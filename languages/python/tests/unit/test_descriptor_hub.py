@@ -1,9 +1,10 @@
 """The six public doors of ``parallax.descriptor`` (spec §2 "Canonical descriptor input").
 
-The three ``hub_from_*`` doors converge on one sealed fixed-source hub and share a
+The three ``hub_from_*`` doors converge on one sealed fixed-source
+``DomainModel`` and share a
 fixed phase order — syntax, schema, value, then every semantic model rule as a
 ``MetamodelValidationError`` inside the same call. The three export doors run the
-same conversion over a class-backed or a descriptor-backed hub. These pin the
+same conversion over a class-backed or a descriptor-backed model. These pin the
 door-level contracts the private ingestion, adaptation, and export modules are
 already tested through: which phase each door can fail in, that text input is
 accepted as ``str`` or UTF-8 ``bytes``, that repeated document results are
@@ -93,8 +94,10 @@ def _document() -> Mapping[str, object]:
 def _class_backed() -> tuple[DomainModel, type]:
     """The same model as classes, with one of its Entity Classes.
 
-    A successful construction claims its classes permanently, so every caller
-    declares fresh class objects rather than sharing a module-level model.
+    Declared per call rather than at module scope so each caller's assertions
+    are about its own class objects: a class may be composed into any number of
+    Domain Models, so sharing them would let one case's model answer another's
+    lookup.
     """
 
     class Author(Entity, table="author", namespace="bookshop"):
@@ -117,18 +120,18 @@ def _class_backed() -> tuple[DomainModel, type]:
 
 
 # --------------------------------------------------------------------------- #
-# The three doors agree, and each yields a sealed hub.                         #
+# The three doors agree, and each yields a sealed Domain Model.                #
 # --------------------------------------------------------------------------- #
 def test_every_door_yields_the_same_sealed_model() -> None:
     document = _document()
-    hubs = [
+    built_models = [
         hub_from_document(document),
         hub_from_json(json.dumps(document)),
         hub_from_yaml(_YAML),
     ]
-    exported = [export_document(hub) for hub in hubs]
+    exported = [export_document(model) for model in built_models]
     assert exported[0] == exported[1] == exported[2]
-    for built in hubs:
+    for built in built_models:
         assert built.meta("bookshop.Author").identity.name == "Author"
         assert [entity.identity.canonical for entity in built.entities] == [
             "bookshop.Author",

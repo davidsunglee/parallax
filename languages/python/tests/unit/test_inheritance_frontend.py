@@ -6,8 +6,8 @@ compares the accepted Metamodel a class family forms against the one its corpus
 model forms. What is pinned here is the frontend's own half: that the parent and
 the role variant derive from the class hierarchy, that a temporal base selects
 the family's axes on the root alone, and that a family-semantic violation which
-stays *spellable* reaches hub construction as the shared formation-time
-``inheritance-*`` issue rather than through a Python-only rule.
+stays *spellable* reaches ``DomainModel`` construction as the shared
+formation-time ``inheritance-*`` issue rather than through a Python-only rule.
 """
 
 from __future__ import annotations
@@ -141,8 +141,9 @@ def test_a_subtype_role_without_a_domain_parent_is_rejected() -> None:
 
 # --------------------------------------------------------------------------- #
 # What stays spellable and is therefore a formation-time family rule: the two  #
-# frontends enforce the same accepted-model invariants, so these reach hub     #
-# construction as `inheritance-*` issues rather than a Python-only rejection.  #
+# frontends enforce the same accepted-model invariants, so these reach          #
+# `DomainModel` construction as `inheritance-*` issues rather than a            #
+# Python-only rejection.                                                        #
 # --------------------------------------------------------------------------- #
 def test_a_tph_descendant_declaring_a_table_is_a_formation_issue() -> None:
     class TphRoot(

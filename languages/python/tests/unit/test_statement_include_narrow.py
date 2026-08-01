@@ -57,13 +57,17 @@ from parallax.snapshot.handle._preflight import preflight_find
 
 # The animal family's model composes its own polymorphic owner alongside it, so
 # it is the composition every case here is measured against at the gate below.
-# Authoring reaches no model; connecting is what makes these classes queryable.
+# Authoring reaches no model, so these classes are queryable without one; what a
+# model supplies is something to EXECUTE a query against, which is why every case
+# here reaches the preflight rather than a connection.
 assert _ANIMAL_MODEL is not None
 _DOCUMENTS = read_models.DOCUMENT_MODEL
 
 
 def preflighted(statement: Statement, models: DomainModel = _ANIMAL_MODEL) -> Statement:
-    """``statement`` after the shared read preflight accepted it against ``models``.
+    """``statement`` after the shared read preflight accepted it against ``models``,
+    which defaults to the corpus animal model whose family every include/narrow
+    case here traverses.
 
     Runs exactly what executing the statement would run before any I/O, and
     answers the statement itself so a case can go on to assert its canonical

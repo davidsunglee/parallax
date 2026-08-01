@@ -220,7 +220,7 @@ def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() ->
 def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> None:
     port = RecordingPort()
     owner = account_db(port)
-    foreign = account_db(port)  # same hub, same adapter, same clock; a different object
+    foreign = account_db(port)  # same model, same adapter, same clock; a different object
 
     def outer(_tx: Transaction) -> str:
         with pytest.raises(TransactionOwnershipError) as excinfo:

@@ -45,9 +45,12 @@ from parallax.core import (
 )
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.entity._model import model_of
 from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
+    PredicateWrite,
+    instructions,
 )
 from parallax.snapshot import QueryTargetError
 from parallax.snapshot.handle import Database, Transaction
@@ -896,6 +899,47 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
     with pytest.raises(OperationRejectedError) as caught:
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "attribute-outside-active-position"
+
+
+# --------------------------------------------------------------------------- #
+# The conformance engine reaches the SAME frozen buffering seam by its own      #
+# route: it deserializes a case's canonical write-instruction document,         #
+# `validate_instruction`s it, and calls                                         #
+# `Transaction._buffer_predicate_instruction` directly, never a `_where` verb.  #
+# Because the whole `validate_operation` vocabulary lives in                    #
+# `validate_instruction`, that route refuses the same predicate the typed verb  #
+# refuses — for the readless (unversioned, non-temporal) dispatch and for the   #
+# materializing (versioned/temporal) one alike, and before either reaches a     #
+# port at all.                                                                  #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("model", "entity"),
+    [(PERSON, "Person"), (WHERE_POSITION_META, "WherePosition")],
+    ids=["readless-unversioned", "materializing-bitemporal"],
+)
+def test_the_engines_own_predicate_write_ingress_refuses_an_inverted_between_window(
+    model: DomainModel, entity: str
+) -> None:
+    instruction = instructions.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": entity,
+                "predicate": {"between": {"attr": f"{entity}.id", "lower": 10, "upper": 1}},
+            },
+        }
+    )
+    assert isinstance(instruction, PredicateWrite)
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:  # pragma: no cover - the refusal precedes the body
+        tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own route into the frozen seam
+
+    with pytest.raises(OperationRejectedError) as caught:
+        instructions.validate_instruction(instruction, model_of(model))
+        Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.rule == "between-bounds-inverted"
+    assert port.ops == []
 
 
 def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:

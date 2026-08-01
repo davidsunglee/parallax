@@ -489,11 +489,11 @@ INCOMPLETE_DOCUMENT_BUILDERS: dict[str, tuple[str, Callable[[], object]]] = {
 }
 
 
-def _rejected_write_target(hub: DomainModel) -> EntityMetadata:
+def _rejected_write_target(domain_model: DomainModel) -> EntityMetadata:
     """The Entity a rejected `when.write` resolves against (`engine._rejected_target`'s
     own convention): these models declare no family, so it is the model's one Entity —
     unpacking fails loudly if that ever stops holding."""
-    (entity,) = hub.entities
+    (entity,) = domain_model.entities
     return entity
 
 
@@ -512,9 +512,9 @@ def test_the_class_grammar_refuses_the_corpus_incomplete_document(case_id: str) 
 def test_the_declared_structure_classifies_the_corpus_rule(case_id: str) -> None:
     case = _CASES[case_id]
     expected_rule = case_document(case)["then"]["rejectedRule"]
-    hub = MODELS[_case_model_stem(case_id)]
-    model = model_of(hub)
-    target = _rejected_write_target(hub)
+    domain_model = MODELS[_case_model_stem(case_id)]
+    model = model_of(domain_model)
+    target = _rejected_write_target(domain_model)
     # The case authors its row in the wire spellings a read golden uses, so it
     # decodes to native carriers first — exactly as `engine.run_rejected_case`
     # does — or a type mismatch, not the omission, would be what gets classified.

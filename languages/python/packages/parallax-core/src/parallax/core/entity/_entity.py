@@ -445,22 +445,28 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         apply (:func:`_validate_copy_update`), and the merged instance still
         goes back through the ordinary constructor for the §2 input policies.
 
+        ``update`` is READ EXACTLY ONCE, into a snapshot every subsequent step
+        works from — the judgement, the merge, the axis carry-forward, and the
+        Change Record. Reading it again would let a stateful mapping pass
+        judgement with one value and be copied with another.
+
         An axis-governed member this copy's ``update`` never names is carried
         forward without re-validation: a materialized current milestone's value
         there may be the framework's open-interval sentinel, which the wrapping
         construction never validated either.
         """
-        if not update:
+        edits = dict(update) if update is not None else {}
+        if not edits:
             copied = super().model_copy(update=None, deep=deep)
             carried = dict(changed_fields(self) or {})
             object.__setattr__(copied, "__parallax_changes__", carried)
             return copied
         names = wire_names_of(type(self))
-        _validate_copy_update(type(self).__name__, names, update)
+        _validate_copy_update(type(self).__name__, names, edits)
         declared = set(names.py_to_name)
         merged = {k: v for k, v in self.__dict__.items() if k in declared}
-        merged.update(update)
-        untouched_axis = names.axis_governed_py - set(update)
+        merged.update(edits)
+        untouched_axis = names.axis_governed_py - set(edits)
         carry_forward = {
             py_name: merged.pop(py_name) for py_name in untouched_axis if py_name in merged
         }
@@ -468,7 +474,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         for py_name, value in carry_forward.items():
             object.__setattr__(validated, py_name, value)
         changes = dict(changed_fields(self) or {})
-        for py_name in update:
+        for py_name in edits:
             if py_name not in changes:
                 changes[py_name] = getattr(self, py_name)
         object.__setattr__(validated, "__parallax_changes__", changes)

@@ -86,11 +86,11 @@ def test_mirrored_and_reasoned_models_partition_the_corpus() -> None:
     assert [stem for stem in mm.UNMIRRORED if not mm.UNMIRRORED[stem].strip()] == []
 
 
-@pytest.mark.parametrize("stem, hub", mm.MIRRORED, ids=[stem for stem, _ in mm.MIRRORED])
-def test_idiomatic_classes_form_the_corpus_model(stem: str, hub: DomainModel) -> None:
+@pytest.mark.parametrize("stem, model", mm.MIRRORED, ids=[stem for stem, _ in mm.MIRRORED])
+def test_idiomatic_classes_form_the_corpus_model(stem: str, model: DomainModel) -> None:
     corpus = _corpus(stem)
-    assert [entity.identity for entity in hub.entities] == [
+    assert [entity.identity for entity in model.entities] == [
         entity.identity for entity in corpus.entities
     ]
-    for left, right in zip(hub.entities, corpus.entities, strict=True):
+    for left, right in zip(model.entities, corpus.entities, strict=True):
         _entity(left, right)

@@ -33,7 +33,7 @@ _SPEC_CODES = frozenset(
 
 # Every class-creation and factory-call rejection, paired with the code it must
 # raise. `entity-relationship-annotation-mismatch` is absent because it is the
-# one code raised during hub construction rather than at class creation.
+# one code raised during `DomainModel` construction rather than at class creation.
 _PROBES: dict[str, str] = {
     "define_header_unknown_option": "entity-header-unknown-option",
     "define_header_invalid_value": "entity-header-invalid-value",

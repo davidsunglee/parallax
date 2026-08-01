@@ -8,6 +8,7 @@ framework-owned end to end at the write seam (`m-opt-lock`); see
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterator, Mapping
 from decimal import Decimal
 
 import pytest
@@ -256,3 +257,47 @@ def test_model_copy_still_validates_an_explicitly_touched_axis_field() -> None:
     )
     with pytest.raises(ModelCopyError, match="tx_end"):
         balance.model_copy(update={"tx_end": "not-a-datetime"})
+
+
+# --------------------------------------------------------------------------- #
+# `update=` is a caller-supplied `Mapping`, so nothing forbids it from        #
+# answering a different value each time it is read. The §2 scalar input       #
+# policy is stated of "every `model_copy(update=...)` value"                  #
+# (`spec/python.md`), which can only hold if the value that was JUDGED is the  #
+# value that is COPIED — so the mapping is read exactly once, into a snapshot  #
+# the judgement, the merge, the axis carry-forward, and the Change Record all  #
+# work from. The mapping below is legal on its first value read and forbidden  #
+# afterwards; a second read would silently copy the forbidden value, because   #
+# Pydantic's own constructor coerces the string a `Decimal` attribute rejects. #
+# --------------------------------------------------------------------------- #
+class _ShiftingUpdate(Mapping[str, object]):
+    def __init__(self) -> None:
+        self.value_reads = 0
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(("balance",))
+
+    def __len__(self) -> int:
+        return 1
+
+    def __getitem__(self, key: str) -> object:
+        self.value_reads += 1
+        return Decimal("175.00") if self.value_reads == 1 else "999.99"
+
+
+def test_model_copy_judges_and_copies_one_snapshot_of_a_stateful_update_mapping() -> None:
+    shifting = _ShiftingUpdate()
+    copy = _account(balance="100.00").model_copy(update=shifting)
+    assert shifting.value_reads == 1
+    assert copy.balance == Decimal("175.00")
+    changes = changed_fields(copy)
+    assert changes is not None
+    assert changes["balance"] == Decimal("100.00")
+
+
+def test_a_string_is_never_an_accepted_decimal_edit() -> None:
+    # The oracle the case above depends on: the forbidden second value really is
+    # forbidden when it is authored directly, so a second read would have been
+    # an escape rather than a difference without a distinction.
+    with pytest.raises(ModelCopyError, match="does not match the declared type"):
+        _account().model_copy(update={"balance": "999.99"})

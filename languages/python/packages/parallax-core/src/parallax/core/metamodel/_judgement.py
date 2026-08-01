@@ -7,9 +7,12 @@ member's own accepted metadata and the value, and nothing else. This module owns
 the second half, so a caller holding a member — the descriptor that installed it,
 or a facet walk that just found it — states the rule without reaching a model.
 
-That is what keeps "one validator, two callers" true across the split: the typed
-``.set(...)`` path and the serialized write-instruction path both judge here, and
-only the resolution in front of them differs.
+That is what keeps ONE VALIDATOR true across the split. Three surfaces judge
+here — the typed ``.set(...)`` path, ``Entity.model_copy(update=...)``, and the
+serialized write-instruction path — and only the resolution in front of them
+differs: an expression already holds its member, a Python name is resolved
+class-shaped, and a canonical ``Class.member`` reference is resolved
+family-effectively against a model.
 """
 
 from __future__ import annotations

@@ -521,7 +521,8 @@ def test_member_name_honesty_covers_value_object_members() -> None:
 # `entity.expressions.AttributeExpr.set` raises at build time for the typed     #
 # path (`test_where_verbs.py`'s own `test_set_on_a_primary_key_attribute_       #
 # raises` / `..._framework_owned_version_attribute_raises` / `..._a_mismatched_ #
-# type_raises`) — the "one validator, two callers" pattern.                     #
+# type_raises`) and for the edited copy (`test_model_free_authoring.py`'s own    #
+# three-surface parity block) — one validator, three callers.                    #
 # --------------------------------------------------------------------------- #
 def test_member_name_honesty_rejects_a_primary_key_assignment() -> None:
     predicate = wi.deserialize(
@@ -628,6 +629,66 @@ def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none(
         }
     )
     wi.validate_instruction(predicate, customer)  # must not raise
+
+
+# --------------------------------------------------------------------------- #
+# The selecting predicate is measured with the WHOLE `validate_operation`      #
+# vocabulary, not just the rules the instruction schema states — and here,     #
+# because this is the ONE model-aware gate every predicate-write ingress runs  #
+# (`m-case-format` "The model-aware validator validates the predicate ...,     #
+# checks entity scope and bare-predicate rules"). The two cases below come     #
+# from different rule families so the pin covers the vocabulary rather than    #
+# one rule.                                                                    #
+# --------------------------------------------------------------------------- #
+def test_a_predicate_writes_inverted_between_window_is_rejected() -> None:
+    predicate = wi.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "Account",
+                "predicate": {"between": {"attr": "Account.id", "lower": 10, "upper": 1}},
+            },
+        }
+    )
+    with pytest.raises(op_algebra.OperationRejectedError) as caught:
+        wi.validate_instruction(predicate, _ACCOUNT)
+    assert caught.value.rule == "between-bounds-inverted"
+
+
+def test_a_predicate_writes_out_of_position_attribute_reference_is_rejected() -> None:
+    orders = models.accepted_model(_MODELS["orders"])
+    predicate = wi.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "Order",
+                "predicate": {"eq": {"attr": "OrderItem.sku", "value": "X"}},
+            },
+        }
+    )
+    with pytest.raises(op_algebra.OperationRejectedError) as caught:
+        wi.validate_instruction(predicate, orders)
+    assert caught.value.rule == "attribute-outside-active-position"
+
+
+def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
+    # `m-case-format` orders the model-aware validator: predicate and entity
+    # scope first, then the assignment rules. An instruction that fails BOTH
+    # must report the predicate, so the caller is not sent to fix an assignment
+    # while the selection itself can match nothing.
+    predicate = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {
+                "entity": "Account",
+                "predicate": {"between": {"attr": "Account.id", "lower": 10, "upper": 1}},
+            },
+            "assignments": [{"attr": "Account.id", "value": 2}],
+        }
+    )
+    with pytest.raises(op_algebra.OperationRejectedError) as caught:
+        wi.validate_instruction(predicate, _ACCOUNT)
+    assert caught.value.rule == "between-bounds-inverted"
 
 
 def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() -> None:
