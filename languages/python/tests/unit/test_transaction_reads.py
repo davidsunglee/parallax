@@ -360,8 +360,8 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
     port = RecordingPort(rows=_balance_history_rows())
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    # `.limit(...)` after `.history()` also exercises `is_milestone_set_op`'s
-    # own directive-peeling loop (a result-shaping wrapper around the scan).
+    # `.limit(...)` after `.history()` also exercises the directive peel behind
+    # `scans_an_axis` (a result-shaping wrapper around the scan).
     query = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME).limit(5)
     snapshot = db.find(query)
     assert len(snapshot.results()) == 2

@@ -37,15 +37,8 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.op_algebra import (
-    AsOfRange,
-    DeepFetch,
-    Distinct,
-    History,
-    Limit,
-    Operation,
-    OrderBy,
-)
+from parallax.core.op_algebra import DeepFetch, Operation
+from parallax.core.temporal_read import scans_an_axis
 
 __all__ = ["DeferredFeatureError", "deferred_features"]
 
@@ -116,18 +109,12 @@ def _includes_over_a_scan(operation: Operation) -> bool:
 
     A milestone-set read answers one graph per milestone, and combining that
     with includes is the ``snapshot-history-includes`` Feature. Lowering places
-    the deep fetch outermost and the temporal wrapper innermost of the
-    directives, so the walk peels only what canonically sits between them.
-
-    ``~parallax.snapshot.handle._read.is_milestone_set_op`` answers the
-    neighbouring question — which executor a preflighted operation dispatches to
-    — from a module that reaches SQL and a Database Port, which this one is
-    scoped away from; the shared shape is a walk over two node families rather
-    than a seam either could own.
+    the deep fetch outermost, so peeling it leaves exactly the question
+    ``~parallax.core.temporal_read.scans_an_axis`` owns — the same recognizer
+    the read executors dispatch a milestone-set find on, which is what keeps
+    this seam from deferring a shape the executor would have run, or passing one
+    it could not. Reaching it costs no port: ``m-temporal-read`` is a pure
+    operation-and-metadata scope, so this module stays clear of the Database
+    Port its own read-preflight consumer must not touch.
     """
-    if not isinstance(operation, DeepFetch):
-        return False
-    inner: Operation = operation.operand
-    while isinstance(inner, (Distinct, Limit, OrderBy)):
-        inner = inner.operand
-    return isinstance(inner, (AsOfRange, History))
+    return isinstance(operation, DeepFetch) and scans_an_axis(operation.operand)

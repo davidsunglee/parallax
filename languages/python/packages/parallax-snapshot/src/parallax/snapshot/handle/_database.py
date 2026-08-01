@@ -52,6 +52,7 @@ from parallax.core.entity import DomainModel, FindQuery
 # rows, so it needs both facts out of a Domain Model.
 from parallax.core.entity._model import ClassIndex, class_index, model_of
 from parallax.core.metamodel import Metamodel
+from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     Clock,
     Concurrency,
@@ -79,7 +80,6 @@ from parallax.snapshot.handle._read import (
     deep_fetch_statement_pin,
     find,
     find_history,
-    is_milestone_set_op,
     snapshot_from_find_result,
     snapshot_from_history_result,
 )
@@ -284,7 +284,7 @@ class Database:
         lowered = preflight_find(query, model=self._meta)
         target, op = lowered.target.name, lowered.operation
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
-        if is_milestone_set_op(op):
+        if scans_an_axis(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
             return snapshot_from_history_result(history_result, target, self._meta, classes)
         find_result = find(op, self._meta, self._dialect, target, self._port)
