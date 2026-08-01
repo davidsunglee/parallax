@@ -23,6 +23,7 @@ from _transact_support import (
     ORDERS,
     PAYMENT,
     PERSON,
+    RATE,
     WHERE_POSITION_META,
     NoIoPort,
     RecordingPort,
@@ -45,9 +46,9 @@ from parallax.core import (
     attr,
     inheritance,
 )
+from parallax.core.base import InstantError
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity._model import model_of
 from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
@@ -904,6 +905,80 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 
 
 # --------------------------------------------------------------------------- #
+# `m-case-format` enumerates the validator's order: it "validates the           #
+# predicate ..., checks entity scope and bare-predicate rules, rejects          #
+# duplicate or framework-owned/unassignable assignments, and requires ONLY the  #
+# temporal coordinates the target profile uses" — the temporal coordinates      #
+# last. A compound-invalid typed write must therefore classify by its           #
+# PREDICATE, which is also the classification the conformance ingress gives the #
+# same instruction (it takes no `dt.datetime` at all, so it has no other        #
+# candidate). Rendering a bound is not judging it.                              #
+# --------------------------------------------------------------------------- #
+_NAIVE = dt.datetime(2024, 7, 1)
+_AWARE = dt.datetime(2024, 8, 1, tzinfo=dt.UTC)
+
+
+def test_an_invalid_predicate_outranks_a_naive_valid_from() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WherePosition.where(WherePosition.id.between(10, 1)),
+            WherePosition.value.set(Decimal("300.00")),
+            valid_from=_NAIVE,
+        )
+
+    with pytest.raises(OperationRejectedError) as caught:
+        Database.connect(NoIoPort(), WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.rule == "between-bounds-inverted"
+
+
+def test_an_invalid_predicate_outranks_a_naive_until() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.update_until_where(
+            WherePosition.where(WherePosition.id.between(10, 1)),
+            WherePosition.value.set(Decimal("300.00")),
+            valid_from=_AWARE,
+            until=_NAIVE,
+        )
+
+    with pytest.raises(OperationRejectedError) as caught:
+        Database.connect(NoIoPort(), WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.rule == "between-bounds-inverted"
+
+
+@pytest.mark.parametrize(
+    ("valid_from", "until"),
+    [(_NAIVE, None), (_AWARE, _NAIVE)],
+    ids=["naive-valid-from", "naive-until"],
+)
+def test_a_naive_bound_is_still_refused_once_the_predicate_is_valid(
+    valid_from: dt.datetime, until: dt.datetime | None
+) -> None:
+    # Deferring the judgement never loses it: the verbatim literal a naive
+    # bound renders to is refused before any buffering, by the same step that
+    # decides whether the target's profile admits a bound at all.
+    port = RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        if until is None:
+            tx.update_where(
+                WherePosition.where(WherePosition.id == 1),
+                WherePosition.value.set(Decimal("300.00")),
+                valid_from=valid_from,
+            )
+        else:
+            tx.update_until_where(
+                WherePosition.where(WherePosition.id == 1),
+                WherePosition.value.set(Decimal("300.00")),
+                valid_from=valid_from,
+                until=until,
+            )
+
+    with pytest.raises(InstantError, match="naive datetime"):
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
+    assert port.ops == [("begin",), ("rollback",)]
+
+
+# --------------------------------------------------------------------------- #
 # The conformance engine's OWN ingress, driven as the engine drives it. Both    #
 # engine entry points are exercised as functions — the readless one             #
 # (`_run_readless_predicate_write`, which opens the transaction itself) and     #
@@ -992,12 +1067,25 @@ def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
         engine._is_materializing_write_step(step, _MATERIALIZING_ENGINE_META)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own materializing predicate-write ingress
 
 
+# The frozen seam's OWN contract, driven the way the conformance engine drives
+# it — an instruction NOTHING pre-validated, straight into
+# `Transaction._buffer_predicate_instruction`. `validate_instruction`
+# establishes the CALLER ordering; this establishes that the directly reachable
+# seam takes no instruction on faith, so deleting its
+# `inheritance.reject_predicate_write` call fails BOTH cases.
+#
+# The refusal is asserted at the seam CALL, inside the transaction body, which
+# is what makes each half discriminating. Without the seam's own guard the
+# readless family instruction is merely buffered and the call returns — the
+# planner's flush-time refusal would come later, and never at all on the
+# abandoned transaction here. And the materializing one reaches the resolving
+# read, real SQL on the caller's connection, which `port.ops` then shows.
 @pytest.mark.parametrize(
     ("model", "entity"),
-    [(PERSON, "Person"), (WHERE_POSITION_META, "WherePosition")],
-    ids=["readless-unversioned", "materializing-bitemporal"],
+    [(PAYMENT, "CardPayment"), (RATE, "DepositRate")],
+    ids=["readless-unversioned-family", "materializing-bitemporal-family"],
 )
-def test_the_frozen_buffering_seam_never_reaches_a_port_for_a_refused_predicate(
+def test_the_frozen_buffering_seam_refuses_an_unvalidated_inheritance_family_instruction(
     model: DomainModel, entity: str
 ) -> None:
     instruction = instructions.deserialize(
@@ -1005,21 +1093,23 @@ def test_the_frozen_buffering_seam_never_reaches_a_port_for_a_refused_predicate(
             "mutation": "delete",
             "target": {
                 "entity": entity,
-                "predicate": {"between": {"attr": f"{entity}.id", "lower": 10, "upper": 1}},
+                "predicate": {"eq": {"attr": f"{entity}.id", "value": 1}},
             },
         }
     )
     assert isinstance(instruction, PredicateWrite)
-    port = RecordingPort()
+    port = RecordingPort(rows=[])
 
-    def fn(tx: Transaction) -> None:  # pragma: no cover - the refusal precedes the body
-        tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own route into the frozen seam
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(
+            inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
+        ):
+            tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own route into the frozen seam
+        assert port.ops == [("begin",)]
+        raise _Abandon
 
-    with pytest.raises(OperationRejectedError) as caught:
-        instructions.validate_instruction(instruction, model_of(model))
+    with pytest.raises(_Abandon):
         Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
-    assert caught.value.rule == "between-bounds-inverted"
-    assert port.ops == []
 
 
 def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:

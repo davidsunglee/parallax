@@ -37,7 +37,7 @@ import datetime as dt
 from collections.abc import Sequence
 from typing import Any, cast
 
-from parallax.core import deep_fetch, op_algebra, read_lock
+from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment
@@ -128,8 +128,10 @@ def buffer_predicate(
        ``*Until`` forms additionally require ``until``, with
        ``valid_from < until`` — an equal or reversed window rejects
        HERE, at build, before any buffering (:func:`validate_until`).
-       Typed-only: only this ingress takes ``dt.datetime`` arguments, which are
-       rendered to the instruction's own instant literals in step 3.
+       Typed-only: only this ingress takes ``dt.datetime`` arguments, whose
+       WIRE FORM step 3 renders (:func:`_rendered_bound`) but whose every
+       judgement — a naive value, and a profile that admits no bound — is
+       this step's.
     5. **Hand off** to :func:`buffer_predicate_instruction`, which dispatches
        READLESS (one statement, `m-batch-write`) or MATERIALIZING
        (``_materialize_predicate_write``, ADR 0014).
@@ -151,12 +153,13 @@ def buffer_predicate(
     }
     if assignments:
         doc["assignments"] = [{"attr": str(a.attr), "value": a.value} for a in assignments]
-    # Rendered, not yet judged: whether this target's profile ADMITS a bound is
-    # step 4's question, which the spec orders after the predicate.
+    # Rendered, not yet judged: whether the bound is aware and whether this
+    # target's profile ADMITS one at all are both step 4's questions, which the
+    # spec orders after the predicate (:func:`_rendered_bound`).
     if valid_from is not None:
-        doc["validFrom"] = instant_literal(valid_from)
+        doc["validFrom"] = _rendered_bound(valid_from)
     if until is not None:
-        doc["until"] = instant_literal(until)
+        doc["until"] = _rendered_bound(until)
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
@@ -167,6 +170,28 @@ def buffer_predicate(
         assert valid_from is not None  # `*_until_where` verbs require both together
         validate_until(declaring_entity, mutation, valid_from, until)
     buffer_predicate_instruction(uow, meta, conn, dialect, instruction)
+
+
+def _rendered_bound(value: dt.datetime) -> str:
+    """Render a typed Valid-Time bound to the canonical instruction literal
+    WITHOUT judging it.
+
+    `m-case-format` orders the predicate rules before the temporal coordinates,
+    so nothing about a bound may pre-empt a predicate rejection: an inverted
+    ``between`` and a naive ``valid_from`` in one call must classify as the
+    predicate rejection, exactly as it does through the conformance ingress,
+    which carries no ``dt.datetime`` at all. An AWARE value renders canonically
+    (:func:`~parallax.core.unit_work.instant_literal`); a naive one renders
+    verbatim, because :func:`~parallax.snapshot.handle._write_inputs.
+    validate_valid_from` and :func:`~parallax.snapshot.handle._write_inputs.
+    validate_until` reject every naive bound on their own step — a bitemporal
+    target through ``normalize_instant``, any other profile because it admits
+    no bound at all — so a verbatim literal is always refused before it can
+    reach a buffer.
+    """
+    if value.utcoffset() is None:
+        return value.isoformat()
+    return instant_literal(value)
 
 
 def buffer_predicate_instruction(
@@ -181,9 +206,10 @@ def buffer_predicate_instruction(
     "predicate-shaped case entries deserialize
     to PredicateWrite through the existing serde and buffer through
     Transaction's own seam"): given an ALREADY-BUILT
-    :class:`~parallax.core.unit_work.PredicateWrite` instruction, dispatch it
-    READLESS (`m-batch-write`) or MATERIALIZE it (`m-opt-lock`, ADR 0014). The
-    typed ``_where`` verbs (:func:`buffer_predicate`) build ``instruction`` from
+    :class:`~parallax.core.unit_work.PredicateWrite` instruction, reject an
+    inheritance-family target (`m-inheritance`), then dispatch it READLESS
+    (`m-batch-write`) or MATERIALIZE it (`m-opt-lock`, ADR 0014). The typed
+    ``_where`` verbs (:func:`buffer_predicate`) build ``instruction`` from
     a bare :class:`~parallax.core.entity.Statement` plus typed
     ``Attr.set(...)`` assignments first; the engine builds it directly
     from the case's own canonical write-instruction document.
@@ -195,10 +221,19 @@ def buffer_predicate_instruction(
     order `m-case-format` fixes: the whole ``validate_operation`` vocabulary and
     the bare-predicate rule over the selecting predicate, the
     inheritance-family rejection, then member-name honesty and assignability.
-    This seam is dispatch only, so the two ingresses cannot classify one
-    instruction differently. The flush-time
-    :mod:`~parallax.core.unit_work.write_planner` keeps its own structural
-    inheritance refusal as the last line before SQL.
+    That call establishes the CALLER ORDERING — one classification whichever
+    ingress an instruction arrives through.
+
+    The inheritance refusal repeated here is this seam's OWN contract, not a
+    duplicate of that rule. This entry point is reachable directly, with an
+    instruction no caller validated, so it takes nothing on faith: without its
+    own refusal a family instruction whose target MATERIALIZES reaches
+    :func:`_materialize_predicate_write`'s resolving read — real SQL on the
+    caller's connection — and, when that read matches no row, buffers nothing
+    for the flush-time
+    :mod:`~parallax.core.unit_work.write_planner` to refuse, so nothing refuses
+    it at all. The planner's own structural refusal is the last line before SQL
+    for what IS buffered; this one is the first line before the resolve.
 
     ``Transaction._buffer_predicate_instruction`` is the thin method that
     delegates here. It keeps its leading underscore and its exact signature
@@ -207,6 +242,7 @@ def buffer_predicate_instruction(
     cross-module helper.
     """
     entity = entity_of(meta, instruction.target.entity)
+    inheritance.reject_predicate_write(entity)
     declaring_entity = declaring(meta, entity)
     version_attr = version_attribute(meta, declaring_entity)
     if not declaring_entity.declared_as_of_axes and version_attr is None:
