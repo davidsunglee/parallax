@@ -20,7 +20,7 @@ import pytest
 
 from _support.repo import REPO_ROOT
 from parallax.conformance import models
-from parallax.core import op_algebra
+from parallax.core import inheritance, op_algebra
 from parallax.core.unit_work import instructions as wi
 
 _SCHEMA = cast(
@@ -689,6 +689,244 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
     with pytest.raises(op_algebra.OperationRejectedError) as caught:
         wi.validate_instruction(predicate, _ACCOUNT)
     assert caught.value.rule == "between-bounds-inverted"
+
+
+# --------------------------------------------------------------------------- #
+# The bare-predicate rule (`m-case-format` `target.predicate`: "one schema-valid #
+# `m-op-algebra` operation; it is a bare write predicate, never a result         #
+# modifier"; `python.md` §5: "`order_by`, `limit`, `include`, `as_of`,           #
+# `history` / `as_of_range`, and `narrow` are all rejected on any write          #
+# target"). Every one of these is a VALID READ operation, so                     #
+# `validate_operation` — which the read path shares — cannot carry the rule;     #
+# it is a rule of the write instruction and has its own refusal.                 #
+# --------------------------------------------------------------------------- #
+_BARE_INNER: dict[str, Any] = {"lessThan": {"attr": "Account.balance", "value": 200.00}}
+_NON_BARE_PREDICATES: list[tuple[str, dict[str, Any]]] = [
+    ("orderBy", {"orderBy": {"operand": _BARE_INNER, "keys": [{"attr": "Account.balance"}]}}),
+    ("limit", {"limit": {"operand": _BARE_INNER, "count": 5}}),
+    ("distinct", {"distinct": {"operand": _BARE_INNER}}),
+    ("asOf", {"asOf": {"operand": _BARE_INNER, "dimension": "validTime", "coordinate": _B1}}),
+    (
+        "asOfRange",
+        {"asOfRange": {"operand": _BARE_INNER, "dimension": "validTime", "start": _B1, "end": _B2}},
+    ),
+    ("history", {"history": {"operand": _BARE_INNER, "dimension": "validTime"}}),
+]
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "predicate"), _NON_BARE_PREDICATES, ids=[w for w, _p in _NON_BARE_PREDICATES]
+)
+def test_a_result_modifier_is_never_a_bare_write_predicate(
+    wrapper: str, predicate: dict[str, Any]
+) -> None:
+    instruction = wi.deserialize(
+        {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
+    )
+    with pytest.raises(wi.WriteInstructionError, match=f"`{wrapper}` is a result modifier"):
+        wi.validate_instruction(instruction, _ACCOUNT)
+
+
+@pytest.mark.parametrize(
+    ("position", "predicate"),
+    [
+        (
+            "and",
+            {"and": {"operands": [{"limit": {"operand": _BARE_INNER, "count": 5}}, _BARE_INNER]}},
+        ),
+        (
+            "or",
+            {"or": {"operands": [_BARE_INNER, {"limit": {"operand": _BARE_INNER, "count": 5}}]}},
+        ),
+        ("not", {"not": {"operand": {"limit": {"operand": _BARE_INNER, "count": 5}}}}),
+        ("group", {"group": {"operand": {"limit": {"operand": _BARE_INNER, "count": 5}}}}),
+    ],
+    ids=["and", "or", "not", "group"],
+)
+def test_a_result_modifier_hidden_in_the_boolean_spine_is_rejected(
+    position: str, predicate: dict[str, Any]
+) -> None:
+    # `and(limit(...), ...)` round-trips through the algebra's serde, and a
+    # nested directive lowers exactly as a root one does, so the rule is checked
+    # at every position rather than only at the root.
+    assert position in predicate
+    instruction = wi.deserialize(
+        {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
+    )
+    with pytest.raises(wi.WriteInstructionError, match="`limit` is a result modifier"):
+        wi.validate_instruction(instruction, _ACCOUNT)
+
+
+@pytest.mark.parametrize(
+    ("position", "predicate"),
+    [
+        (
+            "navigate",
+            {
+                "navigate": {
+                    "rel": "Order.items",
+                    "op": {"limit": {"operand": {"eq": {"attr": "OrderItem.sku", "value": "X"}}}},
+                }
+            },
+        ),
+        (
+            "exists",
+            {
+                "exists": {
+                    "rel": "Order.items",
+                    "op": {"limit": {"operand": {"eq": {"attr": "OrderItem.sku", "value": "X"}}}},
+                }
+            },
+        ),
+        (
+            "notExists",
+            {
+                "notExists": {
+                    "rel": "Order.items",
+                    "op": {"limit": {"operand": {"eq": {"attr": "OrderItem.sku", "value": "X"}}}},
+                }
+            },
+        ),
+    ],
+    ids=["navigate", "exists", "not-exists"],
+)
+def test_a_result_modifier_inside_a_navigation_filter_is_rejected(
+    position: str, predicate: dict[str, Any]
+) -> None:
+    assert position in predicate
+    orders = models.accepted_model(_MODELS["orders"])
+    body = cast("dict[str, Any]", predicate[position])
+    body["op"]["limit"]["count"] = 5
+    instruction = wi.deserialize(
+        {"mutation": "delete", "target": {"entity": "Order", "predicate": predicate}}
+    )
+    with pytest.raises(wi.WriteInstructionError, match="`limit` is a result modifier"):
+        wi.validate_instruction(instruction, orders)
+
+
+@pytest.mark.parametrize(
+    ("position", "predicate"),
+    [
+        ("exists", {"exists": {"rel": "Order.items"}}),
+        ("notExists", {"notExists": {"rel": "Order.items"}}),
+    ],
+    ids=["exists", "not-exists"],
+)
+def test_a_bare_navigation_filter_carrying_no_inner_operation_is_accepted(
+    position: str, predicate: dict[str, Any]
+) -> None:
+    # The optional inner `op` is absent — the recursion has nothing to descend
+    # into and the predicate stays bare.
+    assert position in predicate
+    orders = models.accepted_model(_MODELS["orders"])
+    instruction = wi.deserialize(
+        {"mutation": "delete", "target": {"entity": "Order", "predicate": predicate}}
+    )
+    wi.validate_instruction(instruction, orders)  # must not raise
+
+
+def test_a_narrow_is_never_a_bare_write_predicate() -> None:
+    # A `narrow` names a polymorphic position, so it is refused as a non-bare
+    # predicate BEFORE the inheritance-family rejection the target would also
+    # earn — `python.md` §5 lists `narrow` among the clauses rejected on any
+    # write target.
+    instruction = wi.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "CardPayment",
+                "predicate": {
+                    "narrow": {
+                        "entity": "Payment",
+                        "to": ["CardPayment"],
+                        "operand": {"eq": {"attr": "Payment.id", "value": 1}},
+                    }
+                },
+            },
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="`narrow` is a result modifier"):
+        wi.validate_instruction(instruction, _PAYMENT)
+
+
+def test_a_deep_fetch_is_never_a_bare_write_predicate() -> None:
+    orders = models.accepted_model(_MODELS["orders"])
+    instruction = wi.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "Order",
+                "predicate": {
+                    "deepFetch": {
+                        "operand": {"eq": {"attr": "Order.id", "value": 1}},
+                        "paths": [{"segments": [{"rel": "Order.items"}]}],
+                    }
+                },
+            },
+        }
+    )
+    with pytest.raises(wi.WriteInstructionError, match="`deepFetch` is a result modifier"):
+        wi.validate_instruction(instruction, orders)
+
+
+# --------------------------------------------------------------------------- #
+# The inheritance-family rejection is stated HERE, in the one model-aware       #
+# validator both predicate-write ingresses call, so the typed `_where` verbs    #
+# and the conformance engine classify one instruction identically. Its position #
+# is fixed from both sides: AFTER the predicate rules `m-case-format` orders    #
+# first, and BEFORE the assignments, which `python.md` §5 requires — "every     #
+# assigned attribute or value-object member must be declared by the exact       #
+# target entity — set-based writes already reject inheritance-family targets,   #
+# so ancestry resolution never arises."                                         #
+# --------------------------------------------------------------------------- #
+def test_a_predicate_write_on_an_inheritance_family_target_is_rejected() -> None:
+    instruction = wi.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "CardPayment",
+                "predicate": {"eq": {"attr": "CardPayment.id", "value": 1}},
+            },
+        }
+    )
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        wi.validate_instruction(instruction, _PAYMENT)
+    assert caught.value.rule == "subtype-write-set-based-unsupported"
+
+
+def test_an_invalid_predicate_outranks_the_inheritance_family_rejection() -> None:
+    instruction = wi.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "CardPayment",
+                "predicate": {"between": {"attr": "CardPayment.id", "lower": 10, "upper": 1}},
+            },
+        }
+    )
+    with pytest.raises(op_algebra.OperationRejectedError) as caught:
+        wi.validate_instruction(instruction, _PAYMENT)
+    assert caught.value.rule == "between-bounds-inverted"
+
+
+def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> None:
+    # The assignment names the DECLARING root (`Payment.amount`) while the
+    # target names the concrete subtype, which the exact-target assignment rule
+    # refuses. The family rejection must come first, or the caller is told to
+    # fix an assignment on a write that is unsupported whatever it assigns.
+    instruction = wi.deserialize(
+        {
+            "mutation": "update",
+            "target": {
+                "entity": "CardPayment",
+                "predicate": {"eq": {"attr": "CardPayment.id", "value": 1}},
+            },
+            "assignments": [{"attr": "Payment.amount", "value": 1.00}],
+        }
+    )
+    with pytest.raises(inheritance.InheritanceError) as caught:
+        wi.validate_instruction(instruction, _PAYMENT)
+    assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
 def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() -> None:

@@ -11,6 +11,7 @@ non-temporal targets.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from decimal import Decimal
 from typing import cast
 
@@ -31,6 +32,7 @@ from _transact_support import (
 
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
+from parallax.conformance import case_format, engine
 from parallax.conformance.story_models import Order
 from parallax.core import (
     Attr,
@@ -902,22 +904,100 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
 
 
 # --------------------------------------------------------------------------- #
-# The conformance engine reaches the SAME frozen buffering seam by its own      #
-# route: it deserializes a case's canonical write-instruction document,         #
-# `validate_instruction`s it, and calls                                         #
-# `Transaction._buffer_predicate_instruction` directly, never a `_where` verb.  #
-# Because the whole `validate_operation` vocabulary lives in                    #
-# `validate_instruction`, that route refuses the same predicate the typed verb  #
-# refuses — for the readless (unversioned, non-temporal) dispatch and for the   #
-# materializing (versioned/temporal) one alike, and before either reaches a     #
-# port at all.                                                                  #
+# The conformance engine's OWN ingress, driven as the engine drives it. Both    #
+# engine entry points are exercised as functions — the readless one             #
+# (`_run_readless_predicate_write`, which opens the transaction itself) and     #
+# the materializing one (`_is_materializing_write_step`, which classifies the   #
+# step AND validates it before `_run_materializing_pair` executes anything) —   #
+# so deleting either function's own `validate_instruction` call fails these     #
+# cases. Driving `validate_instruction` from the test instead would leave that  #
+# regression unpinned: the refusal would then come from the test, not from the  #
+# engine.                                                                       #
+#                                                                               #
+# The models are the corpus's own, the exact pair the two dispatches are        #
+# authored over: `models/wallet.yaml` (unversioned, non-temporal -> READLESS,   #
+# m-batch-write-005) and `models/account.yaml` (versioned -> MATERIALIZING,     #
+# m-opt-lock-015).                                                              #
+#                                                                               #
+# The predicates cover both refusal families a write target carries: the        #
+# model-aware `between-bounds-inverted` rejection, and each result modifier     #
+# `m-case-format` `target.predicate` forbids ("a bare write predicate, never a  #
+# result modifier").                                                            #
 # --------------------------------------------------------------------------- #
+_READLESS_ENGINE_META = engine.load_case_metamodel(
+    next(case for case in case_format.load_cases() if case.case_id == "m-batch-write-005")
+)
+_MATERIALIZING_ENGINE_META = engine.load_case_metamodel(
+    next(case for case in case_format.load_cases() if case.case_id == "m-opt-lock-015")
+)
+_ENGINE_TX_INSTANT = "2024-06-01T00:00:00+00:00"
+
+
+def _refused_predicates(entity: str) -> list[tuple[str, str, dict[str, object]]]:
+    inner: dict[str, object] = {"lessThan": {"attr": f"{entity}.balance", "value": 200.00}}
+    return [
+        ("between", "upper bound", {"between": {"attr": f"{entity}.id", "lower": 10, "upper": 1}}),
+        ("limit", "`limit` is a result modifier", {"limit": {"operand": inner, "count": 1}}),
+        (
+            "orderBy",
+            "`orderBy` is a result modifier",
+            {"orderBy": {"operand": inner, "keys": [{"attr": f"{entity}.balance"}]}},
+        ),
+        ("distinct", "`distinct` is a result modifier", {"distinct": {"operand": inner}}),
+    ]
+
+
+_READLESS_REFUSALS = _refused_predicates("Wallet")
+_MATERIALIZING_REFUSALS = _refused_predicates("Account")
+
+
+@pytest.mark.parametrize(
+    ("message", "predicate"),
+    [(message, predicate) for _id, message, predicate in _READLESS_REFUSALS],
+    ids=[case_id for case_id, _message, _predicate in _READLESS_REFUSALS],
+)
+def test_the_engines_readless_predicate_ingress_refuses_before_it_opens_a_transaction(
+    message: str, predicate: dict[str, object]
+) -> None:
+    port = RecordingPort()
+    with pytest.raises(ValueError, match=re.escape(message)):
+        engine._run_readless_predicate_write(  # pyright: ignore[reportPrivateUsage] - the conformance engine's own readless predicate-write ingress
+            port,
+            _READLESS_ENGINE_META,
+            POSTGRES,
+            "optimistic",
+            {"mutation": "delete", "target": {"entity": "Wallet", "predicate": predicate}},
+            _ENGINE_TX_INSTANT,
+            rollback=False,
+        )
+    assert port.ops == []
+
+
+@pytest.mark.parametrize(
+    ("message", "predicate"),
+    [(message, predicate) for _id, message, predicate in _MATERIALIZING_REFUSALS],
+    ids=[case_id for case_id, _message, _predicate in _MATERIALIZING_REFUSALS],
+)
+def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
+    message: str, predicate: dict[str, object]
+) -> None:
+    step = {
+        "write": {
+            "mutation": "delete",
+            "target": {"entity": "Account", "predicate": predicate},
+            "at": _ENGINE_TX_INSTANT,
+        }
+    }
+    with pytest.raises(ValueError, match=re.escape(message)):
+        engine._is_materializing_write_step(step, _MATERIALIZING_ENGINE_META)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own materializing predicate-write ingress
+
+
 @pytest.mark.parametrize(
     ("model", "entity"),
     [(PERSON, "Person"), (WHERE_POSITION_META, "WherePosition")],
     ids=["readless-unversioned", "materializing-bitemporal"],
 )
-def test_the_engines_own_predicate_write_ingress_refuses_an_inverted_between_window(
+def test_the_frozen_buffering_seam_never_reaches_a_port_for_a_refused_predicate(
     model: DomainModel, entity: str
 ) -> None:
     instruction = instructions.deserialize(

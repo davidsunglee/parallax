@@ -160,6 +160,26 @@ WriteInstruction = KeyedWrite | PredicateWrite
 # `Class.member` descriptor reference.
 _ASSIGNMENT_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9_]*$")
 
+# The wrappers a write target's predicate may never carry, by canonical wire tag
+# (`m-case-format` `target.predicate`: "it is a bare write predicate, never a
+# result modifier"; `python.md` §5: "`order_by`, `limit`, `include`, `as_of`,
+# `history` / `as_of_range`, and `narrow` are all rejected on any write
+# target"). A READ composes every one of them legally, which is why this is a
+# rule of the write instruction and carries its own refusal rather than joining
+# `validate_operation`'s vocabulary.
+_NON_BARE_PREDICATES: Final[Mapping[type[object], str]] = MappingProxyType(
+    {
+        op_algebra.OrderBy: "orderBy",
+        op_algebra.Limit: "limit",
+        op_algebra.Distinct: "distinct",
+        op_algebra.Narrow: "narrow",
+        op_algebra.DeepFetch: "deepFetch",
+        op_algebra.AsOf: "asOf",
+        op_algebra.AsOfRange: "asOfRange",
+        op_algebra.History: "history",
+    }
+)
+
 
 # --------------------------------------------------------------------------- #
 # Deserialize (canonical write-instruction document -> frozen instruction).    #
@@ -403,18 +423,34 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     """Validate an instruction against the metamodel: its selecting predicate,
     then its member names.
 
-    A predicate-selected instruction's ``target.predicate`` is measured with the
-    WHOLE ``validate_operation`` vocabulary from its own resolved root — an
-    attribute reference outside the active position, an ambiguous Entity
-    spelling, an inverted ``between`` window, a literal disagreeing with its
-    member's declared type (`m-case-format` "The model-aware validator validates
+    A predicate-selected instruction's ``target.predicate`` is measured twice,
+    in the order `m-case-format` states ("The model-aware validator validates
     the predicate ..., checks entity scope and bare-predicate rules, [then]
-    rejects ... unassignable assignments"). Predicate scope is checked BEFORE the
-    assignments for that reason. This is the only model-aware gate every
-    predicate-write ingress shares — the typed ``_where`` verbs and the
-    conformance engine's own translation both reach the buffering seam through
-    here — so a rejection always precedes buffering, the materializing resolve,
-    and any SQL.
+    rejects ... unassignable assignments"), and BEFORE the assignments for that
+    reason:
+
+    - the WHOLE ``validate_operation`` vocabulary from its own resolved root —
+      an attribute reference outside the active position, an ambiguous Entity
+      spelling, an inverted ``between`` window, a literal disagreeing with its
+      member's declared type;
+    - the BARE-PREDICATE rule (:func:`_reject_non_bare_predicate`), which
+      ``validate_operation`` cannot carry because it is shared with the read
+      path, where a result modifier is legal and must stay legal.
+
+    An inheritance-family target is then rejected
+    (``subtype-write-set-based-unsupported``, `m-inheritance` "Per-object
+    writes are keyed; set-based inheritance writes are out of scope") — after
+    the predicate rules, which the spec orders first, and BEFORE the
+    assignments, which `python.md` §5 requires: "every assigned attribute or
+    value-object member must be declared by the exact target entity — set-based
+    writes already reject inheritance-family targets, so ancestry resolution
+    never arises."
+
+    Every predicate-write ingress reaches these rules through here — the typed
+    ``_where`` verbs and the conformance engine's own translation both call this
+    before the buffering seam — so both classify the same instruction the same
+    way, and a rejection precedes buffering, the materializing resolve, and any
+    SQL.
 
     A keyed write row key must name a declared attribute or value object of the
     entity — for an inheritance-family participant, ANCESTRY-EFFECTIVE: every
@@ -456,6 +492,8 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     else:
         entity = _entity(model, instruction.target.entity)
         op_algebra.validate_operation(entity, instruction.target.predicate, model)
+        _reject_non_bare_predicate(entity.identity.name, instruction.target.predicate)
+        inheritance.reject_predicate_write(entity)
         members = _declared_members(model, entity)
         seen: set[str] = set()
         for assignment in instruction.assignments:
@@ -475,6 +513,39 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
                 inheritance.validate_write_assignment(model, entity, member, assignment.value)
             except inheritance.WriteAssignmentError as exc:
                 raise WriteInstructionError(str(exc)) from exc
+
+
+def _reject_non_bare_predicate(entity_name: str, predicate: Operation) -> None:
+    """Refuse a write target's predicate that is not BARE — one carrying a
+    result modifier, a temporal wrapper, a deep fetch, or a narrow at ANY
+    position (`m-case-format` `target.predicate`, `python.md` §5).
+
+    Checked at every position rather than only at the root because the algebra
+    admits a directive as a boolean operand (``and(limit(...), eq(...))``
+    round-trips), and a nested one reaches exactly the same lowering the root
+    one does.
+    """
+    wrapper = _NON_BARE_PREDICATES.get(type(predicate))
+    if wrapper is not None:
+        raise WriteInstructionError(
+            f"{entity_name}: `{wrapper}` is a result modifier, not a bare write predicate — "
+            "a predicate-selected write target carries nothing but a predicate"
+        )
+    match predicate:
+        case op_algebra.And(operands=operands) | op_algebra.Or(operands=operands):
+            for operand in operands:
+                _reject_non_bare_predicate(entity_name, operand)
+        case op_algebra.Not(operand=operand) | op_algebra.Group(operand=operand):
+            _reject_non_bare_predicate(entity_name, operand)
+        case (
+            op_algebra.Navigate(op=nested)
+            | op_algebra.Exists(op=nested)
+            | op_algebra.NotExists(op=nested)
+        ):
+            if nested is not None:
+                _reject_non_bare_predicate(entity_name, nested)
+        case _:
+            return
 
 
 def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:

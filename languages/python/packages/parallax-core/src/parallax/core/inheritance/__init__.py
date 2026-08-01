@@ -274,10 +274,13 @@ def reject_predicate_write(entity: EntityMetadata) -> None:
     a predicate-selected write is set-based BY CONSTRUCTION (there is no row at
     all, keyed or otherwise), so this needs no row inspection and never
     synthesizes a fake keyless row just to trigger
-    :func:`validate_subtype_write`'s own branch — both the developer-facing
-    ``_where`` verb family (`python.md` §5) and the conformance engine's
-    predicate-write translation call this SAME function, so the two callers
-    can never classify an inheritance-family predicate write differently. A
+    :func:`validate_subtype_write`'s own branch. The build-time caller is
+    :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
+    the developer-facing ``_where`` verb family (`python.md` §5) and the
+    conformance engine's predicate-write translation both run before they
+    buffer, so no ingress can classify an inheritance-family predicate write
+    differently; :mod:`~parallax.core.unit_work.write_planner` calls it again at
+    flush as the structural refusal before SQL. A
     no-op for a non-participant ``entity`` (every entity outside an
     inheritance family accepts a predicate-selected write, subject to every
     OTHER m-batch-write / m-opt-lock rule).
