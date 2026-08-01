@@ -184,13 +184,13 @@ EXAMPLES: Final[list[Example]] = [
     Example(
         "m-inheritance-064",
         "A relationship-scope narrow past its target's reachable set",
-        "Person.pets.any(Pet.narrow(WildBoar))\n"
+        "Person.pets.exists(Pet.narrow(WildBoar))\n"
         '# raises OperationRejectedError(rule="narrow-outside-relationship-target")',
     ),
     Example(
         "m-inheritance-072",
         "A relationship-scope narrow naming the wrong position",
-        "Person.pets.any(Animal.narrow(Dog))\n"
+        "Person.pets.exists(Animal.narrow(Dog))\n"
         '# raises OperationRejectedError(rule="narrow-outside-relationship-target")',
     ),
     # Rejected-case build/buffer-time proof: the write-side counterpart of the
@@ -629,15 +629,28 @@ _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
 # find carries the shared read lock and is graded end-to-end by the compile and
 # run sweeps. No `db.transact` participation-mode configuration is needed to
 # demonstrate beyond the module's own declared default (its api-conformance-
-# lane runtime siblings, `-002`/`-003`/`-005`, are already exercised above).
+# lane runtime siblings `-002` and `-005` are already exercised above).
 _READ_LOCK_HARNESS_GOLDEN_REASON: Final[str] = (
     "the module's own harness-lane single-connection golden (the default locking-"
     "mode object find carries the shared read lock) is graded end-to-end by the "
     "compile AND run sweeps now (COR-3 Phase 8 increment 6); no idiomatic example is "
     "needed beyond the runtime matrix's own api-conformance siblings "
-    "(`m-read-lock-002`/`-003`/`-005`, exercised as idiomatic read-story examples "
+    "(`m-read-lock-002`/`-005`, exercised as idiomatic read-story examples "
     "above) — this witness needs no `db.transact` participation-mode configuration, "
     "only the module's own declared default"
+)
+# `m-read-lock-003`'s operation is a `distinct` PROJECTION, and the Find Query
+# surface authors no such query: `python.md` §2 states the clause set exactly and
+# excludes `distinct`, because a Find Query always returns complete root
+# Entities and duplicate roots are a lowering defect rather than something a
+# caller masks. The lock behaviour it pins is a property of the projection shape,
+# so there is no differently-spelled idiomatic query that would exercise it.
+_READ_LOCK_PROJECTION_UNAUTHORABLE_REASON: Final[str] = (
+    "the case reads a `distinct` PROJECTION, which the Find Query surface has no clause "
+    "to author (`python.md` §2 fixes the clause set and excludes `distinct` — a Find "
+    "Query always returns complete root Entities); the lock omission it pins belongs to "
+    "the projection shape itself, so no other idiomatic spelling reaches it, and the "
+    "harness lane grades the operation independently"
 )
 # The read-lock module's two-session behavioral proofs
 # (`m-read-lock-006`/`-007`/`-008`) cover a genuine two-connection
@@ -740,12 +753,12 @@ _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
 )
 
 # `navigate`-tagged corpus siblings: a deliberate spelling redundancy for the
-# IDENTICAL correlated-EXISTS lowering the exercised `.any()`/`.none()` examples
+# IDENTICAL correlated-EXISTS lowering the exercised `.exists()`/`.not_exists()` examples
 # already prove (m-navigate-002/003/004/006/008/009/010) — m-op-algebra's own
 # framing ("navigate and exists are the same correlated-EXISTS lowering").
 _NAVIGATE_TAG_REDUNDANT_REASON: Final[str] = (
     "a `navigate`-tagged corpus spelling redundancy for the IDENTICAL correlated-EXISTS "
-    "lowering the exercised `.any()`/`.none()` examples already prove "
+    "lowering the exercised `.exists()`/`.not_exists()` examples already prove "
     "(m-navigate-002/003/004/006/008/009/010) — no distinct developer-facing shape to add"
 )
 
@@ -824,7 +837,7 @@ _VO_DEEPFETCH_SEGMENT_REASON: Final[str] = (
     "deep-fetch-through-a-value-object shape"
 )
 _VO_NAVIGATE_TARGET_REASON: Final[str] = (
-    "`Customer.address.any()` builds successfully, but to a DIFFERENT, valid operation "
+    "`Customer.address.exists()` builds successfully, but to a DIFFERENT, valid operation "
     "(`nestedExists`, the to-many VO presence quantifier m-value-object-015/016 already "
     "exercise) — not the corpus's invalid `navigate` node targeting a value object; the "
     "idiomatic surface has no spelling that produces THAT exact shape, only a "
@@ -926,6 +939,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-read-lock-001": _READ_LOCK_HARNESS_GOLDEN_REASON,
+    "m-read-lock-003": _READ_LOCK_PROJECTION_UNAUTHORABLE_REASON,
     "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-008": _READ_LOCK_TWO_SESSION_REASON,

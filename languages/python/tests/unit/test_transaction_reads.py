@@ -144,7 +144,7 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     )
     rate = MODELS["rate"]
     db = Database.connect(port, rate, clock=FixedClock(FIXED))
-    statement = im.DepositRate.where().as_of(tx_time=LATEST)
+    statement = im.DepositRate.where(im.DepositRate.all).as_of(tx_time=LATEST)
     snapshot = db.find(statement)
     assert snapshot.pin.tx_time is LATEST
     assert snapshot.pin.valid_time is None
@@ -359,10 +359,10 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
     port = RecordingPort(rows=_balance_history_rows())
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    # `.distinct()` after `.history()` also exercises `is_milestone_set_op`'s
+    # `.limit(...)` after `.history()` also exercises `is_milestone_set_op`'s
     # own directive-peeling loop (a result-shaping wrapper around the scan).
-    statement = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME).distinct()
-    snapshot = db.find(statement)
+    query = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME).limit(5)
+    snapshot = db.find(query)
     assert len(snapshot.results()) == 2
     assert snapshot.pin == Pin()  # the whole-graph pin is per-milestone, not here
 

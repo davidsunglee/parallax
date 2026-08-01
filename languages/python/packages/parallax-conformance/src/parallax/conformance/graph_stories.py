@@ -124,7 +124,7 @@ def empty_intermediate_level_short_circuits(db: Database) -> Snapshot[Any]:
 
 def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
     return db.find(
-        Policy.where()
+        Policy.where(Policy.all)
         .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
         .include(Policy.coverages)
     )
@@ -149,14 +149,14 @@ def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -
     correction and the current row as two distinct, edge-pinned nodes sharing
         one domain key.
     """
-    return db.find(DepositRate.where().history(TX_TIME))
+    return db.find(DepositRate.where(DepositRate.all).history(TX_TIME))
 
 
 def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
     """Every ``Person`` materializes with its single ``Passport`` peer — a
     to-one relationship attaches as ONE object, not a collection, and a
     person with no passport (id 3) gets a null peer."""
-    return db.find(Person.where().include(Person.passport))
+    return db.find(Person.where(Person.all).include(Person.passport))
 
 
 def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapshot[Any]:
@@ -176,7 +176,9 @@ def narrowed_pets_view_populates_per_owner(db: Database) -> Snapshot[Any]:
     """A single narrowed ``pets[Dog]`` view over every owner (`m-inheritance-065`):
     the narrowed hop populates a distinct view keyed by the derived name,
     never marking the broad ``pets`` relationship loaded."""
-    return db.find(AnimalOwnerPerson.where().include(AnimalOwnerPerson.pets.narrow(Dog)))
+    return db.find(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(AnimalOwnerPerson.pets.narrow(Dog))
+    )
 
 
 def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any]:
@@ -184,7 +186,7 @@ def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any
     concrete set dedupe to ONE hop (`m-inheritance-066`): ``narrow(Pet)`` and
     ``narrow(Cat, Dog)`` both derive the view key ``pets[Cat,Dog]``."""
     return db.find(
-        AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets.narrow(Pet), AnimalOwnerPerson.pets.narrow(Cat, Dog)
         )
     )
@@ -198,7 +200,7 @@ def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Sn
     segment's view key follows whether a narrow was AUTHORED, never what it
     resolves to."""
     return db.find(
-        AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets, AnimalOwnerPerson.pets.narrow(Pet)
         )
     )
@@ -210,7 +212,7 @@ def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any
     independently (dedup identity is the effective concrete set, not the
     bare relationship hop)."""
     return db.find(
-        AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
         )
     )
@@ -223,7 +225,7 @@ def disjoint_root_guards_fill_one_owner_view(db: Database) -> Snapshot[Any]:
     Two hops result, and both fill the ORDINARY ``owner`` view — a root guard
     creates no view of its own, so there is no ``owner[Dog]``, and an animal
     neither guard admits is never attached at all."""
-    return db.find(Animal.where().include(Dog.owner, Cat.owner))
+    return db.find(Animal.where(Animal.all).include(Dog.owner, Cat.owner))
 
 
 def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot[Any]:
@@ -232,7 +234,7 @@ def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot
     of the unguarded path's, and hop identity at the root keys on the RESOLVED
     source set, so the two stay distinct. The graph is indistinguishable from the
     broad path's alone — only the round-trip count observes the second hop."""
-    return db.find(Animal.where().include(Animal.owner, Dog.owner))
+    return db.find(Animal.where(Animal.all).include(Animal.owner, Dog.owner))
 
 
 def guarded_branches_keep_their_own_parents(db: Database) -> Snapshot[Any]:
@@ -241,7 +243,7 @@ def guarded_branches_keep_their_own_parents(db: Database) -> Snapshot[Any]:
     ordinary ``owner`` view from disjoint roots, and ``Dog.owner.pets`` continues
     from the DOG branch's owners alone — so Alice and Bob carry ``pets`` while
     Carol, reached only through the WildBoar branch, does not."""
-    return db.find(Animal.where().include(Dog.owner, WildBoar.owner, Dog.owner.pets))
+    return db.find(Animal.where(Animal.all).include(Dog.owner, WildBoar.owner, Dog.owner.pets))
 
 
 def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[Any]:
@@ -249,28 +251,30 @@ def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[An
     (`m-inheritance-076`): ``Pet.owner`` guards which animals the path starts
     from — contributing no key — while ``.pets.narrow(Dog)`` narrows the second
     hop's target into its own derived ``pets[Dog]`` view on those owners."""
-    return db.find(Animal.where().include(Pet.owner.pets.narrow(Dog)))
+    return db.find(Animal.where(Animal.all).include(Pet.owner.pets.narrow(Dog)))
 
 
 def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides its Transaction-Time-only owner's milestone
     (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
-    return db.find(Supplier.where().as_of(tx_time=LATEST))
+    return db.find(Supplier.where(Supplier.all).as_of(tx_time=LATEST))
 
 
 def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapshot[Any]:
     """The SAME owner read at a past Transaction-Time instant returns the
     SUPERSEDED address document (`m-value-object-029`) — the document rides
     the milestone exactly like a scalar column."""
-    return db.find(Supplier.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
+    return db.find(
+        Supplier.where(Supplier.all).as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    )
 
 
 def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
     (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
-    return db.find(Branch.where().as_of(valid_time=LATEST, tx_time=LATEST))
+    return db.find(Branch.where(Branch.all).as_of(valid_time=LATEST, tx_time=LATEST))
 
 
 def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
@@ -278,7 +282,7 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     reconstructs the ORIGINALLY-believed document, distinct from what the
     system knows (`bitemporal_vo_owner_as_of_latest`)."""
     return db.find(
-        Branch.where().as_of(
+        Branch.where(Branch.all).as_of(
             valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
         )
@@ -291,7 +295,7 @@ def tph_abstract_root_read_materializes_typed_per_variant_instances(db: Database
     materialized instance is its OWN concrete class — a `CardPayment` node
     carries no `tendered` attribute at all, a `CashPayment` node no
     `card_network` — never a sibling's null-padded column."""
-    return db.find(Payment.where())
+    return db.find(Payment.where(Payment.all))
 
 
 def tph_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
@@ -350,14 +354,14 @@ def customer_to_many_nested_exists_is_a_nonempty_test(db: Database) -> Snapshot[
     """A to-many nested existence test (`m-value-object-015`): true for a row
     whose `phones` array has at least one element; every not-present state
     (empty, absent, or non-array) is excluded."""
-    return db.find(Customer.where(Customer.address.phones.any()))
+    return db.find(Customer.where(Customer.address.phones.exists()))
 
 
 def customer_to_many_nested_not_exists_folds_every_not_present_state(db: Database) -> Snapshot[Any]:
     """A to-many nested absence test (`m-value-object-016`): empty, absent,
     and non-array `phones` states are all INDISTINGUISHABLE to the algebra —
     the negated sibling of `customer_to_many_nested_exists_is_a_nonempty_test`."""
-    return db.find(Customer.where(Customer.address.phones.none()))
+    return db.find(Customer.where(Customer.address.phones.not_exists()))
 
 
 def customer_to_many_any_element_eq_matches_some_element(db: Database) -> Snapshot[Any]:
@@ -375,7 +379,7 @@ def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
     phone carries both fields; Ada's carry them on DIFFERENT elements."""
     return db.find(
         Customer.where(
-            Customer.address.phones.any(
+            Customer.address.phones.exists(
                 CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
             )
         )
@@ -386,7 +390,7 @@ def customer_owner_materializes_its_whole_nested_composite(db: Database) -> Snap
     """The whole nested composite arrives WITH the owner in ONE round trip
     (`m-value-object-023`): no deep-fetch, no per-value-object fetch — the
     positive proof of the getter-navigation contract to arbitrary depth."""
-    return db.find(Customer.where())
+    return db.find(Customer.where(Customer.all))
 
 
 def customer_owner_materializes_its_composite_under_a_filter(db: Database) -> Snapshot[Any]:
@@ -406,7 +410,7 @@ def customer_locations_deep_fetch_materializes_the_child_document_too(
     list (id, customer_id, label, address), decoded with LOCATION's
     descriptor — never the root's — and a null child document (Location 101)
     collapses to null exactly like a null-address Customer does at the root."""
-    return db.find(Customer.where().include(Customer.locations))
+    return db.find(Customer.where(Customer.all).include(Customer.locations))
 
 
 GRAPH_STORIES: tuple[GraphStory, ...] = (

@@ -1,9 +1,9 @@
-"""Statement-half unit tests (entity/statement + expression surface).
+"""Find Query unit tests (entity/_query + the expression surface).
 
 Every predicate operator, the boolean combinators and their canonical grouping,
-the value-object nested access path, the result-shaping directives, and the
-statement lowering/serialization are exercised in the unit lane so the developer
-surface is covered independently of the Docker-gated API suite.
+the value-object nested access path, the result-shaping clauses, and the query
+lowering are exercised in the unit lane so the developer surface is covered
+independently of the Docker-gated API suite.
 """
 
 from __future__ import annotations
@@ -14,32 +14,30 @@ from typing import Any
 
 import pytest
 
+from _support.query_probes import lowered_document
 from parallax.core import (
     LATEST,
     TX_TIME,
     VALID_TIME,
     Attr,
     AttributeExpr,
+    Bitemporal,
     DomainModel,
     Entity,
+    FindQuery,
     Int32,
     Predicate,
-    Statement,
+    QueryDefinitionError,
+    TxTemporal,
     attr,
 )
-from parallax.core.metamodel import (
-    AsOfAxisMetadata,
-    AttributeIdentity,
-    EntityIdentity,
-    TemporalDimension,
-)
-from parallax.core.op_algebra import All
+from parallax.core.entity._query import build_find_query
 
 _NS = "parallax.compatibility"
 
 
 class Widget(Entity, table="widget", namespace=_NS):
-    """A local scalar entity for exercising the statement surface."""
+    """A local scalar entity for exercising the Find Query surface."""
 
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=64)
@@ -118,8 +116,8 @@ def test_boolean_combinators_and_grouping() -> None:
 
 
 def test_where_conjoins_and_flattens() -> None:
-    stmt = Widget.where(Widget.active.is_(True), Widget.qty > 1)
-    assert stmt.serialize() == {
+    query = Widget.where(Widget.active.is_(True), Widget.qty > 1)
+    assert lowered_document(query) == {
         "and": {
             "operands": [
                 {"eq": {"attr": "Widget.active", "value": True}},
@@ -127,18 +125,44 @@ def test_where_conjoins_and_flattens() -> None:
             ]
         }
     }
-    assert Widget.where().serialize() == {"all": {}}
-    assert Widget.where(Widget.id == 1).serialize() == {"eq": {"attr": "Widget.id", "value": 1}}
+    assert lowered_document(Widget.where(Widget.all)) == {"all": {}}
+    assert lowered_document(Widget.where(Widget.id == 1)) == {
+        "eq": {"attr": "Widget.id", "value": 1}
+    }
 
 
-def test_result_shaping_directives() -> None:
-    stmt = Widget.where().order_by(Widget.qty.desc(), Widget.name.asc()).limit(5).distinct()
-    assert stmt.serialize() == {
+def test_where_requires_at_least_one_predicate() -> None:
+    # `where`'s first predicate is a required positional, so `Widget.where()` is
+    # a static error and Python's own call binding refuses it before the body.
+    # The coded rule is the seam's, where a dynamically composed argument list
+    # can still arrive empty.
+    with pytest.raises(TypeError, match="required positional argument"):
+        Widget.where()  # pyright: ignore[reportCallIssue] - where() takes at least one predicate
+    with pytest.raises(QueryDefinitionError) as caught:
+        build_find_query(Widget.identity, ())
+    assert caught.value.code == "query-clause-invalid"
+
+
+def test_the_unfiltered_spelling_is_the_whole_filter_or_none_of_it() -> None:
+    # `Entity.all` is not a Predicate, so only `where`'s first parameter admits
+    # it and a trailing one is a static error too. The runtime rule refuses both
+    # orders, which is what an untyped caller reaches.
+    with pytest.raises(QueryDefinitionError) as leading:
+        Widget.where(Widget.all, Widget.id == 1)
+    assert leading.value.code == "query-expression-invalid"
+    with pytest.raises(QueryDefinitionError) as trailing:
+        Widget.where(Widget.id == 1, Widget.all)  # pyright: ignore[reportArgumentType] - Entity.all is not a Predicate, so it never joins one
+    assert trailing.value.code == "query-expression-invalid"
+
+
+def test_result_shaping_clauses() -> None:
+    query = Widget.where(Widget.all).order_by(Widget.qty.desc(), Widget.name.asc()).limit(5)
+    assert lowered_document(query) == {
         "limit": {
             "count": 5,
             "operand": {
                 "orderBy": {
-                    "operand": {"distinct": {"operand": {"all": {}}}},
+                    "operand": {"all": {}},
                     "keys": [
                         {"attr": "Widget.qty", "direction": "desc"},
                         {"attr": "Widget.name", "direction": "asc"},
@@ -149,11 +173,42 @@ def test_result_shaping_directives() -> None:
     }
 
 
-def test_directive_guards() -> None:
-    with pytest.raises(ValueError, match="at least one key"):
-        Widget.where().order_by()
-    with pytest.raises(ValueError, match="positive count"):
-        Widget.where().limit(0)
+def test_clause_invocation_order_never_reaches_the_lowering() -> None:
+    # A Find Query retains clauses rather than wrapping them as they arrive, so
+    # the canonical inner-to-outer order is lowering's alone.
+    ordered_first = Widget.where(Widget.all).order_by(Widget.qty.asc()).limit(2)
+    limited_first = Widget.where(Widget.all).limit(2).order_by(Widget.qty.asc())
+    assert lowered_document(ordered_first) == lowered_document(limited_first)
+
+
+def test_clause_guards() -> None:
+    with pytest.raises(QueryDefinitionError) as no_key:
+        Widget.where(Widget.all).order_by()
+    assert no_key.value.code == "query-clause-invalid"
+    with pytest.raises(QueryDefinitionError) as not_positive:
+        Widget.where(Widget.all).limit(0)
+    assert not_positive.value.code == "query-clause-invalid"
+
+
+def test_a_limit_is_single_shot_and_takes_a_positive_builtin_int() -> None:
+    # `True` is not the limit 1: `bool` is a subtype of `int`, so no parameter
+    # refuses it and only the runtime rule can — a coercible value is refused
+    # rather than coerced, and a second limit derives from the unbounded base.
+    with pytest.raises(QueryDefinitionError, match="single-shot"):
+        Widget.where(Widget.all).limit(2).limit(3)
+    with pytest.raises(QueryDefinitionError, match="positive built-in int"):
+        Widget.where(Widget.all).limit(True)
+    with pytest.raises(QueryDefinitionError, match="positive built-in int"):
+        Widget.where(Widget.all).limit(-1)
+
+
+def test_one_attribute_orders_a_query_once() -> None:
+    # Across one call and across successive calls alike, and whatever direction
+    # each occurrence carries.
+    with pytest.raises(QueryDefinitionError, match="already orders"):
+        Widget.where(Widget.all).order_by(Widget.qty.asc(), Widget.qty.desc())
+    with pytest.raises(QueryDefinitionError, match="already orders"):
+        Widget.where(Widget.all).order_by(Widget.qty.asc()).order_by(Widget.qty.desc())
 
 
 def test_nested_value_object_expression_paths() -> None:
@@ -201,51 +256,53 @@ def test_attribute_expr_ref_and_str() -> None:
     assert str(expr.ref) == "Widget.name"
 
 
-def test_statement_is_a_frozen_value() -> None:
-    stmt = Widget.where(Widget.id == 1)
-    assert isinstance(stmt, Statement)
-    assert stmt.target == "Widget"
+def test_a_find_query_is_an_opaque_value_with_no_truth_and_no_structural_equality() -> None:
+    query = Widget.where(Widget.id == 1)
+    assert isinstance(query, FindQuery)
+    with pytest.raises(TypeError, match="no truth value"):
+        bool(query)
+    # Two independently authored queries lower to one operation and are still
+    # two objects: identity equality applies, and conformance code compares
+    # lowerings rather than queries.
+    twin = Widget.where(Widget.id == 1)
+    assert query != twin
+    assert lowered_document(query) == lowered_document(twin)
+
+
+def test_every_clause_answers_a_new_query_and_leaves_its_receiver_alone() -> None:
+    base = Widget.where(Widget.all)
+    limited = base.limit(3)
+    assert limited is not base
+    assert lowered_document(base) == {"all": {}}
 
 
 # --------------------------------------------------------------------------- #
-# Axis-keyed temporal-read clauses (m-temporal-read), exercised over a         #
-# Statement carrying its axes directly — proving the wrapper-node construction #
-# (Valid-Time outer/Transaction-Time inner, LATEST -> latest, single-shot)     #
-# without a whole model behind it.                                             #
+# Axis-keyed temporal-read clauses (m-temporal-read) over two locally declared #
+# framework-base entities — proving the wrapper-node construction (Valid-Time  #
+# outer / Transaction-Time inner, LATEST -> latest, single-shot) with no whole #
+# model behind it, since authoring reaches none.                               #
 # --------------------------------------------------------------------------- #
-def _axis(entity: str, dimension: TemporalDimension, start: str, end: str) -> AsOfAxisMetadata:
-    identity = EntityIdentity(_NS, entity)
-    return AsOfAxisMetadata(
-        dimension=dimension,
-        start_attribute=AttributeIdentity(identity, start),
-        end_attribute=AttributeIdentity(identity, end),
-    )
+class Balance(TxTemporal, table="balance", namespace=_NS):
+    """A Transaction-Time-Only entity: the one axis a temporal clause may pin."""
+
+    id: Attr[int] = attr(primary_key=True)
 
 
-_TRANSACTION_TIME = _axis("Balance", TemporalDimension.TRANSACTION_TIME, "tx_start", "tx_end")
-_VALID_TIME = _axis("Position", TemporalDimension.VALID_TIME, "valid_start", "valid_end")
-_POSITION_TX_TIME = _axis("Position", TemporalDimension.TRANSACTION_TIME, "tx_start", "tx_end")
+class Position(Bitemporal, table="position", namespace=_NS):
+    """A Bitemporal entity: both axes, nested Valid-Time outside Transaction-Time."""
 
-
-def _balance_stmt() -> Statement:
-    return Statement(target="Balance", predicate=All(), as_of_axes=(_TRANSACTION_TIME,))
-
-
-def _position_stmt() -> Statement:
-    return Statement(
-        target="Position", predicate=All(), as_of_axes=(_VALID_TIME, _POSITION_TX_TIME)
-    )
+    id: Attr[int] = attr(primary_key=True)
 
 
 def test_as_of_latest_serializes_the_current_pin_wrapper() -> None:
-    assert _balance_stmt().as_of(tx_time=LATEST).serialize() == {
+    assert lowered_document(Balance.where(Balance.all).as_of(tx_time=LATEST)) == {
         "asOf": {"operand": {"all": {}}, "dimension": "transactionTime", "coordinate": "latest"}
     }
 
 
 def test_as_of_past_instant_normalizes_to_utc_iso() -> None:
     d = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
-    assert _balance_stmt().as_of(tx_time=d).serialize() == {
+    assert lowered_document(Balance.where(Balance.all).as_of(tx_time=d)) == {
         "asOf": {
             "operand": {"all": {}},
             "dimension": "transactionTime",
@@ -255,8 +312,8 @@ def test_as_of_past_instant_normalizes_to_utc_iso() -> None:
 
 
 def test_bitemporal_as_of_nests_valid_time_outside_tx_time() -> None:
-    stmt = _position_stmt().as_of(valid_time=LATEST, tx_time=LATEST)
-    assert stmt.serialize() == {
+    query = Position.where(Position.all).as_of(valid_time=LATEST, tx_time=LATEST)
+    assert lowered_document(query) == {
         "asOf": {
             "operand": {
                 "asOf": {
@@ -274,7 +331,7 @@ def test_bitemporal_as_of_nests_valid_time_outside_tx_time() -> None:
 def test_as_of_range_scans_the_window() -> None:
     frm = dt.datetime(2024, 6, 15, tzinfo=dt.UTC)
     to = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
-    assert _balance_stmt().as_of_range(tx_time=(frm, to)).serialize() == {
+    assert lowered_document(Balance.where(Balance.all).as_of_range(tx_time=(frm, to))) == {
         "asOfRange": {
             "operand": {"all": {}},
             "dimension": "transactionTime",
@@ -287,7 +344,7 @@ def test_as_of_range_scans_the_window() -> None:
 def test_as_of_range_on_valid_time() -> None:
     frm = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     to = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-    assert _position_stmt().as_of_range(valid_time=(frm, to)).serialize() == {
+    assert lowered_document(Position.where(Position.all).as_of_range(valid_time=(frm, to))) == {
         "asOfRange": {
             "operand": {"all": {}},
             "dimension": "validTime",
@@ -298,20 +355,21 @@ def test_as_of_range_on_valid_time() -> None:
 
 
 def test_history_wraps_the_predicate() -> None:
-    assert _balance_stmt().history(TX_TIME).serialize() == {
+    assert lowered_document(Balance.where(Balance.all).history(TX_TIME)) == {
         "history": {"operand": {"all": {}}, "dimension": "transactionTime"}
     }
 
 
 def test_history_on_valid_time() -> None:
-    assert _position_stmt().history(VALID_TIME).serialize() == {
+    assert lowered_document(Position.where(Position.all).history(VALID_TIME)) == {
         "history": {"operand": {"all": {}}, "dimension": "validTime"}
     }
 
 
 def test_history_rejects_a_string_dimension() -> None:
-    with pytest.raises(ValueError, match="VALID_TIME / TX_TIME"):
-        _balance_stmt().history("tx_time")  # type: ignore[arg-type] - deliberate string dimension drives history's constant-only validation
+    with pytest.raises(QueryDefinitionError, match="VALID_TIME / TX_TIME") as caught:
+        Balance.where(Balance.all).history("tx_time")  # type: ignore[arg-type] - deliberate string dimension drives history's constant-only validation
+    assert caught.value.code == "query-clause-invalid"
 
 
 def test_dimension_constants_are_frozen() -> None:
@@ -324,29 +382,29 @@ def test_dimension_constants_are_frozen() -> None:
             constant._dimension = "validTime"  # pyright: ignore[reportPrivateUsage] - frozen dimension constant: reassignment must raise
         with pytest.raises(AttributeError, match="frozen"):
             del constant._dimension  # pyright: ignore[reportPrivateUsage] - frozen dimension constant: deletion must raise
-    assert _balance_stmt().history(TX_TIME).serialize() == {
+    assert lowered_document(Balance.where(Balance.all).history(TX_TIME)) == {
         "history": {"operand": {"all": {}}, "dimension": "transactionTime"}
     }
-    assert _position_stmt().history(VALID_TIME).serialize() == {
+    assert lowered_document(Position.where(Position.all).history(VALID_TIME)) == {
         "history": {"operand": {"all": {}}, "dimension": "validTime"}
     }
 
 
 def test_temporal_clause_is_single_shot() -> None:
-    with pytest.raises(ValueError, match="single-shot"):
-        _balance_stmt().as_of(tx_time=LATEST).as_of(tx_time=LATEST)
+    with pytest.raises(QueryDefinitionError, match="single-shot"):
+        Balance.where(Balance.all).as_of(tx_time=LATEST).as_of(tx_time=LATEST)
 
 
 def test_temporal_clause_requires_an_axis() -> None:
-    with pytest.raises(ValueError, match="at least one dimension"):
-        _balance_stmt().as_of()
+    with pytest.raises(QueryDefinitionError, match="at least one dimension"):
+        Balance.where(Balance.all).as_of()
 
 
 def test_undeclared_axis_is_rejected_at_build() -> None:
-    with pytest.raises(ValueError, match="no valid_time dimension"):
-        _balance_stmt().as_of(valid_time=LATEST)
+    with pytest.raises(QueryDefinitionError, match="no valid_time dimension"):
+        Balance.where(Balance.all).as_of(valid_time=LATEST)
 
 
 def test_naive_datetime_is_rejected_at_build() -> None:
     with pytest.raises(ValueError, match="naive"):
-        _balance_stmt().as_of(tx_time=dt.datetime(2024, 4, 1))
+        Balance.where(Balance.all).as_of(tx_time=dt.datetime(2024, 4, 1))

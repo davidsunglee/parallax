@@ -45,8 +45,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.core.entity import DomainModel
-from parallax.core.entity import Statement as EntityStatement
+from parallax.core.entity import DomainModel, FindQuery
 
 # First-party support, deliberately absent from `parallax.core.entity`'s exports:
 # this composition root connects to an accepted `Metamodel` and materializes
@@ -261,29 +260,30 @@ class Database:
             )
         return cls(adapter, model, dialect=dialect, clock=clock)
 
-    def find(self, statement: EntityStatement) -> Snapshot[Any]:
-        """Execute ``statement`` exactly once, materializing fully, and return
-        ``Snapshot[T]`` (spec §3). Non-transactional: no read lock, no
+    def find[S](self, query: FindQuery[Any, S]) -> Snapshot[S]:
+        """Execute ``query`` exactly once, materializing fully, and return
+        ``Snapshot[S]`` (spec §3). Non-transactional: no read lock, no
         participation mode. ``.history()`` / ``.as_of_range()`` return one root
         per milestone, each edge-pinned at its own milestone's from-instant.
 
-        Target resolution and operation validation are the shared
+        Lowering, target resolution, and operation validation are the shared
         :func:`~parallax.snapshot.handle._preflight.preflight_find` seam's, so
         this and :meth:`Transaction.find` differ only in locking, unit-of-work
-        wrapping, and observation recording.
-        Returns ``Snapshot[Any]``: the concrete root type is resolved only at
-        runtime (from the statement's own target), so callers annotate their
-        own binding (``snapshot: Snapshot[Order] = db.find(...)``) for static
-        typing.
+        wrapping, and observation recording. The lowering the seam answers is
+        kept locally through this execution and recomputed on the next one.
+
+        The Snapshot's parameter is the query's RESULT — what ``narrow`` moved
+        it to, or the queried Entity itself — so a narrowed find yields the
+        narrowed rows' type without a caller-side annotation.
         """
         # The connection refusal precedes preflight, exactly as it does on
         # `Transaction.find`: a Database that cannot materialize a Snapshot at
         # all answers that before it answers anything about this query, so the
         # two entry points refuse a classless connection in the same order.
         classes = self._connected.materializing()
-        lowered = preflight_find(statement, model=self._meta)
-        target, op = lowered.target, lowered.operation
-        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.root))
+        lowered = preflight_find(query, model=self._meta)
+        target, op = lowered.target.name, lowered.operation
+        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
         if is_milestone_set_op(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
             return snapshot_from_history_result(history_result, target, self._meta, classes)

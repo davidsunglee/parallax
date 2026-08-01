@@ -128,7 +128,7 @@ def customer_locations_deep_fetch_materializes_the_child_document_too(
     list (id, customer_id, label, address), decoded with LOCATION's
     descriptor — never the root's — and a null child document (Location 101)
     collapses to null exactly like a null-address Customer does at the root."""
-    return db.find(Customer.where().include(Customer.locations))
+    return db.find(Customer.where(Customer.all).include(Customer.locations))
 ```
 
 ## Table-per-hierarchy concrete-target read
@@ -136,7 +136,7 @@ def customer_locations_deep_fetch_materializes_the_child_document_too(
 Corpus case: `m-inheritance-001`
 
 ```python
-op = CardPayment.where()
+op = CardPayment.where(CardPayment.all)
 ```
 
 ## Table-per-concrete-subtype concrete read
@@ -144,7 +144,7 @@ op = CardPayment.where()
 Corpus case: `m-inheritance-005`
 
 ```python
-op = Invoice.where()
+op = Invoice.where(Invoice.all)
 ```
 
 ## The `Entity.narrow(...)` constructor, narrowed to one concrete subtype
@@ -187,7 +187,7 @@ Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))
 Corpus case: `m-inheritance-064`
 
 ```python
-Person.pets.any(Pet.narrow(WildBoar))
+Person.pets.exists(Pet.narrow(WildBoar))
 # raises OperationRejectedError(rule="narrow-outside-relationship-target")
 ```
 
@@ -200,7 +200,9 @@ def narrowed_pets_view_populates_per_owner(db: Database) -> Snapshot[Any]:
     """A single narrowed ``pets[Dog]`` view over every owner (`m-inheritance-065`):
     the narrowed hop populates a distinct view keyed by the derived name,
     never marking the broad ``pets`` relationship loaded."""
-    return db.find(AnimalOwnerPerson.where().include(AnimalOwnerPerson.pets.narrow(Dog)))
+    return db.find(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(AnimalOwnerPerson.pets.narrow(Dog))
+    )
 ```
 
 ## Equivalent authored narrowings dedupe to the same derived view
@@ -213,7 +215,7 @@ def equivalent_narrow_spellings_dedupe_to_one_view(db: Database) -> Snapshot[Any
     concrete set dedupe to ONE hop (`m-inheritance-066`): ``narrow(Pet)`` and
     ``narrow(Cat, Dog)`` both derive the view key ``pets[Cat,Dog]``."""
     return db.find(
-        AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets.narrow(Pet), AnimalOwnerPerson.pets.narrow(Cat, Dog)
         )
     )
@@ -230,7 +232,7 @@ def distinct_narrowed_views_populate_independently(db: Database) -> Snapshot[Any
     independently (dedup identity is the effective concrete set, not the
     bare relationship hop)."""
     return db.find(
-        AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
         )
     )
@@ -249,7 +251,7 @@ def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Sn
     segment's view key follows whether a narrow was AUTHORED, never what it
     resolves to."""
     return db.find(
-        AnimalOwnerPerson.where().include(
+        AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
             AnimalOwnerPerson.pets, AnimalOwnerPerson.pets.narrow(Pet)
         )
     )
@@ -260,7 +262,7 @@ def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Sn
 Corpus case: `m-inheritance-070`
 
 ```python
-op = Folder.where(Folder.documents.any())
+op = Folder.where(Folder.documents.exists())
 ```
 
 ## The same polymorphic navigation, narrowed to one abstract subtype
@@ -268,7 +270,7 @@ op = Folder.where(Folder.documents.any())
 Corpus case: `m-inheritance-071`
 
 ```python
-op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))
+op = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument)))
 ```
 
 ## A relationship-scope narrow naming the wrong position
@@ -276,7 +278,7 @@ op = Folder.where(Folder.documents.any(Document.narrow(FinancialDocument)))
 Corpus case: `m-inheritance-072`
 
 ```python
-Person.pets.any(Animal.narrow(Dog))
+Person.pets.exists(Animal.narrow(Dog))
 # raises OperationRejectedError(rule="narrow-outside-relationship-target")
 ```
 
@@ -292,7 +294,7 @@ def disjoint_root_guards_fill_one_owner_view(db: Database) -> Snapshot[Any]:
     Two hops result, and both fill the ORDINARY ``owner`` view — a root guard
     creates no view of its own, so there is no ``owner[Dog]``, and an animal
     neither guard admits is never attached at all."""
-    return db.find(Animal.where().include(Dog.owner, Cat.owner))
+    return db.find(Animal.where(Animal.all).include(Dog.owner, Cat.owner))
 ```
 
 ## A path-root guard subsumed by a broad path stays its own hop
@@ -306,7 +308,7 @@ def a_root_guard_beside_a_broad_path_stays_its_own_hop(db: Database) -> Snapshot
     of the unguarded path's, and hop identity at the root keys on the RESOLVED
     source set, so the two stay distinct. The graph is indistinguishable from the
     broad path's alone — only the round-trip count observes the second hop."""
-    return db.find(Animal.where().include(Animal.owner, Dog.owner))
+    return db.find(Animal.where(Animal.all).include(Animal.owner, Dog.owner))
 ```
 
 ## A guarded path root composes with a narrowed hop target
@@ -319,7 +321,7 @@ def a_guarded_root_continues_through_a_narrowed_hop(db: Database) -> Snapshot[An
     (`m-inheritance-076`): ``Pet.owner`` guards which animals the path starts
     from — contributing no key — while ``.pets.narrow(Dog)`` narrows the second
     hop's target into its own derived ``pets[Dog]`` view on those owners."""
-    return db.find(Animal.where().include(Pet.owner.pets.narrow(Dog)))
+    return db.find(Animal.where(Animal.all).include(Pet.owner.pets.narrow(Dog)))
 ```
 
 ## Two guarded branches over one relationship keep their own parents
@@ -333,7 +335,7 @@ def guarded_branches_keep_their_own_parents(db: Database) -> Snapshot[Any]:
     ordinary ``owner`` view from disjoint roots, and ``Dog.owner.pets`` continues
     from the DOG branch's owners alone — so Alice and Bob carry ``pets`` while
     Carol, reached only through the WildBoar branch, does not."""
-    return db.find(Animal.where().include(Dog.owner, WildBoar.owner, Dog.owner.pets))
+    return db.find(Animal.where(Animal.all).include(Dog.owner, WildBoar.owner, Dog.owner.pets))
 ```
 
 ## A keyed write aimed at an abstract inheritance position
@@ -350,7 +352,7 @@ db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
 Corpus case: `m-inheritance-100`
 
 ```python
-op = DepositRate.where().as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))
+op = DepositRate.where(DepositRate.all).as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))
 ```
 
 ## A table-per-hierarchy abstract-root read materializes typed per-variant instances
@@ -364,7 +366,7 @@ def tph_abstract_root_read_materializes_typed_per_variant_instances(db: Database
     materialized instance is its OWN concrete class — a `CardPayment` node
     carries no `tendered` attribute at all, a `CashPayment` node no
     `card_network` — never a sibling's null-padded column."""
-    return db.find(Payment.where())
+    return db.find(Payment.where(Payment.all))
 ```
 
 ## A narrow to an abstract subtype materializes typed per-variant instances
@@ -413,20 +415,20 @@ def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     return db.find(Document.where(Document.narrow(FinancialDocument)))
 ```
 
-## Relationship existence (bare `.any()`)
+## Relationship existence (bare `.exists()`)
 
 Corpus case: `m-navigate-002`
 
 ```python
-op = Order.where(Order.items.any())
+op = Order.where(Order.items.exists())
 ```
 
-## Relationship absence (bare `.none()`)
+## Relationship absence (bare `.not_exists()`)
 
 Corpus case: `m-navigate-003`
 
 ```python
-op = Order.where(Order.items.none())
+op = Order.where(Order.items.not_exists())
 ```
 
 ## Relationship existence with a predicate
@@ -434,7 +436,7 @@ op = Order.where(Order.items.none())
 Corpus case: `m-navigate-004`
 
 ```python
-op = Order.where(Order.items.any(OrderItem.quantity >= 4))
+op = Order.where(Order.items.exists(OrderItem.quantity >= 4))
 ```
 
 ## A navigation filter composed with a scalar predicate
@@ -442,7 +444,7 @@ op = Order.where(Order.items.any(OrderItem.quantity >= 4))
 Corpus case: `m-navigate-006`
 
 ```python
-op = Order.where(Order.items.none(), Order.active.is_(True))
+op = Order.where(Order.items.not_exists(), Order.active.is_(True))
 ```
 
 ## Multi-hop relationship existence
@@ -450,7 +452,7 @@ op = Order.where(Order.items.none(), Order.active.is_(True))
 Corpus case: `m-navigate-008`
 
 ```python
-op = Order.where(Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PACKED")))
+op = Order.where(Order.items.exists(OrderItem.statuses.exists(OrderStatus.code == "PACKED")))
 ```
 
 ## Existence over a to-one (nullable) relationship
@@ -458,7 +460,7 @@ op = Order.where(Order.items.any(OrderItem.statuses.any(OrderStatus.code == "PAC
 Corpus case: `m-navigate-009`
 
 ```python
-op = OrderStatus.where(OrderStatus.order_item.any())
+op = OrderStatus.where(OrderStatus.order_item.exists())
 ```
 
 ## Negated multi-hop relationship existence
@@ -466,7 +468,7 @@ op = OrderStatus.where(OrderStatus.order_item.any())
 Corpus case: `m-navigate-010`
 
 ```python
-op = Order.where(Order.items.none(OrderItem.statuses.any()))
+op = Order.where(Order.items.not_exists(OrderItem.statuses.exists()))
 ```
 
 ## A deep fetch pinned to a past Valid-Time instant materializes the superseded milestone
@@ -476,7 +478,7 @@ Corpus case: `m-navigate-013`
 ```python
 def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
     return db.find(
-        Policy.where()
+        Policy.where(Policy.all)
         .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
         .include(Policy.coverages)
     )
@@ -487,7 +489,7 @@ def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
 Corpus case: `m-navigate-018`
 
 ```python
-op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(
+op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
     tx_time=LATEST, valid_time=LATEST
 )
 ```
@@ -497,7 +499,7 @@ op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00)).as_of(
 Corpus case: `m-navigate-023`
 
 ```python
-op = Policy.where(Policy.coverages.any(Coverage.amount >= 600.00))
+op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00))
 ```
 
 ## Equality on the primary key
@@ -577,7 +579,7 @@ op = Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True))
 Corpus case: `m-op-algebra-032`
 
 ```python
-op = Order.where().order_by(Order.active.desc(), Order.qty.asc()).limit(2)
+op = Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2)
 ```
 
 ## Versioned update advances the version ungated in locking mode
@@ -604,15 +606,6 @@ Corpus case: `m-read-lock-002`
 
 ```python
 op = Account.where(Account.id == 2)
-db.transact(lambda tx: tx.find(op), concurrency="locking")
-```
-
-## A locking-mode projection read omits the shared read lock
-
-Corpus case: `m-read-lock-003`
-
-```python
-op = Account.where().distinct()
 db.transact(lambda tx: tx.find(op), concurrency="locking")
 ```
 
@@ -661,7 +654,7 @@ def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:
     """Every ``Person`` materializes with its single ``Passport`` peer — a
     to-one relationship attaches as ONE object, not a collection, and a
     person with no passport (id 3) gets a null peer."""
-    return db.find(Person.where().include(Person.passport))
+    return db.find(Person.where(Person.all).include(Person.passport))
 ```
 
 ## Closed-world: an un-included relationship raises with zero SQL
@@ -717,7 +710,7 @@ def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapsho
 Corpus case: `m-temporal-read-003`
 
 ```python
-op = Balance.where().as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))
+op = Balance.where(Balance.all).as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))
 ```
 
 ## Transaction-Time-Only insert opens a current milestone
@@ -1040,7 +1033,7 @@ def customer_to_many_nested_exists_is_a_nonempty_test(db: Database) -> Snapshot[
     """A to-many nested existence test (`m-value-object-015`): true for a row
     whose `phones` array has at least one element; every not-present state
     (empty, absent, or non-array) is excluded."""
-    return db.find(Customer.where(Customer.address.phones.any()))
+    return db.find(Customer.where(Customer.address.phones.exists()))
 ```
 
 ## A to-many nested absence test folding every not-present state
@@ -1052,7 +1045,7 @@ def customer_to_many_nested_not_exists_folds_every_not_present_state(db: Databas
     """A to-many nested absence test (`m-value-object-016`): empty, absent,
     and non-array `phones` states are all INDISTINGUISHABLE to the algebra —
     the negated sibling of `customer_to_many_nested_exists_is_a_nonempty_test`."""
-    return db.find(Customer.where(Customer.address.phones.none()))
+    return db.find(Customer.where(Customer.address.phones.not_exists()))
 ```
 
 ## An any-element predicate through a to-many nested member
@@ -1080,7 +1073,7 @@ def customer_to_many_scoped_exists_requires_one_element_to_satisfy_both(
     phone carries both fields; Ada's carry them on DIFFERENT elements."""
     return db.find(
         Customer.where(
-            Customer.address.phones.any(
+            Customer.address.phones.exists(
                 CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
             )
         )
@@ -1096,7 +1089,7 @@ def customer_owner_materializes_its_whole_nested_composite(db: Database) -> Snap
     """The whole nested composite arrives WITH the owner in ONE round trip
     (`m-value-object-023`): no deep-fetch, no per-value-object fetch — the
     positive proof of the getter-navigation contract to arbitrary depth."""
-    return db.find(Customer.where())
+    return db.find(Customer.where(Customer.all))
 ```
 
 ## The same materialization rides a filtered owner read too
@@ -1213,7 +1206,7 @@ def transaction_time_only_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides its Transaction-Time-only owner's milestone
     (`m-value-object-028`): an Latest read returns each supplier's CURRENT
     address document — no value-object-specific temporal machinery."""
-    return db.find(Supplier.where().as_of(tx_time=LATEST))
+    return db.find(Supplier.where(Supplier.all).as_of(tx_time=LATEST))
 ```
 
 ## A value object rides its Transaction-Time-only owner's superseded milestone
@@ -1225,7 +1218,9 @@ def transaction_time_only_vo_owner_as_of_a_past_instant(db: Database) -> Snapsho
     """The SAME owner read at a past Transaction-Time instant returns the
     SUPERSEDED address document (`m-value-object-029`) — the document rides
     the milestone exactly like a scalar column."""
-    return db.find(Supplier.where().as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)))
+    return db.find(
+        Supplier.where(Supplier.all).as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
+    )
 ```
 
 ## A value object rides a full bitemporal owner's fully-current rectangle
@@ -1237,7 +1232,7 @@ def bitemporal_vo_owner_as_of_latest(db: Database) -> Snapshot[Any]:
     """A value object rides a FULL bitemporal owner's rectangle
     (`m-value-object-030`): pinning both dimensions to Latest returns the
     fully-current document."""
-    return db.find(Branch.where().as_of(valid_time=LATEST, tx_time=LATEST))
+    return db.find(Branch.where(Branch.all).as_of(valid_time=LATEST, tx_time=LATEST))
 ```
 
 ## A bitemporal audit read reconstructs the originally-believed document
@@ -1250,7 +1245,7 @@ def bitemporal_vo_owner_as_of_a_past_audit_point(db: Database) -> Snapshot[Any]:
     reconstructs the ORIGINALLY-believed document, distinct from what the
     system knows (`bitemporal_vo_owner_as_of_latest`)."""
     return db.find(
-        Branch.where().as_of(
+        Branch.where(Branch.all).as_of(
             valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
         )

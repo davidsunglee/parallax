@@ -51,6 +51,7 @@ from parallax.core.entity import (
 from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
 from parallax.core.entity._errors import FrameworkOwnedAxisError, ModelCopyError, ProvenanceError
+from parallax.core.entity._query import lower_find_query
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -508,14 +509,14 @@ def test_class_level_member_access_seeds_operation_nodes() -> None:
     assert path.target == "sales.Customer"
 
 
-def test_a_statement_over_a_class_no_model_composed_still_builds() -> None:
+def test_a_query_over_a_class_no_model_composed_still_builds() -> None:
     # Query authoring reaches no model, so composition is not a precondition of
-    # it: every class in this module belongs to no DomainModel, and a statement
-    # over one is an ordinary statement. Whether the queried Entity is declared
-    # is the connected model's question, answered at execution preflight.
-    statement = Order.where(Order.id == 1)
-    assert statement.target == "Order"
-    assert serialize(statement.operation()) == {"eq": {"attr": "Order.id", "value": 1}}
+    # it: every class in this module belongs to no DomainModel, and a query over
+    # one is an ordinary query. Whether the queried Entity is declared is the
+    # connected model's question, answered at execution preflight.
+    lowered = lower_find_query(Order.where(Order.id == 1))
+    assert lowered.target == Order.identity
+    assert serialize(lowered.operation) == {"eq": {"attr": "Order.id", "value": 1}}
 
 
 def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:

@@ -40,7 +40,7 @@ from parallax.core.entity._errors import (
 )
 from parallax.core.entity._expressions import AllPredicate, Predicate, serialize_member
 from parallax.core.entity._members import Attr, IndexSpec, InheritanceRole
-from parallax.core.entity.statement import Statement, build_statement
+from parallax.core.entity._query import FindQuery, build_find_query
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -383,8 +383,16 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     """
 
     @classmethod
-    def where[E: Entity](cls: type[E], *predicates: Predicate[E] | AllPredicate[E]) -> Statement:
-        """Build a side-effect-free statement conjoining ``predicates`` (empty is find-all).
+    def where[E: Entity](
+        cls: type[E], first: Predicate[E] | AllPredicate[E], /, *rest: Predicate[E]
+    ) -> FindQuery[E, E]:
+        """Build a side-effect-free Find Query conjoining its predicates.
+
+        At least one predicate is required, so an accidentally empty argument
+        list is a mistake rather than a find-all; ``where(Entity.all)`` is the
+        explicitly unfiltered spelling. The unfiltered value is the whole filter
+        or none of it: only the first parameter admits it, and combining it with
+        a term is refused whichever position it is written in.
 
         Each predicate is measured against the queried position twice. The
         parameter measures it before anything runs — a Predicate is
@@ -402,7 +410,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         root, so a concrete subtype accepts its inherited axis spelling even
         though its own declaration carries no axis.
         """
-        return build_statement(cls.identity.name, predicates, as_of_axes=_family_axes(cls))
+        return build_find_query(cls.identity, (first, *rest), as_of_axes=_family_axes(cls))
 
     @classmethod
     def narrow[E: Entity, S: Entity](

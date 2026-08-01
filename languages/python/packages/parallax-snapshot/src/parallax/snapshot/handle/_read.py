@@ -32,7 +32,13 @@ from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
-from parallax.core.metamodel import EntityMetadata, Metamodel, TemporalDimension, entity_by_name
+from parallax.core.metamodel import (
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    TemporalDimension,
+    entity_by_name,
+)
 from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
@@ -330,7 +336,7 @@ def find_history(
     # `~parallax.core.temporal_read` per-entity primitive below (`milestone_edge`,
     # `_edge_pin`, `_edge_sort_key`) MUST resolve through it rather than the
     # queried target's own (possibly locally-empty) axes.
-    entity = declaring_metadata(meta, metadata)
+    entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root_operation, meta, dialect, metadata, result_form="instance")
     statements: list[ExecutedStatement] = []
     materialized_rows = [
@@ -472,19 +478,23 @@ def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
     return metadata
 
 
-def declaring_metadata(model: Metamodel, entity: EntityMetadata) -> EntityMetadata:
-    """The accepted Metadata of the position that DECLARES ``entity``'s family
+def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetadata:
+    """The accepted Metadata of the position that DECLARES ``target``'s family
     facts — its family root, which for a standalone Entity is itself.
 
     Temporality and the physical primary key are family-wide and root-owned
     (`m-inheritance` "Inherited members"), so every per-entity milestone
     primitive below resolves through this rather than through the queried
     target's own (possibly locally empty) declaration.
+
+    Keyed by Entity Identity rather than by an already-resolved Metadata, because
+    a read's preflight answers an identity: the resolution is exact and the
+    caller keeps no metadata it would otherwise have to thread.
     """
-    position = inheritance.view(model).entity(entity.identity)
-    root = entity if position is None else model.entity(position.root)
-    if root is None:  # pragma: no cover - a family root is always an accepted Entity
-        raise ValueError(f"{entity.identity.canonical}: the model declares no family root")
+    position = inheritance.view(model).entity(target)
+    root = model.entity(target if position is None else position.root)
+    if root is None:  # pragma: no cover - preflight resolved this identity in this model
+        raise ValueError(f"{target.canonical}: the model declares no family root")
     return root
 
 
@@ -565,7 +575,7 @@ def snapshot_from_find_result(
 def snapshot_from_history_result(
     result: HistoryFindResult, target: str, meta: Metamodel, classes: ClassIndex
 ) -> Snapshot[Any]:
-    entity = declaring_metadata(meta, _metadata(meta, target))
+    entity = declaring_metadata(meta, _metadata(meta, target).identity)
     roots: list[Any] = []
     for graph in result.graphs:
         milestone_pin = _pin_from_milestone(entity, graph.pin)

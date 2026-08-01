@@ -34,9 +34,8 @@ from typing import Any
 from parallax.core import opt_lock, read_lock
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
-from parallax.core.entity import AttributeAssignment, full_row, primary_key_row
+from parallax.core.entity import AttributeAssignment, FindQuery, full_row, primary_key_row
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import Statement as EntityStatement
 from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.unit_work import (
@@ -96,7 +95,8 @@ class Transaction:
     ``_where`` verb family (`python.md` §5) —
     :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where`,
     :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
-    keyed surface over a bare predicate: readless for an unversioned,
+    keyed surface over a mutation-compatible Find Query: readless for an
+    unversioned,
     non-temporal target, materializing to per-row keyed writes otherwise
     (:mod:`parallax.snapshot.handle._predicate_writes`, ADR 0014, which those
     five verbs delegate to). A reference used after
@@ -359,19 +359,16 @@ class Transaction:
             return
         opt_lock.require_observed_milestone(record.identity.name, self._uow.observation_for(key))
 
-    def find(self, statement: EntityStatement) -> Snapshot[Any]:
-        """Run a participating read for ``statement`` and return ``Snapshot[T]``
+    def find[S](self, query: FindQuery[Any, S]) -> Snapshot[S]:
+        """Run a participating read for ``query`` and return ``Snapshot[S]``:
         force-flushes pending writes first (read-your-own-writes), and
         the transaction's participation mode renders the read-lock suffix
         (``locking`` takes the dialect's shared row lock; ``optimistic`` takes
         none). Otherwise identical to :meth:`Database.find` — the SAME
         :func:`~parallax.snapshot.handle._preflight.preflight_find` gate, which
         runs BEFORE the force-flush so a refused read flushes nothing, the SAME
-        shared find executor, the SAME frozen-node wrapping. Returns
-        ``Snapshot[Any]``:
-        the concrete root type is resolved only at runtime (from the
-        statement's own target), so callers annotate their own binding
-        (``snapshot: Snapshot[Order] = tx.find(...)``) for static typing.
+        shared find executor, the SAME frozen-node wrapping, and the SAME
+        parameter answer: the Snapshot carries the query's RESULT Entity.
 
         Every materialized node of a VERSIONED entity — root and included
         (deep-fetch) alike — records its observed version on this unit of work
@@ -391,9 +388,9 @@ class Transaction:
         # Both refusals precede `uow.read` deliberately: that read force-flushes
         # pending buffered writes, so a refused read must be refused before it.
         classes = _materializing(self._classes)
-        lowered = preflight_find(statement, model=self._meta)
-        target, op = lowered.target, lowered.operation
-        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.root))
+        lowered = preflight_find(query, model=self._meta)
+        target, op = lowered.target.name, lowered.operation
+        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         if is_milestone_set_op(op):
             history_result = self._uow.read(
@@ -452,13 +449,14 @@ class Transaction:
     # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(
         self,
-        statement: EntityStatement,
+        query: FindQuery[Any, Any],
         *assignments: AttributeAssignment[Any],
         valid_from: dt.datetime | None = None,
     ) -> None:
-        """A predicate-selected ``update`` (`python.md` §5): ``statement`` MUST
-        be a bare statement (nothing but a predicate); ``assignments`` are
-        ``Attr.set(value)`` calls, non-empty, no duplicate field. Readless
+        """A predicate-selected ``update`` (`python.md` §5): ``query`` MUST be
+        mutation-compatible (nothing but a target and a predicate);
+        ``assignments`` are ``Attr.set(value)`` calls, non-empty, no duplicate
+        field, each addressing the query's exact target. Readless
         (one statement) for an unversioned, non-temporal target; a versioned
         or temporal target MATERIALIZES (`m-opt-lock`, ADR 0014) — see
         :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`,
@@ -469,12 +467,12 @@ class Transaction:
             self._conn,
             self._dialect,
             "update",
-            statement,
+            query,
             assignments,
             valid_from=valid_from,
         )
 
-    def delete_where(self, statement: EntityStatement) -> None:
+    def delete_where(self, query: FindQuery[Any, Any]) -> None:
         """A predicate-selected ``delete`` over a NON-temporal target
         (`python.md` §5): readless for an unversioned target; a versioned one
         MATERIALIZES to one observation-backed per-row delete per resolved row
@@ -487,13 +485,13 @@ class Transaction:
             self._conn,
             self._dialect,
             "delete",
-            statement,
+            query,
             (),
             valid_from=None,
         )
 
     def terminate_where(
-        self, statement: EntityStatement, *, valid_from: dt.datetime | None = None
+        self, query: FindQuery[Any, Any], *, valid_from: dt.datetime | None = None
     ) -> None:
         """A predicate-selected ``terminate`` over a TEMPORAL target
         (`python.md` §5): Transaction-Time-Only takes no ``valid_from``;
@@ -505,14 +503,14 @@ class Transaction:
             self._conn,
             self._dialect,
             "terminate",
-            statement,
+            query,
             (),
             valid_from=valid_from,
         )
 
     def update_until_where(
         self,
-        statement: EntityStatement,
+        query: FindQuery[Any, Any],
         *assignments: AttributeAssignment[Any],
         valid_from: dt.datetime,
         until: dt.datetime,
@@ -526,14 +524,14 @@ class Transaction:
             self._conn,
             self._dialect,
             "updateUntil",
-            statement,
+            query,
             assignments,
             valid_from=valid_from,
             until=until,
         )
 
     def terminate_until_where(
-        self, statement: EntityStatement, *, valid_from: dt.datetime, until: dt.datetime
+        self, query: FindQuery[Any, Any], *, valid_from: dt.datetime, until: dt.datetime
     ) -> None:
         """A predicate-selected, Valid-Time-bounded ``terminateUntil`` over
         a Bitemporal target (`python.md` §5): always materializes to a close
@@ -545,7 +543,7 @@ class Transaction:
             self._conn,
             self._dialect,
             "terminateUntil",
-            statement,
+            query,
             (),
             valid_from=valid_from,
             until=until,

@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from _support.query_probes import lowered_operation
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -118,7 +119,7 @@ def _preflight(
     models: DomainModel, root: type[Entity], path: RelationshipPath[Any, Any]
 ) -> DeepFetch:
     """Build the include operation ``path`` authors and validate it as a read does."""
-    operation = root.where().include(path).operation()
+    operation = lowered_operation(root.where(root.all).include(path))
     assert isinstance(operation, DeepFetch)
     validate_operation(models.meta(root), operation, model_of(models))
     return operation

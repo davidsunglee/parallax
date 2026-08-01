@@ -502,7 +502,7 @@ class AttributeExpr[E, T]:
             return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
         return Predicate(NullCheck(op="isNotNull", attr=str(self.ref)))
 
-    def any(self, *predicates: Predicate[Any]) -> Predicate[E]:
+    def exists(self, *predicates: Predicate[Any]) -> Predicate[E]:
         """The value-object member is present/non-empty (optionally matching
         ``predicates``, same-element composed): ``nestedExists`` over this
         value-object-terminated path. Zero arguments emit the bare presence
@@ -510,8 +510,8 @@ class AttributeExpr[E, T]:
         element-scoped attributes, never re-prefixed."""
         return Predicate(NestedExists(path=self._dotted(), where=conjoin(predicates)))
 
-    def none(self, *predicates: Predicate[Any]) -> Predicate[E]:
-        """The complement of :meth:`any` — ``nestedNotExists``."""
+    def not_exists(self, *predicates: Predicate[Any]) -> Predicate[E]:
+        """The complement of :meth:`exists` — ``nestedNotExists``."""
         return Predicate(NestedNotExists(path=self._dotted(), where=conjoin(predicates)))
 
     def _string(self, op: StringOp, value: str, case_insensitive: bool) -> Predicate[E]:
@@ -763,7 +763,7 @@ class RelationshipPath[E, R]:
     """A chained class-level relationship reference (``Order.items``,
     ``Order.items.statuses``) — the seed of the ``.include(...)`` deep-fetch
     spelling, the hop-level ``.narrow(*subtypes)`` narrowed-view request, and
-    the single-hop relationship quantifiers ``.any()``/``.none()``.
+    the single-hop relationship quantifiers ``.exists()``/``.not_exists()``.
 
     ``E`` is the Entity the seeding class access went through — where the path
     starts — and ``R`` the Entity it currently points at. Both are covariant. A
@@ -903,7 +903,7 @@ class RelationshipPath[E, R]:
             _, new_target = narrowed[0]
         return RelationshipPath(segments=(*head, new_last), target=new_target, source=self.source)
 
-    def any(self, *predicates: Predicate[R]) -> Predicate[Any]:
+    def exists(self, *predicates: Predicate[R]) -> Predicate[Any]:
         """The single-hop relationship quantifier: ``>= 1`` related row
         (optionally matching ``predicates``), serializing to ``exists``.
 
@@ -920,14 +920,14 @@ class RelationshipPath[E, R]:
         """
         return Predicate(Exists(rel=self._single_hop_ref(), op=conjoin(predicates)))
 
-    def none(self, *predicates: Predicate[R]) -> Predicate[Any]:
-        """The complement of :meth:`any` — ``notExists``."""
+    def not_exists(self, *predicates: Predicate[R]) -> Predicate[Any]:
+        """The complement of :meth:`exists` — ``notExists``."""
         return Predicate(NotExists(rel=self._single_hop_ref(), op=conjoin(predicates)))
 
     def _single_hop_ref(self) -> str:
         if len(self.segments) != 1:
             raise ValueError(
-                ".any()/.none() quantify a single relationship hop, not a multi-hop "
+                ".exists()/.not_exists() quantify a single relationship hop, not a multi-hop "
                 "include path (m-navigate)"
             )
         return self.segments[0].rel

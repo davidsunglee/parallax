@@ -48,6 +48,7 @@ from _support import inheritance_models as im
 from _support import snapshot_models as sm
 from _support import value_object_models as vm
 from _support.corpus import case_document
+from _support.query_probes import lowered_document
 from parallax.conformance import case_format
 from parallax.conformance.animal_owner import ANIMAL_MODEL as ANIMAL_OWNER_MODEL
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
@@ -74,14 +75,14 @@ from parallax.conformance.vo_models import (
     CustomerPhone,
     Supplier,
 )
-from parallax.core import DomainModel, Entity, OperationRejectedError, Predicate, Statement
+from parallax.core import DomainModel, Entity, FindQuery, OperationRejectedError, Predicate
 from parallax.core.entity._model import model_of
 from parallax.core.op_algebra import serialize
 from parallax.core.temporal_read import LATEST
 from parallax.snapshot.handle._preflight import preflight_find
 
-# case id -> the idiomatic statement that must serialize to the case's operation.
-BUILDERS: dict[str, Callable[[], Statement]] = {
+# case id -> the idiomatic query that must lower to the case's operation.
+BUILDERS: dict[str, Callable[[], FindQuery[Any, Any]]] = {
     # The op-algebra / temporal-read / navigate / single-concrete-inheritance
     # read examples: derived from the SAME `build()` the real-database runner
     # executes (`read_stories.READ_STORIES`) — see this file's own docstring.
@@ -96,7 +97,7 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     "m-snapshot-read-005": lambda: Order.where(Order.id == 4).include(Order.items.statuses),
     "m-snapshot-read-011": lambda: Order.where(Order.id == 1).include(Order.items.order),
     "m-navigate-013": lambda: (
-        Policy.where()
+        Policy.where(Policy.all)
         .as_of(valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC), tx_time=LATEST)
         .include(Policy.coverages)
     ),
@@ -107,13 +108,13 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     # table-per-concrete-subtype instance-form projection over 2+ resolved
     # concretes has no goldened lowering yet) — see `read_stories`'s own
     # module docstring.
-    "m-inheritance-003": lambda: im.Payment.where(),
-    "m-inheritance-013": lambda: sm.Animal.where().narrow(sm.Pet),
+    "m-inheritance-003": lambda: im.Payment.where(im.Payment.all),
+    "m-inheritance-013": lambda: sm.Animal.where(sm.Animal.all).narrow(sm.Pet),
     "m-inheritance-015": lambda: sm.Animal.where(
         sm.Animal.narrow(sm.Dog, where=sm.Dog.bark_volume > 5)
         | sm.Animal.narrow(sm.Cat, where=sm.Cat.indoor.is_(True))
     ),
-    "m-inheritance-052": lambda: im.Document.where().narrow(im.FinancialDocument),
+    "m-inheritance-052": lambda: im.Document.where(im.Document.all).narrow(im.FinancialDocument),
     # Value-object traversal over the installed Customer mirror — the query-shape
     # no-drift half of the executable graph stories in `graph_stories.py`
     # (see that module's own docstring for why these land as `GraphStory`
@@ -121,54 +122,58 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     "m-value-object-001": lambda: Customer.where(Customer.address.city == "Oslo"),
     "m-value-object-002": lambda: Customer.where(Customer.address.geo.country == "US"),
     "m-value-object-007": lambda: Customer.where(Customer.address.city.is_null()),
-    "m-value-object-015": lambda: Customer.where(Customer.address.phones.any()),
-    "m-value-object-016": lambda: Customer.where(Customer.address.phones.none()),
+    "m-value-object-015": lambda: Customer.where(Customer.address.phones.exists()),
+    "m-value-object-016": lambda: Customer.where(Customer.address.phones.not_exists()),
     "m-value-object-017": lambda: Customer.where(Customer.address.phones.type == "home"),
     "m-value-object-019": lambda: Customer.where(
-        Customer.address.phones.any(
+        Customer.address.phones.exists(
             CustomerPhone.type == "home", CustomerPhone.number == "555-9999"
         )
     ),
-    "m-value-object-023": lambda: Customer.where(),
+    "m-value-object-023": lambda: Customer.where(Customer.all),
     "m-value-object-024": lambda: Customer.where(Customer.address.city == "Oslo"),
-    "m-deep-fetch-018": lambda: Customer.where().include(Customer.locations),
+    "m-deep-fetch-018": lambda: Customer.where(Customer.all).include(Customer.locations),
     # Deep-fetch include paths over the installed Person/Passport and
     # animal-owner mirrors — the query-shape no-drift
     # half of the executable graph stories in `graph_stories.py`.
-    "m-snapshot-read-007": lambda: Person.where().include(Person.passport),
+    "m-snapshot-read-007": lambda: Person.where(Person.all).include(Person.passport),
     "m-snapshot-read-012": lambda: AnimalOwnerPerson.where(AnimalOwnerPerson.id == 10).include(
         AnimalOwnerPerson.animals, AnimalOwnerPerson.pets.narrow(Dog)
     ),
-    "m-inheritance-065": lambda: AnimalOwnerPerson.where().include(
+    "m-inheritance-065": lambda: AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
         AnimalOwnerPerson.pets.narrow(Dog)
     ),
-    "m-inheritance-066": lambda: AnimalOwnerPerson.where().include(
+    "m-inheritance-066": lambda: AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
         AnimalOwnerPerson.pets.narrow(Pet), AnimalOwnerPerson.pets.narrow(Cat, Dog)
     ),
-    "m-inheritance-067": lambda: AnimalOwnerPerson.where().include(
+    "m-inheritance-067": lambda: AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
         AnimalOwnerPerson.pets.narrow(Dog), AnimalOwnerPerson.pets.narrow(Cat)
     ),
-    "m-inheritance-068": lambda: AnimalOwnerPerson.where().include(
+    "m-inheritance-068": lambda: AnimalOwnerPerson.where(AnimalOwnerPerson.all).include(
         AnimalOwnerPerson.pets, AnimalOwnerPerson.pets.narrow(Pet)
     ),
     # Path-ROOT guards: reaching the inherited `Animal.owner` through a subtype
     # keeps that one relationship identity and guards which queried objects the
     # path starts from, so the wire carries `narrow: {entity, to}` beside
     # `segments` rather than on a segment.
-    "m-inheritance-074": lambda: AnimalRoot.where().include(Dog.owner, Cat.owner),
-    "m-inheritance-075": lambda: AnimalRoot.where().include(AnimalRoot.owner, Dog.owner),
-    "m-inheritance-076": lambda: AnimalRoot.where().include(Pet.owner.pets.narrow(Dog)),
-    "m-inheritance-078": lambda: AnimalRoot.where().include(
+    "m-inheritance-074": lambda: AnimalRoot.where(AnimalRoot.all).include(Dog.owner, Cat.owner),
+    "m-inheritance-075": lambda: AnimalRoot.where(AnimalRoot.all).include(
+        AnimalRoot.owner, Dog.owner
+    ),
+    "m-inheritance-076": lambda: AnimalRoot.where(AnimalRoot.all).include(
+        Pet.owner.pets.narrow(Dog)
+    ),
+    "m-inheritance-078": lambda: AnimalRoot.where(AnimalRoot.all).include(
         Dog.owner, WildBoar.owner, Dog.owner.pets
     ),
     # Value-object-bearing temporal reads over the installed Supplier/
     # Branch mirrors.
-    "m-value-object-028": lambda: Supplier.where().as_of(tx_time=LATEST),
-    "m-value-object-029": lambda: Supplier.where().as_of(
+    "m-value-object-028": lambda: Supplier.where(Supplier.all).as_of(tx_time=LATEST),
+    "m-value-object-029": lambda: Supplier.where(Supplier.all).as_of(
         tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     ),
-    "m-value-object-030": lambda: Branch.where().as_of(valid_time=LATEST, tx_time=LATEST),
-    "m-value-object-031": lambda: Branch.where().as_of(
+    "m-value-object-030": lambda: Branch.where(Branch.all).as_of(valid_time=LATEST, tx_time=LATEST),
+    "m-value-object-031": lambda: Branch.where(Branch.all).as_of(
         valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     ),
@@ -177,7 +182,7 @@ BUILDERS: dict[str, Callable[[], Statement]] = {
     # (m-inheritance-003/-013/-015/-052 above), but built over the INSTALLED
     # `read_models` classes rather than the test-only `im`/`sm` mirrors — the
     # object-lane witness a real `db.find` executes against.
-    "m-inheritance-106": lambda: Payment.where(),
+    "m-inheritance-106": lambda: Payment.where(Payment.all),
     "m-inheritance-107": lambda: AnimalRoot.where(AnimalRoot.narrow(Pet)),
     "m-inheritance-108": lambda: AnimalRoot.where(
         AnimalRoot.narrow(Dog, where=Dog.bark_volume > 5)
@@ -190,9 +195,9 @@ _CASES = {c.case_id: c for c in case_format.load_cases()}
 
 
 @pytest.mark.parametrize("case_id", sorted(BUILDERS), ids=sorted(BUILDERS))
-def test_idiomatic_statement_serializes_to_the_corpus_operation(case_id: str) -> None:
+def test_the_idiomatic_query_lowers_to_the_corpus_operation(case_id: str) -> None:
     expected = case_document(_CASES[case_id])["when"]["operation"]
-    assert BUILDERS[case_id]().serialize() == expected
+    assert lowered_document(BUILDERS[case_id]()) == expected
 
 
 def test_expression_rejects_bool_misuse() -> None:
@@ -206,7 +211,7 @@ def test_expression_rejects_bool_misuse() -> None:
 # Rejected-case build-time proofs (m-op-algebra / m-navigate / m-value-object): #
 # a rejected case's `when.operation` never becomes a Statement                 #
 # — the SAME model-aware `validate_operation` the corpus's own rejected lane   #
-# calls (m-conformance-adapter) runs INSIDE `Entity.where()` /                 #
+# calls (m-conformance-adapter) runs INSIDE `Entity.where(Entity.all)` /                 #
 # `.narrow()`, raising before a Statement is ever returned. No-drift here is   #
 # two proofs: the raw built predicate serializes to the case's own            #
 # `when.operation` (the SAME structural comparison every other example makes, #
@@ -217,10 +222,12 @@ def test_expression_rejects_bool_misuse() -> None:
 REJECTED_BUILDERS: dict[str, Callable[[], Predicate[Any]]] = {
     "m-op-algebra-039": lambda: Order.price.between(50.75, 20.00),
     "m-op-algebra-040": lambda: vm.Customer.address.geo.elevation.between(12, 5),
-    "m-op-algebra-041": lambda: vm.Customer.address.phones.any(vm.Phone.number.between(42, 7)),
+    "m-op-algebra-041": lambda: vm.Customer.address.phones.exists(vm.Phone.number.between(42, 7)),
     "m-op-algebra-042": lambda: vm.Customer.address.geo.elevation.starts_with("1"),
     "m-op-algebra-043": lambda: Contact.address.phones.expires.starts_with("2024"),
-    "m-op-algebra-044": lambda: Contact.address.phones.any(ContactPhone.expires.ends_with("-01")),
+    "m-op-algebra-044": lambda: Contact.address.phones.exists(
+        ContactPhone.expires.ends_with("-01")
+    ),
     "m-value-object-038": lambda: vm.Customer.address.city == 42,
     # The animal-owner mirror composes `Person` alongside the family, so a
     # predicate over the owner is CONSTRUCTIBLE at the family position and is
@@ -233,8 +240,8 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate[Any]]] = {
     # reachable set (WildBoar, a sibling branch) or naming the wrong `entity`
     # (Animal instead of Pet) both raise `narrow-outside-relationship-target`
     # over the installed animal-owner mirror.
-    "m-inheritance-064": lambda: AnimalOwnerPerson.pets.any(Pet.narrow(WildBoar)),
-    "m-inheritance-072": lambda: AnimalOwnerPerson.pets.any(AnimalRoot.narrow(Dog)),
+    "m-inheritance-064": lambda: AnimalOwnerPerson.pets.exists(Pet.narrow(WildBoar)),
+    "m-inheritance-072": lambda: AnimalOwnerPerson.pets.exists(AnimalRoot.narrow(Dog)),
 }
 
 # case id -> the entity `Entity.where(...)` is called on to trigger validation

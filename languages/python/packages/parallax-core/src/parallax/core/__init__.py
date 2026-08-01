@@ -10,7 +10,7 @@ bases (``Entity`` and the temporal framework bases ``TxTemporal`` /
 member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` / ``desc``
 factories, the core-algebra values those take (cardinality, persistence,
 inheritance role and strategy, primary-key generation, and the two narrowable
-Neutral Types), ``DomainModel``, the ``Statement`` query surface (predicate,
+Neutral Types), ``DomainModel``, the ``FindQuery`` surface (predicate,
 result-shaping, deep-fetch ``.include``, subtype ``.narrow``, and the axis-keyed
 temporal-read clauses), the temporal as-of coordinate model (``LATEST`` /
 ``VALID_TIME`` / ``TX_TIME`` / ``Pin`` / ``Edge`` / ``pin_of`` / ``edge_of``),
@@ -43,6 +43,7 @@ from parallax.core.entity import (
     DomainModel,
     Entity,
     EntityDefinitionError,
+    FindQuery,
     Float32,
     Int32,
     MetamodelDefinitionError,
@@ -54,7 +55,6 @@ from parallax.core.entity import (
     RelationshipPath,
     Sequence,
     SortKey,
-    Statement,
     TablePerHierarchy,
     TxTemporal,
     UnloadedRelationshipError,
@@ -103,6 +103,7 @@ __all__ = [
     "Edge",
     "Entity",
     "EntityDefinitionError",
+    "FindQuery",
     "Float32",
     "Int32",
     "MetamodelDefinitionError",
@@ -117,7 +118,6 @@ __all__ = [
     "RelationshipPath",
     "Sequence",
     "SortKey",
-    "Statement",
     "TablePerHierarchy",
     "TemporalReadError",
     "TxTemporal",
