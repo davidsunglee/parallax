@@ -1,11 +1,13 @@
 """Unit tests for the production-file enforcement-scope ownership check.
 
-Each of the tool's three findings gets a canary that drives ``main()`` to a
+Each of the tool's four findings gets a canary that drives ``main()`` to a
 non-zero exit, because a gate that runs but cannot block buys nothing:
 
 * an unowned production file (the ``parallax/snapshot/wrap.py`` shape the check
   exists for) is written to disk for real;
 * an undeclared nested scope produces overlapping owners;
+* an import-free module written beside a zero-grant scope, which is the one
+  shape that escapes both halves of that scope's forbidden row;
 * an exemption that stops describing the tree — in both directions.
 
 plus the coupling that makes the overlap arm load-bearing: a nested scope
@@ -15,10 +17,11 @@ parent's forbidden row, where import-linter silently skips it.
 
 The guarantee under test is **one most-specific owner plus any declared
 ancestor scopes**, not one owner outright: a file inside a declared child scope
-legitimately matches both the child and its parent, which is what child scopes
-are for. ``test_declared_child_scope_files_are_owned_twice`` pins that as a
-property of the scope tables, so the documented claim and the implemented
-behaviour cannot drift apart again.
+legitimately matches the child and every declared scope above it, which is what
+child scopes are for. ``test_child_scope_files_are_owned_by_their_whole_declared_chain``
+pins that as a property of the scope tables, at whatever nesting depth they
+declare, so the documented claim and the implemented behaviour cannot drift
+apart again.
 """
 
 from __future__ import annotations
@@ -81,26 +84,28 @@ def test_every_exemption_is_genuinely_unowned_today() -> None:
         assert own.owning_scopes(own.module_path(relative), scopes) == [], relative
 
 
-def test_declared_child_scope_files_are_owned_twice() -> None:
+def test_child_scope_files_are_owned_by_their_whole_declared_chain() -> None:
     # The check does NOT promise one owner per file. It promises one
-    # most-specific owner plus declared ancestors, and a file inside a declared
-    # child scope is the intended two-owner state child scopes exist to create —
-    # not a defect and not something to weaken the check into forbidding. Stated
-    # as a property of the scope tables rather than as a file list, so declaring
-    # another child scope does not move a literal here.
+    # most-specific owner plus ANY declared ancestor scopes, and a file inside a
+    # declared child scope is the intended multi-owner state child scopes exist
+    # to create — not a defect and not something to weaken the check into
+    # forbidding. Asserted at whatever depth the tables declare, because
+    # `scope_ancestors` and `is_declared_chain` are both recursive: a
+    # parent -> child -> grandchild declaration gives three owners and is just as
+    # legal. Stated as a property of the scope tables rather than as a file list,
+    # so declaring another child scope does not move a literal here.
     scopes = own.declared_scopes()
-    doubled: dict[str, list[str]] = {}
+    nested: dict[str, list[str]] = {}
     for path in own.production_files():
         owners = own.owning_scopes(own.module_path(path), scopes)
         if len(owners) > 1:
-            doubled[path] = owners
-    for path, owners in doubled.items():
+            nested[path] = owners
+    for path, owners in nested.items():
         assert own.is_declared_chain(owners, dag.CHILD_SCOPE_PARENT), path
-        parent = dag.CHILD_SCOPE_PARENT[owners[-1]]
-        assert owners == [parent, owners[-1]], path
-    # Every declared child scope owns at least one file, and every doubly owned
-    # file belongs to one — so the two-owner set is exactly what §7 declares.
-    assert {owners[-1] for owners in doubled.values()} == set(dag.CHILD_SCOPE_PARENT)
+        assert set(owners[:-1]) == dag.scope_ancestors(owners[-1]), path
+    # Every declared child scope owns at least one file, and every multiply owned
+    # file belongs to one — so the nested set is exactly what §7 declares.
+    assert {owners[-1] for owners in nested.values()} == set(dag.CHILD_SCOPE_PARENT)
     # ...and the tree is clean regardless: declared overlap never fails.
     assert own.main([]) == 0
 
@@ -117,7 +122,8 @@ def test_the_success_message_states_the_guarantee_it_actually_proves(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # The message is the only thing most readers of this gate ever see, so it
-    # must not promise one owner per file while child-scope files have two.
+    # must not promise one owner per file while a file inside a declared child
+    # scope has its whole chain.
     scopes = own.declared_scopes()
     nested = sum(
         1
@@ -198,7 +204,91 @@ def test_dropping_a_child_declaration_fails(
 
 
 # --------------------------------------------------------------------------
-# Canary 3: an exemption that no longer describes the tree.
+# Canary 3: an import-free module beside a zero-grant scope.
+# --------------------------------------------------------------------------
+_STDLIB_LEAF = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_stdlib_leaf.py"
+_IMPORT_FREE = '"""Deliberately import-free, and outside every declared child scope."""\n'
+_FIRST_PARTY = (
+    f"{_IMPORT_FREE}\n"
+    "from parallax.core.metamodel import EntityDescriptor\n"
+    "\n"
+    "_ = EntityDescriptor\n"
+)
+
+
+def test_import_free_module_beside_a_zero_grant_scope_fails(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The one shape that escapes both halves of a zero-grant scope's forbidden
+    # row: it is not a declared sibling scope, so the row cannot name it, and it
+    # reaches nothing outside the package, so no indirect chain catches it
+    # either. Written to disk for real, like canary 1.
+    _STDLIB_LEAF.write_text(_IMPORT_FREE)
+    try:
+        assert own.main([]) == 1
+    finally:
+        _STDLIB_LEAF.unlink()
+    err = capsys.readouterr().err
+    assert "_stdlib_leaf.py" in err
+    assert "parallax.snapshot.handle._errors cannot name it" in err
+    assert own.main([]) == 0
+
+
+def test_a_sibling_that_imports_first_party_is_left_to_the_import_gate() -> None:
+    # The same undeclared module, with one first-party import, passes: importing
+    # it from the refusal leaf is caught by `lint-imports` on the chain through
+    # it, so this check would be duplicating a gate that already holds. What the
+    # check refuses is import-freedom, not the module's existence.
+    _STDLIB_LEAF.write_text(_FIRST_PARTY)
+    try:
+        assert own.main([]) == 0
+    finally:
+        _STDLIB_LEAF.unlink()
+
+
+def test_the_rule_applies_only_where_a_zero_grant_scope_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Scoped to the reason it exists. Grant the refusal leaf anything and the
+    # package stops being special: its row then has a closure to complement, and
+    # an import-free sibling is no longer the row's blind spot.
+    assert own.zero_grant_scopes() == {
+        "parallax.snapshot.handle._errors": "parallax.snapshot.handle"
+    }
+    tampered = dict(dag.SUPPORT_SCOPE_DEPS)
+    tampered["parallax.snapshot.handle._errors"] = frozenset({"parallax.core.base"})
+    monkeypatch.setattr(dag, "SUPPORT_SCOPE_DEPS", tampered)
+    assert own.zero_grant_scopes() == {}
+    _STDLIB_LEAF.write_text(_IMPORT_FREE)
+    try:
+        assert own.main([]) == 0
+    finally:
+        _STDLIB_LEAF.unlink()
+
+
+def test_first_party_imports_sees_every_import_form() -> None:
+    source = (
+        "import os\n"
+        "import parallax.core.base\n"
+        "from parallax.snapshot.handle import _errors\n"
+        "from . import sibling\n"
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from parallax.core.metamodel import EntityDescriptor\n"
+    )
+    assert own.first_party_imports(source) == frozenset(
+        {
+            "parallax.core.base",
+            "parallax.snapshot.handle",
+            ".",
+            "parallax.core.metamodel",
+        }
+    )
+    assert own.first_party_imports("import os\nfrom typing import Final\n") == frozenset()
+
+
+# --------------------------------------------------------------------------
+# Canary 4: an exemption that no longer describes the tree.
 # --------------------------------------------------------------------------
 def test_exemption_for_a_missing_file_fails(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

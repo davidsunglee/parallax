@@ -2518,10 +2518,14 @@ parallax.postgres --> parallax.core.dialect
   row can state, and a same-package sibling import is refused rather than left
   to convention. Only a **zero-grant** row takes its siblings as targets: a
   scope with grants has a closure to complement, and naming siblings in its row
-  would forbid intra-package edges this section permits. What such a row still
-  cannot state is a sibling module over which this section declares no child
-  scope; importing one is caught on whatever that module reaches outside the
-  package instead. `parallax.core.entity.statement` is the **grantable**
+  would forbid intra-package edges this section permits. A sibling module over
+  which this section declares no child scope is not stated in the row either;
+  importing one is caught on whatever that module reaches outside the package,
+  and `tools/check_scope_ownership.py` fails when a module beside a zero-grant
+  scope has no first-party import at all — the one shape that would reach
+  neither the row nor a chain out of it. The shared parent package stays the
+  single name such a row cannot state, which no scope declaration could change.
+  `parallax.core.entity.statement` is the **grantable**
   case: a child scope may also be named as another scope's grant,
   which is how a consumer takes a narrow part of a package without taking what
   the rest of that package reaches. All are generated as ordinary contract
@@ -2575,7 +2579,16 @@ parallax.postgres --> parallax.core.dialect
   what governs it. Zero owners, **undeclared** overlapping owners (two or more
   matching scopes that are not a parent/child chain declared in
   `check_dag_sync.CHILD_SCOPE_PARENT`), and stale exemptions each fail the
-  check, which runs in `just python-check-scope-ownership`.
+  check, which runs in `just python-check-scope-ownership`. The same tool
+  carries the one zero-grant guarantee no scope table can state: inside a
+  package holding a scope granted `(none)`, every module must either resolve to
+  a scope that row names — the zero-grant scope itself or one of its declared
+  siblings — or carry a first-party import, which is what makes it reachable by
+  an indirect chain. A module that is neither is refused. The rule is derived
+  from the declared scopes rather than written against one package, and today
+  selects only `parallax.snapshot.handle`; the package's own interface module is
+  outside it, because no declaration could bring it inside a row that cannot
+  name its own ancestor.
 - **Scopes sharing one artifact.** Every behavioral module in `parallax-core`
   is its own submodule; the generated forbidden contracts operate at
   submodule granularity, so co-location in one wheel cannot legalize a
