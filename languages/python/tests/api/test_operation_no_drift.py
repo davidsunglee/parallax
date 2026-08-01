@@ -1,21 +1,21 @@
 """Operation no-drift guard (m-api-conformance).
 
-Each idiomatic public-API statement the suite authors must serialize to the exact
+Each idiomatic public-API query the suite authors must LOWER to the exact
 ``m-op-algebra`` operation the mirrored corpus case authors — the developer
 surface cannot drift from the graded protocol. The builders here are the source of
-truth for the ``api_suite.EXAMPLES`` snippets; the guard compares
-``statement.serialize()`` to the case's ``when.operation``.
+truth for the ``api_suite.EXAMPLES`` snippets; the guard compares each query's
+canonical lowering to the case's ``when.operation``.
 
 Two case shapes carry no single top-level ``when.operation`` to compare a built
-``Statement`` against, so they get their OWN comparison instead of a ``BUILDERS``
+``FindQuery`` against, so they get their OWN comparison instead of a ``BUILDERS``
 entry: a ``rejected`` case (the invalid input is authored under ``when.operation``,
-but building it through the idiomatic surface never returns a ``Statement`` at all
+but building it through the idiomatic surface never returns a ``FindQuery`` at all
 — the model-aware validator raises immediately, exactly as it does for the corpus's
 own operation-input path) proves no-drift by comparing
 the RAW built predicate's own serialization to the case's ``when.operation`` and
 separately asserting the SAME build raises the classified ``then.rejectedRule``;
 a ``scenario`` case's per-step ``find`` bodies are graded by the executable graph
-stories (``test_story_run.py``) instead, when their own statement is trivial
+stories (``test_story_run.py``) instead, when their own query is trivial
 (a bare primary-key equality already proven by the ``m-op-algebra`` examples
 above) or their behavior is not a query at all (a mutation/access step).
 
@@ -26,7 +26,7 @@ Postgres, so this guard's no-drift proof and that execution share one source,
 never a second, hand-duplicated expression that could drift from it. The
 remaining hand-authored entries are the ones that genuinely have no executable
 real-database story yet, OR that pair with a `graph_stories.GraphStory` (a
-graph story's own bare-statement half — including the Customer value-object
+graph story's own bare-query half — including the Customer value-object
 family: `db.find`'s
 always-instance-form materialization means these grade bespoke there rather
 than through `read_stories.ReadStory`'s byte-exact generic runner, see that
@@ -88,7 +88,7 @@ BUILDERS: dict[str, Callable[[], FindQuery[Any, Any]]] = {
     # executes (`read_stories.READ_STORIES`) — see this file's own docstring.
     **{story.case_id: story.build for story in READ_STORIES},
     # Deep-fetch include paths (m-deep-fetch) that also drive an executable graph
-    # story (`parallax.conformance.graph_stories`) — the SAME statement expression;
+    # story (`parallax.conformance.graph_stories`) — the SAME query expression;
     # this entry is the query-shape no-drift half, the story is the execution half.
     "m-snapshot-read-001": lambda: Order.where(Order.id == 1).include(
         Order.items, Order.items_by_ship_date
@@ -178,7 +178,7 @@ BUILDERS: dict[str, Callable[[], FindQuery[Any, Any]]] = {
         tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     ),
     # Multi-concrete polymorphic INSTANCE-FORM reads: the SAME
-    # statement expression as their row-form values-lane siblings
+    # query expression as their row-form values-lane siblings
     # (m-inheritance-003/-013/-015/-052 above), but built over the INSTALLED
     # `read_models` classes rather than the test-only `im`/`sm` mirrors — the
     # object-lane witness a real `db.find` executes against.
@@ -274,7 +274,7 @@ def test_rejected_predicate_serializes_to_the_corpus_operation(case_id: str) -> 
     assert serialize(predicate.op) == expected
 
 
-# case id -> the Domain Model the rejected statement is executed against.
+# case id -> the Domain Model the rejected query is executed against.
 # Authoring reaches no model, so the rule fires at the shared read gate rather
 # than at `Entity.where`; the model each target belongs to is what states it.
 REJECTED_MODELS: dict[str, DomainModel] = {
@@ -295,10 +295,10 @@ REJECTED_MODELS: dict[str, DomainModel] = {
 
 
 @pytest.mark.parametrize("case_id", sorted(REJECTED_BUILDERS), ids=sorted(REJECTED_BUILDERS))
-def test_idiomatic_statement_rejects_the_corpus_rule_at_the_read_gate(case_id: str) -> None:
+def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: str) -> None:
     expected_rule = case_document(_CASES[case_id])["then"]["rejectedRule"]
     target = REJECTED_TARGETS[case_id]
-    statement = target.where(REJECTED_BUILDERS[case_id]())
+    query = target.where(REJECTED_BUILDERS[case_id]())
     with pytest.raises(OperationRejectedError) as exc_info:
-        preflight_find(statement, model=model_of(REJECTED_MODELS[case_id]))
+        preflight_find(query, model=model_of(REJECTED_MODELS[case_id]))
     assert exc_info.value.rule == expected_rule

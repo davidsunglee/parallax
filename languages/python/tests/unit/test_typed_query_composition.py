@@ -508,6 +508,63 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# What each `FindQuery.narrow` arity answers as the RESULT parameter, read     #
+# through the sort keys the answered query does and does not admit — with no   #
+# annotation anywhere, so the parameter is the one `narrow` produced rather    #
+# than one the case declared. Each case carries its runtime twin.              #
+# --------------------------------------------------------------------------- #
+
+
+def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
+    admitted = Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())
+    assert lowered_document(preflighted(admitted))["orderBy"] == {
+        "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
+        "keys": [{"attr": "Dog.barkVolume", "direction": "desc"}],
+    }
+    # A sibling's key is refused by the answered parameter and by the gate: the
+    # ordered rows are Dogs, and `Cat.indoor` applies to none of them.
+    refused = Animal.where(Animal.all).narrow(Dog).order_by(Cat.indoor.asc())  # pyright: ignore[reportArgumentType]
+    with pytest.raises(OperationRejectedError) as caught:
+        preflighted(refused)
+    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_narrowing_to_two_subtypes_answers_their_union() -> None:
+    admitted = Animal.where(Animal.all).narrow(Cat, Dog).order_by(Animal.name.asc())
+    assert lowered_document(preflighted(admitted))["orderBy"] == {
+        "operand": {"narrow": {"entity": "Animal", "to": ["Cat", "Dog"], "operand": {"all": {}}}},
+        "keys": [{"attr": "Animal.name", "direction": "asc"}],
+    }
+    # `Cat | Dog` is not a subtype of `Dog`, so a Dog member does not apply to
+    # every concrete the narrow left in the position — the union is what the
+    # parameter answers, not the common base.
+    refused = Animal.where(Animal.all).narrow(Cat, Dog).order_by(Dog.bark_volume.asc())  # pyright: ignore[reportArgumentType]
+    with pytest.raises(OperationRejectedError) as caught:
+        preflighted(refused)
+    assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
+    # A subtype list of indeterminate length reaches the variadic overload,
+    # which moves nothing: the result stays `Animal`, so a root key is admitted
+    # and a Dog key is refused STATICALLY even though the very same query is
+    # legal — the widest honest answer a fixed overload set can give to a list
+    # whose length it cannot see, which is why the suppression below has no
+    # runtime twin to raise.
+    subtypes: list[type[Entity]] = [Dog]
+    admitted = Animal.where(Animal.all).narrow(*subtypes).order_by(Animal.name.asc())
+    assert lowered_document(preflighted(admitted))["orderBy"] == {
+        "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
+        "keys": [{"attr": "Animal.name", "direction": "asc"}],
+    }
+    conservative = Animal.where(Animal.all).narrow(*subtypes).order_by(Dog.bark_volume.desc())  # pyright: ignore[reportArgumentType]
+    assert lowered_document(preflighted(conservative))["orderBy"] == {
+        "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
+        "keys": [{"attr": "Dog.barkVolume", "direction": "desc"}],
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Assignments: contravariant, and valued by the member's own declared type     #
 # --------------------------------------------------------------------------- #
 

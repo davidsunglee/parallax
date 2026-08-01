@@ -793,12 +793,12 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # (`graph_stories.py`) and no case-scoped reason remains for either.
 #
 # `.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT,
-# documented deferral (spec §3 `snapshot-history-includes`): `Statement`
+# documented deferral (spec §3 `snapshot-history-includes`): `FindQuery`
 # refuses the combination with `UnsupportedFeatureError` naming it. Not a gap —
 # a designed-in refusal.
 _SNAPSHOT_HISTORY_INCLUDES_UNSUPPORTED_REASON: Final[str] = (
     "`.history()`/`.as_of_range()` combined with `.include(...)` is an EXPLICIT, "
-    "designed-in deferral (spec §3 `snapshot-history-includes`): `Statement` refuses "
+    "designed-in deferral (spec §3 `snapshot-history-includes`): `FindQuery` refuses "
     "the combination with `UnsupportedFeatureError` naming it — not a capability gap, a "
     "documented refusal"
 )

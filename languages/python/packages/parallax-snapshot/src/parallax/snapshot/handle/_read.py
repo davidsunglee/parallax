@@ -14,7 +14,7 @@ exists anywhere in this codebase.
 The executor's own results (:class:`ExecutedStatement`, :class:`Execution`,
 :class:`FindResult`, :class:`MilestoneGraph`, :class:`HistoryFindResult`) stay
 co-located with it, together with the developer-facing :class:`Snapshot`
-surface they convert into and the pin helpers that carry a statement's or a
+surface they convert into and the pin helpers that carry a query's or a
 milestone's as-of coordinates across that conversion. Those helpers stay here
 rather than moving to the write side: `_write_inputs` imports this module, so
 the reverse edge would close a cycle.
@@ -141,7 +141,7 @@ class Snapshot[T]:
 
     @property
     def pin(self) -> Pin:
-        """The statement's OWN lowered as-of coordinates (spec §3): only
+        """The query's OWN lowered as-of coordinates (spec §3): only
         genuinely pinned axes — a scanned (``history`` / ``as_of_range``) axis
         is absent, per the core rule that a scan is not a pin."""
         return self._pin
