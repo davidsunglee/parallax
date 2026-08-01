@@ -564,6 +564,18 @@ def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
     }
 
 
+def test_ordering_before_narrowing_is_refused_statically_and_only_statically() -> None:
+    # The sort-key twin of the narrow clause's own no-retroactive-scope rule: a
+    # Find Query retains clauses rather than wrapping them, so ordering-then-
+    # narrowing and narrowing-then-ordering lower to ONE canonical operation and
+    # no model-aware rule can refuse one while accepting the other. What refuses
+    # the wrong order is the result parameter the receiver carries when the call
+    # is written, which is why the suppression below has no runtime twin.
+    late_narrow = Animal.where(Animal.all).order_by(Dog.bark_volume.desc()).narrow(Dog)  # pyright: ignore[reportArgumentType]
+    early_narrow = Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())
+    assert lowered_document(preflighted(late_narrow)) == lowered_document(preflighted(early_narrow))
+
+
 # --------------------------------------------------------------------------- #
 # Assignments: contravariant, and valued by the member's own declared type     #
 # --------------------------------------------------------------------------- #

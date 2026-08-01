@@ -223,9 +223,14 @@ class FindQuery[E, S]:
         A Sort Key carries the position it was built from and the canonical
         ordering term it holds; the query keeps the term alone, because the
         ordered rows' position is a property of the query rather than of a key.
-        Keys are measured against the RESULT — a subtype's key requires the root
-        narrow that establishes its scope first, and a later narrow never
-        retroactively legalizes an ordering authored before it.
+
+        Keys are measured against the RESULT, so a subtype's key requires the
+        root narrow that establishes its scope first — and that ordering rule is
+        STATIC ONLY. Clause order does not reach the wire: ordering before
+        narrowing and narrowing before ordering lower to one canonical
+        operation, so no model-aware rule could refuse the first and accept the
+        second. What refuses it is this parameter, against the result the
+        receiver carries at the moment the call is written.
 
         One resolved Attribute Identity may occur only once across the whole
         accumulated ordering, whichever direction each occurrence carries: a
