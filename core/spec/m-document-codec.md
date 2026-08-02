@@ -196,6 +196,16 @@ presence table and the encode/decode inverse below say nothing about it. That is
 why it is its own operation rather than an `encode` over a partial mapping, whose
 `Missing` means the opposite thing.
 
+The constraints are **keyed by path**, and that is a precondition on the caller,
+not a convenience: a candidate object holds one value per key, so **one constrained
+path is one candidate key**. A consumer holding two constraints on one path — the
+`x = a and x = b` a same-element conjunction can express — has one candidate to
+build only when the two values are equal, in which case they are one constraint.
+When they differ, no candidate carries them: this operation is not the place to
+choose which one survives, because a dropped constraint yields a probe that matches
+elements the predicate excludes, silently. The consumer either collapses the
+duplicate or refuses the predicate before it reaches here (`m-sql`, `m-dialect`).
+
 `patch` applies ordered patches to a document in memory and returns the result.
 It never reads the database and never issues a statement; composing the
 equivalent database expression is `m-sql`'s and `m-dialect`'s job, and the two
@@ -422,7 +432,10 @@ two paths agree; it promises never to invent a value for one.
   as an extraction (`m-dialect`, `m-sql`). That candidate carries each constrained
   leaf's **document encoding**, which is neither of the two forms above, so the
   three together close the lowering: text where it compares text, the managed value
-  where it casts, the encoding where it contains.
+  where it casts, the encoding where it contains. It binds as the `Document` it is —
+  the dialect adapts it to its structured-document type at bind time, exactly as it
+  adapts a written document — so no lowering and no golden ever holds its rendered
+  text.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`.
 - Read materialization decodes only the paths its result form needs, by declared

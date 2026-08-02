@@ -1374,6 +1374,27 @@ is built through the codec, never assembled around a predicate literal, exactly 
 the atomic document write is; the dialect adapts the finished candidate to its
 structured-document type at bind time.
 
+**The candidate therefore rides the bind list as a document, not as its rendered
+text**, exactly as the atomic value-object write's document does (below): the
+serialized form is what the MariaDB adapter produces *below* this seam, so it is
+neither this lowering's output nor a golden's authored value (`m-case-format`). A
+golden that spelled the candidate as text would fix a key order and a separator
+convention that nothing specifies, and two conforming implementations whose
+serializers differ by one space would then disagree on a document
+`m-document-codec` says is one value.
+
+**One constrained path, one candidate key.** The lowering builds
+`encodeCandidate`'s constraints from the element predicates of the scoped `where`
+(or from the single flat predicate), one entry per constrained element-relative
+path. A conjunction that constrains the **same** path twice with the same value is
+one constraint and collapses to one entry; one that constrains it with two
+**different** values has no candidate at all — an object carries one value per key,
+and dropping either constraint yields a candidate that matches elements the
+predicate excludes — so it is outside the containment seam and MariaDB rejects it
+with the capability diagnostic (`m-dialect`, "Scope of the containment golden").
+Postgres, whose element predicates ride one alias rather than one object, lowers it
+unchanged and answers with no rows.
+
 ```yaml
 # nestedEq(Customer.address.phones.type, 'home') — flat any-element:
 - sql:
@@ -1381,14 +1402,14 @@ structured-document type at bind time.
     mariadb: select t0.id, t0.name from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_contains(t0.address, ?, ?)
   binds:
     postgres: [phones, 'array', phones, '[]', type, home]
-    mariadb: ['$.phones', 'ARRAY', '{"type":"home"}', '$.phones']
+    mariadb: ['$.phones', 'ARRAY', { type: home }, '$.phones']
 # nestedExists(Customer.address.phones, where: type='home' AND number='555-9999') — same-element:
 - sql:
     postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)
     mariadb: select t0.id, t0.name from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_contains(t0.address, ?, ?)
   binds:
     postgres: [phones, 'array', phones, '[]', type, home, number, '555-9999']
-    mariadb: ['$.phones', 'ARRAY', '{"type":"home", "number":"555-9999"}', '$.phones']
+    mariadb: ['$.phones', 'ARRAY', { type: home, number: '555-9999' }, '$.phones']
 ```
 
 The unscoped `and(nestedEq(phones.type, 'home'), nestedEq(phones.number,
@@ -1435,11 +1456,13 @@ element must satisfy it (`m-op-algebra`):
 ```
 
 The MariaDB `json_contains` golden expresses **equality/containment** element
-predicates only (any-element `nestedEq`, same-element equality conjunctions);
+predicates only (any-element `nestedEq`, same-element equality conjunctions **over
+distinct paths**);
 non-equality element predicates through a `many` segment — `nestedGt` / `nestedLt` /
 `nestedNotEq` / `nestedBetween` / `nestedNotIn`, any of the five string predicates,
 or a `where` compound with a
-range/negated membership/string predicate/`or`/`not` — need a set-returning
+range/negated membership/string predicate/`or`/`not`, or one whose equalities
+constrain a single path with two different values — need a set-returning
 unnest, which lies **outside what the MariaDB containment seam can express**; a
 MariaDB implementation rejects them with a capability diagnostic rather than
 lowering them (`m-dialect`, "Scope of the containment golden"). Postgres's

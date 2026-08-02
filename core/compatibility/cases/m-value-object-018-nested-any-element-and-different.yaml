@@ -32,7 +32,7 @@ then:
         mariadb: select t0.id, t0.name from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_contains(t0.address, ?, ?) and json_type(json_extract(t0.address, ?)) = ? and json_contains(t0.address, ?, ?)
       binds:
         postgres: [phones, 'array', phones, '[]', type, home, phones, 'array', phones, '[]', number, '555-9999']
-        mariadb: ['$.phones', 'ARRAY', '{"type":"home"}', '$.phones', '$.phones', 'ARRAY', '{"number":"555-9999"}', '$.phones']
+        mariadb: ['$.phones', 'ARRAY', { type: home }, '$.phones', '$.phones', 'ARRAY', { number: '555-9999' }, '$.phones']
   referenceSql:
     postgres: select id, name from customer where address -> 'phones' @> '[{"type":"home"}]' and address -> 'phones' @> '[{"number":"555-9999"}]'
     mariadb: select id, name from customer where json_type(json_extract(address, '$.phones')) = 'ARRAY' and exists (select 1 from json_table(address, '$.phones[*]' columns (type varchar(64) path '$.type', number varchar(64) path '$.number')) jt where jt.type = 'home') and exists (select 1 from json_table(address, '$.phones[*]' columns (type varchar(64) path '$.type', number varchar(64) path '$.number')) jt2 where jt2.number = '555-9999')

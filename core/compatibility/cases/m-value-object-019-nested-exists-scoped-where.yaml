@@ -10,8 +10,9 @@
 #
 # Postgres puts both element predicates on the SAME unnested alias t1 (behind the
 # `case`/`jsonb_typeof` array guard of case 015); MariaDB uses one `json_contains`
-# whose candidate object '{"type":"home", "number":"555-9999"}' forces one element
-# to contain all of it, preceded by the `json_type(json_extract(...)) = 'ARRAY'`
+# whose candidate document { type: home, number: '555-9999' } — bound as a document
+# and serialized by the provider, never as authored text (m-case-format) — forces one
+# element to contain all of it, preceded by the `json_type(json_extract(...)) = 'ARRAY'`
 # guard. The object row (10), whose content IS that candidate, is the trap:
 # unguarded, `json_contains` would match it and Postgres would ERROR; the guard
 # collapses the non-array `phones` to not-present. The oracle is a `json_table`
@@ -36,7 +37,7 @@ then:
         mariadb: select t0.id, t0.name from customer t0 where json_type(json_extract(t0.address, ?)) = ? and json_contains(t0.address, ?, ?)
       binds:
         postgres: [phones, 'array', phones, '[]', type, home, number, '555-9999']
-        mariadb: ['$.phones', 'ARRAY', '{"type":"home", "number":"555-9999"}', '$.phones']
+        mariadb: ['$.phones', 'ARRAY', { type: home, number: '555-9999' }, '$.phones']
   referenceSql:
     postgres: select id, name from customer where address -> 'phones' @> '[{"type":"home", "number":"555-9999"}]'
     mariadb: select id, name from customer where json_type(json_extract(address, '$.phones')) = 'ARRAY' and exists (select 1 from json_table(address, '$.phones[*]' columns (type varchar(64) path '$.type', number varchar(64) path '$.number')) jt where jt.type = 'home' and jt.number = '555-9999')
