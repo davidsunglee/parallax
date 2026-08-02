@@ -1043,7 +1043,6 @@ def test_a_join_that_does_not_resolve_locally_designates_no_endpoint() -> None:
 
 
 def _document_family_joined_through_an_inherited_endpoint() -> list[dict[str, Any]]:
-    """A document-mapped TPCS family whose concrete joins an inherited Attribute."""
     return [
         {
             "name": "Ledger",
