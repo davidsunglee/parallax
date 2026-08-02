@@ -1,0 +1,33 @@
+# Portable document encoding: a `bytes` leaf stores LOWERCASE hexadecimal, two digits
+# per byte, with no prefix or separator, and a comparison binds that spelling
+# (m-document-codec, m-dialect text-compared table, m-sql), on Postgres AND MariaDB.
+#
+# Equal texts are equal octet sequences and text order is octet order, so the
+# extraction compares directly with no cast — and a cast would not even be honest
+# here: a Postgres text-to-`bytea` cast reinterprets the characters instead of
+# decoding the hex the codec wrote.
+#
+# The literal is written in uppercase to prove the normalization: it decodes to the
+# octets and re-spells through the codec, so the bind is `0a1b` and Ada matches. Bo
+# stores `ff00`; the not-present rows (3/4/5) extract SQL NULL.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedEq: { path: Sample.profile.blob, value: '0A1B' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where jsonb_extract_path_text(t0.profile, ?) = ?
+        mariadb: select t0.id, t0.label from sample t0 where json_value(t0.profile, ?) = ?
+      binds:
+        postgres: [blob, '0a1b']
+        mariadb: ['$.blob', '0a1b']
+  referenceSql:
+    postgres: select id, label from sample where profile ->> 'blob' = '0a1b'
+    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.blob')), 'null') = '0a1b'
+  rows:
+    - { id: 1, label: Ada }
+  roundTrips: 1

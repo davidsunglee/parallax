@@ -1,0 +1,114 @@
+# Fixture rows for the document-codec model (models/document-codec.yaml).
+#
+# Each `profile` value is the STORED DOCUMENT, so every leaf is authored in the one
+# portable spelling m-document-codec fixes for its declared type — a `decimal` as its
+# exact digit string, `bytes` as lowercase hexadecimal, `date` / `time` / `timestamp`
+# as ISO-8601 (the instant already UTC at microsecond precision), and `uuid` in
+# canonical lowercase. A read case's golden bind is what the codec produces for the
+# same value, so a bind spelled any other way selects no row.
+#
+# The two populated rows are chosen so each comparison DISCRIMINATES, and two of them
+# discriminate against the wrong decision rather than merely against the other row:
+#
+#   id 1 Ada   flag true   small 10   ratio 1.5   amount "10.25"   day 2026-01-15
+#   id 2 Bo    flag false  small -3   ratio 2.5   amount  "9.25"   day 2025-12-31
+#
+# * `amount` orders 10.25 > 9.25 numerically and "10.25" < "9.25" as text, because a
+#   decimal's integer part has no fixed width. `nestedGt(amount, 9.50)` therefore
+#   returns Ada through the cast and NO row if the same predicate were lowered as a
+#   text comparison — which is why `decimal` sits in m-dialect's cast table even
+#   though its document form is a JSON string.
+# * `flag` is a JSON boolean, and the two dialects' text extractions disagree on its
+#   characters (`true`/`false` on Postgres, `1`/`0` on MariaDB). `nestedEq(flag, true)`
+#   returns Ada through the cast on both engines and would silently return nothing on
+#   MariaDB if a bound text were compared instead.
+#
+# The remaining three rows instantiate the presence states side by side, so a decode
+# that confuses them fails a case rather than a review:
+#
+#   id 3 Cyd   `profile` present, every leaf key ABSENT, `entries` an EMPTY ARRAY
+#   id 4 Dee   `profile` present, every leaf an explicit JSON NULL, `origin` null
+#   id 5 Eli   `profile` is SQL NULL — the whole column
+#
+# All three collapse to "not present" for every comparison below (m-op-algebra), and
+# `entries` reads as zero elements for all of them alike — the empty array, the missing
+# key, and the null column are one logical zero state.
+#
+# `entries` is where the to-many containment candidate is measured. Ada's first element
+# and Bo's only element agree on `kind`, `price`, and `issued` and differ ONLY on
+# `active`, so a same-element candidate constraining all four matches Ada alone; drop
+# the boolean from the candidate, or spell it as MariaDB's `1`, and the answer changes.
+# Ada's second element carries `work`/`false`, so no cross-element pairing satisfies it.
+Sample:
+  - id: 1
+    label: Ada
+    profile:
+      flag: true
+      small: 10
+      big: 100
+      ratio: 1.5
+      measure: 2.25
+      text: alpha
+      amount: "10.25"
+      blob: "0a1b"
+      day: "2026-01-15"
+      clock: "09:30:00"
+      instant: "2026-01-15T09:30:00.000000Z"
+      token: "123e4567-e89b-12d3-a456-426614174000"
+      origin:
+        city: Oslo
+        since: "2020-03-01"
+      entries:
+        - { kind: home, active: true, price: "19.99", issued: "2026-02-01" }
+        - { kind: work, active: false, price: "5.00", issued: "2026-03-01" }
+  - id: 2
+    label: Bo
+    profile:
+      flag: false
+      small: -3
+      big: 900
+      ratio: 2.5
+      measure: 9.75
+      text: beta
+      amount: "9.25"
+      blob: "ff00"
+      day: "2025-12-31"
+      clock: "23:59:59.500000"
+      instant: "2025-12-31T23:59:59.500000Z"
+      token: "00000000-0000-4000-8000-0000000000ab"
+      origin:
+        city: Bergen
+        since: "2019-01-01"
+      entries:
+        - { kind: home, active: false, price: "19.99", issued: "2026-02-01" }
+  # id 3 (Cyd): `profile` is present but every leaf key is MISSING — the absent-key
+  # presence state — and `entries` is the empty array, the sole zero-element form.
+  - id: 3
+    label: Cyd
+    profile:
+      entries: []
+  # id 4 (Dee): every leaf key is PRESENT with an explicit JSON null, and so is the
+  # `one` occurrence. Distinct from id 3 in the document, identical to it through
+  # every comparison (m-op-algebra absence collapse).
+  - id: 4
+    label: Dee
+    profile:
+      flag: null
+      small: null
+      big: null
+      ratio: null
+      measure: null
+      text: null
+      amount: null
+      blob: null
+      day: null
+      clock: null
+      instant: null
+      token: null
+      origin: null
+      entries: []
+  # id 5 (Eli): the nullable top-level occurrence is written absent, so the whole
+  # structured-document column is SQL NULL.
+  - id: 5
+    label: Eli
+    profile: null

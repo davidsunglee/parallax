@@ -205,6 +205,39 @@
       }
     }
   },
+  "models/document-codec.yaml": {
+    "parallax.compatibility.Sample": {
+      "attribute": {
+        "id": "id",
+        "label": "label"
+      },
+      "documentPath": {
+        "profile.amount": "profile:amount",
+        "profile.big": "profile:big",
+        "profile.blob": "profile:blob",
+        "profile.clock": "profile:clock",
+        "profile.day": "profile:day",
+        "profile.entries": "profile:entries",
+        "profile.entries.active": "profile:entries.active",
+        "profile.entries.issued": "profile:entries.issued",
+        "profile.entries.kind": "profile:entries.kind",
+        "profile.entries.price": "profile:entries.price",
+        "profile.flag": "profile:flag",
+        "profile.instant": "profile:instant",
+        "profile.measure": "profile:measure",
+        "profile.origin": "profile:origin",
+        "profile.origin.city": "profile:origin.city",
+        "profile.origin.since": "profile:origin.since",
+        "profile.ratio": "profile:ratio",
+        "profile.small": "profile:small",
+        "profile.text": "profile:text",
+        "profile.token": "profile:token"
+      },
+      "valueObject": {
+        "profile": "profile"
+      }
+    }
+  },
   "models/document.yaml": {
     "parallax.compatibility.Document": {
       "attribute": {

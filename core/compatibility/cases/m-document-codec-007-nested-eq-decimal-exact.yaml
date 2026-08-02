@@ -1,0 +1,35 @@
+# Portable document encoding: a `decimal(p, s)` equality binds the EXACT decimal, not
+# the JSON number that carried the literal (m-document-codec, m-dialect, m-sql), on
+# Postgres AND MariaDB.
+#
+# The compared literal arrives as a JSON number and is decoded to the managed decimal
+# before it is bound, so the cast comparison happens entirely in exact decimal space.
+# Binding the number instead would compare a binary float, which matches every stored
+# value that merely rounds to the same float — a wrong row set on both engines, and
+# invisible at the scale this fixture uses, which is exactly why the rule is stated
+# rather than left to the arithmetic.
+#
+# Ada stores "10.25"; Bo's "9.25" and the three not-present rows are excluded. The
+# document keeps its exact digit string, so an equality over it compares like with
+# like: the writer's spelling and the reader's literal resolve to one decimal value.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedEq: { path: Sample.profile.amount, value: 10.25 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as decimal(12, 2)) = ?
+        mariadb: select t0.id, t0.label from sample t0 where cast(json_value(t0.profile, ?) as decimal(12, 2)) = ?
+      binds:
+        postgres: [amount, '10.25']
+        mariadb: ['$.amount', '10.25']
+  referenceSql:
+    postgres: select id, label from sample where (profile ->> 'amount')::decimal(12, 2) = 10.25
+    mariadb: select id, label from sample where cast(nullif(json_unquote(json_extract(profile, '$.amount')), 'null') as decimal(12, 2)) = 10.25
+  rows:
+    - { id: 1, label: Ada }
+  roundTrips: 1

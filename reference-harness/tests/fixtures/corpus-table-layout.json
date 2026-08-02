@@ -582,6 +582,45 @@
       ]
     }
   },
+  "models/document-codec.yaml": {
+    "sample": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Sample"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Sample.id",
+          "declaringOwner": "parallax.compatibility.Sample",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Sample"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.Sample.label",
+          "declaringOwner": "parallax.compatibility.Sample",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Sample"
+          ],
+          "column": "profile",
+          "contributor": "valueObject:parallax.compatibility.Sample.profile",
+          "declaringOwner": "parallax.compatibility.Sample",
+          "effectiveNullable": true,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/document.yaml": {
     "folder": {
       "columns": [

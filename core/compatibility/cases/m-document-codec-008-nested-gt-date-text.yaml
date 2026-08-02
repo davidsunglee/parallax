@@ -1,0 +1,34 @@
+# Portable document encoding: a `date` leaf compares as the extracted TEXT, with no
+# cast on either dialect, and its ISO-8601 spelling is what makes that order-correct
+# (m-document-codec, m-dialect text-compared table, m-sql), on Postgres AND MariaDB.
+#
+# `YYYY-MM-DD` is fixed width with the most significant field first, so text order IS
+# calendar order and the extraction can be compared directly. That is why the spelling
+# is normative in m-document-codec rather than a serialization convenience: changing
+# it would change predicate and ordering results, and would have to move m-dialect's
+# decision — adding a cast for `date` — with it.
+#
+# Ada's `day` is 2026-01-15 and Bo's is 2025-12-31, so `nestedGt(day, '2025-12-31')`
+# answers Ada across a year boundary; the not-present rows (3/4/5) extract SQL NULL
+# and are excluded.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, temporal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedGt: { path: Sample.profile.day, value: '2025-12-31' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where jsonb_extract_path_text(t0.profile, ?) > ?
+        mariadb: select t0.id, t0.label from sample t0 where json_value(t0.profile, ?) > ?
+      binds:
+        postgres: [day, '2025-12-31']
+        mariadb: ['$.day', '2025-12-31']
+  referenceSql:
+    postgres: select id, label from sample where profile ->> 'day' > '2025-12-31'
+    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.day')), 'null') > '2025-12-31'
+  rows:
+    - { id: 1, label: Ada }
+  roundTrips: 1

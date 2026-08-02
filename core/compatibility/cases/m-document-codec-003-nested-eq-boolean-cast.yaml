@@ -1,0 +1,36 @@
+# Portable document encoding: a `boolean` leaf compares through a dialect CAST, never
+# as extracted text (m-document-codec, m-dialect typed cast form, m-sql), on Postgres
+# AND MariaDB.
+#
+# The document stores a JSON boolean on both engines, but the two golden extractions
+# hand back different characters for it: `jsonb_extract_path_text` yields `true` while
+# `json_value` yields `1`. So no single bound text matches on both — a
+# `json_value(...) = 'true'` predicate PLANS and EXECUTES on MariaDB and selects
+# nothing, which is a wrong row set rather than an error. `boolean` therefore sits in
+# m-dialect's cast table, and the bind is the managed boolean the cast compares
+# against inside the engine's own type system.
+#
+# Ada's `flag` is true and Bo's is false; the three not-present rows (3/4/5) cast SQL
+# NULL and are excluded, so this case answers Ada alone on both dialects and answers
+# NOTHING on MariaDB under the text lowering it exists to refuse.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, cast, boolean, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedEq: { path: Sample.profile.flag, value: true }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as boolean) = ?
+        mariadb: select t0.id, t0.label from sample t0 where cast(json_value(t0.profile, ?) as signed) = ?
+      binds:
+        postgres: [flag, true]
+        mariadb: ['$.flag', true]
+  referenceSql:
+    postgres: select id, label from sample where (profile ->> 'flag')::boolean = true
+    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.flag')), 'null') = 'true'
+  rows:
+    - { id: 1, label: Ada }
+  roundTrips: 1

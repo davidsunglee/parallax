@@ -72,6 +72,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-inheritance": "parallax.core.inheritance",
     "m-storage-layout": "parallax.core.storage_layout",
     "m-value-object": "parallax.core.value_object",
+    "m-document-codec": "parallax.core.document_codec",
     "m-relationship": "parallax.core.relationship",
     "m-op-algebra": "parallax.core.op_algebra",
     "m-sql": "parallax.core.sql_gen",
@@ -145,6 +146,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.relationship",
             "parallax.core.op_algebra",
             "parallax.core.temporal_read",
+            "parallax.core.document_codec",
             "parallax.core._formation_profile",
         }
     ),

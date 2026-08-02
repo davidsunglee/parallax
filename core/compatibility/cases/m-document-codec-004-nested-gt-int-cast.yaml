@@ -1,0 +1,32 @@
+# Portable document encoding: an `int32` leaf is a JSON number and compares through
+# the integer cast (m-document-codec, m-dialect typed cast form, m-sql), on Postgres
+# AND MariaDB.
+#
+# The integer family casts because its document spelling does not order in value order
+# as text: `-3` sorts above `10` as characters and below it as a number. Postgres
+# spells the cast `bigint` and MariaDB `signed` — one width for both declared integer
+# types, since the neutral value space is what the comparison is over.
+#
+# Ada's `small` is 10 and Bo's is -3, so `nestedGt(small, 0)` answers Ada; the
+# not-present rows (3/4/5) cast SQL NULL and are excluded.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedGt: { path: Sample.profile.small, value: 0 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as bigint) > ?
+        mariadb: select t0.id, t0.label from sample t0 where cast(json_value(t0.profile, ?) as signed) > ?
+      binds:
+        postgres: [small, 0]
+        mariadb: ['$.small', 0]
+  referenceSql:
+    postgres: select id, label from sample where (profile ->> 'small')::bigint > 0
+    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.small')), 'null') + 0 > 0
+  rows:
+    - { id: 1, label: Ada }
+  roundTrips: 1

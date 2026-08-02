@@ -1,0 +1,53 @@
+# The containment candidate carries each constrained leaf's DOCUMENT ENCODING, which
+# is neither of the two comparison forms (m-document-codec `encodeCandidate`, m-sql
+# to-many, m-dialect containment scope), on Postgres AND MariaDB.
+#
+# A same-element `where` requires ONE element to satisfy the whole compound. Postgres
+# puts every element predicate on the same unnested alias, so each leaf compares
+# exactly as it would at the top level — cast for `boolean` and `decimal`, text for
+# `date`. MariaDB expresses it as `json_contains` against a candidate OBJECT, and
+# containment compares JSON VALUES type-strictly, so neither comparison form is what
+# it binds: the boolean's cast form is MariaDB's `1` and `{"active": 1}` matches no
+# element storing a JSON boolean, while the decimal's managed value is a JSON number
+# and `{"price": 19.99}` matches no element storing the digit string `"19.99"`. Every
+# one of those misses is SILENT — the statement plans, executes, and answers empty.
+#
+# This is the corpus's first NON-STRING candidate, and it is what makes that concrete:
+# the candidate constrains a `string`, a `boolean`, a `decimal`, and a `date` at once,
+# so a candidate assembled from anything but the encoding table fails here. The
+# candidate crosses the bind seam as the DOCUMENT the codec returns — the provider
+# serializes it (m-case-format), so no golden holds its rendered text.
+#
+# Ada's first element and Bo's only element agree on `kind`, `price`, and `issued` and
+# differ only on `active`, so the answer is Ada alone; Ada's second element carries
+# `work`/`false`, so no cross-element pairing satisfies the compound either. The
+# empty-array row (3), the null-occurrence rows (4/5) contribute no element.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedExists:
+      path: Sample.profile.entries
+      where:
+        and:
+          operands:
+            - nestedEq: { path: kind, value: home }
+            - nestedEq: { path: active, value: true }
+            - nestedEq: { path: price, value: 19.99 }
+            - nestedEq: { path: issued, value: '2026-02-01' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.profile, ?)) = ? then jsonb_extract_path(t0.profile, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and cast(jsonb_extract_path_text(t1.value, ?) as boolean) = ? and cast(jsonb_extract_path_text(t1.value, ?) as decimal(12, 2)) = ? and jsonb_extract_path_text(t1.value, ?) = ?)
+        mariadb: select t0.id, t0.label from sample t0 where json_type(json_extract(t0.profile, ?)) = ? and json_contains(t0.profile, ?, ?)
+      binds:
+        postgres: [entries, 'array', entries, '[]', kind, home, active, true, price, '19.99', issued, '2026-02-01']
+        mariadb: ['$.entries', 'ARRAY', { kind: home, active: true, price: '19.99', issued: '2026-02-01' }, '$.entries']
+  referenceSql:
+    postgres: select id, label from sample where profile -> 'entries' @> '[{"kind":"home", "active":true, "price":"19.99", "issued":"2026-02-01"}]'
+    mariadb: select id, label from sample where json_type(json_extract(profile, '$.entries')) = 'ARRAY' and exists (select 1 from json_table(profile, '$.entries[*]' columns (kind varchar(64) path '$.kind', active varchar(8) path '$.active', price varchar(32) path '$.price', issued varchar(32) path '$.issued')) jt where jt.kind = 'home' and jt.active = 'true' and jt.price = '19.99' and jt.issued = '2026-02-01')
+  rows:
+    - { id: 1, label: Ada }
+  roundTrips: 1

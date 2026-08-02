@@ -1,0 +1,34 @@
+# Portable document encoding: a `time` leaf stores ISO-8601 `hh:mm:ss`, with
+# `.ffffff` only where the value carries sub-second precision, and a comparison binds
+# that form (m-document-codec, m-dialect text-compared table, m-sql), on Postgres AND
+# MariaDB.
+#
+# The fields are zero-padded most significant first, so text order is clock order and
+# the extraction compares directly with no cast.
+#
+# The literal is the abbreviated `09:30`, which names the same time of day Ada stores
+# as `09:30:00`: it decodes to the time and re-spells through the codec, so the bind
+# carries the stored characters. This closes the last of the six text-compared types.
+# Bo stores `23:59:59.500000` — the sub-second form — and the not-present rows (3/4/5)
+# extract SQL NULL.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, temporal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedEq: { path: Sample.profile.clock, value: '09:30' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where jsonb_extract_path_text(t0.profile, ?) = ?
+        mariadb: select t0.id, t0.label from sample t0 where json_value(t0.profile, ?) = ?
+      binds:
+        postgres: [clock, '09:30:00']
+        mariadb: ['$.clock', '09:30:00']
+  referenceSql:
+    postgres: select id, label from sample where profile ->> 'clock' = '09:30:00'
+    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.clock')), 'null') = '09:30:00'
+  rows:
+    - { id: 1, label: Ada }
+  roundTrips: 1

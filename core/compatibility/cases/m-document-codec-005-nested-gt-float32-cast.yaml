@@ -1,0 +1,33 @@
+# Portable document encoding: a `float32` leaf is a JSON number and casts to the
+# dialect's SINGLE-precision type (m-document-codec, m-dialect typed cast form,
+# m-sql), on Postgres AND MariaDB.
+#
+# The cast target is per declared width, not per family: `float32` casts to Postgres
+# `real` / MariaDB `float` while `float64` casts to `double precision` / `double`
+# (m-value-object-009 is that sibling). The encoding is a JSON number in both cases —
+# the shortest one that decodes back to the value at the declared width — because a
+# float IS a binary float and needs no exact-decimal carrier.
+#
+# Ada's `ratio` is 1.5 and Bo's is 2.5, so `nestedGt(ratio, 2)` answers Bo; the
+# not-present rows (3/4/5) cast SQL NULL and are excluded.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedGt: { path: Sample.profile.ratio, value: 2 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where cast(jsonb_extract_path_text(t0.profile, ?) as real) > ?
+        mariadb: select t0.id, t0.label from sample t0 where cast(json_value(t0.profile, ?) as float) > ?
+      binds:
+        postgres: [ratio, 2.0]
+        mariadb: ['$.ratio', 2.0]
+  referenceSql:
+    postgres: select id, label from sample where (profile ->> 'ratio')::real > 2
+    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.ratio')), 'null') + 0 > 2
+  rows:
+    - { id: 2, label: Bo }
+  roundTrips: 1

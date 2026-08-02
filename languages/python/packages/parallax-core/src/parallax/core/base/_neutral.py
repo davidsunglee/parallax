@@ -239,6 +239,10 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     exactly, a :class:`Float32` or :class:`Float64`; an ISO-8601 string spells a
     :class:`Date`, :class:`Time`, or :class:`Timestamp`, a canonical UUID string
     spells a :class:`Uuid`, and a lowercase-hex string spells :class:`Bytes`.
+    A :class:`Decimal` additionally spells as an exact digit STRING, which is the
+    one literal a JSON number cannot carry — no JSON number declares a scale, so
+    that is the form a structured document stores
+    (``parallax.core.document_codec``) and this is the inverse it decodes through.
     Every other space is already carried natively, so its literal decodes to
     itself.
 
@@ -262,6 +266,8 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
             # the digits the literal was written with rather than the binary
             # expansion of the float that carried it.
             return _decimal.Decimal(repr(value))
+        case Decimal() if isinstance(value, str):
+            return _decoded_decimal(value)
         case Bytes() if isinstance(value, str):
             return _decoded(bytes.fromhex, value)
         case Date() if isinstance(value, str):
@@ -349,6 +355,20 @@ def _decoded[T](decode: Callable[[str], T], literal: str) -> T | str:
     try:
         return decode(literal)
     except ValueError:
+        return literal
+
+
+def _decoded_decimal(literal: str) -> _decimal.Decimal | str:
+    """An exact decimal string decoded, or the literal itself when it is not one.
+
+    Separate from :func:`_decoded` because a malformed decimal raises
+    :class:`decimal.InvalidOperation`, an :class:`ArithmeticError` rather than a
+    :class:`ValueError`. ``nan`` and ``infinity`` parse here and are refused by
+    :func:`matches_neutral_type`, which is where value-space membership is decided.
+    """
+    try:
+        return _decimal.Decimal(literal)
+    except _decimal.InvalidOperation:
         return literal
 
 
