@@ -1,8 +1,18 @@
 # Python Metamodel Hub and Entity frontend design
 
-**Status:** Accepted design; COR-64 execution-seam and COR-50 graph closure pending
+**Status:** Accepted design; COR-64 landed and amended it (below); COR-50 graph closure pending
 
 **Accepted:** 2026-07-20
+
+**Amended:** 2026-08-01 by COR-64
+
+> **COR-64 renamed the Metamodel Hub to the Domain Model and replaced exact-hub
+> query identity with Python's type system.** The "Settled design" sections
+> below have been reconciled with what landed. The "Delivery plan" sections are
+> a historical record of what each ticket was scoped to build and are
+> deliberately left as written; read them with the substitutions in
+> [Python ADR 0007](../../languages/python/docs/adr/0007-entity-classes-compose-into-explicit-sealed-metamodel-hubs.md)'s
+> closing amendment, which tabulates every retirement one for one.
 
 **Scope:** Candidate 06 in the Python architecture review; the core metadata
 contract it revealed; the Python `parallax.core.entity` frontend; the optional
@@ -12,7 +22,7 @@ translation, provenance, and Snapshot-handle seams.
 ## Purpose
 
 Replace the process-global, mutually dependent Entity frontend with one
-explicit, sealed Metamodel Hub and a directed set of internal concerns. The
+explicit Domain Model and a directed set of internal concerns. The
 result should make the ordinary Python path pleasant, make the core metadata
 contract representation-independent, and leave a fresh implementation session
 with no ambient registry, descriptor mirror, lazy back-import, or migration
@@ -72,7 +82,7 @@ class Order(
     customer: Rel[Customer] = rel(...)
 
 
-models = MetamodelHub(Customer, Order)
+models = DomainModel(Customer, Order)
 
 db = Database.connect(adapter, models)
 
@@ -87,7 +97,7 @@ Entity Classes are always frozen. Pydantic's `frozen=True`, `EntityConfig`,
 `__parallax__`, `registry=`, explicit registration calls, and default registry
 selection are not part of the target interface.
 
-Descriptor interchange is explicitly optional and external to the Hub API:
+Descriptor interchange is explicitly optional and external to the Domain Model API:
 
 ```python
 from parallax.descriptor import export_yaml, hub_from_yaml
@@ -100,15 +110,17 @@ canonical_yaml = export_yaml(models)
 
 ### One explicit model scope
 
-- `MetamodelHub` is the sole Python model scope.
+- `DomainModel` is the sole Python model scope.
 - There is no process-global default, parent registry, `ScopedMetamodel`,
   ambient fallback, or inference of a scope from an arbitrary class list.
-- A hub has exactly one fixed source: Entity Classes supplied to its public
+- A model has exactly one fixed source: Entity Classes supplied to its public
   constructor, or an Unresolved Metamodel supplied through a private,
   first-party construction seam. The optional Descriptor Frontend owns the
   latter call after accepting a canonical descriptor. Sources cannot be mixed
-  and classes cannot be late-bound into a descriptor-backed hub.
-- One Entity Class may be bound to only one successfully sealed hub.
+  and classes cannot be late-bound into a descriptor-backed model.
+- One Entity Class participates in any number of Domain Models, and one Domain
+  Model serves any number of Databases. Composition claims nothing and creates
+  no synchronization point.
 
 ### Class declaration and model composition are separate
 
@@ -138,12 +150,12 @@ canonical_yaml = export_yaml(models)
 - A Value Object intended for one occurrence may be declared lexically inside
   its owning Entity or Value Object. A shape used at multiple occurrence paths
   is an ordinary standalone Value Object class referenced by each `Attr[...]`
-  annotation. Neither form is a hub candidate or requires registration: only
-  Entity Classes are passed to `MetamodelHub`, and the frontend follows their
+  annotation. Neither form is a model candidate or requires registration: only
+  Entity Classes are passed to `DomainModel`, and the frontend follows their
   explicit annotations. Shape keys, occurrence keys, and shape registration
   are not part of the Python authoring interface.
 - `TxTemporal` and `Bitemporal` are framework roots derived from
-  `Entity`, exactly as `Entity` itself is. They are neither hub candidates nor
+  `Entity`, exactly as `Entity` itself is. They are neither model candidates nor
   domain inheritance positions. `TxTemporal` supplies the typed,
   read-only `tx_start`/`tx_end` attributes with `in_z`/`out_z` mappings;
   `Bitemporal` supplies typed, read-only `valid_start`/`valid_end` followed by
@@ -171,7 +183,7 @@ class Customer(Entity, table="customer"):
     address: Attr[Address]
 
 
-models = MetamodelHub(Customer)
+models = DomainModel(Customer)
 ```
 
 The reusable form lifts only the shared shape out of its owners:
@@ -194,12 +206,12 @@ class Supplier(Entity, table="supplier"):
     address: Attr[Address]
 
 
-models = MetamodelHub(Customer, Supplier)
+models = DomainModel(Customer, Supplier)
 ```
 
 The reusable class contributes one declaration shape, while compilation gives
 each use its own path-based Value Object Identity. The class is still reached
-only through Entity declarations and is not passed to the hub separately.
+only through Entity declarations and is not passed to the model separately.
 
 - Inheritance uses explicit, glossary-aligned declaration values:
   `AbstractRoot`, `AbstractSubtype`, and `ConcreteSubtype`. Every subclass in a
@@ -213,16 +225,16 @@ only through Entity declarations and is not passed to the hub separately.
   entity declares its own table; a TPH Abstract Root declares the family's one
   shared table and its concrete descendants omit it; a TPCS root and abstract
   subtypes omit it while every concrete subtype declares its own table.
-- Defining or importing an Entity Class does not mutate a hub.
-- `MetamodelHub(*entity_classes)` receives the complete class-backed candidate
+- Defining or importing an Entity Class does not mutate a model.
+- `DomainModel(*entity_classes)` receives the complete class-backed candidate
   set in one call. The set is immutable after construction.
-- All inheritance participants are supplied explicitly; the hub does not scan
+- All inheritance participants are supplied explicitly; the model does not scan
   `__subclasses__()` or infer imported classes from process state.
 - A Python `Rel[Target]` class value resolves directly within the candidate set.
   A string target such as `Rel["Customer"]` is relative only to the declaring
   class's core namespace, while `Rel["crm.Customer"]` is exact. Resolution
   never evaluates arbitrary module globals, calls `eval`, or searches outside
-  the hub candidate set.
+  the model candidate set.
 - `Rel[Target]` is the sole Python target declaration. `rel(...)` has exactly
   two mutually exclusive forms:
 
@@ -242,14 +254,14 @@ only through Entity declarations and is not passed to the hub separately.
 - There is no public class-backed `add()` or `build()` path. Large applications
   may expand explicit tuples into the constructor.
 - Every frontend source contains at least one Entity declaration.
-  `MetamodelHub()` fails before construction with
+  `DomainModel()` fails before construction with
   `MetamodelDefinitionError(code="metamodel-empty")` and no argument index.
   The canonical descriptor retains its schema-level nonempty Entity
   requirement, so an empty descriptor fails during descriptor parsing rather
   than during formation. Every other Unresolved Metamodel adapter guarantees the
   same nonempty source invariant.
-- `MetamodelHub(*classes)` validates its source arguments left-to-right before
-  constructing a hub. Every argument must be a domain Entity Class; Entity
+- `DomainModel(*classes)` validates its source arguments left-to-right before
+  constructing a model. Every argument must be a domain Entity Class; Entity
   instances, ordinary classes, Value Object classes, and the framework roots
   `Entity`, `TxTemporal`, and `Bitemporal` fail with
   `MetamodelDefinitionError(code="metamodel-invalid-entity-class")`. Repeating
@@ -266,17 +278,17 @@ only through Entity declarations and is not passed to the hub separately.
   unsound — and no filesystem or stream I/O; acquisition belongs to the
   caller. Malformed UTF-8 is a syntax failure for the selected format.
   Descriptor ingestion has three explicit phases. Invalid JSON/YAML text raises
-  `DescriptorSyntaxError(code="descriptor-invalid-syntax")` before a hub
+  `DescriptorSyntaxError(code="descriptor-invalid-syntax")` before a model
   exists, carrying its format, optional one-based line/column, and parser
   cause. A decoded document that violates the canonical schema raises
   `DescriptorSchemaError(code="descriptor-schema-invalid")`, also before a
-  hub exists, carrying a canonically ordered immutable violation sequence. A
+  model exists, carrying a canonically ordered immutable violation sequence. A
   schema-valid document whose denoted core value is unconstructible — an
   out-of-bounds or non-canonical decimal type spelling — raises
-  `DescriptorValueError(code="descriptor-value-invalid")`, also before a hub
+  `DescriptorValueError(code="descriptor-value-invalid")`, also before a model
   exists, carrying the same canonically ordered violation shape over
   `m-descriptor`'s value-rule vocabulary.
-  Only a document every phase accepts reaches hub construction; missing
+  Only a document every phase accepts reaches model construction; missing
   references, invalid families, relationship incoherence, and all other model
   semantics then fail through `MetamodelValidationError` raised by that same
   construction call. An ingestion function therefore raises both families —
@@ -285,7 +297,7 @@ only through Entity declarations and is not passed to the hub separately.
   Successful ingestion converts caller input into immutable descriptor-owned
   records, retains no caller-owned mutable document, adapts those records to
   `UnresolvedMetamodel`, and calls the private, versioned first-party seam
-  `MetamodelHub._from_unresolved(source)`. That seam is not a supported
+  `DomainModel._from_unresolved(source)`. That seam is not a supported
   third-party extension point; no registration, discovery, callback, or lazy
   import supplies it.
 - `DescriptorError(ValueError)` is the public descriptor-ingestion base.
@@ -300,46 +312,41 @@ only through Entity declarations and is not passed to the hub separately.
   records, and the separate `DescriptorExportError(RuntimeError)` are exported
   only from `parallax.descriptor`; `parallax.core` re-exports none of them.
 
-### Sealing in the constructor
+### Acceptance in the constructor
 
-- Construction seals. `MetamodelHub(*classes)` returns a fully sealed hub or
-  raises, and the private `MetamodelHub._from_unresolved(source)` seam behaves
+- Construction accepts or raises. `DomainModel(*classes)` returns a fully
+  accepted model or raises, and the private `DomainModel._from_unresolved(source)`
+  seam behaves
   identically. There is no `seal()` operation, no unsealed, sealing, or
   rejected state, and consequently no lifecycle state a caller can observe,
   branch on, or forget to reach.
 - One constructor call runs, in order: left-to-right validation of its source
   arguments, model-relative reference resolution, whole-model validation,
   compilation of the immutable module-owned facets, and — for a class-backed
-  hub — the Python realization phase. Nothing it builds is reachable from
-  outside the call while it runs: a class-backed hub becomes observable when
-  its atomic Entity Class claim publishes the binding that retains it, and a
-  source-backed hub when the constructor returns.
-- A failure at any step raises out of the constructor. No hub object escapes,
-  no facet or Entity Class binding is published, and no orphaned class claim
-  survives, because the claim is the last step that can fail and happens under
-  the single binding synchronization point. Corrected declarations go to a new
+  model — building the Class Index. Nothing it builds is reachable from
+  outside the call while it runs: a model becomes observable when its
+  constructor returns.
+- A failure at any step raises out of the constructor. No model object escapes
+  and no facet is published. Corrected declarations go to a new
   constructor call: there is nothing to retry, reseal, or interrogate for a
   stored terminal cause.
-- Every hub a caller can name is therefore authoritative, and every
+- Every model a caller can name is therefore authoritative, and every
   model-dependent operation on it is available: Entity enumeration, metadata
-  lookup, export, typed facet access, query and path construction, class
-  resolver and row/graph codec access, database connection, and execution.
-- Concurrency reduces to the Entity Class claim. Two constructor calls are two
-  independent objects with no shared lifecycle to coordinate, so the atomic
-  claim over the complete class set is the only synchronization point in the
-  hub. Two class-backed hubs racing for any shared class have exactly one
-  winner; the loser raises
-  `MetamodelStateError(code="metamodel-class-already-bound")` naming every
-  conflicting Entity Identity in canonical order and publishes nothing.
-- Direct expression or path use of an Entity Class that no hub has claimed
-  raises `MetamodelStateError(code="metamodel-class-not-bound")`.
-- Constructing an ordinary frozen concrete Entity value remains class-local and
-  is allowed without a binding because it reads no model metadata. It confers
-  no binding: query construction and persistence still fail until the class is
-  claimed. Abstract-role instantiation remains forbidden by the class
+  lookup, export, typed facet access, row/graph codec access, database
+  connection, and execution. Query and path construction is deliberately not on
+  that list — authoring reaches no model at all.
+- Concurrency reduces to nothing. Two constructor calls are two independent
+  objects with no shared lifecycle to coordinate and nothing process-global to
+  contend for, so composition has no synchronization point and two models over
+  any shared class are both authoritative.
+- Constructing an ordinary frozen concrete Entity value, and composing a query
+  from its class, are both class-local and allowed for a class no model
+  composed, because neither reads model metadata. Execution is where a model is
+  required: a Database refuses a query whose target its connected model does not
+  declare. Abstract-role instantiation remains forbidden by the class
   declaration itself.
 - Because construction does the work, a module-level `models =
-  MetamodelHub(...)` performs formation and claims its classes at import time,
+  DomainModel(...)` performs formation at import time,
   so a model defect surfaces as an import failure. This is the same shape as
   Pydantic building its models at import.
 
@@ -351,8 +358,8 @@ only through Entity declarations and is not passed to the hub separately.
   names, malformed `Attr`/`Rel` annotations, context-invalid options, and
   Pydantic definition errors. Intrinsically invalid factory arguments fail
   at the factory call itself.
-- A hub's fixed source is an immutable **Unresolved Metamodel**. The
-  constructor submits it to the runtime's explicit Formation Profile; the hub
+- A model's fixed source is an immutable **Unresolved Metamodel**. The
+  constructor submits it to the runtime's explicit Formation Profile; the model
   does not implement reference resolution or semantic rules itself.
 - Candidate and accepted capabilities are exact:
 
@@ -687,7 +694,7 @@ only through Entity declarations and is not passed to the hub separately.
   issue-declaration, duplicate-issue, and
   facet-assembly defects use their corresponding stable code. None becomes
   `MetamodelIssue` or `MetamodelValidationError`. Formation publishes no
-  accepted Metamodel or facet set after either error category, and the hub
+  accepted Metamodel or facet set after either error category, and the model
   installs no class binding.
 - One explicit, deterministic composition root supplies two separate immutable
   values to the formation runner: a Formation Manifest containing only owner
@@ -747,7 +754,7 @@ only through Entity declarations and is not passed to the hub separately.
   Each semantic compiler consumes Compiled Metadata plus only its declared
   facet dependencies and returns exactly one typed facet. The runner combines
   the exact Compiled Metadata object and complete facets into the sole accepted
-  Metamodel without another metadata graph. A hub may delegate that object and
+  Metamodel without another metadata graph. A model may delegate that object and
   add lifecycle, binding, or export context, but may not reconstruct accepted
   Entity/member/facet values or maintain independent normalized
   accepted-metadata indexes. There is no mutable draft, patch merge, or partial
@@ -759,62 +766,47 @@ only through Entity declarations and is not passed to the hub separately.
   keys and the runner installs the complete immutable facet set atomically.
   There is no registration, discovery, global side table, or public
   string-keyed facet map.
-- Python-specific realization checks run as a separate atomic claim phase
-  after the language-neutral profile succeeds. The relationship-annotation
-  agreement rule (Python spec §2) runs first in that phase and reports every
-  mismatch together; only an agreement-clean class set proceeds to claiming.
-  Under one binding synchronization point, that phase checks the complete
-  class set before installing any claim. If one or more classes already belong to another
-  sealed hub, it raises
-  `MetamodelStateError(code="metamodel-class-already-bound")` with the
-  immutable conflicting Entity Identity sequence in canonical order. The
-  losing constructor publishes no binding and raises; two hubs racing for any
-  shared class therefore have exactly one winner. A claim collision is
-  process-dependent realization state, not invalid model metadata or a
-  Formation Profile defect.
-- A successful Entity Class binding is permanent for that class object's
-  lifetime and keeps its sealed hub reachable. There is no public or private
-  supported `unbind`, hub `close`, reset hook, or weak-reference expiry. A
-  class can therefore never acquire different metadata semantics after its
-  first successful claim; reload and test-isolation scenarios that need a new
-  model use fresh class objects.
-- One immutable **Metamodel Binding** is created per successfully sealed
-  class-backed hub. It contains the opaque exact-hub identity, a reference to
-  the one accepted Metamodel, and the immutable bidirectional Entity Identity
-  to Entity Class index. The binding module separately retains the concrete
-  hub as a private strong owner reference. Every claimed class points to this
-  same Metamodel Binding; no metadata is copied per class.
-- Entity frontend internals share the Metamodel Binding. Before graph
-  materialization lands, a Snapshot Database owns a private `_ConnectedHub`
-  containing the accepted Metamodel, opaque exact-hub identity, and the
-  transitional binding required by the existing wrapper. It obtains this state
-  through the private sealed-model seam, never by retaining the concrete
-  `MetamodelHub` lifecycle, export, or construction surface. COR-50 may replace
-  only that transitional materialization dependency with the complete Entity
-  Runtime described below. An **Entity Class Binding** is the individual
-  association between a class object and its Entity Identity within the
-  Metamodel Binding, not another value graph or metadata implementation.
-  Descriptor-backed hubs have neither a Metamodel Binding nor an Entity
-  Runtime.
+- Python-specific realization checks run after the language-neutral profile
+  succeeds. The relationship-annotation
+  agreement rule (Python spec §2) reports every mismatch together, and only an
+  agreement-clean class set produces a model. There is no claim phase and no
+  synchronization point: composition binds nothing, so two models sharing any
+  class are both authoritative and neither races the other.
+- A class-backed model builds one immutable **Class Index**: the bidirectional
+  association between accepted Entity Identities and the Python Entity Classes
+  that realize them. It carries no identity of its own and is reachable only
+  through a private first-party seam. A class appears in the index of every
+  model that composed it and in no other, so the index is a lookup rather than a
+  claim, and one class participates in any number of models. A
+  descriptor-backed model has no index.
+- Before graph
+  materialization lands, a Snapshot Database owns a private `_ConnectedModel`
+  containing the accepted Metamodel and the class index the existing wrapper
+  requires, and no identity. It obtains both
+  through the private `model_of` / `class_index` pair, never by retaining the
+  concrete `DomainModel` lifecycle, export, or construction surface. COR-50 may
+  replace only that transitional materialization dependency with the complete
+  Entity Runtime described below. Descriptor-backed models have neither a class
+  index nor an Entity Runtime.
 
 ### Public error model
 
 - `EntityDefinitionError(TypeError)` covers invalid Entity Class construction
   and declaration-grammar violations; its closed stable code set is normative
-  in the Python spec's declaration grammar (§2). One code fires during hub
+  in the Python spec's declaration grammar (§2). One code fires during model
   construction rather than class creation:
   `entity-relationship-annotation-mismatch`, the realization check that a `Rel`
   annotation shape — multiplicity and optionality — agrees with the accepted
   model, reported with every mismatch in canonical order before any class claim
   and raising out of the constructor like any other construction failure.
-- `MetamodelDefinitionError(TypeError)` covers an invalid class-backed hub
-  constructor call before any hub exists. Its stable codes are
+- `MetamodelDefinitionError(TypeError)` covers an invalid class-backed model
+  constructor call before any model exists. Its stable codes are
   `metamodel-empty`, `metamodel-invalid-entity-class`, and
   `metamodel-duplicate-entity-class`. The latter two expose the zero-based
   offending argument index; `metamodel-empty` has no index. It never
   represents a duplicate Entity Identity across distinct valid classes.
 - The optional Descriptor Frontend owns `DescriptorError(ValueError)`, the base
-  for descriptor ingestion before a hub exists. `DescriptorSyntaxError` uses stable code
+  for descriptor ingestion before a model exists. `DescriptorSyntaxError` uses stable code
   `descriptor-invalid-syntax`; `DescriptorSchemaError` uses
   `descriptor-schema-invalid` and exposes canonical structured violations;
   `DescriptorValueError` uses `descriptor-value-invalid` and exposes the same
@@ -822,45 +814,41 @@ only through Entity declarations and is not passed to the hub separately.
   None is a `MetamodelValidationError`, whose locations are semantic rather
   than document-relative.
 - The Descriptor Frontend's separate `DescriptorExportError(RuntimeError)` is
-  the descriptor adapter-defect boundary after successful hub construction. It has stable code
+  the descriptor adapter-defect boundary after successful model construction. It has stable code
   `descriptor-export-failed`, identifies `document`, `json`, or `yaml`, and
-  preserves the cause. It never rejects or mutates the sealed hub and never
+  preserves the cause. It never rejects or mutates the accepted model and never
   exposes partial output.
 - `FormationContractError(RuntimeError)` is a supported top-level error for a
   defective Formation Profile, Rule Set, issue emission, facet assembly, or
   compiler. Its stable code, optional owner, and optional cause distinguish an
   implementation/configuration defect from invalid model metadata.
-- `MetamodelValidationError(ValueError)` is raised by hub construction and
+- `MetamodelValidationError(ValueError)` is raised by model construction and
   carries an immutable sequence of `m-metamodel`'s
   `MetamodelIssue(code, location, related, message)` values. The aggregate
   error belongs to `m-model-formation` and does not translate issue types.
-  Because construction seals, every Descriptor Frontend ingestion function
+  Because construction accepts, every Descriptor Frontend ingestion function
   raises it too; representation and model failures stay disjoint types in a
   fixed phase order rather than being separated by call site.
-- `MetamodelStateError(RuntimeError)` covers direct use of an Entity Class that
-  no hub has claimed, and an atomic Entity Class claim collision. Its two
-  stable codes are `metamodel-class-not-bound` and
-  `metamodel-class-already-bound`. There are no unsealed, rejected, or
-  seal-re-entry codes: a hub exists only sealed, so those states are
-  unreachable. A claim collision exposes every conflicting Entity Identity in
-  canonical order; it is neither a `MetamodelValidationError` nor a
-  `FormationContractError`.
+- There is no model state-error family. A model exists only accepted, and
+  composition claims nothing, so neither an unsealed state nor a claim
+  collision exists to report.
 - `MetamodelLookupError(LookupError)` covers only a failed developer-facing
   `models.meta(...)` lookup. It has stable codes
-  `metamodel-invalid-entity-reference`, `metamodel-entity-not-found`, and
-  `metamodel-class-not-bound`; the class-free lookup protocol never raises it.
-- `QueryDefinitionError(ValueError)` is the one public error family for every
-  invalid Python `AttributeExpr`, `RelationshipPath`, `Predicate`,
+  `metamodel-invalid-entity-reference` and `metamodel-entity-not-found`; the
+  class-free lookup protocol returns absence and never raises it. An Entity
+  Class this model did not compose is `metamodel-entity-not-found`, because a
+  class names an Entity of the models that composed it and of no other.
+- `QueryDefinitionError(ValueError)` is the public error family for every
+  Python `AttributeExpr`, `RelationshipPath`, `Predicate`,
   `Assignment`, `SortKey`, and `FindQuery` construction, composition, or
-  refinement. The Entity frontend translates a semantic rejection from
-  `m-op-algebra`, inheritance, relationship navigation, deep fetch, or temporal
-  read exactly once at this seam, preserving the original cause; direct callers
-  of those owner modules retain their native error families. An incoming
-  `QueryDefinitionError` passes through unchanged. Its closed stable code set
+  refinement **the frontend itself refuses** — which is exactly the rules that
+  need no model. There is no translation seam: authoring reaches no model, so a
+  model-aware rejection is stated once at execution preflight and once at the
+  predicate-selected write boundary and surfaces there as its owner module's own
+  error carrying its own rule code, un-rewrapped. Its closed stable code set
   is:
 
   ```text
-  query-hub-mismatch
   query-target-mismatch
   query-expression-invalid
   query-path-invalid
@@ -872,10 +860,8 @@ only through Entity declarations and is not passed to the hub separately.
 
   Category codes remain deliberately coarser than owner-module validation
   codes. Optional structured `target`, `member`, `path`, and `clause` context
-  plus the preserved original cause identify the exact rejection; no literal
-  value or opaque hub identity is exposed. `query-hub-mismatch` rejects
-  mixed-hub operation nodes during construction or composition;
-  `query-target-mismatch` rejects a same-hub expression or predicate rooted at
+  identifies the exact rejection; no literal value is exposed.
+  `query-target-mismatch` rejects an expression or predicate rooted at
   an inapplicable Entity; `query-expression-invalid` covers operator and
   literal-shape defects; `query-path-invalid` covers invalid Value Object or
   relationship hops, quantifiers, and narrowing;
@@ -883,28 +869,31 @@ only through Entity declarations and is not passed to the hub separately.
   clause; `query-assignment-invalid` covers a non-assignable member or value;
   `query-not-mutation-compatible` rejects a read-shaped Find Query passed to a
   predicate-selected write; and `query-assignment-target-mismatch` rejects an
-  Assignment from another hub or Entity target. These fail before connection,
+  Assignment addressing another Entity target. These fail before connection,
   SQL, adapter, or Unit of Work mutation. Database and adapter errors remain
   execution errors.
-- `QueryOwnershipError(RuntimeError)` distinguishes a valid query executed by
-  the wrong exact Snapshot Database hub from mixed-hub query composition. It
-  has stable code `query-owner-mismatch`, is raised after lowering but before
-  deferred-feature classification or any I/O, and exposes neither query,
-  Database, hub, nor opaque identity.
+- `QueryTargetError(RuntimeError)` covers a valid query executed through a
+  Database whose connected model declares no Entity for its target. It
+  has stable code `query-target-not-in-model`, is raised after lowering but
+  before operation validation, deferred-feature classification, or any I/O, and
+  retains neither query, model, nor Database. It is a resolution failure, not an
+  ownership one: no ownership relation between a query and a model exists.
 - `DeferredFeatureError(RuntimeError)` distinguishes a valid modeled read whose
   canonical operation requires execution behavior intentionally deferred by
   the installed Snapshot package. It has stable code
   `execution-feature-deferred` and exposes every matching canonical feature tag
-  in sorted `features: tuple[str, ...]`. It is raised after exact query
-  ownership but before SQL generation, connection acquisition, or adapter
-  access. It is never a `QueryDefinitionError` and does not describe provider
-  variability.
+  in a nonempty sorted `features: tuple[str, ...]`. It is raised after target
+  resolution and operation validation but before SQL generation, connection
+  acquisition, or adapter access. It is never a `QueryDefinitionError` and does
+  not describe provider variability.
 - `SnapshotConnectionError(ValueError)` is exported from
-  `parallax.snapshot` and covers a valid Hub that cannot back the Snapshot
+  `parallax.snapshot` and covers a model that cannot back the Snapshot
   Entity lifecycle. Its sole stable code is
-  `snapshot-class-backed-hub-required`. Connecting a descriptor-backed Hub
-  raises it before adapter validation or access. The error exposes neither the
-  missing class binding nor any opaque hub identity.
+  `snapshot-class-backed-model-required`. Connecting a descriptor-backed model
+  or a bare accepted Metamodel raises it before adapter validation or access,
+  and a classless connection built through `Database(port, model)` — the neutral
+  write-lane form — is refused the same way at `find`. The error exposes neither
+  an Entity Runtime nor a class index.
 - `EditError(ValueError)` covers invalid `edit(...)` input and active rejection
   of inherited Pydantic copy paths. `Entity.model_copy(...)` always raises
   `EditError(code="edit-use-edit")`; it never creates an Entity value, even
@@ -1340,8 +1329,8 @@ only through Entity declarations and is not passed to the hub separately.
   are private and no common-runtime source imports them.
 - Class and descriptor frontends each expose an Unresolved Metamodel input
   view. The shared compiler produces the one accepted Metamodel and lookup
-  indexes. A class-backed hub delegates that object and adds Entity Class
-  bindings; a descriptor-backed hub delegates it without bindings. Neither hub
+  indexes. A class-backed model delegates that object and adds Entity Class
+  bindings; a descriptor-backed model delegates it without bindings. Neither model
   implements a separate accepted Metadata graph or owns independent normalized
   accepted-metadata indexes.
 - The conformance guard compares the two frontends through interface behavior
@@ -1358,7 +1347,7 @@ only through Entity declarations and is not passed to the hub separately.
   `asOfAttributes` vocabulary is retired across specs, schema, corpus,
   implementation, and tests.
 
-### Hub-owned introspection and export
+### Model-owned introspection and export
 
 - `models.meta(Order)` and `models.meta("sales.Order")` provide model-relative,
   read-only declaration-metadata lookup and return the public `EntityMetadata`
@@ -1368,7 +1357,7 @@ only through Entity declarations and is not passed to the hub separately.
   only an unnamespaced identity.
 - A malformed string raises `MetamodelLookupError` with code
   `metamodel-invalid-entity-reference`; an absent identity uses
-  `metamodel-entity-not-found`; a supplied class outside this hub uses
+  `metamodel-entity-not-found`; a supplied class outside this model uses
   `metamodel-class-not-bound`. These checks occur before adapter work.
 - `models.entities` is the immutable, canonical-order sequence of
   `EntityMetadata` views.
@@ -1477,46 +1466,46 @@ only through Entity declarations and is not passed to the hub separately.
   runner creates no ambient registry.
 - The optional Descriptor Frontend's `export_document(models)`,
   `export_json(models)`, and `export_yaml(models)` functions perform explicit
-  canonical representation conversion over a Hub. `MetamodelHub` exposes no
-  descriptor export method or property. Every hub is sealed by construction, so
+  canonical representation conversion over a Domain Model. `DomainModel` exposes no
+  descriptor export method or property. Every model is sealed by construction, so
   the exporters perform no lifecycle check and have no state failure to
   propagate: every accepted Metamodel is exportable by contract without renewed
   validation or state change. `export_document` returns a fresh tree of
   ordinary mappings, lists, and JSON-compatible scalar values. Repeated
   document exports are structurally equal, and repeated JSON or YAML exports
   are byte-identical `str` values.
-- `parallax.core.entity.model_of(hub) -> Metamodel` is the durable, read-only
+- `parallax.core.entity.model_of(model) -> Metamodel` is the durable, read-only
   first-party collaboration seam used by the separately distributed Descriptor
-  Frontend. It returns the hub's one accepted immutable Metamodel without a
-  copy and works for both class-backed and descriptor-backed hubs. It exposes
+  Frontend. It returns the model's one accepted immutable Metamodel without a
+  copy and works for both class-backed and descriptor-backed models. It exposes
   no Entity Class binding or construction capability. The function is
   available from the advanced `parallax.core.entity` interface but is not
-  re-exported from top-level `parallax.core`; `MetamodelHub` gains no `model`
+  re-exported from top-level `parallax.core`; `DomainModel` gains no `model`
   property. Ordinary developers continue to use `models.meta(...)`,
   `models.entities`, and the Descriptor Frontend's `export_*` functions.
 - Class and Descriptor Frontends continue to return the same concrete
-  `MetamodelHub` type. The representation-independent `m-metamodel` contract
+  `DomainModel` type. The representation-independent `m-metamodel` contract
   remains implemented by the dedicated `parallax.core.metamodel` package, but
-  the Hub stays in `parallax.core.entity`: its class-backed constructor owns
+  the model stays in `parallax.core.entity`: its class-backed constructor owns
   Python realization, atomic Entity Class claims, and the Metamodel Binding.
-  Moving the Hub into `m-metamodel` would invert that module's dependency on
+  Moving the model into `m-metamodel` would invert that module's dependency on
   Entity realization or require a generic callback/registration seam. The
   private `parallax.descriptor._hub` orchestration leaf therefore owns the
   intentional direct edge to `parallax.core.entity` for
-  `MetamodelHub._from_unresolved(...)` and `model_of(...)`; descriptor parsing,
+  `DomainModel._from_unresolved(...)` and `model_of(...)`; descriptor parsing,
   adaptation, and serialization retain only their ordinary `m-core` and
   `m-metamodel` dependencies.
 - Export is pure and returns its complete result or raises; it emits no partial
   output. An unexpected conversion or serialization defect raises
   `DescriptorExportError(code="descriptor-export-failed")`, carrying target
-  `document | json | yaml` and the original cause, and leaves the hub
-  unchanged. Hub construction neither performs export nor caches a mirrored
+  `document | json | yaml` and the original cause, and leaves the model
+  unchanged. Domain Model construction neither performs export nor caches a mirrored
   canonical descriptor graph; canonical output is derived from the accepted
   Metamodel on demand.
 - There is no global `meta`, `meta_of`, `metamodel(classes)`,
   `entity_record_of`, `entity_records`, `descriptor_document`, registry helper,
   `Order.meta()` convenience, or public concrete metadata-record graph.
-- Canonical descriptor documents and JSON/YAML are exports of the sealed hub,
+- Canonical descriptor documents and JSON/YAML are exports of the sealed model,
   not its required in-memory representation.
 
 ### Query values and expressions
@@ -1527,9 +1516,11 @@ This section records why the boundary is shaped that way; examples and named
 operations here are rationale, not a second surface definition.
 
 - The developer query value is named **Find Query**, represented as
-  `FindQuery[T]`; `Statement` is retired from this surface.
+  `FindQuery[E, S]` — the Entity queried and the Entity the result returns,
+  which `narrow` and only `narrow` moves; `Statement` is retired from this
+  surface.
 - `Entity.where(...)` remains the query root. There is no competing
-  `hub.find(...)` builder.
+  `model.find(...)` builder.
 - The Find Query is deliberately opaque and immutable. Public callers author
   behavior; first-party lowering and conformance own representation access.
   This prevents a second public operation model and keeps canonical equality a
@@ -1567,89 +1558,103 @@ operations here are rationale, not a second surface definition.
 - A `Predicate` is the lower-level typed filter expression consumed by a Find
   Query; it is not the name of the whole query.
 - A Predicate is a non-executable boolean condition. A Find Query adds the
-  target, hub identity, predicate, includes, narrowing, ordering, limit, and
+  target, predicate, includes, narrowing, ordering, limit, and
   temporal coordinates and is therefore the value accepted by `find`.
-- A Find Query keeps clause-oriented private authoring state: binding,
-  structured target, and independently validated predicate, narrow, temporal,
-  order, limit, and include clauses. It carries no Snapshot feature tags.
+- A Find Query keeps clause-oriented private authoring state: its structured
+  target and independently validated predicate, narrow, temporal,
+  order, limit, and include clauses. It retains no model and carries no Snapshot
+  feature tags.
 - The advanced first-party `lower_find_query(query)` operation is total for
   every valid Find Query and introduces no new semantic validation. It returns
-  a fresh frozen, slotted `LoweredFindQuery` containing exactly opaque
-  `hub_identity`, structured `target`, and canonical `operation`. It contains
-  no binding, classes, class index, feature tags, provider state, SQL, or
+  a fresh frozen, slotted `LoweredFindQuery` containing exactly a structured
+  `target` and a canonical `operation`. It contains
+  no model, classes, class index, feature tags, provider state, SQL, or
   serialization contract. Each `find` call lowers once and retains that local
   value through execution; later calls recompute it rather than consulting a
   query cache.
-- Every `AttributeExpr`, `RelationshipPath`, `Predicate`, `Assignment`,
-  `SortKey`, and `FindQuery` carries the opaque exact identity of the sealed hub
-  that resolved it. Narrowing preserves the path's hub. Neutral literal and
-  assignment values have no hub identity by themselves; incorporation into an
-  operation node adopts the tagged expression's hub.
-- Every operation-node constructor checks all tagged children and raises
-  `QueryDefinitionError(query-hub-mismatch)` immediately on disagreement.
-  Cross-hub composition therefore fails before a Database, Transaction, SQL
-  generator, or adapter observes the operation.
-- The Entity frontend is the single translation seam for invalid Python query
-  values. It converts owner-module semantic rejections into
-  `QueryDefinitionError` exactly once and preserves their cause; it never
-  exposes `TemporalReadError`, `InheritanceError`, `DeepFetchError`, or
-  operation-validation errors from an `Entity.where(...)` expression or a
-  `FindQuery` clause. The owner errors remain part of their modules' direct
-  interfaces.
+- Every `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`,
+  `AttributeAssignment`, `SortKey`, and `FindQuery` is parameterized by the
+  Entity it addresses rather than tagged with a model. Variance states the
+  inheritance rule: Predicate, match-all Predicate, Sort Key, and Assignment are
+  contravariant in their position; a Relationship Path is covariant in both its
+  source and its target. Neutral literal and assignment values carry no
+  parameter until incorporated into a parameterized value.
+- Composing a value from an inapplicable Entity is therefore a static error at
+  the composition site, and every such static rejection also has an equivalent
+  model-aware rejection at execution preflight — which is what covers the
+  serialized ingress and any untyped caller. Narrowing relatedness is the single
+  stated exception: a type parameter's bound may not itself be generic, so
+  `narrow-outside-position` alone refuses an unrelated narrow target. A hop
+  narrow keeps its static half, carrying the bound on its receiver.
+- There is no translation seam. Because authoring reaches no model, the errors
+  a `FindQuery` clause can raise are the frontend's own; a model-aware rejection
+  reaches the caller from execution preflight as its owner module's error, with
+  its own rule code, which is what makes the typed and the serialized ingress
+  report one rejection under one name.
 
 ### Predicate-selected writes
 
 - The five predicate-selected verbs are `update_where`, `delete_where`,
   `terminate_where`, `update_until_where`, and `terminate_until_where`.
   `insert` has no predicate-selected form.
-- They accept the same ordinary `FindQuery[T]` produced by
+- They accept the same ordinary `FindQuery[E, S]` produced by
   `Entity.where(...)`; there is no public Mutation Target, Selection, Criteria,
   Statement, or second builder. A Find Query is mutation-compatible only when
-  it contains exactly target, hub identity, and predicate. Includes, ordering,
+  it carries exactly its target and its predicate. Includes, ordering,
   limit, narrowing, temporal read clauses, history/range, or any other
   result-shaping state make it read-shaped and cause
   `QueryDefinitionError(query-not-mutation-compatible)` before Unit of Work or
   adapter access.
 - Each `_where` verb privately normalizes a mutation-compatible Find Query to a
-  `PredicateSelection(target, predicate, hub_identity)`. This is an ephemeral
-  implementation value, not an exported operation model, authoring surface, or
-  second serialized query representation.
+  `MutationSelection(target, predicate)`, from which the write boundary builds
+  the canonical, model-neutral `PredicateSelection`. The normalization is an
+  ephemeral implementation value, not an exported operation model, authoring
+  surface, or second serialized query representation, and a Find Query reaches
+  neither the Unit of Work, the planner, nor SQL lowering.
 - `update_where` and `update_until_where` require one or more Assignments;
   `delete_where`, `terminate_where`, and `terminate_until_where` accept none.
   The Attribute Expression's `.set(...)` has already applied member assignability,
   declared-type, and nullability validation before producing each Assignment;
   this COR-50 contract does not derive from the COR-51 edited-copy path.
   Combining inputs validates only the list and composition rules. Every
-  Assignment carries the same exact hub identity and must target a member of
+  Assignment must target a member of
   the Find Query's exact Entity. A mismatch raises
   `QueryDefinitionError(query-assignment-target-mismatch)` while combining the
-  inputs at the transaction method, before buffering, SQL, or adapter access.
-- After composition succeeds, the Transaction still requires identity with its
-  Database handle's hub. Structural Metamodel equality never substitutes for
-  exact hub identity.
+  inputs at the transaction method, before buffering, SQL, or adapter access —
+  and before the inheritance-family refusal, because an inherited member's
+  Assignment addresses the Entity that declares it.
+- After composition succeeds, the target is resolved in the Transaction's
+  connected model. There is nothing further to own: no model identity exists to
+  compare.
 
 ### Handles and execution
 
-- `Database.connect(adapter, models)` requires a successfully sealed,
-  class-backed hub and permanently pairs the handle with it. Its static
-  contract accepts only `MetamodelHub`, and it uses the existing private
-  `sealed_model(models)` seam before inspecting the adapter. A descriptor-backed
-  Hub or legacy bare accepted Metamodel raises
-  `SnapshotConnectionError(code="snapshot-class-backed-hub-required")` before
-  adapter validation or access.
-- The Database owns one private `_ConnectedHub` containing the accepted
-  Metamodel, exact-hub identity, and transitional Metamodel Binding required by
-  the old materializer. COR-64 introduces no partial Entity Runtime.
-- Transactions inherit that hub from their database handle.
+- `Database.connect(adapter, model)` requires a class-backed Domain Model. Its
+  static contract accepts only `DomainModel`, and it reads the model through the
+  private `model_of` / `class_index` pair before inspecting the adapter. A
+  descriptor-backed model or a bare accepted Metamodel raises
+  `SnapshotConnectionError(code="snapshot-class-backed-model-required")` before
+  adapter validation or access. The pairing is not ownership: one model connects
+  to any number of Databases.
+- The Database owns one private `_ConnectedModel` containing the accepted
+  Metamodel and the class index the transitional materializer requires, and no
+  identity. COR-64 introduces no partial Entity Runtime. The neutral
+  `Database(port, model)` constructor still admits a bare accepted Metamodel for
+  the conformance write lanes, and such a classless connection is refused at
+  `find` with the same `SnapshotConnectionError` — before target resolution and
+  before the unit of work's force-flush.
+- Transactions inherit that connected model from their database handle.
 - `Database.find`, `Transaction.find`, and later `Session.find` call
-  `preflight_find(query, expected_hub_identity=...)`. It lowers once, checks the
-  lowered hub identity by identity, classifies the canonical operation against
+  `preflight_find(query, *, model=...)`. It lowers once, resolves the lowered
+  target in the connected model, validates the canonical operation from that
+  resolved root, classifies it against
   Snapshot's Deferred Execution Features, and returns that same local
-  `LoweredFindQuery`.
-- Cross-hub execution raises
-  `QueryOwnershipError(query-owner-mismatch)` before deferred-feature
-  classification, adapter access, connection acquisition, or SQL generation.
-  Structural metadata equality is insufficient.
+  `LoweredFindQuery` — in that order, which is the contract rather than an
+  implementation detail.
+- A target the connected model does not declare raises
+  `QueryTargetError(query-target-not-in-model)` before operation validation,
+  deferred-feature classification, adapter access, connection acquisition, or
+  SQL generation.
 - Snapshot owns one private package-level
   `_DEFERRED_EXECUTION_FEATURES: frozenset[str]`, initially containing only
   `snapshot-history-includes`. This fixed installed-package inventory records
@@ -1658,9 +1663,15 @@ operations here are rationale, not a second surface definition.
   environment, provider, adapter, database port, or dialect.
 - A matching modeled read raises
   `DeferredFeatureError(execution-feature-deferred)` with every matching
-  feature sorted. The classifier does not apply to predicate-selected writes;
-  read-shaped writes remain
+  feature in a nonempty sorted tuple. The classifier does not apply to
+  predicate-selected writes; read-shaped writes remain
   `QueryDefinitionError(query-not-mutation-compatible)`.
+- Whether an operation scans a temporal axis is one `m-temporal-read` question
+  with one answer, asked by the deferral seam and again by the executor dispatch
+  that sends a scan to the milestone-set read. It is asked of the whole
+  operation: result-shaping directives between the deep fetch and the temporal
+  wrapper are peeled, and a bitemporal nest of one wrapper per dimension is
+  walked, so one scanned dimension answers *scan* however the other is pinned.
 - Handles never infer model scope from a query and never consult ambient state.
 
 ### Transaction demarcation ownership
@@ -1668,19 +1679,23 @@ operations here are rationale, not a second surface definition.
 - The outermost `Database.transact(...)` demarcation stores a strong reference
   to the exact originating `Database` object beside its Transaction and resolved
   options. This owner is scoped to the active demarcation; it is not a registry,
-  hub property, adapter property, or structural Database identity.
+  model property, adapter property, or structural Database identity.
 - A nested `transact(...)` call joins only when invoked through that exact
   object (`requested_database is active_owner`). An alias of the same object
   joins and receives the identical Transaction. Any other Database instance is
-  rejected even when it uses the same sealed hub, adapter object, dialect,
+  rejected even when it uses the same Domain Model, adapter object, dialect,
   clock, or equivalent configuration, because those values do not make it the
   owner of the active connection/flush/retry boundary.
 - A mismatch raises exported
   `TransactionOwnershipError(RuntimeError)` with stable code
   `transaction-owner-mismatch` before option comparison, rollback-only joining,
-  closure execution, Unit of Work mutation, SQL, or adapter access. The error
-  retains neither Database object. A non-Parallax active Unit of Work retains
-  its existing distinct error.
+  Principal resolution, closure execution, Unit of Work mutation, SQL, or
+  adapter access. The error
+  retains neither Database object. `RuntimeError` rather than `ValueError` is
+  the deciding posture: nothing about the call's arguments is wrong and the
+  identical call succeeds from the owner, which is what separates it from
+  `TransactionOptionConflictError`'s rejected argument value. A non-Parallax
+  active Unit of Work retains its existing distinct error.
 - Once exact owner identity succeeds, existing joining semantics are unchanged:
   rollback-only foreclosure and option-conflict checks apply, the inner closure
   receives the same Transaction, no savepoint or nested database transaction is
@@ -1757,11 +1772,11 @@ refer to that contract and do not redefine it.
   `is_view_loaded`, `view`, `pin_of`, and `edge_of` functions. Entity
   stores one opaque lifecycle value and exposes only raw first-party
   relationship/state inspection, so it never imports or interprets Snapshot.
-- Snapshot inspection establishes lifecycle ownership before exact hub, path,
+- Snapshot inspection establishes lifecycle ownership before exact model, path,
   loaded-view, or temporal validation. The Python spec alone defines the
   validation precedence and public error codes.
-- Exact-hub and path-owner validation prevents structurally equal paths from
-  another hub or an unrelated same-hub Entity from inspecting a node.
+- Exact-model and path-owner validation prevents structurally equal paths from
+  another model or an unrelated same-model Entity from inspecting a node.
   Traversal reads loaded state only, preserves the narrowed position at every
   hop, and never issues SQL. The Python spec alone defines fan-out, vacuous
   loaded-state, pin/edge behavior, validation precedence, and errors.
@@ -1790,38 +1805,38 @@ refer to that contract and do not redefine it.
   `edited_row(value)`. `edited_row` returns the canonical sparse row of identity
   plus effective changes, or `None` for a net-zero edit.
 - `parallax.core.entity.EntityRuntime` is one frozen slotted value created
-  during each successful class-backed Hub construction:
+  during each successful class-backed Domain Model construction:
 
   ```text
   EntityRuntime
     model: Metamodel
-    hub_identity: opaque exact-hub sentinel
     graph_construction: EntityGraphConstruction
     row_codec: EntityRowCodec
 
-  entity_runtime_of(hub: MetamodelHub) -> EntityRuntime | absent
+  entity_runtime_of(model: DomainModel) -> EntityRuntime | absent
   ```
 
   `entity_runtime_of(...)` is a nonthrowing advanced first-party query and,
   once COR-50 installs the complete runtime, returns the same Entity Runtime
-  object for every call on one class-backed hub. It returns absent for a
-  descriptor-backed hub. The runtime references the one accepted Metamodel and
-  exact identity already owned by the binding; it copies no model fact and
-  exposes neither the Metamodel Binding nor its Entity Identity/Class index. It
+  object for every call on one class-backed model. It returns absent for a
+  descriptor-backed model. The runtime references the one accepted Metamodel the
+  model already owns; it copies no model fact and
+  exposes no Entity Identity/Class index. It
   is not a registry, extension map, protocol with third-party adapters, or
   generic capability bag, and neither it nor its query is re-exported from
   top-level `parallax.core`.
-- Entity Runtime is atomic: the accepted Metamodel, opaque exact-hub identity,
+- Entity Runtime is atomic: the accepted Metamodel,
   Entity Graph Construction, and Entity Row Codec appear together or not at
   all. COR-64 neither constructs nor exposes a partial runtime. When COR-50
   lands, Snapshot obtains the complete runtime before adapter work and replaces
-  only `_ConnectedHub`'s transitional materialization dependency with its Graph
-  Construction and Row Codec. The connected model and identity contract does
+  only `_ConnectedModel`'s transitional materialization dependency with its
+  Graph Construction and Row Codec. The connected Metamodel contract does
   not change.
 - Snapshot connection does not use `model_of(...)` as an executability test.
-  A descriptor-backed hub remains readable by `model_of(...)`, but the private
-  sealed-model seam rejects it for Snapshot. After COR-50, it also has no
-  Entity Runtime and cannot construct Entity instances.
+  A descriptor-backed model remains readable by `model_of(...)`, but it composes
+  no Entity Class, so `class_index(...)` is absent and Snapshot refuses it.
+  After COR-50, it also has no Entity Runtime and cannot construct Entity
+  instances.
 - Read materialization crosses only Entity Graph Construction; transaction
   write preparation crosses only the Entity Row Codec. Snapshot imports the
   advanced Entity construction interface but no registry, concrete Entity
@@ -1830,9 +1845,9 @@ refer to that contract and do not redefine it.
 - The declaration compiler installs canonical names as Pydantic validation and
   serialization aliases, so resolved classes carry their own Python-to-
   canonical field mapping without an exported `WireNames` side table.
-- Descriptor-backed hubs cannot supply either capability and are rejected by
+- Descriptor-backed models cannot supply either capability and are rejected by
   `Database.connect` as
-  `SnapshotConnectionError(snapshot-class-backed-hub-required)` before any
+  `SnapshotConnectionError(snapshot-class-backed-model-required)` before any
   adapter validation or work.
 
 ### Edited copies
@@ -1877,9 +1892,8 @@ parallax/core/
 
   entity/
     __init__.py
-    _binding.py
     _declaration.py
-    _hub.py
+    _model.py
     _entity.py
     _expressions.py
     _query.py
@@ -1950,50 +1964,49 @@ additional caller seams.
 | `model_formation._runner` | Deterministic resolve-validate-compile execution, issue aggregation, and immutable facet assembly; no contributor imports or semantic rules. |
 | `relationship.__init__` | Relationship formation rules and issue codes, symmetric Relationship Metadata compilation, typed Relationship Facet access, and no navigation execution. |
 | `_formation_profile` | Private composition root containing immutable built-in Formation Manifest data and the explicit, manifest-complete built-in Rule Set and compiler tuple. |
-| `descriptor.__init__` | The narrow public Descriptor Frontend: Hub ingestion/export functions and descriptor error/violation exports only. |
+| `descriptor.__init__` | The narrow public Descriptor Frontend: Domain Model ingestion/export functions and descriptor error/violation exports only. |
 | `descriptor._errors` | Descriptor ingestion and export errors plus immutable, canonically ordered schema/value violation records; no common-runtime implementation objects. |
-| `descriptor._hub` | Private public-function orchestration and the distribution's sole Python-specific support edge: it calls `MetamodelHub._from_unresolved` after successful ingestion and passes sealed Hubs to canonical export conversion. |
+| `descriptor._hub` | Private public-function orchestration and the distribution's sole Python-specific support edge: it calls `DomainModel._from_unresolved` after successful ingestion and passes sealed Domain Models to canonical export conversion. |
 | `descriptor` private conversion modules | Immutable descriptor records, JSON/YAML decoding and deterministic writing, packaged-schema validation, descriptor-to-Unresolved adaptation, and accepted-Metamodel canonical export. They expose no second public metadata API. |
-| `entity._binding` | Atomic class-claim synchronization and the one immutable Metamodel Binding per sealed class-backed hub: opaque hub identity, accepted-Metamodel reference, bidirectional Entity Identity/Class index, and private strong owner reference. It owns no model facts, exposes no hub lifecycle surface, and provides no unbind/reset path. |
 | `entity._declaration` | Shared lower-level Pydantic metaclass engine for Entity and Value Object classes, typed header/annotation parsing through `_members`, immutable declaration payloads and private kind markers, and immediate class-shape validation. It imports neither concrete frontend class nor expression behavior. |
-| `entity._hub` | `MetamodelHub`, public fixed-class construction, private first-party Unresolved-source construction, the constructor's formation and realization sequence, delegation to the one accepted Metamodel, class binding when applicable, and introspection. It owns no descriptor behavior, accepted Metadata/facet copies, or independent normalized accepted-metadata indexes. |
+| `entity._model` | `DomainModel`, public fixed-class construction, private first-party Unresolved-source construction, the constructor's formation and realization sequence, delegation to the one accepted Metamodel, the Class Index when applicable, and introspection. It owns no descriptor behavior, accepted Metadata/facet copies, or independent normalized accepted-metadata indexes. |
 | `entity._entity` | The small frozen `Entity` façade built on `_declaration`, plus delegation to Find Query and Edited Copy behavior. |
-| `entity._expressions` | Pure immutable, hub-tagged operation nodes: Attribute Expressions, Relationship Paths including narrowing, Predicates, Assignments, and Sort Keys. Nodes receive hub identity and structured member identities explicitly, reject mixed-hub children, and perform no class lookup. |
-| `entity._query` | `FindQuery`, its clause-oriented private authoring state, hub-identity checks, fresh `LoweredFindQuery` construction, mutation-compatibility validation, and private ephemeral Predicate Selection normalization. |
+| `entity._expressions` | Pure immutable operation nodes parameterized by the Entity they address: Attribute Expressions, Relationship Paths including narrowing, Predicates, Assignments, and Sort Keys. Nodes receive the declaration's own member metadata and structured identities explicitly, reach no model, and perform no class lookup. |
+| `entity._query` | `FindQuery[E, S]`, its clause-oriented private authoring state, the class-local clause rules, fresh `LoweredFindQuery` construction, mutation-compatibility validation, and the private ephemeral Mutation Selection normalization. |
 | `entity._graph_construction` | The concrete callback-scoped Entity Graph Construction capability, opaque Node Handles, two-phase structural allocation/population, deferred opaque lifecycle-state creation, atomic publication, concrete class selection, Pydantic mechanics, recursive Value Object construction, broad relationship-slot installation, and raw relationship/lifecycle-state access for first-party collaborators. It owns no lifecycle-specific graph semantics. |
 | `entity._rows` | Entity-to-row translation, Edited Copy construction, Change Record merging, and effective-change calculation. |
 | `entity._members` | Public `Attr`/`Rel` annotations, `attr`/`rel` declaration values, and the installed class/instance descriptors that turn bound members into operation nodes. It is the only runtime module in this cluster that touches owner classes. |
 | `entity._value_object` | The frozen Value Object frontend built on the shared `_declaration` metaclass engine. |
-| `entity._errors` | Entity declaration, hub lifecycle, binding, query-scope, graph-construction, and edited-copy errors. It is a strict leaf within the Entity cluster and accepts only structured error data. |
-| `snapshot._errors` | Snapshot-owned public connection, query-ownership, deferred-feature, transaction-ownership, materialization, and inspection errors. It is a strict Snapshot-package leaf, retains only the specified structured data and causes, and imports no Entity implementation module. |
+| `entity._errors` | Entity declaration, model definition and lookup, query-scope, graph-construction, and edited-copy errors. It is a strict leaf within the Entity cluster and accepts only structured error data. |
+| `snapshot._errors` | Snapshot-owned public connection, query-target, deferred-feature, transaction-ownership, materialization, and inspection errors. It is a strict Snapshot-package leaf, retains only the specified structured data and causes, and imports no Entity implementation module. |
 | `snapshot._graph` | Snapshot Graph Input and Materializer, graph-local identity/projection merging, broad and narrowed loaded-state decisions, whole-graph pin and milestone-edge decisions, and direct emission through Entity Graph Construction. |
 | `snapshot._state` | Private Snapshot Node State plus Snapshot-owned `is_view_loaded`, `view`, `pin_of`, and `edge_of`; it interprets only Snapshot state obtained through the advanced Entity collaboration seam. |
-| `snapshot.handle._database` | Private connected-hub state, shared read preflight, exact-owner transaction demarcation, same-owner joining, and the outermost commit/abort/retry boundary. |
+| `snapshot.handle._database` | Private connected-model state, shared read preflight, exact-owner transaction demarcation, same-owner joining, and the outermost commit/abort/retry boundary. |
 
 ### Enforced direction
 
 ```text
 behavioral modules ------------------------------> metamodel
 descriptor --------------------------------------> base + metamodel
-descriptor._hub ---------------------------------> entity._hub
+descriptor._hub ---------------------------------> entity._model
 model_formation ---------------------------------> metamodel
 formation-contributing modules ------------------> model_formation
 _formation_profile ------------------------------> model_formation + contributors
 entity._errors -------> metamodel
 entity._declaration --> entity._members + entity._errors + metamodel
 entity._value_object -> entity._declaration
-entity._hub ---------> entity._declaration + entity._binding
-entity._hub ---------> metamodel + _formation_profile
-entity._hub ---------> entity._graph_construction + entity._rows
-entity._entity ------> entity._declaration + entity._binding
+entity._model -------> entity._declaration
+entity._model -------> metamodel + _formation_profile
+entity._model -------> entity._graph_construction + entity._rows
+entity._entity ------> entity._declaration
 entity._entity ------> entity._query + entity._rows
-entity._members -----> entity._binding + entity._expressions + entity._errors
-entity._expressions -> metamodel + entity._errors
-entity._query -------> entity._expressions + entity._binding + entity._errors
-entity._graph_construction -> entity._binding + entity._entity
+entity._members -----> entity._expressions + entity._errors
+entity._expressions -> metamodel + op_algebra
+entity._query -------> entity._expressions + entity._errors
+entity._graph_construction -> entity._entity
 entity._graph_construction -> entity._value_object
 entity._graph_construction -> entity._errors + metamodel
-entity._rows --------> entity._binding
+entity._rows --------> metamodel
 snapshot._graph -----> snapshot._state + snapshot._errors
 snapshot._graph -----> entity._graph_construction + metamodel
 snapshot._state -----> snapshot._errors + entity._graph_construction + metamodel
@@ -2003,7 +2016,7 @@ snapshot.handle._database -> snapshot._errors + metamodel
 - `metamodel` never imports `descriptor` or `entity`.
 - `model_formation` imports `metamodel` but never imports a contributing module;
   only `_formation_profile` knows the complete rule-set and compiler tuple.
-- Only the descriptor façade/orchestration layer imports `MetamodelHub`, and
+- Only the descriptor façade/orchestration layer imports `DomainModel`, and
   only to call `_from_unresolved` or read the sealed Metamodel interface.
   Descriptor records, serde, schema validation, Unresolved adaptation, and
   canonical conversion do not import Entity implementation modules.
@@ -2012,7 +2025,7 @@ snapshot.handle._database -> snapshot._errors + metamodel
   edge.
 - `_errors` imports only the standard library and class-free core
   identity/issue values. It imports no other `entity` implementation module,
-  and its exceptions retain structured values rather than concrete hubs,
+  and its exceptions retain structured values rather than concrete models,
   bindings, classes, queries, Entities, or implementation callbacks. Every
   other Entity module may therefore depend on `_errors` without a return edge.
 - `_declaration` owns two thin Pydantic metaclass paths over one shared engine.
@@ -2020,24 +2033,23 @@ snapshot.handle._database -> snapshot._errors + metamodel
   markers installed by those metaclasses, not by importing the concrete
   classes, consulting a registry, or invoking registered callbacks.
 - Both `_entity` and `_value_object` import `_declaration`; `_declaration` never
-  imports either of them. It also never imports the hub, query builder,
+  imports either of them. It also never imports the model, query builder,
   expression behavior, graph state, or row/provenance implementation.
 - `_members` is the sole class-aware runtime bridge. Its installed descriptors
-  resolve the owner's binding and construct operation nodes from explicit hub
-  identity and structured member identities.
-- `_hub` creates the Metamodel Binding and installs its claims through
-  `_binding`, but `_binding` never imports or exposes the concrete hub type.
-  Its private owner reference preserves binding lifetime while all claimed
-  classes share the same Metamodel Binding, so the directed
-  `_hub -> _binding` edge has no return edge. The hub also constructs the
+  carry the declaration's own member metadata and structured identities into the
+  operation nodes they seed, and reach no model to do it.
+- `_model` builds the Class Index during construction; nothing publishes it
+  process-globally and no module holds a return edge to the model. The model
+  also constructs the
   Entity Graph Construction and Entity Row Codec capabilities it supplies to a
-  connection; neither implementation imports the hub.
-- `_expressions` is a class-free operation-node algebra. It imports no
-  `_members`, `_entity`, `_query`, or `_hub`, and it never resolves a Python
-  class. `_query` composes those nodes and may consult `_binding`; neither
+  connection; neither implementation imports the model.
+- `_expressions` is a class-free operation-node algebra whose enforcement scope
+  grants `m-metamodel` and `m-op-algebra` alone. It imports no
+  `_members`, `_entity`, `_query`, or `_model`, and it never resolves a Python
+  class. `_query` composes those nodes; neither
   module back-imports `Entity`.
 - `_graph_construction` depends only in the forward direction on the Entity and
-  Value Object frontends, binding and error machinery, plus the class-free
+  Value Object frontends and the error machinery, plus the class-free
   Metamodel. It accepts one explicit callback per construction, invokes
   deferred opaque-state factories before publication, and owns no callback
   registry or lifecycle-specific graph policy. `snapshot._graph` and
@@ -2073,6 +2085,11 @@ concepts and names:
 - direct `many-to-many` cardinality; association tables are explicit Entities
   connected by two supported direct relationships;
 - `EntityRegistry`, `ScopedMetamodel`, `default_registry`, and `registry=`;
+- the permanent one-model-per-class claim, `MetamodelBinding`, Entity Class
+  Binding, `MetamodelStateError`, and both of its codes;
+- opaque exact-model identity on query values, `query-hub-mismatch`, and
+  `QueryOwnershipError` / `query-owner-mismatch`, replaced by Entity-parameterized
+  query values and `QueryTargetError` / `query-target-not-in-model`;
 - `EntityMeta` and `EntityMetaView` introspection names;
 - registry and class-list scope helpers;
 - global/class-relative metadata lookup and descriptor export;
@@ -2093,20 +2110,19 @@ ReadOnly, ReadWrite
 AbstractRoot, AbstractSubtype, ConcreteSubtype
 TablePerHierarchy, TablePerConcreteSubtype
 Int32, Float32, Max, Sequence
-MetamodelHub
-FindQuery, Predicate
+DomainModel
+FindQuery, Predicate, AllPredicate, AttributeExpr, RelationshipPath, SortKey
 EntityIdentity, EntityMetadata, MetamodelIssue
 ModelLocation
 EntityDefinitionError, MetamodelDefinitionError, FormationContractError,
-MetamodelValidationError, MetamodelStateError
+MetamodelValidationError
 MetamodelLookupError, QueryDefinitionError, EditError
 LATEST, VALID_TIME, TX_TIME, Pin, Edge
 TemporalReadError, UndeclaredAxisError
 ```
 
 `parallax.core.entity` additionally exposes the advanced typing and first-party
-collaboration values `Assignment`, `AttributeExpr`, `RelationshipPath`,
-`SortKey`, `LoweredFindQuery`, `EntityGraphConstruction`, `EntityGraphWriter`,
+collaboration values `AttributeAssignment`, `LoweredFindQuery`, `EntityGraphConstruction`, `EntityGraphWriter`,
 `EntityGraphResolution`, `NodeHandle`, `ValueObjectRecord`,
 `ValueObjectAttributeInput`, `ValueObjectOccurrenceInput`,
 `GraphConstructionError`, `UnloadedRelationshipError`, and `EntityRowCodec`, plus
@@ -2124,11 +2140,11 @@ Snapshot-node inspection functions and re-exports the Entity-defined
 `SnapshotDecodingError` with stable code `snapshot-decoding-failed`,
 `SnapshotMaterializationError` with stable code
 `snapshot-materialization-failed`, and `SnapshotInspectionError` with stable
-codes `snapshot-node-required`, `snapshot-hub-mismatch`,
+codes `snapshot-node-required`, `snapshot-model-mismatch`,
 `snapshot-pin-unavailable`, and
 `snapshot-edge-unavailable`. It also exposes `SnapshotConnectionError` with
-stable code `snapshot-class-backed-hub-required`,
-`QueryOwnershipError` with stable code `query-owner-mismatch`,
+stable code `snapshot-class-backed-model-required`,
+`QueryTargetError` with stable code `query-target-not-in-model`,
 `DeferredFeatureError` with stable code `execution-feature-deferred`, and
 `TransactionOwnershipError` with stable code `transaction-owner-mismatch`.
 
@@ -2188,6 +2204,15 @@ modules use that typed seam; neither generic Metamodel lookup nor top-level
 developer imports expose symmetric Relationship Metadata as declared truth.
 
 ## Delivery plan
+
+> **Historical.** Each section below records what its ticket was scoped to
+> build, as scoped. COR-64 later renamed the Metamodel Hub to the Domain Model
+> and retired exact-model query identity along with the claim rule, so these
+> sections still name `MetamodelHub`, `MetamodelBinding`, `MetamodelStateError`,
+> `query-hub-mismatch`, and `QueryOwnershipError`. They are deliberately not
+> rewritten; the "Settled design" sections above state the current contracts,
+> and Python ADR 0007's closing amendment tabulates every retirement one for
+> one.
 
 The accepted work is tracked as one non-implementation parent and six
 blocking implementation tickets. Work the frontier in order; each child must

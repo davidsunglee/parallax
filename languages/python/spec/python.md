@@ -21,7 +21,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 27 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
 ```json
@@ -98,23 +98,54 @@ mutations, exceptions, or exports.
 
 ### Query and operation API
 
-- **One query-definition error family.** Every invalid Python Attribute
-  Expression, Relationship Path, Predicate, Assignment, Sort Key, or Find
-  Query construction, composition, and refinement raises
-  `QueryDefinitionError(ValueError)` with a stable `query-*` code. The Entity
-  frontend translates an `m-op-algebra`, inheritance, relationship-navigation,
-  deep-fetch, or temporal-read semantic rejection exactly once and preserves
-  its cause; an incoming `QueryDefinitionError` passes through unchanged.
-  Direct callers of those behavioral modules continue to receive their native
-  error families. Deferred Execution Features and execution failures retain
-  their separate classifications.
+- **Every composed query value names the Entity it addresses.** The exported
+  authoring vocabulary is parameterized: `AttributeExpr[E, T]`, `Predicate[E]`,
+  `AllPredicate[E]`, `SortKey[E]`, `AttributeAssignment[E]`,
+  `RelationshipPath[E, R]`, and `FindQuery[E, S]`, where `E` is the position a
+  value is rooted at, `R` the related Entity a hop reaches, `T` a declared
+  Python value type, and `S` the Entity a query's result returns. `Predicate`,
+  `AllPredicate`, `SortKey`, and `AttributeAssignment` are **contravariant** in
+  `E` — the inheritance rule expressed as variance, so an ancestor's member is
+  addressable from a descendant position and a descendant's member is not
+  addressable from an ancestor position. `RelationshipPath` is **covariant** in
+  both parameters, for the opposite reason: its source narrows which queried
+  objects a path starts from, so any descendant of the queried Entity is a legal
+  include source. Composing a value from the wrong Entity is therefore a static
+  error where the call is written. Every such static rejection also has an
+  equivalent model-aware rejection at execution preflight, which is what covers
+  the serialized ingress and any untyped caller — with exactly one stated
+  exception, narrowing relatedness (below). Class access reads the **accessing**
+  class rather than the declaring one, so `Dog.name` addresses `Dog` even where
+  `Animal` declares it; the wire keeps the declaring identity either way, and
+  the remedy for the one asymmetry this creates — an ancestor's query refusing
+  an inherited member spelled through a descendant — is to start every term from
+  the queried Entity. A comparison's value parameter is deliberately not
+  narrowed to the member's declared Python type: a predicate's value is a wire
+  literal, and the canonical contract spells a decimal member's comparison as
+  the JSON number `600.00`, which the declared type would refuse. `.set(value)`
+  is the exception, because an Assignment's value genuinely is a member value.
+- **One query-definition error family.** Every Python Attribute Expression,
+  Relationship Path, Predicate, Assignment, Sort Key, or Find Query
+  construction, composition, and refinement the frontend itself refuses raises
+  `QueryDefinitionError(ValueError)` with a stable `query-*` code. What the
+  frontend judges is exactly what needs no model — clause arity, single-shot
+  clauses, literal and collection shapes, and the target's own declared
+  temporal axes — because query authoring reaches no model. There is
+  consequently no translation seam: a rule that needs a whole model is stated
+  once at execution preflight and once at the predicate-selected write
+  boundary, and surfaces there as its owner module's own error carrying its own
+  rule code — `OperationRejectedError` for an `m-op-algebra`, inheritance,
+  relationship-navigation, or deep-fetch rejection, `TemporalReadError` for a
+  temporal-read one — neither rewrapped nor reclassified, so the typed and the
+  serialized ingress report one rejection under one name. Deferred Execution
+  Features and execution failures retain their separate classifications.
   The closed stable code set is
   `query-target-mismatch`,
   `query-expression-invalid`, `query-path-invalid`,
   `query-clause-invalid`, `query-assignment-invalid`,
   `query-assignment-target-mismatch`, and
   `query-not-mutation-compatible`. Optional structured `target`, `member`,
-  `path`, and `clause` context plus the preserved cause identify the exact
+  `path`, and `clause` context identifies the exact
   rejection; errors expose neither literal values nor internal model state.
   Invalid operators and literals use `query-expression-invalid`; invalid Value
   Object or relationship hops, quantifiers, and narrowing use
@@ -139,9 +170,14 @@ mutations, exceptions, or exports.
   Object leaf is assignable. Primary-key, framework-owned, read-only,
   relationship, and whole-Value-Object occurrences are rejected, as are values
   that require coercion or violate the declared type or nullability. Failure
-  raises `QueryDefinitionError(query-assignment-invalid)` from `.set(...)`
-  itself; it is never postponed until a Transaction mutation method, write
-  boundary, or database call. Assignment-list validation remains separate:
+  raises `ModelCopyError(TypeError)` from `.set(...)` itself; it is never
+  postponed until a Transaction mutation method, write boundary, or database
+  call. That class rather than a `query-*` code is deliberate. The assignment
+  rules are one set with one home: `.set(...)`, `model_copy(update=...)` (§3),
+  and the serialized write boundary (§5) all reach the same judgement over the
+  member's metadata and the raw value, differing only in the resolution in front
+  of it, so `.set(...)` reports the copy surface's refusal rather than minting a
+  second verdict for the same rule. Assignment-list validation remains separate:
   an assignment-bearing mutation checks nonemptiness, duplicates, and exact
   target compatibility when combining already-valid Assignments with its
   Find Query.
@@ -237,18 +273,27 @@ mutations, exceptions, or exports.
   concrete subtype in the query's effective set at the moment `order_by(...)`
   is called. Thus
   `Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())` is
-  valid, while spelling `order_by(...)` before `narrow(Dog)` raises
-  `QueryDefinitionError(query-target-mismatch)` immediately; later clauses
-  never retroactively legalize an invalid intermediate query.
+  valid, while spelling `order_by(...)` before `narrow(Dog)` is refused;
+  later clauses never retroactively legalize an invalid intermediate query.
+  This one rule is **stated statically and only statically**: `order_by`'s
+  parameter reads the result the receiver carries where the call is written, so
+  a subtype's Sort Key against an un-narrowed result is a type error in the
+  editor. No model-aware rule restates it, and none could — clause order does
+  not reach the wire, so ordering before narrowing and narrowing before ordering
+  lower to one canonical operation that no validator can accept in one spelling
+  and refuse in the other.
   A first include hop may be authored through any descendant of the Find Query
   target, whether that Entity declares the relationship or inherits it; the
   Entity it is authored through is the path's conditional source set. Legality
   is measured against the query's **effective position** — the target's own
   position — so the source Entity must resolve to a nonempty subset of it. A
   broad root therefore admits every descendant of its target, a path authored
-  through the target itself remains broad, and a source outside the position
-  raises `QueryDefinitionError(query-target-mismatch)` immediately; a later
-  clause never repairs it. Thus
+  through the target itself remains broad, and a source outside the position is
+  refused; a later clause never repairs it. That refusal has both halves: the
+  path parameter is covariant in its source, so a source outside the target's
+  own subtree is a type error where the call is written, and a source the
+  connected model puts outside the effective position is refused at execution
+  preflight as `OperationRejectedError`. Thus
   `Animal.where(Animal.all).include(Dog.doghouse, Cat.ball_of_yarn)` is valid
   and loads `doghouse` only on Dogs and `ball_of_yarn` only on Cats, while
   `Pet.where(Pet.all).include(WildBoar.owner)` raises: the query's position is
@@ -533,13 +578,33 @@ mutations, exceptions, or exports.
   relationship view and a target-narrowed view remain distinct observable
   views and separate fetch hops; the planner does not reuse the broad view for
   conditional subtype descent.
+- **Known limit — a Python-authored relationship chain stops at two hops.** The
+  canonical contract sets no depth maximum and the serialized ingress accepts
+  any depth, but this target's authoring surface reaches only two. A composed
+  hop spells its own segment as `<its target's local name>.<member>`, and after
+  one continuation the path no longer knows what its last hop points at, so a
+  third authored hop raises `AttributeError` naming the remedy: root the deeper
+  traversal at the Entity the next hop is declared on and add it as its own
+  `include(...)` path. `SalesOrder.customer.notes` above is a **two**-hop path
+  and is within the limit. Two consequences follow and are deferred with it: a
+  multi-hop relationship quantifier is unauthorable, so `exists(...)` /
+  `not_exists(...)` are single-hop on this surface however deep the canonical
+  nesting may go; and the deepest include path a Python caller can author is
+  shallower than the deepest a canonical operation document may carry. Lifting
+  the limit needs a way for a composed segment to name its owner without
+  reaching a model at authoring time; no correct one exists today, and deferring
+  the owner to preflight is not admissible — the canonical relationship
+  reference grammar admits exactly `Owner.member` and no marker form, and a
+  canonical field never holds a non-canonical value.
 - **Relationship existence predicates.** A Relationship Path exposes
   `exists(*predicates)` and `not_exists(*predicates)` for either to-one or
   to-many cardinality. Zero arguments mean pure path existence or absence.
   Multiple arguments are conjoined in the terminal related-Entity scope, so one
   terminal object must satisfy every argument; separate `exists(...)`
   predicates may be satisfied by different terminal objects. A multi-hop path
-  lowers mechanically to nested canonical `exists` nodes. `not_exists(...)`
+  lowers mechanically to nested canonical `exists` nodes — a rule this target
+  states and does not yet reach, because the two-hop authoring limit above keeps
+  the quantifier single-hop. `not_exists(...)`
   negates existence of that complete nested chain by using `notExists` at the
   outermost hop; it does not negate every hop independently. Hop narrowing
   becomes the corresponding nested `narrow` scope. Callers needing predicates
@@ -733,6 +798,23 @@ mirroring `attr(name=)`. A standalone Entity (no `inheritance=`) that omits
 of the descriptor schema's phase-2 `table` requirement; family table
 incoherence (a TPH descendant declaring `table=`, a TPCS concrete omitting
 it) stays the formation-time `inheritance-*` issue family.
+
+A local Entity name may be declared in more than one namespace of one model:
+the Entity Identity is what must be unique, and the qualified identities differ.
+Such an Entity remains declarable, materializable, and queryable through its
+family root — the constraint is at the **reference site**, not on the
+declaration. Every position that names an Entity in a canonical operation
+spells it bare, so a bare name two namespaces of the connected model share
+resolves to no Entity and the operation is refused as
+`OperationRejectedError(reference-ambiguous-entity-name)`, naming the canonical
+spellings that would resolve. The rule governs every such position — an
+attribute or nested-path reference, a relationship reference, an order-by key,
+a `narrow`'s position and each of its alternatives, and a deep-fetch hop with
+its narrows — and is distinct from `attribute-outside-active-position`, which
+fires when a reference *does* resolve and resolves outside the active position.
+A serialized write instruction's ambiguous `entity` is the write family's own
+`WriteInstructionError` rather than this rule, because that name is the
+instruction's target rather than a reference within an operation.
 
 Every Entity Class declares exactly one Parallax base: a framework root
 (`Entity`, `TxTemporal`, `Bitemporal`) or exactly one domain Entity
@@ -1428,6 +1510,16 @@ or descriptor authoring form and performs no audit stamping.
   Entity metadata method. Class-backed and descriptor-backed models return the same
   compiler-owned objects; there is no package-global `meta(...)` registry
   lookup or parallel `EntityMeta` graph.
+  `meta(...)` is the one developer-facing lookup that raises rather than
+  answering absence, so it has its own exported family: `MetamodelLookupError`
+  (a `LookupError`) with the closed code set `metamodel-invalid-entity-reference`
+  for a string that is not a canonical `<namespace>.<name>` (or bare `<name>`)
+  spelling, and `metamodel-entity-not-found` for a well-formed key naming no
+  Entity of this model — including an Entity Class this model did not compose,
+  since a class names an Entity of the models that composed it and of no other.
+  It accepts an Entity Class, a canonical spelling, or an `EntityIdentity`, and
+  all three answer the same object. The class-free `m-metamodel` lookup protocol
+  underneath returns ordinary absence and raises none of these.
 - **Neutral scalar type mapping.** No lossy coercions; validation at build
   time; the database never sees an invalid value.
 
@@ -1878,7 +1970,24 @@ or descriptor authoring form and performs no audit stamping.
   optimistic-lock conflicts join the retriable set only via
   `retry_optimistic_conflicts=True`.
 - **Nesting, ownership, and participation mode.** A `db.transact` call while
-  a transaction is already active on the current thread **joins** it —
+  a transaction is already active on the current thread **joins** it, but only
+  through the exact `Database` object that opened the boundary. The outermost
+  demarcation retains a strong reference to that object, and a nested call joins
+  only when the invoked handle **is** it; an alias of the same object joins and
+  receives the identical Transaction, while any other handle is refused even
+  when it carries the same Domain Model, adapter, dialect, clock, or otherwise
+  equivalent configuration, because the demarcation owner is scoped state rather
+  than a property of any of those. A mismatch raises exported
+  `TransactionOwnershipError(RuntimeError)` with sole stable code
+  `transaction-owner-mismatch`, before rollback-only state, Principal
+  resolution, option comparison, closure execution, Unit of Work mutation, SQL,
+  connection acquisition, or any adapter activity, and it retains neither
+  handle. It is a `RuntimeError` rather than a `ValueError` because nothing
+  about the call's arguments is wrong — the identical call succeeds from the
+  owner — which is also what distinguishes it from
+  `TransactionOptionConflictError`, a rejected argument value. A non-Parallax
+  unit of work active on the thread keeps its own distinct `UnitOfWorkError`.
+  Once ownership succeeds, joining is as it always was —
   aligning with Reladomo (ADR 0004): the inner
   closure receives the **same** Parallax Transaction (no nested database
   transaction, no savepoint) and its return value is returned immediately;
@@ -2062,10 +2171,12 @@ or descriptor authoring form and performs no audit stamping.
   resolved row that survives the per-row no-op elimination below; for the
   delete and terminate verbs, every resolved row (`1 + N` round trips, a
   mid-batch zero-row gate aborting like any conflict). A Find Query becomes
-  a write target only as a **bare Find Query** — one carrying nothing but a
-  predicate (its `where(...)` arguments); `order_by`, `limit`, `include`,
-  `as_of`, `history` / `as_of_range`, and `narrow` are all rejected on any
-  write target. This is the single definition; the set-based verbs below
+  a write target only in its **mutation-compatible** form — one carrying
+  nothing but its target and its predicate (the `where(...)` arguments);
+  `order_by`, `limit`, `include`, `as_of`, `history` / `as_of_range`, and
+  `narrow` are all rejected on any write target, each naming the clauses it
+  carries, because every one of them shapes a **result** and a set-based write
+  has none to shape. This is the single definition; the set-based verbs below
   reference it rather than restating fragments. Version values are
   framework-owned end
   to end: the version field on a node, an edited copy, or any caller input
@@ -2106,7 +2217,9 @@ or descriptor authoring form and performs no audit stamping.
   assigned attribute or value-object member must be declared by the exact
   target entity — set-based writes already reject inheritance-family targets
   (below), so ancestry resolution never arises. The target Find Query must be
-  a **bare Find Query** (the single definition above);
+  **mutation-compatible** (the single definition above), and one that is not
+  raises `QueryDefinitionError(query-not-mutation-compatible)` before Unit of
+  Work buffering, SQL, or adapter access;
   resolution happens inside the transaction and participates in its mode
   (shared-locked under `locking`, lock-free under `optimistic`). Lowering
   follows the observation rule above, with **per-path no-op semantics**.
@@ -2181,6 +2294,22 @@ or descriptor authoring form and performs no audit stamping.
   Write Effect Error family `parallax.core.unit_work` owns; each carries only
   the Entity Identity, the Write Target (retained by reference), and the
   expected and actual counts — no SQL, statement index, or driver exception.
+- **The serialized write instruction has its own ingress family.** Beside the
+  typed developer surface, `parallax.core.unit_work` accepts a canonical
+  `m-unit-work` write-instruction document — the form the conformance adapter
+  hands it, and the form a Find Query never becomes. A document that is not a
+  well-formed canonical instruction raises `WriteInstructionError(ValueError)`:
+  an unknown mutation, a missing or ill-typed `entity`, `rows`, or Valid-Time
+  bound, an unexpected key, a forbidden framework-owned row key, an `entity`
+  the connected model does not declare or two of its namespaces share, or a row
+  naming a member the target's family does not declare. It is deliberately not
+  a `QueryDefinitionError`: nothing authored it, so no `query-*` code describes
+  it. It also carries this ingress's assignment refusals, which reach the same
+  judgement the typed `.set(...)` path does and render the same message under
+  this family's name rather than the copy family's. Once the document is well
+  formed, the model-aware operation rules it is subject to are exactly the ones
+  the typed verbs reach and raise their owner families unchanged, so the two
+  ingresses classify one input one way.
 
 ## 6. Database support and compatibility proof
 
@@ -2679,7 +2808,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, `FindQuery`, `Predicate`, `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Find Query authoring vocabulary — `FindQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
