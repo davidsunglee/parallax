@@ -229,8 +229,9 @@ literal; the rest of the comparison / range / membership `value`(s) are polymorp
 declared neutral type; a resolver **MUST** reject a type-mismatched literal (e.g. a
 `number` compared against a `string`-typed attribute). The presence tests
 (`nestedIsNull` / `nestedIsNotNull`) carry a `path` only. `m-sql` lowers a nested
-read to a dialect-specific extraction from the structured-document column and
-**casts** it to the declared type before comparing; the extraction spelling, the
+read to a dialect-specific extraction from the structured-document column and,
+where the declared type requires one, **casts** it before comparing; the extraction
+spelling, which types cast and which compare as the canonical document text, the
 typed-cast form, and the **bind order** (per-segment JSON keys vs a single path
 bind) are all `m-dialect` decisions (`m-sql`, `m-dialect`), not fixed by this
 algebra.

@@ -34,7 +34,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
-| **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) |
+| **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family only; every other declarable type compares as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
 | **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, ?)` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, ?, ?, ?, …)` — one call, one pair per assigned path (see below) |
 | **structural document equality** (`m-document-codec` / `m-case-format`) | `=` on `jsonb` — the type normalizes on storage, so `=` is already structural | `json_equals(a, b)` — `json` is a `longtext` alias, so `=` is textual and key-order sensitive (see below) |
@@ -109,22 +109,53 @@ whole point of localizing the extraction here. `json_value` returns SQL `NULL` f
 a non-scalar (object/array) target as well, but the algebra only ever extracts a
 declared **scalar** leaf, so that is never reached.
 
-### Typed cast form (`m-value-object`)
+### Typed cast form (`m-value-object` / `m-storage-layout`)
 
-A `valueObject` inner attribute has a declared `m-core` neutral type
-(`m-value-object`). The document extraction above yields **text**, so a comparison
-against a **non-text** attribute (a numeric `nestedGt` / `nestedLt`, …) **casts**
-the extraction to the declared type before comparing — and the cast spelling is a
-dialect decision owned here:
+A document-resident member has a declared `m-core` neutral type — a `valueObject`
+inner attribute (`m-value-object`) or a document-resident Attribute under
+Relational Document Layout (`m-storage-layout`). The document extraction above
+yields **text**, and whether a comparison casts that text is fixed by the declared
+type. Both halves of the answer are owned here, and between them the two tables
+below cover **every declarable neutral type**, so no type is left without a
+comparison form.
+
+**The numeric family casts**, because its document spelling does not compare in
+value order as text — `'10'` is less than `'9'` — and the cast spelling is a
+dialect decision:
 
 | Neutral type | Postgres | MariaDB |
 |---|---|---|
 | `int32` / `int64` | `cast(<extraction> as bigint)` | `cast(<extraction> as signed)` |
+| `float32` | `cast(<extraction> as real)` | `cast(<extraction> as float)` |
 | `float64` | `cast(<extraction> as double precision)` | `cast(<extraction> as double)` |
 | `decimal(p,s)` | `cast(<extraction> as decimal(p, s))` | `cast(<extraction> as decimal(p, s))` |
 
-For a **text** (`string`) attribute the extraction already compares directly — no
-cast. Postgres also admits the `<extraction>::type` surface; it denotes the same
+**Every other declarable type compares as the extracted text, with no cast on
+either dialect**, because the canonical spelling `m-document-codec` writes already
+equates and orders correctly as text — which is why that module states those
+spellings to be comparison-significant rather than a serialization convenience:
+
+| Neutral type | Document spelling (`m-document-codec`) | Why no cast |
+|---|---|---|
+| `string` | JSON string | the extraction already **is** the text the predicate compares |
+| `boolean` | JSON boolean | extracts as `true` / `false` on both engines, and `'false' < 'true'` is the value order |
+| `bytes` | lowercase hex, two digits per byte | equal texts are equal octet sequences, and text order is octet order |
+| `date` | ISO-8601 `YYYY-MM-DD` | fixed width, most-significant field first — text order is calendar order |
+| `time` | ISO-8601 `hh:mm:ss[.ffffff]` | zero-padded, most-significant field first — text order is clock order |
+| `timestamp` | ISO-8601 UTC `YYYY-MM-DDThh:mm:ss.ffffffZ` | fixed width, already UTC-normalized — text order is instant order |
+| `uuid` | canonical lowercase 8-4-4-4-12 | equal texts are equal 128-bit values |
+
+`json` needs no row: it is the one variant no member may declare (`m-core`), so it
+never reaches a comparison as a leaf.
+
+The no-cast half is a claim about these ASCII spellings under both concrete
+dialects' text comparison, not a general claim that text comparison is enough. A
+future dialect whose text comparison does not equate or order them in value order
+supplies a cast for those types **at this decision point**, rather than changing
+the spelling — the spelling is shared with every other consumer of the document
+and is not a dialect's to move.
+
+Postgres also admits the `<extraction>::type` surface; it denotes the same
 cast and normalizes to the `cast(… as …)` canonical form (`m-sql`). Because every
 not-present state casts SQL `NULL` (never a spurious value), the numeric predicates
 obey the same absence-collapse rule as the text ones (`m-op-algebra`). A future

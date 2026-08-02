@@ -1207,10 +1207,11 @@ hole structure diverges, the `binds` are authored as a **per-dialect map**
     mariadb: ['$.geo.country', 'US']
 ```
 
-The compared `value` is a **typed** `m-op-algebra` literal; the extraction is cast
-to the attribute's declared neutral type before comparing (the typed-cast form is a
-per-dialect `m-dialect` decision). For a `string`-typed attribute the extraction is
-already text and compares directly, as above. A future dialect with a different
+The compared `value` is a **typed** `m-op-algebra` literal; a numeric-family
+attribute casts the extraction to its declared neutral type before comparing (the
+typed-cast form is a per-dialect `m-dialect` decision), and every other declarable
+type — `string` included — compares the extraction directly against the canonical
+text `m-document-codec` stored, as above. A future dialect with a different
 document type — Snowflake `VARIANT` — uses its own extraction (a `VARIANT` path
 expression) behind the same seam while preserving the path order and result
 semantics. The independent `then.referenceSql` oracle spells the extraction a
@@ -1225,9 +1226,11 @@ harness asserts returns the same rows (`m-case-format`).
 #### The flat `nested*` operator family
 
 The range operators (`nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`) apply
-the **typed cast** (`m-dialect`) to the extraction before the SQL comparison, since
-the extraction is text and the attribute is numeric. `nestedBetween` applies the
-same cast and lowers to **one** `<extraction> between ? and ?` — never a pair of
+the **typed cast** (`m-dialect`) to the extraction before the SQL comparison when
+the attribute is of the numeric family, since text order is not numeric order; over
+a type whose canonical spelling already orders as text they compare the extraction
+directly. `nestedBetween` follows the same rule and lowers to **one**
+`<extraction> between ? and ?` — never a pair of
 comparisons (`m-op-algebra`) — binding the JSON path first, then `lower`, then
 `upper`. `nestedIn` lowers the membership to `<extraction> in (?, …)` — the JSON
 path bind(s) first, then one bind per list value in `values` order — and
@@ -1482,10 +1485,16 @@ Attribute is a one-segment path — the ordinary scalar comparison that would ha
 been `t0.display_name = ?` under Columns layout becomes an extraction over
 `t0.payload` with one path bind.
 
-**The cast is by declared Neutral Type.** The extraction yields text, so every
-non-`string` comparison casts through `m-dialect`'s typed-cast form before
-comparing, exactly as a numeric `nestedGt` does today, and the compared literal
-is encoded through `m-document-codec` so both sides carry the same spelling.
+**Whether the extraction casts is fixed by the declared Neutral Type.** The
+extraction yields text, and `m-dialect`'s two typed-cast tables say which types do
+what: a member of the **numeric family** — `int32`, `int64`, `float32`, `float64`,
+`decimal(p,s)` — casts through the typed-cast form before comparing, exactly as a
+numeric `nestedGt` does today; every other declarable type compares the extracted
+text directly, with no cast, because `m-document-codec`'s canonical spelling for it
+already equates and orders correctly as text. Those two tables are closed over the
+declarable types, so no document-resident member is left without a comparison form.
+Either way the compared literal is encoded through `m-document-codec`, so both
+sides carry the same spelling.
 
 Everything else is unchanged: the absence collapse, the operator-by-operator
 fragments, the negation normalizations, the per-dialect bind-hole divergence that
