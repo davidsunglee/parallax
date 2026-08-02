@@ -29,6 +29,8 @@ from parallax.core.metamodel import (
     AbstractSubtype,
     AsOfAxisMetadata,
     AttributeIdentity,
+    AttributeReference,
+    Cardinality,
     Column,
     CompiledMetadata,
     ConcreteSubtype,
@@ -38,10 +40,13 @@ from parallax.core.metamodel import (
     ExactEntityReference,
     Multiplicity,
     NestedValueObjectOccurrenceDeclaration,
+    RelationshipIdentity,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
     TemporalDimension,
+    UnresolvedDefiningRelationshipDeclaration,
+    UnresolvedRelationshipJoin,
     ValueObjectAttributeDeclaration,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
@@ -764,6 +769,53 @@ def test_a_tpcs_family_receives_one_structured_column_per_concrete_table() -> No
         assert layout.placement(
             AttributeIdentity(owned, f"{owned.name.lower()}Detail")
         ) == storage_layout.DocumentPath(slots[table], (f"{owned.name.lower()}Detail",))
+
+
+def test_an_inherited_join_endpoint_keeps_the_direct_column_its_role_earns_it() -> None:
+    # The compiler reads endpoints from compiled directions, which address an
+    # inherited Attribute at the position naming it, and classifies declarations,
+    # which carry the declaring Entity's Identity. Resolving one to the other is
+    # what keeps the endpoint's required Column in the Table: without it the
+    # join's own Attribute would be written into the document and the Table would
+    # have no Column to join on.
+    root = identity("Ledger")
+    entry = identity("Entry")
+    holder = identity("Holder")
+    owner_id = attribute(root, "ownerId", column="owner_key")
+    metadata = _unvalidated(
+        Declaration(
+            identity=root,
+            layout=Document(Column("doc")),
+            attributes=(key(root), owner_id, attribute(root, "title", type=STRING)),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        Declaration(
+            identity=entry,
+            container=Table("entry"),
+            inheritance=ConcreteSubtype(ExactEntityReference(root)),
+            relationships=(
+                UnresolvedDefiningRelationshipDeclaration(
+                    identity=RelationshipIdentity(entry, "owner"),
+                    cardinality=Cardinality.MANY_TO_ONE,
+                    join=UnresolvedRelationshipJoin(
+                        source=AttributeIdentity(entry, "ownerId"),
+                        target=AttributeReference(ExactEntityReference(holder), "id"),
+                    ),
+                ),
+            ),
+        ),
+        Declaration(identity=holder, container=Table("holder"), attributes=(key(holder),)),
+    )
+    layout = _require_layout(_document_facet(metadata), "entry")
+    assert _column_names(layout) == ["id", "owner_key", "doc"]
+    assert layout.placement(owner_id.identity) == storage_layout.DirectColumn(
+        _require_slot(layout, owner_id.identity)
+    )
+    assert layout.placement(AttributeIdentity(root, "title")) == storage_layout.DocumentPath(
+        layout.columns[-1], ("title",)
+    )
+    holder_layout = _require_layout(_document_facet(metadata), "holder")
+    assert _column_names(holder_layout) == ["id"]
 
 
 def test_branch_placements_are_the_branch_layouts_own_answers_in_member_order() -> None:

@@ -578,9 +578,18 @@ reason `slots` exists for contributors. The per-branch answers genuinely differ:
 under table-per-concrete-subtype each branch has its own Structured Column, and
 under `Document` the applicable document shape differs per variant, so a
 polymorphic read that resolved placement once for the position would be wrong for
-every branch but one. Under `Columns` each entry is the same `DirectColumn` its
-aligned `slots` entry already names, so the two sequences agree and the addition
-costs conventional consumers nothing.
+every branch but one. Under `Columns` each entry is the `DirectColumn` over the
+slot that member's own contributor owns — the slot `slots` already names at that
+contributor's own index in `columns` — so the two sequences carry the same
+physical answers and the addition costs conventional consumers nothing.
+
+`slots` and `placements` are each aligned with their own logical sequence and
+never with each other. `columns` is tier-partitioned and `members` is not, so
+equal indices name different declarations, and under `Document` the two
+sequences are not even the same length: a document-resident member appears in
+`members` and contributes no `columns` entry at all. A consumer that needs both
+answers for one declaration reaches them through that declaration, not through a
+shared index.
 
 The union carries top-level members only. A Value Object leaf is located
 through the branch's own `layout.placement(...)`, which is total over every

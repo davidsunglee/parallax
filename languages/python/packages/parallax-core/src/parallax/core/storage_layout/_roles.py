@@ -29,11 +29,17 @@ class DirectRoles:
 
     Each set is one role of the closed list: model primary keys are read from the
     Attribute itself, ``joined`` are the endpoints of accepted Relationship
-    Joins, ``temporal`` the starts and ends of the family's As-Of Axes,
-    ``audit`` the Attributes accepted Audit Metadata designates, and an explicit
-    optimistic-lock Attribute is likewise read from the Attribute itself. The
-    table-per-hierarchy variant tag is framework-owned rather than an Attribute,
-    so it is not decided here.
+    Joins, ``temporal`` the starts and ends of the family's As-Of Axes, and an
+    explicit optimistic-lock Attribute is likewise read from the Attribute
+    itself. The table-per-hierarchy variant tag is framework-owned rather than an
+    Attribute, so it is not decided here. Audit Metadata designates no Attribute
+    in any accepted model, so that role selects nothing and carries no set of its
+    own: a set only one of the two deciders could be given is a residency the
+    other could never accept.
+
+    Every designation names a declared Attribute by the Identity its declaring
+    Entity bears, never by the position that inherits it, so membership answers
+    the same way wherever the declaration is reached from.
 
     Overlapping designations still name one Attribute and one role, so the answer
     is membership rather than a ranking.
@@ -41,7 +47,6 @@ class DirectRoles:
 
     joined: frozenset[AttributeIdentity] = frozenset()
     temporal: frozenset[AttributeIdentity] = frozenset()
-    audit: frozenset[AttributeIdentity] = frozenset()
 
     def covers(self, attribute: AttributeMetadata) -> bool:
         """Whether ``attribute`` holds a direct role and stays a Column."""
@@ -50,7 +55,6 @@ class DirectRoles:
             or attribute.optimistic_locking
             or attribute.identity in self.joined
             or attribute.identity in self.temporal
-            or attribute.identity in self.audit
         )
 
 

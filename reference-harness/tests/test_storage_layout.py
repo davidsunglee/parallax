@@ -882,8 +882,8 @@ def _document_standalone(**overrides: Any) -> dict[str, Any]:
 def test_the_capability_gate_names_every_declared_shape_the_owner_matches() -> None:
     # The scope list is a set of independent predicates over one accepted
     # root-owned declaration, so a model matching several is refused once and
-    # names all of them: the phase that makes one shape work deletes exactly its
-    # own entry and leaves the rest refusing.
+    # names all of them. Removing one matched entry therefore leaves the others
+    # matched, and the owner is still refused for every shape that remains.
     definition = _document_standalone(
         attributes=[
             _attribute("id", primary_key=True),
@@ -1040,6 +1040,62 @@ def test_a_join_that_does_not_resolve_locally_designates_no_endpoint() -> None:
     with pytest.raises(RejectionError) as caught:
         validate_storage_layout(_note_owning_a_holder(join_source="missing"))
     assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE
+
+
+def _document_family_joined_through_an_inherited_endpoint() -> list[dict[str, Any]]:
+    """A document-mapped TPCS family whose concrete joins an inherited Attribute."""
+    return [
+        {
+            "name": "Ledger",
+            "namespace": "example",
+            "layout": {"document": {"column": "doc"}},
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [
+                _attribute("id", primary_key=True),
+                _attribute("ownerId", column="owner_key"),
+                _attribute("title"),
+            ],
+        },
+        {
+            "name": "Entry",
+            "namespace": "example",
+            "table": "entry",
+            "inheritance": {"role": "concrete-subtype", "parent": "Ledger"},
+            "relationships": [
+                {
+                    "name": "owner",
+                    "cardinality": "many-to-one",
+                    "join": {
+                        "source": "ownerId",
+                        "target": {"entity": "Holder", "attribute": "id"},
+                    },
+                }
+            ],
+        },
+        {
+            "name": "Holder",
+            "namespace": "example",
+            "table": "holder",
+            "attributes": [_attribute("id", primary_key=True)],
+        },
+    ]
+
+
+def test_an_inherited_join_endpoint_is_direct_at_the_declaration_that_bears_it() -> None:
+    # A join addresses an inherited Attribute at the descendant naming it, while
+    # residency is decided over the ancestor's declaration. Role 2 is about the
+    # declared Attribute, so `ownerId` keeps its Column and its Override, and the
+    # concrete Table carries the Column the join needs.
+    definitions = _document_family_joined_through_an_inherited_endpoint()
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout(definitions)
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+    layout = compile_storage_layout(definitions).table("entry")
+    assert layout is not None
+    assert [slot.column for slot in layout.columns] == ["id", "owner_key", "doc"]
+    owner = MemberAddress("example.Ledger", ("ownerId",))
+    placement = layout.placement(owner)
+    assert placement == DirectColumn(layout.column("owner_key"))
 
 
 def test_tph_participants_are_one_owner_and_tpcs_sibling_columns_may_repeat() -> None:

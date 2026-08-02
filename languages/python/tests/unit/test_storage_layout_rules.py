@@ -548,8 +548,8 @@ def _refused_shapes(*declarations: Declaration) -> tuple[str, ...]:
 def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
     # The scope list is a set of independent predicates over one accepted
     # root-owned declaration, so a model matching several is refused once and
-    # names all of them: the phase that makes one shape work deletes exactly its
-    # own entry and leaves the rest refusing.
+    # names all of them. Removing one matched entry therefore leaves the others
+    # matched, and the owner is still refused for every shape that remains.
     versioned = attribute(_SIBLING, "revision")
     owner = _standalone_document(
         attributes=(
@@ -574,6 +574,17 @@ def test_the_gate_locates_the_refusal_at_the_layout_owner_with_no_related_locati
     assert issue.location == EntityLocation(_SIBLING)
     assert issue.related == ()
     assert "body" in issue.message
+
+
+def test_an_owner_matching_no_declared_shape_is_executed_rather_than_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The gate refuses exactly the shapes the scope list declares, so an owner
+    # matching none of them is one this build executes and reports nothing. Every
+    # mapping shape is declared today, leaving no such owner to write a model
+    # for, so the scope is emptied here to state the rule rather than the list.
+    monkeypatch.setattr("parallax.core.storage_layout._rules.CAPABILITY_SCOPE", ())
+    assert _rule_issues(_standalone_document()) == ()
 
 
 def test_a_hierarchy_root_owns_one_refusal_for_its_whole_family() -> None:
@@ -762,6 +773,38 @@ def test_a_join_endpoint_stays_direct_so_neither_layout_rule_fires_on_it() -> No
     assert [issue.code for issue in _rule_issues(*_note_owning_a_holder())] == [_CAPABILITY]
 
 
+def test_an_inherited_join_endpoint_is_direct_at_the_declaration_that_bears_it() -> None:
+    # A descendant addresses an inherited Attribute at its own position, while
+    # the declaration the Rule Set classifies carries the ancestor's Identity.
+    # Role 2 is about the declared Attribute, so `ownerId` keeps its Column and
+    # its override in every concrete Table of the family, and the layout is
+    # refused by the capability gate alone.
+    note_owner = attribute(_ROOT, "ownerId", column="owner_key")
+    root = Declaration(
+        identity=_ROOT,
+        layout=Document(Column("payload")),
+        attributes=(key(_ROOT), note_owner),
+        inheritance=AbstractRoot(TablePerConcreteSubtype()),
+    )
+    entry = Declaration(
+        identity=_LEAF,
+        container=Table("entry"),
+        inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
+        relationships=(
+            UnresolvedDefiningRelationshipDeclaration(
+                identity=RelationshipIdentity(_LEAF, "owner"),
+                cardinality=Cardinality.MANY_TO_ONE,
+                join=UnresolvedRelationshipJoin(
+                    source=AttributeIdentity(_LEAF, "ownerId"),
+                    target=AttributeReference(ExactEntityReference(_HOLDER), "id"),
+                ),
+            ),
+        ),
+    )
+    holder = Declaration(identity=_HOLDER, container=Table("holder"), attributes=(key(_HOLDER),))
+    assert [issue.code for issue in _rule_issues(root, entry, holder)] == [_CAPABILITY]
+
+
 def test_a_malformed_join_leaves_its_endpoint_document_resident_without_ordering() -> None:
     # An endpoint of a malformed join is not locally resolvable and is excluded,
     # so the Attribute is classified document-resident here while
@@ -851,4 +894,5 @@ def test_the_storage_layout_rejection_fixture_set_is_complete() -> None:
         "m-storage-layout-013",
         "m-storage-layout-014",
         "m-storage-layout-015",
+        "m-storage-layout-016",
     ]

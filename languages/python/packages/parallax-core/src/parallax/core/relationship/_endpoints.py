@@ -84,6 +84,12 @@ def project_join_endpoints(candidate: CandidateMetamodel) -> frozenset[Attribute
     provisional value, and never rejects, so a consuming Rule Set's result does
     not depend on when it asks.
 
+    An endpoint is addressed at the position that names it, which for an
+    inherited Attribute is not the Entity declaring it. The projection returns
+    the Identity the resolved Attribute bears, because that is the Identity
+    accepted Attribute Metadata carries and the only one a consumer classifying
+    a declaration can compare against.
+
     Only a defining declaration is read. A reverse declaration introduces no
     Attribute of its own — the compiler swaps the sides of the same join and
     inverts cardinality for it — so every Attribute any direction names is
@@ -106,5 +112,5 @@ def project_join_endpoints(candidate: CandidateMetamodel) -> frozenset[Attribute
             target = endpoint(join.target.entity, join.target, positions)
             if source is None or target is None:
                 continue
-            endpoints.update((join.source, join.target))
+            endpoints.update((source.identity, target.identity))
     return frozenset(endpoints)
