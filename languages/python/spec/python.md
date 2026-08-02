@@ -118,28 +118,52 @@ mutations, exceptions, or exports.
   frontend itself refuses with no model at all. Where that composition lowers to
   a **valid** canonical operation instead, the parameter is the only place the
   mistake is visible and no preflight rule could restate it, because the wire
-  carries no record of what was refused. A parameter can outrun the wire in only
-  three ways — the wire records less than the parameter read, the query flattens
-  the clause order the parameter read it in, or a signature deliberately answers
-  wider than the narrowing it describes — so those ways enumerate the places,
-  each stated again where it arises: `Entity.all`, since an `all` node names no
-  position and nothing distinguishes `Dog.all` from `Animal.all`; an
+  carries no record of what was refused. Whether a given rejection is one of
+  those is settled by a **test**, not by membership in a list: lower the refused
+  spelling and the accepted one and compare the canonical operations. Where the
+  two are one document, no model-aware rule can refuse either without refusing
+  both, and the parameter is the whole of the rule. A rejection lands there
+  because lowering discards what the parameter read — the wire records a
+  canonical Entity Identity and a declaring member, never the Python class a term
+  was spelled through, and a Find Query retains clauses rather than wrapping
+  them, so clause order reaches nothing — or because a signature deliberately
+  answers wider than the narrowing it describes and refuses a composition that is
+  in fact legal. The families that produces, **as examples and not as a closed
+  set**, each stated again where it arises: `Entity.all`, since an `all` node
+  names no position and nothing distinguishes `Dog.all` from `Animal.all`; an
   **inherited** member spelled through a descendant, since the wire keeps the
-  declaring Entity; the two clause-order rules below (a `where` argument or a
-  sort key written before the `narrow` that scopes it), since a Find Query
-  retains clauses rather than wrapping them, so the refused spelling and the
+  declaring Entity; a member spelled through one of **two distinct Entity Classes
+  carrying the same Entity Identity**, since the wire keeps the identity and not
+  the class; the two clause-order rules below (a `where` argument or a sort key
+  written before the `narrow` that scopes it), since the refused spelling and the
   accepted one lower to one operation; and `FindQuery.narrow`'s **conservative
   variadic overload**, which leaves the result parameter where it was for any
   subtype list a fixed overload set cannot read — one expanded from a sequence,
   or one naming more than three alternatives — while the narrow itself reaches
-  the wire and scopes exactly the sort keys preflight then accepts. The converse
+  the wire and scopes exactly the sort keys preflight then accepts. Nothing here
+  closes that list and no count of it is normative: another family arrives with
+  any typing decision that lets a parameter read what lowering discards, and
+  three have been found after the list was first written. What is fixed is the
+  test above and the obligation that follows it — a static rule that fails the
+  test is stated where it arises and pinned in the negative-typing corpus
+  (`tests/unit/test_typed_query_composition.py`), where
+  `reportUnnecessaryTypeIgnoreComment` holds it to both directions. The converse
   direction has exactly one exception of its own — narrowing relatedness
   (below) is refused at preflight and stated nowhere statically. Class access
   reads the **accessing** class rather than the declaring one, so `Dog.name`
   addresses `Dog` even where `Animal` declares it; the wire keeps the declaring
   identity either way, and the remedy for the asymmetry this creates — an
   ancestor's query refusing an inherited member spelled through a descendant —
-  is to start every term from the queried Entity. A comparison's value
+  is to start every term from the queried Entity. Inheritance is not the only
+  way a class and an Identity come apart: Entity Identity is unique **per
+  model** (`metamodel-duplicate-entity-identity`) and a class belongs to no
+  model until it is composed into one, so two distinct Entity Classes may
+  legitimately carry one Identity. A member both declare then lowers to one
+  attribute reference at one target from either class, while the parameters hold
+  the two classes nominally incompatible — so `TwinLeft.where(TwinRight.id == 1)`
+  is a static error whose operation is the one `TwinLeft.where(TwinLeft.id == 1)`
+  produces. The remedy is the same one: spell every term through the class the
+  query is rooted at. A comparison's value
   parameter is deliberately not
   narrowed to the member's declared Python type: a predicate's value is a wire
   literal, and the canonical contract spells a decimal member's comparison as
