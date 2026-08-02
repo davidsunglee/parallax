@@ -331,8 +331,11 @@ class _DirectRoles:
     Model primary keys and an explicit optimistic-lock Attribute are read from
     the Attribute itself; ``joined`` and ``temporal`` name the endpoints of
     accepted Relationship Joins and the As-Of Axis bounds of the family root.
-    Audit Metadata designates no Attribute in any model this harness reads, so
-    the role selects nothing and needs no set of its own.
+    Each designation names a declared Attribute by its declaring Entity, never by
+    a position that inherits it, so an inherited endpoint answers the same way
+    from every Table that reaches it. Audit Metadata designates no Attribute in
+    any model this harness reads, so the role selects nothing and needs no set of
+    its own.
     """
 
     joined: frozenset[tuple[str, str]]
@@ -597,20 +600,25 @@ def _group_attributes(group: _Group) -> tuple[tuple[str, dict[str, Any]], ...]:
     )
 
 
-def _declares_attribute(index: _ModelIndex, entity: str, name: str) -> bool:
-    """Whether ``entity`` or its ancestry declares an Attribute called ``name``."""
+def _declaring_owner(index: _ModelIndex, entity: str, name: str) -> str | None:
+    """The Entity declaring the Attribute ``name`` reaches at ``entity``, or absence.
+
+    A join endpoint is addressed at the position that names it, so an inherited
+    Attribute is addressed at a descendant while its declaration lives on an
+    ancestor. Residency is decided over declarations, so the walk returns the
+    declaring Entity — nearest first, as a position resolves a member.
+    """
     if entity not in index.family.defs:
-        return False
-    return any(
-        attribute["name"] == name
-        for identity in index.family.ancestry(entity)
-        for attribute in index.family.defs[identity].get("attributes", []) or []
-        if isinstance(attribute, dict)
-    )
+        return None
+    for identity in reversed(index.family.ancestry(entity)):
+        for attribute in index.family.defs[identity].get("attributes", []) or []:
+            if isinstance(attribute, dict) and attribute["name"] == name:
+                return identity
+    return None
 
 
 def _joined_attributes(index: _ModelIndex) -> frozenset[tuple[str, str]]:
-    """Every ``(owner, attribute name)`` an accepted Relationship Join designates.
+    """Every ``(declaring owner, attribute name)`` an accepted Relationship Join designates.
 
     Only a defining declaration is read: a reverse declaration introduces no
     Attribute its defining peer does not already name. Both endpoints of one join
@@ -634,12 +642,12 @@ def _joined_attributes(index: _ModelIndex) -> frozenset[tuple[str, str]]:
             qualified = entity if "." in entity or namespace is None else f"{namespace}.{entity}"
             source_name = join["source"]
             target_name = target["attribute"]
-            if not _declares_attribute(index, owner, source_name):
+            source_owner = _declaring_owner(index, owner, source_name)
+            target_owner = _declaring_owner(index, qualified, target_name)
+            if source_owner is None or target_owner is None:
                 continue
-            if not _declares_attribute(index, qualified, target_name):
-                continue
-            endpoints.add((owner, source_name))
-            endpoints.add((qualified, target_name))
+            endpoints.add((source_owner, source_name))
+            endpoints.add((target_owner, target_name))
     return frozenset(endpoints)
 
 

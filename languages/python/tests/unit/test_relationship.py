@@ -485,9 +485,13 @@ def test_an_endpoint_of_a_join_that_does_not_resolve_locally_is_excluded() -> No
     assert _endpoints(*_orders((foreign,))) == frozenset()
 
 
-def test_an_inherited_endpoint_resolves_through_the_declared_ancestry() -> None:
+def test_an_inherited_endpoint_is_designated_by_the_identity_its_declaration_bears() -> None:
     # A join endpoint may name an Attribute an ancestor declares, so the
-    # projection walks the same parent links the Rule Set resolves through.
+    # projection walks the same parent links the Rule Set resolves through. It
+    # returns the resolved Attribute's own Identity rather than the addressed
+    # one: `Leaf.id` is how the join reaches the member, but `Node.id` is the
+    # Identity its accepted declaration carries, and a consumer classifying
+    # declarations can compare against nothing else.
     root = identity("Node")
     leaf = identity("Leaf")
     declarations = (
@@ -513,7 +517,7 @@ def test_an_inherited_endpoint_resolves_through_the_declared_ancestry() -> None:
         ),
     )
     assert _endpoints(*declarations) == frozenset(
-        {AttributeIdentity(leaf, "nodeId"), AttributeIdentity(leaf, "id")}
+        {AttributeIdentity(leaf, "nodeId"), AttributeIdentity(root, "id")}
     )
 
 

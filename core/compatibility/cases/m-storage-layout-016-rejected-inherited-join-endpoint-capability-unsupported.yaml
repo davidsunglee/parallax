@@ -1,0 +1,51 @@
+# Negative (m-storage-layout): an inherited Relationship Join endpoint is a
+# direct-role Attribute of the declaration that bears it, not of the position
+# that addresses it.
+#
+# `Entry` joins `Holder` on `ownerId`, which `Ledger` declares and `Entry`
+# inherits, so the join addresses the endpoint at `Entry` while the Attribute it
+# names is `Ledger.ownerId`. Under the family's root-owned Relational Document
+# Layout that Attribute holds direct-column role 2 and keeps a Column of its own
+# in every concrete Table, which is what makes its `column: owner_key` an
+# override of a Column the member really occupies rather than a contradiction.
+# A validator that matched the addressed position instead would classify
+# `ownerId` as document-resident and reject this model with
+# `storage-layout-document-member-column-override`, refusing a legal override and
+# leaving the join with no Column to join on. What the model is refused for is
+# the capability gate alone: this build executes neither a
+# table-per-concrete-subtype family nor an Attribute named by a Relationship Join
+# under this layout.
+model: models/member-column-defaults.yaml
+tags: [m-storage-layout, m-inheritance, m-relationship, m-model-formation, m-descriptor, rejected, negative, document-layout, table-per-concrete-subtype, capability, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Ledger
+        inheritance:
+          role: root
+          strategy: table-per-concrete-subtype
+        layout:
+          document:
+            column: doc
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: ownerId, type: int64, column: owner_key }
+          - { name: title, type: string }
+      - name: Entry
+        table: entry
+        inheritance:
+          role: concrete-subtype
+          parent: Ledger
+        relationships:
+          - name: owner
+            cardinality: many-to-one
+            join:
+              source: ownerId
+              target: { entity: Holder, attribute: id }
+      - name: Holder
+        table: holder
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+then:
+  rejectedRule: storage-layout-document-capability-unsupported

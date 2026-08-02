@@ -82,6 +82,7 @@ non-empty; emptying the scope retires the rule and this code with it."""
 class DocumentLayoutOwner:
     """One accepted root-owned ``Document`` declaration and the mapping it governs.
 
+    ``declaration`` is the accepted Entity Declaration that selected the layout.
     ``strategy`` is the family's root-owned inheritance strategy, or absent for a
     standalone Entity. ``attributes`` is every Attribute contributing to the
     Tables this layout governs — one Table for a standalone Entity or a
@@ -91,7 +92,7 @@ class DocumentLayoutOwner:
     designates anywhere in the model.
     """
 
-    owner: EntityDeclaration
+    declaration: EntityDeclaration
     layout: Document
     strategy: InheritanceStrategy | None
     attributes: tuple[AttributeMetadata, ...]
@@ -100,7 +101,7 @@ class DocumentLayoutOwner:
     @property
     def axes(self) -> frozenset[TemporalDimension]:
         """The temporal axes the layout owner declares; empty when non-temporal."""
-        return frozenset(axis.dimension for axis in self.owner.as_of_axes)
+        return frozenset(axis.dimension for axis in self.declaration.as_of_axes)
 
 
 def _is_standalone(owner: DocumentLayoutOwner) -> bool:
@@ -221,26 +222,23 @@ def _document_groups(
     return tuple(document_groups)
 
 
-def _member_name(contributor: TableGroupContributor) -> str | None:
-    """The canonical member name ``contributor`` declares, or absence when framework-owned."""
+def _document_resident_member(contributor: TableGroupContributor, roles: DirectRoles) -> str | None:
+    """``contributor``'s member name when it lives in the shared Structured Column.
+
+    Absence covers both a member keeping a Column of its own and a framework-owned
+    contributor declaring no member at all, which is one classification rather than
+    two: naming and residency are decided together, so no contributor variant can
+    answer one of them without answering the other.
+    """
     match contributor:
         case AttributeTableContributor():
+            if roles.covers(contributor.attribute):
+                return None
             return contributor.attribute.identity.name
         case TopLevelValueObjectTableContributor():
             return contributor.identity.path[-1]
         case _:
             return None
-
-
-def _is_document_resident(contributor: TableGroupContributor, roles: DirectRoles) -> bool:
-    """Whether ``contributor``'s member lives in the shared Structured Column."""
-    match contributor:
-        case AttributeTableContributor():
-            return not roles.covers(contributor.attribute)
-        case TopLevelValueObjectTableContributor():
-            return True
-        case _:
-            return False
 
 
 def _claims(
@@ -262,7 +260,7 @@ def _claims(
         *(
             (contributor.column, contributor.location)
             for contributor in group.declaration_contributors
-            if not _is_document_resident(contributor, document.roles)
+            if _document_resident_member(contributor, document.roles) is None
         ),
         (document.layout.column, EntityLocation(group.root)),
     )
@@ -306,8 +304,8 @@ def _override_issues(
     for document in document_groups:
         owner = document.group.root
         for contributor in document.group.declaration_contributors:
-            name = _member_name(contributor)
-            if name is None or not _is_document_resident(contributor, document.roles):
+            name = _document_resident_member(contributor, document.roles)
+            if name is None:
                 continue
             if not declares_column_override(name, contributor.column):
                 continue
@@ -345,7 +343,7 @@ def _index_issues(
         for contributor in document.group.declaration_contributors:
             if not isinstance(contributor, AttributeTableContributor):
                 continue
-            if _is_document_resident(contributor, document.roles):
+            if _document_resident_member(contributor, document.roles) is not None:
                 resident.setdefault(contributor.attribute.identity, document.group.root)
     issues: list[tuple[EntityIdentity, MetamodelIssue]] = []
     for declaration in candidate.entities:
@@ -398,7 +396,7 @@ def _layout_owners(
             continue
         owners.append(
             DocumentLayoutOwner(
-                owner=declaration,
+                declaration=declaration,
                 layout=layouts[identity],
                 strategy=_strategy(declaration),
                 attributes=tuple(governed[identity]),
@@ -415,7 +413,7 @@ def _capability_issue(owner: DocumentLayoutOwner) -> MetamodelIssue | None:
         return None
     return MetamodelIssue(
         DOCUMENT_CAPABILITY_UNSUPPORTED,
-        EntityLocation(owner.owner.identity),
+        EntityLocation(owner.declaration.identity),
         message=(
             f"Relational Document Layout over Structured Column "
             f"{owner.layout.column.name!r} is not executable by this build: "
@@ -476,7 +474,7 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
         defective.add(owner)
         issues.append(issue)
     for owner in _layout_owners(candidate, document_groups):
-        if owner.owner.identity in defective:
+        if owner.declaration.identity in defective:
             continue
         capability = _capability_issue(owner)
         if capability is not None:

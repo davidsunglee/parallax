@@ -8,9 +8,10 @@
 # implementation MUST NOT accept a layout whose reads and writes it cannot both
 # execute: the Rule Set carries a declared capability scope list and this build
 # still refuses the standalone shape. A model is accepted or refused whole, so
-# the refusal is a formation rejection rather than a per-operation failure, and
-# the entry — with the rule itself, once the list empties — is deleted by the
-# phase that makes the shape work.
+# the refusal is a formation rejection rather than a per-operation failure. A
+# build that executes the standalone shape end to end drops that entry and
+# accepts this model; a build whose scope list is empty refuses nothing and no
+# longer owns the rule or this case.
 model: models/member-column-defaults.yaml
 tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, document-layout, capability, slice-snapshot-1, slice-managed-1]
 shape: rejected

@@ -123,6 +123,22 @@ def _entity_view(inheritance: InheritanceFacet, identity: EntityIdentity) -> Inh
     return view
 
 
+def _declared_endpoint(
+    endpoint: AttributeIdentity,
+    views_by_identity: Mapping[EntityIdentity, InheritanceEntityView],
+) -> AttributeIdentity:
+    """The Identity the Attribute ``endpoint`` addresses actually bears.
+
+    An endpoint is addressed at the position that names it, so an inherited one
+    carries the descendant's Identity while its accepted declaration carries the
+    ancestor's. Residency compares declarations, so the addressed Identity is
+    resolved back to the declared one here.
+    """
+    view = views_by_identity.get(endpoint.entity)
+    declared = None if view is None else view.applicable_attribute(endpoint.name)
+    return endpoint if declared is None else declared.identity
+
+
 def _compilation_index(
     metadata: CompiledMetadata,
     inheritance: InheritanceFacet,
@@ -140,7 +156,7 @@ def _compilation_index(
     ancestries_by_identity: dict[EntityIdentity, tuple[EntityIdentity, ...]] = {}
     family_members: dict[EntityIdentity, list[EntityMetadata]] = {}
     roots: list[EntityIdentity] = []
-    joined: set[AttributeIdentity] = set()
+    addressed: list[AttributeIdentity] = []
     for entity in entities:
         view = _entity_view(inheritance, entity.identity)
         views_by_identity[entity.identity] = view
@@ -149,7 +165,8 @@ def _compilation_index(
         if view.root == entity.identity:
             roots.append(entity.identity)
         for direction in relationship.relationships(entity.identity) or ():
-            joined.update((direction.join.source, direction.join.target))
+            addressed.extend((direction.join.source, direction.join.target))
+    joined = {_declared_endpoint(endpoint, views_by_identity) for endpoint in addressed}
     return _CompilationIndex(
         entities=entities,
         entities_by_identity=entities_by_identity,
@@ -430,6 +447,7 @@ def _layout(
     index: _CompilationIndex,
     group: _LayoutGroup,
     roles: DirectRoles,
+    audit_designations: frozenset[AttributeIdentity],
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]],
 ) -> TableLayout:
     root = index.entities_by_identity[group.root]
@@ -452,7 +470,7 @@ def _layout(
         applicable = _interned(
             attribute_applicability.get(attribute.identity, set()), applicability_intern
         )
-        tier = classify_attribute_tier(attribute, roles.temporal, roles.audit)
+        tier = classify_attribute_tier(attribute, roles.temporal, audit_designations)
         drafts.append(
             _SlotDraft(
                 column=attribute.storage,
@@ -537,6 +555,7 @@ def _layout(
 def _family_facts(
     index: _CompilationIndex,
     roles_of_root: Mapping[EntityIdentity, DirectRoles],
+    audit_designations: frozenset[AttributeIdentity],
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]],
 ) -> tuple[StorageLayoutFamilyFacts, ...]:
     families: list[StorageLayoutFamilyFacts] = []
@@ -563,7 +582,7 @@ def _family_facts(
                 PositionColumnFacts(
                     PositionColumn(
                         contributor=attribute.identity,
-                        tier=classify_attribute_tier(attribute, roles.temporal, roles.audit),
+                        tier=classify_attribute_tier(attribute, roles.temporal, audit_designations),
                         declaring_owner=attribute.identity.entity,
                     ),
                     applicable,
@@ -610,8 +629,10 @@ def compile_facet(
 ) -> StorageLayoutFacet:
     """Compile one compact canonical layout graph for ``metadata``.
 
-    ``audit_designations`` is an internal classifier input only. The built-in
-    formation profile supplies the empty set.
+    ``audit_designations`` is an internal tier-classification input only: it
+    creates no declaration and decides no residency, so it cannot compile a
+    member into a place the Rule Set validated it out of. The built-in formation
+    profile supplies the empty set.
     """
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]] = {}
     index = _compilation_index(metadata, inheritance, relationship)
@@ -619,7 +640,6 @@ def compile_facet(
         root: DirectRoles(
             joined=index.joined,
             temporal=_temporal_designations(index.entities_by_identity[root]),
-            audit=audit_designations,
         )
         for root in index.roots
     }
@@ -629,6 +649,7 @@ def compile_facet(
             index,
             group,
             roles_of_root[group.root],
+            audit_designations,
             applicability_intern,
         )
         for group in groups
@@ -667,6 +688,7 @@ def compile_facet(
         _family_facts(
             index,
             roles_of_root,
+            audit_designations,
             applicability_intern,
         ),
     )
