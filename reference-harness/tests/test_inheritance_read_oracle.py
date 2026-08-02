@@ -19,12 +19,17 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from reference_harness.case import Case, load_model
-from reference_harness.case_runner import CaseFailure, _materialize_family_variant, _resolve_hop
+from reference_harness.case_runner import (
+    CaseFailure,
+    _materialize_family_variant,
+    _resolve_hop,
+    run_case,
+)
 from reference_harness.inheritance import (
     ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
     NARROW_EMPTY_EFFECTIVE_SET,
@@ -666,6 +671,62 @@ def test_a_narrow_inside_a_boolean_combinator_moves_no_ordered_position(combinat
     assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
 
+class _RefusingDb:
+    """A provider that fails loudly if the runner reaches the database at all."""
+
+    dialect = "postgres"
+
+    def reset(self) -> None:
+        raise AssertionError("a read refused pre-SQL must never provision a database")
+
+    def query(self, sql: str, binds: list[Any] | None = None) -> list[dict[str, Any]]:
+        raise AssertionError(f"a read refused pre-SQL must never execute {sql!r}")
+
+
+def test_run_case_validates_a_deep_fetch_reads_positions_before_any_sql() -> None:
+    # Guards the WIRING: every read result form reaches the positional oracle through
+    # one owner in `run_case`, so a deep-fetch read is validated exactly as a flat one
+    # is. This operation orders the whole Animal family by a Dog-declared attribute
+    # with no narrow to bring it into scope; if the graph forms were left unvalidated
+    # the refusal would go unnoticed and the case would reach a database.
+    raw = {
+        "model": "models/animal.yaml",
+        "tags": ["m-inheritance"],
+        "shape": "read",
+        "when": {
+            "targetEntity": "Animal",
+            "operation": {
+                "deepFetch": {
+                    "operand": {
+                        "orderBy": {
+                            "operand": {"all": {}},
+                            "keys": [{"attr": "Dog.barkVolume"}],
+                        }
+                    },
+                    "paths": _DEEP_FETCH_PATHS,
+                }
+            },
+        },
+        # SQL text is inert: the refusal precedes execution, so nothing runs it.
+        "then": {
+            "statements": [
+                {"sql": {"postgres": _ANIMAL_GOLDEN}},
+                {"sql": {"postgres": "select t0.id, t0.name from person t0"}},
+            ],
+            "graph": {"Animal": []},
+            "roundTrips": 2,
+        },
+    }
+    case = Case(
+        path=Path("m-inheritance-999-x.yaml"),
+        raw=raw,
+        model=load_model(_COMPATIBILITY_ROOT, "models/animal.yaml"),
+    )
+    with pytest.raises(RejectionError) as exc:
+        run_case(case, cast("Any", _RefusingDb()))
+    assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
+
+
 # --- familyVariant + projection superset derivation -------------------------
 
 
@@ -847,6 +908,49 @@ def test_materialize_fails_when_superset_column_missing() -> None:
     case = _read_case("Animal", {"all": {}}, golden=golden)
     with pytest.raises(CaseFailure, match="concrete-superset column"):
         _materialize_family_variant(case, [_dog_row()])
+
+
+_DOG_NARROWED_GOLDEN = (
+    "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0"
+)
+
+
+def test_materialize_reads_the_narrowed_projection_through_a_deep_fetch() -> None:
+    # A deep fetch attaches fetched levels to the rows its operand yields rather than
+    # replacing them, so its ROOT projection follows the operand's own narrow: a root
+    # narrowed to Dog projects Dog's chain and no sibling column. Reading the position
+    # from `targetEntity` alone would demand Cat's `indoor` and WildBoar's
+    # `tusk_length` here and reject a golden the compiler correctly emits.
+    operation = {
+        "deepFetch": {
+            "operand": {
+                "orderBy": {
+                    "operand": _NARROW_TO_DOG,
+                    "keys": [{"attr": "Dog.barkVolume", "direction": "desc"}],
+                }
+            },
+            "paths": _DEEP_FETCH_PATHS,
+        }
+    }
+    case = _read_case("Animal", operation, golden=_DOG_NARROWED_GOLDEN)
+    row = {
+        "id": 1,
+        "kind": "dog",
+        "name": "Rex",
+        "owner_id": 10,
+        "license_id": "L-100",
+        "bark_volume": 7,
+    }
+    assert _materialize_family_variant(case, [row]) == [
+        {
+            "id": 1,
+            "name": "Rex",
+            "owner_id": 10,
+            "license_id": "L-100",
+            "bark_volume": 7,
+            "familyVariant": "Dog",
+        }
+    ]
 
 
 def test_materialize_fails_when_tag_column_missing() -> None:
