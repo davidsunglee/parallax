@@ -299,6 +299,13 @@ def entity_by_name(model: Metamodel, name: str) -> EntityMetadata | None:
     one resolving through a scoped record graph. A free utility over the protocol,
     never a protocol method: the accepted ``Metamodel`` seam itself stays
     Identity-keyed and accepts no name string.
+
+    This is the rule for an Entity spelling in an OPERATION REFERENCE position, and
+    the only one: validation and lowering both resolve such a spelling here, which
+    is what makes "preflight accepted this reference" imply "lowering resolves it".
+    :func:`~parallax.core.metamodel.resolve_entity_reference` is the DECLARATION
+    rule and answers a different question — what a reference means where it was
+    declared — so it never adjudicates a reference an operation carries.
     """
     bare: EntityMetadata | None = None
     bare_matches = 0

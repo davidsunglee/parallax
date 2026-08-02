@@ -530,6 +530,7 @@ def _compile_inheritance_read(
         distinct,
         order_keys,
         limit,
+        model,
         facet,
         storage,
         result_form == "instance",

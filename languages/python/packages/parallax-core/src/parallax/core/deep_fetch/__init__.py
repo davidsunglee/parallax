@@ -93,10 +93,9 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     NullPlacement,
-    RelativeEntityReference,
     SortDirection,
     TemporalDimension,
-    resolve_entity_reference,
+    entity_by_name,
 )
 from parallax.core.op_algebra import (
     And,
@@ -325,8 +324,8 @@ class _PlanBuilder:
     # The relationship direction each trie node was REACHED by, absent for the root:
     # a segment is a back-reference only against its parent's own arrival edge.
     _arrivals: dict[int, RelationshipMetadata] = field(default_factory=_new_arrivals)
-    # Each trie node's own Entity: the scope a segment beneath it names its
-    # ``Class.relationship`` reference relative to.
+    # Each trie node's own Entity: the position a segment beneath it writes its
+    # ``Class.relationship`` reference against.
     _owners: dict[int, EntityMetadata] = field(default_factory=_new_owners)
     # The queried position's own effective concrete set, against which a path's
     # resolved root source set is measured for properness.
@@ -334,10 +333,12 @@ class _PlanBuilder:
 
     def seed_root(self, root_entity: EntityMetadata) -> None:
         self._owners[_ROOT_ID] = root_entity
-        self._root_position = _resolve_root_source(self.families, root_entity, None)
+        self._root_position = _resolve_root_source(self.model, self.families, root_entity, None)
 
     def add_path(self, path: NavigationPath) -> None:
-        source = _resolve_root_source(self.families, self._owners[_ROOT_ID], path.narrow)
+        source = _resolve_root_source(
+            self.model, self.families, self._owners[_ROOT_ID], path.narrow
+        )
         parent_id = _ROOT_ID
         for segment in path.segments:
             parent_id = self._add_segment(parent_id, segment, source)
@@ -354,7 +355,7 @@ class _PlanBuilder:
         owner = self._owners[parent_id]
         direction = navigate.resolve_relationship(segment.rel, owner.identity, self.model)
         related_entity = _entity(self.model, direction.join.target.entity)
-        position = _resolve_position(self.families, related_entity, segment)
+        position = _resolve_position(self.model, self.families, related_entity, segment)
         narrowed = bool(segment.narrow)
         source = root_source if parent_id == _ROOT_ID else None
         key = _TrieKey(
@@ -474,17 +475,34 @@ def _attribute_column(facet: InheritanceFacet, attribute: AttributeIdentity) -> 
     )
 
 
+def _narrowed_position(
+    model: Metamodel, facet: InheritanceFacet, to: Sequence[str]
+) -> tuple[EntityIdentity, ...] | None:
+    """The canonical effective concrete set an authored ``to`` list denotes, or
+    ``None`` when a name denotes no single Entity or the members span two families.
+
+    Each name is an operation reference and resolves model-wide by
+    :func:`~parallax.core.metamodel.entity_by_name`'s rule, never into the
+    referring Entity's own namespace — the caller classifies the miss in its own
+    vocabulary, as `m-op-algebra`'s validator does for the same spellings.
+    """
+    members: list[EntityIdentity] = []
+    for name in to:
+        entity = entity_by_name(model, name)
+        if entity is None:
+            return None
+        members.append(entity.identity)
+    position = facet.position(tuple(members))
+    return None if position is None else tuple(position.concrete_subtypes)
+
+
 def _resolve_position(
-    facet: InheritanceFacet, related: EntityMetadata, segment: PathSegment
+    model: Metamodel, facet: InheritanceFacet, related: EntityMetadata, segment: PathSegment
 ) -> tuple[EntityIdentity, ...]:
     """The hop's resolved effective concrete-subtype set (m-deep-fetch dedup
     identity's second component): the segment's own narrow when authored, else
     the relationship target's own effective set — a non-polymorphic target's
     trivial one-name set either way.
-
-    Each authored narrow name is resolved relative to the target's own
-    namespace, exactly as any other bare model reference is, and the facet
-    resolves their union to the position's canonical effective set.
 
     A family position names its members by their DECLARED names, because those
     are the names a narrowed view key spells and the names a graph assembler
@@ -494,22 +512,18 @@ def _resolve_position(
     if related.inheritance is None:
         return (related.identity,)
     if segment.narrow:
-        members = tuple(
-            resolve_entity_reference(related.identity, RelativeEntityReference(name))
-            for name in segment.narrow
-        )
-        position = facet.position(members)
+        position = _narrowed_position(model, facet, segment.narrow)
         if position is None:
             raise DeepFetchError(
-                f"narrow to {sorted(identity.canonical for identity in members)} names an "
-                "entity the model does not declare, or spans more than one inheritance family"
+                f"narrow to {list(segment.narrow)} names an entity the model does not "
+                "declare, or spans more than one inheritance family"
             )
-        return tuple(position.concrete_subtypes)
+        return position
     return tuple(_entity_view(facet, related.identity).concrete_subtypes)
 
 
 def _resolve_root_source(
-    facet: InheritanceFacet, root: EntityMetadata, narrow: PathRootNarrow | None
+    model: Metamodel, facet: InheritanceFacet, root: EntityMetadata, narrow: PathRootNarrow | None
 ) -> tuple[EntityIdentity, ...]:
     """The concrete source set ONE path starts from (m-deep-fetch's root hop identity).
 
@@ -528,16 +542,13 @@ def _resolve_root_source(
         return (root.identity,)
     if narrow is None:
         return tuple(_entity_view(facet, root.identity).concrete_subtypes)
-    members = tuple(
-        resolve_entity_reference(root.identity, RelativeEntityReference(name)) for name in narrow.to
-    )
-    position = facet.position(members)
+    position = _narrowed_position(model, facet, narrow.to)
     if position is None:
         raise DeepFetchError(
-            f"path-root narrow to {sorted(identity.canonical for identity in members)} names an "
-            "entity the model does not declare, or spans more than one inheritance family"
+            f"path-root narrow to {list(narrow.to)} names an entity the model does not "
+            "declare, or spans more than one inheritance family"
         )
-    return tuple(position.concrete_subtypes)
+    return position
 
 
 def _view_key(

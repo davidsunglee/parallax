@@ -77,11 +77,11 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
-    RelativeEntityReference,
+    Metamodel,
     TablePerHierarchy,
     ValueObjectIdentity,
     ValueObjectMetadata,
-    resolve_entity_reference,
+    entity_by_name,
 )
 from parallax.core.op_algebra import Narrow, Operation, OrderKey
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
@@ -243,14 +243,29 @@ IDENTITY_TRANSFORM = _IdentityTransform()
 # --------------------------------------------------------------------------- #
 # Position resolution.                                                         #
 # --------------------------------------------------------------------------- #
+def _referenced_entities(
+    model: Metamodel, names: Sequence[str]
+) -> tuple[EntityIdentity, ...] | None:
+    """The Identities ``names`` denote as operation references
+    (:func:`~parallax.core.metamodel.entity_by_name`), or ``None`` when any of
+    them denotes no single Entity."""
+    resolved: list[EntityIdentity] = []
+    for name in names:
+        entity = entity_by_name(model, name)
+        if entity is None:
+            return None
+        resolved.append(entity.identity)
+    return tuple(resolved)
+
+
 def narrow_position(
-    facet: InheritanceFacet, owner: EntityIdentity, to: Sequence[str]
+    model: Metamodel, facet: InheritanceFacet, to: Sequence[str]
 ) -> InheritancePositionView:
     """The projection a `narrow`'s authored ``to`` list denotes.
 
-    Each authored name is resolved relative to the queried Entity's own
-    namespace, exactly as any other bare model reference is, and the facet
-    resolves the members' union to the position's canonical effective
+    Each authored name is an operation reference and resolves model-wide by
+    `entity_by_name`'s rule, never into the queried Entity's own namespace, and
+    the facet resolves the members' union to the position's canonical effective
     concrete-subtype set and its projection supersets.
 
     `validate_operation` runs upstream and guarantees the resolved set is
@@ -258,12 +273,12 @@ def narrow_position(
     validation rule") before this compiler ever sees the operation, so this need
     only resolve — never re-validate.
     """
-    members = tuple(resolve_entity_reference(owner, RelativeEntityReference(name)) for name in to)
-    position = facet.position(members)
+    members = _referenced_entities(model, to)
+    position = None if members is None else facet.position(members)
     if position is None:
         raise SqlGenError(
-            f"narrow to {sorted(identity.canonical for identity in members)} names an entity "
-            "the model does not declare, or spans more than one inheritance family"
+            f"narrow to {list(to)} names an entity the model does not declare, "
+            "or spans more than one inheritance family"
         )
     return position
 
@@ -618,6 +633,7 @@ def plan_inheritance_read(
     distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
+    model: Metamodel,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     instance_form: bool,
@@ -636,7 +652,7 @@ def plan_inheritance_read(
     that a caller-side check would silently reorder.
     """
     view = entity_view(facet, entity.identity)
-    position, inner, narrowed = _read_position(view, predicate, facet)
+    position, inner, narrowed = _read_position(view, predicate, model, facet)
     if isinstance(view.strategy, TablePerHierarchy):
         return _plan_tph_read(
             entity, view, position, inner, facet, storage, instance_form, narrowed
@@ -647,7 +663,7 @@ def plan_inheritance_read(
 
 
 def _read_position(
-    view: InheritanceEntityView, predicate: Operation, facet: InheritanceFacet
+    view: InheritanceEntityView, predicate: Operation, model: Metamodel, facet: InheritanceFacet
 ) -> tuple[InheritancePositionView, Operation, bool]:
     """The read's queried position, the predicate left to lower under it, and
     whether a top-level `narrow` produced it.
@@ -658,7 +674,7 @@ def _read_position(
     Entity's own position standing and is lowered whole.
     """
     if isinstance(predicate, Narrow):
-        return narrow_position(facet, view.entity, predicate.to), predicate.operand, True
+        return narrow_position(model, facet, predicate.to), predicate.operand, True
     return view, predicate, False
 
 
@@ -884,6 +900,7 @@ def _result_aliases(spellings: Sequence[str]) -> tuple[str, ...]:
 
 
 def plan_branch_narrow(
+    model: Metamodel,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     entity: EntityMetadata,
@@ -900,7 +917,7 @@ def plan_branch_narrow(
             "a narrow nested inside and/or/not/group over a table-per-concrete-subtype "
             "family has no goldened lowering yet"
         )
-    position = narrow_position(facet, entity.identity, narrow.to)
+    position = narrow_position(model, facet, narrow.to)
     layout = _table_layout(storage, facet, entity.identity)
     return BranchNarrowPlan(
         operand=narrow.operand,
