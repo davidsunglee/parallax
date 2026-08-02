@@ -439,6 +439,28 @@ survive.
 The **Transaction-Time Basis** records only whether the read licenses an ungated
 locking-mode write. It is not a claim about lock scope (`m-read-lock`).
 
+### Comparing an assigned member with its persisted value
+
+Wherever this module compares an assigned member with the value a read observed —
+the write-input comparison of a Materialized Write Group below, and the no-op
+elimination that precedes planning — the comparison follows the member's kind,
+and does so identically under either Storage Layout. These are the structural
+equality rules those steps name.
+
+A **scalar** member compares as one logical value with the two not-present forms
+collapsed: an absent Document Path and a JSON null at that path are the same
+observed null (`m-document-codec` keeps them distinct and leaves this collapse to
+its consumer, which is this rule). Assigning null to a member whose key is absent
+is therefore a no-op — it issues no DML, advances no version, and consults no
+clock — exactly as assigning null to an already-null Column is.
+
+A **whole Value Object occurrence** compares **structurally as a document**
+(`m-document-codec`): the encoded assignment against the persisted subtree as
+stored, unknown keys included. An occurrence that differs only in a key no member
+declares is therefore not equal, which is the answer the write itself gives —
+replacing that subtree would drop the key, so the write is not a no-op. Key order
+and insignificant whitespace never make two otherwise equal documents differ.
+
 ### Write Gate and the concurrency decision
 
 ```text

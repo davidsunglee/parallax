@@ -192,8 +192,8 @@ ColumnContributor =
 ```
 
 Only a top-level Value Object occurrence is a `ValueObjectIdentity`
-contributor. Its nested occurrences and scalar fields live inside the one
-document column and contribute no slot.
+contributor. Its nested occurrences and scalar fields live inside the document
+that column carries and contribute no slot of their own, under either layout.
 
 `RelationalDocument` is the shared Structured Column of a `Document` layout. Its
 `layoutOwner` is the standalone Entity or family root whose declaration selected
@@ -232,10 +232,13 @@ physical spelling, no dotted string, no JSON Pointer, and no provider-native
 path expression; rendering one into a dialect path expression is `m-dialect`'s
 job and happens below this contract, never inside it.
 
-`DocumentPath.slot` is always a `RelationalDocument` slot of this layout's
-Table. `DirectColumn.slot` is always a slot the member's own contributor owns,
-so under `Columns` layout `placement(m)` and `contribution(m)` select the same
-slot for every applicable member.
+`DocumentPath.slot` is the slot of the document the member lives in, and `path`
+locates the member *within that document*: the Table's one `RelationalDocument`
+slot under `Document`, and the containing top-level Value Object occurrence's own
+Structured Column under `Columns`. `DirectColumn.slot` is always a slot the
+member's own contributor owns, so under `Columns` layout `placement(m)` and
+`contribution(m)` select the same slot for every applicable member that is itself
+a contributor — a top-level Attribute or a top-level Value Object occurrence.
 
 `TableLayout.columns` is the complete physical Table sequence and is the sole
 physical order exposed to consumers. `physicalPrimaryKey` selects the same
@@ -273,8 +276,12 @@ survive. `contribution(...)` answers *which physical slot does this contributor
 own*, and is what DDL, physical order, fixture binding, and physical Table
 read-back consume. `placement(...)` answers *where does this member live*, and
 is what SQL predicates, projection, write lowering, and materialization consume.
-Under `Columns` the two agree for every applicable member, so conventional
-behavior is one case of this contract rather than a parallel path.
+Under `Columns` the two agree for every applicable member that is a contributor,
+so conventional behavior is one case of this contract rather than a parallel
+path. They are not one lookup under a second name: a member inside a top-level
+Value Object occurrence has no contributor at all, so `contribution(...)` has no
+answer for it while `placement(...)` does, and the Structured Column has no
+member, so `placement(...)` has no answer for it while `contribution(...)` does.
 
 `placement(...)` is **the sole authority for locating a logical member**. No
 consumer may re-derive direct-versus-document residency, reconstruct a Document
@@ -299,21 +306,37 @@ projection instead.
 
 Placement follows the accepted layout of the member's mapping owner:
 
-- under `Columns`, every applicable member's placement is
-  `DirectColumn(slot)`, and the slot is the one its own contributor owns;
+- under `Columns`, a top-level Attribute and a top-level Value Object occurrence
+  are placed `DirectColumn(slot)` over the slot their own contributor owns, and
+  every member *inside* a top-level occurrence — a nested occurrence or a Value
+  Object Attribute — is placed `DocumentPath(slot, path)` over that occurrence's
+  own Structured Column;
 - under `Document`, a direct-role Attribute's placement is `DirectColumn(slot)`
   and every other applicable member's placement is `DocumentPath(slot, path)`
   over the Table's one `RelationalDocument` slot.
 
-A Document Path is derived, never authored. A document-resident top-level
-Attribute's path is the one-segment sequence of its canonical Attribute name. A
-top-level Value Object occurrence's path is the one-segment sequence of its
-canonical occurrence name, and each contained member extends its container's
-path by one canonical segment, at every depth. A `Many` occurrence contributes
-exactly one segment like any other: a `postalCode` inside a `Many` occurrence
-named `locations` is `("locations", "postalCode")`, and that the path crosses a
-collection is recorded by the occurrence's own declared multiplicity rather than
-by a synthetic segment.
+Conventional storage therefore already has Document Paths. A top-level Value
+Object occurrence has always been stored as a document and its leaves have always
+been addressed inside it (`m-value-object`); what the layout selects is how many
+documents a row carries and which members live in them, not whether a member can
+live inside one. That is why `placement(...)` stays total over `MemberIdentity`
+— `ValueObjectAttributeIdentity` included — under both layouts, and why no
+consumer branches on the layout to locate a member.
+
+A Document Path is derived, never authored, and every path is relative to the
+root of the document its slot carries. Under `Document` that root is the shared
+Structured Column's object: a document-resident top-level Attribute's path is the
+one-segment sequence of its canonical Attribute name, a top-level Value Object
+occurrence's path is the one-segment sequence of its canonical occurrence name,
+and each contained member extends its container's path by one canonical segment,
+at every depth. Under `Columns` that root is the containing occurrence's own
+document, so the path begins at the first segment below that occurrence: the
+`city` of a top-level occurrence `address` is `("city")` over the `address`
+Structured Column, which is the location conventional nested access already
+reads. A `Many` occurrence contributes exactly one segment like any other: a
+`postalCode` inside a `Many` occurrence named `locations` is
+`("locations", "postalCode")`, and that the path crosses a collection is recorded
+by the occurrence's own declared multiplicity rather than by a synthetic segment.
 
 Only a top-level Attribute or a complete top-level Value Object occurrence is
 assignable, so deeper paths exist for predicates, ordering, and materialization
@@ -327,7 +350,8 @@ Column order, and it is what consumers use when several members must be applied
 in one deterministic sequence.
 
 Because a `DocumentPath` claims no Column, two declarations that can never apply
-to the same concrete row may derive the same path. Disjoint sibling branches of
+to the same concrete row may derive the same path over one Structured Column.
+Disjoint sibling branches of
 one table-per-hierarchy family reusing one Document Path is therefore not a
 Column collision and is not rejected — see the Rule Set below. The Navigable
 Member Namespace (`m-metamodel`) already prevents two declarations that *can*
@@ -542,13 +566,21 @@ answering *where does this member live in this branch's row*: the entry is that
 branch's `MemberPlacement` when the member applies to at least one selected
 concrete in the branch, and absent otherwise.
 
-Placement needs a per-branch answer that `TableLayout` alone cannot give.
-Under table-per-concrete-subtype each branch has its own Structured Column, and
+`placements` is a derived projection, not a second fact. Each entry **is**
+`branch.layout.placement(members[i])` where the member applies, and absent where
+it does not, so there is one authority and the sequence can no more disagree with
+it than `slots` can disagree with `branch.layout.contribution(...)`.
+
+What it adds is alignment, which is the position view's whole shape. A
+polymorphic read walks one logical member order and emits or decodes each branch
+positionally, so it needs the per-branch answers *in that order* — the same
+reason `slots` exists for contributors. The per-branch answers genuinely differ:
+under table-per-concrete-subtype each branch has its own Structured Column, and
 under `Document` the applicable document shape differs per variant, so a
-polymorphic read that resolved placement once for the position would be wrong
-for every branch but one. Under `Columns` each entry is the same `DirectColumn`
-its aligned `slots` entry already names, so the two sequences agree and the
-addition costs conventional consumers nothing.
+polymorphic read that resolved placement once for the position would be wrong for
+every branch but one. Under `Columns` each entry is the same `DirectColumn` its
+aligned `slots` entry already names, so the two sequences agree and the addition
+costs conventional consumers nothing.
 
 The union carries top-level members only. A Value Object leaf is located
 through the branch's own `layout.placement(...)`, which is total over every
