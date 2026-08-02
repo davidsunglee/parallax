@@ -425,6 +425,7 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-117-rejected-family-variant-materialization-key-collision": (
         inheritance.MATERIALIZATION_KEY_COLLISION
     ),
+    "m-inheritance-122-rejected-layout-declared-on-descendant": (inheritance.LAYOUT_NOT_ROOT_OWNED),
 }
 """The fixtures this module's Rule Set rejects, with the one code each yields."""
 
@@ -484,6 +485,7 @@ def test_the_owned_issue_code_set_is_closed() -> None:
         "inheritance-concrete-without-abstract-root",
         "inheritance-cycle",
         "inheritance-duplicate-tag-value",
+        "inheritance-layout-not-root-owned",
         "inheritance-materialization-key-collision",
         "inheritance-member-shadowing",
         "inheritance-missing-concrete-subtype",

@@ -1,0 +1,14 @@
+# `layout` is a closed one-member object whose only spelling is `document`:
+# Columns storage has no wire form at all, so `columns` is both an unexpected
+# property and a missing `document`. Both violations report at the `layout`
+# object that owns the closed key set, not at the unknown key, and they order by
+# rule at that equal path. This is a schema-phase failure, distinct from the
+# semantic `storage-layout-*` and `inheritance-layout-not-root-owned`
+# rejections a schema-VALID layout earns in whole-model formation.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, layout]
+    rule: additionalProperties
+  - path: [entity, layout]
+    rule: required

@@ -740,7 +740,8 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` raw-descriptor invariant `_descriptor_family.validate` "
     "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership/optimistic-"
-    "locking-ownership shape) — the class metaclass never calls this validator (DQ2: "
+    "locking-ownership/layout-ownership shape) — the class metaclass never calls this "
+    "validator (DQ2: "
     "`parent`/`role` are DERIVED from the live Python class hierarchy, never separately "
     "authored, so most of these malformed shapes — an unknown parent, a cycle, multiple "
     "roots, a missing root, a redeclared strategy, a duplicate/misplaced tag — have no "
@@ -1049,6 +1050,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-116": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-117": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-121": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-122": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #
     "m-navigate-001": _NAVIGATE_TAG_REDUNDANT_REASON,
     "m-navigate-005": _NAVIGATE_TAG_REDUNDANT_REASON,

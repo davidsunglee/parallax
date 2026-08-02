@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import fields
 from pathlib import Path
@@ -344,6 +345,37 @@ def test_retired_temporal_spelling_is_rejected() -> None:
     }
     with pytest.raises(DescriptorError, match="unknown properties: `temporal`"):
         deserialize(document)
+
+
+def _layout_document(layout: object) -> dict[str, object]:
+    return {
+        "entity": {
+            "name": "Bad",
+            "table": "bad",
+            "layout": layout,
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("layout", "message"),
+    [
+        ({"columns": {}}, "unknown properties: `columns`"),
+        ({}, "`document` is required"),
+        ({"document": {"column": 1}}, "`column` must be a string"),
+        ({"document": {"column": "payload", "format": "bson"}}, "unknown properties: `format`"),
+    ],
+    ids=["columns-has-no-spelling", "document-required", "column-not-a-string", "closed-document"],
+)
+def test_a_malformed_layout_is_rejected_at_ingestion(layout: object, message: str) -> None:
+    with pytest.raises(DescriptorError, match=re.escape(message)):
+        deserialize(_layout_document(layout))
+
+
+def test_a_document_layout_survives_the_canonical_round_trip() -> None:
+    document = _layout_document({"document": {"column": "payload"}})
+    assert canonicalize(document) == document
 
 
 def test_non_string_persistence_is_rejected() -> None:

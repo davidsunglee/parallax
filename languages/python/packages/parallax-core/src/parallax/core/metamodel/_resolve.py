@@ -64,6 +64,7 @@ from parallax.core.metamodel._values import (
     RelationshipOrder,
     ReverseRelationshipDeclaration,
     StorageContainer,
+    StorageLayout,
     TemporalDimension,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedInheritance,
@@ -214,6 +215,7 @@ class _EntityDeclaration:
     identity: EntityIdentity
     container: StorageContainer | None
     persistence: PersistenceMode | None
+    layout: StorageLayout | None
     attributes: tuple[AttributeMetadata, ...]
     relationships: tuple[RelationshipDeclaration, ...]
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...]
@@ -336,6 +338,7 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
                 identity=declaration.identity,
                 container=declaration.container,
                 persistence=declaration.persistence,
+                layout=declaration.layout,
                 attributes=tuple(declaration.attributes),
                 relationships=relationships,
                 value_objects=tuple(declaration.value_objects),

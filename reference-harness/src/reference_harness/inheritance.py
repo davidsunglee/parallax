@@ -108,6 +108,12 @@ INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-o
 # versioned or not — is rejected. A family is versioned together or not at all.
 INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED = "inheritance-optimistic-locking-not-root-owned"
 INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED = "inheritance-persistence-not-root-owned"
+# Storage Layout is family-wide physical policy, exactly like persistence: only
+# the root may declare `layout`, so a family is entirely conventional or
+# entirely document-mapped. Fires for BOTH malformed shapes — a
+# conventionally-mapped root whose descendant declares a layout, and a
+# document-mapped root whose descendant redeclares, repeats, or overrides it.
+INHERITANCE_LAYOUT_NOT_ROOT_OWNED = "inheritance-layout-not-root-owned"
 INHERITANCE_MATERIALIZATION_KEY_COLLISION = "inheritance-materialization-key-collision"
 
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
@@ -129,6 +135,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
         INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
+        INHERITANCE_LAYOUT_NOT_ROOT_OWNED,
         INHERITANCE_MATERIALIZATION_KEY_COLLISION,
     }
 )
@@ -772,6 +779,15 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
             raise RejectionError(
                 INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
                 f"non-root {definition['name']!r} declares persistence; persistence is "
+                f"family-wide and MUST be declared only on the root",
+            )
+
+    # 4d. Storage Layout is family-wide and root-owned.
+    for definition in participants:
+        if role_of(definition) != ROLE_ROOT and "layout" in definition:
+            raise RejectionError(
+                INHERITANCE_LAYOUT_NOT_ROOT_OWNED,
+                f"non-root {definition['name']!r} declares layout; the Storage Layout is "
                 f"family-wide and MUST be declared only on the root",
             )
 

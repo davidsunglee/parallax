@@ -31,10 +31,12 @@ from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,
     DefiningRelationship,
+    DocumentLayout,
     Entity,
     Index,
     Inheritance,
     InheritanceRole,
+    Layout,
     Metamodel,
     Multiplicity,
     NestedValueObject,
@@ -410,6 +412,7 @@ def _entity_from(value: object) -> Entity:
                 "namespace",
                 "table",
                 "persistence",
+                "layout",
                 "attributes",
                 "asOfAxes",
                 "relationships",
@@ -459,6 +462,7 @@ def _entity_from(value: object) -> Entity:
         namespace=_opt_str(m, "namespace", where),
         table=_opt_str(m, "table", where),
         persistence=_persistence_from(m, where),
+        layout=_layout_from(m, where),
         attributes=attributes,
         as_of_axes=as_of,
         relationships=relationships,
@@ -482,6 +486,25 @@ def _persistence_from(m: Mapping[str, object], where: str) -> Persistence | None
     if not isinstance(value, str):
         raise DescriptorError(f"{where}: `persistence` must be a string")
     return cast("Persistence", _enum(value, _PERSISTENCE_MODES, "persistence", where))
+
+
+def _layout_from(m: Mapping[str, object], where: str) -> Layout | None:
+    """The Storage Layout the document declares, or ``None`` when it omits it.
+
+    Omission is the only spelling of Columns storage, so there is no `columns`
+    member to read and absence is preserved rather than resolved: on a
+    standalone entity or a family root it means Columns, and on a descendant it
+    means inherit.
+    """
+    if "layout" not in m:
+        return None
+    layout = _mapping(m["layout"], f"{where}.layout")
+    _closed(layout, frozenset({"document"}), f"{where}.layout")
+    if "document" not in layout:
+        raise DescriptorError(f"{where}.layout: `document` is required")
+    document = _mapping(layout["document"], f"{where}.layout.document")
+    _closed(document, frozenset({"column"}), f"{where}.layout.document")
+    return DocumentLayout(column=_str(document, "column", f"{where}.layout.document"))
 
 
 def _resolved_relationship_entities(entities: tuple[Entity, ...]) -> tuple[Entity, ...]:
@@ -745,11 +768,11 @@ def _value_object_to_json(vo: ValueObject) -> dict[str, object]:
 def _is_family_descendant(entity: Entity) -> bool:
     """Whether ``entity`` occupies a non-root position in an inheritance family.
 
-    Canonical form omits ``persistence`` on such an entity unconditionally: the
-    mode is family-wide and root-owned, so a descendant has none of its own to
-    spell and absence there means inherit. A record that nonetheless declares one
-    keeps it — that is the evidence family validation is stated over — but it is
-    never part of the canonical spelling.
+    Canonical form omits ``persistence`` and ``layout`` on such an entity
+    unconditionally: both are family-wide and root-owned, so a descendant has
+    none of its own to spell and absence there means inherit. A record that
+    nonetheless declares one keeps it — that is the evidence family validation is
+    stated over — but it is never part of the canonical spelling.
     """
     return entity.inheritance is not None and entity.inheritance.role != "root"
 
@@ -773,6 +796,8 @@ def _entity_to_json(entity: Entity) -> dict[str, object]:
         out["table"] = entity.table
     if entity.persistence == "read-only" and not _is_family_descendant(entity):
         out["persistence"] = "read-only"
+    if entity.layout is not None and not _is_family_descendant(entity):
+        out["layout"] = {"document": {"column": entity.layout.column}}
     if entity.attributes:
         out["attributes"] = [_attribute_to_json(a) for a in entity.attributes]
     if entity.as_of_axes:

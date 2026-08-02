@@ -45,6 +45,7 @@ from parallax.core.metamodel._values import (
     PersistenceMode,
     RelationshipDeclaration,
     StorageContainer,
+    StorageLayout,
     StorageLocation,
     TemporalDimension,
     ValueObjectOccurrenceDeclaration,
@@ -133,6 +134,7 @@ class _EntityMetadata:
     identity: EntityIdentity
     declared_container: StorageContainer | None
     declared_persistence: PersistenceMode | None
+    declared_layout: StorageLayout | None
     declared_attributes: tuple[AttributeMetadata, ...]
     declared_relationships: tuple[RelationshipDeclaration, ...]
     declared_value_objects: tuple[ValueObjectMetadata, ...]
@@ -257,6 +259,7 @@ def _entity_metadata(declaration: EntityDeclaration) -> EntityMetadata:
         identity=declaration.identity,
         declared_container=declaration.container,
         declared_persistence=declaration.persistence,
+        declared_layout=declaration.layout,
         declared_attributes=tuple(declaration.attributes),
         declared_relationships=tuple(declaration.relationships),
         declared_value_objects=tuple(

@@ -1,0 +1,9 @@
+entity:
+  name: Order
+  table: orders
+  layout:
+    columns: {}
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true

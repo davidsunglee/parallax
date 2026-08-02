@@ -27,6 +27,7 @@ from parallax.core.metamodel._identities import (
 
 __all__ = [
     "APPLICATION_ASSIGNED",
+    "COLUMNS",
     "MAX",
     "NOT_PRIMARY_KEY",
     "TABLE_PER_CONCRETE_SUBTYPE",
@@ -38,8 +39,10 @@ __all__ = [
     "AttributePrimaryKey",
     "Cardinality",
     "Column",
+    "Columns",
     "ConcreteSubtype",
     "DefiningRelationshipDeclaration",
+    "Document",
     "IndexMetadata",
     "Inheritance",
     "InheritanceMetadata",
@@ -59,6 +62,7 @@ __all__ = [
     "Sequence",
     "SortDirection",
     "StorageContainer",
+    "StorageLayout",
     "StorageLocation",
     "Table",
     "TablePerConcreteSubtype",
@@ -177,7 +181,41 @@ class Column:
 
 type StorageLocation = Column
 """A mapped top-level member's physical placement. It never repeats the
-container, and the reserved ``DocumentPath`` variant is not constructible."""
+container, and the reserved ``ContainerDocument`` variant is not constructible.
+
+A Document Path is not a Storage Location: it is derived by
+``m-storage-layout`` from the accepted model rather than declared, so no member
+carries one here under any layout."""
+
+
+@dataclass(frozen=True, slots=True)
+class Columns:
+    """Conventional layout: each mapped Attribute owns its own Column and each
+    top-level Value Object occurrence its own Structured Column."""
+
+
+# The shared :class:`Columns` instance, on the same value-object terms.
+COLUMNS: Final[Columns] = Columns()
+
+
+@dataclass(frozen=True, slots=True)
+class Document:
+    """Relational Document Layout: one shared Structured Column carries every
+    document-resident member of the governed rows.
+
+    ``column`` is always resolved — a frontend may supply a conventional name the
+    author omitted, but no accepted layout value carries an unresolved one.
+    """
+
+    column: Column
+
+
+type StorageLayout = Columns | Document
+"""The root-owned physical mapping policy of one independent mapping owner.
+
+Only a standalone Entity or a family root declares it, and a descendant's
+declaration is a family-invariant rejection rather than an override. ``Columns``
+has no authoring spelling: declaring nothing selects it."""
 
 
 @dataclass(frozen=True, slots=True)

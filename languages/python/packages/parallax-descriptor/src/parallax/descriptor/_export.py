@@ -10,9 +10,10 @@ implementation defect, which surfaces as :class:`DescriptorExportError` rather
 than a :class:`DescriptorError`.
 
 Every optional key whose value equals the fact ingestion re-derives is dropped —
-a column that matches its member's portable derived default, a Read Write persistence mode, an
-application-assigned generation, and the other members of the omission set — and
-the single-versus-multi ``entity``/``entities`` form is chosen by entity count.
+a column that matches its member's portable derived default, a Read Write
+persistence mode, a Columns storage layout, an application-assigned generation,
+and the other members of the omission set — and the single-versus-multi
+``entity``/``entities`` form is chosen by entity count.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from parallax.core.metamodel import (
     Cardinality,
     ConcreteSubtype,
     DefiningRelationshipDeclaration,
+    Document,
     EntityIdentity,
     EntityMetadata,
     IndexMetadata,
@@ -131,6 +133,9 @@ def _entity(entity: EntityMetadata) -> dict[str, object]:
         entity
     ):
         out["persistence"] = "read-only"
+    layout = entity.declared_layout
+    if isinstance(layout, Document) and not _is_family_descendant(entity):
+        out["layout"] = {"document": {"column": layout.column.name}}
     if entity.declared_attributes:
         out["attributes"] = [_attribute(a) for a in entity.declared_attributes]
     if entity.declared_as_of_axes:
@@ -149,9 +154,10 @@ def _entity(entity: EntityMetadata) -> dict[str, object]:
 def _is_family_descendant(entity: EntityMetadata) -> bool:
     """Whether ``entity`` occupies a non-root family position.
 
-    Persistence is family-wide and root-owned, so a descendant never spells one
-    in canonical form even when its record declares it — absence there means
-    inherit, and only the root ever writes the family mode.
+    Persistence and Storage Layout are family-wide and root-owned, so a
+    descendant never spells either in canonical form even when its record
+    declares one — absence there means inherit, and only the root ever writes the
+    family fact.
     """
     return isinstance(entity.inheritance, (AbstractSubtype, ConcreteSubtype))
 

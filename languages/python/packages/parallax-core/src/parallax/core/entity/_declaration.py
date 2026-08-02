@@ -37,6 +37,7 @@ from parallax.core.entity._members import (
     AttrSpec,
     ConcreteSubtype,
     DefiningRelSpec,
+    Document,
     ElementAttr,
     IndexSpec,
     InheritanceRole,
@@ -68,6 +69,7 @@ from parallax.core.metamodel import (
     RelativeEntityReference,
     Sequence,
     StorageContainer,
+    StorageLayout,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
@@ -89,6 +91,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
+from parallax.core.metamodel import Document as AcceptedDocument
 
 __all__ = [
     "DECLARATION_MEMBER_NAMES",
@@ -144,6 +147,7 @@ DECLARATION_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
         "identity",
         "container",
         "persistence",
+        "layout",
         "attributes",
         "relationships",
         "value_objects",
@@ -190,7 +194,7 @@ _TEMPORAL_MEMBERS: Final[dict[TemporalDimension, tuple[tuple[str, str], tuple[st
 
 @dataclass(frozen=True, slots=True)
 class EntityHeader:
-    """The six class-header keywords, exactly as the class statement spelled them.
+    """The seven class-header keywords, exactly as the class statement spelled them.
 
     Deliberately untyped: the metaclass types the keywords for the developer's
     type checker, while the engine still has to validate what a dynamically
@@ -201,6 +205,7 @@ class EntityHeader:
     name: object = None
     namespace: object = None
     persistence: object = None
+    layout: object = None
     inheritance: object = None
     indices: object = ()
 
@@ -217,6 +222,7 @@ class EntityDeclaration:
     identity: EntityIdentity
     container: StorageContainer | None
     persistence: PersistenceMode | None
+    layout: StorageLayout | None
     attributes: tuple[AttributeMetadata, ...]
     relationships: tuple[UnresolvedRelationshipDeclaration, ...]
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...]
@@ -974,6 +980,7 @@ def _build_entity(
         identity=identity,
         container=_container(cls_name, header),
         persistence=_persistence(cls_name, header),
+        layout=_layout(cls_name, header),
         attributes=tuple(attributes),
         relationships=tuple(relationships),
         value_objects=tuple(occurrences),
@@ -1077,6 +1084,37 @@ def _persistence(cls_name: str, header: EntityHeader) -> PersistenceMode | None:
         code="entity-header-invalid-value",
         message=f"{cls_name}: persistence= takes READ_ONLY, got {header.persistence!r}",
     )
+
+
+def _layout(cls_name: str, header: EntityHeader) -> StorageLayout | None:
+    """The Storage Layout this class itself declares, with its name resolved.
+
+    ``Document`` carries no payload in the common case, so the class object
+    reads as naturally as an instance. The conventional column name is supplied
+    here rather than left to a consumer, so accepted metadata never carries an
+    unresolved one; whether this class may declare a layout at all is a
+    family-wide question formation answers.
+    """
+    declared: object = header.layout
+    if declared is Document:
+        declared = Document()
+    if declared is None:
+        return None
+    if not isinstance(declared, Document):
+        raise EntityDefinitionError(
+            code="entity-header-invalid-value",
+            message=f"{cls_name}: layout= takes Document or Document(column=...), got {declared!r}",
+        )
+    # A frozen dataclass records its payload without checking it, so the declared
+    # field type is a promise to the type checker rather than a fact about what a
+    # header actually passed.
+    column = cast("object", declared.column)
+    if not isinstance(column, str) or not column:
+        raise EntityDefinitionError(
+            code="entity-header-invalid-value",
+            message=f"{cls_name}: Document(column=) takes a nonempty string, got {column!r}",
+        )
+    return AcceptedDocument(Column(column))
 
 
 def _entity_name(cls_name: str, header: EntityHeader) -> str:

@@ -48,6 +48,7 @@ from parallax.core.metamodel import (
 from parallax.core.op_algebra import PathSegment
 
 __all__ = [
+    "DEFAULT_STRUCTURED_COLUMN",
     "MANY_TO_ONE",
     "MAX",
     "ONE_TO_MANY",
@@ -61,6 +62,7 @@ __all__ = [
     "AttrSpec",
     "ConcreteSubtype",
     "DefiningRelSpec",
+    "Document",
     "ElementAttr",
     "Float32",
     "IndexSpec",
@@ -120,6 +122,25 @@ class ConcreteSubtype:
 
 type InheritanceRole = AbstractRoot | AbstractSubtype | ConcreteSubtype
 """The parent-free authoring counterpart of the core ``Inheritance`` algebra."""
+
+
+DEFAULT_STRUCTURED_COLUMN: Final = "payload"
+"""The Structured Column name ``layout=Document()`` supplies for an author who
+names none. It is an authoring convenience: accepted metadata and the exported
+descriptor always carry the resolved name."""
+
+
+@dataclass(frozen=True, slots=True)
+class Document:
+    """Relational Document Layout, as a class header spells it.
+
+    The column name is optional, so ``layout=Document`` and ``layout=Document()``
+    are the same declaration. ``Columns`` has no counterpart here: omitting
+    ``layout=`` is what selects it, and a second spelling of the default would be
+    a way to say nothing.
+    """
+
+    column: str = DEFAULT_STRUCTURED_COLUMN
 
 
 @dataclass(frozen=True, slots=True)

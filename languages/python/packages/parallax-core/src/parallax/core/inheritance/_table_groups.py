@@ -171,11 +171,18 @@ class InheritanceTableGroup:
     ``declaration_contributors`` is in the explicit diagnostic category order:
     primary-key Attributes, optional TPH tag, remaining Attributes, then
     top-level Value Objects. It is not the accepted physical column order.
+
+    ``root`` is the Entity whose own declaration carries this group's root-owned
+    family policies — the standalone Entity itself, or the family root of a
+    table-per-hierarchy or table-per-concrete-subtype group. It differs from
+    ``mapping_owner`` only for a table-per-concrete-subtype group, where each
+    concrete Entity owns its own Table under one root's policies.
     """
 
     table: Table
     mapping_owner: EntityIdentity
     mapping_provenance: EntityLocation
+    root: EntityIdentity
     row_owners: tuple[EntityIdentity, ...]
     declaration_contributors: tuple[TableGroupContributor, ...]
 
@@ -322,6 +329,7 @@ def project_table_groups(candidate: CandidateMetamodel) -> tuple[InheritanceTabl
                 table=declaration.container,
                 mapping_owner=declaration.identity,
                 mapping_provenance=EntityLocation(declaration.identity),
+                root=declaration.identity,
                 row_owners=(declaration.identity,),
                 declaration_contributors=_declaration_contributors((declaration,)),
             )
@@ -348,6 +356,7 @@ def project_table_groups(candidate: CandidateMetamodel) -> tuple[InheritanceTabl
                     table=root.container,
                     mapping_owner=family.root,
                     mapping_provenance=EntityLocation(family.root),
+                    root=family.root,
                     row_owners=row_owners,
                     declaration_contributors=_declaration_contributors(
                         declarations,
@@ -375,6 +384,7 @@ def project_table_groups(candidate: CandidateMetamodel) -> tuple[InheritanceTabl
                     table=declaration.container,
                     mapping_owner=declaration.identity,
                     mapping_provenance=EntityLocation(declaration.identity),
+                    root=family.root,
                     row_owners=(declaration.identity,),
                     declaration_contributors=_declaration_contributors(declarations),
                 )

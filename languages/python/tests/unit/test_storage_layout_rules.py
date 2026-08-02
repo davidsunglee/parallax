@@ -17,8 +17,10 @@ from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     AttributeLocation,
+    AttributeMetadata,
     Column,
     ConcreteSubtype,
+    Document,
     EntityIdentity,
     EntityLocation,
     ExactEntityReference,
@@ -46,6 +48,7 @@ _SHARED_TABLE: Final = Table("ledger")
 
 _REPO = case_format.find_repo_root()
 _CASES = _REPO / "core" / "compatibility" / "cases"
+_CAPABILITY: Final = storage_layout.DOCUMENT_CAPABILITY_UNSUPPORTED
 
 
 def _shape(name: str = "text") -> ValueObjectShapeDeclaration:
@@ -114,6 +117,7 @@ def test_the_owned_issue_code_set_is_closed() -> None:
             {
                 "storage-layout-table-mapping-collision",
                 "storage-layout-column-collision",
+                "storage-layout-document-capability-unsupported",
             }
         )
         == storage_layout.ISSUE_CODES
@@ -502,6 +506,112 @@ def test_a_container_less_concrete_subtype_projects_no_table_group() -> None:
     assert inheritance.project_table_groups(candidate) == ()
 
 
+# --------------------------------------------------------------------------- #
+# The capability gate: the shapes this build refuses to execute, and the       #
+# defects that report themselves instead of it.                                #
+# --------------------------------------------------------------------------- #
+
+
+def _standalone_document(*, column: str = "payload", **members: Any) -> Declaration:
+    members.setdefault("attributes", (key(_SIBLING),))
+    return Declaration(
+        identity=_SIBLING,
+        container=Table("note"),
+        layout=Document(Column(column)),
+        **members,
+    )
+
+
+def _refused_shapes(*declarations: Declaration) -> tuple[str, ...]:
+    gate = [issue for issue in _rule_issues(*declarations) if issue.code == _CAPABILITY]
+    if not gate:
+        return ()
+    (issue,) = gate
+    return tuple(
+        entry.shape for entry in storage_layout.CAPABILITY_SCOPE if entry.shape in issue.message
+    )
+
+
+def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
+    # The scope list is a set of independent predicates over one accepted
+    # root-owned declaration, so a model matching several is refused once and
+    # names all of them: the phase that makes one shape work deletes exactly its
+    # own entry and leaves the rest refusing.
+    versioned = attribute(_SIBLING, "revision")
+    owner = _standalone_document(
+        attributes=(
+            key(_SIBLING),
+            AttributeMetadata(
+                identity=versioned.identity,
+                type=versioned.type,
+                storage=versioned.storage,
+                optimistic_locking=True,
+            ),
+        )
+    )
+    assert _refused_shapes(owner) == (
+        "a standalone Entity",
+        "an explicit optimistic-lock Attribute",
+    )
+
+
+def test_the_gate_locates_the_refusal_at_the_layout_owner_with_no_related_location() -> None:
+    (issue,) = _rule_issues(_standalone_document(column="body"))
+    assert issue.code == _CAPABILITY
+    assert issue.location == EntityLocation(_SIBLING)
+    assert issue.related == ()
+    assert "body" in issue.message
+
+
+def test_a_hierarchy_root_owns_one_refusal_for_its_whole_family() -> None:
+    # One TPH family is one mapping owner, so the gate fires once at the root
+    # even though every participant's rows carry the shared Structured Column.
+    root = Declaration(
+        identity=_ROOT,
+        container=_SHARED_TABLE,
+        layout=Document(Column("payload")),
+        attributes=(key(_ROOT),),
+        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+    )
+    issues = _rule_issues(root, _concrete(_LEAF), _concrete(_MID, tag_value="journal"))
+    assert [(issue.code, issue.location) for issue in issues] == [
+        (_CAPABILITY, EntityLocation(_ROOT))
+    ]
+    assert "a table-per-hierarchy family" in issues[0].message
+
+
+def test_a_layout_declared_off_the_root_raises_nothing_here() -> None:
+    # Root ownership comes from the Inheritance projection, so a descendant's
+    # own declaration is invisible to this Rule Set: the model reports
+    # `inheritance-layout-not-root-owned` and never the gate.
+    root = Declaration(
+        identity=_ROOT,
+        container=_SHARED_TABLE,
+        attributes=(key(_ROOT),),
+        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+    )
+    descendant = Declaration(
+        identity=_LEAF,
+        layout=Document(Column("payload")),
+        inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), "entry"),
+    )
+    assert _rule_issues(root, descendant) == ()
+
+
+def test_a_layout_owner_with_a_column_collision_reports_the_collision_alone() -> None:
+    # The gate exists to keep "not yet supported" distinguishable from
+    # "supported and wrong", so a mapping that raised a physical defect reports
+    # that defect rather than a refusal to execute the layout it does not have.
+    collided = attribute(_SIBLING, "profileText", type=STRING, column="profile")
+    document = ValueObjectOccurrenceDeclaration(
+        name="profileDocument", storage=Column("profile"), shape=_shape()
+    )
+    issues = _rule_issues(
+        _standalone_document(attributes=(key(_SIBLING), collided), value_objects=(document,))
+    )
+    assert [issue.code for issue in issues] == [storage_layout.COLUMN_COLLISION]
+
+
 @pytest.mark.parametrize(
     ("stem", "inline", "expected"),
     _REJECTIONS,
@@ -522,4 +632,5 @@ def test_the_storage_layout_rejection_fixture_set_is_complete() -> None:
         "m-storage-layout-003",
         "m-storage-layout-004",
         "m-storage-layout-005",
+        "m-storage-layout-012",
     ]
