@@ -16,22 +16,27 @@ _Avoid_: table class, generated model, managed entity, DTO
 
 **Entity Class Declaration**:
 The typed class-header metadata that declares an Entity Class's table,
-namespace, Persistence Mode, and inheritance role without enrolling it in a
-model.
+namespace, Persistence Mode, inheritance role, and root-owned Storage Layout
+without enrolling it in a model.
 The framework base—`Entity`, `TxTemporal`, or `Bitemporal`—declares
 its temporal shape. Python exposes no separate As-Of Axis authoring value.
 Entity Classes are always frozen, so declaration headers do
 not carry Pydantic's `frozen=True` option.
 _Avoid_: `EntityConfig`, `__parallax__`, registry call, model options object
 
+**Document Layout Declaration**:
+The root-owned `Document(column=...)` Entity Class header value selecting core
+Relational Document Layout and naming its required Structured Column. Omission
+selects conventional Columns layout; descendants cannot repeat or override it.
+_Avoid_: document entity, JSON model, payload option, Mongo mapping
+
 **Attribute Declaration**:
 An `Attr[T]` annotation on an Entity Class or Value Object, optionally paired
-with context-checked `attr(...)` mapping options. Omitted storage configuration
-derives the conventional location from the attribute or containment name;
-accepted metadata nevertheless contains an explicit Storage Location. Class
-access yields a typed attribute expression; instance access yields the plain
-`T` value.
-_Avoid_: field, column property, Pydantic field
+with context-checked `attr(...)` mapping options. Its optional `column=` is a
+core Column Override rather than effective placement; Model Formation derives
+the Direct Column or Document Path through Storage Layout. Class access yields
+a typed attribute expression; instance access yields the plain `T` value.
+_Avoid_: field, column property, Pydantic field, storage location
 
 **Inline Value Object Class**:
 A Value Object class declared lexically inside the Entity or Value Object that

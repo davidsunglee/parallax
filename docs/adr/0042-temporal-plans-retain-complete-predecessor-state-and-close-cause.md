@@ -26,3 +26,12 @@ deterministic, and preserving the authored close cause avoids the information
 loss in prior art where both causes eventually become generic close updates.
 This builds on ADR 0033's distinction between revision and termination and ADR
 0037's provenance-neutral successor and close dispositions.
+
+For Relational Document Layout, complete predecessor state additionally retains
+the raw Structured Column document alongside its decoded known members. A
+temporal successor starts from that raw document and applies its declared path
+assignments before binding the complete successor value, preserving unknown
+keys written by a newer model version without another database read. An
+explicit whole Value Object assignment still replaces its subtree
+intentionally. Retaining only decoded members would satisfy the current model's
+shape while silently destroying forward-version state during temporal chaining.

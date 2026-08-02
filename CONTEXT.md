@@ -91,9 +91,9 @@ _Avoid_: Relationship ID, target name, relationship string, Python descriptor
 **Attribute Metadata**:
 The self-identifying, read-only Metamodel Interface view of one locally
 declared Entity scalar attribute. It contains its Attribute Identity, Neutral
-Type, Storage Location, a Not-Primary-Key or Primary-Key state (the latter owns
-Primary-Key Generation), and normalized flags; it never
-contains inherited context or descriptor spellings.
+Type, an optional Column Override, a Not-Primary-Key or Primary-Key state (the
+latter owns Primary-Key Generation), and normalized flags; it never contains
+inherited context, effective Member Placement, or descriptor spellings.
 _Avoid_: attribute record, reflected field, effective attribute
 
 **Neutral Type**:
@@ -350,8 +350,8 @@ _Avoid_: per-member-kind namespace, ambiguous path, dotted-name disambiguation
 
 **Nested Value Object**:
 A Value Object member contained recursively inside another Value Object. It
-is persisted beneath its top-level occurrence and has no Storage Location of
-its own.
+is persisted beneath its top-level occurrence and has no Column Override or
+independent Member Placement of its own.
 _Avoid_: stored value object, nested entity, child column
 
 **Value Object Containment**:
@@ -362,38 +362,52 @@ _Avoid_: recursive Value Object type, cyclic JSON shape, shared occurrence
 
 **Value Object Multiplicity**:
 The shared Multiplicity of a contained Value Object: One for a single embedded
-object or Many for an ordered collection at the same top-level Storage
-Location. It reuses `Multiplicity = One | Many` rather than defining Value
+object or Many for an ordered collection at the same top-level Member
+Placement. It reuses `Multiplicity = One | Many` rather than defining Value
 Object cardinality. A Many Value Object is always non-null; its empty ordered
 collection is the sole representation of no contained values.
 _Avoid_: Value Object cardinality, collection flag, relationship cardinality
 
-**Storage Location**:
-The normalized physical location of a mapped top-level Entity member,
-independent of that member's model identity. The initial form is a named
-Column; nested Value Object members have no Storage Location of their own.
-_Avoid_: column property, storage binding, member identity
+**Column Override**:
+An optional locally declared physical Column spelling for a top-level Entity
+member when its eventual direct role permits customization. It is authoring
+intent rather than effective placement; omission remains absence until Storage
+Layout derives the member's Direct Column or Document Path.
+_Avoid_: Storage Location, default column, effective column, document path
 
 **Storage Container**:
 The Entity-level physical container that holds its stored instances, declared
-once rather than repeated by member Storage Locations. The initial form is a
+once rather than repeated by member placements. The initial form is a
 Table; a future Document Collection is a different container form.
 _Avoid_: repeated table mapping, member location, database
+
+**Member Placement**:
+The immutable `m-storage-layout` answer locating one applicable top-level
+Entity Attribute or Value Object occurrence in a Table Layout: either one
+Direct Column or one Document Path beneath a Structured Column Slot.
+_Avoid_: Storage Location, declared column, member identity, SQL expression
+
+**Direct Column**:
+The Member Placement storing one top-level Entity member directly in one Column
+Slot rather than beneath a Structured Column. Directness is an effective
+Storage Layout role, not a second member declaration.
+_Avoid_: escape column, duplicated document member, declared placement
 
 **Table Layout**:
 The immutable `m-storage-layout` view of one physical Table: its identity,
 ordered Column Slots, effective physical primary key, contributor provenance,
-and effective nullability. It composes the storage consequences of accepted
-Metadata and module-owned semantic designations without making any contributing
-behavioral module mandatory.
+effective nullability, and Member Placement lookup. It composes the storage
+consequences of accepted Metadata and module-owned semantic designations without
+making any contributing behavioral module mandatory.
 _Avoid_: inheritance column order, DDL column list, flattened entity mapping
 
 **Column Slot**:
 One physical column position in a Table Layout, carrying its column identity,
 Column Tier, declaring contributor, effective nullability, and the Entities to
-which it applies. Two model facts that intentionally designate one Attribute
-Identity, such as temporal `revised_at` and `tx_start`, produce one slot rather
-than aliases competing for storage.
+which it applies. Many document-resident members may refer to one Structured
+Column Slot through distinct Member Placements, while two model facts that
+intentionally designate one Attribute Identity, such as temporal `revised_at`
+and `tx_start`, produce one slot rather than aliases competing for storage.
 _Avoid_: selected field, result key, duplicate alias column
 
 **Physical Primary Key**:
@@ -410,12 +424,26 @@ declaration ancestry while declaration order remains stable within a tier.
 _Avoid_: framework columns, per-entity prefix, module load order
 
 **Document Path**:
-The structured pair of a Document Root and a nonempty ordered sequence of
-member-name segments locating a value inside that document. The root is either
-a document-bearing Column or the container record itself; a nested Value Object
-member's full Document Path may be derived without giving that member an
-independently owned Storage Location.
+The Member Placement consisting of one Structured Column Slot and a nonempty
+ordered sequence of canonical member-name segments locating a value inside its
+document. A nested Value Object member's full path derives from its top-level
+occurrence without giving that nested member an independently owned placement.
 _Avoid_: dotted path, JSON Pointer, column-plus-path concatenation
+
+**Storage Layout**:
+The root-owned mapping policy choosing conventional Columns or Relational
+Document Layout for a standalone Entity or complete Inheritance Family. It
+governs Member Placement but is distinct from the compiled physical Table
+Layout.
+_Avoid_: Table Layout, per-member mapping, provider capability, storage mode
+
+**Relational Document Layout**:
+A root-owned physical mapping for an Entity or Inheritance Family stored in
+relational Tables, where one Structured Column contains its document-resident
+domain state and structurally significant members remain in separate direct
+columns. It is distinct from a Document Collection because each stored object
+remains a relational table row.
+_Avoid_: document storage, Mongo layout, JSON entity, blob mapping
 
 **Document Collection**:
 A Storage Container whose stored records are themselves structured documents.
@@ -423,10 +451,12 @@ Parallax applies one Metamodel shape to every document in the collection.
 _Avoid_: schemaless Entity, table, document column
 
 **Structured Column**:
-A Column Storage Location carrying one whole top-level Value Object occurrence
-as a structured value. The dialect selects its concrete JSON-like database
-type; the model declares no constant mapping discriminator.
-_Avoid_: flattened columns, JSON blob
+A physical Column carrying a structured document. In conventional Columns
+layout one Structured Column carries one top-level Value Object occurrence; in
+Relational Document Layout one shared Structured Column is the document root
+for every document-resident member in its Table, and compilation gives that
+Column one physical Column Slot.
+_Avoid_: payload column, entity JSON column, document root column, JSON blob
 
 ### Expressions And Reads
 
@@ -606,7 +636,8 @@ _Avoid_: optional row bag, no-observation value, write target
 **Predecessor Row**:
 The complete, immutable, concrete persisted state retained by a Temporal
 Observation, including every applicable scalar attribute, Value Object
-occurrence, primary-key value, temporal bound, and audit value. It contains no
+occurrence, primary-key value, temporal bound, audit value, and any raw
+Structured Column document needed to preserve unknown keys. It contains no
 generated-value expression and may be shared by every successor derived from
 it. In bulk materialization this is a logical row view over Predecessor Columns,
 not a requirement to allocate one row object per observation.
@@ -614,9 +645,10 @@ _Avoid_: Planned Row, sparse observation, copied successor state
 
 **Predecessor Columns**:
 The compact immutable bulk representation of complete Predecessor Rows: one
-shared row shape plus aligned Attribute and Value Object value columns with the
-same positive row count. It can expose a logical Predecessor Row view without
-eagerly allocating a row wrapper for every selected predecessor.
+shared row shape plus aligned Attribute, Value Object, and, where the Storage
+Layout requires them, raw Structured Column document value columns with the same
+positive row count. It can expose a logical Predecessor Row view without eagerly
+allocating a row wrapper for every selected predecessor.
 _Avoid_: predecessor object array, sparse observation columns, managed objects
 
 **Transaction-Time Basis**:

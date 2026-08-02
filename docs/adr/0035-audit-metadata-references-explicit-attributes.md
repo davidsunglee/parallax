@@ -16,9 +16,18 @@ temporal termination principal. The temporal revision-instant alias contributes
 no audit slot because its Attribute Identity already contributes the
 Transaction-Time start slot in the temporal tier.
 
+Relational Document Layout does not move Audit Attributes into its shared
+Structured Column. Accepted Audit Metadata designates those Attributes as
+structural direct-column members before physical placement is compiled, so the
+fixed audit columns remain individually queryable and writable by Audit
+Provenance. `m-storage-layout` reads those accepted designations from Compiled
+Metadata rather than depending on runtime `m-audit-provenance`; Audit Provenance
+continues to depend on and consume the completed layout.
+
 Audit Attributes are not indexed automatically. They participate in the
-existing explicit Index Metadata grammar wherever that grammar permits, but
-Audit Metadata introduces no implicit access path or audit-specific index
+existing explicit Index Metadata grammar wherever that grammar permits,
+including Relational Document Layout because they remain direct, but Audit
+Metadata introduces no implicit access path or audit-specific index
 configuration.
 
 Audit formation reuses the issue owner that already understands a defect.
