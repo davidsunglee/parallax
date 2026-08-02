@@ -145,14 +145,25 @@ and never addresses an array position.
 `comparisonText` answers the exact characters a dialect's text extraction returns
 for the encoding of `value` — the literal SQL binds when the member's declared
 type compares as **extracted text** rather than through a cast (`m-dialect`,
-`m-sql`). For every type whose document form is a JSON string it is that string's
-own characters, unquoted and unescaped, so the bound literal is the spelling the
-writer stored. For `boolean`, whose document form is a JSON boolean, it is `true`
-or `false` — the text the extraction yields, which the *encoded* value is not: a
-bound JSON boolean compared against an extracted text is a type mismatch, not a
-comparison. The operation is defined for exactly the types that compare as text;
-a numeric-family literal has no comparison text, because its comparison casts the
-extraction and binds the encoded JSON number instead.
+`m-sql`). It is defined for exactly the six types whose document form is a JSON
+string — `string`, `bytes`, `date`, `time`, `timestamp`, and `uuid` — and for each
+it is that string's own characters, unquoted and unescaped, so a consumer binds
+`0a1b` rather than the JSON text `"0a1b"` that carries it, against an extraction
+that returns the characters alone.
+
+No other type has a comparison text, because no other type is compared as text. A
+member whose comparison casts the extraction — the numeric family and `boolean`
+(`m-dialect`) — is compared inside the engine's own type system, so what SQL binds
+there is the **managed value in its declared Neutral Type**, not a literal this
+module produces: a `decimal(p, s)` binds the exact decimal rather than any JSON
+number, and a `boolean` binds the boolean rather than any text. The distinction is
+not decorative. `decimal`'s document form is a digit string precisely because a
+JSON number cannot carry its scale and precision, so binding one against
+a cast extraction compares a binary float and matches stored values that merely
+round to the same float; and a JSON boolean is the one document form the concrete
+dialects' text extractions do not agree on the characters of (`m-dialect`), so no
+bound text can match on both — which is why it has a cast rather than a comparison
+text.
 
 `patch` applies ordered patches to a document in memory and returns the result.
 It never reads the database and never issues a statement; composing the
@@ -212,12 +223,19 @@ one implementation and fail against the other, and a whole-occurrence comparison
 (`m-unit-work`) against a subtree some other writer stored would report a change
 where the value never changed. The encoding is therefore the number with the
 **fewest significant digits** that decodes back to the value under the member's
-declared format — binary32 for `float32`, binary64 for `float64` — and, where two
-equally short numbers both decode to it, the one nearest the value. This fixes
-the *number*, not its spelling: `20` and `20.0` are one JSON number and either
-may be written, while `0.1` and `0.10000000000000001` are two numbers and only
-`0.1` is admissible. It is what a shortest-round-trip float formatter produces; a
-fixed-width `17`-significant-digit rendering is not admissible, even though it
+declared format — binary32 for `float32`, binary64 for `float64` — and, where
+several equally short numbers decode to it, the one **nearest** the value, and
+where two of those are equally near, the one whose **last significant digit is
+even**. All three levels are load-bearing: binary64 `562949953421312.25` is
+decoded from both `562949953421312.2` and `562949953421312.3` — sixteen
+significant digits each, `0.05` from the value each, with no fifteen-digit
+candidate in range — so the first two levels alone still admit two numbers, and
+the third selects `562949953421312.2`. (`1048576.2` / `1048576.3` is the same tie
+for binary32 `1048576.25`.) This fixes the *number*, not its spelling: `20` and
+`20.0` are one JSON number and either may be written, while `0.1` and
+`0.10000000000000001` are two numbers and only `0.1` is admissible. It is what a
+shortest-round-trip float formatter produces, the even-digit tie-break included;
+a fixed-width `17`-significant-digit rendering is not admissible, even though it
 also round-trips.
 
 **Encoding and decoding are inverse.** For every value of a declared type,
@@ -238,22 +256,22 @@ as a `uuid`, a `date`, or a `string` because the member declares which. The
 codec never guesses a type from a value's shape, so a `string` member holding
 `"2026-01-01"` stays that string.
 
-**The non-numeric spellings are comparison-significant, not house style.** SQL compares
-a document-resident member of the numeric family through a dialect cast, and every
-other declarable type — `boolean`, `bytes`, `date`, `time`, `timestamp`, `uuid`,
-and `string` itself — **by comparing the extracted text directly**, with no cast on
-either dialect (`m-dialect`, `m-sql`). Each spelling above is therefore chosen so
-that, for two values of one declared type, the encodings are equal exactly when the
-values are equal, and — for an ordered type — the encodings compare in the values'
-own order. Zero-padded fixed-width fields with the most significant first, a
-`Z`-normalized UTC instant, lowercase hexadecimal, and the canonical lowercase UUID
-form are what deliver that, so they are normative here for a reason that lives
-outside this module. The literal such a comparison binds is the type's
-`comparisonText`, never its encoded document value: for the six types whose
-document form is a JSON string the two coincide character for character, and for
-`boolean` they do not. A change to any of these spellings changes predicate and
-ordering results, and MUST therefore be made together with `m-dialect`'s
-corresponding decision — adding a cast for that type — rather than alone.
+**The string spellings are comparison-significant, not house style.** SQL compares
+a document-resident member of the numeric family — and a `boolean`, whose extracted
+characters the concrete dialects do not agree on — through a dialect cast, and the six
+types whose document form is a JSON string — `string`, `bytes`, `date`, `time`,
+`timestamp`, and `uuid` — **by comparing the extracted text directly**, with no cast
+on either dialect (`m-dialect`, `m-sql`). Each of those six spellings above is
+therefore chosen so that, for two values of one declared type, the encodings are
+equal exactly when the values are equal, and — for an ordered type — the encodings
+compare in the values' own order. Zero-padded fixed-width fields with the most
+significant first, a `Z`-normalized UTC instant, lowercase hexadecimal, and the
+canonical lowercase UUID form are what deliver that, so they are normative here for
+a reason that lives outside this module. The literal such a comparison binds is the
+type's `comparisonText` — the string's own characters — never the JSON text that
+carries them. A change to any of these spellings changes predicate and ordering
+results, and MUST therefore be made together with `m-dialect`'s corresponding
+decision — adding a cast for that type — rather than alone.
 
 ## Presence
 
@@ -358,11 +376,13 @@ two paths agree; it promises never to invent a value for one.
 
 ## Consumer contract
 
-- SQL lowering takes a predicate or ordering literal from this module before
-  binding it — the encoded JSON number where the comparison casts the extraction,
-  the type's `comparisonText` where it compares the extraction as text — so a
+- SQL lowering takes a predicate or ordering literal from this module — the type's
+  `comparisonText` — where the comparison compares the extraction as text, and
+  binds the managed value in its declared Neutral Type, through the dialect's typed
+  bind normalization, where the comparison casts the extraction (`m-dialect`). So a
   comparison against a document-resident member compares the spelling the writer
-  stored, in the form the extraction actually yields.
+  stored, in the form the extraction actually yields, and never routes an exact
+  `decimal` through a JSON number to get there.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`.
 - Read materialization decodes only the paths its result form needs, by declared

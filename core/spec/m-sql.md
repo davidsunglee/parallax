@@ -1207,14 +1207,20 @@ hole structure diverges, the `binds` are authored as a **per-dialect map**
     mariadb: ['$.geo.country', 'US']
 ```
 
-The compared `value` is a **typed** `m-op-algebra` literal; a numeric-family
-attribute casts the extraction to its declared neutral type before comparing (the
-typed-cast form is a per-dialect `m-dialect` decision), and every other declarable
-type — `string` included — compares the extraction directly against that type's
-**comparison text** (`m-document-codec`): the characters the extraction itself
-returns, which for a JSON-string spelling is the stored text as above and for a
-`boolean` field is `true` / `false` rather than a bound boolean. A future dialect
-with a different
+The compared `value` is a **typed** `m-op-algebra` literal, and which form is bound
+follows `m-dialect`'s two typed-cast tables. An attribute in the **cast** table —
+the numeric family and `boolean` — casts the extraction to its declared neutral
+type before comparing (the fragments in the table above show the uncast form; the
+`nestedGt` rows show the cast one) and binds the **managed value** in that type: a
+`decimal(p, s)` field binds the exact decimal rather than a JSON number, and a
+`boolean` field binds the boolean. Each of the six types whose document form is a
+JSON string — `string` included — compares the extraction directly against that
+type's **comparison text** (`m-document-codec`): the characters the extraction
+itself returns, which is the stored text as above. A `boolean` field cannot join
+them, because the two extractions disagree on its characters —
+`jsonb_extract_path_text` returns `true` / `false` where `json_value` returns `1` /
+`0` — so one bound text would match on Postgres and silently match nothing on
+MariaDB. A future dialect with a different
 document type — Snowflake `VARIANT` — uses its own extraction (a `VARIANT` path
 expression) behind the same seam while preserving the path order and result
 semantics. The independent `then.referenceSql` oracle spells the extraction a
@@ -1230,9 +1236,9 @@ harness asserts returns the same rows (`m-case-format`).
 
 The range operators (`nestedGt` / `nestedGte` / `nestedLt` / `nestedLte`) apply
 the **typed cast** (`m-dialect`) to the extraction before the SQL comparison when
-the attribute is of the numeric family, since text order is not numeric order; over
-a type whose canonical spelling already orders as text they compare the extraction
-directly. `nestedBetween` follows the same rule and lowers to **one**
+the attribute's declared type is in that seam's cast table, since text order is not
+numeric order; over a type whose canonical spelling already orders as text they
+compare the extraction directly. `nestedBetween` follows the same rule and lowers to **one**
 `<extraction> between ? and ?` — never a pair of
 comparisons (`m-op-algebra`) — binding the JSON path first, then `lower`, then
 `upper`. `nestedIn` lowers the membership to `<extraction> in (?, …)` — the JSON
@@ -1491,19 +1497,30 @@ been `t0.display_name = ?` under Columns layout becomes an extraction over
 **Whether the extraction casts is fixed by the declared Neutral Type.** The
 extraction yields text, and `m-dialect`'s two typed-cast tables say which types do
 what: a member of the **numeric family** — `int32`, `int64`, `float32`, `float64`,
-`decimal(p,s)` — casts through the typed-cast form before comparing, exactly as a
-numeric `nestedGt` does today; every other declarable type compares the extracted
-text directly, with no cast, because `m-document-codec`'s canonical spelling for it
-already equates and orders correctly as text. Those two tables are closed over the
-declarable types, so no document-resident member is left without a comparison form.
-Either way the compared literal comes from `m-document-codec` so that both sides
-carry one spelling, but **which** of its answers is bound follows the same split:
-a cast comparison binds the encoded JSON number, and a text comparison binds the
-type's **comparison text** — the characters the extraction itself returns. The
-two are not interchangeable. A `boolean` member's document form is a JSON
-boolean, so binding its *encoding* would compare a bound boolean against
-`jsonb_extract_path_text(…)`, a type mismatch rather than the textual comparison
-this rule selects; its comparison text is `true` or `false`.
+`decimal(p,s)` — and a `boolean` member cast through the typed-cast form before
+comparing, exactly as a numeric `nestedGt` does today; each of the six types whose
+document form is a JSON string compares the extracted text directly, with no cast,
+because `m-document-codec`'s canonical spelling for it already equates and orders
+correctly as text. Those two tables are closed over the declarable types, so no
+document-resident member is left without a comparison form.
+
+**Which literal is bound follows the same split, and the two are not
+interchangeable.** A text comparison binds the type's **comparison text**
+(`m-document-codec`) — the characters the extraction itself returns, which for the
+six JSON-string spellings is the stored text unquoted. A cast comparison binds the
+**managed value in its declared Neutral Type**, through the dialect's typed bind
+normalization (`m-dialect`), because the cast has already moved the comparison into
+the engine's own type system. Neither side may substitute the member's document
+encoding for the other's answer:
+
+- a `decimal(p, s)` member encodes as an exact digit string, so there is no
+  encoded JSON number to bind; producing one would compare
+  `cast(<extraction> as decimal(p, s))` against a binary float and match every
+  stored decimal that rounds to the same float, not the one that equals the
+  literal;
+- a `boolean` member encodes as a JSON boolean, and the two dialects extract it as
+  different characters — `true` / `false` on Postgres, `1` / `0` on MariaDB — so it
+  has no comparison text at all and compares through its cast instead.
 
 Everything else is unchanged: the absence collapse, the operator-by-operator
 fragments, the negation normalizations, the per-dialect bind-hole divergence that
