@@ -35,17 +35,24 @@ no position on the wire, so nothing downstream can tell `Dog.all` from
 the wrong position is refused. Another is clause order — a `where` argument or a
 sort key written before the `narrow` that scopes it — because a Find Query
 retains clauses rather than wrapping them, so the refused spelling and the
-sanctioned one lower to one operation. The last known today is
-`FindQuery.narrow`'s conservative variadic overload, which leaves the result
-parameter where it was for any subtype list the fixed one-through-three
-overloads cannot read, while the narrow it authors lowers exactly as the
-readable spelling's does — so a later subtype key is refused statically and
-accepted by the gate.
+sanctioned one lower to one operation. Another is `FindQuery.narrow`'s
+conservative variadic overload, which leaves the result parameter where it was
+for any subtype list the fixed one-through-three overloads cannot read, while the
+narrow it authors lowers exactly as the readable spelling's does — so a later
+subtype key is refused statically and accepted by the gate.
+
+The converse direction is open in the same way: a model-aware rule has no static
+half when nothing the checker reads at the call site decides it, either because
+the fact is the connected model's rather than the classes' or because no
+parameter is free to carry it. Those cases sit in the last section below and
+carry NO suppression, which asserts the checker's silence exactly as a
+rule-coded ignore asserts its diagnostic, because an unsuppressed diagnostic
+fails `just python-typecheck`.
 
 Authoring reaches no model, so every runtime twin here runs the shared read gate
 `preflight_find` — the seam `Database.find` and `Transaction.find` both call —
 rather than expecting a rejection from `Entity.where`. That is where the
-model-aware validator states these rules now, and it is what covers the wire path
+model-aware validator states these rules, and it is what covers the wire path
 and any untyped caller identically.
 
 The mechanism under test is variance. `Predicate[E]` holds only a canonical
@@ -182,6 +189,22 @@ class TwinRight(Entity, table="typed_twin", name="TypedTwin", namespace=_NS):
 
 
 _TWINS = DomainModel(TwinLeft)
+
+
+# One local Entity name declared in two namespaces, which the Entity Identity
+# rule permits because the qualified identities differ. Composing both into one
+# model is legal too, and is what makes the bare name the wire spells answer two
+# Entities instead of one.
+class LeftShared(Entity, table="typed_left_shared", name="Shared", namespace=f"{_NS}.alpha"):
+    id: Attr[int] = attr(primary_key=True)
+
+
+class RightShared(Entity, table="typed_right_shared", name="Shared", namespace=f"{_NS}.beta"):
+    id: Attr[int] = attr(primary_key=True)
+
+
+_ONE_SHARED_NAME = DomainModel(LeftShared)
+_TWO_SHARED_NAMES = DomainModel(LeftShared, RightShared)
 
 
 def preflighted(query: FindQuery[Any, Any], models: DomainModel = _ANIMALS) -> FindQuery[Any, Any]:
@@ -831,6 +854,22 @@ def test_a_path_reaches_the_element_type_of_every_declared_relationship_shape() 
 # --------------------------------------------------------------------------- #
 # What erases, and is therefore a runtime rejection alone                      #
 # --------------------------------------------------------------------------- #
+
+
+def test_a_bare_reference_two_namespaces_answer_is_refused_by_the_model_alone() -> None:
+    # The converse family's own test in its purest form: ONE expression, two
+    # models. The wire spells every operation reference bare, so `LeftShared.id`
+    # reaches the model as `Shared.id` and the namespace that told the two
+    # classes apart has erased. One model answers that name and the other cannot,
+    # while the checker read one expression and no model at all — so no
+    # suppression belongs on either line, and none could.
+    query = LeftShared.where(LeftShared.id == 1)
+    assert lowered_document(preflighted(query, _ONE_SHARED_NAME)) == {
+        "eq": {"attr": "Shared.id", "value": 1}
+    }
+    with pytest.raises(OperationRejectedError) as caught:
+        preflighted(query, _TWO_SHARED_NAMES)
+    assert caught.value.rule == "reference-ambiguous-entity-name"
 
 
 def test_a_relationship_hop_past_the_first_erases_and_the_gate_refuses_it() -> None:
