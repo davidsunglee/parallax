@@ -148,8 +148,37 @@ mutations, exceptions, or exports.
   test is stated where it arises and pinned in the negative-typing corpus
   (`tests/unit/test_typed_query_composition.py`), where
   `reportUnnecessaryTypeIgnoreComment` holds it to both directions. The converse
-  direction has exactly one exception of its own — narrowing relatedness
-  (below) is refused at preflight and stated nowhere statically. Class access
+  direction is open in the same way and for the mirror-image reason: a
+  model-aware rule has no static half when nothing the checker reads at the call
+  site decides it, which happens either because the fact belongs to the
+  **connected model** rather than to the classes, or because it is a class fact
+  **no parameter is free to carry**. Each half has its own test. The first is the
+  mirror of the test above — hold one Python expression fixed and execute it
+  against two models; where one accepts and the other refuses, no static rule
+  could have separated them, because the checker read one expression and a Find
+  Query names no model. So a bare Entity name that two namespaces of the
+  connected model share resolves to no Entity and is refused as
+  `reference-ambiguous-entity-name`, while the identical expression is accepted
+  against a model declaring one of them; and every relationship hop past the
+  first, and every Value Object segment below the statically typed first hop,
+  reaches the model as a name rather than as a class, which is why a renamed or
+  inherited relationship member, an unknown one, and a nested literal against its
+  leaf's declared type are all the model's to refuse. The second test is to name
+  the parameter that would state the rule and show what it is already spent on:
+  `type[…]` is covariant and a type parameter's bound may not itself be generic,
+  so each narrowing form's one parameter is spent on what the narrowing produces
+  and states no relatedness (`narrow-outside-position`, below); and the interior
+  Predicate parameter of a relationship quantifier is contravariant — which is
+  the inheritance rule itself — so an ancestor's `narrow` satisfies it where
+  `m-navigate`'s exact-naming rule refuses it
+  (`narrow-outside-relationship-target`, whose hop-narrow spelling escapes only
+  by carrying its bound on the receiver). Those are examples on this side too,
+  nothing closes this list either, and no count of it is normative. The
+  obligation is the same one discharged the other way round: a model-aware rule
+  with no static half is stated where it arises and pinned in the same corpus on
+  a line carrying **no** suppression, which asserts the checker's silence exactly
+  as a rule-coded suppression asserts its diagnostic, because an unsuppressed
+  diagnostic fails the typecheck gate. Class access
   reads the **accessing** class rather than the declaring one, so `Dog.name`
   addresses `Dog` even where `Animal` declares it; the wire keeps the declaring
   identity either way, and the remedy for the asymmetry this creates — an
@@ -772,8 +801,10 @@ mutations, exceptions, or exports.
   `Animal.narrow(Dog)` and `Order.narrow(Customer)` are alike accepted by the
   checker, and an unrelated narrow target is refused by the model-aware rule
   alone (`narrow-outside-position`) — a named, immediate refusal rather than a
-  wrong answer, and the one model-aware rejection in this binding that has no
-  static half at all. Hop narrowing is the exception and keeps one:
+  wrong answer. It is one of the model-aware rejections with no static half at
+  all, and it is there for the second of the two reasons given above: the
+  parameter that would state relatedness is already spent. Hop narrowing is the
+  exception and keeps one:
   `Owner.pets.narrow(Dog)` carries its bound on the **receiver** — the hop's own
   target — which states the same rule without a generic bound, so
   `narrow-outside-relationship-target` is refused in the editor as well.

@@ -272,7 +272,7 @@ def test_a_root_guard_outside_the_queried_position_is_rejected_at_the_gate() -> 
     # A read already narrowed to the Pet branch cannot guard a path to the sibling
     # WildBoar: the guard is clamped to the active position exactly as an
     # operation-position narrow is. The suppression is the static half, which
-    # `include`'s own parameter now states — a Relationship Path is covariant in
+    # `include`'s own parameter states — a Relationship Path is covariant in
     # its source, so a sibling's path never reaches this query's position, and an
     # ignore that goes idle fails `just python-typecheck`.
     with pytest.raises(OperationRejectedError) as exc:
