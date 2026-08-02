@@ -32,6 +32,7 @@ from parallax.core.metamodel import (
     Cardinality,
     Column,
     ConcreteSubtype,
+    Document,
     EntityIdentity,
     EntityReference,
     ExactEntityReference,
@@ -49,6 +50,7 @@ from parallax.core.metamodel import (
     RelativeEntityReference,
     SortDirection,
     StorageContainer,
+    StorageLayout,
     Table,
     TablePerHierarchy,
     TemporalDimension,
@@ -111,6 +113,7 @@ class _EntityDeclaration:
     identity: EntityIdentity
     container: StorageContainer | None
     persistence: PersistenceMode | None
+    layout: StorageLayout | None
     attributes: tuple[AttributeMetadata, ...]
     relationships: tuple[UnresolvedRelationshipDeclaration, ...]
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...]
@@ -164,6 +167,7 @@ def _declaration(entity: _records.Entity) -> UnresolvedEntityDeclaration:
         identity=identity,
         container=None if entity.table is None else Table(entity.table),
         persistence=_persistence(entity),
+        layout=_layout(entity),
         attributes=tuple(_attribute(identity, member, where) for member in entity.attributes),
         relationships=tuple(_relationship(identity, member) for member in entity.relationships),
         value_objects=tuple(_value_object(member, where) for member in entity.value_objects),
@@ -188,6 +192,19 @@ def _persistence(entity: _records.Entity) -> PersistenceMode | None:
             return PersistenceMode.READ_WRITE
         case "read-only":
             return PersistenceMode.READ_ONLY
+
+
+def _layout(entity: _records.Entity) -> StorageLayout | None:
+    """The Storage Layout this Entity itself declares, if any.
+
+    Absence is a declaration fact rather than the Columns default: on a
+    standalone Entity or a family root it selects Columns, and on a descendant it
+    means inherit, so a family rule can still see a descendant that declared a
+    layout at all.
+    """
+    if entity.layout is None:
+        return None
+    return Document(Column(entity.layout.column))
 
 
 def _attribute(

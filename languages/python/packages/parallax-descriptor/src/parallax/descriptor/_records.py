@@ -28,10 +28,12 @@ __all__ = [
     "AsOfAxisMetadata",
     "Attribute",
     "DefiningRelationship",
+    "DocumentLayout",
     "Entity",
     "Index",
     "Inheritance",
     "InheritanceRole",
+    "Layout",
     "Metamodel",
     "Multiplicity",
     "NestedValueObject",
@@ -265,6 +267,24 @@ class ValueObject:
 
 
 @dataclass(frozen=True, slots=True)
+class DocumentLayout:
+    """One shared Structured Column carrying the mapping's document-resident state.
+
+    The column name is required here because the canonical descriptor always
+    carries the resolved one: a frontend that supplies a conventional name the
+    author omitted resolves it before export.
+    """
+
+    column: str
+
+
+type Layout = DocumentLayout
+"""The Storage Layout an entity declares. Conventional Columns storage has no
+spelling — omitting `layout` is what selects it — so the only member is the
+document form."""
+
+
+@dataclass(frozen=True, slots=True)
 class Entity:
     """One mapped entity: identity, attributes, temporal dimensions, and relations.
 
@@ -274,12 +294,17 @@ class Entity:
     Read Write default while absence on a descendant means inherit — and a
     descendant that declares any mode at all is invalid. Normalizing an omitted
     property to the default would erase the only evidence of that.
+
+    ``layout`` reads the same way and for the same reason: it is family-wide and
+    root-owned, and ``None`` is both the Columns default on a root and the
+    inherit signal on a descendant.
     """
 
     name: str
     namespace: str | None = None
     table: str | None = None
     persistence: Persistence | None = None
+    layout: Layout | None = None
     attributes: tuple[Attribute, ...] = ()
     as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     relationships: tuple[RelationshipDeclaration, ...] = ()

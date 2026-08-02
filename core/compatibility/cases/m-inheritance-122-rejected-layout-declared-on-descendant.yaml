@@ -1,0 +1,38 @@
+# Negative (m-inheritance): a conventionally-mapped table-per-hierarchy root
+# whose concrete subtype declares its own Relational Document Layout.
+#
+# Storage Layout is family-wide physical policy, exactly like temporal axes,
+# optimistic locking, and persistence: only the family root may declare
+# `layout`, so a family is entirely conventional or entirely document-mapped.
+# `Record` (root) declares none; `CardRecord` (concrete-subtype) declares
+# `layout.document` — a model-aware validator MUST reject the family before any
+# SQL. The rejection is Inheritance's, not Storage Layout's: the declaration is
+# not root-owned, so the capability gate that refuses an unexecutable
+# root-owned layout stays silent here and the model reports the reason it is
+# actually wrong.
+model: models/payment.yaml
+tags: [m-inheritance, m-storage-layout, m-model-formation, m-descriptor, rejected, negative, table-per-hierarchy, document-layout, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Record
+        table: record
+        inheritance:
+          role: root
+          strategy: table-per-hierarchy
+          tag: { column: kind }
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: CardRecord
+        inheritance:
+          role: concrete-subtype
+          parent: Record
+          tagValue: card
+        layout:
+          document:
+            column: payload
+        attributes:
+          - { name: cardNote, type: string }
+then:
+  rejectedRule: inheritance-layout-not-root-owned

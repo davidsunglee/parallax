@@ -58,6 +58,7 @@ from parallax.core.metamodel import (
     ReverseRelationshipDeclaration,
     SortDirection,
     StorageContainer,
+    StorageLayout,
     StorageLocation,
     Table,
     TemporalDimension,
@@ -145,6 +146,7 @@ class FakeEntity:
         *,
         declared_container: StorageContainer | None = None,
         declared_persistence: PersistenceMode | None = None,
+        declared_layout: StorageLayout | None = None,
         declared_attributes: Sequence[AttributeMetadata] = (),
         declared_relationships: Sequence[RelationshipDeclaration] = (),
         declared_value_objects: Sequence[ValueObjectMetadata] = (),
@@ -155,6 +157,7 @@ class FakeEntity:
         self.identity = identity
         self.declared_container = declared_container
         self.declared_persistence = declared_persistence
+        self.declared_layout = declared_layout
         self.declared_attributes = tuple(declared_attributes)
         self.declared_relationships = tuple(declared_relationships)
         self.declared_value_objects = tuple(declared_value_objects)

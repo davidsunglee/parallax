@@ -56,6 +56,7 @@ __all__ = [
     "CYCLE",
     "DUPLICATE_TAG_VALUE",
     "ISSUE_CODES",
+    "LAYOUT_NOT_ROOT_OWNED",
     "MATERIALIZATION_KEY_COLLISION",
     "MEMBER_SHADOWING",
     "MISSING_CONCRETE_SUBTYPE",
@@ -154,6 +155,11 @@ PERSISTENCE_NOT_ROOT_OWNED: Final[IssueCode] = "inheritance-persistence-not-root
 so absence on a descendant means inherit and any declaration at all is a second
 owner."""
 
+LAYOUT_NOT_ROOT_OWNED: Final[IssueCode] = "inheritance-layout-not-root-owned"
+"""A descendant declares a Storage Layout. The layout is family-wide physical
+policy its root owns, so a family is entirely conventional or entirely
+document-mapped and a descendant may not redeclare, repeat, or override it."""
+
 MEMBER_SHADOWING: Final[IssueCode] = "inheritance-member-shadowing"
 """A descendant redeclares a name an ancestor already declares. One navigable
 namespace runs down each ancestry, so shadowing is ambiguous across categories
@@ -186,6 +192,7 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         TEMPORAL_AXES_NOT_ROOT_OWNED,
         OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         PERSISTENCE_NOT_ROOT_OWNED,
+        LAYOUT_NOT_ROOT_OWNED,
         MEMBER_SHADOWING,
         MATERIALIZATION_KEY_COLLISION,
     }
@@ -429,6 +436,15 @@ def _root_owned_issues(
                 EntityLocation(declaration.identity),
                 related,
                 message="only a family root declares a Persistence Mode",
+            )
+        )
+    if declaration.layout is not None:
+        issues.append(
+            MetamodelIssue(
+                LAYOUT_NOT_ROOT_OWNED,
+                EntityLocation(declaration.identity),
+                related,
+                message="only a family root declares a Storage Layout",
             )
         )
     return issues

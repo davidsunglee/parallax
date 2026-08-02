@@ -36,6 +36,7 @@ from parallax.core.metamodel import (
     Rejected,
     Resolved,
     StorageContainer,
+    StorageLayout,
     UnresolvedEntityDeclaration,
     UnresolvedInheritance,
     UnresolvedRelationshipDeclaration,
@@ -54,6 +55,7 @@ class Declaration:
     identity: EntityIdentity
     container: StorageContainer | None = None
     persistence: PersistenceMode | None = None
+    layout: StorageLayout | None = None
     attributes: tuple[AttributeMetadata, ...] = ()
     relationships: tuple[UnresolvedRelationshipDeclaration, ...] = ()
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...] = ()

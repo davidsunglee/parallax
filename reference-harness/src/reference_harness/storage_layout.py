@@ -28,11 +28,18 @@ from .value_object_resolve import RejectionError
 
 STORAGE_LAYOUT_TABLE_MAPPING_COLLISION = "storage-layout-table-mapping-collision"
 STORAGE_LAYOUT_COLUMN_COLLISION = "storage-layout-column-collision"
+# The capability gate: an implementation MUST NOT accept a Relational Document
+# Layout whose behavior it cannot execute end to end, so a build that does not
+# yet execute some layout shape declares that shape in CAPABILITY_SCOPE and
+# refuses it at formation. Emptying the scope retires the rule and this code
+# with it — a permanently vacuous check is not a supported state.
+STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED = "storage-layout-document-capability-unsupported"
 
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
         STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
         STORAGE_LAYOUT_COLUMN_COLLISION,
+        STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED,
     }
 )
 
@@ -433,6 +440,123 @@ def _render_contributor(contributor: ColumnContributor) -> str:
     return f"table-per-hierarchy discriminator of {contributor.root}"
 
 
+def _layout_column(definition: Mapping[str, Any]) -> str | None:
+    """The Structured Column this definition's own ``layout`` names, if any.
+
+    The canonical descriptor always carries the resolved name, so a `layout`
+    block without one is not a document mapping this validator can reason about.
+    """
+    layout = definition.get("layout")
+    if not isinstance(layout, dict):
+        return None
+    document = layout.get("document")
+    if not isinstance(document, dict):
+        return None
+    column = document.get("column")
+    return column if isinstance(column, str) and column else None
+
+
+def _group_attributes(group: _Group) -> tuple[tuple[str, dict[str, Any]], ...]:
+    """Every ``(owner, attribute)`` contributing to this group's Table."""
+    return tuple(
+        (_identity(definition), attribute)
+        for definition in group.declarations
+        for attribute in definition.get("attributes", []) or []
+        if isinstance(attribute, dict)
+    )
+
+
+def _joined_attributes(definitions: Sequence[dict[str, Any]]) -> frozenset[tuple[str, str]]:
+    """Every ``(owner, attribute name)`` an accepted Relationship Join designates.
+
+    Both endpoints of a defining declaration are read, because both stay direct
+    Columns under Relational Document Layout; a reverse declaration introduces no
+    Attribute its defining peer does not already name.
+    """
+    endpoints: set[tuple[str, str]] = set()
+    for definition in definitions:
+        owner = _identity(definition)
+        namespace = definition.get("namespace")
+        for relationship in definition.get("relationships", []) or []:
+            join = relationship.get("join") if isinstance(relationship, dict) else None
+            if not isinstance(join, dict):
+                continue
+            target = join.get("target")
+            if not isinstance(target, dict):
+                continue
+            entity = target["entity"]
+            qualified = entity if "." in entity or namespace is None else f"{namespace}.{entity}"
+            endpoints.add((owner, join["source"]))
+            endpoints.add((qualified, target["attribute"]))
+    return frozenset(endpoints)
+
+
+def _refused_shapes(
+    owner: str,
+    root_definition: Mapping[str, Any],
+    groups: Sequence[_Group],
+    joined: frozenset[tuple[str, str]],
+) -> tuple[str, ...]:
+    """The declared capability-scope entries this layout owner matches.
+
+    Each entry names one layout shape this build cannot execute end to end, and
+    is deleted whole once the build executes that shape's reads and writes
+    alike. Deleting the last one retires the rule.
+    """
+    block = inheritance_of(root_definition)
+    strategy = block.get("strategy") if block is not None else None
+    attributes = tuple(
+        pair for group in groups if group.root == owner for pair in _group_attributes(group)
+    )
+    axes = {
+        axis["dimension"]
+        for axis in root_definition.get("asOfAxes", []) or []
+        if isinstance(axis, dict)
+    }
+    refused: list[str] = []
+    if block is None:
+        refused.append("a standalone Entity")
+    if strategy == STRATEGY_TPH:
+        refused.append("a table-per-hierarchy family")
+    if strategy == STRATEGY_TPCS:
+        refused.append("a table-per-concrete-subtype family")
+    if any((declaring, attribute["name"]) in joined for declaring, attribute in attributes):
+        refused.append("an Attribute named by a Relationship Join")
+    if any(attribute.get("optimisticLocking") for _, attribute in attributes):
+        refused.append("an explicit optimistic-lock Attribute")
+    if axes == {"transactionTime"}:
+        refused.append("a Transaction-Time axis")
+    if "validTime" in axes:
+        refused.append("a Bitemporal axis pair")
+    return tuple(refused)
+
+
+def _validate_capability(index: _ModelIndex, groups: Sequence[_Group]) -> None:
+    """Refuse every root-owned Document layout this build cannot execute.
+
+    Root ownership comes from the group projection: a group's root is the
+    standalone Entity itself or its family root, so a descendant's own layout
+    declaration is never seen here — that shape is Inheritance's
+    ``inheritance-layout-not-root-owned``. This runs only after the mapping and
+    Column claims validate, so a model with a genuine physical defect reports
+    that defect instead.
+    """
+    joined = _joined_attributes(index.definitions)
+    for owner in sorted({group.root for group in groups}, key=_identity_sort_key):
+        root_definition = index.family.defs[owner]
+        column = _layout_column(root_definition)
+        if column is None:
+            continue
+        refused = _refused_shapes(owner, root_definition, groups, joined)
+        if not refused:
+            continue
+        raise RejectionError(
+            STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED,
+            f"Relational Document Layout over Structured Column {column!r} owned by "
+            f"{owner!r} is not executable by this build: {', '.join(refused)}",
+        )
+
+
 def _validate_groups(groups: Sequence[_Group]) -> None:
     first_owners: dict[str, _Group] = {}
     multiply_owned: set[str] = set()
@@ -470,8 +594,11 @@ def _validate_groups(groups: Sequence[_Group]) -> None:
 
 
 def validate_storage_layout(entity_defs: Sequence[dict[str, Any]]) -> None:
-    """Reject mapping ownership before any uniquely owned Table's Columns."""
-    _validate_groups(_project_groups(_model_index(entity_defs)))
+    """Reject mapping ownership, then Columns, then unexecutable document layouts."""
+    index = _model_index(entity_defs)
+    groups = _project_groups(index)
+    _validate_groups(groups)
+    _validate_capability(index, groups)
 
 
 def _temporal_designations(

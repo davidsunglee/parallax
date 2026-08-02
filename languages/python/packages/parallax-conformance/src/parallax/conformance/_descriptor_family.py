@@ -115,6 +115,7 @@ def validate(metamodel: Metamodel) -> None:
     _reject_strategy_redeclared(participants)
     _reject_descendant_temporal_axes(participants)
     _reject_descendant_optimistic_locking(participants)
+    _reject_descendant_layout(participants)
     _reject_concrete_without_root(participants, by_name)
     rooted = [
         (_reject_missing_root(root, members), members)
@@ -248,6 +249,28 @@ def _reject_descendant_optimistic_locking(participants: tuple[Entity, ...]) -> N
                 f"non-root {entity.name} declares its own optimisticLocking attribute; "
                 "the version attribute is family-wide and MUST be declared only on the "
                 "root",
+                entity=entity.name,
+            )
+
+
+def _reject_descendant_layout(participants: tuple[Entity, ...]) -> None:
+    """Reject any ``abstract-subtype`` or ``concrete-subtype`` that declares its
+    own ``layout``.
+
+    The Storage Layout is family-wide physical policy: only the family ROOT may
+    declare it, so a family is entirely conventional or entirely document-mapped
+    and every descendant inherits the root's choice unchanged. Like the sibling
+    root-owned rules this is structural per-entity, so it fires for both
+    malformed shapes — a conventionally-mapped root whose descendant declares a
+    layout, and a document-mapped root whose descendant redeclares, repeats, or
+    overrides it.
+    """
+    for entity in participants:
+        if _inh(entity).role != "root" and entity.layout is not None:
+            raise InheritanceError(
+                "inheritance-layout-not-root-owned",
+                f"non-root {entity.name} declares its own layout; the Storage Layout is "
+                "family-wide and MUST be declared only on the root",
                 entity=entity.name,
             )
 

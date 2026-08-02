@@ -20,6 +20,7 @@ from reference_harness.data_loader import load_model as load_fixture_rows
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.storage_layout import (
     STORAGE_LAYOUT_COLUMN_COLLISION,
+    STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED,
     STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
     AttributeContributor,
     ColumnTier,
@@ -742,6 +743,71 @@ def test_column_collision_uses_category_order_and_distinct_provenance() -> None:
     assert caught.value.rule == STORAGE_LAYOUT_COLUMN_COLLISION
     assert "discriminator of Record" in caught.value.detail
     assert "Attribute Record.kind" in caught.value.detail
+
+
+def _document_standalone(**overrides: Any) -> dict[str, Any]:
+    definition: dict[str, Any] = {
+        "name": "Note",
+        "table": "note",
+        "layout": {"document": {"column": "payload"}},
+        "attributes": [_attribute("id", primary_key=True)],
+    }
+    definition.update(overrides)
+    return definition
+
+
+def test_the_capability_gate_names_every_declared_shape_the_owner_matches() -> None:
+    # The scope list is a set of independent predicates over one accepted
+    # root-owned declaration, so a model matching several is refused once and
+    # names all of them: the phase that makes one shape work deletes exactly its
+    # own entry and leaves the rest refusing.
+    definition = _document_standalone(
+        attributes=[
+            _attribute("id", primary_key=True),
+            {"name": "revision", "type": "int32", "optimisticLocking": True},
+        ]
+    )
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout([definition])
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+    assert "a standalone Entity" in caught.value.detail
+    assert "an explicit optimistic-lock Attribute" in caught.value.detail
+    assert "'payload'" in caught.value.detail
+
+
+def test_the_capability_gate_refuses_one_hierarchy_family_at_its_root() -> None:
+    definitions = _tph_definitions()
+    definitions[0]["layout"] = {"document": {"column": "payload"}}
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout(definitions)
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+    assert "a table-per-hierarchy family" in caught.value.detail
+    assert "'example.Record'" in caught.value.detail
+
+
+def test_a_layout_declared_off_the_root_raises_nothing_in_storage_layout() -> None:
+    # Root ownership comes from the group projection, so a descendant's own
+    # declaration is invisible here: the model reports
+    # `inheritance-layout-not-root-owned` and never the capability gate.
+    definitions = _tph_definitions()
+    definitions[1]["layout"] = {"document": {"column": "payload"}}
+    validate_storage_layout(definitions)
+
+
+def test_a_column_collision_reports_itself_rather_than_the_capability_gate() -> None:
+    # The gate exists to keep "not yet supported" distinguishable from
+    # "supported and wrong", so a mapping that raised a physical defect reports
+    # that defect rather than a refusal to execute the layout it does not have.
+    definition = _document_standalone(
+        attributes=[
+            _attribute("id", primary_key=True),
+            _attribute("profileText", column="profile"),
+        ],
+        valueObjects=[{"name": "profileDocument", "column": "profile"}],
+    )
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout([definition])
+    assert caught.value.rule == STORAGE_LAYOUT_COLUMN_COLLISION
 
 
 def test_tph_participants_are_one_owner_and_tpcs_sibling_columns_may_repeat() -> None:

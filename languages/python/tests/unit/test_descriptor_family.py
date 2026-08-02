@@ -80,7 +80,7 @@ families."""
 
 
 def test_every_descriptor_rejection_case_is_covered() -> None:
-    assert len(_RAW_ONLY_REJECTIONS) == 17
+    assert len(_RAW_ONLY_REJECTIONS) == 18
 
 
 @pytest.mark.parametrize(

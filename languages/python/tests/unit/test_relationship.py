@@ -49,6 +49,7 @@ from parallax.core.metamodel import (
     ReverseRelationshipDeclaration,
     SortDirection,
     StorageContainer,
+    StorageLayout,
     Table,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedEntityDeclaration,
@@ -239,6 +240,7 @@ class _Declared:
     relationships: tuple[RelationshipDeclaration, ...] = ()
     container: StorageContainer | None = None
     persistence: PersistenceMode | None = None
+    layout: StorageLayout | None = None
     value_objects: tuple[ValueObjectOccurrenceDeclaration, ...] = ()
     as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     inheritance: InheritanceMetadata | None = None

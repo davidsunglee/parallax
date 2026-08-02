@@ -23,6 +23,8 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Column,
+    ConcreteSubtype,
+    Document,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
@@ -161,6 +163,34 @@ def test_export_retains_acronym_domain_and_old_camel_case_overrides() -> None:
     }
     assert "column" not in value_objects["postalAddress"]
     assert value_objects["legacyAddress"]["column"] == "legacyAddress"
+
+
+def test_export_writes_the_resolved_structured_column_only_where_the_root_owns_it() -> None:
+    # Omission is the only wire form of Columns storage, and Storage Layout is
+    # root-owned, so the property appears exactly where a root selects the
+    # Document layout. A descendant record that nonetheless carries one keeps it
+    # as the evidence family validation is stated over, and canonical form drops
+    # it — the same rule persistence follows.
+    root = EntityIdentity(None, "Record")
+    child = EntityIdentity(None, "CardRecord")
+    entities = (
+        fake_metamodel.FakeEntity(
+            root,
+            declared_container=Table("record"),
+            declared_layout=Document(Column("payload")),
+            declared_attributes=(
+                AttributeMetadata(AttributeIdentity(root, "note"), STRING, Column("note")),
+            ),
+        ),
+        fake_metamodel.FakeEntity(
+            child,
+            declared_layout=Document(Column("payload")),
+            inheritance=ConcreteSubtype(root, "card"),
+        ),
+    )
+    exported = _by_identity(export_document(fake_metamodel.FakeMetamodel(entities)))
+    assert exported[(None, "Record")]["layout"] == {"document": {"column": "payload"}}
+    assert "layout" not in exported[(None, "CardRecord")]
 
 
 def test_export_spells_read_only_cross_namespace_parent_and_a_many_value_object() -> None:

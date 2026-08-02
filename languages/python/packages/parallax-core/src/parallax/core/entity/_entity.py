@@ -2,11 +2,11 @@
 
 An Entity Class is an implicitly frozen Pydantic model whose class statement
 carries the model's mapping facts and whose body carries its members. The
-metaclass is thin: it types the six header keywords, rejects every other one, and
+metaclass is thin: it types the seven header keywords, rejects every other one, and
 hands the class body to the shared declaration engine.
 
 Because the engine builds the declaration payload eagerly, an Entity Class *is*
-its own ``UnresolvedEntityDeclaration``: the metaclass publishes the nine
+its own ``UnresolvedEntityDeclaration``: the metaclass publishes the ten
 declaration members on the class object, so a Domain Model composes classes
 directly with
 no adapter and no mirrored record graph.
@@ -39,7 +39,7 @@ from parallax.core.entity._errors import (
     ProvenanceError,
 )
 from parallax.core.entity._expressions import AllPredicate, Predicate, serialize_member
-from parallax.core.entity._members import Attr, IndexSpec, InheritanceRole
+from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
 from parallax.core.entity._query import FindQuery, build_find_query
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -48,6 +48,7 @@ from parallax.core.metamodel import (
     IndexMetadata,
     PersistenceMode,
     StorageContainer,
+    StorageLayout,
     TemporalDimension,
     UnresolvedInheritance,
     UnresolvedRelationshipDeclaration,
@@ -110,12 +111,12 @@ class EntityMeta(ModelMetaclass):
     header option rather than silently accepted; the engine sets ``frozen=True``
     itself.
 
-    The nine annotations below are the ``UnresolvedEntityDeclaration`` surface,
+    The ten annotations below are the ``UnresolvedEntityDeclaration`` surface,
     published on the class object so an Entity Class needs no adapter. They
     declare types without binding values: the hidden ``__getattr__`` serves each
     read from the class's own eagerly built declaration, and instances stay
     unaffected because the members live on the metaclass. Declaring them rather
-    than writing nine properties is what makes ``type[SomeEntity]`` *statically*
+    than writing ten properties is what makes ``type[SomeEntity]`` *statically*
     satisfy the protocol — a type checker resolving a member through
     ``type[...]`` reads the metaclass declaration itself and does not apply the
     descriptor protocol to a metaclass ``property``.
@@ -127,6 +128,8 @@ class EntityMeta(ModelMetaclass):
     """This Entity's declared physical container, if it declares one."""
     persistence: PersistenceMode | None
     """The Persistence Mode this Entity itself declares, if any."""
+    layout: StorageLayout | None
+    """The Storage Layout this Entity itself declares, if any."""
     attributes: Sequence[AttributeMetadata]
     """This Entity's own scalar Attributes, in declaration order."""
     relationships: Sequence[UnresolvedRelationshipDeclaration]
@@ -162,6 +165,7 @@ class EntityMeta(ModelMetaclass):
         name: str | None = None,
         namespace: str | None = None,
         persistence: PersistenceMode | None = None,
+        layout: Document | type[Document] | None = None,
         inheritance: InheritanceRole | type[AbstractSubtype] | type[ConcreteSubtype] | None = None,
         indices: tuple[IndexSpec, ...] = (),
         _mint: object | None = None,
@@ -183,7 +187,7 @@ class EntityMeta(ModelMetaclass):
             kind=DeclarationKind.ENTITY,
             mint=_mint,
             axes=_axes,
-            header=EntityHeader(table, name, namespace, persistence, inheritance, indices),
+            header=EntityHeader(table, name, namespace, persistence, layout, inheritance, indices),
             # `Entity.all` is a class-body descriptor, which Pydantic's own
             # namespace inspection would otherwise refuse as an unannotated
             # field the moment `Entity` itself is created.

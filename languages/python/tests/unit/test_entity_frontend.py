@@ -22,6 +22,7 @@ from parallax.core import (
     Attr,
     Bitemporal,
     ConcreteSubtype,
+    Document,
     Entity,
     EntityDefinitionError,
     QueryDefinitionError,
@@ -70,6 +71,7 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipOrder,
     UnresolvedReverseRelationshipDeclaration,
 )
+from parallax.core.metamodel import Document as AcceptedDocument
 from parallax.core.op_algebra import Comparison, PathSegment, serialize
 
 
@@ -159,6 +161,22 @@ def test_persistence_is_declared_only_where_it_is_exceptional() -> None:
 
     assert Order.persistence is None
     assert Archive.persistence is READ_ONLY
+
+
+def test_the_storage_layout_is_declared_only_where_it_is_exceptional() -> None:
+    class Bare(Entity, table="bare", layout=Document):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Empty(Entity, table="empty", layout=Document()):
+        id: Attr[int] = attr(primary_key=True)
+
+    class Named(Entity, table="named", layout=Document(column="body")):
+        id: Attr[int] = attr(primary_key=True)
+
+    assert Order.layout is None
+    assert Bare.layout == AcceptedDocument(Column("payload"))
+    assert Empty.layout == Bare.layout
+    assert Named.layout == AcceptedDocument(Column("body"))
 
 
 def test_the_scalar_families_narrow_only_through_the_type_option() -> None:
@@ -283,6 +301,24 @@ def _unspellable_persistence() -> type:
     return LooseMode
 
 
+def _unspellable_layout() -> type:
+    """A ``layout=`` outside the Storage Layout algebra."""
+
+    class LooseLayout(Entity, table="loose_layout", layout="document"):
+        id: Attr[int] = attr(primary_key=True)
+
+    return LooseLayout
+
+
+def _blank_structured_column() -> type:
+    """A ``Document(column=)`` present but empty, which no Column can be."""
+
+    class BlankColumn(Entity, table="blank_column", layout=Document(column="")):
+        id: Attr[int] = attr(primary_key=True)
+
+    return BlankColumn
+
+
 def _blank_namespace() -> type:
     """A ``namespace=`` present but empty, which no namespace can be."""
 
@@ -347,6 +383,16 @@ def _relationship_target_that_is_not_an_entity() -> type:
             "LooseMode: persistence= takes READ_ONLY, got 'READ_ONLY'",
         ),
         (
+            _unspellable_layout,
+            "entity-header-invalid-value",
+            "LooseLayout: layout= takes Document or Document(column=...), got 'document'",
+        ),
+        (
+            _blank_structured_column,
+            "entity-header-invalid-value",
+            "BlankColumn: Document(column=) takes a nonempty string, got ''",
+        ),
+        (
             _blank_namespace,
             "entity-header-invalid-value",
             "BlankNamespace: namespace= takes a nonempty string, got ''",
@@ -375,6 +421,8 @@ def _relationship_target_that_is_not_an_entity() -> type:
     ids=[
         "blank-table",
         "unspellable-persistence",
+        "unspellable-layout",
+        "blank-structured-column",
         "blank-namespace",
         "decimal-scale-past-precision",
         "decimal-parameters-without-a-decimal",

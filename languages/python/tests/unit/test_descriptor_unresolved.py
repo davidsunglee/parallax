@@ -24,6 +24,7 @@ from parallax.core.metamodel import (
     Column,
     ConcreteSubtype,
     DefiningRelationshipDeclaration,
+    Document,
     EntityIdentity,
     ExactEntityReference,
     IndexIdentity,
@@ -207,6 +208,17 @@ def test_the_adapter_reports_the_persistence_the_record_declared(
     )
     (declaration,) = unresolved_metamodel(records.Metamodel((entity,))).entities
     assert declaration.persistence is expected
+
+
+def test_the_adapter_resolves_the_structured_column_a_document_layout_names() -> None:
+    key = records.Attribute(name="id", type="int64", column="id", primary_key=True)
+    layout = records.DocumentLayout(column="payload")
+    entity = records.Entity(name="Account", table="account", layout=layout, attributes=(key,))
+    (declaration,) = unresolved_metamodel(records.Metamodel((entity,))).entities
+    assert declaration.layout == Document(Column("payload"))
+    plain = records.Entity(name="Account", table="account", attributes=(key,))
+    (bare,) = unresolved_metamodel(records.Metamodel((plain,))).entities
+    assert bare.layout is None
 
 
 def test_an_authored_read_write_stays_distinguishable_from_an_omitted_one() -> None:
