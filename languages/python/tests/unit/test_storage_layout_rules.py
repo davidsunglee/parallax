@@ -580,9 +580,11 @@ def test_an_owner_matching_no_declared_shape_is_executed_rather_than_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The gate refuses exactly the shapes the scope list declares, so an owner
-    # matching none of them is one this build executes and reports nothing. Every
-    # mapping shape is declared today, leaving no such owner to write a model
-    # for, so the scope is emptied here to state the rule rather than the list.
+    # matching none of them is one this build executes and reports nothing. No
+    # model produces such an owner while the scope keeps its mapping-shape
+    # entries: standalone, table-per-hierarchy, and table-per-concrete-subtype
+    # partition every layout owner. Emptying the scope is what states the rule
+    # rather than the list.
     monkeypatch.setattr("parallax.core.storage_layout._rules.CAPABILITY_SCOPE", ())
     assert _rule_issues(_standalone_document()) == ()
 
