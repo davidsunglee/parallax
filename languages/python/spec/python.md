@@ -111,15 +111,28 @@ mutations, exceptions, or exports.
   both parameters, for the opposite reason: its source narrows which queried
   objects a path starts from, so any descendant of the queried Entity is a legal
   include source. Composing a value from the wrong Entity is therefore a static
-  error where the call is written. Every such static rejection also has an
-  equivalent model-aware rejection at execution preflight, which is what covers
-  the serialized ingress and any untyped caller — with exactly one stated
-  exception, narrowing relatedness (below). Class access reads the **accessing**
-  class rather than the declaring one, so `Dog.name` addresses `Dog` even where
-  `Animal` declares it; the wire keeps the declaring identity either way, and
-  the remedy for the one asymmetry this creates — an ancestor's query refusing
-  an inherited member spelled through a descendant — is to start every term from
-  the queried Entity. A comparison's value parameter is deliberately not
+  error where the call is written. Such a static rejection has an equivalent
+  model-aware rejection at execution preflight — which is what covers the
+  serialized ingress and any untyped caller — whenever the composition it
+  refuses reaches the wire as an operation a validator can refuse. Where that
+  composition lowers to a **valid** canonical operation instead, the parameter
+  is the only place the mistake is visible and no preflight rule could restate
+  it, because the wire carries no record of what was refused. That is the case
+  in exactly three places, each stated again where it arises: `Entity.all`,
+  since an `all` node names no position and nothing distinguishes `Dog.all`
+  from `Animal.all`; an **inherited** member spelled through a descendant, since
+  the wire keeps the declaring Entity; and the two clause-order rules below
+  (a `where` argument or a sort key written before the `narrow` that scopes
+  it), since a Find Query retains clauses rather than wrapping them, so the
+  refused spelling and the accepted one lower to one operation. The converse
+  direction has exactly one exception of its own — narrowing relatedness
+  (below) is refused at preflight and stated nowhere statically. Class access
+  reads the **accessing** class rather than the declaring one, so `Dog.name`
+  addresses `Dog` even where `Animal` declares it; the wire keeps the declaring
+  identity either way, and the remedy for the asymmetry this creates — an
+  ancestor's query refusing an inherited member spelled through a descendant —
+  is to start every term from the queried Entity. A comparison's value
+  parameter is deliberately not
   narrowed to the member's declared Python type: a predicate's value is a wire
   literal, and the canonical contract spells a decimal member's comparison as
   the JSON number `600.00`, which the declared type would refuse. `.set(value)`
@@ -166,10 +179,15 @@ mutations, exceptions, or exports.
 - **Assignment construction validates immediately.**
   An Attribute Expression's `.set(value)` constructs an immutable Assignment and
   applies the member's assignability, declared neutral-type, and nullability
-  rules before returning it. Only a mapped scalar Attribute or scalar Value
-  Object leaf is assignable. Primary-key, framework-owned, read-only,
-  relationship, and whole-Value-Object occurrences are rejected, as are values
-  that require coercion or violate the declared type or nullability. Failure
+  rules before returning it. The assignable targets are the **top-level** mapped
+  members: a scalar Attribute, and a whole Value Object occurrence — One or
+  Many — whose value is rendered to its canonical document (or list of
+  documents) and judged as that. A Value Object always binds its whole document,
+  so there is no sparse write below its boundary and a **nested** path
+  (`Customer.address.city.set(...)`) is refused. Primary-key,
+  framework-owned, and read-only targets are rejected, as are values
+  that require coercion or violate the declared type or nullability; a
+  relationship exposes no `.set(...)` at all. Failure
   raises `ModelCopyError(TypeError)` from `.set(...)` itself; it is never
   postponed until a Transaction mutation method, write boundary, or database
   call. That class rather than a `query-*` code is deliberate. The assignment
@@ -362,6 +380,12 @@ mutations, exceptions, or exports.
   `QueryDefinitionError(query-expression-invalid)` rather than silently
   simplifying redundant input. There is no `Entity.all()` Find Query
   constructor; `Entity.where(...)` remains the sole query constructor.
+  `AllPredicate[E]`'s parameter is the **only** place an unfiltered query
+  written at another position is refused: `Animal.where(Dog.all)` is a static
+  error, and it is one of the three static rejections with no model-aware twin,
+  because an `all` node names no position — `Dog.all` and `Animal.all` lower to
+  the byte-identical `{"all": {}}` at the same target, which is a valid
+  operation there is nothing for preflight to refuse.
   `as_of(...)`, `history(...)`, and `as_of_range(...)` form one mutually
   exclusive, single-shot temporal-clause family. Once any one is present, every
   later temporal-clause call raises
@@ -378,8 +402,8 @@ mutations, exceptions, or exports.
   Temporal wrapper(s), optional Order By, optional Limit, then optional Deep
   Fetch. Thus permuting otherwise valid `include`, `order_by`, `limit`, and
   temporal calls produces the same canonical operation. This normalization
-  does not defer validation or weaken build-time scope: a subtype-specific sort
-  key still requires a preceding root narrow when `order_by(...)` is called.
+  does not weaken the static scope rule: a subtype-specific sort
+  key still requires a preceding root narrow where `order_by(...)` is written.
   `Entity.narrow(*subtypes, where=...)` remains the scoped Predicate
   constructor; result-set `FindQuery.narrow(*subtypes)` accepts no `where=` and
   is single-shot. Calling it on an already root-narrowed Find Query raises
@@ -494,9 +518,11 @@ mutations, exceptions, or exports.
   absence-collapse semantics). Nested string predicates share the top-level
   case-insensitive option, wildcard escaping, and bind ordering. The first hop is
   statically typed via the `Attr[...]` descriptor overloads; deeper hops
-  resolve dynamically and are validated during Predicate construction against the
-  declared value-object structure — an undeclared segment or a literal
-  mismatching the leaf's declared neutral type is rejected at build, never at
+  resolve dynamically and are validated against the declared value-object
+  structure at execution preflight, where the model is — an undeclared segment
+  raises `OperationRejectedError(nested-path-unknown-member)` and a literal
+  mismatching the leaf's declared neutral type
+  `OperationRejectedError(nested-literal-type-mismatch)`, never at
   the database. A flat predicate whose path crosses a `multiplicity: many`
   member keeps the flat node and therefore core's **any-element** semantics:
   each such predicate matches independently, so two ANDed flat predicates may
@@ -511,7 +537,9 @@ mutations, exceptions, or exports.
   **element-relative** paths (`type`, `geo.country` — no leading entity
   prefix), composing with `&`/`|`/`~` and parentheses. An element-scoped
   expression is valid only inside an `.exists(...)`/`.not_exists(...)` over that
-  element type; a stray one is rejected during Predicate construction.
+  element type; a stray one builds an element-relative path the queried Entity
+  declares no member for, and is refused at execution preflight under the
+  nested-path rules.
   Every new nested operator is also valid on these element-relative paths. A
   flat operator crossing a Many occurrence retains core's any-element
   semantics, but one element must satisfy the complete operator:
@@ -536,7 +564,8 @@ mutations, exceptions, or exports.
   literal, so a pattern against one would otherwise satisfy the typed-literal
   check and lower text matching against a value that is not text; the member's own
   declared type is checked first, and a mismatch raises
-  `OperationRejectedError(nested-string-predicate-non-string-member)` at build.
+  `OperationRejectedError(nested-string-predicate-non-string-member)` at
+  execution preflight.
 
   ```python
   Customer.where(
@@ -629,8 +658,13 @@ mutations, exceptions, or exports.
   subtype class), and `operand` is the `where=` expression (omitted ⇒ `all`).
   Inside `where=`, subtype-declared attributes become predicable
   (`Animal.narrow(Dog, where=Dog.bark_volume > 3)`); referencing one outside a
-  compatible narrow scope is rejected during Predicate construction
-  (`subtype-attribute-outside-narrow-scope`). A narrow expression is an
+  compatible narrow scope is a static error where the term is written — the
+  `where=` parameter is measured against the named subtypes — and is refused
+  again at execution preflight, against the connected model, as
+  `OperationRejectedError(subtype-attribute-outside-narrow-scope)`. Predicate
+  construction itself judges neither: authoring reaches no model, so a built
+  Predicate carries the reference and the position settles it. A narrow
+  expression is an
   ordinary predicate, so separately narrowed branches compose with the
   Boolean operators:
 
@@ -644,20 +678,26 @@ mutations, exceptions, or exports.
   relationship quantifier the constructor must be called on exactly the
   relationship target (`Person.pets.exists(Pet.narrow(Cat))` —
   `m-navigate`'s
-  exact-naming rule, checked at build). The Find Query clause
+  exact-naming rule). Naming another position builds without complaint and is
+  refused at execution preflight as
+  `OperationRejectedError(narrow-outside-relationship-target)`: which Entity a
+  hop reaches is a model fact, so nothing at authoring time can check it. The
+  Find Query clause
   `Animal.where(...).narrow(Dog, ...)` is the whole-query form: it wraps
   the Find Query's conjoined predicate as the single top-level `narrow` node's
   operand (`Entity.all` ⇒ `all`) and is single-shot like `as_of`. It is a
   **pure result-set narrowing** that grants no attribute scope to the
-  already-built `where` arguments: every predicate is validated immediately as
-  it is built, so subtype-declared attributes are predicable **only** inside
-  the scoped constructor's `where=` —
-  `Animal.where(Dog.bark_volume > 3).narrow(Dog)` is rejected the moment the
-  first predicate is built
-  (`subtype-attribute-outside-narrow-scope`), and the valid spelling is
-  `Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))`. The clause
-  and the constructor converge on the identical canonical node, so neither
-  spelling can drift. On an include path, `.narrow(*subtypes)` on a hop
+  already-built `where` arguments, and it grants none **statically**: each
+  argument is measured against the position the query is at where the call is
+  written, and a later clause never retroactively legalizes it, so
+  `Animal.where(Dog.bark_volume > 3).narrow(Dog)` is a static error at the
+  `where` and the statically valid spelling is
+  `Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))`. Like the sort
+  key's own clause-order rule below, **this one is stated statically and only
+  statically**: the clause and the constructor converge on the identical
+  canonical node — `narrow(Animal, [Dog], greaterThan(Dog.barkVolume, 3))` — so
+  neither spelling can drift, and no model-aware rule can accept one and refuse
+  the other. On an include path, `.narrow(*subtypes)` on a hop
   (`Owner.pets.narrow(Dog)`, continuable to deeper hops) serializes to the
   path segment's `narrow: { to: [...] }` and requests a distinct **narrowed
   view** (§3). Narrowing is single-shot per path segment:
@@ -670,8 +710,10 @@ mutations, exceptions, or exports.
   at every hop and by every enclosing `narrow` scope, never the declared base
   type — so a nested same-position narrow can only constrain the position
   further, and one that broadens back out (a `Cat` narrow inside a `Dog`
-  scope) is rejected at build time (`narrow-outside-position`, the corpus's
-  threaded-position rule).
+  scope) builds and is refused at execution preflight as
+  `OperationRejectedError(narrow-outside-position)`, the corpus's
+  threaded-position rule. Which concrete subtypes a class resolves to is a
+  per-model fact, so the threading is the connected model's to do.
 - **What a narrowing signature does not judge.** A type parameter's bound may
   not itself be generic, so no narrowing form states statically that the
   classes it names are subtypes of the position it narrows. Each form solves
@@ -687,8 +729,8 @@ mutations, exceptions, or exports.
   `Animal.narrow(Dog)` and `Order.narrow(Customer)` are alike accepted by the
   checker, and an unrelated narrow target is refused by the model-aware rule
   alone (`narrow-outside-position`) — a named, immediate refusal rather than a
-  wrong answer, and the one place this binding's static rejections have no
-  static half. Hop narrowing is the exception and keeps one:
+  wrong answer, and the one model-aware rejection in this binding that has no
+  static half at all. Hop narrowing is the exception and keeps one:
   `Owner.pets.narrow(Dog)` carries its bound on the **receiver** — the hop's own
   target — which states the same rule without a generic bound, so
   `narrow-outside-relationship-target` is refused in the editor as well.

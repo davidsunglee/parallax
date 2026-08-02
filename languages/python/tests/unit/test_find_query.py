@@ -253,8 +253,15 @@ def test_expression_bool_and_scalar_guards() -> None:
         bool(Widget.id)
     with pytest.raises(TypeError, match="no truth value"):
         bool(Widget.id == 1)
-    with pytest.raises(TypeError, match="scalar literal"):
+    # A non-literal is a frontend refusal like every other one it judges, so it
+    # carries the coded family rather than a bare `TypeError`; `__eq__` / `__ne__`
+    # keep `object` for Liskov, which is what lets it be reached at all.
+    with pytest.raises(QueryDefinitionError) as scalar:
         _ = Widget.id == object()
+    assert scalar.value.code == "query-expression-invalid"
+    with pytest.raises(QueryDefinitionError) as not_scalar:
+        _ = Widget.id != object()
+    assert not_scalar.value.code == "query-expression-invalid"
     with pytest.raises(AttributeError):
         _ = Widget.id._private  # dunder/private access is not a value-object hop
 

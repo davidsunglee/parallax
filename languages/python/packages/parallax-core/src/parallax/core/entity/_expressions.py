@@ -580,7 +580,7 @@ class AttributeExpr[E, T]:
         and the parameter no longer admits.
         """
         if self._path:
-            raise TypeError(
+            raise ModelCopyError(
                 f"{self._dotted()}: only a top-level attribute or value-object member is "
                 "assignable via .set(...) — a value object binds its whole document, never "
                 "a nested path (m-value-object)"
@@ -625,9 +625,23 @@ class AttributeExpr[E, T]:
 
 
 def _as_scalar(value: object) -> Scalar:
+    """``value`` as a wire literal, refusing anything that is not one.
+
+    ``__eq__`` / ``__ne__`` keep ``object`` for Liskov, so this is the only place
+    a non-literal is refused on those two operators. It is a SHAPE rule and needs
+    no model, so it is the frontend's own refusal and carries the frontend's
+    code; whether a literal's TYPE matches the member's declared one stays the
+    model-aware validator's question.
+    """
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    raise TypeError(f"expected a scalar literal, got {type(value).__name__}")
+    raise QueryDefinitionError(
+        code="query-expression-invalid",
+        message=(
+            f"a comparison takes a scalar literal (null / string / number / boolean), "
+            f"got {type(value).__name__}"
+        ),
+    )
 
 
 def serialize_member(value: object) -> object:

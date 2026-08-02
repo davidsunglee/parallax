@@ -1,0 +1,28 @@
+# Negative (m-op-algebra positional rule): the rule is measured against the entity a
+# reference NAMES, never against the ancestor that declares the member.
+#
+# The read is positioned at `Animal` (the family root, the default a rejected case
+# takes) and the predicate references `Dog.name`. `name` is declared on `Animal`, so
+# every concrete in the family possesses it — but the reference names `Dog`, whose
+# effective concrete set is {Dog}, and the active position {Cat, Dog, WildBoar} is not
+# a subset of it. m-op-algebra states the rule that way on purpose: "an attribute
+# reference is applicable only where the active position's effective set is a subset
+# of the referenced Entity's". A validator that substituted the DECLARING entity would
+# accept this, lower it to the shared table's `t0.name = ?`, and answer a question
+# spelled about dogs with cats and boars — the same mis-answer m-op-algebra-045 and
+# m-op-algebra-047 pin for a foreign entity, reached here through a spelling inside
+# the family. The same substitution also accepts a DISJOINT sibling's spelling
+# (`Cat.name` under a narrow to Dog), which addresses no row the position contains.
+#
+# `Dog` and `Animal` share an inheritance family, so narrowing IS the remedy —
+# `narrow(Animal, to: [Dog])` around this predicate is valid (m-inheritance-012's
+# shape) — which is what makes the rule `subtype-attribute-outside-narrow-scope`
+# rather than `attribute-outside-active-position`.
+model: models/animal.yaml
+tags: [m-op-algebra, m-inheritance, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    eq: { attr: Dog.name, value: Rex }
+then:
+  rejectedRule: subtype-attribute-outside-narrow-scope
