@@ -17,6 +17,7 @@ __all__ = [
     "EntityReference",
     "ExactEntityReference",
     "IndexIdentity",
+    "MemberIdentity",
     "RelationshipIdentity",
     "RelationshipReference",
     "RelativeEntityReference",
@@ -133,6 +134,23 @@ class ValueObjectAttributeIdentity:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("a Value Object Attribute name is nonempty")
+
+
+type MemberIdentity = AttributeIdentity | ValueObjectIdentity | ValueObjectAttributeIdentity
+"""The closed union of the identity types addressing one logical member.
+
+A member is a top-level Attribute, a Value Object occurrence at any containment
+depth, or a scalar field inside one. Relationships, Indices, and Temporal
+Dimensions are not members in this sense and are not arms.
+
+The union names no new identity and adds no lookup: it is the addressing
+vocabulary a consumer uses to denote a member without caring where that member
+is stored, and it is what ``m-storage-layout`` accepts when it answers where a
+member lives. It is the successor to dotted-string member addressing — every
+authored ``Entity.occurrence.field`` string denotes exactly one member identity —
+without changing any serialized form, since no descriptor or operation position
+accepts one as a value.
+"""
 
 
 @dataclass(frozen=True, slots=True)

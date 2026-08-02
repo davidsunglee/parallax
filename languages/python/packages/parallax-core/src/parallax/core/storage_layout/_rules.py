@@ -9,19 +9,22 @@ from typing import Final
 from parallax.core.inheritance import (
     AttributeTableContributor,
     InheritanceTableGroup,
+    TableGroupContributor,
+    TopLevelValueObjectTableContributor,
     project_table_groups,
 )
 from parallax.core.metamodel import (
     AbstractRoot,
     AttributeIdentity,
+    AttributeLocation,
     AttributeMetadata,
     CandidateMetamodel,
     Column,
-    DefiningRelationshipDeclaration,
     Document,
     EntityDeclaration,
     EntityIdentity,
     EntityLocation,
+    IndexLocation,
     InheritanceStrategy,
     IssueCode,
     MetamodelIssue,
@@ -32,11 +35,15 @@ from parallax.core.metamodel import (
     TemporalDimension,
 )
 from parallax.core.model_formation import ModuleIdentity
+from parallax.core.relationship import project_join_endpoints
+from parallax.core.storage_layout._roles import DirectRoles, declares_column_override
 
 __all__ = [
     "CAPABILITY_SCOPE",
     "COLUMN_COLLISION",
     "DOCUMENT_CAPABILITY_UNSUPPORTED",
+    "DOCUMENT_MEMBER_COLUMN_OVERRIDE",
+    "INDEX_OVER_DOCUMENT_MEMBER",
     "ISSUE_CODES",
     "RULE_SET",
     "STORAGE_LAYOUT_MODULE",
@@ -55,6 +62,15 @@ TABLE_MAPPING_COLLISION: Final[IssueCode] = "storage-layout-table-mapping-collis
 
 COLUMN_COLLISION: Final[IssueCode] = "storage-layout-column-collision"
 """Two distinct contributors in one uniquely owned Table claim one Column."""
+
+DOCUMENT_MEMBER_COLUMN_OVERRIDE: Final[IssueCode] = "storage-layout-document-member-column-override"
+"""A document-resident member carries a Column Override naming a Column it does
+not occupy, so the model states two contradictory placements for one member."""
+
+INDEX_OVER_DOCUMENT_MEMBER: Final[IssueCode] = "storage-layout-index-over-document-member"
+"""An Index component names a document-resident Attribute, which has no Column to
+index; this contract adds no document-path, expression, or provider-native index
+form."""
 
 DOCUMENT_CAPABILITY_UNSUPPORTED: Final[IssueCode] = "storage-layout-document-capability-unsupported"
 """A root-owned Relational Document Layout selects a shape this build cannot
@@ -146,46 +162,31 @@ refuses nothing and is not a supported state.
 """
 
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
-    {TABLE_MAPPING_COLLISION, COLUMN_COLLISION, DOCUMENT_CAPABILITY_UNSUPPORTED}
+    {
+        TABLE_MAPPING_COLLISION,
+        COLUMN_COLLISION,
+        DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+        INDEX_OVER_DOCUMENT_MEMBER,
+        DOCUMENT_CAPABILITY_UNSUPPORTED,
+    }
 )
 """The complete Issue Code set owned by Storage Layout."""
 
 
-def _column_issues(group: InheritanceTableGroup) -> list[MetamodelIssue]:
-    claimed: dict[Column, ModelLocation] = {}
-    issues: list[MetamodelIssue] = []
-    for contributor in group.declaration_contributors:
-        existing = claimed.get(contributor.column)
-        if existing is None:
-            claimed[contributor.column] = contributor.location
-            continue
-        issues.append(
-            MetamodelIssue(
-                COLUMN_COLLISION,
-                contributor.location,
-                (existing,),
-                message=(
-                    f"physical Column {contributor.column.name!r} is already claimed "
-                    f"in Table {group.table.name!r}"
-                ),
-            )
-        )
-    return issues
+@dataclass(frozen=True, slots=True)
+class _DocumentGroup:
+    """One projected mapping group whose root selected a ``Document`` layout."""
+
+    group: InheritanceTableGroup
+    layout: Document
+    roles: DirectRoles
 
 
-def _joined_attributes(candidate: CandidateMetamodel) -> frozenset[AttributeIdentity]:
-    """Every Attribute an accepted Relationship Join designates.
-
-    Both endpoints of a defining declaration are read, because both stay direct
-    Columns under Relational Document Layout; a reverse declaration introduces no
-    Attribute its defining peer does not already name.
-    """
+def _temporal_designations(declaration: EntityDeclaration) -> frozenset[AttributeIdentity]:
     return frozenset(
-        endpoint
-        for declaration in candidate.entities
-        for relationship in declaration.relationships
-        if isinstance(relationship, DefiningRelationshipDeclaration)
-        for endpoint in (relationship.join.source, relationship.join.target)
+        attribute
+        for axis in declaration.as_of_axes
+        for attribute in (axis.start_attribute, axis.end_attribute)
     )
 
 
@@ -193,39 +194,217 @@ def _strategy(owner: EntityDeclaration) -> InheritanceStrategy | None:
     return owner.inheritance.strategy if isinstance(owner.inheritance, AbstractRoot) else None
 
 
-def _layout_owners(
-    candidate: CandidateMetamodel, groups: Sequence[InheritanceTableGroup]
-) -> tuple[DocumentLayoutOwner, ...]:
-    """The accepted root-owned ``Document`` declarations of ``candidate``.
+def _document_groups(
+    candidate: CandidateMetamodel,
+    groups: Sequence[InheritanceTableGroup],
+    joined: frozenset[AttributeIdentity],
+) -> tuple[_DocumentGroup, ...]:
+    """The projected groups governed by a root-owned ``Document`` declaration.
 
     Root ownership comes from the Inheritance projection: a group's root is the
     standalone Entity itself or its family root, so a descendant's own layout
     declaration is never seen here — that shape is Inheritance's
     ``inheritance-layout-not-root-owned``.
     """
-    joined = _joined_attributes(candidate)
-    governed: dict[EntityIdentity, list[AttributeMetadata]] = {}
+    document_groups: list[_DocumentGroup] = []
     for group in groups:
-        governed.setdefault(group.root, []).extend(
-            contributor.attribute
+        root = candidate.entity(group.root)
+        if root is None or not isinstance(root.layout, Document):
+            continue
+        document_groups.append(
+            _DocumentGroup(
+                group=group,
+                layout=root.layout,
+                roles=DirectRoles(joined=joined, temporal=_temporal_designations(root)),
+            )
+        )
+    return tuple(document_groups)
+
+
+def _member_name(contributor: TableGroupContributor) -> str | None:
+    """The canonical member name ``contributor`` declares, or absence when framework-owned."""
+    match contributor:
+        case AttributeTableContributor():
+            return contributor.attribute.identity.name
+        case TopLevelValueObjectTableContributor():
+            return contributor.identity.path[-1]
+        case _:
+            return None
+
+
+def _is_document_resident(contributor: TableGroupContributor, roles: DirectRoles) -> bool:
+    """Whether ``contributor``'s member lives in the shared Structured Column."""
+    match contributor:
+        case AttributeTableContributor():
+            return not roles.covers(contributor.attribute)
+        case TopLevelValueObjectTableContributor():
+            return True
+        case _:
+            return False
+
+
+def _claims(
+    group: InheritanceTableGroup, document: _DocumentGroup | None
+) -> tuple[tuple[Column, ModelLocation], ...]:
+    """One group's physical Column claims, in diagnostic encounter order.
+
+    Only contributors enter the registry. Under ``Document`` the Attribute and
+    Value Object categories therefore contain the owner's direct-role Attributes
+    alone, and the shared Structured Column is category five — always the later
+    claimant, located at the layout declaration.
+    """
+    if document is None:
+        return tuple(
+            (contributor.column, contributor.location)
             for contributor in group.declaration_contributors
+        )
+    return (
+        *(
+            (contributor.column, contributor.location)
+            for contributor in group.declaration_contributors
+            if not _is_document_resident(contributor, document.roles)
+        ),
+        (document.layout.column, EntityLocation(group.root)),
+    )
+
+
+def _column_issues(
+    group: InheritanceTableGroup, document: _DocumentGroup | None
+) -> list[MetamodelIssue]:
+    claimed: dict[Column, ModelLocation] = {}
+    issues: list[MetamodelIssue] = []
+    for column, location in _claims(group, document):
+        existing = claimed.get(column)
+        if existing is None:
+            claimed[column] = location
+            continue
+        issues.append(
+            MetamodelIssue(
+                COLUMN_COLLISION,
+                location,
+                (existing,),
+                message=(
+                    f"physical Column {column.name!r} is already claimed "
+                    f"in Table {group.table.name!r}"
+                ),
+            )
+        )
+    return issues
+
+
+def _override_issues(
+    document_groups: Sequence[_DocumentGroup],
+) -> list[tuple[EntityIdentity, MetamodelIssue]]:
+    """The document-resident members whose Column Override contradicts the layout.
+
+    A table-per-concrete-subtype family projects one group per concrete Table
+    over one ancestry, so an ancestor's member is encountered once per branch and
+    the defect is reported once.
+    """
+    reported: set[ModelLocation] = set()
+    issues: list[tuple[EntityIdentity, MetamodelIssue]] = []
+    for document in document_groups:
+        owner = document.group.root
+        for contributor in document.group.declaration_contributors:
+            name = _member_name(contributor)
+            if name is None or not _is_document_resident(contributor, document.roles):
+                continue
+            if not declares_column_override(name, contributor.column):
+                continue
+            if contributor.location in reported:
+                continue
+            reported.add(contributor.location)
+            issues.append(
+                (
+                    owner,
+                    MetamodelIssue(
+                        DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+                        contributor.location,
+                        (EntityLocation(owner),),
+                        message=(
+                            f"document-resident member {name!r} declares Column "
+                            f"{contributor.column.name!r}, which it does not occupy"
+                        ),
+                    ),
+                )
+            )
+    return issues
+
+
+def _index_issues(
+    candidate: CandidateMetamodel, document_groups: Sequence[_DocumentGroup]
+) -> list[tuple[EntityIdentity, MetamodelIssue]]:
+    """The Index components reaching into a shared Structured Column.
+
+    Index Metadata is local and never inherited, so the model's declarations are
+    walked once and each offending component is reported against the Index that
+    must change.
+    """
+    resident: dict[AttributeIdentity, EntityIdentity] = {}
+    for document in document_groups:
+        for contributor in document.group.declaration_contributors:
+            if not isinstance(contributor, AttributeTableContributor):
+                continue
+            if _is_document_resident(contributor, document.roles):
+                resident.setdefault(contributor.attribute.identity, document.group.root)
+    issues: list[tuple[EntityIdentity, MetamodelIssue]] = []
+    for declaration in candidate.entities:
+        for index in declaration.indices:
+            for component in index.attributes:
+                owner = resident.get(component)
+                if owner is None:
+                    continue
+                issues.append(
+                    (
+                        owner,
+                        MetamodelIssue(
+                            INDEX_OVER_DOCUMENT_MEMBER,
+                            IndexLocation(index.identity),
+                            (AttributeLocation(component),),
+                            message=(
+                                f"Index {index.identity.name!r} names document-resident "
+                                f"Attribute {component.name!r}, which has no Column"
+                            ),
+                        ),
+                    )
+                )
+    return issues
+
+
+def _layout_owners(
+    candidate: CandidateMetamodel, document_groups: Sequence[_DocumentGroup]
+) -> tuple[DocumentLayoutOwner, ...]:
+    """The accepted root-owned ``Document`` declarations, one per layout owner.
+
+    A table-per-concrete-subtype family projects one group per concrete Table
+    under one root, so the groups are folded back onto their owner and the gate
+    fires once per layout declaration rather than once per governed Table.
+    """
+    governed: dict[EntityIdentity, list[AttributeMetadata]] = {}
+    layouts: dict[EntityIdentity, Document] = {}
+    joined: frozenset[AttributeIdentity] = frozenset()
+    for document in document_groups:
+        joined = document.roles.joined
+        layouts[document.group.root] = document.layout
+        governed.setdefault(document.group.root, []).extend(
+            contributor.attribute
+            for contributor in document.group.declaration_contributors
             if isinstance(contributor, AttributeTableContributor)
         )
     owners: list[DocumentLayoutOwner] = []
-    for identity, attributes in governed.items():
+    for identity in sorted(layouts, key=lambda entity: entity.sort_key):
         declaration = candidate.entity(identity)
-        if declaration is None or not isinstance(declaration.layout, Document):
+        if declaration is None:  # pragma: no cover - the group projected this root
             continue
         owners.append(
             DocumentLayoutOwner(
                 owner=declaration,
-                layout=declaration.layout,
+                layout=layouts[identity],
                 strategy=_strategy(declaration),
-                attributes=tuple(attributes),
+                attributes=tuple(governed[identity]),
                 joined=joined,
             )
         )
-    owners.sort(key=lambda owner: owner.owner.identity.sort_key)
     return tuple(owners)
 
 
@@ -246,7 +425,7 @@ def _capability_issue(owner: DocumentLayoutOwner) -> MetamodelIssue | None:
 
 
 def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIssue, ...]:
-    """Report independent-owner, physical-Column, and layout-capability defects.
+    """Report independent-owner, physical-Column, layout, and capability defects.
 
     Mapping owners are visited in canonical Entity Identity order. Every later
     owner of one Table relates to the first owner, and a multiply owned Table is
@@ -254,11 +433,13 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
     invalid physical boundary. The complete mapping pass finishes before any
     uniquely owned Table enters Column validation.
 
-    The capability gate runs last and skips a layout owner whose own Tables
-    raised anything above, so a model with a genuine physical defect reports that
+    The capability gate runs last and skips a layout owner whose own mapping
+    raised anything above, so a model with a genuine layout defect reports that
     defect rather than a refusal to execute the layout it does not yet have.
     """
     groups = project_table_groups(candidate)
+    document_groups = _document_groups(candidate, groups, project_join_endpoints(candidate))
+    documents_by_table = {document.group.table: document for document in document_groups}
     first_owners: dict[Table, InheritanceTableGroup] = {}
     multiply_owned: set[Table] = set()
     defective: set[EntityIdentity] = set()
@@ -284,11 +465,17 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
     for group in groups:
         if group.table in multiply_owned:
             continue
-        column_issues = _column_issues(group)
+        column_issues = _column_issues(group, documents_by_table.get(group.table))
         if column_issues:
             defective.add(group.root)
         issues.extend(column_issues)
-    for owner in _layout_owners(candidate, groups):
+    for owner, issue in (
+        *_override_issues(document_groups),
+        *_index_issues(candidate, document_groups),
+    ):
+        defective.add(owner)
+        issues.append(issue)
+    for owner in _layout_owners(candidate, document_groups):
         if owner.owner.identity in defective:
             continue
         capability = _capability_issue(owner)

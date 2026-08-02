@@ -28,6 +28,8 @@ from .value_object_resolve import RejectionError
 
 STORAGE_LAYOUT_TABLE_MAPPING_COLLISION = "storage-layout-table-mapping-collision"
 STORAGE_LAYOUT_COLUMN_COLLISION = "storage-layout-column-collision"
+STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE = "storage-layout-document-member-column-override"
+STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER = "storage-layout-index-over-document-member"
 # The capability gate: an implementation MUST NOT accept a Relational Document
 # Layout whose behavior it cannot execute end to end, so a build that does not
 # yet execute some layout shape declares that shape in CAPABILITY_SCOPE and
@@ -39,6 +41,8 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
         STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
         STORAGE_LAYOUT_COLUMN_COLLISION,
+        STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+        STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER,
         STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED,
     }
 )
@@ -78,10 +82,56 @@ class InheritanceDiscriminator:
     root: str
 
 
+@dataclass(frozen=True, slots=True)
+class RelationalDocument:
+    """The shared Structured Column of one layout owner's ``Document`` layout."""
+
+    layout_owner: str
+
+
 ColumnContributor: TypeAlias = (
-    AttributeContributor | ValueObjectContributor | InheritanceDiscriminator
+    AttributeContributor | ValueObjectContributor | InheritanceDiscriminator | RelationalDocument
 )
-"""The closed identity-bearing Attribute, Value Object, or discriminator algebra."""
+"""The closed identity-bearing Attribute, Value Object, discriminator, or shared
+Structured Column algebra."""
+
+
+@dataclass(frozen=True, slots=True)
+class MemberAddress:
+    """One logical member of one Entity, addressed by declared member names.
+
+    A one-segment path names a top-level Attribute or a top-level Value Object
+    occurrence; a longer path descends into an occurrence. ``owner`` is the
+    Entity that declares the outermost member, so an inherited member keeps one
+    address across every Table it reaches.
+    """
+
+    owner: str
+    path: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DirectColumn:
+    """A member stored in a Column of its own."""
+
+    slot: ColumnSlot
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentPath:
+    """A member stored inside ``slot``'s document at ``path``.
+
+    ``path`` is relative to the root of the document that slot carries: the
+    Table's one shared Structured Column under ``Document``, and the containing
+    top-level occurrence's own Structured Column under ``Columns``.
+    """
+
+    slot: ColumnSlot
+    path: tuple[str, ...]
+
+
+MemberPlacement: TypeAlias = DirectColumn | DocumentPath
+"""Where one logical member of one Table lives."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,12 +153,14 @@ class TableLayout:
     table: str
     columns: tuple[ColumnSlot, ...]
     physical_primary_key: tuple[ColumnSlot, ...]
+    placements: Mapping[MemberAddress, MemberPlacement] = field(repr=False, compare=False)
     _column_index: Mapping[str, ColumnSlot] = field(init=False, repr=False, compare=False)
     _contributor_index: Mapping[ColumnContributor, ColumnSlot] = field(
         init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "placements", MappingProxyType(dict(self.placements)))
         object.__setattr__(
             self,
             "_column_index",
@@ -130,6 +182,10 @@ class TableLayout:
     def contribution(self, contributor: ColumnContributor) -> ColumnSlot | None:
         """Return this Table's occurrence of ``contributor``, or absent."""
         return self._contributor_index.get(contributor)
+
+    def placement(self, member: MemberAddress) -> MemberPlacement | None:
+        """Return where ``member`` lives in this Table's rows, or absent."""
+        return self.placements.get(member)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,20 +232,27 @@ class PositionColumn:
 
 @dataclass(frozen=True, slots=True)
 class PositionBranch:
-    """One physical branch aligned with a position's logical columns."""
+    """One physical branch aligned with a position's logical columns.
+
+    ``slots`` aligns with the view's ``columns`` and ``placements`` with its
+    ``members``; each entry is present when its contributor or member applies to
+    at least one selected concrete in this branch.
+    """
 
     layout: TableLayout
     concrete_entities: tuple[str, ...]
     slots: tuple[ColumnSlot | None, ...]
+    placements: tuple[MemberPlacement | None, ...]
     discriminator_slot: ColumnSlot | None
 
 
 @dataclass(frozen=True, slots=True)
 class PositionLayoutView:
-    """A canonical concrete set's logical columns and physical branches."""
+    """A canonical concrete set's logical columns, members, and physical branches."""
 
     concrete_entities: tuple[str, ...]
     columns: tuple[PositionColumn, ...]
+    members: tuple[MemberAddress, ...]
     branches: tuple[PositionBranch, ...]
 
     @property
@@ -219,6 +282,7 @@ class _Group:
     row_owners: tuple[str, ...]
     declarations: tuple[dict[str, Any], ...]
     tag_column: str | None
+    document_column: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,10 +311,39 @@ class _PositionFacts:
 
 
 @dataclass(frozen=True, slots=True)
+class _MemberFacts:
+    member: MemberAddress
+    applicable_entities: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
 class _FamilyFacts:
     root: str
     concrete_entities: tuple[str, ...]
     columns: tuple[_PositionFacts, ...]
+    members: tuple[_MemberFacts, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectRoles:
+    """The designations that keep an Attribute a direct Column under ``Document``.
+
+    Model primary keys and an explicit optimistic-lock Attribute are read from
+    the Attribute itself; ``joined`` and ``temporal`` name the endpoints of
+    accepted Relationship Joins and the As-Of Axis bounds of the family root.
+    Audit Metadata designates no Attribute in any model this harness reads, so
+    the role selects nothing and needs no set of its own.
+    """
+
+    joined: frozenset[tuple[str, str]]
+    temporal: frozenset[tuple[str, str]]
+
+    def covers(self, owner: str, attribute: Mapping[str, Any]) -> bool:
+        """Whether ``attribute`` holds a direct role and stays a Column."""
+        if bool(attribute.get("primaryKey")) or bool(attribute.get("optimisticLocking")):
+            return True
+        designation = (owner, attribute["name"])
+        return designation in self.joined or designation in self.temporal
 
 
 def _identity(definition: Mapping[str, Any]) -> str:
@@ -344,6 +437,7 @@ def _project_groups(index: _ModelIndex) -> tuple[_Group, ...]:
                 row_owners=(identity,),
                 declarations=(definition,),
                 tag_column=None,
+                document_column=_layout_column(definition),
             )
         )
 
@@ -368,6 +462,7 @@ def _project_groups(index: _ModelIndex) -> tuple[_Group, ...]:
                     row_owners=concretes,
                     declarations=_family_declarations(family, members, root, concretes),
                     tag_column=tag_column,
+                    document_column=_layout_column(root_definition),
                 )
             )
         elif strategy == STRATEGY_TPCS:
@@ -385,6 +480,7 @@ def _project_groups(index: _ModelIndex) -> tuple[_Group, ...]:
                             family.defs[identity] for identity in family.ancestry(concrete)
                         ),
                         tag_column=None,
+                        document_column=_layout_column(root_definition),
                     )
                 )
     return tuple(sorted(groups, key=lambda group: _identity_sort_key(group.mapping_owner)))
@@ -402,34 +498,67 @@ def _value_object_contributor(
     return ValueObjectContributor(_identity(definition), value_object["name"])
 
 
-def _diagnostic_claims(group: _Group) -> tuple[tuple[str, ColumnContributor], ...]:
-    keys = tuple(
-        (effective_column(attribute), _attribute_contributor(definition, attribute))
+def _group_value_objects(group: _Group) -> tuple[tuple[str, dict[str, Any]], ...]:
+    """Every ``(owner, top-level occurrence)`` contributing to this group's Table."""
+    return tuple(
+        (_identity(definition), value_object)
         for definition in group.declarations
-        for attribute in definition.get("attributes", []) or []
-        if isinstance(attribute, dict) and bool(attribute.get("primaryKey"))
+        for value_object in definition.get("valueObjects", []) or []
+        if isinstance(value_object, dict)
     )
+
+
+def _diagnostic_claims(
+    group: _Group, roles: _DirectRoles | None
+) -> tuple[tuple[str, ColumnContributor], ...]:
+    """One group's physical Column claims, in diagnostic encounter order.
+
+    Only contributors enter the registry. Under ``Document`` the Attribute and
+    Value Object categories therefore contain the owner's direct-role Attributes
+    alone, and the shared Structured Column is category five — always the later
+    claimant.
+    """
+
+    def claims(*, primary_key: bool) -> tuple[tuple[str, ColumnContributor], ...]:
+        return tuple(
+            (effective_column(attribute), _attribute_contributor(definition, attribute))
+            for definition in group.declarations
+            for attribute in definition.get("attributes", []) or []
+            if isinstance(attribute, dict)
+            and bool(attribute.get("primaryKey")) is primary_key
+            and (roles is None or roles.covers(_identity(definition), attribute))
+        )
+
     discriminator: tuple[tuple[str, ColumnContributor], ...] = (
         ()
         if group.tag_column is None
         else ((group.tag_column, InheritanceDiscriminator(group.root)),)
     )
-    attributes = tuple(
-        (effective_column(attribute), _attribute_contributor(definition, attribute))
-        for definition in group.declarations
-        for attribute in definition.get("attributes", []) or []
-        if isinstance(attribute, dict) and not bool(attribute.get("primaryKey"))
-    )
-    documents = tuple(
-        (
-            value_object.get("column", default_column_name(value_object["name"])),
-            _value_object_contributor(definition, value_object),
+    documents: tuple[tuple[str, ColumnContributor], ...] = (
+        ()
+        if roles is not None
+        else tuple(
+            (
+                value_object.get("column", default_column_name(value_object["name"])),
+                _value_object_contributor(definition, value_object),
+            )
+            for definition in group.declarations
+            for value_object in definition.get("valueObjects", []) or []
+            if isinstance(value_object, dict)
         )
-        for definition in group.declarations
-        for value_object in definition.get("valueObjects", []) or []
-        if isinstance(value_object, dict)
     )
-    return (*keys, *discriminator, *attributes, *documents)
+    structured: tuple[tuple[str, ColumnContributor], ...] = (
+        ()
+        if group.document_column is None
+        else ((group.document_column, RelationalDocument(group.root)),)
+    )
+    return (
+        *claims(primary_key=True),
+        *discriminator,
+        *claims(primary_key=False),
+        *documents,
+        *structured,
+    )
 
 
 def _render_contributor(contributor: ColumnContributor) -> str:
@@ -437,6 +566,8 @@ def _render_contributor(contributor: ColumnContributor) -> str:
         return f"Attribute {contributor.owner}.{contributor.name}"
     if isinstance(contributor, ValueObjectContributor):
         return f"Value Object {contributor.owner}.{contributor.name}"
+    if isinstance(contributor, RelationalDocument):
+        return f"Structured Column of the layout {contributor.layout_owner} declares"
     return f"table-per-hierarchy discriminator of {contributor.root}"
 
 
@@ -466,15 +597,30 @@ def _group_attributes(group: _Group) -> tuple[tuple[str, dict[str, Any]], ...]:
     )
 
 
-def _joined_attributes(definitions: Sequence[dict[str, Any]]) -> frozenset[tuple[str, str]]:
+def _declares_attribute(index: _ModelIndex, entity: str, name: str) -> bool:
+    """Whether ``entity`` or its ancestry declares an Attribute called ``name``."""
+    if entity not in index.family.defs:
+        return False
+    return any(
+        attribute["name"] == name
+        for identity in index.family.ancestry(entity)
+        for attribute in index.family.defs[identity].get("attributes", []) or []
+        if isinstance(attribute, dict)
+    )
+
+
+def _joined_attributes(index: _ModelIndex) -> frozenset[tuple[str, str]]:
     """Every ``(owner, attribute name)`` an accepted Relationship Join designates.
 
-    Both endpoints of a defining declaration are read, because both stay direct
-    Columns under Relational Document Layout; a reverse declaration introduces no
-    Attribute its defining peer does not already name.
+    Only a defining declaration is read: a reverse declaration introduces no
+    Attribute its defining peer does not already name. Both endpoints of one join
+    are returned together or not at all, because an endpoint of a join that does
+    not resolve locally is not a designated one — that model is rejected by
+    relationship formation, and classifying the excluded Attribute as
+    document-resident here does not change that outcome.
     """
     endpoints: set[tuple[str, str]] = set()
-    for definition in definitions:
+    for definition in index.definitions:
         owner = _identity(definition)
         namespace = definition.get("namespace")
         for relationship in definition.get("relationships", []) or []:
@@ -486,14 +632,39 @@ def _joined_attributes(definitions: Sequence[dict[str, Any]]) -> frozenset[tuple
                 continue
             entity = target["entity"]
             qualified = entity if "." in entity or namespace is None else f"{namespace}.{entity}"
-            endpoints.add((owner, join["source"]))
-            endpoints.add((qualified, target["attribute"]))
+            source_name = join["source"]
+            target_name = target["attribute"]
+            if not _declares_attribute(index, owner, source_name):
+                continue
+            if not _declares_attribute(index, qualified, target_name):
+                continue
+            endpoints.add((owner, source_name))
+            endpoints.add((qualified, target_name))
     return frozenset(endpoints)
+
+
+def _temporal_bounds(root_definition: Mapping[str, Any], root: str) -> frozenset[tuple[str, str]]:
+    return frozenset(
+        (root, attribute)
+        for axis in root_definition.get("asOfAxes", []) or []
+        if isinstance(axis, dict)
+        for attribute in (axis["startAttribute"], axis["endAttribute"])
+    )
+
+
+def _direct_roles(
+    index: _ModelIndex, group: _Group, joined: frozenset[tuple[str, str]]
+) -> _DirectRoles:
+    """The direct-column roles of ``group``, or absence of a Document layout."""
+    return _DirectRoles(
+        joined=joined,
+        temporal=_temporal_bounds(index.family.defs[group.root], group.root),
+    )
 
 
 def _refused_shapes(
     owner: str,
-    root_definition: Mapping[str, Any],
+    root_definition: dict[str, Any],
     groups: Sequence[_Group],
     joined: frozenset[tuple[str, str]],
 ) -> tuple[str, ...]:
@@ -541,7 +712,7 @@ def _validate_capability(index: _ModelIndex, groups: Sequence[_Group]) -> None:
     Column claims validate, so a model with a genuine physical defect reports
     that defect instead.
     """
-    joined = _joined_attributes(index.definitions)
+    joined = _joined_attributes(index)
     for owner in sorted({group.root for group in groups}, key=_identity_sort_key):
         root_definition = index.family.defs[owner]
         column = _layout_column(root_definition)
@@ -557,7 +728,7 @@ def _validate_capability(index: _ModelIndex, groups: Sequence[_Group]) -> None:
         )
 
 
-def _validate_groups(groups: Sequence[_Group]) -> None:
+def _validate_groups(groups: Sequence[_Group], roles_of_group: Mapping[str, _DirectRoles]) -> None:
     first_owners: dict[str, _Group] = {}
     multiply_owned: set[str] = set()
     mapping_collision: tuple[_Group, _Group] | None = None
@@ -581,7 +752,7 @@ def _validate_groups(groups: Sequence[_Group]) -> None:
         if group.table in multiply_owned:
             continue
         claimed: dict[str, ColumnContributor] = {}
-        for column, contributor in _diagnostic_claims(group):
+        for column, contributor in _diagnostic_claims(group, roles_of_group.get(group.table)):
             existing = claimed.get(column)
             if existing is not None and existing != contributor:
                 raise RejectionError(
@@ -593,11 +764,84 @@ def _validate_groups(groups: Sequence[_Group]) -> None:
             claimed[column] = contributor
 
 
+def _validate_document_members(
+    groups: Sequence[_Group], roles_of_group: Mapping[str, _DirectRoles]
+) -> None:
+    """Refuse a Column Override that contradicts the layout it is declared under."""
+    for group in groups:
+        roles = roles_of_group.get(group.table)
+        if roles is None:
+            continue
+        members: tuple[tuple[str, str, str], ...] = (
+            *(
+                (owner, attribute["name"], effective_column(attribute))
+                for owner, attribute in _group_attributes(group)
+                if not roles.covers(owner, attribute)
+            ),
+            *(
+                (
+                    owner,
+                    value_object["name"],
+                    value_object.get("column", default_column_name(value_object["name"])),
+                )
+                for owner, value_object in _group_value_objects(group)
+            ),
+        )
+        for owner, name, column in members:
+            if column == default_column_name(name):
+                continue
+            raise RejectionError(
+                STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+                f"document-resident member {owner}.{name} declares Column {column!r}, "
+                f"which it does not occupy under the layout {group.root} declares",
+            )
+
+
+def _validate_document_indices(
+    index: _ModelIndex, groups: Sequence[_Group], roles_of_group: Mapping[str, _DirectRoles]
+) -> None:
+    """Refuse an Index component reaching into a shared Structured Column."""
+    resident: dict[tuple[str, str], str] = {}
+    for group in groups:
+        roles = roles_of_group.get(group.table)
+        if roles is None:
+            continue
+        for owner, attribute in _group_attributes(group):
+            if not roles.covers(owner, attribute):
+                resident.setdefault((owner, attribute["name"]), group.root)
+    for definition in index.definitions:
+        owner = _identity(definition)
+        for declared in definition.get("indices", []) or []:
+            if not isinstance(declared, dict):
+                continue
+            for component in declared.get("attributes", []) or []:
+                if (owner, component) not in resident:
+                    continue
+                raise RejectionError(
+                    STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER,
+                    f"Index {owner}.{declared['name']} names document-resident Attribute "
+                    f"{component!r}, which has no Column to index",
+                )
+
+
+def _roles_by_table(index: _ModelIndex, groups: Sequence[_Group]) -> dict[str, _DirectRoles]:
+    """The direct-column roles of every Table a ``Document`` layout governs."""
+    joined = _joined_attributes(index)
+    return {
+        group.table: _direct_roles(index, group, joined)
+        for group in groups
+        if group.document_column is not None
+    }
+
+
 def validate_storage_layout(entity_defs: Sequence[dict[str, Any]]) -> None:
-    """Reject mapping ownership, then Columns, then unexecutable document layouts."""
+    """Reject mapping ownership, then Columns, then the layout's own consequences."""
     index = _model_index(entity_defs)
     groups = _project_groups(index)
-    _validate_groups(groups)
+    roles_of_group = _roles_by_table(index, groups)
+    _validate_groups(groups, roles_of_group)
+    _validate_document_members(groups, roles_of_group)
+    _validate_document_indices(index, groups, roles_of_group)
     _validate_capability(index, groups)
 
 
@@ -693,9 +937,65 @@ def _interned_ordinal_selection(
     return intern.setdefault(bits, _OrdinalSelection(bits))
 
 
+def _contained_members(occurrence: Mapping[str, Any]) -> list[tuple[str, ...]]:
+    """Every member path inside ``occurrence``, relative to the occurrence itself.
+
+    Each contained member extends its container's path by one canonical segment
+    at every depth. A ``many`` occurrence contributes exactly one segment like
+    any other: that the path crosses a collection is recorded by the occurrence's
+    own declared multiplicity rather than by a synthetic segment.
+    """
+    paths: list[tuple[str, ...]] = []
+    for leaf in occurrence.get("attributes", []) or []:
+        if isinstance(leaf, dict):
+            paths.append((leaf["name"],))
+    for nested in occurrence.get("valueObjects", []) or []:
+        if not isinstance(nested, dict):
+            continue
+        paths.append((nested["name"],))
+        paths.extend((nested["name"], *deeper) for deeper in _contained_members(nested))
+    return paths
+
+
+def _compile_placements(
+    group: _Group,
+    roles: _DirectRoles | None,
+    by_contributor: Mapping[ColumnContributor, ColumnSlot],
+) -> dict[MemberAddress, MemberPlacement]:
+    """Where every member applicable to ``group``'s Table lives."""
+    document_slot = (
+        None if group.document_column is None else by_contributor[RelationalDocument(group.root)]
+    )
+    placements: dict[MemberAddress, MemberPlacement] = {}
+    for owner, attribute in _group_attributes(group):
+        address = MemberAddress(owner, (attribute["name"],))
+        if document_slot is None or (roles is not None and roles.covers(owner, attribute)):
+            placements[address] = DirectColumn(
+                by_contributor[AttributeContributor(owner, attribute["name"])]
+            )
+            continue
+        placements[address] = DocumentPath(document_slot, (attribute["name"],))
+    for owner, value_object in _group_value_objects(group):
+        name = value_object["name"]
+        if document_slot is None:
+            occurrence_slot = by_contributor[ValueObjectContributor(owner, name)]
+            placements[MemberAddress(owner, (name,))] = DirectColumn(occurrence_slot)
+            prefix: tuple[str, ...] = ()
+        else:
+            occurrence_slot = document_slot
+            prefix = (name,)
+            placements[MemberAddress(owner, (name,))] = DocumentPath(occurrence_slot, (name,))
+        for relative in _contained_members(value_object):
+            placements[MemberAddress(owner, (name, *relative))] = DocumentPath(
+                occurrence_slot, (*prefix, *relative)
+            )
+    return placements
+
+
 def _compile_layout(
     family: Family,
     group: _Group,
+    roles: _DirectRoles | None,
     audit_designations: frozenset[AttributeContributor],
     applicability_intern: dict[frozenset[str], frozenset[str]],
 ) -> TableLayout:
@@ -718,6 +1018,8 @@ def _compile_layout(
     for definition in group.declarations:
         for attribute in definition.get("attributes", []) or []:
             if not isinstance(attribute, dict):
+                continue
+            if roles is not None and not roles.covers(_identity(definition), attribute):
                 continue
             contributor = _attribute_contributor(definition, attribute)
             drafts.append(
@@ -746,24 +1048,38 @@ def _compile_layout(
                 applicable_entities=row_owners,
             )
         )
-    for definition in group.declarations:
-        for value_object in definition.get("valueObjects", []) or []:
-            if not isinstance(value_object, dict):
-                continue
-            contributor = _value_object_contributor(definition, value_object)
-            drafts.append(
-                _Draft(
-                    column=value_object.get("column", default_column_name(value_object["name"])),
-                    tier=ColumnTier.DOCUMENT,
-                    contributor=contributor,
-                    declaring_owner=contributor.owner,
-                    declared_nullable=bool(value_object.get("nullable", False)),
-                    applicable_entities=_interned(
-                        value_object_applicability.get(contributor, set()),
-                        applicability_intern,
-                    ),
+    if group.document_column is None:
+        for definition in group.declarations:
+            for value_object in definition.get("valueObjects", []) or []:
+                if not isinstance(value_object, dict):
+                    continue
+                contributor = _value_object_contributor(definition, value_object)
+                drafts.append(
+                    _Draft(
+                        column=value_object.get(
+                            "column", default_column_name(value_object["name"])
+                        ),
+                        tier=ColumnTier.DOCUMENT,
+                        contributor=contributor,
+                        declaring_owner=contributor.owner,
+                        declared_nullable=bool(value_object.get("nullable", False)),
+                        applicable_entities=_interned(
+                            value_object_applicability.get(contributor, set()),
+                            applicability_intern,
+                        ),
+                    )
                 )
+    else:
+        drafts.append(
+            _Draft(
+                column=group.document_column,
+                tier=ColumnTier.DOCUMENT,
+                contributor=RelationalDocument(group.root),
+                declaring_owner=group.root,
+                declared_nullable=False,
+                applicable_entities=row_owners,
             )
+        )
     ordered = tuple(draft for tier in ColumnTier for draft in drafts if draft.tier is tier)
     columns = tuple(
         ColumnSlot(
@@ -773,7 +1089,9 @@ def _compile_layout(
             declaring_owner=draft.declaring_owner,
             effective_nullable=(
                 False
-                if draft.contributor in key_set or draft.tier is ColumnTier.DISCRIMINATOR
+                if draft.contributor in key_set
+                or draft.tier is ColumnTier.DISCRIMINATOR
+                or isinstance(draft.contributor, RelationalDocument)
                 else True
                 if draft.applicable_entities != row_owners
                 else draft.declared_nullable
@@ -788,7 +1106,12 @@ def _compile_layout(
         slot = by_contributor[contributor]
         if slot not in physical_key:
             physical_key.append(slot)
-    return TableLayout(group.table, columns, tuple(physical_key))
+    return TableLayout(
+        group.table,
+        columns,
+        tuple(physical_key),
+        _compile_placements(group, roles, by_contributor),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -821,7 +1144,7 @@ class StorageLayout:
         """Build an operation-scoped view for one canonical effective concrete set."""
         selected = tuple(concrete_entities)
         if not selected:
-            return PositionLayoutView((), (), ())
+            return PositionLayoutView((), (), (), ())
         if selected != tuple(sorted(set(selected), key=_identity_sort_key)):
             return None
         entity_views: list[EntityLayoutView] = []
@@ -843,6 +1166,10 @@ class StorageLayout:
             facts for facts in family.columns if facts.applicable_entities & selected_set
         )
         columns = tuple(facts.column for facts in column_facts)
+        member_facts = tuple(
+            facts for facts in family.members if facts.applicable_entities & selected_set
+        )
+        members = tuple(facts.member for facts in member_facts)
         branch_entities: dict[str, list[str]] = {}
         for view in entity_views:
             branch_entities.setdefault(view.layout.table, []).append(view.entity)
@@ -860,14 +1187,21 @@ class StorageLayout:
                         else None
                         for facts in column_facts
                     ),
+                    placements=tuple(
+                        layout.placement(facts.member)
+                        if facts.applicable_entities & branch_set
+                        else None
+                        for facts in member_facts
+                    ),
                     discriminator_slot=layout.contribution(InheritanceDiscriminator(family.root)),
                 )
             )
-        return PositionLayoutView(selected, columns, tuple(branches))
+        return PositionLayoutView(selected, columns, members, tuple(branches))
 
 
 def _compile_family_facts(
     index: _ModelIndex,
+    roles_of_root: Mapping[str, _DirectRoles],
     audit_designations: frozenset[AttributeContributor],
     applicability_intern: dict[frozenset[str], frozenset[str]],
 ) -> tuple[_FamilyFacts, ...]:
@@ -878,7 +1212,6 @@ def _compile_family_facts(
         for definition in index.standalone
     ]
     for root in index.roots:
-        members = _family_members(index, root)
         concretes = tuple(
             _canonical(family, identity) for identity in family.concrete_descendants(root)
         )
@@ -886,20 +1219,32 @@ def _compile_family_facts(
             (
                 root,
                 concretes,
-                _family_declarations(family, members, root, concretes),
+                _family_declarations(family, _family_members(index, root), root, concretes),
             )
         )
     for root, concretes, declarations in sorted(
         family_inputs, key=lambda item: _identity_sort_key(item[0])
     ):
         temporal = _temporal_designations(family.defs[root], root)
+        roles = roles_of_root.get(root)
         attribute_applicability, value_object_applicability = _applicability(family, concretes)
         drafts: list[_PositionFacts] = []
+        member_facts: list[_MemberFacts] = []
         for definition in declarations:
+            owner = _identity(definition)
             for attribute in definition.get("attributes", []) or []:
                 if not isinstance(attribute, dict):
                     continue
                 contributor = _attribute_contributor(definition, attribute)
+                applicable = _interned(
+                    attribute_applicability.get(contributor, set()),
+                    applicability_intern,
+                )
+                member_facts.append(
+                    _MemberFacts(MemberAddress(owner, (attribute["name"],)), applicable)
+                )
+                if roles is not None and not roles.covers(owner, attribute):
+                    continue
                 drafts.append(
                     _PositionFacts(
                         PositionColumn(
@@ -912,17 +1257,24 @@ def _compile_family_facts(
                             ),
                             declaring_owner=contributor.owner,
                         ),
-                        _interned(
-                            attribute_applicability.get(contributor, set()),
-                            applicability_intern,
-                        ),
+                        applicable,
                     )
                 )
         for definition in declarations:
+            owner = _identity(definition)
             for value_object in definition.get("valueObjects", []) or []:
                 if not isinstance(value_object, dict):
                     continue
                 contributor = _value_object_contributor(definition, value_object)
+                applicable = _interned(
+                    value_object_applicability.get(contributor, set()),
+                    applicability_intern,
+                )
+                member_facts.append(
+                    _MemberFacts(MemberAddress(owner, (value_object["name"],)), applicable)
+                )
+                if roles is not None:
+                    continue
                 drafts.append(
                     _PositionFacts(
                         PositionColumn(
@@ -930,16 +1282,13 @@ def _compile_family_facts(
                             tier=ColumnTier.DOCUMENT,
                             declaring_owner=contributor.owner,
                         ),
-                        _interned(
-                            value_object_applicability.get(contributor, set()),
-                            applicability_intern,
-                        ),
+                        applicable,
                     )
                 )
         ordered = tuple(
             column for tier in ColumnTier for column in drafts if column.column.tier is tier
         )
-        facts.append(_FamilyFacts(root, concretes, ordered))
+        facts.append(_FamilyFacts(root, concretes, ordered, tuple(member_facts)))
     return tuple(facts)
 
 
@@ -952,12 +1301,14 @@ def compile_storage_layout(
     index = _model_index(entity_defs)
     family = index.family
     groups = _project_groups(index)
-    _validate_groups(groups)
+    roles_of_group = _roles_by_table(index, groups)
+    _validate_groups(groups, roles_of_group)
     applicability_intern: dict[frozenset[str], frozenset[str]] = {}
     layouts = tuple(
         _compile_layout(
             family,
             group,
+            roles_of_group.get(group.table),
             audit_designations,
             applicability_intern,
         )
@@ -993,6 +1344,11 @@ def compile_storage_layout(
             )
     family_facts = _compile_family_facts(
         index,
+        {
+            group.root: roles_of_group[group.table]
+            for group in groups
+            if group.table in roles_of_group
+        },
         audit_designations,
         applicability_intern,
     )

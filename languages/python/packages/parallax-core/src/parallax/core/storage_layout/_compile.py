@@ -14,9 +14,12 @@ from parallax.core.metamodel import (
     Column,
     CompiledMetadata,
     ConcreteSubtype,
+    Document,
     EntityIdentity,
     EntityMetadata,
     FacetKey,
+    MemberIdentity,
+    NestedValueObjectMetadata,
     PrimaryKey,
     Table,
     TablePerHierarchy,
@@ -24,15 +27,22 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.model_formation import ModuleIdentity
+from parallax.core.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
+from parallax.core.relationship import RelationshipFacet
 from parallax.core.storage_layout._facet import (
     FACET_KEY,
     ColumnContributor,
     ColumnSlot,
     ColumnTier,
+    DirectColumn,
     DiscriminatorAssignment,
+    DocumentPath,
     InheritanceDiscriminator,
+    MemberPlacement,
     PositionColumn,
     PositionColumnFacts,
+    PositionMemberFacts,
+    RelationalDocument,
     SlotOrdinalSelection,
     StorageLayoutEntityFacts,
     StorageLayoutFacet,
@@ -41,6 +51,7 @@ from parallax.core.storage_layout._facet import (
     storage_layout_facet,
     table_layout,
 )
+from parallax.core.storage_layout._roles import DirectRoles
 from parallax.core.storage_layout._rules import STORAGE_LAYOUT_MODULE
 
 __all__ = [
@@ -60,6 +71,7 @@ class _LayoutGroup:
     attributes: tuple[AttributeMetadata, ...]
     value_objects: tuple[ValueObjectMetadata, ...]
     tag_column: Column | None
+    document: Document | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +92,7 @@ class _CompilationIndex:
     ancestries_by_identity: Mapping[EntityIdentity, tuple[EntityIdentity, ...]]
     family_members_by_root: Mapping[EntityIdentity, tuple[EntityMetadata, ...]]
     roots: tuple[EntityIdentity, ...]
+    joined: frozenset[AttributeIdentity]
 
 
 def classify_attribute_tier(
@@ -111,15 +124,23 @@ def _entity_view(inheritance: InheritanceFacet, identity: EntityIdentity) -> Inh
 
 
 def _compilation_index(
-    metadata: CompiledMetadata, inheritance: InheritanceFacet
+    metadata: CompiledMetadata,
+    inheritance: InheritanceFacet,
+    relationship: RelationshipFacet,
 ) -> _CompilationIndex:
-    """Index accepted Entities and family facts in one metadata visit."""
+    """Index accepted Entities, family facts, and join endpoints in one metadata visit.
+
+    Both endpoints of every direction are collected, because both stay direct
+    Columns under Relational Document Layout. A reverse direction names the same
+    pair its defining peer does, with the sides exchanged.
+    """
     entities = tuple(metadata.entities)
     entities_by_identity = {entity.identity: entity for entity in entities}
     views_by_identity: dict[EntityIdentity, InheritanceEntityView] = {}
     ancestries_by_identity: dict[EntityIdentity, tuple[EntityIdentity, ...]] = {}
     family_members: dict[EntityIdentity, list[EntityMetadata]] = {}
     roots: list[EntityIdentity] = []
+    joined: set[AttributeIdentity] = set()
     for entity in entities:
         view = _entity_view(inheritance, entity.identity)
         views_by_identity[entity.identity] = view
@@ -127,6 +148,8 @@ def _compilation_index(
         family_members.setdefault(view.root, []).append(entity)
         if view.root == entity.identity:
             roots.append(entity.identity)
+        for direction in relationship.relationships(entity.identity) or ():
+            joined.update((direction.join.source, direction.join.target))
     return _CompilationIndex(
         entities=entities,
         entities_by_identity=entities_by_identity,
@@ -134,6 +157,7 @@ def _compilation_index(
         ancestries_by_identity=ancestries_by_identity,
         family_members_by_root={root: tuple(members) for root, members in family_members.items()},
         roots=tuple(roots),
+        joined=frozenset(joined),
     )
 
 
@@ -182,6 +206,17 @@ def _family_members(
     )
 
 
+def _document_layout(index: _CompilationIndex, root: EntityIdentity) -> Document | None:
+    """``root``'s own declared ``Document`` layout, or absence for ``Columns``.
+
+    Storage Layout is root-owned, so a participant's effective layout is derived
+    from the family root's own declared metadata on every lookup rather than
+    copied onto descendants.
+    """
+    layout = index.entities_by_identity[root].declared_layout
+    return layout if isinstance(layout, Document) else None
+
+
 def _groups(index: _CompilationIndex) -> tuple[_LayoutGroup, ...]:
     groups: list[_LayoutGroup] = []
     for entity in index.entities:
@@ -199,6 +234,7 @@ def _groups(index: _CompilationIndex) -> tuple[_LayoutGroup, ...]:
                     attributes=tuple(entity.declared_attributes),
                     value_objects=tuple(entity.declared_value_objects),
                     tag_column=None,
+                    document=_document_layout(index, entity.identity),
                 )
             )
             continue
@@ -219,6 +255,7 @@ def _groups(index: _CompilationIndex) -> tuple[_LayoutGroup, ...]:
                     attributes=attributes,
                     value_objects=value_objects,
                     tag_column=Column(strategy.tag_column),
+                    document=_document_layout(index, view.root),
                 )
             )
             continue
@@ -237,6 +274,7 @@ def _groups(index: _CompilationIndex) -> tuple[_LayoutGroup, ...]:
                 attributes=tuple(view.applicable_attributes),
                 value_objects=tuple(view.applicable_value_objects),
                 tag_column=None,
+                document=_document_layout(index, view.root),
             )
         )
     groups.sort(key=lambda group: group.mapping_owner.sort_key)
@@ -309,14 +347,92 @@ def _interned_ordinal_selection(
     return intern.setdefault(bits, SlotOrdinalSelection(bits))
 
 
+def _effective_nullable(
+    draft: _SlotDraft,
+    key_set: frozenset[ColumnContributor],
+    row_owners: frozenset[EntityIdentity],
+) -> bool:
+    """Whether ``draft``'s Column admits ``NULL``, by the normative cascade.
+
+    The shared Structured Column is never nullable: every governed row carries a
+    document, and a row with no applicable document-resident member carries the
+    empty object rather than ``NULL``.
+    """
+    if draft.contributor in key_set or draft.tier is ColumnTier.DISCRIMINATOR:
+        return False
+    if isinstance(draft.contributor, RelationalDocument):
+        return False
+    if draft.applicable_entities != row_owners:
+        return True
+    return draft.declared_nullable
+
+
+def _contained_members(
+    occurrence: ValueObjectMetadata | NestedValueObjectMetadata,
+    prefix: tuple[str, ...],
+) -> list[tuple[MemberIdentity, tuple[str, ...]]]:
+    """Every member inside ``occurrence``, paired with its path below ``prefix``.
+
+    Each contained member extends its container's path by one canonical segment
+    at every depth. A ``Many`` occurrence contributes exactly one segment like
+    any other: that the path crosses a collection is recorded by the
+    occurrence's own declared multiplicity rather than by a synthetic segment.
+    """
+    members: list[tuple[MemberIdentity, tuple[str, ...]]] = []
+    for leaf in occurrence.attributes:
+        members.append((leaf.identity, (*prefix, leaf.identity.name)))
+    for nested in occurrence.value_objects:
+        path = (*prefix, nested.identity.path[-1])
+        members.append((nested.identity, path))
+        members.extend(_contained_members(nested, path))
+    return members
+
+
+def _placements(
+    group: _LayoutGroup,
+    roles: DirectRoles,
+    by_contributor: Mapping[ColumnContributor, ColumnSlot],
+) -> dict[MemberIdentity, MemberPlacement]:
+    """Where every member applicable to ``group``'s Table lives.
+
+    Under ``Columns`` a top-level Attribute and a top-level Value Object
+    occurrence are placed over the slot their own contributor owns, and every
+    member inside an occurrence is placed over that occurrence's own Structured
+    Column. Under ``Document`` a direct-role Attribute keeps its Column and every
+    other applicable member is placed over the Table's one shared Structured
+    Column, whose document root the paths are relative to.
+    """
+    document_slot = (
+        None if group.document is None else by_contributor[RelationalDocument(group.root)]
+    )
+    placements: dict[MemberIdentity, MemberPlacement] = {}
+    for attribute in group.attributes:
+        if document_slot is None or roles.covers(attribute):
+            placements[attribute.identity] = DirectColumn(by_contributor[attribute.identity])
+            continue
+        placements[attribute.identity] = DocumentPath(document_slot, (attribute.identity.name,))
+    for value_object in group.value_objects:
+        name = value_object.identity.path[0]
+        if document_slot is None:
+            occurrence_slot = by_contributor[value_object.identity]
+            placements[value_object.identity] = DirectColumn(occurrence_slot)
+            prefix: tuple[str, ...] = ()
+        else:
+            occurrence_slot = document_slot
+            prefix = (name,)
+            placements[value_object.identity] = DocumentPath(occurrence_slot, (name,))
+        for member, path in _contained_members(value_object, prefix):
+            placements[member] = DocumentPath(occurrence_slot, path)
+    return placements
+
+
 def _layout(
     index: _CompilationIndex,
     group: _LayoutGroup,
-    audit_designations: frozenset[AttributeIdentity],
+    roles: DirectRoles,
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]],
 ) -> TableLayout:
     root = index.entities_by_identity[group.root]
-    temporal = _temporal_designations(root)
     attribute_applicability, value_object_applicability = _applicability(index, group.row_owners)
     row_owners = _interned(set(group.row_owners), applicability_intern)
     key_contributors: list[AttributeIdentity] = [
@@ -327,14 +443,16 @@ def _layout(
     for contributor in _temporal_start_designations(root):
         if contributor not in key_contributors:
             key_contributors.append(contributor)
-    key_set = frozenset(key_contributors)
+    key_set: frozenset[ColumnContributor] = frozenset(key_contributors)
 
     drafts: list[_SlotDraft] = []
     for attribute in group.attributes:
+        if group.document is not None and not roles.covers(attribute):
+            continue
         applicable = _interned(
             attribute_applicability.get(attribute.identity, set()), applicability_intern
         )
-        tier = classify_attribute_tier(attribute, temporal, audit_designations)
+        tier = classify_attribute_tier(attribute, roles.temporal, roles.audit)
         drafts.append(
             _SlotDraft(
                 column=attribute.storage,
@@ -356,18 +474,30 @@ def _layout(
                 applicable_entities=row_owners,
             )
         )
-    for value_object in group.value_objects:
-        applicable = _interned(
-            value_object_applicability.get(value_object.identity, set()), applicability_intern
-        )
+    if group.document is None:
+        for value_object in group.value_objects:
+            applicable = _interned(
+                value_object_applicability.get(value_object.identity, set()), applicability_intern
+            )
+            drafts.append(
+                _SlotDraft(
+                    column=value_object.storage,
+                    tier=ColumnTier.DOCUMENT,
+                    contributor=value_object.identity,
+                    declaring_owner=value_object.identity.entity,
+                    declared_nullable=value_object.nullable,
+                    applicable_entities=applicable,
+                )
+            )
+    else:
         drafts.append(
             _SlotDraft(
-                column=value_object.storage,
+                column=group.document.column,
                 tier=ColumnTier.DOCUMENT,
-                contributor=value_object.identity,
-                declaring_owner=value_object.identity.entity,
-                declared_nullable=value_object.nullable,
-                applicable_entities=applicable,
+                contributor=RelationalDocument(group.root),
+                declaring_owner=group.root,
+                declared_nullable=False,
+                applicable_entities=row_owners,
             )
         )
 
@@ -378,13 +508,7 @@ def _layout(
             tier=draft.tier,
             contributor=draft.contributor,
             declaring_owner=draft.declaring_owner,
-            effective_nullable=(
-                False
-                if draft.contributor in key_set or draft.tier is ColumnTier.DISCRIMINATOR
-                else True
-                if draft.applicable_entities != row_owners
-                else draft.declared_nullable
-            ),
+            effective_nullable=_effective_nullable(draft, key_set, row_owners),
             applicable_entities=draft.applicable_entities,
         )
         for draft in ordered
@@ -405,12 +529,14 @@ def _layout(
             )
         if slot not in physical_key:
             physical_key.append(slot)
-    return table_layout(group.table, columns, physical_key)
+    return table_layout(
+        group.table, columns, physical_key, _placements(group, roles, by_contributor)
+    )
 
 
 def _family_facts(
     index: _CompilationIndex,
-    audit_designations: frozenset[AttributeIdentity],
+    roles_of_root: Mapping[EntityIdentity, DirectRoles],
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]],
 ) -> tuple[StorageLayoutFamilyFacts, ...]:
     families: list[StorageLayoutFamilyFacts] = []
@@ -418,26 +544,39 @@ def _family_facts(
         entity = index.entities_by_identity[root]
         root_view = index.views_by_identity[root]
         attributes, value_objects = _family_members(index, root)
-        temporal = _temporal_designations(entity)
+        roles = roles_of_root[root]
+        document = _document_layout(index, root)
         attribute_applicability, value_object_applicability = _applicability(
             index, root_view.concrete_subtypes
         )
         drafts: list[PositionColumnFacts] = []
+        members: list[PositionMemberFacts] = []
         for attribute in attributes:
+            applicable = _interned(
+                attribute_applicability.get(attribute.identity, set()),
+                applicability_intern,
+            )
+            members.append(PositionMemberFacts(attribute.identity, applicable))
+            if document is not None and not roles.covers(attribute):
+                continue
             drafts.append(
                 PositionColumnFacts(
                     PositionColumn(
                         contributor=attribute.identity,
-                        tier=classify_attribute_tier(attribute, temporal, audit_designations),
+                        tier=classify_attribute_tier(attribute, roles.temporal, roles.audit),
                         declaring_owner=attribute.identity.entity,
                     ),
-                    _interned(
-                        attribute_applicability.get(attribute.identity, set()),
-                        applicability_intern,
-                    ),
+                    applicable,
                 )
             )
         for value_object in value_objects:
+            applicable = _interned(
+                value_object_applicability.get(value_object.identity, set()),
+                applicability_intern,
+            )
+            members.append(PositionMemberFacts(value_object.identity, applicable))
+            if document is not None:
+                continue
             drafts.append(
                 PositionColumnFacts(
                     PositionColumn(
@@ -445,10 +584,7 @@ def _family_facts(
                         tier=ColumnTier.DOCUMENT,
                         declaring_owner=value_object.identity.entity,
                     ),
-                    _interned(
-                        value_object_applicability.get(value_object.identity, set()),
-                        applicability_intern,
-                    ),
+                    applicable,
                 )
             )
         ordered = tuple(
@@ -459,6 +595,7 @@ def _family_facts(
                 root=entity.identity,
                 concrete_entities=tuple(root_view.concrete_subtypes),
                 columns=ordered,
+                members=tuple(members),
             )
         )
     return tuple(families)
@@ -467,6 +604,7 @@ def _family_facts(
 def compile_facet(
     metadata: CompiledMetadata,
     inheritance: InheritanceFacet,
+    relationship: RelationshipFacet,
     *,
     audit_designations: frozenset[AttributeIdentity] = frozenset(),
 ) -> StorageLayoutFacet:
@@ -476,13 +614,21 @@ def compile_facet(
     formation profile supplies the empty set.
     """
     applicability_intern: dict[frozenset[EntityIdentity], frozenset[EntityIdentity]] = {}
-    index = _compilation_index(metadata, inheritance)
+    index = _compilation_index(metadata, inheritance, relationship)
+    roles_of_root = {
+        root: DirectRoles(
+            joined=index.joined,
+            temporal=_temporal_designations(index.entities_by_identity[root]),
+            audit=audit_designations,
+        )
+        for root in index.roots
+    }
     groups = _groups(index)
     layouts = tuple(
         _layout(
             index,
             group,
-            audit_designations,
+            roles_of_root[group.root],
             applicability_intern,
         )
         for group in groups
@@ -520,14 +666,14 @@ def compile_facet(
         entity_facts,
         _family_facts(
             index,
-            audit_designations,
+            roles_of_root,
             applicability_intern,
         ),
     )
 
 
 class StorageLayoutModelCompiler:
-    """The Storage Layout Model Compiler requiring the Inheritance Facet."""
+    """The Storage Layout Model Compiler requiring Inheritance and Relationship."""
 
     __slots__ = ()
 
@@ -544,16 +690,17 @@ class StorageLayoutModelCompiler:
     @property
     def requires(self) -> frozenset[FacetKey[Any]]:
         """The exact prerequisite facet set."""
-        return frozenset({INHERITANCE_FACET_KEY})
+        return frozenset({INHERITANCE_FACET_KEY, RELATIONSHIP_FACET_KEY})
 
     def compile(
         self,
         metadata: CompiledMetadata,
         required_facets: Mapping[FacetKey[Any], object],
     ) -> StorageLayoutFacet:
-        """Compile accepted Metadata and the required Inheritance Facet."""
+        """Compile accepted Metadata and the required Inheritance and Relationship Facets."""
         inheritance = cast(InheritanceFacet, required_facets[INHERITANCE_FACET_KEY])
-        return compile_facet(metadata, inheritance)
+        relationship = cast(RelationshipFacet, required_facets[RELATIONSHIP_FACET_KEY])
+        return compile_facet(metadata, inheritance, relationship)
 
 
 MODEL_COMPILER: Final[StorageLayoutModelCompiler] = StorageLayoutModelCompiler()

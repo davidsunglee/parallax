@@ -36,6 +36,7 @@ from parallax.core.storage_layout import (
     ColumnSlot,
     EntityLayoutView,
     InheritanceDiscriminator,
+    RelationalDocument,
     TableLayout,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
@@ -79,7 +80,9 @@ _TAG_COLUMN_TYPE = STRING
 _TAG_COLUMN_MAX_LENGTH = 32
 
 # A top-level Value Object occupies one structured-document column
-# (m-value-object); nested occurrences and inner fields live inside it.
+# (m-value-object); nested occurrences and inner fields live inside it. A
+# Relational Document Layout's shared Structured Column is the same physical
+# type and carries the document-resident members of every governed row.
 _DOCUMENT_COLUMN_TYPE = "jsonb"
 
 
@@ -88,7 +91,7 @@ def _slot_type(model: Metamodel, slot: ColumnSlot, dialect: Dialect) -> str:
     contributor = slot.contributor
     if isinstance(contributor, InheritanceDiscriminator):
         return dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)
-    if isinstance(contributor, ValueObjectIdentity):
+    if isinstance(contributor, (ValueObjectIdentity, RelationalDocument)):
         return _DOCUMENT_COLUMN_TYPE
     attribute = _declared_attribute(model, contributor)
     return dialect.column_type(attribute.type, attribute.max_length)

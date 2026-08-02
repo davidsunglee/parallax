@@ -14,20 +14,31 @@ from parallax.core import inheritance, storage_layout
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.metamodel import (
+    APPLICATION_ASSIGNED,
     AbstractRoot,
     AbstractSubtype,
+    AttributeIdentity,
     AttributeLocation,
     AttributeMetadata,
+    AttributeReference,
+    Cardinality,
     Column,
     ConcreteSubtype,
     Document,
     EntityIdentity,
     EntityLocation,
     ExactEntityReference,
+    IndexIdentity,
+    IndexLocation,
+    IndexMetadata,
     MetamodelIssue,
+    PrimaryKey,
+    RelationshipIdentity,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
+    UnresolvedDefiningRelationshipDeclaration,
+    UnresolvedRelationshipJoin,
     ValueObjectAttributeDeclaration,
     ValueObjectIdentity,
     ValueObjectLocation,
@@ -117,6 +128,8 @@ def test_the_owned_issue_code_set_is_closed() -> None:
             {
                 "storage-layout-table-mapping-collision",
                 "storage-layout-column-collision",
+                "storage-layout-document-member-column-override",
+                "storage-layout-index-over-document-member",
                 "storage-layout-document-capability-unsupported",
             }
         )
@@ -602,6 +615,20 @@ def test_a_layout_owner_with_a_column_collision_reports_the_collision_alone() ->
     # The gate exists to keep "not yet supported" distinguishable from
     # "supported and wrong", so a mapping that raised a physical defect reports
     # that defect rather than a refusal to execute the layout it does not have.
+    issues = _rule_issues(_standalone_document(column="id"))
+    assert [issue.code for issue in issues] == [storage_layout.COLUMN_COLLISION]
+
+
+# --------------------------------------------------------------------------- #
+# The consequences of a valid root-owned Document layout.                      #
+# --------------------------------------------------------------------------- #
+
+
+def test_only_direct_role_contributors_claim_a_column_under_a_document_layout() -> None:
+    # A document-resident Attribute and top-level Value Object claim no Column,
+    # so two spellings that collide under `Columns` cannot collide here: neither
+    # member is a claimant at all. What they do carry is a Column Override each,
+    # which is the contradiction this layout reports.
     collided = attribute(_SIBLING, "profileText", type=STRING, column="profile")
     document = ValueObjectOccurrenceDeclaration(
         name="profileDocument", storage=Column("profile"), shape=_shape()
@@ -609,7 +636,195 @@ def test_a_layout_owner_with_a_column_collision_reports_the_collision_alone() ->
     issues = _rule_issues(
         _standalone_document(attributes=(key(_SIBLING), collided), value_objects=(document,))
     )
-    assert [issue.code for issue in issues] == [storage_layout.COLUMN_COLLISION]
+    assert [(issue.code, issue.location, issue.related) for issue in issues] == [
+        (
+            storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+            AttributeLocation(collided.identity),
+            (EntityLocation(_SIBLING),),
+        ),
+        (
+            storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+            ValueObjectLocation(ValueObjectIdentity(_SIBLING, ("profileDocument",))),
+            (EntityLocation(_SIBLING),),
+        ),
+    ]
+
+
+def test_the_structured_column_is_the_later_claimant_against_a_direct_column() -> None:
+    # Category five is last, so the Structured Column always relates the direct
+    # contributor rather than the other way round, and the Issue is located where
+    # an author fixes it: the layout declaration naming the Column.
+    (issue,) = _rule_issues(_standalone_document(column="id"))
+    assert issue.code == storage_layout.COLUMN_COLLISION
+    assert issue.location == EntityLocation(_SIBLING)
+    assert issue.related == (AttributeLocation(key(_SIBLING).identity),)
+
+
+def test_a_direct_role_attribute_keeps_its_column_override_under_a_document_layout() -> None:
+    # Role 1 stays a direct Column, so an override on it names a Column the
+    # member really occupies and is not a contradiction. The layout is refused by
+    # the capability gate alone.
+    owner = Declaration(
+        identity=_SIBLING,
+        container=Table("note"),
+        layout=Document(Column("payload")),
+        attributes=(
+            attribute(
+                _SIBLING,
+                "noteId",
+                primary_key=PrimaryKey(APPLICATION_ASSIGNED),
+                column="note_key",
+            ),
+        ),
+    )
+    assert [issue.code for issue in _rule_issues(owner)] == [_CAPABILITY]
+
+
+def test_restating_a_document_resident_members_conventional_column_is_not_a_rejection() -> None:
+    # The canonical descriptor normalizes a conventional spelling to absence, so
+    # a member whose accepted location equals the portable default carries no
+    # authored override however it was written.
+    owner = _standalone_document(
+        attributes=(key(_SIBLING), attribute(_SIBLING, "displayName", type=STRING))
+    )
+    assert [issue.code for issue in _rule_issues(owner)] == [_CAPABILITY]
+
+
+def test_an_index_over_a_document_resident_attribute_is_located_at_the_index() -> None:
+    display_name = attribute(_SIBLING, "displayName", type=STRING)
+    owner = Declaration(
+        identity=_SIBLING,
+        container=Table("note"),
+        layout=Document(Column("payload")),
+        attributes=(key(_SIBLING), display_name),
+        indices=(IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),),
+    )
+    (issue,) = _rule_issues(owner)
+    assert issue.code == storage_layout.INDEX_OVER_DOCUMENT_MEMBER
+    assert issue.location == IndexLocation(IndexIdentity(_SIBLING, "byName"))
+    assert issue.related == (AttributeLocation(display_name.identity),)
+
+
+def test_an_index_over_a_direct_role_attribute_still_resolves_to_a_column() -> None:
+    # Every Index component of an accepted document layout must be a direct-role
+    # Attribute, and a primary key is one, so index resolution is unchanged.
+    key_attribute = key(_SIBLING)
+    owner = Declaration(
+        identity=_SIBLING,
+        container=Table("note"),
+        layout=Document(Column("payload")),
+        attributes=(key_attribute,),
+        indices=(IndexMetadata(IndexIdentity(_SIBLING, "byKey"), (key_attribute.identity,)),),
+    )
+    assert [issue.code for issue in _rule_issues(owner)] == [_CAPABILITY]
+
+
+_HOLDER = identity("Holder")
+
+
+def _note_owning_a_holder(
+    *, join_source: AttributeIdentity | None = None
+) -> tuple[Declaration, ...]:
+    """A document-mapped `Note` joined to a conventional `Holder` on `ownerId`.
+
+    ``join_source`` overrides the join's source so a caller can address it at
+    another Entity, which resolves referentially but is not a locally-resolvable
+    endpoint.
+    """
+    note_owner = attribute(_SIBLING, "ownerId", column="owner_key")
+    return (
+        Declaration(
+            identity=_SIBLING,
+            container=Table("note"),
+            layout=Document(Column("payload")),
+            attributes=(key(_SIBLING), note_owner),
+            relationships=(
+                UnresolvedDefiningRelationshipDeclaration(
+                    identity=RelationshipIdentity(_SIBLING, "owner"),
+                    cardinality=Cardinality.MANY_TO_ONE,
+                    join=UnresolvedRelationshipJoin(
+                        source=note_owner.identity if join_source is None else join_source,
+                        target=AttributeReference(ExactEntityReference(_HOLDER), "id"),
+                    ),
+                ),
+            ),
+            indices=(IndexMetadata(IndexIdentity(_SIBLING, "byOwner"), (note_owner.identity,)),),
+        ),
+        Declaration(identity=_HOLDER, container=Table("holder"), attributes=(key(_HOLDER),)),
+    )
+
+
+def test_a_join_endpoint_stays_direct_so_neither_layout_rule_fires_on_it() -> None:
+    # The Rule Set learns role 2 from `m-relationship`'s pure candidate
+    # projection before any facet exists, which is what lets it decide whether an
+    # Index component is document-resident. `ownerId` is an endpoint, so it keeps
+    # its Column, its override, and its Index.
+    assert [issue.code for issue in _rule_issues(*_note_owning_a_holder())] == [_CAPABILITY]
+
+
+def test_a_malformed_join_leaves_its_endpoint_document_resident_without_ordering() -> None:
+    # An endpoint of a malformed join is not locally resolvable and is excluded,
+    # so the Attribute is classified document-resident here while
+    # `m-relationship` rejects the join. Both Issues are permitted on one model
+    # and neither waits for the other.
+    declarations = _note_owning_a_holder(join_source=AttributeIdentity(_HOLDER, "id"))
+    assert [issue.code for issue in _rule_issues(*declarations)] == [
+        storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+        storage_layout.INDEX_OVER_DOCUMENT_MEMBER,
+    ]
+
+
+def test_one_ancestors_override_is_one_defect_however_many_branches_reach_it() -> None:
+    # A table-per-concrete-subtype family projects one group per concrete Table
+    # over one ancestry, so an ancestor's member is encountered once per branch.
+    # The defect is about one declaration and is reported once.
+    display_name = attribute(_ROOT, "displayName", type=STRING, column="dn")
+    issues = _rule_issues(
+        Declaration(
+            identity=_ROOT,
+            layout=Document(Column("payload")),
+            attributes=(key(_ROOT), display_name),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        Declaration(
+            identity=_LEAF,
+            container=Table("entry"),
+            inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
+        ),
+        Declaration(
+            identity=_SIBLING,
+            container=Table("note"),
+            inheritance=ConcreteSubtype(ExactEntityReference(_ROOT), None),
+        ),
+    )
+    assert [(issue.code, issue.location) for issue in issues] == [
+        (
+            storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+            AttributeLocation(display_name.identity),
+        )
+    ]
+
+
+def test_a_layout_owner_with_an_override_defect_reports_it_instead_of_the_gate() -> None:
+    owner = _standalone_document(
+        attributes=(key(_SIBLING), attribute(_SIBLING, "displayName", type=STRING, column="dn"))
+    )
+    assert [issue.code for issue in _rule_issues(owner)] == [
+        storage_layout.DOCUMENT_MEMBER_COLUMN_OVERRIDE
+    ]
+
+
+def test_a_conventional_layout_reports_neither_new_code() -> None:
+    # Both codes are consequences of a `Document` declaration. A conventional
+    # Entity may override any Column and index any Attribute exactly as before.
+    display_name = attribute(_SIBLING, "displayName", type=STRING, column="dn")
+    owner = Declaration(
+        identity=_SIBLING,
+        container=Table("note"),
+        attributes=(key(_SIBLING), display_name),
+        indices=(IndexMetadata(IndexIdentity(_SIBLING, "byName"), (display_name.identity,)),),
+    )
+    assert _rule_issues(owner) == ()
 
 
 @pytest.mark.parametrize(
@@ -633,4 +848,7 @@ def test_the_storage_layout_rejection_fixture_set_is_complete() -> None:
         "m-storage-layout-004",
         "m-storage-layout-005",
         "m-storage-layout-012",
+        "m-storage-layout-013",
+        "m-storage-layout-014",
+        "m-storage-layout-015",
     ]

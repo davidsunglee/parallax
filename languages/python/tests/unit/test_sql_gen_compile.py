@@ -390,7 +390,9 @@ def _fake_model() -> Metamodel:
     return fake_metamodel.parity_model(
         {
             inheritance.FACET_KEY: inheritance_facet,
-            storage_layout.FACET_KEY: storage_layout.compile_facet(base, inheritance_facet),
+            storage_layout.FACET_KEY: storage_layout.compile_facet(
+                base, inheritance_facet, relationship.compile_facet(base)
+            ),
             relationship.FACET_KEY: relationship.compile_facet(base),
         }
     )

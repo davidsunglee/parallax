@@ -20,7 +20,7 @@ from _metamodel_support import (
     source,
 )
 
-from parallax.core import inheritance, storage_layout
+from parallax.core import inheritance, relationship, storage_layout
 from parallax.core._formation_profile import BUILTIN_MANIFEST, BUILTIN_PROFILE, form_metamodel
 from parallax.core.base import STRING
 from parallax.core.metamodel import (
@@ -32,15 +32,18 @@ from parallax.core.metamodel import (
     Column,
     CompiledMetadata,
     ConcreteSubtype,
+    Document,
     EntityIdentity,
     EntityMetadata,
     ExactEntityReference,
     Multiplicity,
+    NestedValueObjectOccurrenceDeclaration,
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
     TemporalDimension,
     ValueObjectAttributeDeclaration,
+    ValueObjectAttributeIdentity,
     ValueObjectIdentity,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
@@ -75,6 +78,14 @@ def _require_entity(
     view = facet.entity(entity)
     assert view is not None
     return view
+
+
+def _require_slot(
+    layout: storage_layout.TableLayout, contributor: storage_layout.ColumnContributor
+) -> storage_layout.ColumnSlot:
+    slot = layout.contribution(contributor)
+    assert slot is not None
+    return slot
 
 
 def _column_names(layout: storage_layout.TableLayout) -> list[str]:
@@ -341,7 +352,7 @@ def _large_tph_model(width: int) -> Any:
     return form_metamodel(source(*declarations))
 
 
-def test_the_builtin_manifest_and_profile_install_the_typed_facet_after_inheritance() -> None:
+def test_the_builtin_manifest_and_profile_install_the_typed_facet_after_its_prerequisites() -> None:
     (entry,) = (
         entry
         for entry in BUILTIN_MANIFEST.entries
@@ -350,14 +361,24 @@ def test_the_builtin_manifest_and_profile_install_the_typed_facet_after_inherita
     assert entry.issue_codes == storage_layout.ISSUE_CODES
     assert entry.compiler == ModelCompilerRequirement(storage_layout.FACET_KEY)
     assert entry.required_modules == frozenset(
-        {METAMODEL_MODULE, MODEL_FORMATION_MODULE, inheritance.INHERITANCE_MODULE}
+        {
+            METAMODEL_MODULE,
+            MODEL_FORMATION_MODULE,
+            inheritance.INHERITANCE_MODULE,
+            relationship.RELATIONSHIP_MODULE,
+        }
     )
-    assert entry.required_facets == frozenset({inheritance.FACET_KEY})
+    assert entry.required_facets == frozenset({inheritance.FACET_KEY, relationship.FACET_KEY})
     assert storage_layout.RULE_SET in BUILTIN_PROFILE.rule_sets
     assert storage_layout.MODEL_COMPILER in BUILTIN_PROFILE.model_compilers
-    assert storage_layout.MODEL_COMPILER.requires == frozenset({inheritance.FACET_KEY})
+    assert storage_layout.MODEL_COMPILER.requires == frozenset(
+        {inheritance.FACET_KEY, relationship.FACET_KEY}
+    )
     owners = [compiler.owner for compiler in BUILTIN_PROFILE.model_compilers]
     assert owners.index(inheritance.INHERITANCE_MODULE) < owners.index(
+        storage_layout.STORAGE_LAYOUT_MODULE
+    )
+    assert owners.index(relationship.RELATIONSHIP_MODULE) < owners.index(
         storage_layout.STORAGE_LAYOUT_MODULE
     )
 
@@ -401,6 +422,7 @@ def test_internal_audit_designations_cover_all_six_tiers_without_new_declaration
     facet = storage_layout.compile_facet(
         cast(CompiledMetadata, model),
         inheritance.view(model),
+        relationship.view(model),
         audit_designations=frozenset({revised_by}),
     )
     layout = _require_layout(facet, "record")
@@ -426,6 +448,7 @@ def test_temporal_revision_alias_is_one_temporal_slot_not_an_audit_duplicate() -
     facet = storage_layout.compile_facet(
         cast(CompiledMetadata, model),
         inheritance.view(model),
+        relationship.view(model),
         audit_designations=frozenset({tx_start}),
     )
     layout = _require_layout(facet, "record")
@@ -509,6 +532,267 @@ def test_tph_slots_retain_provenance_applicability_and_effective_nullability() -
     assert not discriminator.effective_nullable
     assert document.applicable_entities == frozenset({alpha})
     assert document.effective_nullable
+
+
+# --------------------------------------------------------------------------- #
+# Member Placement: the sole logical locator, total over both layouts.         #
+# --------------------------------------------------------------------------- #
+
+
+def _nested_shape() -> ValueObjectShapeDeclaration:
+    """A `contact` occurrence holding one leaf and one nested `geo` occurrence."""
+    return ValueObjectShapeDeclaration(
+        key=ValueObjectShapeKey(),
+        attributes=(ValueObjectAttributeDeclaration("city", type=STRING),),
+        value_objects=(
+            NestedValueObjectOccurrenceDeclaration(
+                name="geo",
+                shape=ValueObjectShapeDeclaration(
+                    key=ValueObjectShapeKey(),
+                    attributes=(ValueObjectAttributeDeclaration("country", type=STRING),),
+                ),
+            ),
+        ),
+    )
+
+
+def _nested_value_object_model() -> tuple[Any, EntityIdentity]:
+    entity = identity("Contact")
+    return (
+        form_metamodel(
+            source(
+                Declaration(
+                    identity=entity,
+                    container=Table("contact"),
+                    attributes=(key(entity), attribute(entity, "name", type=STRING)),
+                    value_objects=(
+                        ValueObjectOccurrenceDeclaration(
+                            name="address",
+                            storage=Column("address"),
+                            shape=_nested_shape(),
+                        ),
+                    ),
+                )
+            )
+        ),
+        entity,
+    )
+
+
+def test_placement_and_contribution_agree_for_every_conventional_top_level_member() -> None:
+    # Under `Columns` every top-level member is placed over the slot its own
+    # contributor owns, so conventional behavior is one case of this contract
+    # rather than a parallel path.
+    model, entity = _nested_value_object_model()
+    layout = _require_layout(storage_layout.view(model), "contact")
+    for member in (
+        AttributeIdentity(entity, "id"),
+        AttributeIdentity(entity, "name"),
+        ValueObjectIdentity(entity, ("address",)),
+    ):
+        assert layout.placement(member) == storage_layout.DirectColumn(
+            _require_slot(layout, member)
+        )
+
+
+def test_a_conventional_value_object_leaf_is_placed_inside_its_own_structured_column() -> None:
+    # Conventional storage already has Document Paths: a leaf's path begins at
+    # the first segment below the occurrence, over that occurrence's own column.
+    model, entity = _nested_value_object_model()
+    layout = _require_layout(storage_layout.view(model), "contact")
+    address = ValueObjectIdentity(entity, ("address",))
+    slot = layout.contribution(address)
+    assert slot is not None
+    geo = ValueObjectIdentity(entity, ("address", "geo"))
+    assert layout.placement(ValueObjectAttributeIdentity(address, "city")) == (
+        storage_layout.DocumentPath(slot, ("city",))
+    )
+    assert layout.placement(geo) == storage_layout.DocumentPath(slot, ("geo",))
+    assert layout.placement(ValueObjectAttributeIdentity(geo, "country")) == (
+        storage_layout.DocumentPath(slot, ("geo", "country"))
+    )
+
+
+def test_a_document_path_names_at_least_one_member() -> None:
+    # Every path is relative to the root of the document its slot carries, so an
+    # empty one would name the document itself, which is not a member.
+    model, entity = _nested_value_object_model()
+    layout = _require_layout(storage_layout.view(model), "contact")
+    slot = _require_slot(layout, ValueObjectIdentity(entity, ("address",)))
+    with pytest.raises(ValueError, match="at least one member"):
+        storage_layout.DocumentPath(slot, ())
+
+
+def test_placement_is_absent_for_a_member_the_table_does_not_carry() -> None:
+    # Absence is a lookup miss, never a "not resolved yet": the facet is
+    # published whole and after every Rule Set has succeeded.
+    model, entity = _nested_value_object_model()
+    layout = _require_layout(storage_layout.view(model), "contact")
+    address = ValueObjectIdentity(entity, ("address",))
+    assert layout.placement(AttributeIdentity(entity, "absent")) is None
+    assert layout.placement(ValueObjectAttributeIdentity(address, "absent")) is None
+    assert layout.placement(ValueObjectIdentity(identity("Other"), ("address",))) is None
+
+
+def _document_family() -> tuple[CompiledMetadata, EntityIdentity, EntityIdentity, EntityIdentity]:
+    """A TPH family whose root selects Relational Document Layout.
+
+    Built through the Metadata Compiler rather than whole-model formation,
+    because the capability gate refuses every Document layout this build cannot
+    execute end to end.
+    """
+    root = identity("Record")
+    alpha = identity("AlphaRecord")
+    beta = identity("BetaRecord")
+    return (
+        _unvalidated(
+            Declaration(
+                identity=root,
+                container=Table("record"),
+                layout=Document(Column("doc")),
+                attributes=(key(root), attribute(root, "rootDomain", type=STRING)),
+                inheritance=AbstractRoot(TablePerHierarchy("kind")),
+            ),
+            Declaration(
+                identity=alpha,
+                attributes=(attribute(alpha, "alphaDomain", type=STRING),),
+                value_objects=(
+                    ValueObjectOccurrenceDeclaration(
+                        name="payload", storage=Column("payload"), shape=_nested_shape()
+                    ),
+                ),
+                inheritance=ConcreteSubtype(ExactEntityReference(root), "alpha"),
+            ),
+            Declaration(
+                identity=beta,
+                attributes=(attribute(beta, "betaDomain", type=STRING),),
+                inheritance=ConcreteSubtype(ExactEntityReference(root), "beta"),
+            ),
+        ),
+        root,
+        alpha,
+        beta,
+    )
+
+
+def _document_facet(metadata: CompiledMetadata) -> storage_layout.StorageLayoutFacet:
+    return storage_layout.compile_facet(
+        metadata,
+        inheritance.compile_facet(metadata),
+        relationship.compile_facet(metadata),
+    )
+
+
+def test_a_document_layout_contributes_one_shared_not_null_structured_column_last() -> None:
+    metadata, root, alpha, beta = _document_family()
+    layout = _require_layout(_document_facet(metadata), "record")
+    assert _column_names(layout) == ["id", "kind", "doc"]
+    structured = layout.columns[-1]
+    assert structured.contributor == storage_layout.RelationalDocument(root)
+    assert structured.tier is storage_layout.ColumnTier.DOCUMENT
+    assert structured.declaring_owner == root
+    assert not structured.effective_nullable
+    assert structured.applicable_entities == frozenset({alpha, beta})
+
+
+def test_document_resident_members_contribute_no_slot_and_are_placed_by_path() -> None:
+    metadata, root, alpha, _ = _document_family()
+    layout = _require_layout(_document_facet(metadata), "record")
+    structured = layout.columns[-1]
+    payload = ValueObjectIdentity(alpha, ("payload",))
+    assert layout.contribution(AttributeIdentity(root, "rootDomain")) is None
+    assert layout.contribution(payload) is None
+    assert layout.placement(AttributeIdentity(root, "id")) == storage_layout.DirectColumn(
+        _require_slot(layout, AttributeIdentity(root, "id"))
+    )
+    assert layout.placement(AttributeIdentity(root, "rootDomain")) == (
+        storage_layout.DocumentPath(structured, ("rootDomain",))
+    )
+    assert layout.placement(payload) == storage_layout.DocumentPath(structured, ("payload",))
+    assert layout.placement(ValueObjectAttributeIdentity(payload, "city")) == (
+        storage_layout.DocumentPath(structured, ("payload", "city"))
+    )
+    assert layout.placement(
+        ValueObjectAttributeIdentity(ValueObjectIdentity(alpha, ("payload", "geo")), "country")
+    ) == storage_layout.DocumentPath(structured, ("payload", "geo", "country"))
+
+
+def test_a_tpcs_family_receives_one_structured_column_per_concrete_table() -> None:
+    # One root declares one layout policy and one Structured Column name that
+    # every concrete Table in the family receives, so each concrete Table has its
+    # own slot naming the same owner and the same Column.
+    root = identity("Ledger")
+    invoice = identity("Invoice")
+    memo = identity("Memo")
+    metadata = _unvalidated(
+        Declaration(
+            identity=root,
+            layout=Document(Column("doc")),
+            attributes=(key(root), attribute(root, "title", type=STRING)),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        Declaration(
+            identity=invoice,
+            container=Table("invoice"),
+            attributes=(attribute(invoice, "invoiceDetail", type=STRING),),
+            inheritance=ConcreteSubtype(ExactEntityReference(root)),
+        ),
+        Declaration(
+            identity=memo,
+            container=Table("memo"),
+            attributes=(attribute(memo, "memoDetail", type=STRING),),
+            inheritance=ConcreteSubtype(ExactEntityReference(root)),
+        ),
+    )
+    facet = _document_facet(metadata)
+    contributor = storage_layout.RelationalDocument(root)
+    slots = {
+        table: _require_slot(_require_layout(facet, table), contributor)
+        for table in ("invoice", "memo")
+    }
+    assert {table: slot.column.name for table, slot in slots.items()} == {
+        "invoice": "doc",
+        "memo": "doc",
+    }
+    assert slots["invoice"] != slots["memo"]
+    for table, owned in (("invoice", invoice), ("memo", memo)):
+        layout = _require_layout(facet, table)
+        assert _column_names(layout) == ["id", "doc"]
+        assert layout.placement(AttributeIdentity(root, "title")) == storage_layout.DocumentPath(
+            slots[table], ("title",)
+        )
+        assert layout.placement(
+            AttributeIdentity(owned, f"{owned.name.lower()}Detail")
+        ) == storage_layout.DocumentPath(slots[table], (f"{owned.name.lower()}Detail",))
+
+
+def test_branch_placements_are_the_branch_layouts_own_answers_in_member_order() -> None:
+    model, root, alpha, beta = _tiered_tph_model()
+    view = storage_layout.view(model).position((alpha, beta))
+    assert view is not None
+    assert tuple(view.members) == (
+        AttributeIdentity(root, "id"),
+        AttributeIdentity(root, "txStart"),
+        AttributeIdentity(root, "rootDomain"),
+        AttributeIdentity(root, "revisedBy"),
+        AttributeIdentity(root, "txEnd"),
+        AttributeIdentity(alpha, "alphaDomain"),
+        AttributeIdentity(beta, "betaDomain"),
+        ValueObjectIdentity(alpha, ("payload",)),
+    )
+    (branch,) = view.branches
+    assert branch.placements == tuple(branch.layout.placement(member) for member in view.members)
+
+
+def test_a_position_over_disjoint_branches_answers_placement_per_branch() -> None:
+    model, invoice, memo = _tpcs_model()[0], _tpcs_model()[2], _tpcs_model()[3]
+    view = storage_layout.view(model).position((invoice, memo))
+    assert view is not None
+    assert len(view.branches) == 2
+    for branch in view.branches:
+        assert len(branch.placements) == len(view.members)
+        for member, placement in zip(view.members, branch.placements, strict=True):
+            assert placement == branch.layout.placement(member) or placement is None
 
 
 def test_rowless_tph_branch_still_contributes_to_the_complete_shared_layout() -> None:
@@ -725,7 +1009,9 @@ def test_compiling_without_an_inheritance_view_refuses_rather_than_guessing_a_fa
     )
     with pytest.raises(RuntimeError, match="no Inheritance Facet view"):
         storage_layout.compile_facet(
-            metadata, cast(inheritance.InheritanceFacet, _AbsentInheritanceFacet())
+            metadata,
+            cast(inheritance.InheritanceFacet, _AbsentInheritanceFacet()),
+            relationship.compile_facet(metadata),
         )
 
 
@@ -743,7 +1029,11 @@ def test_compiling_a_twice_claimed_column_refuses_rather_than_composing_one_slot
         )
     )
     with pytest.raises(RuntimeError, match="duplicate Column or contributor"):
-        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+        storage_layout.compile_facet(
+            metadata,
+            inheritance.compile_facet(metadata),
+            relationship.compile_facet(metadata),
+        )
 
 
 def test_compiling_a_tagless_shared_table_variant_refuses_rather_than_omitting_it() -> None:
@@ -762,7 +1052,11 @@ def test_compiling_a_tagless_shared_table_variant_refuses_rather_than_omitting_i
         ),
     )
     with pytest.raises(RuntimeError, match="no tag value"):
-        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+        storage_layout.compile_facet(
+            metadata,
+            inheritance.compile_facet(metadata),
+            relationship.compile_facet(metadata),
+        )
 
 
 def test_compiling_a_tableless_shared_family_root_refuses_rather_than_inventing_a_table() -> None:
@@ -780,7 +1074,11 @@ def test_compiling_a_tableless_shared_family_root_refuses_rather_than_inventing_
         ),
     )
     with pytest.raises(RuntimeError, match=r"TPH root .* has no Table"):
-        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+        storage_layout.compile_facet(
+            metadata,
+            inheritance.compile_facet(metadata),
+            relationship.compile_facet(metadata),
+        )
 
 
 def test_compiling_a_tableless_branch_concrete_refuses_rather_than_inventing_a_table() -> None:
@@ -795,7 +1093,11 @@ def test_compiling_a_tableless_branch_concrete_refuses_rather_than_inventing_a_t
         Declaration(identity=concrete, inheritance=ConcreteSubtype(ExactEntityReference(root))),
     )
     with pytest.raises(RuntimeError, match=r"TPCS concrete .* has no Table"):
-        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+        storage_layout.compile_facet(
+            metadata,
+            inheritance.compile_facet(metadata),
+            relationship.compile_facet(metadata),
+        )
 
 
 def test_compiling_a_twice_owned_table_refuses_rather_than_merging_two_mappings() -> None:
@@ -806,7 +1108,11 @@ def test_compiling_a_twice_owned_table_refuses_rather_than_merging_two_mappings(
         Declaration(identity=second, container=Table("shared"), attributes=(key(second),)),
     )
     with pytest.raises(RuntimeError, match="has multiple mapping owners"):
-        storage_layout.compile_facet(metadata, inheritance.compile_facet(metadata))
+        storage_layout.compile_facet(
+            metadata,
+            inheritance.compile_facet(metadata),
+            relationship.compile_facet(metadata),
+        )
 
 
 def test_layout_values_and_sequences_are_immutable() -> None:
@@ -828,8 +1134,12 @@ def test_repeated_compilation_and_operation_scoped_positions_are_structurally_de
     None
 ):
     model, _, alpha, beta = _tiered_tph_model()
-    first = storage_layout.compile_facet(cast(CompiledMetadata, model), inheritance.view(model))
-    second = storage_layout.compile_facet(cast(CompiledMetadata, model), inheritance.view(model))
+    first = storage_layout.compile_facet(
+        cast(CompiledMetadata, model), inheritance.view(model), relationship.view(model)
+    )
+    second = storage_layout.compile_facet(
+        cast(CompiledMetadata, model), inheritance.view(model), relationship.view(model)
+    )
     assert tuple(first.tables) == tuple(second.tables)
     first_position = first.position((alpha, beta))
     second_position = first.position((alpha, beta))
@@ -852,6 +1162,7 @@ def test_family_fact_compilation_visits_standalone_inputs_linearly(count: int) -
     storage_layout.compile_facet(
         counted,
         cast(inheritance.InheritanceFacet, counted_inheritance),
+        relationship.view(model),
     )
     assert counted.visits == count
     assert counted_inheritance.visits == count

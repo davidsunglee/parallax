@@ -1,0 +1,28 @@
+# Negative (m-storage-layout): the shared Structured Column collides with a
+# direct Attribute Column and reports the existing physical collision code.
+#
+# `Order` names its Structured Column `id`, which the primary-key Attribute
+# already claims. Under Relational Document Layout the Structured Column is the
+# only contributor claiming a Column beyond the direct-role Attributes and the
+# variant tag, and it enters the claim registry last, so it is always the later
+# claimant: the Issue is located at the layout declaration — where an author
+# fixes it, by naming a different Structured Column — and relates the direct
+# contributor's own declaration. That needs no new code, because the rule already
+# locates a framework-owned contributor at a root declaration rather than at a
+# member's, exactly as it does for a table-per-hierarchy tag.
+model: models/member-column-defaults.yaml
+tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, document-layout, physical-column, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Order
+      table: orders
+      layout:
+        document:
+          column: id
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: displayName, type: string }
+then:
+  rejectedRule: storage-layout-column-collision

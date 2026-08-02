@@ -1,0 +1,29 @@
+# Negative (m-storage-layout): a document-resident member declares a Column
+# Override, which is a contradiction rather than a silent placement change.
+#
+# `Order` selects Relational Document Layout, so `displayName` — no primary key,
+# no relationship join, no temporal or audit designation, no optimistic lock, no
+# variant tag — lives inside the shared Structured Column `payload` and occupies
+# no Column of its own. Its `column: display` therefore names a Column the member
+# does not occupy, so accepting it would let one model state two contradictory
+# placements for one member. The Issue is located at the member's own
+# declaration and relates the layout declaration it contradicts. Writing a
+# member's conventional spelling is normalized to absence before the rule sees
+# it, so restating the default is never a rejection; the capability gate stays
+# silent because the model already reports the reason it is wrong.
+model: models/member-column-defaults.yaml
+tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, document-layout, physical-column, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Order
+      table: orders
+      layout:
+        document:
+          column: payload
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: displayName, type: string, column: display }
+then:
+  rejectedRule: storage-layout-document-member-column-override

@@ -18,6 +18,7 @@ from parallax.core.base import INT64, STRING
 from parallax.core.metamodel import (
     METAMODEL_MODULE,
     NOT_PRIMARY_KEY,
+    AbstractRoot,
     AbstractSubtype,
     AsOfAxisMetadata,
     AttributeIdentity,
@@ -28,6 +29,7 @@ from parallax.core.metamodel import (
     Cardinality,
     Column,
     CompiledMetadata,
+    ConcreteSubtype,
     DefiningRelationshipDeclaration,
     EntityDeclaration,
     EntityIdentity,
@@ -51,6 +53,7 @@ from parallax.core.metamodel import (
     StorageContainer,
     StorageLayout,
     Table,
+    TablePerConcreteSubtype,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedEntityDeclaration,
     UnresolvedRelationshipDeclaration,
@@ -82,6 +85,7 @@ from parallax.core.relationship import (
     RULE_SET,
     RelationshipFacet,
     RelationshipMetadata,
+    project_join_endpoints,
     view,
 )
 from parallax.descriptor._adapter import unresolved_metamodel
@@ -435,6 +439,95 @@ def test_the_facet_offers_no_global_enumeration_or_reverse_pair_lookup() -> None
         "relationship",
         "relationships",
     }
+
+
+# --------------------------------------------------------------------------
+# The validation-time join-endpoint projection.
+# --------------------------------------------------------------------------
+
+
+def _endpoints(*declarations: UnresolvedEntityDeclaration) -> frozenset[AttributeIdentity]:
+    return project_join_endpoints(accepted(source(*declarations)))
+
+
+def test_the_projection_returns_both_endpoints_of_a_defining_declaration() -> None:
+    assert _endpoints(*_orders((_ITEMS,))) == frozenset(
+        {AttributeIdentity(_ORDER, "id"), AttributeIdentity(_ITEM, "orderId")}
+    )
+
+
+def test_a_reverse_declaration_names_no_endpoint_its_peer_does_not_already_name() -> None:
+    # A reverse declaration introduces no Attribute of its own — the compiler
+    # swaps the sides of the same join for it — so restricting the projection to
+    # defining declarations loses nothing and never depends on reverse
+    # resolution, which is where most of this module's rejections live.
+    assert _endpoints(*_orders((_ITEMS,), (_ORDER_OF_ITEM,))) == _endpoints(*_orders((_ITEMS,)))
+
+
+def test_a_model_declaring_no_relationship_designates_nothing() -> None:
+    assert _endpoints(*_orders()) == frozenset()
+
+
+def test_an_endpoint_of_a_join_that_does_not_resolve_locally_is_excluded() -> None:
+    # Both endpoints are returned together or not at all: a source addressed at
+    # another Entity denotes nothing at the declaring one, so neither side is a
+    # designated endpoint. Such a model is rejected by this module's own Rule
+    # Set, and a consumer that classified the excluded Attribute differently in
+    # the meantime has not changed that outcome.
+    foreign = _defining(
+        _ORDER,
+        "items",
+        join_source=AttributeIdentity(_TAG, "id"),
+        target=_ITEM,
+        target_attribute="orderId",
+    )
+    assert _codes(*_orders((foreign,))) == [JOIN_SOURCE_INVALID]
+    assert _endpoints(*_orders((foreign,))) == frozenset()
+
+
+def test_an_inherited_endpoint_resolves_through_the_declared_ancestry() -> None:
+    # A join endpoint may name an Attribute an ancestor declares, so the
+    # projection walks the same parent links the Rule Set resolves through.
+    root = identity("Node")
+    leaf = identity("Leaf")
+    declarations = (
+        Declaration(
+            identity=root,
+            attributes=(key(root),),
+            inheritance=AbstractRoot(TablePerConcreteSubtype()),
+        ),
+        Declaration(
+            identity=leaf,
+            attributes=(attribute(leaf, "nodeId"),),
+            inheritance=ConcreteSubtype(ExactEntityReference(root)),
+            relationships=(
+                _defining(
+                    leaf,
+                    "parent",
+                    cardinality=Cardinality.MANY_TO_ONE,
+                    join_source=AttributeIdentity(leaf, "nodeId"),
+                    target=leaf,
+                    target_attribute="id",
+                ),
+            ),
+        ),
+    )
+    assert _endpoints(*declarations) == frozenset(
+        {AttributeIdentity(leaf, "nodeId"), AttributeIdentity(leaf, "id")}
+    )
+
+
+def test_the_projection_emits_no_issue_over_a_model_this_rule_set_rejects() -> None:
+    # Pure, total, and issue-free: the projection is a value, so a consumer's
+    # result does not depend on when it asks or on what else is wrong.
+    duplicated = (
+        _reverse(_ITEM, "order", peer=_ORDER, peer_name="items"),
+        _reverse(_ITEM, "owner", peer=_ORDER, peer_name="items"),
+    )
+    assert _codes(*_orders((_ITEMS,), duplicated)) == [DEFINING_DUPLICATE]
+    assert _endpoints(*_orders((_ITEMS,), duplicated)) == frozenset(
+        {AttributeIdentity(_ORDER, "id"), AttributeIdentity(_ITEM, "orderId")}
+    )
 
 
 # --------------------------------------------------------------------------
