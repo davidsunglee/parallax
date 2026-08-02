@@ -8,13 +8,14 @@ error, which is why a case below carries its suppression and its runtime
 rejection in ONE test — static and runtime agreement proved by construction
 rather than in two processes that never meet.
 
-Four suppression families here have no runtime twin, and each is deliberate for
+Some suppression families here have no runtime twin, and each is deliberate for
 one reason: the composition the parameter refuses lowers to a VALID canonical
 operation, so the wire carries no record of the mistake and no preflight rule
-could restate it. `python.md` §2 states the same four and the criterion that
-closes the list — a parameter outruns the wire only where the wire records less
-than it read, where the query flattens the clause order it read it in, or where
-a signature answers wider than the narrowing it describes.
+could restate it. Which ones those are is settled by a test rather than by a
+count — lower the refused spelling and the accepted one, and they are one
+document — and `python.md` §2 states that test, names the same families as
+examples, and says plainly that the list is open. A case belongs here when it
+fails that test; adding one is the obligation, not keeping a tally.
 
 `test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is`
 asserts a SUCCESSFUL serialization under a `reportArgumentType` ignore. The
@@ -25,17 +26,21 @@ under `Animal` answers. No type the checker can see separates it from the
 rejection that IS wanted — `Animal.where(Dog.bark_volume > …)`, where the member
 really is the subtype's — so the parameter is strictly narrower than the model
 there, and that test is where the asymmetry is recorded rather than discovered.
-The second is `Entity.all`: an `all` node names no position on the wire, so
-nothing downstream can tell `Dog.all` from `Animal.all` and the parameter is the
-only place an unfiltered query written at the wrong position is refused. The
-third is clause order — a `where` argument or a sort key written before the
-`narrow` that scopes it — because a Find Query retains clauses rather than
-wrapping them, so the refused spelling and the sanctioned one lower to one
-operation. The fourth is `FindQuery.narrow`'s conservative variadic overload,
-which leaves the result parameter where it was for any subtype list the fixed
-one-through-three overloads cannot read, while the narrow it authors lowers
-exactly as the readable spelling's does — so a later subtype key is refused
-statically and accepted by the gate.
+`test_one_identity_reached_through_two_classes_is_refused_statically_only` is
+the same gap without inheritance: Entity Identity is unique per MODEL, so two
+distinct classes may carry one Identity, and a member both declare lowers to one
+attribute reference at one target. Another is `Entity.all`: an `all` node names
+no position on the wire, so nothing downstream can tell `Dog.all` from
+`Animal.all` and the parameter is the only place an unfiltered query written at
+the wrong position is refused. Another is clause order — a `where` argument or a
+sort key written before the `narrow` that scopes it — because a Find Query
+retains clauses rather than wrapping them, so the refused spelling and the
+sanctioned one lower to one operation. The last known today is
+`FindQuery.narrow`'s conservative variadic overload, which leaves the result
+parameter where it was for any subtype list the fixed one-through-three
+overloads cannot read, while the narrow it authors lowers exactly as the
+readable spelling's does — so a later subtype key is refused statically and
+accepted by the gate.
 
 Authoring reaches no model, so every runtime twin here runs the shared read gate
 `preflight_find` — the seam `Database.find` and `Transaction.find` both call —
@@ -162,6 +167,23 @@ class Keeper(Entity, table="typed_keeper", namespace=_NS):
 _BESTIARY = DomainModel(Keeper, Badge, Beast, Hound, Feline)
 
 
+# Entity Identity is unique per MODEL — composing both of these raises
+# `metamodel-duplicate-entity-identity` — and a class belongs to no model until
+# it is composed, so one Identity reached through two distinct classes is a
+# legal configuration rather than a declaration defect.
+class TwinLeft(Entity, table="typed_twin", name="TypedTwin", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    left_only: Attr[str] = attr(max_length=8)
+
+
+class TwinRight(Entity, table="typed_twin", name="TypedTwin", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    right_only: Attr[str] = attr(max_length=8)
+
+
+_TWINS = DomainModel(TwinLeft)
+
+
 def preflighted(query: FindQuery[Any, Any], models: DomainModel = _ANIMALS) -> FindQuery[Any, Any]:
     """``query`` after the shared read preflight accepted it against ``models``,
     which defaults to the animal composition every composition case is written over.
@@ -240,6 +262,22 @@ def test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is
     assert lowered_document(preflighted(Animal.where(Dog.name == "Ada"))) == {  # pyright: ignore[reportArgumentType]
         "eq": {"attr": "Animal.name", "value": "Ada"}
     }
+
+
+def test_one_identity_reached_through_two_classes_is_refused_statically_only() -> None:
+    # The same class/Identity gap with no inheritance in it. `TwinLeft` and
+    # `TwinRight` are nominally incompatible, so a term built from one is refused
+    # at the other's position; the wire keeps the Identity and the declaring
+    # member and never the class, so a member both declare lowers to one
+    # attribute reference at one target. The refused spelling and the accepted
+    # one are byte-identical documents, which is why this suppression has no
+    # runtime twin: preflight is handed nothing that differs.
+    foreign = TwinLeft.where(TwinRight.id == 1)  # pyright: ignore[reportArgumentType]
+    native = TwinLeft.where(TwinLeft.id == 1)
+    assert lowered_document(preflighted(foreign, _TWINS)) == {
+        "eq": {"attr": "TypedTwin.id", "value": 1}
+    }
+    assert lowered_document(preflighted(native, _TWINS)) == lowered_document(foreign)
 
 
 def test_a_conjunction_addresses_the_position_both_of_its_operands_address() -> None:
