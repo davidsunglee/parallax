@@ -94,6 +94,10 @@ decode(shape: DocumentShape,
 comparisonText(type: NeutralType,
                value: NeutralValue)                  -> string
 
+encodeCandidate(shape: DocumentShape,
+                constraints: nonempty Mapping<
+                    nonempty sequence<MemberName>, NeutralValue>) -> Document
+
 patch(document: Document,
       patches: nonempty ordered sequence<DocumentPatch>) -> Document
 
@@ -145,11 +149,13 @@ and never addresses an array position.
 `comparisonText` answers the exact characters a dialect's text extraction returns
 for the encoding of `value` — the literal SQL binds when the member's declared
 type compares as **extracted text** rather than through a cast (`m-dialect`,
-`m-sql`). It is defined for exactly the six types whose document form is a JSON
-string — `string`, `bytes`, `date`, `time`, `timestamp`, and `uuid` — and for each
-it is that string's own characters, unquoted and unescaped, so a consumer binds
-`0a1b` rather than the JSON text `"0a1b"` that carries it, against an extraction
-that returns the characters alone.
+`m-sql`). It is defined for exactly the six **text-compared** types — `string`,
+`bytes`, `date`, `time`, `timestamp`, and `uuid` — and for each it is that
+string's own characters, unquoted and unescaped, so a consumer binds `0a1b`
+rather than the JSON text `"0a1b"` that carries it, against an extraction that
+returns the characters alone. The domain is fixed by how a type **compares**, not
+by its document form: `decimal(p, s)`'s document form is a JSON string too and it
+is deliberately not here, because it casts (below).
 
 No other type has a comparison text, because no other type is compared as text. A
 member whose comparison casts the extraction — the numeric family and `boolean`
@@ -164,6 +170,31 @@ round to the same float; and a JSON boolean is the one document form the concret
 dialects' text extractions do not agree on the characters of (`m-dialect`), so no
 bound text can match on both — which is why it has a cast rather than a comparison
 text.
+
+`encodeCandidate` builds the **containment candidate** a to-many equality binds:
+the object carrying exactly the constrained paths, each at its declared position
+under `shape` and spelled by the encoding table below, and no other key. It exists
+because a dialect may express "some element of this `Many` equals this" as
+document **containment** rather than as an extraction — MariaDB's `json_contains`
+does (`m-dialect`, `m-sql`) — and containment compares **JSON values**, so neither
+comparison form above is what it binds. Both are wrong there, silently: a
+`boolean` in the form its cast comparison binds is MariaDB's `1`, and a candidate
+`{"flag": 1}` matches no element storing a JSON boolean, while a `decimal(p, s)`
+in that form is a JSON number, and `{"amt": 1.50}` matches no element storing the
+exact digit string `"1.50"`. What containment needs is each constrained leaf's own
+**document encoding**, in place inside an object — this module's answer, and no
+consumer's to spell or to wrap a literal in.
+
+A candidate is a probe, never a document a row holds, and that is where its rules
+part from `encode`'s. A path the constraints do not name is left
+**unconstrained** rather than absent, so it contributes no key at all — including
+a `Many` member, which therefore contributes no `[]`. Each named path MUST reach a
+`Leaf` of `shape`, and a path that descends through a `One` occurrence nests
+inside the candidate exactly as the stored document nests. The result is never
+written, never patched, never decoded, and never compared structurally, so the
+presence table and the encode/decode inverse below say nothing about it. That is
+why it is its own operation rather than an `encode` over a partial mapping, whose
+`Missing` means the opposite thing.
 
 `patch` applies ordered patches to a document in memory and returns the result.
 It never reads the database and never issues a statement; composing the
@@ -258,10 +289,13 @@ codec never guesses a type from a value's shape, so a `string` member holding
 
 **The string spellings are comparison-significant, not house style.** SQL compares
 a document-resident member of the numeric family — and a `boolean`, whose extracted
-characters the concrete dialects do not agree on — through a dialect cast, and the six
-types whose document form is a JSON string — `string`, `bytes`, `date`, `time`,
-`timestamp`, and `uuid` — **by comparing the extracted text directly**, with no cast
-on either dialect (`m-dialect`, `m-sql`). Each of those six spellings above is
+characters the concrete dialects do not agree on — through a dialect cast, and the
+six **text-compared** types — `string`, `bytes`, `date`, `time`, `timestamp`, and
+`uuid` — **by comparing the extracted text directly**, with no cast on either
+dialect (`m-dialect`, `m-sql`). The split is by comparison behavior, not by
+document form: `decimal(p, s)` is a JSON string above and still casts, because its
+integer part has no fixed width, so `10.00` sorts below `9.00` as text and a range
+predicate over it would answer with the wrong rows. Each of those six spellings is
 therefore chosen so that, for two values of one declared type, the encodings are
 equal exactly when the values are equal, and — for an ordered type — the encodings
 compare in the values' own order. Zero-padded fixed-width fields with the most
@@ -383,6 +417,12 @@ two paths agree; it promises never to invent a value for one.
   comparison against a document-resident member compares the spelling the writer
   stored, in the form the extraction actually yields, and never routes an exact
   `decimal` through a JSON number to get there.
+- SQL lowering takes a **containment candidate** from this module — `encodeCandidate`
+  — where a dialect expresses a to-many equality as document containment rather than
+  as an extraction (`m-dialect`, `m-sql`). That candidate carries each constrained
+  leaf's **document encoding**, which is neither of the two forms above, so the
+  three together close the lowering: text where it compares text, the managed value
+  where it casts, the encoding where it contains.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`.
 - Read materialization decodes only the paths its result form needs, by declared
@@ -393,6 +433,6 @@ two paths agree; it promises never to invent a value for one.
   documents here rather than each spelling a leaf themselves.
 
 No consumer may hand a raw host-language value to a JSON serializer, spell a leaf
-encoding of its own, assemble a `Many` occurrence's array itself, decode by
-inspecting a JSON value's shape, or expose a raw document as an Entity member or
-result field.
+encoding of its own, assemble a `Many` occurrence's array or a containment
+candidate itself, decode by inspecting a JSON value's shape, or expose a raw
+document as an Entity member or result field.

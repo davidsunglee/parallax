@@ -34,7 +34,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | `dialect` identifier | `postgres` | `mariadb` |
 | type mapping (neutral type → column type) | per the `m-core` Postgres column | per the `m-core` MariaDB column (see below) |
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
-| **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six types whose document form is a JSON string compare as the canonical document text on both dialects |
+| **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
 | **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, ?)` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, ?, ?, ?, …)` — one call, one pair per assigned path (see below) |
 | **structural document equality** (`m-document-codec` / `m-case-format`) | `=` on `jsonb` — the type normalizes on storage, so `=` is already structural | `json_equals(a, b)` — `json` is a `longtext` alias, so `=` is textual and key-order sensitive (see below) |
@@ -153,11 +153,14 @@ is a digit string precisely because no JSON number carries the type's contract
 which matches stored decimals that are merely near the literal. A `boolean` binds
 the boolean, which each dialect renders for its own cast target.
 
-**The six types whose document form is a JSON string compare as the extracted
-text, with no cast on either dialect**, because the canonical spelling
-`m-document-codec` writes already equates and orders correctly as text — which is
-why that module states those spellings to be comparison-significant rather than a
-serialization convenience:
+**Six types compare as the extracted text, with no cast on either dialect**,
+because the canonical spelling `m-document-codec` writes already equates and
+orders correctly as text — which is why that module states those spellings to be
+comparison-significant rather than a serialization convenience. Membership is
+fixed by comparison behavior, not by document form: `decimal(p, s)`'s document
+form is a JSON string as well and it casts with the rest of the numeric family,
+because its integer part has no fixed width, so `10.00` sorts below `9.00` as
+text.
 
 | Neutral type | Document spelling (`m-document-codec`) | Why no cast |
 |---|---|---|
@@ -236,6 +239,16 @@ containment / length test.
 | same-element (`where`) | one `exists` with every element predicate on the **same** `t1` alias | one `<g> and json_contains(col, ?, ?)` whose candidate object carries **every** required field — a single element must contain all of them |
 | non-empty (`exists`, no `where`) | `exists (select 1 from jsonb_array_elements(<array-guard>) t1)` | `<g> and json_length(col, ?) > ?` (`> 0`) — the `<g>` guard is required because `json_length` of a JSON scalar (or JSON `null`) is `1` |
 | empty-or-absent (`notExists`) | `not exists (…)` — `not exists` over zero elements is **true**, so an empty array, a NULL column, and a non-array value all match | wrap the guarded containment / length in `coalesce(<g> and …, ?)` so a NULL column, missing key, non-array value, and empty array all read as the "no match" value the leading `not` then admits |
+
+**The candidate document is not this seam's to spell.** `json_contains` binds a
+candidate document, and its content — each constrained leaf's **document
+encoding**, placed where the stored element places it — is `m-document-codec`'s
+(`encodeCandidate`), not a dialect literal. Containment compares JSON values
+rather than extracted text, so neither of this seam's two comparison forms fits:
+the managed `boolean` this dialect's cast takes is `1`, and `{"flag": 1}` matches
+no element storing a JSON boolean. What this seam owns is the containment
+*spelling* — the function family, the guard, and the bind order — exactly as it
+owns the extraction spelling without owning the text the codec writes.
 
 **Why MariaDB uses the containment family, not `JSON_TABLE`.** The natural
 element-unnest on MariaDB is `JSON_TABLE(col, '$.phones[*]' columns (…))`, and it is
