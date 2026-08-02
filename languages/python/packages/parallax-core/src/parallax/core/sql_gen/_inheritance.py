@@ -173,9 +173,18 @@ class _TagTransform:
     position, since a narrowed abstract read still projects the shared table's
     tag column and may observe any of them. A tuple of pairs rather than a
     `Mapping` is what keeps `CompiledRead` hashable and its `repr` stable.
+
+    "The whole family" is the family as this model COMPOSES it, which need not be
+    the family the shared Table holds: a model may compose a family's concrete
+    leaves partially (`m-inheritance`), and an abstract-root read injects no tag
+    predicate, so a row tagged for an uncomposed sibling can reach this transform.
+    ``root`` is carried so that row is refused by name — the family it belongs to
+    and the composed tags it could have matched — rather than by a bare mapping
+    miss.
     """
 
     column: str
+    root: EntityIdentity
     tag_pairs: tuple[tuple[str, EntityIdentity, str], ...]
 
     def materialize(
@@ -184,7 +193,13 @@ class _TagTransform:
         materialized = dict(row)
         raw = materialized.pop(self.column)
         pairs = {tag: (identity, spelling) for tag, identity, spelling in self.tag_pairs}
-        identity, spelling = pairs[cast("str", raw)]
+        resolved = pairs.get(cast("str", raw))
+        if resolved is None:
+            raise SqlGenError(
+                f"{self.root.canonical}: the tag column {self.column!r} holds {raw!r}, which "
+                f"names no concrete subtype this model composes {sorted(pairs)}"
+            )
+        identity, spelling = resolved
         return materialized, identity, spelling
 
 
@@ -668,7 +683,7 @@ def _plan_tph_read(
     # the transform reads the column this read projects, or there is no column to
     # read and nothing to materialize.
     transform: RowTransform = (
-        _TagTransform(tag_col, family_tag_pairs(facet, view.root))
+        _TagTransform(tag_col, view.root, family_tag_pairs(facet, view.root))
         if abstract_target
         else IDENTITY_TRANSFORM
     )

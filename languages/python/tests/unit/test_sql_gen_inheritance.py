@@ -542,6 +542,36 @@ def test_tph_tag_transform_holds_regardless_of_narrow_cardinality() -> None:
     assert compiled.transform_row({"id": 2, "kind": "boar"})["familyVariant"] == "WildBoar"
 
 
+def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None:
+    # A model may compose a family's concrete leaves PARTIALLY (m-inheritance), and
+    # an untouched abstract-root read injects no tag predicate (m-sql), so the shared
+    # table can hand back a row tagged for a sibling this model never composed. The
+    # tag map is the composed family's, so that row maps to nothing — and the refusal
+    # names the family, the tag column, the observed value, and the composed tags,
+    # rather than surfacing as a bare mapping miss with no diagnosis in it.
+    from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
+
+    root = Entity(
+        name="Beast",
+        table="beast",
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    wolf = Entity(
+        name="Wolf",
+        inheritance=Inheritance(role="concrete-subtype", parent="Beast", tag_value="wolf"),
+        attributes=(Attribute(name="howl", type="string", column="howl", nullable=True),),
+    )
+    partial = formed(Metamodel(entities=(root, wolf)))
+    compiled = compile_read(oa.All(), partial, POSTGRES, target(partial, "Beast"))
+
+    assert compiled.statement.sql == "select t0.id, t0.kind, t0.howl from beast t0"
+    wolf_row = compiled.transform_row({"id": 1, "kind": "wolf", "howl": "aooo"})
+    assert wolf_row["familyVariant"] == "Wolf"
+    with pytest.raises(SqlGenError, match="names no concrete subtype this model composes"):
+        compiled.transform_row({"id": 2, "kind": "bear", "howl": None})
+
+
 def test_tpcs_union_read_renames_the_projected_literal_column() -> None:
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
     transformed = compiled.transform_row({"id": 1, "title": "A", "family_variant": "Invoice"})
