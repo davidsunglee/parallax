@@ -36,13 +36,13 @@ _Avoid_: field, column property, Pydantic field
 **Inline Value Object Class**:
 A Value Object class declared lexically inside the Entity or Value Object that
 owns its intended single occurrence. It is referenced through `Attr[...]` and
-requires no shape name, registration, or separate Metamodel Hub input.
+requires no shape name, registration, or separate Domain Model input.
 _Avoid_: anonymous Value Object, inline schema, registered shape
 
 **Standalone Value Object Class**:
 An ordinary Value Object class declared outside its occurrence owners so the
 same shape can be referenced through `Attr[...]` at multiple paths. It is not
-an independent model or Metamodel Hub input.
+an independent model or Domain Model input.
 _Avoid_: registered Value Object, independent model, shared occurrence
 
 **Relationship Declaration**:
@@ -51,86 +51,105 @@ Class access yields a typed relationship path; instance access yields the plain
 related value.
 _Avoid_: navigation field, relationship property, foreign-key field
 
-**Metamodel Hub**:
+**Domain Model**:
 The explicit, self-contained model scope owned by the common Python runtime.
 Its public constructor receives the complete set of Entity Classes at once;
-importing or declaring a class never mutates a hub. An optional Descriptor
+importing or declaring a class never mutates a model. An optional Descriptor
 Frontend can produce the same model scope through a narrow source seam, but
-descriptor ingestion and export are not hub operations. Construction seals: it
-returns an authoritative hub whose normalized declarations, compiled Metamodel
-Facets, Entity Class bindings when applicable, and model-relative name
-resolution are already fixed, or it raises and creates nothing.
-_Avoid_: schema registry, entity registry, ambient registry, dual model, descriptor facade, class reflection cache
+descriptor ingestion and export are not model operations. Construction is
+construct-or-raise: it returns an authoritative model whose normalized
+declarations, compiled Metamodel Facets, Entity Class index when applicable, and
+model-relative name resolution are already fixed, or it raises and creates
+nothing. It carries no identity of its own and claims nothing, so one Entity
+Class participates in any number of Domain Models and one Domain Model serves
+any number of Databases.
+_Avoid_: Metamodel Hub, schema registry, entity registry, ambient registry, dual model, descriptor facade, class reflection cache
 
 **Descriptor Frontend**:
 The optional interchange boundary that translates canonical descriptor
-documents into Metamodel Hubs and Metamodel Hubs back into
+documents into Domain Models and Domain Models back into
 canonical descriptor documents. It owns descriptor formats, parsing, schema
 checks, value conversion, serialization, and descriptor-specific errors while
 depending inward on the common Python runtime.
-_Avoid_: hub method, core descriptor module, serialization registry, runtime plugin
+_Avoid_: model method, core descriptor module, serialization registry, runtime plugin
 
-**Metamodel Binding**:
-The one immutable Python realization of a successfully sealed class-backed
-Metamodel Hub. It connects the hub's exact identity and single accepted
-Metamodel to the complete bidirectional association between core Entity
-Identities and their Python Entity Classes. Every participating class shares
-the same Metamodel Binding; it contains no copied model facts.
-_Avoid_: bound model, runtime model, model context, metadata copy
+**Class Index**:
+The immutable bidirectional association between core Entity Identities and the
+Python Entity Classes that realize them, held by a class-backed Domain Model and
+absent from a descriptor-backed one. It carries no identity of its own, is
+reachable only through a private first-party seam, and is what a Snapshot
+connection requires in order to materialize Entity Class instances.
+_Avoid_: Metamodel Binding, Entity Class Binding, bound model, runtime model, model context, metadata copy
 
 **Entity Runtime**:
-The narrow immutable first-party execution view a class-backed Metamodel Hub
-supplies to Snapshot as one atomic value: its accepted Metamodel, opaque
-exact-hub identity, Entity Graph Construction capability, and Entity Row Codec.
-No partial Entity Runtime exists; it exposes neither the Metamodel Binding nor
-its Entity Class index and is absent for a descriptor-backed Hub.
+The narrow immutable first-party execution view a class-backed Domain Model
+supplies to Snapshot as one atomic value: its accepted Metamodel, Entity Graph
+Construction capability, and Entity Row Codec. No partial Entity Runtime exists;
+it exposes no Entity Class index and is absent for a descriptor-backed model.
 _Avoid_: raw binding, sealed model pair, runtime registry, capability bag
-
-**Entity Class Binding**:
-One permanent association within a Metamodel Binding between a core Entity
-Identity and the Entity Class that realizes it. It is a relationship in the
-shared binding, not metadata, a second model representation, or necessarily a
-separate value object.
-_Avoid_: registry entry, class mapping, mirror registration, temporary binding
 
 ### Queries And Results
 
 **Find Query**:
-A free-standing, side-effect-free, immutable opaque query value bound to its
-sealed Metamodel Hub. Only `Entity.where(...)` constructs one; its chainable
-clauses return new values, and first-party lowering converts it to one
-canonical operation for execution by a handle or transaction.
+A free-standing, side-effect-free, immutable opaque query value, `FindQuery[E,
+S]` — parameterized by the Entity it queries and the Entity its result returns,
+which `narrow` and only `narrow` moves. It retains no model. Only
+`Entity.where(...)` constructs one; its chainable clauses return new values, and
+first-party lowering converts it to one canonical operation for execution by a
+handle or transaction.
 _Avoid_: find statement, statement, query builder, queryset, cursor, lazy result
+
+**Predicate**:
+`Predicate[E]`, the immutable typed filter expression a Find Query is composed
+from, contravariant in the position it addresses so an ancestor's member is
+addressable from a descendant position and never the reverse. It composes with
+`&`, `|`, `~`, and native parentheses; it names no model and executes nothing.
+_Avoid_: where object, filter object, query, criteria
 
 **Lowered Find Query**:
 The immutable first-party collaboration value produced from one valid Find
 Query after its independently authored clauses are placed in canonical
-operation order. It carries exact hub identity, structured target Entity
-Identity, and one canonical Operation; it is neither SQL nor a public query
-representation.
+operation order. It carries exactly a structured target Entity Identity and one
+canonical Operation; it is neither SQL nor a public query representation, and
+only its Operation is canonical — its target is a position the connected model
+resolves at execution.
 _Avoid_: canonical Find Query, query plan, SQL AST, serialized query
 
 **Match-All Predicate**:
 The non-callable `Entity.all` value spelling an explicitly unfiltered Find
-Query as `Entity.where(Entity.all)`. It is bound to that Entity Class's exact
-hub and target, lowers to the canonical All operation, and is valid only as the
+Query as `Entity.where(Entity.all)`. It is bound to that Entity Class's target,
+lowers to the canonical All operation, and is valid only as the
 sole `where(...)` argument. Empty `where()` and an `all()` query constructor do
 not exist.
 _Avoid_: empty where, implicit find-all, all query method, global ALL
 
 **Query Definition Error**:
-The single public Python Entity-frontend error family for constructing,
-composing, or refining an invalid expression, relationship path, predicate,
-assignment, sort key, or Find Query. Behavioral owner modules retain their
-native errors behind this translation seam.
-_Avoid_: statement error, query-scope error, leaked validator error
+The public Python Entity-frontend error family for constructing, composing, or
+refining an expression, relationship path, predicate, assignment, sort key, or
+Find Query the frontend itself refuses. Its rules are the class-local ones,
+because authoring reaches no model; a rule needing a whole model is stated once
+at execution preflight and surfaces there as its owner module's own error,
+untranslated.
+_Avoid_: statement error, query-scope error, leaked validator error, translation seam
 
-**Query Ownership Error**:
-The Snapshot execution-preflight error raised when an ordinary valid Find Query
-belongs to a different exact Metamodel Hub than the Database asked to execute
-it. It exposes neither hub identity and is distinct from mixed-hub query
-composition, which is a Query Definition Error.
-_Avoid_: query definition error, structural model mismatch, provider error
+**Query Target Error**:
+The Snapshot execution-preflight error raised when the connected model declares
+no Entity for a Find Query's target. It retains and exposes neither the query,
+the model, nor the Database, and it is not an ownership relation: one Entity
+Class participates in any number of Domain Models and one Domain Model serves
+any number of Databases.
+_Avoid_: query ownership error, hub mismatch, structural model mismatch, provider error
+
+**Runtime-Only Erasure**:
+A query rule the frontend's type parameters cannot state, left to the
+model-aware validator at execution preflight. The named cases are narrowing
+relatedness — a type parameter's bound may not itself be generic, so neither
+`Entity.narrow(...)` nor `FindQuery.narrow(...)` states that the classes it
+names are subtypes of the position it narrows, and `narrow-outside-position`
+alone refuses one that is not — and a relationship hop past the first, whose
+member the composed segment can name but not resolve. A hop narrow is the
+exception that keeps its static half, because its bound rides on the receiver.
+_Avoid_: unchecked query, dynamic fallback, silent acceptance
 
 **Deferred Feature Error**:
 The Snapshot execution-preflight error raised when an ordinary valid Find Query
@@ -196,8 +215,9 @@ and differently narrowed views coexist on the same node.
 _Avoid_: filtered relationship, cast collection, subtype list
 
 **Relationship Path**:
-An immutable exact-hub-bound sequence of relationship views used for includes
-and Snapshot inspection. Its authored root position normally validates against
+An immutable sequence of relationship views used for includes
+and Snapshot inspection, `RelationshipPath[E, R]` — covariant in both its source
+and its target. Its authored root position normally validates against
 the Find Query target; a preceding root narrow may additionally authorize a
 subtype-rooted first hop. The path retains that authored source Entity Identity
 separately from the canonical Relationship Identity, so an inherited
@@ -213,6 +233,9 @@ Narrowed View. Broad and target-narrowed views remain separate fetches. The path
 also authors cardinality-neutral relationship predicates through variadic
 `exists(...)` and `not_exists(...)`; multi-hop paths lower to nested existence
 operations, and multiple predicates must match one terminal related object.
+A Python-authored path stops at two hops: the segment past the first is composed
+from the path's own target rather than resolved against a model, so a third hop
+has no honest owner to name and raises instead.
 _Avoid_: dotted relationship string, lazy traversal
 
 **Existence Predicate**:
