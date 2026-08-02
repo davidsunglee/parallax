@@ -1,0 +1,58 @@
+# The presence table, written from a neutral write input and read back
+# (m-document-codec presence, m-value-object atomic write, m-sql), on Postgres AND
+# MariaDB.
+#
+# Four presence states, each expressible on both sides of the interface, and each
+# distinguishable in the stored document:
+#
+#   text      supplied            the key is present with a non-null valid encoding
+#   flag      supplied as null    the key is present with JSON null
+#   day       omitted             the key is ABSENT — not a null
+#   origin    omitted             the `one` occurrence's key is absent too
+#   entries   omitted             the `many` occurrence's key is present with []
+#
+# The last one is the asymmetry worth the case: a `Many` occurrence is never null, so
+# its empty array is the sole representation of no contained values and an omitted
+# `many` writes `[]` rather than nothing. An implementation that treated omission
+# uniformly would either drop `entries` or write `null` for `day`, and both survive
+# every existing value-object case.
+#
+# The missing-versus-null distinction is preserved by the codec rather than collapsed:
+# where a consumer's own contract folds them together — scalar observed no-op equality
+# does (m-unit-work) — that collapse belongs to the consumer and is applied to the
+# codec's answer.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, write-sequence, insert, json, presence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Sample
+      statements: 1
+      note: insert one Sample whose profile exercises absent, explicitly null, and empty-many presence
+      rows:
+        - id: 101
+          label: Kavi
+          profile:
+            text: only-this
+            flag: null
+then:
+  statements:
+    - sql:
+        postgres: insert into sample(id, label, profile) values (?, ?, ?)
+        mariadb: insert into sample(id, label, profile) values (?, ?, ?)
+      binds:
+        - 101
+        - Kavi
+        - text: only-this
+          flag: null
+          entries: []
+  tableState:
+    sample:
+      - id: 101
+        label: Kavi
+        profile:
+          flag: null
+          text: only-this
+          entries: []
+  roundTrips: 1

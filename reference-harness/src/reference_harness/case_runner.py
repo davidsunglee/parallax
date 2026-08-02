@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import contextlib
 import functools
-import json
 import re
 import threading
 from collections.abc import Iterator, Mapping
@@ -44,6 +43,7 @@ from .ddl_builder import (
     placeholder_cast_type,
     quote_identifier,
 )
+from .document_codec import decode_stored, encode_document
 from .inheritance import (
     MODEL_REJECTED_RULES,
     OPERATION_REJECTED_RULES,
@@ -2334,25 +2334,6 @@ def _graphs_equal(
 # --- value-object + inheritance single-statement graph read (m-value-object, m-inheritance) ---
 
 
-def _decode_document(raw: Any) -> Any:
-    """Decode a structured-document column value to a Python object.
-
-    The single value-object column materializes with the owning entity in one
-    round trip (m-value-object). Postgres returns a ``jsonb`` column already
-    parsed (a ``dict`` / ``list``); MariaDB returns its ``json`` column as the raw
-    JSON text (``str`` / ``bytes``). Both collapse to the same Python structure
-    here, so the projection below is dialect-agnostic. A SQL-NULL column is
-    ``None``.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, (bytes, bytearray, memoryview)):
-        raw = bytes(raw).decode()
-    if isinstance(raw, str):
-        return json.loads(raw)
-    return raw
-
-
 def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
     """Project a decoded document slot to its DECLARED value-object shape.
 
@@ -2422,7 +2403,7 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
             not isinstance(row, _MaterializedRow) or column not in row.consumed_value_object_columns
         ):
             node.pop(column)
-        node[vo["name"]] = _project_value_object(vo, _decode_document(raw))
+        node[vo["name"]] = _project_value_object(vo, decode_stored(raw))
     return node
 
 
@@ -2724,6 +2705,13 @@ def _classify_write_row(
     (``computed`` / ``increment``), even when the document is marker-SHAPED; marker
     interpretation applies only to a scalar-attribute column (see
     :func:`_document_columns`).
+
+    A value object's ① value is the occurrence's neutral write input, so it is
+    ENCODED here (``document_codec``) rather than taken as the document. That is what
+    makes the golden bind graded rather than trusted: the harness derives the document
+    a conforming writer must produce from the case's own member values, and
+    :func:`_assert_write_values` compares it to the authored bind — so a leaf spelled
+    any other way fails the case instead of surviving it.
     """
     pk_columns = {a["column"] for a in entity.attributes if a.get("primaryKey")}
     columns: dict[str, Any] = {}
@@ -2741,13 +2729,15 @@ def _classify_write_row(
             # Document-tier slot (m-value-object); the neutral input names it
             # like a scalar attribute and its value is the whole document.
             try:
-                column = entity.value_object_by_name(key)["column"]
+                value_object = entity.value_object_by_name(key)
             except KeyError as exc:
                 raise CaseFailure(
                     f"{case.path.name}: writeSequence row key {key!r} is not an attribute "
                     f"or value object of {entity.name} — the neutral write input speaks "
                     f"ATTRIBUTE / value-object names, not columns."
                 ) from exc
+            column = value_object["column"]
+            value = encode_document(value_object, value)
         columns[column] = value
         if column in pk_columns:
             pk_value = value
@@ -4047,7 +4037,7 @@ def _read_table(
     for row in rows:
         for column in document_columns:
             if column in row:
-                row[column] = _decode_document(row[column])
+                row[column] = decode_stored(row[column])
         for column in bytes_columns:
             if isinstance(row.get(column), (bytes, bytearray, memoryview)):
                 row[column] = bytes(row[column]).hex()

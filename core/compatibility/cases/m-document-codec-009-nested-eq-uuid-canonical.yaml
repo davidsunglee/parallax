@@ -1,0 +1,35 @@
+# Portable document encoding: a `uuid` leaf stores the canonical LOWERCASE 8-4-4-4-12
+# form, and a comparison binds that form however the literal was written
+# (m-document-codec, m-dialect text-compared table, m-sql), on Postgres AND MariaDB.
+#
+# UUID text case carries no information (m-core), but the extraction's comparison is
+# case-SENSITIVE on both engines, so a literal bound as authored would match nothing
+# whenever an author uppercased it. The literal here is deliberately uppercase: it is
+# decoded to the 128-bit value and re-spelled through the codec, so what the predicate
+# binds is `123e4567-…` — the exact characters the writer stored.
+#
+# That is the whole content of "the string spellings are comparison-significant": both
+# sides of the comparison are the one form the codec produces, rather than whatever
+# the host language rendered. Ada carries the token; Bo's differs and the three
+# not-present rows extract SQL NULL.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Sample
+  operation:
+    nestedEq: { path: Sample.profile.token, value: '123E4567-E89B-12D3-A456-426614174000' }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label from sample t0 where jsonb_extract_path_text(t0.profile, ?) = ?
+        mariadb: select t0.id, t0.label from sample t0 where json_value(t0.profile, ?) = ?
+      binds:
+        postgres: [token, '123e4567-e89b-12d3-a456-426614174000']
+        mariadb: ['$.token', '123e4567-e89b-12d3-a456-426614174000']
+  referenceSql:
+    postgres: select id, label from sample where profile ->> 'token' = '123e4567-e89b-12d3-a456-426614174000'
+    mariadb: select id, label from sample where nullif(json_unquote(json_extract(profile, '$.token')), 'null') = '123e4567-e89b-12d3-a456-426614174000'
+  rows:
+    - { id: 1, label: Ada }
+  roundTrips: 1

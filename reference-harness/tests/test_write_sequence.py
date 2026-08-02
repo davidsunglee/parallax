@@ -540,12 +540,15 @@ def _customer_update_case(address, sql: str, binds: list) -> Case:
     )
 
 
+# Each marker-shaped document carries the empty `phones` array Customer's `many`
+# member always stores (m-document-codec), so ① encodes to exactly what ② authors and
+# the parametrization isolates the marker shape rather than the presence rule.
 @pytest.mark.parametrize(
     "document",
     [
-        {"computed": "maxPlusOne"},
-        {"increment": 1},
-        {"computed": "x", "street": "Main"},
+        {"computed": "maxPlusOne", "phones": []},
+        {"increment": 1, "phones": []},
+        {"computed": "x", "street": "Main", "phones": []},
     ],
 )
 def test_marker_shaped_value_object_insert_binds_the_whole_document(document) -> None:
@@ -561,7 +564,9 @@ def test_marker_shaped_value_object_insert_binds_the_whole_document(document) ->
     _assert_write_input_columns(case, "postgres")
 
 
-@pytest.mark.parametrize("document", [{"increment": 1}, {"computed": "maxPlusOne"}])
+@pytest.mark.parametrize(
+    "document", [{"increment": 1, "phones": []}, {"computed": "maxPlusOne", "phones": []}]
+)
 def test_marker_shaped_value_object_update_replaces_whole_document(document) -> None:
     # A whole-document UPDATE sets the value-object column exactly like a scalar
     # (`set address = ?`), binding the literal document — never the marker's
@@ -580,9 +585,9 @@ def test_scalar_attribute_marker_still_classifies_as_computed() -> None:
     # `coalesce(max(id), ?) + ?`), and only the trailing literal columns (name +
     # the address document) supply binds.
     case = _customer_insert_case(
-        {"street": "Main"},
+        {"street": "Main", "phones": []},
         "insert into customer(id, name, address) values (coalesce(max(id), ?) + ?, ?, ?)",
-        [0, 1, "Ada", {"street": "Main"}],
+        [0, 1, "Ada", {"street": "Main", "phones": []}],
     )
     case.raw["when"]["writeSequence"][0]["rows"][0]["id"] = {"computed": "maxPlusOne"}
     # Must not raise: the scalar marker branch is taken (id's bind skipped), while

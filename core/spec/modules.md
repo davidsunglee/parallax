@@ -101,6 +101,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-inheritance` | Closed-tree inheritance (table-per-hierarchy / -concrete-subtype) | active | cases |
 | `m-storage-layout` | Canonical physical Table composition and column layout | active | cases |
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |
+| `m-document-codec` | Portable document encoding, decoding, and patching | active | cases |
 | `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
 | `m-op-algebra` | Query / operation algebra | active | cases |
 | `m-agg` | Aggregation algebra (group-by / having / functions) | deferred | cases |
@@ -162,6 +163,8 @@ m-storage-layout --> m-inheritance
 m-storage-layout --> m-relationship
 m-value-object --> m-metamodel
 m-value-object --> m-model-formation
+m-document-codec --> m-core
+m-document-codec --> m-metamodel
 m-relationship --> m-metamodel
 m-relationship --> m-model-formation
 m-op-algebra --> m-metamodel
@@ -173,6 +176,7 @@ m-sql --> m-metamodel
 m-sql --> m-inheritance
 m-sql --> m-storage-layout
 m-sql --> m-relationship
+m-sql --> m-document-codec
 m-sql-agg --> m-agg
 m-sql-agg --> m-sql
 m-dialect --> m-core
@@ -266,6 +270,19 @@ construction it may reference any behavioral module it harnesses.
   model, and obtains physical Tables, ordered slots, and branch presence from
   Storage Layout. These direct collaborations are not left to the transitive
   closure through `m-op-algebra`.
+- **`m-document-codec --> m-core`, `m-document-codec --> m-metamodel`.** The codec
+  spells a value of the neutral type algebra into a document, and reads a document's
+  member back by the type the model declared for it, so it names both the value spaces
+  and the accepted Metadata a document shape is derived from. It depends on nothing
+  else: it is pure, holds no connection, imports no driver, emits no SQL, and carries
+  no dialect seam, so a codec value crosses the database seam already portable.
+- **`m-sql --> m-document-codec`.** A comparison against a document-resident member
+  compares like with like only when both sides agree on the spelling, so lowering takes
+  its literal from the codec rather than rendering one: the type's comparison text
+  where the extraction compares as text, and — where a dialect expresses a to-many
+  equality as document containment — the containment candidate. The direction is
+  one-way: the codec knows nothing about SQL, extraction, or casting, and the cast
+  decision itself stays a `m-dialect` one.
 - **`m-sql --> m-relationship`.** A navigation hop lowers to a correlated
   semi-join whose columns come from the relationship's join predicate. The
   Relationship Facet is the one place a reverse direction's swapped join exists,

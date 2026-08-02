@@ -21,6 +21,7 @@ from testcontainers.postgres import PostgresContainer
 
 from .. import errors
 from ..ddl_builder import quote_identifier
+from ..document_codec import is_document
 from . import register
 
 if TYPE_CHECKING:
@@ -33,14 +34,15 @@ POSTGRES_IMAGE = "postgres:17"
 def _adapt(value: Any) -> Any:
     """Adapt a fixture / bind value for binding.
 
-    A ``dict`` / ``list`` value is a valueObject document destined for a JSONB
-    column (m-value-object) — a fixture row's stored document, or a golden
-    write-sequence bind that carries the whole document as one atomic document
-    bind; psycopg does not auto-adapt a plain mapping, so wrap it
-    in ``Jsonb``. ``None`` (a null nullable value object) and every scalar pass
+    A portable document (``document_codec.is_document``) is destined for a JSONB
+    column — a fixture row's stored document, a golden write-sequence bind carrying
+    the whole document atomically, or a containment candidate — and psycopg does not
+    auto-adapt a plain mapping, so it is wrapped in ``Jsonb`` here. Serialization sits
+    below the bind, which is why a golden authors the document and never its rendered
+    text (m-case-format). ``None`` (a null nullable value object) and every scalar pass
     through unchanged (binding SQL ``NULL`` / the literal).
     """
-    if isinstance(value, (dict, list)):
+    if is_document(value):
         return Jsonb(value)
     return value
 

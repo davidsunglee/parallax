@@ -26,9 +26,13 @@ _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
 # notExists and any-element predicates"): guarded-unnest correlated `EXISTS`/`NOT EXISTS`
 # (bare non-empty/empty-or-absent, and same-element scoped `where`) and the flat
 # any-element `nested*` forms crossing customer.yaml's `address.phones` — row-form,
-# compiled and run below.
+# compiled and run below. `-068` joins them: a scoped `where` constraining one
+# element-relative path TWICE lowers here exactly as any other same-element compound
+# does, both conjuncts against the one unnested alias, and answers no row; the form is
+# Postgres-only because MariaDB's containment candidate cannot carry two values for
+# one key (m-dialect, "Scope of the containment golden").
 _VALUE_OBJECT_TO_MANY_READS: Final[frozenset[str]] = frozenset(
-    f"m-value-object-{n:03d}" for n in (*range(15, 23), *range(50, 54), *range(56, 66))
+    f"m-value-object-{n:03d}" for n in (*range(15, 23), *range(50, 54), *range(56, 66), 68)
 )
 # Orders op-algebra reads use the full declared scalar projection emitted by
 # the default find projection. Case 028 is intentionally absent from the corpus.
@@ -173,8 +177,21 @@ _MATERIALIZATION_KEY_COMPATIBILITY_READS: Final[frozenset[str]] = frozenset(
 _STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
     {"m-storage-layout-009", "m-storage-layout-010"}
 )
+# Document-codec predicate reads (`m-document-codec`): one per comparison decision the
+# portable encoding forces — the `boolean` and numeric-family casts (003-007) and the
+# text-compared half's five spellings (008-012), plus the non-string containment
+# candidate (013), whose Postgres lowering puts every element predicate on one
+# unnested alias. Row-form, compiled and run below. The two writeSequence cases
+# (001/002) are the ENCODING witnesses rather than comparison ones and stay outside
+# both write sets: the snapshot write lowering binds a Value Object occurrence's value
+# as it receives it, so routing an insert document through the codec is Phase 5 work
+# and the reference harness grades those two against real engines meanwhile.
+_DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
+    f"m-document-codec-{n:03d}" for n in range(3, 14)
+)
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
+    | _DOCUMENT_CODEC_READS
     | _VALUE_OBJECT_PREDICATE_READS
     | _VALUE_OBJECT_TO_MANY_READS
     | _ORDERS_OP_ALGEBRA_READS

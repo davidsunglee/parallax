@@ -16,9 +16,10 @@
 # a legal write) — required-ness applies to the inner members only when the document
 # is present. `phones` is a nullable to-many member (an array present-or-absent).
 #
-# There are NO fixtures and NO golden SQL for this model: the `rejected` cases assert
-# a value-object document is refused PRE-SQL by model-aware write validation
-# (m-value-object write semantics), so nothing is ever provisioned or executed.
+# There are NO fixtures and NO golden SQL for this model, and there is nothing left to
+# add: every case over it is `rejected`-shaped — a value-object document refused PRE-SQL
+# by model-aware write validation (m-value-object write semantics) — so nothing is ever
+# provisioned or executed, and a fixture would witness nothing a case could observe.
 entity:
   name: Contact
   namespace: parallax.compatibility
@@ -64,7 +65,10 @@ entity:
             # `date` rides the portable `string` literal, so a string predicate aimed
             # at it satisfies the literal check and is named only by the dedicated
             # rule. Reached through the `many` `phones` member so one member
-            # witnesses the rule at BOTH nested scopes.
+            # witnesses the rule at BOTH nested scopes. Its STORED and COMPARED forms
+            # are witnessed on models/document-codec.yaml instead, whose `issued` leaf
+            # is the same shape — a `date` inside a `many` occurrence — with fixtures
+            # and golden SQL on both dialects (m-document-codec-008 / -013).
             - name: expires
               type: date
               nullable: true

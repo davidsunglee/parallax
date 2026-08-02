@@ -17,6 +17,16 @@ from typing import Any, cast
 from pydantic import BaseModel
 from pydantic._internal._model_construction import ModelMetaclass
 
+from parallax.core.document_codec import (
+    NULL,
+    DocumentShape,
+    Occurrence,
+    Presence,
+    Present,
+    encode_document,
+    encode_many,
+    shape_of_declaration,
+)
 from parallax.core.entity._declaration import (
     FRAMEWORK_MINT,
     DeclarationKind,
@@ -24,6 +34,7 @@ from parallax.core.entity._declaration import (
     shape_of,
 )
 from parallax.core.entity._errors import EntityDefinitionError
+from parallax.core.metamodel import Multiplicity
 
 __all__ = ["ValueObject", "ValueObjectMeta", "shape_of", "to_document"]
 
@@ -94,6 +105,10 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
     the empty array, the sole zero-element representation. Whether an omitted
     required member is a defect belongs to write validation, not to this
     serializer.
+
+    Every leaf is spelled by ``m-document-codec``, never by this frontend and never by
+    handing a runtime value to a JSON serializer, which is what left a ``Decimal``,
+    ``bytes``, ``date``, ``time``, ``datetime``, or ``UUID`` leaf with no storage form.
     """
     if value is None:
         return None
@@ -101,20 +116,45 @@ def to_document(value: ValueObject | None) -> dict[str, object] | None:
 
 
 def _document(value: ValueObject) -> dict[str, object]:
-    shape = shape_of(type(value))
+    shape = shape_of_declaration(shape_of(type(value)).shape)
+    return encode_document(shape, _presences(value, shape))
+
+
+def _presences(value: ValueObject, shape: DocumentShape) -> dict[str, Presence]:
+    """One presence per populated member, keyed by canonical name.
+
+    An unpopulated member contributes no entry at all, so the codec classifies it
+    ``Missing`` — which is what omits an unset optional inner member rather than
+    writing an explicit null for it. A ``many`` occurrence is always contributed,
+    because its empty default is a value (``[]``) rather than an absence.
+
+    A nested occurrence's value is composed through the codec rather than assembled
+    here: a ``one`` carries that occurrence's own encoded object and a ``many`` its
+    ``encode_many`` array, so nothing in this frontend builds a JSON array or nests an
+    object of its own. A scalar leaf passes through as its managed value, which the
+    codec spells.
+    """
+    declared = shape_of(type(value))
     fields_set = value.model_fields_set
-    document: dict[str, object] = {}
-    for py_name, canonical in shape.py_to_name.items():
-        if py_name not in fields_set and py_name not in shape.many_py:
+    presences: dict[str, Presence] = {}
+    for py_name, canonical in declared.py_to_name.items():
+        if py_name not in fields_set and py_name not in declared.many_py:
             continue
         raw = getattr(value, py_name)
-        if isinstance(raw, ValueObject):
-            document[canonical] = _document(raw)
-        elif isinstance(raw, tuple):
-            items = cast("tuple[object, ...]", raw)
-            document[canonical] = [
-                _document(item) if isinstance(item, ValueObject) else item for item in items
-            ]
+        member = shape.member(canonical)
+        if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
+            elements = cast("tuple[ValueObject, ...]", raw)
+            presences[canonical] = Present(
+                encode_many(
+                    member.shape, [_presences(element, member.shape) for element in elements]
+                )
+            )
+        elif raw is None:
+            presences[canonical] = NULL
+        elif isinstance(member, Occurrence):
+            presences[canonical] = Present(
+                encode_document(member.shape, _presences(cast("ValueObject", raw), member.shape))
+            )
         else:
-            document[canonical] = raw
-    return document
+            presences[canonical] = Present(raw)
+    return presences

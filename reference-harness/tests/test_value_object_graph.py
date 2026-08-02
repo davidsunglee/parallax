@@ -27,12 +27,12 @@ from reference_harness.case import load_case, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_single_statement_graph,
-    _decode_document,
     _graphs_equal,
     _MaterializedRow,
     _project_value_object,
     _reference_identity_row,
 )
+from reference_harness.document_codec import decode_stored
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -205,10 +205,10 @@ def test_projection_drops_undeclared_keys_and_collapses_absence() -> None:
 
 
 def test_decode_document_is_dialect_agnostic() -> None:
-    assert _decode_document('{"a": 1}') == {"a": 1}  # MariaDB JSON text
-    assert _decode_document(b'{"a": 1}') == {"a": 1}  # MariaDB JSON bytes
-    assert _decode_document({"a": 1}) == {"a": 1}  # Postgres parsed jsonb
-    assert _decode_document(None) is None  # SQL NULL column
+    assert decode_stored('{"a": 1}') == {"a": 1}  # MariaDB JSON text
+    assert decode_stored(b'{"a": 1}') == {"a": 1}  # MariaDB JSON bytes
+    assert decode_stored({"a": 1}) == {"a": 1}  # Postgres parsed jsonb
+    assert decode_stored(None) is None  # SQL NULL column
 
 
 def test_many_value_object_document_order_is_semantic() -> None:

@@ -360,6 +360,21 @@ def test_runtime_neutral_membership_is_exact_lossless_and_total(
     assert _runtime_member(value, declared) is expected
 
 
+def test_an_exact_decimal_string_is_a_decimal_literal_too() -> None:
+    # The one literal a JSON number cannot carry: no JSON number declares a scale, so
+    # a structured document stores an exact decimal as a digit STRING, and this is the
+    # inverse it decodes through. Totality is unchanged — a malformed spelling decodes
+    # to itself and fails membership rather than raising, even though a bad decimal
+    # raises an ArithmeticError where every other spelling raises a ValueError.
+    assert _runtime_member("1.50", base.Decimal(18, 2)) is True
+    assert base.decode_neutral_literal("1.50", base.Decimal(18, 2)) == decimal.Decimal("1.50")
+    assert base.decode_neutral_literal("not a decimal", base.Decimal(18, 2)) == "not a decimal"
+    assert _runtime_member("not a decimal", base.Decimal(18, 2)) is False
+    # `nan` and `infinity` parse as decimals and are refused by membership, which is
+    # where value-space membership is decided.
+    assert _runtime_member("nan", base.Decimal(18, 2)) is False
+
+
 @pytest.mark.parametrize("declared", [base.FLOAT32, base.FLOAT64])
 def test_decoding_a_huge_integer_literal_does_not_raise(declared: base.NeutralType) -> None:
     # A magnitude no float can carry must not overflow; it decodes to itself and

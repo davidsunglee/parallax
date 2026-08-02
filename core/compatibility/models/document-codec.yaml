@@ -1,0 +1,114 @@
+# Sample: the model that reaches every row of the m-document-codec encoding table.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. `profile` is a
+# top-level `valueObject` stored in ONE m-core `json` column, exactly as
+# models/customer.yaml's `address` is; what it adds is COVERAGE. Its inner attributes
+# declare one leaf of every declarable neutral type, so each of the codec's portable
+# leaf encodings has a witness that stores, reads back, and filters it:
+#
+#   flag     boolean          JSON boolean, compared through a dialect cast
+#   small    int32            JSON number
+#   big      int64            JSON number
+#   ratio    float32          JSON number, shortest that round-trips at binary32
+#   measure  float64          JSON number, shortest that round-trips at binary64
+#   text     string           JSON string
+#   amount   decimal(12,2)    JSON STRING, the exact decimal spelling — and it CASTS
+#   blob     bytes            JSON string, lowercase hexadecimal
+#   day      date             JSON string, ISO-8601 YYYY-MM-DD
+#   clock    time             JSON string, ISO-8601 hh:mm:ss[.ffffff]
+#   instant  timestamp        JSON string, ISO-8601 UTC at microsecond precision
+#   token    uuid             JSON string, canonical lowercase 8-4-4-4-12
+#
+# The table's thirteenth row, `json`, needs no leaf: `Json` is the one variant no
+# member may declare (m-core), so it is reachable only as the storage type a whole
+# occurrence maps to — which is what `profile` itself is, in every case below.
+#
+# `origin` (a `one` occurrence) and `entries` (a `many` occurrence) make the nesting
+# and the array composition reachable too, and `entries` carries non-string leaves on
+# purpose: a MariaDB to-many equality lowers to a `json_contains` candidate, which
+# compares JSON values type-strictly, so a `boolean` or a `decimal` constrained inside
+# an element is where a candidate spelled any other way silently matches nothing.
+#
+# Every leaf is nullable so one model can hold the presence states side by side — a
+# key absent, a key present with JSON null, and an empty `many` array — without a
+# second model. Row data lives in the sibling fixtures/document-codec.yaml.
+entity:
+  name: Sample
+  namespace: parallax.compatibility
+  table: sample
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: label
+      type: string
+      maxLength: 64
+  valueObjects:
+    - name: profile
+      nullable: true
+      attributes:
+        - name: flag
+          type: boolean
+          nullable: true
+        - name: small
+          type: int32
+          nullable: true
+        - name: big
+          type: int64
+          nullable: true
+        - name: ratio
+          type: float32
+          nullable: true
+        - name: measure
+          type: float64
+          nullable: true
+        - name: text
+          type: string
+          nullable: true
+        - name: amount
+          type: decimal(12,2)
+          nullable: true
+        - name: blob
+          type: bytes
+          nullable: true
+        - name: day
+          type: date
+          nullable: true
+        - name: clock
+          type: time
+          nullable: true
+        - name: instant
+          type: timestamp
+          nullable: true
+        - name: token
+          type: uuid
+          nullable: true
+      valueObjects:
+        - name: origin
+          nullable: true
+          attributes:
+            - name: city
+              type: string
+              nullable: true
+            - name: since
+              type: date
+              nullable: true
+        - name: entries
+          multiplicity: many
+          attributes:
+            - name: kind
+              type: string
+              nullable: true
+            - name: active
+              type: boolean
+              nullable: true
+            - name: price
+              type: decimal(12,2)
+              nullable: true
+            - name: issued
+              type: date
+              nullable: true
+  indices:
+    - name: sample_pk
+      attributes: [id]
+      unique: true

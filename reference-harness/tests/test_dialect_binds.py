@@ -317,6 +317,12 @@ _POSTGRES_ONLY_ELEMENT_PREDICATE_CASES = frozenset(
         "m-value-object-063-nested-exists-scoped-starts-with",
         "m-value-object-064-nested-exists-scoped-ends-with",
         "m-value-object-065-nested-exists-scoped-contains",
+        # A `where` constraining ONE element-relative path twice with DIFFERENT values
+        # is outside the scope for a different reason from the fourteen above: the
+        # operator IS the equality containment expresses, but a candidate object holds
+        # one value per key, so one of the two constraints would have to be dropped
+        # silently (m-dialect "Scope of the containment golden", fourth entry).
+        "m-value-object-068-nested-exists-scoped-repeated-path",
     }
 )
 

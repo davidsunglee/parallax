@@ -1,0 +1,110 @@
+# Every row of the portable leaf encoding table, written from a neutral write input
+# and read back (m-document-codec, m-value-object atomic write, m-sql), on Postgres
+# AND MariaDB.
+#
+# The neutral write input (①) names members and carries each value in its portable
+# wire spelling; the golden bind (②) is the DOCUMENT that input encodes to. The two
+# differ on exactly the rows where the encoding is a decision rather than an identity,
+# and each difference is a spelling some other implementation would plausibly have
+# produced:
+#
+#   amount   10.25                              -> "10.25"   an exact decimal STRING,
+#                                                            because no JSON number
+#                                                            carries a declared scale
+#   blob     '0A1B'                             -> "0a1b"    lowercase hexadecimal
+#   clock    '09:30'                            -> "09:30:00" zero-padded ISO-8601
+#   instant  '2026-01-15T11:30:00+02:00'        -> "2026-01-15T09:30:00.000000Z"
+#                                                            UTC at microsecond
+#                                                            precision
+#   token    '123E4567-…-426614174000'          -> "123e4567-…" canonical lowercase
+#
+# The remaining leaves encode as themselves — a JSON boolean, two JSON integers, two
+# JSON numbers, and a JSON string — which is why an implementation can pass every
+# existing value-object case while getting all five rows above wrong. The table's
+# thirteenth row, `json`, is the whole `profile` occurrence itself: it is the storage
+# type core derives for a value object, never a leaf a member declares (m-core).
+#
+# Nesting composes through the same two operations and no others: `origin` is one
+# encoded object in place and `entries` an ordered array of them, so no caller
+# assembles a JSON array or nests an object of its own.
+#
+# `then.tableState` asserts the read-back document with its keys in a DELIBERATELY
+# different order from the bind — occurrences first, then the leaves reversed. A
+# document-valued cell compares structurally in every dialect (m-case-format), which
+# has to be normative because Postgres `jsonb` normalizes on storage while MariaDB
+# `json` is a text alias whose `=` is key-order sensitive.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, write-sequence, insert, json, nested, to-many, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Sample
+      statements: 1
+      note: insert one Sample, binding the whole profile document atomically in its layout position
+      rows:
+        - id: 100
+          label: Solveig
+          profile:
+            flag: true
+            small: 10
+            big: 100
+            ratio: 1.5
+            measure: 2.25
+            text: alpha
+            amount: 10.25
+            blob: '0A1B'
+            day: '2026-01-15'
+            clock: '09:30'
+            instant: '2026-01-15T11:30:00+02:00'
+            token: '123E4567-E89B-12D3-A456-426614174000'
+            origin: { city: Oslo, since: '2020-03-01' }
+            entries:
+              - { kind: home, active: true, price: 19.99, issued: '2026-02-01' }
+              - { kind: work, active: false, price: 5, issued: '2026-03-01' }
+then:
+  statements:
+    - sql:
+        postgres: insert into sample(id, label, profile) values (?, ?, ?)
+        mariadb: insert into sample(id, label, profile) values (?, ?, ?)
+      binds:
+        - 100
+        - Solveig
+        - flag: true
+          small: 10
+          big: 100
+          ratio: 1.5
+          measure: 2.25
+          text: alpha
+          amount: '10.25'
+          blob: '0a1b'
+          day: '2026-01-15'
+          clock: '09:30:00'
+          instant: '2026-01-15T09:30:00.000000Z'
+          token: '123e4567-e89b-12d3-a456-426614174000'
+          origin: { city: Oslo, since: '2020-03-01' }
+          entries:
+            - { kind: home, active: true, price: '19.99', issued: '2026-02-01' }
+            - { kind: work, active: false, price: '5.00', issued: '2026-03-01' }
+  tableState:
+    sample:
+      - id: 100
+        label: Solveig
+        profile:
+          entries:
+            - { kind: home, active: true, price: '19.99', issued: '2026-02-01' }
+            - { kind: work, active: false, price: '5.00', issued: '2026-03-01' }
+          origin: { since: '2020-03-01', city: Oslo }
+          token: '123e4567-e89b-12d3-a456-426614174000'
+          instant: '2026-01-15T09:30:00.000000Z'
+          clock: '09:30:00'
+          day: '2026-01-15'
+          blob: '0a1b'
+          amount: '10.25'
+          text: alpha
+          measure: 2.25
+          ratio: 1.5
+          big: 100
+          small: 10
+          flag: true
+  roundTrips: 1

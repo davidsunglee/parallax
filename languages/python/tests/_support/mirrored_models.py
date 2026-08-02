@@ -63,7 +63,9 @@ from parallax.core import (
     DomainModel,
     Entity,
     Float32,
+    Int32,
     Sequence,
+    ValueObject,
     attr,
     index,
 )
@@ -71,6 +73,7 @@ from parallax.core import (
 _NS = "parallax.compatibility"
 
 __all__ = [
+    "DOCUMENT_CODEC_MODEL",
     "MIRRORED",
     "PK_MAX_MODEL",
     "PK_SEQUENCE_MODEL",
@@ -205,6 +208,57 @@ class WritableScalar(
 WRITABLE_SCALARS_MODEL = DomainModel(WritableScalar)
 
 
+class SampleOrigin(ValueObject):
+    city: Attr[str | None]
+    since: Attr[dt.date | None]
+
+
+class SampleEntry(ValueObject):
+    kind: Attr[str | None]
+    active: Attr[bool | None]
+    price: Attr[Decimal | None] = attr(precision=12, scale=2)
+    issued: Attr[dt.date | None]
+
+
+class SampleProfile(ValueObject):
+    """One leaf of every declarable neutral type, plus a nested ``one`` and a
+    nested ``many`` occurrence."""
+
+    flag: Attr[bool | None]
+    small: Attr[int | None] = attr(type=Int32)
+    big: Attr[int | None]
+    ratio: Attr[float | None] = attr(type=Float32)
+    measure: Attr[float | None]
+    text: Attr[str | None]
+    amount: Attr[Decimal | None] = attr(precision=12, scale=2)
+    blob: Attr[bytes | None]
+    day: Attr[dt.date | None]
+    clock: Attr[dt.time | None]
+    instant: Attr[dt.datetime | None]
+    token: Attr[uuid.UUID | None]
+    origin: Attr[SampleOrigin | None]
+    entries: Attr[tuple[SampleEntry, ...]]
+
+
+class Sample(
+    Entity,
+    table="sample",
+    namespace=_NS,
+    indices=(index("sample_pk", "id", unique=True),),
+):
+    """Mirror of ``models/document-codec.yaml``: the only corpus model whose Value
+    Object reaches every row of the portable leaf encoding table, so it is also the
+    only one that proves a `Decimal`, `bytes`, `time`, `timestamp`, or `uuid` leaf is
+    declarable INSIDE an occurrence rather than only as an Entity Attribute."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=64)
+    profile: Attr[SampleProfile | None]
+
+
+DOCUMENT_CODEC_MODEL = DomainModel(Sample)
+
+
 class Taxpayer(
     Entity,
     table="taxpayer",
@@ -248,6 +302,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("pk-sequence", PK_SEQUENCE_MODEL),
     ("writable-scalars", WRITABLE_SCALARS_MODEL),
     ("taxpayer", TAXPAYER_MODEL),
+    ("document-codec", DOCUMENT_CODEC_MODEL),
 ]
 """Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
 

@@ -140,16 +140,31 @@ class Dialect:
         return (f"jsonb_extract_path_text({document}, {holes})", list(segments))
 
     def nested_cast(self, extraction: str, neutral_type: NeutralType) -> str:
-        """Cast a text extraction to a non-text declared type before comparing."""
+        """Cast a text extraction to its declared type before comparing, where the
+        type's comparison casts at all.
+
+        Two reasons a type casts, and the table below carries both: the **numeric
+        family** casts because its document spelling does not compare in value order as
+        text (`'10'` is less than `'9'`), and **`boolean`** casts because the two
+        dialects' extractions do not yield the same characters for it —
+        `jsonb_extract_path_text` returns `true`/`false` where MariaDB's `json_value`
+        returns `1`/`0` — so no single bound text matches on both. Every other
+        declarable type compares as the extracted text, because the canonical spelling
+        `m-document-codec` writes already equates and orders correctly as text.
+        """
         match neutral_type:
             case Decimal(precision, scale):
                 return f"cast({extraction} as decimal({precision}, {scale}))"
             case Int32() | Int64():
                 return f"cast({extraction} as bigint)"
-            case Float32() | Float64():
+            case Float32():
+                return f"cast({extraction} as real)"
+            case Float64():
                 return f"cast({extraction} as double precision)"
+            case Boolean():
+                return f"cast({extraction} as boolean)"
             case _:
-                return extraction  # string / text — compare directly
+                return extraction  # a text-compared type — compare the extraction
 
     def array_guard(self, document: str, segments: tuple[str, ...]) -> tuple[str, list[object]]:
         """The array-type guard fragment for a `multiplicity: many` value-object

@@ -74,6 +74,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-deep-fetch",
         "m-descriptor",
         "m-dialect",
+        "m-document-codec",
         "m-inheritance",
         "m-metamodel",
         "m-model-formation",

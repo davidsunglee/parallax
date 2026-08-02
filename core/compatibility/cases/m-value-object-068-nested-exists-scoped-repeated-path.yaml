@@ -1,0 +1,46 @@
+# valueObject to-many: a same-element `where` MAY constrain one element-relative path
+# twice, and the conflicting form is outside MariaDB's containment scope (m-op-algebra
+# scoped `where`, m-sql to-many, m-dialect "Scope of the containment golden",
+# m-document-codec `encodeCandidate`). Postgres golden only.
+#
+# `m-op-algebra` composes a scoped `where` from the ordinary combinators over
+# element-relative paths, with no requirement that the paths be distinct, so
+# `and(nestedEq(type, home), nestedEq(type, work))` is schema-valid and
+# resolver-valid. It is also unsatisfiable — one element cannot have two types — so it
+# must match NO row.
+#
+# Postgres lowers both conjuncts against the same unnested alias t1 and answers
+# empty, which is the meaning. MariaDB's containment golden cannot: a candidate object
+# holds one value per key, so one constrained path is one candidate key, and a
+# candidate carrying both would have to drop one silently — which returns every row
+# with a `home` phone, or every row with a `work` phone, depending on which constraint
+# survived. Ada (both) and Linus (home) and Nils (work) make that measurable: the
+# meaning is `[]` while the two dropped-constraint answers are `[1, 2]` and `[1, 7]`.
+#
+# So the MariaDB lowering MUST refuse this form with its capability diagnostic rather
+# than emit a `json_contains` that does not mean what the predicate says, and this
+# case carries a Postgres golden only — the corpus's existing mechanism for a form
+# outside that scope (`_POSTGRES_ONLY_ELEMENT_PREDICATE_CASES`). Two equalities
+# carrying the SAME value are one constraint, not two, and still lower.
+model: models/customer.yaml
+tags: [m-value-object, m-op-algebra, m-sql, m-dialect, m-document-codec, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Customer
+  operation:
+    nestedExists:
+      path: Customer.address.phones
+      where:
+        and:
+          operands:
+            - nestedEq: { path: type, value: home }
+            - nestedEq: { path: type, value: work }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.name from customer t0 where exists (select 1 from jsonb_array_elements(case when jsonb_typeof(jsonb_extract_path(t0.address, ?)) = ? then jsonb_extract_path(t0.address, ?) else cast(? as jsonb) end) t1 where jsonb_extract_path_text(t1.value, ?) = ? and jsonb_extract_path_text(t1.value, ?) = ?)
+      binds: [phones, 'array', phones, '[]', type, home, type, work]
+  referenceSql:
+    postgres: select id, name from customer where jsonb_typeof(address -> 'phones') = 'array' and exists (select 1 from jsonb_array_elements(address -> 'phones') e where e.value ->> 'type' = 'home' and e.value ->> 'type' = 'work')
+  rows: []
+  roundTrips: 1

@@ -304,6 +304,16 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "descriptor introspection is proven by the descriptor no-drift guard; the read "
         "path compiles/runs its descriptor cases (COR-3 Phase 5)"
     ),
+    "m-document-codec": (
+        "the portable document encoding has no developer surface of its own: a leaf's "
+        "spelling is never named, chosen, or observed by an application, which is the "
+        "module's reason to exist. Its comparison decisions are graded byte-exact by "
+        "the compile/run lanes over `models/document-codec.yaml`, whose declaration — "
+        "one leaf of every neutral type inside one occurrence — is itself mirrored by "
+        "idiomatic classes and proven equivalent by the descriptor no-drift guard; its "
+        "two encoding witnesses are writeSequence cases the reference harness executes "
+        "against both engines"
+    ),
     "m-op-algebra": (
         "representative predicate/grouping/ordering spellings are exercised as idiomatic "
         "examples (COR-3 Phase 5); the remaining op-algebra cases are graded through the "
@@ -1108,6 +1118,13 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-063": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-064": _VO_PREDICATE_SIBLING_REASON,
     "m-value-object-065": _VO_PREDICATE_SIBLING_REASON,
+    "m-value-object-068": (
+        "a scoped `where` constraining ONE element-relative path twice with different "
+        "values: the quantifier spelling is the same one the flagship same-element "
+        "story already shows, and what this case pins is a DIALECT boundary — MariaDB's "
+        "containment candidate cannot carry two values for one key — which no developer "
+        "surface exposes and which this Postgres-only target never reaches"
+    ),
     # -- m-value-object: structural rejects (no idiomatic spelling exists) --- #
     "m-value-object-034": _VO_UNKNOWN_NESTED_FIELD_REASON,
     "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,

@@ -57,8 +57,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, assert_never
 
-from parallax.core.base import NeutralType
+from parallax.core.base import NeutralType, decode_neutral_literal
 from parallax.core.dialect import Dialect
+from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -627,15 +628,15 @@ def _lower_comparator(
     """
     if isinstance(op, NestedComparison):
         casted = scope.dialect.nested_cast(extraction, leaf_type)
-        scope.ctx.bind(op.value)
+        _bind_nested_literal(op.value, leaf_type, scope)
         # nestedNotEq lowers to `not <ext> = ?` (the corpus form), not `<ext> <> ?`.
         if op.op == "nestedNotEq":
             return f"not {casted} = ?"
         return f"{casted} {_NESTED_COMPARATORS[op.op]} ?"
     if isinstance(op, NestedRange):
         casted = scope.dialect.nested_cast(extraction, leaf_type)
-        scope.ctx.bind(op.lower)
-        scope.ctx.bind(op.upper)
+        _bind_nested_literal(op.lower, leaf_type, scope)
+        _bind_nested_literal(op.upper, leaf_type, scope)
         # One `between`, never two comparisons: through a `many` member the flat
         # family is any-element, so a lowered pair could be satisfied by two
         # DIFFERENT elements (m-op-algebra).
@@ -644,7 +645,7 @@ def _lower_comparator(
         casted = scope.dialect.nested_cast(extraction, leaf_type)
         holes = ", ".join("?" for _ in op.values)
         for value in op.values:
-            scope.ctx.bind(value)
+            _bind_nested_literal(value, leaf_type, scope)
         # nestedNotIn lowers to a LEADING `not` (the corpus form), adding no bind.
         fragment = f"{casted} in ({holes})"
         return fragment if op.op == "nestedIn" else f"not {fragment}"
@@ -657,6 +658,25 @@ def _lower_comparator(
     if op.op == "nestedIsNull":
         return f"{extraction} is null"
     return f"not {extraction} is null"
+
+
+def _bind_nested_literal(literal: object, leaf_type: NeutralType, scope: ResolutionScope) -> None:
+    """Bind one document comparison's literal in the form its extraction compares.
+
+    The literal arrives in its portable wire spelling, so it is decoded to the managed
+    value first and the split then decides which form crosses the seam: where the
+    extraction is cast — the numeric family and `boolean` (`m-dialect`) — the bind is
+    that managed value in its declared Neutral Type, which is what keeps a `decimal`
+    exact instead of routing it through a binary float; where the extraction compares
+    as text, the bind is the type's **comparison text** (`m-document-codec`) — the
+    characters the extraction itself returns, so a `uuid` or a `timestamp` authored in
+    a non-canonical spelling compares against the one the writer stored.
+
+    A string predicate never reaches here: its value is a LIKE pattern rather than a
+    compared value, and its leaf is a `String` by the non-string-member rule.
+    """
+    value = decode_neutral_literal(literal, leaf_type)
+    scope.ctx.bind(comparison_text(leaf_type, value) if is_text_compared(leaf_type) else value)
 
 
 def _split_at_many(
