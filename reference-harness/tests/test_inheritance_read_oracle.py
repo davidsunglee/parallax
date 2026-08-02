@@ -273,6 +273,51 @@ def test_inherited_attribute_is_always_in_scope() -> None:
     )
 
 
+def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
+    # m-op-algebra measures the rule against the REFERENCED entity, not the ancestor
+    # that declares the member: "the active position's effective set is a subset of
+    # the referenced Entity's". `Dog.name` therefore names dogs even though `name` is
+    # declared on Animal, so at the root position it is out of scope and a narrow to
+    # Dog is the remedy. Substituting the declaring entity would accept it, and would
+    # equally accept a DISJOINT sibling's spelling (`Cat.name` inside a narrow to
+    # Dog), which addresses no row the position contains. Pinned by m-op-algebra-049.
+    defs = _animal_defs()
+    for reference in ("Dog.name", "Cat.name", "Pet.licenseId"):
+        with pytest.raises(RejectionError) as exc:
+            validate_operation_inheritance(defs, {"eq": {"attr": reference, "value": "Rex"}})
+        assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
+
+    with pytest.raises(RejectionError) as ordered:
+        validate_operation_inheritance(
+            defs, {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Dog.name"}]}}
+        )
+    assert ordered.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
+
+    with pytest.raises(RejectionError) as sibling:
+        validate_operation_inheritance(
+            defs,
+            {
+                "narrow": {
+                    "entity": "Animal",
+                    "to": ["Dog"],
+                    "operand": {"eq": {"attr": "Cat.name", "value": "Tom"}},
+                }
+            },
+        )
+    assert sibling.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
+
+    validate_operation_inheritance(
+        defs,
+        {
+            "narrow": {
+                "entity": "Animal",
+                "to": ["Dog"],
+                "operand": {"eq": {"attr": "Dog.name", "value": "Rex"}},
+            }
+        },
+    )
+
+
 def test_non_inheritance_model_accepts_its_own_entitys_attribute() -> None:
     defs = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml").entity_defs
     validate_operation_inheritance(defs, {"eq": {"attr": "Customer.name", "value": "Ada"}})

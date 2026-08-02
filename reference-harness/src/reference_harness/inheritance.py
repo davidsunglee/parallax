@@ -461,20 +461,6 @@ class Family:
             for name in sorted(concretes, key=identity)
         ]
 
-    def declaring_entity(self, cls: str, attr_name: str) -> str | None:
-        """The NEAREST entity in *cls*'s ancestry that literally declares *attr_name*.
-
-        An attribute referenced as ``Class.attr`` may be inherited; this returns the
-        entity where it is actually declared (``Payment`` for an inherited
-        ``CardPayment.amount``, ``Dog`` for a subtype-declared ``Dog.barkVolume``),
-        walking from *cls* up toward the root. ``None`` when no ancestor declares it.
-        """
-        for name in reversed(self.ancestry(cls)):
-            for attribute in self.defs.get(name, {}).get("attributes", []) or []:
-                if attribute.get("name") == attr_name:
-                    return name
-        return None
-
 
 def _entity_defs(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
     """Lift a descriptor (single ``entity`` or ``entities`` list) to a flat list."""
@@ -1124,17 +1110,23 @@ def validate_operation_inheritance(
     start = position if position is not None else _default_position(entity_defs)
     if start is None:
         return
-    _walk_narrow(family, family.effective_concrete_set(start), operation)
+    _walk_active_position(family, family.effective_concrete_set(start), operation)
 
 
-def _walk_narrow(
+def _walk_active_position(
     family: Family,
     current_set: list[str],
     node: Any,
     outside_rule: str = NARROW_OUTSIDE_POSITION,
     expected_entity: str | None = None,
 ) -> None:
-    """Walk *node*, tracking the current effective concrete set (narrowed per hop).
+    """Walk *node*, judging every positional rule against the active position.
+
+    The position is *current_set*, the active polymorphic position's effective
+    concrete set, threaded down the whole operation tree and re-narrowed per hop.
+    Two rules are asked of it — a ``narrow``'s subset check and every attribute
+    reference's applicability — and the second runs for a standalone descriptor
+    too, so this walk is not narrow-specific.
 
     *outside_rule* is the rejected rule a broadening narrow raises: at the queried
     (top-level) position a broadening narrow is ``narrow-outside-position``; inside a
@@ -1169,7 +1161,7 @@ def _walk_narrow(
             return
         target = family.relationship_target(body.get("rel"))
         target_set = family.effective_concrete_set(target) if target is not None else []
-        _walk_narrow(family, target_set, op, NARROW_OUTSIDE_RELATIONSHIP_TARGET, target)
+        _walk_active_position(family, target_set, op, NARROW_OUTSIDE_RELATIONSHIP_TARGET, target)
         return
     if tag == "narrow":
         entity = body.get("entity")
@@ -1210,17 +1202,19 @@ def _walk_narrow(
         # Descending into `operand`: the position becomes the narrowed set, so a
         # nested narrow is a SAME-POSITION narrow governed by the clamp — clear
         # `expected_entity` (the naming requirement was this narrow's alone).
-        _walk_narrow(family, to_set, body.get("operand"), outside_rule, None)
+        _walk_active_position(family, to_set, body.get("operand"), outside_rule, None)
     elif tag in ("and", "or"):
         # Position-preserving: a narrow directly under `and` / `or` is still the
         # target-position narrow, so it inherits the naming requirement.
         for operand in body.get("operands", []) or []:
-            _walk_narrow(family, current_set, operand, outside_rule, expected_entity)
+            _walk_active_position(family, current_set, operand, outside_rule, expected_entity)
     elif tag in ("not", "group", "distinct", "limit", "asOf", "asOfRange", "history"):
-        _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
+        _walk_active_position(
+            family, current_set, body.get("operand"), outside_rule, expected_entity
+        )
     elif tag == "orderBy":
         operand = body.get("operand")
-        _walk_narrow(family, current_set, operand, outside_rule, expected_entity)
+        _walk_active_position(family, current_set, operand, outside_rule, expected_entity)
         ordered_set = _ordered_position(family, current_set, operand, outside_rule)
         for key in body.get("keys", []) or []:
             if isinstance(key, dict):
@@ -1252,7 +1246,9 @@ def _walk_narrow(
                     for name in to_list if isinstance(to_list, list) else []:
                         _check_reference_entity_name(family, name, name)
                     resolve_hop_effective_set(family, rel, to_list)
-        _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
+        _walk_active_position(
+            family, current_set, body.get("operand"), outside_rule, expected_entity
+        )
     elif tag == "groupBy":
         # An aggregation names entities in three further reference positions —
         # each group key, each projected aggregate's `attr`, and the `attr` of
@@ -1261,7 +1257,9 @@ def _walk_narrow(
         # resolution half applies here: a group key and an aggregate `attr` are
         # not subtype-attribute references at the queried position, so their
         # applicability is `m-agg`'s question rather than this walk's.
-        _walk_narrow(family, current_set, body.get("operand"), outside_rule, expected_entity)
+        _walk_active_position(
+            family, current_set, body.get("operand"), outside_rule, expected_entity
+        )
         for key in body.get("keys", []) or []:
             _check_member_reference(family, key)
         for aggregate in body.get("aggregates", []) or []:
@@ -1343,14 +1341,17 @@ def _ordered_position(
 def _check_attribute_position(family: Family, current_set: list[str], attr_ref: Any) -> None:
     """Reject an attribute reference that is not applicable to the active position.
 
-    An attribute is available only to the concrete descendants of the entity that
-    DECLARES it; if the current (possibly narrowed) position's effective set is not
-    a subset of those concretes, the reference is out of scope. The subset test is
-    the whole rule and generalizes to a standalone entity, whose effective set is
-    itself; only the classification splits, on whether a narrow could ever be the
-    remedy — within the reference's own inheritance family it can
-    (``subtype-attribute-outside-narrow-scope``), and outside it nothing can
-    (``attribute-outside-active-position``).
+    The rule is measured against the entity the reference NAMES, not the ancestor
+    that declares the member: ``m-op-algebra`` states it as "the active position's
+    effective set is a subset of the referenced Entity's". A reference is a claim
+    about which rows it addresses, so ``Dog.name`` addresses dogs whether or not
+    ``name`` is inherited — at a broader position it would lower to the shared
+    column and answer for cats and boars too, exactly the mis-answer the sibling
+    rules exist to prevent. The subset test is the whole rule and generalizes to a
+    standalone entity, whose effective set is itself; only the classification
+    splits, on whether a narrow could ever be the remedy — within the reference's
+    own inheritance family it can (``subtype-attribute-outside-narrow-scope``), and
+    outside it nothing can (``attribute-outside-active-position``).
 
     The class part is the reference's spelling up to its LAST dot, so a canonically
     spelled position (``<namespace>.<Entity>.<attribute>``) resolves to the entity it
@@ -1361,29 +1362,27 @@ def _check_attribute_position(family: Family, current_set: list[str], attr_ref: 
     if not isinstance(attr_ref, str) or "." not in attr_ref:
         return
     _check_member_reference(family, attr_ref)
-    cls, _, attr_name = attr_ref.rpartition(".")
+    cls, _, _attr_name = attr_ref.rpartition(".")
     if cls not in family.defs:
         return  # an unknown entity — other validation owns this
-    declaring = family.declaring_entity(cls, attr_name) if inheritance_of(family.defs[cls]) else cls
-    if declaring is None:
-        return  # unknown attribute — other validation owns this
-    possessing = set(family.effective_concrete_set(declaring))
+    referenced = family.defs.canonical_key(cls)
+    possessing = set(family.effective_concrete_set(referenced))
     if set(current_set) <= possessing:
         return
-    root = family.root_of(declaring) or declaring
+    root = family.root_of(referenced) or referenced
     if set(current_set) <= set(family.effective_concrete_set(root)):
         raise RejectionError(
             SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
-            f"attribute {attr_ref!r} is declared on {declaring!r}; the current "
-            f"position {sorted(current_set)} is not narrowed to its concrete-subtype "
-            f"set {sorted(possessing)}, so the attribute is not available to every "
+            f"attribute {attr_ref!r} names {referenced!r}, whose concrete-subtype set "
+            f"is {sorted(possessing)}; the current position {sorted(current_set)} is "
+            f"not narrowed within it, so the reference is not applicable to every "
             f"concrete in scope",
         )
     raise RejectionError(
         ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
-        f"attribute {attr_ref!r} is declared on {declaring!r}, which shares no "
-        f"inheritance family with the active position {sorted(current_set)}, so no "
-        f"narrow makes it addressable here",
+        f"attribute {attr_ref!r} names {referenced!r}, which shares no inheritance "
+        f"family with the active position {sorted(current_set)}, so no narrow makes "
+        f"it addressable here",
     )
 
 

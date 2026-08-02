@@ -4,7 +4,7 @@ m-value-object).
 Each rejected rule is pinned with the exact identifier `validate_operation`
 raises, alongside the representative VALID operations that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
-that is NOT outside the active position). The 20 in-slice rejected corpus
+that is NOT outside the active position). The 21 in-slice rejected corpus
 cases are additionally round-tripped through the real validator here (not
 just via the engine's rejected sweep), so a regression in either the node
 construction or the model resolution fails at the unit layer first.
@@ -189,7 +189,7 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 20 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 21 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
@@ -207,6 +207,7 @@ _REJECTED_CASE_IDS = (
     "m-op-algebra-046",
     "m-op-algebra-047",
     "m-op-algebra-048",
+    "m-op-algebra-049",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -444,6 +445,41 @@ def test_an_ancestors_attribute_is_addressable_from_a_descendant_position() -> N
     # The contravariant half the family rule keeps: an ancestor's member applies to
     # every concrete under it, so it applies at a narrower position too.
     _validate("Dog", Comparison(op="eq", attr="Animal.name", value="Rex"), _ANIMAL)
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        Comparison(op="eq", attr="Dog.name", value="Rex"),
+        OrderBy(operand=All(), keys=(OrderKey(attr="Dog.name"),)),
+        Comparison(op="eq", attr="Pet.licenseId", value="L-1"),
+        Narrow(
+            entity="Animal",
+            to=("Dog",),
+            operand=Comparison(op="eq", attr="Cat.name", value="Tom"),
+        ),
+    ],
+    ids=("predicate", "order-key", "abstract-subtype", "disjoint-sibling"),
+)
+def test_the_position_is_measured_against_the_entity_a_reference_names(op: Operation) -> None:
+    # `m-op-algebra`: "the active position's effective set is a subset of the
+    # REFERENCED Entity's" — not the ancestor's that declares the member. `name` is
+    # declared on Animal, so measuring the declaring entity would accept `Dog.name`
+    # at the root position and, worse, accept `Cat.name` inside a narrow to Dog,
+    # where the reference addresses no row the position contains. Pinned by
+    # m-op-algebra-049.
+    exc = _rejects(op, _ANIMAL, "Animal")
+    assert exc.rule == "subtype-attribute-outside-narrow-scope"
+
+
+def test_a_subtype_spelling_is_in_scope_once_the_position_is_narrowed_to_it() -> None:
+    # The remedy the rule names: narrowing to Dog makes `Dog.name` applicable, which
+    # is what keeps the rejection above `subtype-attribute-outside-narrow-scope`
+    # rather than the non-family rule.
+    op = Narrow(
+        entity="Animal", to=("Dog",), operand=Comparison(op="eq", attr="Dog.name", value="Rex")
+    )
+    _validate("Animal", op, _ANIMAL)
 
 
 # --------------------------------------------------------------------------- #

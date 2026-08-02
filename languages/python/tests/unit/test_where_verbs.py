@@ -91,8 +91,10 @@ def test_set_string_matches_the_class_member_reference() -> None:
 
 def test_set_on_a_nested_value_object_path_raises() -> None:
     # Only a TOP-LEVEL attribute or value-object member is assignable — a
-    # value object always binds its WHOLE document, never a nested path.
-    with pytest.raises(TypeError, match="top-level attribute or value-object member"):
+    # value object always binds its WHOLE document, never a nested path. The
+    # refusal carries the assignment family every other `.set(...)` refusal does,
+    # so one `except` clause covers the whole surface.
+    with pytest.raises(ModelCopyError, match="top-level attribute or value-object member"):
         vom.Customer.address.city.set("Oslo")
 
 

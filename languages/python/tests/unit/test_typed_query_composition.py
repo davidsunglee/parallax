@@ -8,7 +8,11 @@ error, which is why a case below carries its suppression and its runtime
 rejection in ONE test — static and runtime agreement proved by construction
 rather than in two processes that never meet.
 
-Two suppressions here have no runtime twin, and both are deliberate.
+Three suppression families here have no runtime twin, and each is deliberate for
+one reason: the composition the parameter refuses lowers to a VALID canonical
+operation, so the wire carries no record of the mistake and no preflight rule
+could restate it. `python.md` §2 states the same three.
+
 `test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is`
 asserts a SUCCESSFUL serialization under a `reportArgumentType` ignore. The
 parameter comes from the class an access went through and the wire keeps the
@@ -20,7 +24,11 @@ really is the subtype's — so the parameter is strictly narrower than the model
 there, and that test is where the asymmetry is recorded rather than discovered.
 The second is `Entity.all`: an `all` node names no position on the wire, so
 nothing downstream can tell `Dog.all` from `Animal.all` and the parameter is the
-only place an unfiltered query written at the wrong position is refused.
+only place an unfiltered query written at the wrong position is refused. The
+third is clause order — a `where` argument or a sort key written before the
+`narrow` that scopes it — because a Find Query retains clauses rather than
+wrapping them, so the refused spelling and the sanctioned one lower to one
+operation.
 
 Authoring reaches no model, so every runtime twin here runs the shared read gate
 `preflight_find` — the seam `Database.find` and `Transaction.find` both call —
@@ -368,6 +376,19 @@ def test_a_narrow_scope_is_how_a_descendants_member_reaches_an_ancestor_position
             "operand": {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
         }
     }
+
+
+def test_narrowing_after_the_predicate_is_refused_statically_and_only_statically() -> None:
+    # The predicate twin of the sort key's clause-order rule below: the `where`
+    # argument is measured at the position the query is at where the call is
+    # written, and the later `narrow` never retroactively legalizes it. It has no
+    # runtime twin because the clause order does not reach the wire — the refused
+    # spelling lowers to the very node the sanctioned one above produces, so no
+    # model-aware rule could accept one and refuse the other.
+    late_narrow = Animal.where(Dog.bark_volume > 3).narrow(Dog)  # pyright: ignore[reportArgumentType]
+    assert lowered_document(preflighted(late_narrow)) == lowered_document(
+        preflighted(Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)))
+    )
 
 
 # --------------------------------------------------------------------------- #
