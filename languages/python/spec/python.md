@@ -110,8 +110,11 @@ mutations, exceptions, or exports.
   addressable from an ancestor position. `RelationshipPath` is **covariant** in
   both parameters, for the opposite reason: its source narrows which queried
   objects a path starts from, so any descendant of the queried Entity is a legal
-  include source. Composing a value from the wrong Entity is therefore a static
-  error where the call is written. Such a static rejection is restated at run
+  include source. Composing a value at an Entity that variance does not admit is
+  therefore a static error where the call is written. What a parameter measures
+  is compatibility under that variance, never identity: a rule needing the
+  position exactly is not statable through one, which is where the quantifier's
+  interior narrow lands (below). Such a static rejection is restated at run
   time — which is what covers the serialized ingress and any untyped caller —
   whenever the composition it refuses either reaches the wire as an operation a
   model-aware validator can refuse at execution preflight, or is one the
@@ -166,9 +169,9 @@ mutations, exceptions, or exports.
   leaf's declared type are all the model's to refuse. The second test is to name
   the parameter that would state the rule and show what it is already spent on:
   `type[…]` is covariant and a type parameter's bound may not itself be generic,
-  so each narrowing form's one parameter is spent on what the narrowing produces
-  and states no relatedness (`narrow-outside-position`, below); and the interior
-  Predicate parameter of a relationship quantifier is contravariant — which is
+  so a narrowing form whose one parameter is already spent on what the narrowing
+  produces states no relatedness (`narrow-outside-position`, below); and the
+  interior Predicate parameter of a relationship quantifier is contravariant — which is
   the inheritance rule itself — so an ancestor's `narrow` satisfies it where
   `m-navigate`'s exact-naming rule refuses it
   (`narrow-outside-relationship-target`, whose hop-narrow spelling escapes only
@@ -200,8 +203,13 @@ mutations, exceptions, or exports.
   is the exception, because an Assignment's value genuinely is a member value.
 - **One query-definition error family.** Every Python Attribute Expression,
   Relationship Path, Predicate, Assignment, Sort Key, or Find Query
-  construction, composition, and refinement the frontend itself refuses raises
-  `QueryDefinitionError(ValueError)` with a stable `query-*` code. What the
+  construction, composition, and refinement the frontend refuses **by a
+  query-definition rule of its own** raises `QueryDefinitionError(ValueError)`
+  with a stable `query-*` code. A refusal that is not one of those rules keeps
+  the class its own mechanism gives it, and each such case says so where it
+  arises below: Python's call binding refuses `Entity.where()`, a path that has
+  no owner left to spell a segment from refuses a further hop, and `.set(...)`
+  reports the copy surface's verdict rather than minting a second one. What the
   frontend judges is exactly what needs no model — clause arity, single-shot
   clauses, literal and collection shapes, and the target's own declared
   temporal axes — because query authoring reaches no model. There is
@@ -739,10 +747,18 @@ mutations, exceptions, or exports.
   relationship quantifier the constructor must be called on exactly the
   relationship target (`Person.pets.exists(Pet.narrow(Cat))` —
   `m-navigate`'s
-  exact-naming rule). Naming another position builds without complaint and is
-  refused at execution preflight as
-  `OperationRejectedError(narrow-outside-relationship-target)`: which Entity a
-  hop reaches is a model fact, so nothing at authoring time can check it. The
+  exact-naming rule). The quantifier's interior parameter carries the declared
+  target and checks it — it is `Predicate[Pet]` there — so a narrow written at a
+  descendant of that target, at a sibling of it, or at an unrelated Entity is a
+  static error where the call is written:
+  `Person.pets.exists(Dog.narrow(ServiceDog))` is refused exactly as
+  `Person.pets.exists(Order.narrow(...))` is. What the parameter cannot also
+  refuse is the one direction the inheritance rule obliges it to admit — a
+  Predicate is contravariant, so an **ancestor's** narrow addresses the hop's
+  position, and no single parameter states both compatibility with a target and
+  identity with it. `Person.pets.exists(Animal.narrow(Cat))` therefore builds
+  without complaint and is refused at execution preflight as
+  `OperationRejectedError(narrow-outside-relationship-target)`. The
   Find Query clause
   `Animal.where(...).narrow(Dog, ...)` is the whole-query form: it wraps
   the Find Query's conjoined predicate as the single top-level `narrow` node's
@@ -754,7 +770,7 @@ mutations, exceptions, or exports.
   `Animal.where(Dog.bark_volume > 3).narrow(Dog)` is a static error at the
   `where` and the statically valid spelling is
   `Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))`. Like the sort
-  key's own clause-order rule below, **this one is stated statically and only
+  key's own clause-order rule above, **this one is stated statically and only
   statically**: the clause and the constructor converge on the identical
   canonical node — `narrow(Animal, [Dog], greaterThan(Dog.barkVolume, 3))` — so
   neither spelling can drift, and no model-aware rule can accept one and refuse
@@ -776,11 +792,14 @@ mutations, exceptions, or exports.
   threaded-position rule. Which concrete subtypes a class resolves to is a
   per-model fact, so the threading is the connected model's to do.
 - **What a narrowing signature does not judge.** A type parameter's bound may
-  not itself be generic, so no narrowing form states statically that the
-  classes it names are subtypes of the position it narrows. Each form solves
+  not itself be generic, so a narrowing form can state that the classes it names
+  are subtypes of the position it narrows only by solving its one parameter
+  **from** that position — which it can do only where the narrowing produces
+  nothing that parameter has to carry instead. `Entity.narrow(*subtypes,
+  where=...)` and `FindQuery.narrow(*subtypes)` are not that case: each solves
   its parameter from those classes and spends it on what the narrowing
-  *produces*: `Entity.narrow(*subtypes, where=...)` measures the scoped `where=`
-  against them, and `FindQuery.narrow(*subtypes)` moves the result parameter to
+  *produces* — the first measures the scoped `where=`
+  against them, and the second moves the result parameter to
   their union, so a subtype-declared Sort Key becomes applicable exactly where
   the narrow makes it so. The overload set that moves it is fixed at one, two,
   and three alternatives, so an argument list it cannot read — one expanded from
@@ -795,19 +814,23 @@ mutations, exceptions, or exports.
   the three the overload set reaches. Neither form can also constrain what the
   narrowing starts *from*, and the two are mutually exclusive in one signature
   because `type[…]`
-  is covariant: a parameter naming the position accepts a descendant and
-  rejects an unrelated class but cannot name the narrowed result, while one
+  is covariant: a parameter naming the position accepts that position and its
+  descendants and rejects every other class — an ancestor's included — but
+  cannot name the narrowed result, while one
   naming the result carries it and accepts anything. So
   `Animal.narrow(Dog)` and `Order.narrow(Customer)` are alike accepted by the
   checker, and an unrelated narrow target is refused by the model-aware rule
   alone (`narrow-outside-position`) — a named, immediate refusal rather than a
   wrong answer. It is one of the model-aware rejections with no static half at
   all, and it is there for the second of the two reasons given above: the
-  parameter that would state relatedness is already spent. Hop narrowing is the
-  exception and keeps one:
-  `Owner.pets.narrow(Dog)` carries its bound on the **receiver** — the hop's own
-  target — which states the same rule without a generic bound, so
-  `narrow-outside-relationship-target` is refused in the editor as well.
+  parameter that would state relatedness is already spent. The hop narrow is the
+  form the criterion above admits, and it keeps a static half: its answer holds
+  the hop's declared target whatever the narrow names, so nothing is waiting on
+  its parameter and `Owner.pets.narrow(Dog)` solves it from the **receiver** —
+  the hop's own target — which states the same rule without a generic bound.
+  That spelling of `narrow-outside-relationship-target` is therefore refused in
+  the editor as well, while the quantifier's interior spelling of the same rule
+  is not, its parameter being a contravariant Predicate rather than a `type[…]`.
 - **Temporal-read spelling.** Query-level and dimension-keyed, with Valid
   Time and Transaction Time as the only public vocabulary:
 

@@ -834,6 +834,21 @@ def test_a_hop_narrows_only_to_subtypes_of_what_it_points_at() -> None:
     assert caught.value.rule == "narrow-outside-relationship-target"
 
 
+def test_a_quantifiers_interior_term_is_measured_against_the_hops_target() -> None:
+    # The half of `narrow-outside-relationship-target` the quantifier's own
+    # parameter DOES state: the interior position is what the hop points at, so a
+    # narrow written at an unrelated Entity is refused where it is written and
+    # again at the gate. Only the ANCESTOR direction escapes — contravariance
+    # obliges the parameter to admit it — and the no-suppression case in the last
+    # section is where that is pinned.
+    with pytest.raises(OperationRejectedError) as caught:
+        preflighted(
+            Keeper.where(Keeper.badge.exists(Beast.narrow(Hound))),  # pyright: ignore[reportArgumentType]
+            _BESTIARY,
+        )
+    assert caught.value.rule == "narrow-outside-relationship-target"
+
+
 def test_a_path_reaches_the_element_type_of_every_declared_relationship_shape() -> None:
     # All three declared shapes resolve to the ELEMENT the hop reaches, because a
     # hop reaches related objects one at a time however many of them there are.
