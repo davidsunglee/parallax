@@ -1213,11 +1213,13 @@ the numeric family and `boolean` — casts the extraction to its declared neutra
 type before comparing (the fragments in the table above show the uncast form; the
 `nestedGt` rows show the cast one) and binds the **managed value** in that type: a
 `decimal(p, s)` field binds the exact decimal rather than a JSON number, and a
-`boolean` field binds the boolean. Each of the six types whose document form is a
-JSON string — `string` included — compares the extraction directly against that
-type's **comparison text** (`m-document-codec`): the characters the extraction
-itself returns, which is the stored text as above. A `boolean` field cannot join
-them, because the two extractions disagree on its characters —
+`boolean` field binds the boolean. Each of the six **text-compared** types —
+`string` included — compares the extraction directly against that type's
+**comparison text** (`m-document-codec`): the characters the extraction itself
+returns, which is the stored text as above. That set is fixed by comparison
+behavior rather than by document form, so `decimal(p, s)` — a JSON string in the
+document — is not in it. A `boolean` field cannot join them either, because the
+two extractions disagree on its characters —
 `jsonb_extract_path_text` returns `true` / `false` where `json_value` returns `1` /
 `0` — so one bound text would match on Postgres and silently match nothing on
 MariaDB. A future dialect with a different
@@ -1355,6 +1357,22 @@ present without the guard. The negated forms wrap the guarded containment / leng
 in `coalesce(…, 0)` so an empty array, a NULL column, **and** a non-array value all
 fall on the matching side of the leading `not` — all indistinguishable here, exactly
 as `m-op-algebra`'s absence collapse requires.
+
+**The candidate document comes from `m-document-codec`, and it is a third bind
+form.** It is that module's `encodeCandidate` over the element's own shape: each
+constrained path placed where the stored element would place it — nesting through a
+`one` occurrence exactly as the document nests — and spelled with that leaf's
+**document encoding**. Neither literal of the scalar split above works here, and
+neither fails loudly: `json_contains` compares **JSON values**, so a `boolean`
+element bound as the managed value its cast comparison takes gives the candidate
+`{"flag": 1}`, which matches no element storing a JSON boolean, and a
+`decimal(p, s)` bound the same way gives `{"amt": 1.50}`, which matches no element
+storing the exact digit string `"1.50"`. A `date`, `uuid`, or `bytes` candidate a
+host serializer produced would miss for the same reason — the stored element
+carries the codec's canonical spelling and containment is exact. So the candidate
+is built through the codec, never assembled around a predicate literal, exactly as
+the atomic document write is; the dialect adapts the finished candidate to its
+structured-document type at bind time.
 
 ```yaml
 # nestedEq(Customer.address.phones.type, 'home') — flat any-element:
@@ -1498,16 +1516,19 @@ been `t0.display_name = ?` under Columns layout becomes an extraction over
 extraction yields text, and `m-dialect`'s two typed-cast tables say which types do
 what: a member of the **numeric family** — `int32`, `int64`, `float32`, `float64`,
 `decimal(p,s)` — and a `boolean` member cast through the typed-cast form before
-comparing, exactly as a numeric `nestedGt` does today; each of the six types whose
-document form is a JSON string compares the extracted text directly, with no cast,
-because `m-document-codec`'s canonical spelling for it already equates and orders
-correctly as text. Those two tables are closed over the declarable types, so no
+comparing, exactly as a numeric `nestedGt` does today; each of the six
+**text-compared** types — `string`, `bytes`, `date`, `time`, `timestamp`, `uuid` —
+compares the extracted text directly, with no cast, because `m-document-codec`'s
+canonical spelling for it already equates and orders correctly as text. Which
+family a type falls in is a comparison-behavior question, not a document-form one:
+`decimal(p, s)` encodes as a JSON string and casts with the numeric family
+regardless. Those two tables are closed over the declarable types, so no
 document-resident member is left without a comparison form.
 
 **Which literal is bound follows the same split, and the two are not
 interchangeable.** A text comparison binds the type's **comparison text**
-(`m-document-codec`) — the characters the extraction itself returns, which for the
-six JSON-string spellings is the stored text unquoted. A cast comparison binds the
+(`m-document-codec`) — the characters the extraction itself returns, which for
+those six spellings is the stored text unquoted. A cast comparison binds the
 **managed value in its declared Neutral Type**, through the dialect's typed bind
 normalization (`m-dialect`), because the cast has already moved the comparison into
 the engine's own type system. Neither side may substitute the member's document

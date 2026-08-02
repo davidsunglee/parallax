@@ -143,7 +143,11 @@ compared literal follows the same split the extraction does (`m-dialect`): where
 the extraction compares as text, the bind is that type's **comparison text** from
 the same module; where the extraction is cast — the numeric family and `boolean` —
 the bind is the managed value in its declared type, so a `decimal` leaf binds the
-exact decimal and a `boolean` leaf the boolean. That is what makes a `date`,
+exact decimal and a `boolean` leaf the boolean. A to-many equality a dialect
+expresses by document **containment** rather than by extraction (`m-dialect`)
+binds a third form from the same module — the containment candidate, carrying
+each constrained leaf's **document encoding** — because what it must match is the
+element as stored. That is what makes a `date`,
 `decimal`, `bytes`, `time`, `timestamp`, `uuid`, or `boolean` leaf comparable at
 all: both sides of the comparison are the one form the codec and the dialect agree
 on, rather than whatever a host language would have rendered.
