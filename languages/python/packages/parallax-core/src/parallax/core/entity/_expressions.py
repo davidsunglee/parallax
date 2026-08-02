@@ -104,6 +104,7 @@ from parallax.core.op_algebra import (
     Or,
     OrderKey,
     PathSegment,
+    QueryDefinitionError,
     Scalar,
     StringMatch,
     StringOp,
@@ -887,6 +888,12 @@ class RelationshipPath[E, R]:
         hop's declared target — a hop narrow does not move where a quantifier's
         interior predicates are measured, since a quantifier reads the hop alone.
 
+        Narrowing is single-shot per segment: a segment carries one alternative
+        list, so a second narrow on the same hop could only intersect or replace
+        the first, and both silently answer something other than what either call
+        asked for. Continuing to another relationship starts a fresh segment,
+        which narrows its own target independently.
+
         At least one subtype is required, like every other narrowing form. A
         segment records "no narrow" as an empty alternative list, so accepting a
         narrow to nothing would answer the broad path itself — the request would
@@ -895,10 +902,22 @@ class RelationshipPath[E, R]:
         (``narrow-empty-effective-set``); this one has no such refusal to fall
         back on, because it lowers to no node of its own.
         """
-        if not subtypes:
-            raise ValueError("narrow requires at least one subtype")
-        narrowed = tuple(_subtype_names(subtype) for subtype in subtypes)
         *head, last = self.segments
+        if last.narrow:
+            raise QueryDefinitionError(
+                code="query-path-invalid",
+                message=(
+                    f"{last.rel}: narrowing is single-shot per path segment and this hop is "
+                    f"already narrowed to {', '.join(last.narrow)}; derive the segment from "
+                    "the un-narrowed hop"
+                ),
+            )
+        if not subtypes:
+            raise QueryDefinitionError(
+                code="query-path-invalid",
+                message=f"{last.rel}: narrow requires at least one subtype",
+            )
+        narrowed = tuple(_subtype_names(subtype) for subtype in subtypes)
         new_last = PathSegment(rel=last.rel, narrow=tuple(local for local, _ in narrowed))
         new_target = self.target
         if len(narrowed) == 1:  # a hop narrowed to one subtype points at that subtype
@@ -928,8 +947,11 @@ class RelationshipPath[E, R]:
 
     def _single_hop_ref(self) -> str:
         if len(self.segments) != 1:
-            raise ValueError(
-                ".exists()/.not_exists() quantify a single relationship hop, not a multi-hop "
-                "include path (m-navigate)"
+            raise QueryDefinitionError(
+                code="query-path-invalid",
+                message=(
+                    ".exists()/.not_exists() quantify a single relationship hop, not a multi-hop "
+                    "include path (m-navigate)"
+                ),
             )
         return self.segments[0].rel

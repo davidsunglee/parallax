@@ -311,8 +311,9 @@ def test_none_builds_not_exists() -> None:
 
 
 def test_any_none_on_a_multi_hop_path_is_rejected() -> None:
-    with pytest.raises(ValueError, match="single relationship hop"):
+    with pytest.raises(QueryDefinitionError, match="single relationship hop") as caught:
         sm.SnapOrder.items.statuses.exists()
+    assert caught.value.code == "query-path-invalid"
 
 
 def test_a_quantifier_predicate_builds_a_query() -> None:

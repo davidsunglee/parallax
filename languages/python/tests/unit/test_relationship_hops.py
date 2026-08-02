@@ -30,6 +30,7 @@ from parallax.core import (
     DomainModel,
     Entity,
     OperationRejectedError,
+    QueryDefinitionError,
     Rel,
     TablePerHierarchy,
     attr,
@@ -232,8 +233,31 @@ def test_a_hop_narrow_to_no_subtype_is_refused_rather_than_erased() -> None:
     # refuses as `narrow-empty-effective-set`; this one lowers to no node, so the
     # arity is its own rule (`python.md` "Every Python narrowing form requires at
     # least one subtype alternative").
-    with pytest.raises(ValueError, match="at least one subtype"):
+    with pytest.raises(QueryDefinitionError, match="at least one subtype") as caught:
         Root.branches.narrow()
+    assert caught.value.code == "query-path-invalid"
+
+
+def test_a_second_narrow_on_one_hop_is_refused_rather_than_replacing_the_first() -> None:
+    # Narrowing is single-shot per segment: a segment carries one alternative
+    # list, so a second narrow on the same hop could only intersect or replace
+    # the first, and either silently answers something neither call asked for.
+    # The receiver's own target is all its parameter states, so nothing about the
+    # first narrow is typed and this is the whole rule.
+    with pytest.raises(QueryDefinitionError, match="single-shot") as caught:
+        Root.branches.narrow(Branch).narrow(Branch)
+    assert caught.value.code == "query-path-invalid"
+
+
+def test_a_deeper_hop_narrows_independently_of_the_hop_it_continued() -> None:
+    # Single-shot is per segment rather than per path: continuing to another
+    # relationship starts a fresh alternative list, and the hop it continued
+    # keeps the one it was given.
+    path = Root.branches.narrow(Branch).leaves.narrow(Leaf)
+    assert [(segment.rel, segment.narrow) for segment in path.segments] == [
+        ("Root.branches", ("Branch",)),
+        ("Branch.leaves", ("Leaf",)),
+    ]
 
 
 def test_a_path_that_already_continued_cannot_continue_again() -> None:
