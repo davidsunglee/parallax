@@ -71,10 +71,11 @@ A `Presence` is always classified against one member of a shape, and the member'
 own kind fixes what a `Present` carries. A `Leaf` member carries a `NeutralValue`
 of its declared Neutral Type. An `Occurrence` member carries that occurrence's
 own `Document` — one object for `One`, an ordered array of objects for `Many` —
-and that document is itself a codec product: a consumer obtains it by encoding
-the occurrence's own shape, never by assembling a host-language value graph.
-Nesting is therefore expressed by composition rather than by a second interface,
-and every leaf at every depth still passes through the encoding table below.
+and that document is always a codec product: a consumer obtains a `One`'s object
+from `encode` and a `Many`'s array from `encodeMany`, never by assembling a
+host-language value graph or a JSON array of its own. Nesting is therefore
+expressed by composition rather than by a second interface, and every leaf at
+every depth still passes through the encoding table below.
 
 ## Operations
 
@@ -82,9 +83,16 @@ and every leaf at every depth still passes through the encoding table below.
 encode(shape: DocumentShape,
        values: Mapping<MemberName, Presence>)        -> Document
 
+encodeMany(shape: DocumentShape,
+           elements: ordered sequence<
+                       Mapping<MemberName, Presence>>) -> Document
+
 decode(shape: DocumentShape,
        document: Document,
        path: nonempty sequence<MemberName>)          -> Presence
+
+comparisonText(type: NeutralType,
+               value: NeutralValue)                  -> string
 
 patch(document: Document,
       patches: nonempty ordered sequence<DocumentPatch>) -> Document
@@ -101,8 +109,21 @@ value per applicable member. Its result is the whole bind a consumer stores: an
 insert, a fresh Value Object column value, and a fixture document all come from
 here. Members are emitted in the shape's own order, so one set of values always
 produces one document. An `Occurrence` member's value is written in place as the
-occurrence's own document, which the same `encode` produced from that
-occurrence's shape, so one complete document is composed from the leaves up.
+occurrence's own document, which `encode` (for a `One`) or `encodeMany` (for a
+`Many`) produced from that occurrence's shape, so one complete document is
+composed from the leaves up.
+
+`encodeMany` builds the one document a `Many` occurrence stores: the ordered JSON
+array whose elements are, in the sequence's own order, the `encode` of each
+element's values against that occurrence's shape. It exists because `encode`
+builds one object from one value mapping while a `Many` is a *sequence* of them —
+without it, a `many` occurrence would have exactly one construction route, a
+consumer assembling the array itself, which is the one JSON structure this module
+would then not own. An empty sequence yields `[]`, the same document a `Missing`
+or `ExplicitNull` `Many` member encodes to (below). Every element crosses the
+encoding table, and an element mapping may itself carry a nested occurrence's
+document, so a `many` of nested occurrences composes to any depth through these
+two operations and no other.
 
 `decode` reads one known path and answers with its presence. The path is resolved
 against the shape, so the declared Neutral Type comes from the model rather than
@@ -114,7 +135,24 @@ replacement need. A path naming no member of the shape is a caller error, not an
 absence. Decoding is per path rather than whole-document because a row-form read
 needs only the members its consumer asked for and never pays to decode the rest;
 a consumer that wants an occurrence's members decodes them against that
-occurrence's shape and its returned document.
+occurrence's shape and its returned document. For a `Many` that returned document
+is the array, and **each of its elements is itself a document over that same
+shape**: the elements are decoded one at a time, in order, by passing an element
+back to `decode` with the occurrence's shape. That is what makes a `many`
+traversable without an element index — a `path` stays a sequence of member names
+and never addresses an array position.
+
+`comparisonText` answers the exact characters a dialect's text extraction returns
+for the encoding of `value` — the literal SQL binds when the member's declared
+type compares as **extracted text** rather than through a cast (`m-dialect`,
+`m-sql`). For every type whose document form is a JSON string it is that string's
+own characters, unquoted and unescaped, so the bound literal is the spelling the
+writer stored. For `boolean`, whose document form is a JSON boolean, it is `true`
+or `false` — the text the extraction yields, which the *encoded* value is not: a
+bound JSON boolean compared against an extracted text is a type mismatch, not a
+comparison. The operation is defined for exactly the types that compare as text;
+a numeric-family literal has no comparison text, because its comparison casts the
+extraction and binds the encoded JSON number instead.
 
 `patch` applies ordered patches to a document in memory and returns the result.
 It never reads the database and never issues a statement; composing the
@@ -133,7 +171,7 @@ Every Neutral Type has exactly one document spelling:
 |---|---|
 | `boolean` | JSON boolean |
 | `int32`, `int64` | JSON number, integral, no exponent or fraction |
-| `float32`, `float64` | JSON number; a finite value only |
+| `float32`, `float64` | JSON number, finite, the shortest number that decodes back to the value (below) |
 | `string` | JSON string |
 | `decimal(p, s)` | JSON string, the exact decimal spelling: a `-` only for a value below zero, the integer digits with no leading zero (a single `0` when the integer part is zero), and — when `s > 0` — `.` and exactly `s` fraction digits |
 | `bytes` | JSON string, lowercase hexadecimal, two digits per byte, no prefix or separator |
@@ -143,7 +181,7 @@ Every Neutral Type has exactly one document spelling:
 | `uuid` | JSON string, canonical lowercase 8-4-4-4-12 form |
 | `json` | the JSON value itself |
 
-Six rules make the table total rather than illustrative.
+Seven rules make the table total rather than illustrative.
 
 **Every type is here.** A member whose declared type has no row above is not
 storable in a document. There is no fallback to a host language's default
@@ -165,6 +203,23 @@ silently changes a value the database would have preserved. `float32`/`float64`
 are numbers because they *are* binary floats; a non-finite float is not a
 `m-core` value and never reaches the codec.
 
+**A float's JSON number is the shortest one that decodes back to it.** "A JSON
+number" alone does not pin a binary float down: `0.1` and `0.10000000000000001`
+decode to the same binary64, so two conforming implementations could write two
+*different* JSON numbers for one value — and two different numbers are two
+different documents, so a `then.tableState` authored as `0.1` would pass against
+one implementation and fail against the other, and a whole-occurrence comparison
+(`m-unit-work`) against a subtree some other writer stored would report a change
+where the value never changed. The encoding is therefore the number with the
+**fewest significant digits** that decodes back to the value under the member's
+declared format — binary32 for `float32`, binary64 for `float64` — and, where two
+equally short numbers both decode to it, the one nearest the value. This fixes
+the *number*, not its spelling: `20` and `20.0` are one JSON number and either
+may be written, while `0.1` and `0.10000000000000001` are two numbers and only
+`0.1` is admissible. It is what a shortest-round-trip float formatter produces; a
+fixed-width `17`-significant-digit rendering is not admissible, even though it
+also round-trips.
+
 **Encoding and decoding are inverse.** For every value of a declared type,
 decoding its encoding yields an equal value, and the encoding is the unique
 document value this table admits. So a value's document form does not depend on
@@ -174,7 +229,9 @@ like without any consumer normalizing first. Uniqueness is uniqueness of the JSO
 *value*: a string encoding is unique character for character, while a JSON number
 is a number, so `1` and `1.0` are one document value and neither a serializer's
 rendering nor an engine's numeric normalization can make two encodings of one
-value differ.
+value differ. For a binary float that uniqueness is what the shortest-number rule
+above delivers — without it the table would admit many JSON numbers per value,
+which is a different document each time.
 
 **Decoding is by declared type, never by inspection.** A JSON string is decoded
 as a `uuid`, a `date`, or a `string` because the member declares which. The
@@ -191,7 +248,10 @@ values are equal, and — for an ordered type — the encodings compare in the v
 own order. Zero-padded fixed-width fields with the most significant first, a
 `Z`-normalized UTC instant, lowercase hexadecimal, and the canonical lowercase UUID
 form are what deliver that, so they are normative here for a reason that lives
-outside this module. A change to any of these spellings changes predicate and
+outside this module. The literal such a comparison binds is the type's
+`comparisonText`, never its encoded document value: for the six types whose
+document form is a JSON string the two coincide character for character, and for
+`boolean` they do not. A change to any of these spellings changes predicate and
 ordering results, and MUST therefore be made together with `m-dialect`'s
 corresponding decision — adding a cast for that type — rather than alone.
 
@@ -211,8 +271,9 @@ A `Many` occurrence is an ordered JSON array of documents and is never null: its
 empty array is the only representation of no contained values, so `Missing` and
 `[]` are the same logical zero state on decode and `[]` is what `encode` writes.
 `encode` therefore writes `[]` for a `Many` member given `Missing`,
-`ExplicitNull`, or `Present` with an empty array alike, and `decode` of a `Many`
-path answers `Present` with `[]` for a key that is absent, JSON null, or an empty
+`ExplicitNull`, or `Present` with an empty array alike — the same document
+`encodeMany` returns for an empty sequence — and `decode` of a `Many` path
+answers `Present` with `[]` for a key that is absent, JSON null, or an empty
 array.
 
 A `One` occurrence is one nested object, `ExplicitNull`, or `Missing`. Each of
@@ -245,11 +306,14 @@ rebuilt a document from the members it knows would silently drop the rest.
   leaf presence — a `NeutralValue`, `ExplicitNull`, or `Missing`: writing
   `ExplicitNull` stores JSON null and writing `Missing` removes the key. A whole
   occurrence is replaced through `SetOccurrence`, never through `SetLeaf`.
-- `SetOccurrence` replaces the subtree at its path in place. Every key outside
-  the subtree survives; unknown keys **inside** the replaced subtree do not. That
-  asymmetry is deliberate — an author who assigns a whole occurrence has stated
-  what that occurrence now is — and it is the one case where patching loses data
-  a newer writer stored.
+- `SetOccurrence` replaces the subtree at its path in place. Its value is that
+  occurrence's own document — an `encode` object for a `One`, an `encodeMany`
+  array for a `Many` — or `Null`, and it is the same value a subtree-replacing
+  `UPDATE` binds (`m-sql`), which is what keeps the in-memory successor and the
+  statement interchangeable. Every key outside the subtree survives; unknown keys
+  **inside** the replaced subtree do not. That asymmetry is deliberate — an
+  author who assigns a whole occurrence has stated what that occurrence now is —
+  and it is the one case where patching loses data a newer writer stored.
 
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical
@@ -263,16 +327,19 @@ not declare survive the close-and-insert (`m-unit-work`).
 ## Determinism and comparison
 
 Document object-member order is **not observable state**. Construction is
-nevertheless deterministic — `encode` emits members in shape order and `patch`
-applies its patches in the given order — so one set of logical values produces
-one document with one member order, which is what makes a golden bind stable to
-author. Determinism is a property of the document the codec builds, not of any
+nevertheless deterministic — `encode` emits members in shape order, `encodeMany`
+emits elements in its sequence's order, and `patch` applies its patches in the
+given order — so one set of logical values produces one document with one member
+order, which is what makes a golden bind stable to author. Determinism is a property of the document the codec builds, not of any
 serialized text: whitespace, and whatever order a driver, an engine, or a
 storage type imposes when it stores or returns the document, sit below this
 contract, which is why comparison is structural rather than textual.
 
 Comparison is **structural**: two documents are equal when they have the same
 members with equal values, regardless of key order or insignificant whitespace.
+Two arrays — the stored form of a `Many` occurrence — are equal when they have
+the same length and equal elements in the same order, because a `Many` is
+ordered and its order is observable state.
 Consumers that compare documents state their own rules on top of this one:
 `m-case-format` fixes structural comparison for asserted table state and
 fixtures, and `m-unit-work` fixes it for whole-occurrence observed equality.
@@ -291,9 +358,11 @@ two paths agree; it promises never to invent a value for one.
 
 ## Consumer contract
 
-- SQL lowering encodes a predicate or ordering literal through this module before
-  binding it, so a comparison against a document-resident member compares the
-  spelling the writer stored.
+- SQL lowering takes a predicate or ordering literal from this module before
+  binding it — the encoded JSON number where the comparison casts the extraction,
+  the type's `comparisonText` where it compares the extraction as text — so a
+  comparison against a document-resident member compares the spelling the writer
+  stored, in the form the extraction actually yields.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`.
 - Read materialization decodes only the paths its result form needs, by declared
@@ -304,5 +373,6 @@ two paths agree; it promises never to invent a value for one.
   documents here rather than each spelling a leaf themselves.
 
 No consumer may hand a raw host-language value to a JSON serializer, spell a leaf
-encoding of its own, decode by inspecting a JSON value's shape, or expose a raw
-document as an Entity member or result field.
+encoding of its own, assemble a `Many` occurrence's array itself, decode by
+inspecting a JSON value's shape, or expose a raw document as an Entity member or
+result field.

@@ -139,10 +139,12 @@ relationship target.
 
 An extracted leaf is decoded by its **declared** Neutral Type through
 `m-document-codec`, never by inspecting the extracted JSON value's shape, and a
-compared literal is encoded through the same table before it is bound. That is
-what makes a `date`, `decimal`, `bytes`, `time`, `timestamp`, or `uuid` leaf
-comparable at all: both sides of the comparison are the one spelling the codec
-defines.
+compared literal comes from the same module before it is bound: its encoding
+where the extraction is cast to a numeric type, its **comparison text** where the
+extraction compares as text. That is what makes a `date`, `decimal`, `bytes`,
+`time`, `timestamp`, `uuid`, or `boolean` leaf comparable at all: both sides of
+the comparison are the one spelling the codec defines, in the form the extraction
+yields.
 
 ## Writing — one atomic document bind
 
