@@ -6,10 +6,11 @@
 > `reladomo/src/main/java/com/gs/fw/common/mithra/`; **`generator/`** =
 > `reladomogen/src/main/java/com/gs/fw/common/mithra/generator/`.
 
-The serialization (`reladomoserial`) and GraphQL (`reladomographql`) modules build JSON serializers and
-GraphQL schemas at runtime purely by introspecting the **generated** metamodel — no XML is read at the
-point of use. Both depend on the same two-level seam, which is itself a core capability worth noting for
-any extraction:
+The serialization (`reladomoserial`) and GraphQL (`reladomographql`) modules map the model purely by
+introspecting the **generated** metamodel — no XML is read at the point of use. They differ in *when*
+they do it: `reladomoserial` builds its serializers at runtime from the live finder, while
+`reladomographql` splits the work across build time and runtime (see **GraphQL** below). Both depend on
+the same two-level seam, which is itself a core capability worth noting for any extraction:
 
 - **`RelatedFinder`** (`mithra/finder/RelatedFinder.java`) — the generated per-class singleton, the live
   runtime descriptor. Key introspection methods: `getPersistentAttributes()` → `Attribute[]`,
@@ -36,13 +37,33 @@ gets the finder via `obj.zGetPortal().getFinder()` and delegates into the core e
 Deserialization (`ReladomoDeserializer` + `DeserializationClassMetaData`, also core) uses
 `getAttributeByName`/`getRelationshipFinderByName` to route incoming fields.
 
-**GraphQL**: `SDLGenerator` walks the cache-controller set and, per class, calls
-`getPersistentAttributes()`/`getAsOfAttributes()`/`getSourceAttribute()`/`getRelationshipFinders()` to emit
-SDL (`reladomographql/.../SDLGenerator.java`); relationship cardinality comes from
-`AbstractRelatedFinder.zGetMapper().isToMany()`. `SchemaProvider` parses that SDL and wires
-`ReladomoQueryFetcher`/`ReladomoMutationFetcher`/`AttributeDataFetcher` per class. `FilterQueryBuilder`
-translates a GraphQL filter map into an `Operation` tree by resolving keys via `getAttributeByName` /
-`getRelationshipFinderByName` and calling the fluent operation methods on the typed attribute.
+**GraphQL**: the module walks the metamodel **twice, in two separate phases**, and the schema is not
+built at runtime.
+
+*Build time.* `SDLGenerator.generate(String filename)` writes SDL to a file through a `FileWriter`
+(`SDLGenerator.java:43`, `45`). It walks the cache-controller set (`SDLGenerator.java:64`) and, per
+class, calls `getPersistentAttributes()`/`getAsOfAttributes()`/`getSourceAttribute()`/
+`getRelationshipFinders()` to emit the types; relationship cardinality comes from
+`AbstractRelatedFinder.zGetMapper().isToMany()`. Its output is a committed, hand-editable artifact —
+`src/test/resources/test-schema.graphqls` is the in-repo example.
+
+*Runtime.* `SchemaProvider.forResource(String)` never calls `SDLGenerator`. It reads two **static
+resources** — `meta.graphqls` and the named schema resource (`SchemaProvider.java:52-60`, `140`) —
+concatenates them, and parses them into a `TypeDefinitionRegistry`. It then walks the cache-controller
+set **again, independently** (`SchemaProvider.java:88`) to build only the `RuntimeWiring`: a
+`ReladomoQueryFetcher`, `ReladomoMutationFetcher`, and `AggregateQueryFetcher` per class, plus an
+`AttributeDataFetcher` per persistent attribute. `makeExecutableSchema(typeRegistry, runtimeWiring)`
+joins the two (`SchemaProvider.java:112`).
+
+So the **type system comes from committed SDL text** and the **resolvers come from a live metamodel
+walk**, joined only by duplicated name conventions (`name + "_insert"`, `name + "ById"`,
+`englishPluralize(name)`, `attr.getAttributeName()`). Nothing mechanically checks that the two agree, so
+the committed SDL can advertise a field no wiring backs, or omit one the wiring provides.
+
+`FilterQueryBuilder` translates a GraphQL filter map into an `Operation` tree by resolving keys via
+`getAttributeByName` / `getRelationshipFinderByName` and calling the fluent operation methods on the
+typed attribute. It is wired only into the read fetchers, so the predicate language is unreachable from
+`Mutation`.
 
 ## Testing patterns
 
@@ -56,4 +77,4 @@ they are non-core modules.
 - `com/gs/reladomo/metadata/ReladomoClassMetaData.java` — cached class-aware facade (fromFinder 86, fromBusinessClass 110)
 - `mithra/util/serializer/` — core serialization engine: `SerializationConfig.java`, `SerializationNode.java` (87-111), `ReladomoSerializationContext.java` (245-284), `SerialWriter.java`, `ReladomoDeserializer.java`, `DeserializationClassMetaData.java`
 - `reladomoserial/` — Jackson/Gson glue: `JacksonReladomoModule.java`, `JacksonReladomoSerializer.java`, `JacksonReladomoWrappedDeserializer.java`, `GsonWrappedSerializer.java`, `GsonReladomoSerialWriter.java`
-- `reladomographql/` — `SDLGenerator.java`, `SchemaProvider.java`, `ReladomoQueryFetcher.java`, `ReladomoMutationFetcher.java`, `FilterQueryBuilder.java`, `AttributeDataFetcher.java`
+- `reladomographql/` — build time: `SDLGenerator.java` (`generate` 43, `FileWriter` 45, cache-controller walk 64); runtime: `SchemaProvider.java` (`forResource` 52, static-resource reads 54/60/140, second cache-controller walk 88, `makeExecutableSchema` 112), `ReladomoQueryFetcher.java`, `ReladomoMutationFetcher.java`, `FilterQueryBuilder.java`, `AttributeDataFetcher.java`; committed SDL: `src/main/resources/meta.graphqls`, `src/test/resources/test-schema.graphqls`
