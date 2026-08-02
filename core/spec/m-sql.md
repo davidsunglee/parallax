@@ -1210,8 +1210,11 @@ hole structure diverges, the `binds` are authored as a **per-dialect map**
 The compared `value` is a **typed** `m-op-algebra` literal; a numeric-family
 attribute casts the extraction to its declared neutral type before comparing (the
 typed-cast form is a per-dialect `m-dialect` decision), and every other declarable
-type — `string` included — compares the extraction directly against the canonical
-text `m-document-codec` stored, as above. A future dialect with a different
+type — `string` included — compares the extraction directly against that type's
+**comparison text** (`m-document-codec`): the characters the extraction itself
+returns, which for a JSON-string spelling is the stored text as above and for a
+`boolean` field is `true` / `false` rather than a bound boolean. A future dialect
+with a different
 document type — Snowflake `VARIANT` — uses its own extraction (a `VARIANT` path
 expression) behind the same seam while preserving the path order and result
 semantics. The independent `then.referenceSql` oracle spells the extraction a
@@ -1493,8 +1496,14 @@ numeric `nestedGt` does today; every other declarable type compares the extracte
 text directly, with no cast, because `m-document-codec`'s canonical spelling for it
 already equates and orders correctly as text. Those two tables are closed over the
 declarable types, so no document-resident member is left without a comparison form.
-Either way the compared literal is encoded through `m-document-codec`, so both
-sides carry the same spelling.
+Either way the compared literal comes from `m-document-codec` so that both sides
+carry one spelling, but **which** of its answers is bound follows the same split:
+a cast comparison binds the encoded JSON number, and a text comparison binds the
+type's **comparison text** — the characters the extraction itself returns. The
+two are not interchangeable. A `boolean` member's document form is a JSON
+boolean, so binding its *encoding* would compare a bound boolean against
+`jsonb_extract_path_text(…)`, a type mismatch rather than the textual comparison
+this rule selects; its comparison text is `true` or `false`.
 
 Everything else is unchanged: the absence collapse, the operator-by-operator
 fragments, the negation normalizations, the per-dialect bind-hole divergence that
