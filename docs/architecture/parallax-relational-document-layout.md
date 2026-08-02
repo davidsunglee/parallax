@@ -62,8 +62,12 @@ authoritative.
 ## Authoring
 
 Omitting `layout` retains conventional column storage. Selecting Relational
-Document Layout requires the Structured Column name; there is no implicit
-`payload` convention.
+Document Layout requires the Structured Column name in *accepted metadata*, but
+not from the author: a frontend may supply a conventional name during
+normalization. Python does — `layout=Document()` selects the column `payload`,
+and `Document(column="…")` overrides it — while the canonical descriptor always
+carries the resolved name explicitly at `layout.document.column`. Nothing
+downstream of authoring handles an unresolved name.
 
 Python authors:
 
@@ -277,20 +281,27 @@ are heterogeneous without a tag filter and homogeneous for the applicable
 variant. The existing Navigable Member Namespace rules prevent two declarations
 that can apply to the same concrete row from claiming the same canonical path.
 
-Typed extraction for a subtype-specific path must guard the extraction and cast
-inside a tag-aware expression:
-
-```sql
-case
-  when kind = 'cash' then cast(<extract payload.detail> as decimal)
-end
-```
+A predicate or ordering term over a path that is not applicable to every
+concrete variant the statement selects is **partitioned by variant**: per-variant
+statements, or a `union all` of tag-filtered branches, so no cast ever evaluates
+against a row of the wrong variant.
 
 It is not sufficient to put `kind = 'cash'` elsewhere in the `where` clause and
 rely on expression evaluation order. PostgreSQL and MariaDB may evaluate an
-unguarded incompatible cast before the separate predicate. Broad polymorphic
-reads first resolve the variant tag and decode only that variant's applicable
-document shape.
+unguarded incompatible cast before the separate predicate.
+
+Nor is a tag-aware expression sufficient, which is where this document
+originally stopped one step short. Measurement against the pinned engines showed
+that a `case when kind = 'cash' then cast(…) end` wrapper is not a guarantee
+either: PostgreSQL's documented constant-folding of a `case` branch can raise
+from a branch no row reaches, and MariaDB never raises at all — a failed `CAST`
+in a non-data-modifying statement is a warning under every `SQL_MODE`, so the
+same query returns a silently coerced value. One engine's hard error and the
+other's wrong answer are not a portable contract. `m-sql` is normative; the
+statement-shape rule replaced the expression-shape remedy.
+
+Broad polymorphic reads first resolve the variant tag and decode only that
+variant's applicable document shape, so projection needs no partitioning.
 
 ### Table per concrete subtype
 
@@ -510,13 +521,19 @@ TPH tag column. The existing physical-column collision rule reports the defect.
 
 `m-storage-layout` owns:
 
-- root-owned layout validation;
 - structural-role classification;
 - physical Column Slots and order;
 - logical Member Placements;
 - Structured Column and direct-column collisions;
 - rejection of document-resident Column Overrides; and
 - rejection of Indexes over document-resident Attributes.
+
+It does **not** own the root-ownership rejection. `m-inheritance` already owns
+every other `*-not-root-owned` rule — temporal axes, optimistic locking, the
+shared table, and persistence — with one emitting function and one diagnostic
+shape, so layout became the fifth instance there rather than a sixth vocabulary
+in a second module. `m-storage-layout` consumes the resulting root ownership and
+rejects the *consequences* of a valid root-owned layout.
 
 Its compiler consumes accepted Compiled Metadata, the Inheritance Facet, and the
 Relationship Facet. The relationship dependency is explicit because accepted
@@ -546,13 +563,15 @@ document expressions and typed casts.
 
 ## Formation errors
 
+Inheritance owns the rejection of a layout declared outside a standalone Entity
+or inheritance root, as it owns every other root-owned family policy.
+
 Storage Layout owns the semantic rejection vocabulary for:
 
-- a layout declared outside a standalone Entity or inheritance root;
 - a non-default Column Override on a document-resident member;
 - an Index naming a document-resident Attribute; and
 - a Structured Column colliding with a direct Attribute or discriminator
-  column.
+  column, through the existing physical-column collision rule.
 
 Descriptor and Python frontends reject only malformed authoring syntax and
 types. They do not duplicate semantic role classification.
@@ -575,7 +594,10 @@ The compatibility corpus needs focused witnesses for:
 
 - descriptor layout normalization and root ownership;
 - PostgreSQL and MariaDB DDL;
-- representative Document Codec scalar encodings;
+- every Document Codec leaf encoding — one witness per row of the encoding
+  table, plus absence and explicit null — rather than a representative sample,
+  because the six types with no defined spelling before this design got there by
+  never being exercised;
 - insert, read, scalar path update, whole Value Object replacement, and
   physical table state;
 - predicates, ordering, missing/null behavior, and nested Value Objects;

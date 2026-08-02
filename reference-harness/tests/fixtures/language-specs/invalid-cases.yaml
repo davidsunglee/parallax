@@ -40,15 +40,27 @@
 
 - name: unclaimed-conditional
   base: valid-snapshot.md
-  old: "No conditional capability is part of this claim."
+  old: "decision is recorded; no other conditional capability is part of this claim."
   new: |-
-    No conditional capability is part of this claim.
+    decision is recorded; no other conditional capability is part of this claim.
 
     ### Process cache
 
     A process cache is configured.
   code: unexpected-conditional-section
   message: "remove 'Process cache'; m-process-cache is not claimed"
+
+- name: missing-claimed-conditional
+  base: valid-snapshot.md
+  old: |-
+    ### Relational Document Layout
+
+    The implementation does not support the root-owned `Document` Storage Layout.
+    The capability is recorded as deferred in section 1, and formation refuses every
+    `Document` declaration rather than accepting a subset it cannot execute.
+  new: ""
+  code: missing-conditional-section
+  message: "retain 'Relational Document Layout'; m-storage-layout is claimed"
 
 - name: missing-source-topology
   base: valid-snapshot.md

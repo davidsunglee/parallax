@@ -51,6 +51,24 @@
           "enum": ["read-write", "read-only"],
           "default": "read-write"
         },
+        "layout": {
+          "$comment": "Root-owned Storage Layout. Placed at the same entity position for every family participant without structurally forbidding it on a descendant: the family rule is not expressible per entity and is deferred to whole-model formation (inheritance-layout-not-root-owned). Omission is the only spelling of conventional Columns storage, so there is no `columns` member to write.",
+          "description": "Relational Document Layout selection (m-storage-layout). Omit for conventional Columns storage.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["document"],
+          "properties": {
+            "document": {
+              "description": "One shared Structured Column carries this mapping's document-resident members. The resolved column name is always explicit in the canonical descriptor.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["column"],
+              "properties": {
+                "column": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
         "attributes": {
           "type": "array",
           "minItems": 1,

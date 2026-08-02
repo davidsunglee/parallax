@@ -194,6 +194,27 @@ table-state rows, which do not fit, stay readable as block maps. Timestamp colum
 in `then.tableState` are ISO-8601 UTC strings at core microsecond precision, with
 the open-bound `infinity` as the literal string `infinity`.
 
+**A document-valued cell compares structurally, in every dialect.** Where a cell
+holds a structured document — a Value Object column, or a Relational Document
+Layout Structured Column — the comparison is by members and values, independent
+of key order and insignificant whitespace (`m-document-codec`). The rule covers
+both `then.tableState`, which asserts the document a write produced, and
+`given.fixtures`, which supplies the document a read starts from.
+
+This is normative here rather than left to each provider because the two engines
+genuinely disagree: Postgres `jsonb` normalizes on storage and `=` is already
+structural, while MariaDB `json` is a text alias whose `=` is key-order and
+whitespace sensitive, so structural comparison needs `json_equals`
+(`m-dialect`). Under Relational Document Layout most of an asserted row is one
+document cell, so a case author must be able to write it in the order that reads
+best and get the same verdict on both dialects.
+
+The complementary rule is on the construction side, not here: binds are built in
+canonical logical placement order so a golden document is deterministic to
+author (`m-storage-layout`). Deterministic construction and order-insensitive
+comparison are complementary — the first makes a golden bind stable, the second
+keeps the assertion honest across engines.
+
 #### Field table
 
 | Field | Group | Required | Meaning |
@@ -1141,12 +1162,21 @@ carried inline under `when.model`):
 `inheritance-temporal-axes-not-root-owned`,
 `inheritance-optimistic-locking-not-root-owned`,
 `inheritance-persistence-not-root-owned`,
+`inheritance-layout-not-root-owned`,
 `inheritance-materialization-key-collision` (see `m-inheritance`),
 `storage-layout-table-mapping-collision`: a later independent mapping owner
-claims a structural Table already claimed by the first canonical owner, and
+claims a structural Table already claimed by the first canonical owner,
 `storage-layout-column-collision`: within one uniquely owned Table, distinct
-Attributes, top-level Value Objects, or a TPH discriminator claim one physical
-Column (see `m-storage-layout` for each invariant).
+Attributes, top-level Value Objects, a TPH discriminator, or a shared Structured
+Column claim one physical Column,
+`storage-layout-document-member-column-override`: a document-resident Attribute
+or top-level Value Object carries a Column Override its root-owned Relational
+Document Layout contradicts,
+`storage-layout-index-over-document-member`: an Index component names a
+document-resident Attribute, which has no Column to index, and
+`storage-layout-document-capability-unsupported`: a well-formed root-owned
+Relational Document Layout selects a capability shape this build declares it
+cannot execute end to end (see `m-storage-layout` for each invariant).
 A `when.model` case carries an **inline** model descriptor — an
 instance of `metamodel.schema.json` with an accepted-model formation defect — kept inside the
 case rather than in the shared `models/` registry, so an invalid model cannot

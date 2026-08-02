@@ -161,6 +161,15 @@ For each physical branch, SQL selects from the layout values as follows:
    `familyVariant` literal to each branch. It is not a layout slot. Typed `NULL`
    placeholders and collision-safe aliases are likewise SQL renderings over a
    branch's absent slot entries.
+5. Under Relational Document Layout, the shared Structured Column slot is
+   projected **once** for a branch that needs any document-resident member, and
+   not at all for a branch that needs none. An instance-form read always needs
+   it, because instances carry document-resident members. A row-form read
+   projects it only when the members it was asked for include one whose
+   placement is a Document Path, so a row-form read of direct members alone
+   emits no document extraction and no document projection at all. The
+   Structured Column is never a result field: the row transform fans it out into
+   the requested logical members and the raw value is not among them.
 
 Within one Table, selected physical slots retain `TableLayout.columns` order:
 `Identity`, `Discriminator`, `Domain`, `Temporal`, `Audit`, then `Document`, with
@@ -244,6 +253,37 @@ their owning modules, then mapped through layout contributor lookups. The
 predicate order and bind order specified by each DML template below remain
 normative even when they differ from complete table order. `familyVariant`, SQL
 aliases, and typed `NULL` expressions never become DML slots.
+
+### Document-resident assignments
+
+Under Relational Document Layout an `UPDATE` splits its assignments by Member
+Placement. A `DirectColumn` assignment is an ordinary `set <column> = ?` term in
+layout order, unchanged. Every `DocumentPath` assignment instead composes into
+**one** `set <structured column> = <mutation expression>` term, in the Structured
+Column's own layout position, rendered through `m-dialect`'s document
+mutation-expression form.
+
+The composition order is **canonical logical placement order** — the order the
+assigned members occupy in the Table's logical placement order — never caller
+mapping order and never a hash or set iteration order. Both dialects apply their
+composed assignments left to right, so this order is observable, and it is what
+makes a golden statement stable to author. Assignments are neither merged nor
+deduplicated: one assigned member is one path in the expression.
+
+An assignment to a whole top-level Value Object occurrence is one such path
+whose value is the complete encoded subtree; it replaces that subtree and
+nothing else. No ordinary update binds the whole Structured Column, and no
+ordinary update reads the row first to rewrite it.
+
+An `INSERT` binds the Structured Column exactly once, as one complete encoded
+document, in its layout position — the same shape a conventional Value Object
+column already has. A temporal successor is an insert, and the document it binds
+is built from the retained raw predecessor document (`m-unit-work`), never
+re-encoded from decoded members.
+
+Assignments to a document-resident member never appear in a primary-key,
+discriminator, optimistic, or temporal gate, because no direct role is
+document-resident.
 
 ## Per-operator SQL emission
 
@@ -1425,3 +1465,75 @@ the golden DML and reading the resulting `then.tableState` document back (decodi
 the structured-document column to a Python structure so both dialects compare
 against the authored document), the write-sequence oracle (`m-case-format`) — corpus
 `m-value-object-025` (insert), `-026` (whole-document update), `-027` (null-out).
+
+### Relational Document Layout — document-path predicates and ordering
+
+Under Relational Document Layout a predicate or ordering term over a
+document-resident member lowers through the **same** `m-dialect` extraction and
+typed-cast seams the nested value-object forms above already use. Two things
+change, and nothing else does.
+
+**The extraction target and path come from Member Placement, not from a string.**
+The member's placement (`m-storage-layout`) supplies the Structured Column and
+the complete Document Path; SQL binds that path's segments in the dialect's own
+shape and never re-splits an authored dotted spelling, appends an occurrence name
+by hand, or reconstructs a path from member names. A document-resident top-level
+Attribute is a one-segment path — the ordinary scalar comparison that would have
+been `t0.display_name = ?` under Columns layout becomes an extraction over
+`t0.payload` with one path bind.
+
+**The cast is by declared Neutral Type.** The extraction yields text, so every
+non-`string` comparison casts through `m-dialect`'s typed-cast form before
+comparing, exactly as a numeric `nestedGt` does today, and the compared literal
+is encoded through `m-document-codec` so both sides carry the same spelling.
+
+Everything else is unchanged: the absence collapse, the operator-by-operator
+fragments, the negation normalizations, the per-dialect bind-hole divergence that
+makes `binds` a per-dialect map, and the `many` traversal seam with its MariaDB
+containment scope.
+
+#### Variant partitioning for a non-uniform path
+
+A shared table-per-hierarchy document is **heterogeneous**: two disjoint sibling
+branches may derive one Document Path (`m-storage-layout`), and a subtype-only
+member's key is simply absent from a sibling variant's document. A cast over such
+a path must therefore never evaluate against a row of the wrong variant.
+
+**When a path is applicable to every concrete variant the statement selects,
+nothing changes**: one statement, one extraction, the tag predicate composed as
+today. This is the only shape the existing corpus contains, so no existing
+statement count, bind order, or golden SQL moves.
+
+**When a path is not applicable to every concrete variant the statement selects,
+the read is partitioned by variant**: either one statement per applicable
+variant, or one `union all` of tag-filtered branches, so each branch's extraction
+and cast see only rows of a variant that declares the path. The choice between
+the two shapes is a lowering decision; what is normative is that no cast is ever
+evaluated in a statement that also selects rows of a variant the path does not
+apply to.
+
+Partitioning is required rather than merely preferred, because the alternative
+was measured not to hold. Wrapping the cast in a tag-aware `case` is not
+sufficient on PostgreSQL, whose documented constant-folding of a `case` branch
+can raise from a branch no row reaches; and placing the tag predicate elsewhere
+in the `where` clause is plan-dependent, since a subquery that becomes an
+optimization barrier evaluates the cast before the filter. MariaDB fails
+differently and worse: a failed `CAST` in a non-data-modifying statement is a
+warning rather than an error under every `SQL_MODE`, so the same query returns a
+**silently coerced** value instead of raising. One engine's hard error and the
+other's wrong answer are not a portable contract, which is why the guard is a
+statement-shape rule rather than an expression-shape rule.
+
+This reuses machinery that already exists. A subtype-declared member can never be
+referenced without a compatible `narrow` (`m-op-algebra`), so every legal
+subtype-specific predicate already carries a resolved variant position and a tag
+fragment; table-per-concrete-subtype reads are already a per-branch `union all`
+with a fresh context per branch. Partitioning applies that same fan-out at a
+finer granularity.
+
+A **broad polymorphic read** resolves the variant tag first and decodes only that
+variant's applicable document shape, so projection needs no partitioning: the
+Structured Column is projected raw and the row transform chooses the shape.
+Under table-per-concrete-subtype each branch projects its own Structured Column
+and decodes against its own applicable shape before the union result is
+normalized.

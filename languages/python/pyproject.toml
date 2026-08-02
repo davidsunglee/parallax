@@ -817,7 +817,6 @@ forbidden_modules = [
     "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
-    "parallax.core.relationship",
     "parallax.core.sql_gen",
     "parallax.core.temporal_read",
     "parallax.core.txtime_write",

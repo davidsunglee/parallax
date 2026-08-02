@@ -927,6 +927,7 @@ the Python identifiers an author actually types.
 | `name=` | `str` | any Entity | canonical Entity-name override — any nonempty dot-free string; omission means the class `__name__` verbatim |
 | `namespace=` | `str` | any Entity | the Entity Identity namespace, declared per class and never inherited from a base class or module; omitted means unnamespaced |
 | `persistence=` | `READ_ONLY` | standalone entities and family roots | the exceptional read-only mapping; omission means Read Write; any descendant declaration is a formation-time issue |
+| `layout=` | `Document(column="...")` | standalone entities and family roots | the exceptional Relational Document Layout mapping; omission means conventional Columns storage; any descendant declaration is a formation-time issue |
 | `inheritance=` | role value (below) | every family participant | the participant's inheritance role |
 | `indices=` | tuple of `index(...)` values | any Entity | the local physical indices |
 
@@ -937,6 +938,36 @@ mirroring `attr(name=)`. A standalone Entity (no `inheritance=`) that omits
 of the descriptor schema's phase-2 `table` requirement; family table
 incoherence (a TPH descendant declaring `table=`, a TPCS concrete omitting
 it) stays the formation-time `inheritance-*` issue family.
+
+`layout=` mirrors `persistence=` exactly, including its asymmetry. `Document` is
+the only spellable value, because `Columns` is what an omitted keyword means and
+the canonical descriptor writes no `layout` property for it (`m-descriptor`);
+exposing a second spelling for the default would add a way to say nothing.
+`Document`'s `column=` is optional and **defaults to `payload`**, so
+`layout=Document` and `layout=Document()` are the same declaration as any other
+all-optional variant class, and `layout=Document(column="body")` overrides the
+name.
+
+The default is an **authoring** convenience, not a metadata default. The
+frontend resolves the Structured Column name during normalization, so accepted
+metadata and the exported descriptor always carry it explicitly at
+`layout.document.column` — an author who writes `layout=Document()` sees
+`column: payload` in the descriptor. No consumer, schema position, or
+diagnostic downstream of authoring ever sees a missing name, so none gains an
+optional field. This is the established Python-versus-descriptor
+divergence: temporal axes have no keyword at all and come from the base class,
+and a relationship's omitted ordering direction and null placement normalize to
+Ascending and NullsLast.
+
+A malformed `layout=` value — anything that is not `Document` or a `Document`
+instance, or a `column=` that is not a nonempty string — fails at class creation
+as `entity-header-invalid-value`, like every other ill-typed header value.
+Everything semantic about the layout is formation-time: a descendant declaring
+one is `inheritance-layout-not-root-owned`, and a Column Override on a
+document-resident member, an Index over a document-resident Attribute, or a
+Structured Column colliding with a direct column are the `storage-layout-*`
+issues below. The frontend performs no role classification, because role
+classification needs the whole model.
 
 A local Entity name may be declared in more than one namespace of one model:
 the Entity Identity is what must be unique, and the qualified identities differ.
@@ -1599,36 +1630,58 @@ class Truck(Vehicle, table="truck", inheritance=ConcreteSubtype):
 The built-in Formation Manifest and Profile include the exact
 `m-storage-layout` contributions. `StorageLayoutRuleSet` receives only the
 Candidate Metamodel and asks `parallax.core.inheritance` for its pure, total
-validation-time Table-group projection; it owns exactly
-`storage-layout-table-mapping-collision` and
-`storage-layout-column-collision`, never consumes a facet, and never relies on
-Rule Set order. Owner collisions are reported before physical Column claims;
-the latter code remains exclusive to distinct physical Column contributors.
-After every Rule Set succeeds, `StorageLayoutCompiler` consumes the same
-Compiled Metadata object plus `FacetKey(m-inheritance)` and installs one
+validation-time Table-group projection and `parallax.core.relationship` for its
+pure, total validation-time join-endpoint projection; it owns exactly
+`storage-layout-table-mapping-collision`,
+`storage-layout-column-collision`,
+`storage-layout-document-member-column-override`,
+`storage-layout-index-over-document-member`, and — while its capability scope
+list is non-empty — `storage-layout-document-capability-unsupported`; it never
+consumes a facet, and never relies on Rule Set order. Owner collisions are
+reported before physical Column claims; the Column collision code remains
+exclusive to distinct physical Column contributors, which under Relational
+Document Layout are the direct-role Attributes, the table-per-hierarchy tag, and
+the one shared Structured Column. After every Rule Set succeeds,
+`StorageLayoutCompiler` consumes the same Compiled Metadata object plus
+`FacetKey(m-inheritance)` and `FacetKey(m-relationship)` and installs one
 `StorageLayoutFacet` under `FacetKey(m-storage-layout)`. It emits no Issue.
 Profile drift, compiler ordering, and all-or-nothing publication follow
 `m-model-formation` without a Python-specific phase or registry.
 
 `parallax.core.storage_layout` is the supported advanced import path. It
-exports `ColumnTier`, `InheritanceDiscriminator`, `ColumnContributor`,
-`ColumnSlot`, the `TableLayout`, `EntityLayoutView`, `PositionLayoutView`, and
-`StorageLayoutFacet` protocols, and `view(model) -> StorageLayoutFacet`. These
-names are not broadly re-exported from `parallax.core`. Python spellings use
-`table`, `columns`, `physical_primary_key`, `declaring_owner`,
-`effective_nullable`, and `applicable_entities`; lookup methods use the core
-contract's `table`, `entity`, `position`, `column`, and `contribution` names.
+exports `ColumnTier`, `InheritanceDiscriminator`, `RelationalDocument`,
+`ColumnContributor`, `ColumnSlot`, `MemberPlacement` with its `DirectColumn` and
+`DocumentPath` variants, the `TableLayout`, `EntityLayoutView`,
+`PositionLayoutView`, and `StorageLayoutFacet` protocols, and
+`view(model) -> StorageLayoutFacet`. These names are not broadly re-exported
+from `parallax.core`. Python spellings use `table`, `columns`,
+`physical_primary_key`, `declaring_owner`, `effective_nullable`,
+`applicable_entities`, `layout_owner`, `slot`, `path`, `members`, and
+`placements`; lookup methods use the core contract's `table`, `entity`,
+`position`, `column`, `contribution`, and `placement` names.
+
+`placement(member)` is the sole locator for a logical member and is total over
+the members applicable to its Table, returning `None` only for an unknown or
+inapplicable member. No `parallax.core` or `parallax.snapshot` consumer
+re-derives direct-versus-document residency, splits a dotted path against
+metadata to reach a document member, or reads a Column spelling to decide where
+a member lives. No Rule Set calls it, because during validation no facet exists.
+`PositionLayoutView.members` is the position's logical member union and each
+branch's `placements` aligns with it, so a polymorphic read gets a per-branch
+answer; a Value Object leaf is located through the branch's own
+`layout.placement(...)`.
 
 Public values are immutable: `ColumnTier` is an Enum; contributor, slot,
-discriminator-assignment, logical-position-column, and branch values are
-frozen slotted dataclasses; ordered collections are exact tuples; and private
-lookup indexes are read-only. One eager object graph is compiled per accepted
-model: one Table Layout per physical Table and one Column Slot per physical
-column occurrence. Layout primary keys, Entity selections, and position
-branches reference those slots structurally instead of copying them. Repeated
-applicability sets may be interned, and arbitrary position views are not kept
-in an unbounded model-lifetime cache. Equality is structural; Python object
-identity and a particular ordinal/index representation are not contractual.
+placement, discriminator-assignment, logical-position-column, and branch values
+are frozen slotted dataclasses; ordered collections are exact tuples; and
+private lookup indexes are read-only. One eager object graph is compiled per
+accepted model: one Table Layout per physical Table and one Column Slot per
+physical column occurrence. Layout primary keys, Entity selections, position
+branches, and placements reference those slots structurally instead of copying
+them. Repeated applicability sets may be interned, and arbitrary position views
+are not kept in an unbounded model-lifetime cache. Equality is structural;
+Python object identity and a particular ordinal/index representation are not
+contractual.
 
 The Python facet implements all six tiers and the temporal-over-audit alias
 precedence. The claimed model inputs currently supply no accepted Audit
@@ -2615,7 +2668,7 @@ legalizes a forbidden edge.
 | `m-descriptor` | `parallax.descriptor` | `parallax.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts + cross-package contract |
 | `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-metamodel` | generated forbidden contracts |
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
-| `m-storage-layout` | `parallax.core.storage_layout` | `parallax.core.storage_layout` | `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
+| `m-storage-layout` | `parallax.core.storage_layout` | `parallax.core.storage_layout` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-op-algebra` | `parallax.core.op_algebra` | `parallax.core.op_algebra` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
@@ -2994,10 +3047,44 @@ hatchling.
 
 ## 9. Conditional capability decisions
 
-No conditional capability is claimed: process caches, cross-process coherence,
-aggregation, additional dialects, and benchmarks are all outside
-`slice-snapshot-1` and recorded as deferred in §1, so every conditional
-subsection of the template is deleted from this completed spec.
+`m-storage-layout` is claimed, so the Relational Document Layout decision below
+is recorded. Every other conditional subsection of the template is deleted from
+this completed spec: process caches, cross-process coherence, aggregation,
+additional dialects, and benchmarks are all outside `slice-snapshot-1` and
+recorded as deferred in §1.
+
+### Relational Document Layout
+
+**Support.** The Python target supports the root-owned `Document` Storage
+Layout. The authoring spelling is the class-header keyword `layout=Document()`
+(§2, *Class headers*): `column=` is optional and defaults to `payload`, the
+frontend resolves the name during normalization, and the canonical descriptor
+always carries the resolved name at `layout.document.column`. `Columns` has no
+spelling — omitting `layout=` is what selects it — and there is no path
+authoring form.
+
+**Member Placement exposure.** `parallax.core.storage_layout` exports
+`MemberPlacement` with `DirectColumn` and `DocumentPath`, and every consumer —
+SQL lowering, write lowering, materialization, provisioning, and fixture
+loading — locates a logical member through `TableLayout.placement(...)` or a
+`PositionBranch.placements` entry (§2, *Storage Layout formation and immutable
+facet*). No consumer re-derives residency, and no Rule Set calls placement.
+
+**Capability shapes and the gate.** While `StorageLayoutRuleSet`'s capability
+scope list is non-empty, a well-formed root-owned `Document` declaration
+matching an entry is refused at formation with
+`storage-layout-document-capability-unsupported`, so this implementation never
+accepts a layout whose reads *and* writes it cannot execute end to end. The
+shapes the list governs are the standalone, table-per-hierarchy, and
+table-per-concrete-subtype mappings; relationships and navigation; the explicit
+non-temporal optimistic lock; and the Transaction-Time and Bitemporal flavors.
+The rule, its Issue Code, and its manifest entry are removed together once the
+list is empty; a permanently empty list is not a supported state.
+
+**Database support.** PostgreSQL is the claimed dialect, so the production
+adapter binds and reads the `jsonb` Structured Column. MariaDB remains deferred
+here and is proven by the language-neutral reference and conformance paths, as
+for every other MariaDB behavior (§1).
 
 ## 10. Mandatory quality toolchain
 

@@ -160,6 +160,7 @@ def test_storage_layout_has_exact_direct_dependencies_and_manifest_ownership() -
         "m-inheritance",
         "m-metamodel",
         "m-model-formation",
+        "m-relationship",
     }
     assert ("m-sql", "m-storage-layout") in edges
     assert ("m-sql", "m-inheritance") in edges
@@ -173,12 +174,17 @@ def test_storage_layout_has_exact_direct_dependencies_and_manifest_ownership() -
     )
     assert (
         "| required | `storage-layout-table-mapping-collision`, "
-        "`storage-layout-column-collision` |" in storage_row
+        "`storage-layout-column-collision`, "
+        "`storage-layout-document-member-column-override`, "
+        "`storage-layout-index-over-document-member`, "
+        "`storage-layout-document-capability-unsupported` |" in storage_row
     )
     assert "storage-layout-table-mapping-collision" in storage_row
     assert "storage-layout-table-boundary-collision" not in storage_row
     assert "`StorageLayoutFacet` under `FacetKey(m-storage-layout)`" in storage_row
     assert "`FacetKey(m-inheritance)`" in storage_row
+    assert "`FacetKey(m-relationship)`" in storage_row
+    assert "inheritance-layout-not-root-owned" in inheritance_row
     assert "inheritance-physical-column-collision" not in inheritance_row
 
 

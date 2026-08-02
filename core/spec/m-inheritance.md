@@ -160,6 +160,16 @@ above, this is not a simplification relative to a Reladomo feature Parallax
 declines to support as broadly: Reladomo has no considered design for optimistic
 locking composed with inheritance at all (ADR 0027).
 
+**Storage Layout is root-owned in the same way.** The `layout` selection
+(`m-storage-layout`) is family-level physical policy: only the family root may
+declare it, and every abstract and concrete descendant inherits the root's
+choice unchanged. A family is therefore either entirely conventional or entirely
+document-mapped; a descendant never mixes the two, and never repeats the root's
+declaration verbatim (see *Family invariants*, below, for the rejection rule).
+This module owns only the ownership rule. Which members the chosen layout keeps
+in direct Columns, and where the others live, is composed once by
+`m-storage-layout` from this same family topology.
+
 ## Physical mapping
 
 **Table-per-hierarchy.** The whole family maps to **one shared table** declared
@@ -490,6 +500,17 @@ owns the complete code-set declaration; this module owns each code's meaning.
 - **Persistence is root-owned** — a descendant declares no `persistence`, even
   when repeating the root value (`inheritance-persistence-not-root-owned`).
   Absence means inherit.
+- **Storage Layout is root-owned** — an `abstract-subtype` or `concrete-subtype`
+  declares no `layout` of its own, regardless of whether the root itself
+  declares one (`inheritance-layout-not-root-owned`). This holds for BOTH
+  malformed shapes: a conventionally-mapped root with a descendant that declares
+  a layout, and a root declaring one whose descendant redeclares, repeats, or
+  overrides it. Only the root may ever carry `layout` (*Inherited members*,
+  above); one table-per-hierarchy family therefore has one shared Structured
+  Column and one table-per-concrete-subtype family applies the root's single
+  policy and Structured Column name to every concrete table. The consequences of
+  an accepted root-owned layout — placement, Column Overrides, Indices, and
+  Structured Column collisions — belong to `m-storage-layout`.
 - **Members do not shadow across ancestry** — a descendant cannot redeclare an
   ancestor Attribute, Relationship, or top-level Value Object name, including
   cross-category shadowing (`inheritance-member-shadowing`). Disjoint sibling

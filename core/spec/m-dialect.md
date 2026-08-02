@@ -36,6 +36,8 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
+| **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, ?)` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, ?, ?, ?, …)` — one call, one pair per assigned path (see below) |
+| **structural document equality** (`m-document-codec` / `m-case-format`) | `=` on `jsonb` — the type normalizes on storage, so `=` is already structural | `json_equals(a, b)` — `json` is a `longtext` alias, so `=` is textual and key-order sensitive (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
@@ -242,6 +244,80 @@ producing a `json_contains` that does not mean what the predicate says. This is 
 MariaDB-lowering boundary: lower the equality shapes above to the
 containment golden, reject every non-equality to-many element predicate until a
 set-returning unnest is available.
+
+### Document mutation-expression form (`m-storage-layout`)
+
+A Relational Document Layout `UPDATE` assigns one or more logical paths inside
+one Structured Column and MUST NOT rewrite the column whole
+(`m-storage-layout`). Composing those assignments into one `SET` expression is a
+dialect decision owned here, and the two engines take genuinely different
+shapes:
+
+| Aspect | Postgres | MariaDB |
+|---|---|---|
+| one assignment | `jsonb_set(col, ?, ?)` | `json_set(col, ?, ?)` |
+| N assignments | **nested** — each call's target is the previous call's result: `jsonb_set(jsonb_set(col, ?, ?), ?, ?)` | **native N-pair** — one call: `json_set(col, ?, ?, ?, ?)` |
+| path bind | one `?` carrying the Postgres text-array path (`{displayName}`) | one `?` carrying the JSON-path string (`$.displayName`) |
+| value bind | one `?` per assignment, the encoded document value | one `?` per assignment, the encoded document value |
+
+```sql
+-- two assignments, canonical logical placement order
+-- postgres
+set payload = jsonb_set(jsonb_set(payload, ?, ?), ?, ?)
+-- mariadb
+set payload = json_set(payload, ?, ?, ?, ?)
+```
+
+**Both forms apply left to right, so assignment order is semantically
+significant on both dialects** — the innermost Postgres call and the first
+MariaDB pair are the first assignment. The dialect does not choose that order:
+it renders the sequence `m-sql` hands it, which is canonical logical placement
+order. A dialect MUST NOT reorder, deduplicate, or merge assignments.
+
+Both engines also create only the **final** path segment: an assignment whose
+parent path is absent silently leaves the document unchanged rather than
+creating the parent or failing. Parallax never reaches that case, because every
+assignment path has exactly one segment and the document root always exists
+(`m-storage-layout`). A future contract admitting a deeper assignment path would
+have to revisit this decision point, not merely its spelling.
+
+Because the bind-hole structure diverges — the same two assignments are four
+holes inside two nested Postgres calls and four holes inside one MariaDB call,
+with different path spellings — a document-mutation case authors its `binds` as
+a **per-dialect map** (`m-case-format`), exactly as nested extraction does.
+
+### Structural document equality (`m-document-codec`)
+
+Two documents are equal when they carry the same members with equal values,
+independent of key order and insignificant whitespace (`m-document-codec`). The
+expression that decides it is a dialect decision, because the two engines do not
+agree by default:
+
+| Aspect | Postgres | MariaDB |
+|---|---|---|
+| comparison | `a = b` on `jsonb` | `json_equals(a, b)` |
+| why | `jsonb` normalizes on storage — whitespace removed, duplicate keys reduced, numerics canonicalized — so `=` is already structural | `json` is `longtext` with a `JSON_VALID` check, so `=` is a **text** comparison and is sensitive to key order and whitespace |
+
+A consumer comparing documents MUST obtain the comparison through this seam. On
+MariaDB the naive `=` returns false for two documents that differ only in key
+order, which under Relational Document Layout is most of a row's state, so
+leaving the choice to each consumer would make an assertion mean different
+things on the two engines. `json_equals` is available from MariaDB 10.7.
+
+### Document column DDL (`m-storage-layout`)
+
+A Relational Document Layout Structured Column renders as `jsonb not null` on
+Postgres and `json not null` on MariaDB. It carries no database default, because
+every write this contract admits binds a complete object explicitly, including
+the empty object. The non-null spelling is not a dialect choice — it is the
+slot's `effectiveNullable` answer (`m-storage-layout`), rendered here.
+
+A conventional Value Object Structured Column keeps its existing derivation: the
+`json` neutral type through the mapping table above, with the occurrence's own
+declared nullability.
+
+The initial contract adds no generated deep `CHECK` constraint over document
+contents on either dialect.
 
 ### `NULL` ordering
 

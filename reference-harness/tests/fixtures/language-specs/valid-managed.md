@@ -90,7 +90,14 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 
 ## 9. Conditional capability decisions
 
-No conditional capability is part of this claim.
+The claim contains `m-storage-layout`, so the Relational Document Layout
+decision is recorded; no other conditional capability is part of this claim.
+
+### Relational Document Layout
+
+The implementation does not support the root-owned `Document` Storage Layout.
+The capability is recorded as deferred in section 1, and formation refuses every
+`Document` declaration rather than accepting a subset it cannot execute.
 
 ## 10. Mandatory quality toolchain
 

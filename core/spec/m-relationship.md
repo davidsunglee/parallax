@@ -30,6 +30,41 @@ complete Issue Code set is:
 Reference absence is a foundational `m-metamodel` issue, not a second
 relationship-owned missing-reference code.
 
+## Validation-time join-endpoint projection
+
+Rule Sets run in unspecified order over one Candidate Metamodel, so a Rule Set
+that needs relationship facts cannot consume the Relationship Facet. This module
+exposes a pure, total, issue-free projection of the bounded fact those Rule Sets
+need:
+
+```text
+joinEndpoints(CandidateMetamodel) -> immutable set<AttributeIdentity>
+```
+
+It returns exactly the join endpoint Attributes of **defining** Relationship
+declarations that resolve locally: for each defining declaration whose
+`join.source` names a local Attribute of the declaring Entity and whose
+`join.target` names an Attribute of the Entity its reference establishes, both
+Identities. It emits no Issue, returns no partial or provisional value, and
+never rejects, so a consumer's result does not depend on when it asks.
+
+Restricting the projection to defining declarations loses nothing. A reverse
+declaration introduces no Attribute of its own; the compiler swaps the sides of
+the same join and inverts cardinality for it, so every Attribute any direction
+names is already named by some defining declaration. The projection therefore
+never depends on reverse resolution, which is where most of this module's
+rejections live.
+
+An endpoint of a malformed defining join is not locally resolvable and is
+excluded. Such a model is rejected by this module's own Rule Set, and a consumer
+that classified the excluded Attribute differently in the meantime has not
+changed that outcome — a consumer's own Issue on an already-rejected model is
+permitted and unordered with respect to this one.
+
+`m-storage-layout` is the projection's consumer: accepted Relationship Joins
+designate direct-role Attributes, and its Rule Set must know them before any
+facet exists.
+
 ## Facet
 
 ```text
