@@ -1,21 +1,28 @@
 """Bare-or-canonical Entity name resolution over a bare accepted model.
 
-Pins the ambiguity-rejecting contract shared by every frontend seam that
-resolves an authored Entity spelling against an accepted ``Metamodel``: an exact
-canonical spelling matches, a bare name matches only when a single Entity
-carries it, and a bare name two namespaces share is a miss rather than a silent
-first match. The ``op_algebra.validate``, snapshot
-materialize, unit-of-work, and write-lowering seams all resolve through the same
-``entity_by_name`` helper, so its rule governs each of them.
+Pins the ambiguity-rejecting contract shared by every seam that resolves an
+authored Entity spelling against an accepted ``Metamodel``: an exact canonical
+spelling matches, a bare name matches only when a single Entity carries it, and a
+bare name two namespaces share is a miss rather than a silent first match. The
+``op_algebra.validate``, snapshot materialize, unit-of-work, and write-lowering
+seams resolve through the same ``entity_by_name`` helper, and so — the second
+suite below — do the three lowering seams an accepted operation reaches next:
+``m-sql``'s family reads and hops, ``m-deep-fetch``'s levels, and
+``m-navigate``'s hop canonicalization. One rule across validation and lowering is
+what makes "preflight accepted this reference" imply "lowering resolves it".
 """
 
 from __future__ import annotations
 
 import pytest
 
+from parallax.core import deep_fetch, navigate
+from parallax.core import op_algebra as oa
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.metamodel import Metamodel, entity_by_name
+from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.op_algebra import All, Narrow, OperationRejectedError, validate_operation
+from parallax.core.sql_gen import compile_read
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 
@@ -71,3 +78,172 @@ def test_op_algebra_resolver_rejects_an_ambiguous_bare_name() -> None:
     with pytest.raises(OperationRejectedError) as excinfo:
         validate_operation(root, op, model)
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
+
+
+# --------------------------------------------------------------------------- #
+# The same rule at the LOWERING seams.                                         #
+#                                                                              #
+# A namespace is declared per class and never inherited, so a family root and   #
+# its own concrete subtypes may sit in different namespaces — and a reference   #
+# position spells them all bare. Resolving such a spelling into the REFERRING   #
+# Entity's namespace (the declaration rule) answers a different Entity than     #
+# `validate_operation` resolved it to, so the operation preflight accepted      #
+# failed to lower. Nothing in the shipped corpus exhibits it: every corpus      #
+# family restates one namespace on every member.                                #
+# --------------------------------------------------------------------------- #
+def _cross_namespace_model() -> Metamodel:
+    """An accepted model whose family root, concrete subtypes, and relationship
+    peer each sit in a DIFFERENT namespace, every local name unique model-wide.
+
+    ``zoo.Beast`` is the table-per-hierarchy root over the ownerless ``Wolf`` and
+    ``Bear``; ``den.Den`` owns them through ``denId``. Every operation reference
+    below therefore names an Entity outside the namespace of the position it is
+    written against, which is exactly the case the two resolution rules answer
+    differently.
+    """
+    beast = records.Entity(
+        name="Beast",
+        namespace="zoo",
+        table="beast",
+        inheritance=records.Inheritance(
+            role="root", strategy="table-per-hierarchy", tag_column="kind"
+        ),
+        attributes=(
+            records.Attribute(name="id", type="int64", column="id", primary_key=True),
+            records.Attribute(name="denId", type="int64", column="den_id", nullable=True),
+        ),
+        relationships=(records.ReverseRelationship(name="den", reverse_of="den.Den.beasts"),),
+    )
+    wolf = records.Entity(
+        name="Wolf",
+        inheritance=records.Inheritance(
+            role="concrete-subtype", parent="zoo.Beast", tag_value="wolf"
+        ),
+        attributes=(records.Attribute(name="howl", type="string", column="howl", nullable=True),),
+    )
+    bear = records.Entity(
+        name="Bear",
+        inheritance=records.Inheritance(
+            role="concrete-subtype", parent="zoo.Beast", tag_value="bear"
+        ),
+        attributes=(
+            records.Attribute(
+                name="hibernates", type="boolean", column="hibernates", nullable=True
+            ),
+        ),
+    )
+    den = records.Entity(
+        name="Den",
+        namespace="den",
+        table="den",
+        attributes=(records.Attribute(name="id", type="int64", column="id", primary_key=True),),
+        relationships=(
+            records.DefiningRelationship(
+                name="beasts",
+                cardinality="one-to-many",
+                join=records.RelationshipJoin(
+                    source="id",
+                    target=records.RelationshipTarget(entity="zoo.Beast", attribute="denId"),
+                ),
+            ),
+        ),
+    )
+    return form_metamodel(unresolved_metamodel(records.Metamodel((beast, wolf, bear, den))))
+
+
+def _named(model: Metamodel, name: str) -> EntityMetadata:
+    entity = entity_by_name(model, name)
+    assert entity is not None
+    return entity
+
+
+def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
+    # The top-level narrow and the mid-predicate branch narrow both resolve `Wolf`
+    # against the model, not against `zoo.Beast`'s namespace, so each lowers to the
+    # tag guard the accepted operation asked for.
+    model = _cross_namespace_model()
+    root = _named(model, "zoo.Beast")
+
+    top_level = Narrow(entity="Beast", to=("Wolf",), operand=All())
+    validate_operation(root, top_level, model)
+    assert compile_read(top_level, model, POSTGRES, root).statement.binds == ("wolf",)
+
+    branches = oa.Or(
+        operands=(
+            Narrow(entity="Beast", to=("Wolf",), operand=All()),
+            Narrow(entity="Beast", to=("Bear",), operand=All()),
+        )
+    )
+    validate_operation(root, branches, model)
+    assert compile_read(branches, model, POSTGRES, root).statement.binds == ("wolf", "bear")
+
+
+def test_sql_lowering_resolves_a_hop_and_its_narrow_across_namespaces() -> None:
+    # Two references in one operation: the hop's own `Den.beasts` (resolved from a
+    # position in the `den` namespace to a relationship whose target is in `zoo`)
+    # and the narrow inside it (`Wolf`, resolved from `zoo.Beast`).
+    model = _cross_namespace_model()
+    den = _named(model, "den.Den")
+
+    op = oa.Exists(rel="Den.beasts", op=Narrow(entity="Beast", to=("Wolf",), operand=All()))
+    validate_operation(den, op, model)
+    compiled = compile_read(op, model, POSTGRES, den)
+    assert compiled.statement.sql == (
+        "select t0.id from den t0 where exists (select 1 from beast t1 "
+        "where t1.den_id = t0.id and t1.kind = ?)"
+    )
+    assert compiled.statement.binds == ("wolf",)
+
+
+def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> None:
+    # A segment narrow, a path-root guard, and a segment whose `Class` prefix names
+    # the family root from a path rooted at an ownerless concrete subtype — the
+    # three deep-fetch reference positions, each pointing outside its own namespace.
+    model = _cross_namespace_model()
+    den = _named(model, "den.Den")
+    beast = _named(model, "zoo.Beast")
+    wolf = _named(model, "Wolf")
+
+    segment_narrow = oa.DeepFetch(
+        operand=All(),
+        paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Den.beasts", narrow=("Wolf",)),)),),
+    )
+    validate_operation(den, segment_narrow, model)
+    assert [level.attach_key for level in deep_fetch.plan(den, segment_narrow, model).levels] == [
+        "beasts[Wolf]"
+    ]
+
+    root_guard = oa.DeepFetch(
+        operand=All(),
+        paths=(
+            oa.NavigationPath(
+                narrow=oa.PathRootNarrow(entity="Beast", to=("Wolf",)),
+                segments=(oa.PathSegment(rel="Beast.den"),),
+            ),
+        ),
+    )
+    validate_operation(beast, root_guard, model)
+    guarded = deep_fetch.plan(beast, root_guard, model).levels
+    assert [level.source_position for level in guarded] == [(wolf.identity,)]
+
+    from_subtype = oa.DeepFetch(
+        operand=All(), paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Beast.den"),)),)
+    )
+    validate_operation(wolf, from_subtype, model)
+    assert [level.attach_key for level in deep_fetch.plan(wolf, from_subtype, model).levels] == [
+        "den"
+    ]
+
+
+def test_navigation_canonicalization_resolves_a_hop_from_another_namespace() -> None:
+    # The hop's `Class` prefix names the family ROOT while the queried position is
+    # the ownerless concrete subtype, so the owner-relative rule looked for a
+    # `Beast` that does not exist. There is no as-of term to inject on this model,
+    # so canonicalization returning the operation unchanged is the whole proof that
+    # the reference resolved.
+    model = _cross_namespace_model()
+    wolf = _named(model, "Wolf")
+
+    op = oa.Exists(rel="Beast.den")
+    validate_operation(wolf, op, model)
+    assert navigate.canonicalize(op, model, wolf) == op

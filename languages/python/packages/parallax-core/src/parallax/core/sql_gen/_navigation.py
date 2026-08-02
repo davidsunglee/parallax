@@ -68,9 +68,8 @@ from parallax.core.metamodel import (
     Metamodel,
     RelationshipIdentity,
     RelationshipJoin,
-    RelativeEntityReference,
     TablePerHierarchy,
-    resolve_entity_reference,
+    entity_by_name,
 )
 from parallax.core.op_algebra import Exists, Narrow, Navigate, NotExists, Operation
 from parallax.core.relationship import view as _relationship_view
@@ -179,17 +178,21 @@ def _resolve_join(rel_ref: str, scope: _PlanScope) -> RelationshipJoin:
     join is the whole of what a semi-join needs: an `EXISTS` is insensitive to
     the direction's cardinality.
 
-    The reference's class name is bare, so it resolves in the active target's own
-    namespace like any other relative model reference.
+    The reference's class name is an operation reference, so it resolves model-wide
+    by `entity_by_name`'s rule — never into the active target's own namespace,
+    which is the DECLARATION rule and would miss an Entity `validate_operation`
+    resolved this very spelling to.
     """
     class_name, dot, member_name = rel_ref.rpartition(".")
     if not dot:  # pragma: no cover - guards an unvalidated operation
         raise SqlGenError(f"relationship reference {rel_ref!r} needs Class.relationship")
-    owner_identity = resolve_entity_reference(
-        scope.entity.identity, RelativeEntityReference(class_name)
-    )
-    direction = _relationship_view(scope.meta).relationship(
-        RelationshipIdentity(source_entity=owner_identity, name=member_name)
+    declaring = entity_by_name(scope.meta, class_name)
+    direction = (
+        None
+        if declaring is None
+        else _relationship_view(scope.meta).relationship(
+            RelationshipIdentity(source_entity=declaring.identity, name=member_name)
+        )
     )
     if direction is None:
         raise SqlGenError(f"{rel_ref!r} names no declared relationship on {class_name}")
@@ -289,7 +292,7 @@ def _plan_simple_hop(
 
 
 def _hop_position(
-    facet: InheritanceFacet, target: EntityMetadata, inner: Operation | None
+    model: Metamodel, facet: InheritanceFacet, target: EntityMetadata, inner: Operation | None
 ) -> tuple[tuple[EntityIdentity, ...], Operation | None, bool]:
     """The polymorphic hop's resolved effective position + remaining interior
     predicate, mirroring a top-level family read's own narrow interception: a
@@ -300,7 +303,7 @@ def _hop_position(
     "no tag predicate at all" case, `m-inheritance`).
     """
     if isinstance(inner, Narrow):
-        position = _narrow_position(facet, target.identity, inner.to)
+        position = _narrow_position(model, facet, inner.to)
         return tuple(position.concrete_subtypes), inner.operand, False
     view = _entity_view(facet, target.identity)
     return (
@@ -325,7 +328,7 @@ def _plan_polymorphic_hop(
     concrete, in the family's canonical order, grouped by `or` (m-sql
     "Polymorphic navigation lowering")."""
     view = _entity_view(scope.facet, target.identity)
-    position, remaining_inner, is_bare_root = _hop_position(scope.facet, target, inner)
+    position, remaining_inner, is_bare_root = _hop_position(scope.meta, scope.facet, target, inner)
     if isinstance(view.strategy, TablePerHierarchy):
         return _plan_tph_hop(
             view.root,

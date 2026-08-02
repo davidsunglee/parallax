@@ -507,7 +507,7 @@ def _lower_branch_narrow(narrow: Narrow, scope: EntityScope) -> str:
     before this dispatcher ever runs (`_compile._compile_tph_read`); every narrow
     this function receives is nested, so it always groups when it has two terms.
     """
-    plan = _plan_branch_narrow(scope.facet, scope.storage, scope.entity, narrow)
+    plan = _plan_branch_narrow(scope.meta, scope.facet, scope.storage, scope.entity, narrow)
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
     branch_sql = lower_predicate(plan.operand, scope)

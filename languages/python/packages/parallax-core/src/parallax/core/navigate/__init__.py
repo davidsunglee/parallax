@@ -56,9 +56,8 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     RelationshipIdentity,
-    RelativeEntityReference,
     TemporalDimension,
-    resolve_entity_reference,
+    entity_by_name,
 )
 from parallax.core.op_algebra import (
     And,
@@ -97,10 +96,11 @@ def canonicalize(
 
     ``op`` is the operation **after** the root's own `inject_as_of` has already run
     (the engine/handle composition order: `inject_as_of` then `canonicalize` then
-    `compile_read`). ``entity`` is the read's queried Entity: a hop's
-    ``Class.relationship`` reference names its class relative to the Entity the
-    reference is written against, which is ``entity`` at the top level and the
-    enclosing hop's own target inside a hop's interior. ``root_pins`` is the root
+    `compile_read`). ``entity`` is the read's queried Entity: the position a hop's
+    ``Class.relationship`` reference is written against, which is ``entity`` at the
+    top level and the enclosing hop's own target inside a hop's interior. That
+    position locates an unresolvable reference rather than scoping resolution —
+    the spelling itself names one Entity model-wide or none. ``root_pins`` is the root
     read's resolved per-axis instant —
     :func:`~parallax.core.temporal_read.resolve_pinned_instants` computed from the
     SAME raw operation `inject_as_of` consumed — mapping an axis to the specific past
@@ -220,8 +220,8 @@ def _hop_inner(
     """The hop's rewritten interior: its own navigation walked, then its own
     per-hop as-of term (if temporal) appended after (m-navigate As-of propagation).
 
-    The interior's own hop references resolve against this hop's TARGET, which is
-    the Entity their bare class names are written against.
+    The interior's own hop references are written against this hop's TARGET, so
+    that is the position threaded into the walk beneath it.
     """
     direction = resolve_relationship(rel, owner.identity, model)
     target = _entity(model, direction.join.target.entity)
@@ -241,9 +241,11 @@ def resolve_relationship(
 ) -> RelationshipMetadata:
     """Resolve a ``Class.relationship`` reference to the direction it navigates.
 
-    The reference's class name is bare, so it resolves in ``owner``'s own namespace
-    like any other relative model reference; ``owner`` is the Entity the reference
-    is written against, never a model-wide search over declared names. The
+    The reference's class name is an operation reference, so it resolves model-wide
+    by :func:`~parallax.core.metamodel.entity_by_name`'s rule and never adopts a
+    namespace of its own — an accepted reference therefore always resolves here,
+    which the owner-relative DECLARATION rule could not promise. ``owner`` is the
+    Entity the reference is written against and locates an unresolvable one. The
     Identity that resolution produces then selects the direction from the
     Relationship Facet, the one place a reverse direction's inverted cardinality
     and swapped join exist — so a caller reads a compiled direction rather than
@@ -257,12 +259,19 @@ def resolve_relationship(
     class_name, dot, member_name = rel_ref.rpartition(".")
     if not dot:  # pragma: no cover - guards an unvalidated operation
         raise ValueError(f"relationship reference {rel_ref!r} needs Class.relationship")
-    declaring = resolve_entity_reference(owner, RelativeEntityReference(class_name))
-    direction = relationship.view(model).relationship(
-        RelationshipIdentity(source_entity=declaring, name=member_name)
+    declaring = entity_by_name(model, class_name)
+    direction = (
+        None
+        if declaring is None
+        else relationship.view(model).relationship(
+            RelationshipIdentity(source_entity=declaring.identity, name=member_name)
+        )
     )
     if direction is None:
-        raise ValueError(f"{rel_ref!r} names no declared relationship on {class_name}")
+        raise ValueError(
+            f"{rel_ref!r} names no declared relationship on {class_name} "
+            f"(written against {owner.canonical})"
+        )
     return direction
 
 

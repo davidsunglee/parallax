@@ -59,11 +59,9 @@ from parallax.core.metamodel import (
     Multiplicity,
     NestedValueObjectMetadata,
     PrimaryKey,
-    RelativeEntityReference,
     TablePerConcreteSubtype,
     ValueObjectMetadata,
     entity_by_name,
-    resolve_entity_reference,
 )
 
 __all__ = [
@@ -166,7 +164,9 @@ def _resolved_position(
 
     Production callers pass ``CompiledRead.resolved_position`` so no local-name
     round trip can erase namespaces. ``narrow_to`` remains only as the defensive
-    direct-call fallback used by tests and older callers.
+    direct-call fallback used by tests and older callers; its entries are
+    operation references and resolve model-wide by :func:`entity_by_name`'s rule,
+    the same rule the read's own lowering resolved them by.
     """
     if resolved_position is not None:
         return resolved_position
@@ -178,10 +178,12 @@ def _resolved_position(
         if view is None:  # pragma: no cover - the facet covers every accepted Entity
             return (entity.identity,)
         return tuple(view.concrete_subtypes)
-    members = [
-        resolve_entity_reference(entity.identity, RelativeEntityReference(name))
-        for name in narrow_to
-    ]
+    members: list[EntityIdentity] = []
+    for name in narrow_to:
+        member = entity_by_name(meta, name)
+        if member is None:  # pragma: no cover - a validated narrow names declared entities
+            return (entity.identity,)
+        members.append(member.identity)
     position = facet.position(members)
     if position is None:  # pragma: no cover - a validated narrow names one family
         return (entity.identity,)
