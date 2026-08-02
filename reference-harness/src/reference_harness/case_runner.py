@@ -62,6 +62,7 @@ from .inheritance import (
     validate_operation_inheritance,
 )
 from .op_validate import validate_operation
+from .operation_references import OPERAND_ROW_WRAPPER_TAGS
 from .providers import DatabaseProvider
 from .sql_normalize import is_union_all, normalize, sqlglot_dialect
 from .storage_layout import (
@@ -1147,18 +1148,17 @@ def _read_effective_set(case: Case, family: Family, target_name: str) -> list[st
 
     The queried position is *target_name*, further constrained when the operation's
     leading node is a ``narrow`` — then the narrowed ``to`` set drives the projection
-    superset. The wrappers descended to reach it are the closed set `m-op-algebra`
-    enumerates as returning their operand's own rows: the result directives, the
-    temporal wrappers, and ``deepFetch``, which attaches fetched levels to the rows its
-    operand yields rather than replacing them, so a deep fetch's ROOT projection follows
-    its operand's narrow. A ``narrow`` buried in an ``or`` (grouped branch predicates)
-    leaves the target's full family in scope, as does a deep-fetch path's own root
-    guard, which qualifies a path's source objects rather than the read's result.
+    superset. The wrappers descended to reach it are the closed set that returns its
+    operand's own rows (:data:`OPERAND_ROW_WRAPPER_TAGS`), so a deep fetch's ROOT
+    projection follows its operand's narrow. A ``narrow`` buried in an ``or`` (grouped
+    branch predicates) leaves the target's full family in scope, as does a deep-fetch
+    path's own root guard, which qualifies a path's source objects rather than the
+    read's result.
     """
     node: Any = case.operation
     while isinstance(node, dict) and len(node) == 1:
         tag = next(iter(node))
-        if tag in ("distinct", "orderBy", "limit", "deepFetch", "asOf", "asOfRange", "history"):
+        if tag in OPERAND_ROW_WRAPPER_TAGS:
             node = node[tag].get("operand")
         elif tag == "narrow":
             return family.resolve_to_set(node["narrow"].get("to", []) or [])

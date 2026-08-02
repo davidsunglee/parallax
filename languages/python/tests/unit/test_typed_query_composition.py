@@ -8,10 +8,13 @@ error, which is why a case below carries its suppression and its runtime
 rejection in ONE test — static and runtime agreement proved by construction
 rather than in two processes that never meet.
 
-Three suppression families here have no runtime twin, and each is deliberate for
+Four suppression families here have no runtime twin, and each is deliberate for
 one reason: the composition the parameter refuses lowers to a VALID canonical
 operation, so the wire carries no record of the mistake and no preflight rule
-could restate it. `python.md` §2 states the same three.
+could restate it. `python.md` §2 states the same four and the criterion that
+closes the list — a parameter outruns the wire only where the wire records less
+than it read, where the query flattens the clause order it read it in, or where
+a signature answers wider than the narrowing it describes.
 
 `test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is`
 asserts a SUCCESSFUL serialization under a `reportArgumentType` ignore. The
@@ -28,7 +31,11 @@ only place an unfiltered query written at the wrong position is refused. The
 third is clause order — a `where` argument or a sort key written before the
 `narrow` that scopes it — because a Find Query retains clauses rather than
 wrapping them, so the refused spelling and the sanctioned one lower to one
-operation.
+operation. The fourth is `FindQuery.narrow`'s conservative variadic overload,
+which leaves the result parameter where it was for any subtype list the fixed
+one-through-three overloads cannot read, while the narrow it authors lowers
+exactly as the readable spelling's does — so a later subtype key is refused
+statically and accepted by the gate.
 
 Authoring reaches no model, so every runtime twin here runs the shared read gate
 `preflight_find` — the seam `Database.find` and `Transaction.find` both call —
