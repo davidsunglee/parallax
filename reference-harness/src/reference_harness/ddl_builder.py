@@ -20,6 +20,7 @@ from .storage_layout import (
     ColumnContributor,
     ColumnSlot,
     InheritanceDiscriminator,
+    RelationalDocument,
     TableLayout,
     ValueObjectContributor,
 )
@@ -297,6 +298,11 @@ def contributor_types(model: Model) -> Mapping[ColumnContributor, tuple[str, int
 def _slot_ddl(slot: ColumnSlot, declarations: _Declarations, dialect: str) -> str:
     if isinstance(slot.contributor, InheritanceDiscriminator):
         neutral_type, max_length = _TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH
+    elif isinstance(slot.contributor, RelationalDocument):
+        # A Relational Document Layout's shared Structured Column has no
+        # declaration of its own, and carries the document-resident members of
+        # every governed row in the same physical type a Value Object occupies.
+        neutral_type, max_length = _DOCUMENT_TYPE, None
     else:
         neutral_type, max_length = declarations.types[slot.contributor]
     parts = [

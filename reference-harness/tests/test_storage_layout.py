@@ -21,10 +21,16 @@ from reference_harness.ddl_builder import ddl_for
 from reference_harness.storage_layout import (
     STORAGE_LAYOUT_COLUMN_COLLISION,
     STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED,
+    STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+    STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER,
     STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
     AttributeContributor,
     ColumnTier,
+    DirectColumn,
+    DocumentPath,
     InheritanceDiscriminator,
+    MemberAddress,
+    RelationalDocument,
     ValueObjectContributor,
     _interned,
     _interned_ordinal_selection,
@@ -506,6 +512,123 @@ def test_tph_layout_accumulates_applicability_and_effective_nullability() -> Non
     assert document.effective_nullable
 
 
+def _customer_layout() -> Any:
+    model = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml")
+    layout = compile_storage_layout(model.entity_defs).table("customer")
+    assert layout is not None
+    return layout
+
+
+def test_placement_and_contribution_agree_for_every_conventional_top_level_member() -> None:
+    # Under `Columns` every top-level member is placed over the slot its own
+    # contributor owns, so the two lookups are one contract's two questions
+    # rather than two spellings of one answer.
+    layout = _customer_layout()
+    customer = "parallax.compatibility.Customer"
+    for member, contributor in (
+        (MemberAddress(customer, ("id",)), AttributeContributor(customer, "id")),
+        (MemberAddress(customer, ("name",)), AttributeContributor(customer, "name")),
+        (MemberAddress(customer, ("address",)), ValueObjectContributor(customer, "address")),
+    ):
+        assert layout.placement(member) == DirectColumn(layout.contribution(contributor))
+
+
+def test_a_conventional_value_object_leaf_is_placed_inside_its_own_structured_column() -> None:
+    # Conventional storage already has Document Paths: a leaf's path begins at the
+    # first segment below the occurrence, over that occurrence's own column, which
+    # is the location conventional nested access already reads.
+    layout = _customer_layout()
+    customer = "parallax.compatibility.Customer"
+    address = layout.contribution(ValueObjectContributor(customer, "address"))
+    assert layout.placement(MemberAddress(customer, ("address", "city"))) == DocumentPath(
+        address, ("city",)
+    )
+    assert layout.placement(
+        MemberAddress(customer, ("address", "geo", "point", "lat"))
+    ) == DocumentPath(address, ("geo", "point", "lat"))
+    assert layout.placement(
+        MemberAddress(customer, ("address", "phones", "number"))
+    ) == DocumentPath(address, ("phones", "number"))
+    assert layout.placement(MemberAddress(customer, ("address", "absent"))) is None
+
+
+def test_a_document_layout_contributes_one_shared_not_null_structured_column_last() -> None:
+    definitions = _document_hierarchy()
+    layout = compile_storage_layout(definitions).table("record")
+    assert layout is not None
+    assert [slot.column for slot in layout.columns] == ["id", "kind", "doc"]
+    structured = layout.columns[-1]
+    assert structured.contributor == RelationalDocument("example.Record")
+    assert structured.tier is ColumnTier.DOCUMENT
+    assert structured.declaring_owner == "example.Record"
+    assert not structured.effective_nullable
+    assert structured.applicable_entities == frozenset(
+        {"example.AlphaRecord", "example.BetaRecord"}
+    )
+
+
+def test_document_resident_members_are_placed_at_one_segment_under_the_shared_column() -> None:
+    definitions = _document_hierarchy()
+    layout = compile_storage_layout(definitions).table("record")
+    assert layout is not None
+    structured = layout.columns[-1]
+    root = "example.Record"
+    alpha = "example.AlphaRecord"
+    assert layout.placement(MemberAddress(root, ("id",))) == DirectColumn(
+        layout.contribution(AttributeContributor(root, "id"))
+    )
+    assert layout.placement(MemberAddress(root, ("label",))) == DocumentPath(structured, ("label",))
+    assert layout.placement(MemberAddress(alpha, ("payload",))) == DocumentPath(
+        structured, ("payload",)
+    )
+    assert layout.contribution(ValueObjectContributor(alpha, "payload")) is None
+
+
+def test_a_tpcs_family_receives_one_structured_column_per_concrete_table() -> None:
+    # One root declares one layout policy and one Structured Column name that
+    # every concrete Table in the family receives.
+    definitions = _tpcs_definitions()
+    definitions[0]["layout"] = {"document": {"column": "doc"}}
+    definitions[1]["attributes"] = [_attribute("invoiceDetail")]
+    definitions[2]["attributes"] = [_attribute("memoDetail")]
+    facet = compile_storage_layout(definitions)
+    root = "example.Document"
+    for table, owner, detail in (
+        ("invoice", "example.Invoice", "invoiceDetail"),
+        ("memo", "example.Memo", "memoDetail"),
+    ):
+        layout = facet.table(table)
+        assert layout is not None
+        assert [slot.column for slot in layout.columns] == ["id", "doc"]
+        structured = layout.contribution(RelationalDocument(root))
+        assert structured is not None
+        assert layout.placement(MemberAddress(root, ("title",))) == DocumentPath(
+            structured, ("title",)
+        )
+        assert layout.placement(MemberAddress(owner, (detail,))) == DocumentPath(
+            structured, (detail,)
+        )
+
+
+def test_branch_placements_align_with_the_positions_logical_member_union() -> None:
+    facet = compile_storage_layout(_tph_definitions())
+    view = facet.position(("example.AlphaRecord", "example.BetaRecord"))
+    assert view is not None
+    root = "example.Record"
+    alpha = "example.AlphaRecord"
+    beta = "example.BetaRecord"
+    assert view.members == (
+        MemberAddress(root, ("id",)),
+        MemberAddress(root, ("label",)),
+        MemberAddress(alpha, ("alphaValue",)),
+        MemberAddress(beta, ("betaValue",)),
+        MemberAddress(alpha, ("payload",)),
+    )
+    (branch,) = view.branches
+    assert len(branch.placements) == len(view.members)
+    assert branch.placements == tuple(branch.layout.placement(member) for member in view.members)
+
+
 def test_private_applicability_intern_deduplicates_structurally_equal_keys() -> None:
     intern: dict[frozenset[str], frozenset[str]] = {}
     first = _interned({"example.Alpha", "example.Beta"}, intern)
@@ -775,11 +898,21 @@ def test_the_capability_gate_names_every_declared_shape_the_owner_matches() -> N
     assert "'payload'" in caught.value.detail
 
 
-def test_the_capability_gate_refuses_one_hierarchy_family_at_its_root() -> None:
+def _document_hierarchy() -> list[dict[str, Any]]:
+    """A TPH family whose root selects Relational Document Layout.
+
+    The subtype occurrence drops its Column Override, because a document-resident
+    member may not carry one; the override is its own rejection, proven below.
+    """
     definitions = _tph_definitions()
-    definitions[0]["layout"] = {"document": {"column": "payload"}}
+    definitions[0]["layout"] = {"document": {"column": "doc"}}
+    definitions[1]["valueObjects"] = [{"name": "payload"}]
+    return definitions
+
+
+def test_the_capability_gate_refuses_one_hierarchy_family_at_its_root() -> None:
     with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(definitions)
+        validate_storage_layout(_document_hierarchy())
     assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
     assert "a table-per-hierarchy family" in caught.value.detail
     assert "'example.Record'" in caught.value.detail
@@ -798,6 +931,18 @@ def test_a_column_collision_reports_itself_rather_than_the_capability_gate() -> 
     # The gate exists to keep "not yet supported" distinguishable from
     # "supported and wrong", so a mapping that raised a physical defect reports
     # that defect rather than a refusal to execute the layout it does not have.
+    definition = _document_standalone(layout={"document": {"column": "id"}})
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout([definition])
+    assert caught.value.rule == STORAGE_LAYOUT_COLUMN_COLLISION
+    assert "Structured Column of the layout Note declares" in caught.value.detail
+    assert "Attribute Note.id" in caught.value.detail
+
+
+def test_document_resident_members_claim_no_column_and_cannot_collide() -> None:
+    # A spelling two members share collides under `Columns`; under `Document`
+    # neither is a claimant at all, so what the model reports is the pair of
+    # Column Overrides that contradict the layout.
     definition = _document_standalone(
         attributes=[
             _attribute("id", primary_key=True),
@@ -807,7 +952,94 @@ def test_a_column_collision_reports_itself_rather_than_the_capability_gate() -> 
     )
     with pytest.raises(RejectionError) as caught:
         validate_storage_layout([definition])
-    assert caught.value.rule == STORAGE_LAYOUT_COLUMN_COLLISION
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE
+    assert "Note.profileText" in caught.value.detail
+
+
+def test_a_direct_role_attribute_may_still_override_its_column() -> None:
+    # Role 1 stays a direct Column, so its override names a Column the member
+    # really occupies. Only the capability gate refuses this model.
+    definition = _document_standalone(
+        attributes=[_attribute("id", column="note_key", primary_key=True)]
+    )
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout([definition])
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+
+
+def test_restating_a_document_resident_members_conventional_column_is_accepted() -> None:
+    definition = _document_standalone(
+        attributes=[
+            _attribute("id", primary_key=True),
+            _attribute("displayName", column="display_name"),
+        ]
+    )
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout([definition])
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+
+
+def test_an_index_over_a_document_resident_attribute_is_refused() -> None:
+    definition = _document_standalone(
+        attributes=[_attribute("id", primary_key=True), _attribute("displayName")],
+        indices=[{"name": "byDisplayName", "attributes": ["displayName"]}],
+    )
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout([definition])
+    assert caught.value.rule == STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER
+    assert "byDisplayName" in caught.value.detail
+
+
+def test_an_index_over_a_direct_role_attribute_still_resolves() -> None:
+    definition = _document_standalone(
+        attributes=[_attribute("id", primary_key=True)],
+        indices=[{"name": "byKey", "attributes": ["id"]}],
+    )
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout([definition])
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+
+
+def _note_owning_a_holder(*, join_source: str = "ownerId") -> list[dict[str, Any]]:
+    """A document-mapped `Note` joined to a conventional `Holder` on `ownerId`."""
+    return [
+        _document_standalone(
+            attributes=[
+                _attribute("id", primary_key=True),
+                _attribute("ownerId", column="owner_key"),
+            ],
+            relationships=[
+                {
+                    "name": "owner",
+                    "cardinality": "many-to-one",
+                    "join": {
+                        "source": join_source,
+                        "target": {"entity": "Holder", "attribute": "id"},
+                    },
+                }
+            ],
+            indices=[{"name": "byOwner", "attributes": ["ownerId"]}],
+        ),
+        {"name": "Holder", "table": "holder", "attributes": [_attribute("id", primary_key=True)]},
+    ]
+
+
+def test_a_join_endpoint_stays_direct_so_neither_layout_rule_fires_on_it() -> None:
+    # Role 2 comes from the validation-time join-endpoint projection, so
+    # `ownerId` keeps its Column, its Override, and its Index.
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout(_note_owning_a_holder())
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+    assert "an Attribute named by a Relationship Join" in caught.value.detail
+
+
+def test_a_join_that_does_not_resolve_locally_designates_no_endpoint() -> None:
+    # An endpoint of a join whose source names no Attribute of the declaring
+    # Entity is excluded, so `ownerId` is document-resident here while
+    # relationship formation rejects the join. Both are permitted, unordered.
+    with pytest.raises(RejectionError) as caught:
+        validate_storage_layout(_note_owning_a_holder(join_source="missing"))
+    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE
 
 
 def test_tph_participants_are_one_owner_and_tpcs_sibling_columns_may_repeat() -> None:

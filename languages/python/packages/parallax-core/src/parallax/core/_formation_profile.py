@@ -106,9 +106,14 @@ BUILTIN_MANIFEST: Final[FormationManifest] = FormationManifest(
             issue_codes=STORAGE_LAYOUT_ISSUE_CODES,
             compiler=ModelCompilerRequirement(STORAGE_LAYOUT_FACET_KEY),
             required_modules=frozenset(
-                {METAMODEL_MODULE, MODEL_FORMATION_MODULE, INHERITANCE_MODULE}
+                {
+                    METAMODEL_MODULE,
+                    MODEL_FORMATION_MODULE,
+                    INHERITANCE_MODULE,
+                    RELATIONSHIP_MODULE,
+                }
             ),
-            required_facets=frozenset({INHERITANCE_FACET_KEY}),
+            required_facets=frozenset({INHERITANCE_FACET_KEY, RELATIONSHIP_FACET_KEY}),
         ),
         FormationManifestEntry(
             owner=VALUE_OBJECT_MODULE,
@@ -171,8 +176,8 @@ BUILTIN_PROFILE: Final[_BuiltinProfile] = _BuiltinProfile(
     metadata_compiler=METADATA_COMPILER,
     model_compilers=(
         INHERITANCE_COMPILER,
-        STORAGE_LAYOUT_COMPILER,
         RELATIONSHIP_COMPILER,
+        STORAGE_LAYOUT_COMPILER,
         TEMPORAL_COMPILER,
         OPT_LOCK_COMPILER,
     ),

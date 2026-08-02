@@ -7,6 +7,7 @@
         "owner": "owner",
         "version": "version"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -17,18 +18,21 @@
         "name": "name",
         "ownerId": "owner_id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Cat": {
       "attribute": {
         "indoor": "indoor"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Dog": {
       "attribute": {
         "barkVolume": "bark_volume"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Person": {
@@ -36,18 +40,21 @@
         "id": "id",
         "name": "name"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Pet": {
       "attribute": {
         "licenseId": "license_id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.WildBoar": {
       "attribute": {
         "tuskLength": "tusk_length"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -58,18 +65,21 @@
         "name": "name",
         "version": "version"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Fridge": {
       "attribute": {
         "capacityLiters": "capacity_liters"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Oven": {
       "attribute": {
         "wattage": "wattage"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -82,6 +92,7 @@
         "tx_start": "in_z",
         "value": "val"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -95,6 +106,15 @@
         "valid_end": "thru_z",
         "valid_start": "from_z"
       },
+      "documentPath": {
+        "address.city": "address:city",
+        "address.geo": "address:geo",
+        "address.geo.country": "address:geo.country",
+        "address.phones": "address:phones",
+        "address.phones.number": "address:phones.number",
+        "address.phones.type": "address:phones.type",
+        "address.street": "address:street"
+      },
       "valueObject": {
         "address": "address"
       }
@@ -105,6 +125,19 @@
       "attribute": {
         "id": "id",
         "name": "name"
+      },
+      "documentPath": {
+        "address.city": "address:city",
+        "address.geo": "address:geo",
+        "address.geo.country": "address:geo.country",
+        "address.geo.point": "address:geo.point",
+        "address.geo.point.lat": "address:geo.point.lat",
+        "address.geo.point.lon": "address:geo.point.lon",
+        "address.phones": "address:phones",
+        "address.phones.expires": "address:phones.expires",
+        "address.phones.number": "address:phones.number",
+        "address.phones.type": "address:phones.type",
+        "address.street": "address:street"
       },
       "valueObject": {
         "address": "address"
@@ -117,6 +150,19 @@
         "id": "id",
         "name": "name"
       },
+      "documentPath": {
+        "address.city": "address:city",
+        "address.geo": "address:geo",
+        "address.geo.country": "address:geo.country",
+        "address.geo.elevation": "address:geo.elevation",
+        "address.geo.point": "address:geo.point",
+        "address.geo.point.lat": "address:geo.point.lat",
+        "address.geo.point.lon": "address:geo.point.lon",
+        "address.phones": "address:phones",
+        "address.phones.number": "address:phones.number",
+        "address.phones.type": "address:phones.type",
+        "address.street": "address:street"
+      },
       "valueObject": {
         "address": "address"
       }
@@ -127,6 +173,10 @@
         "id": "id",
         "label": "label"
       },
+      "documentPath": {
+        "address.line": "address:line",
+        "address.postcode": "address:postcode"
+      },
       "valueObject": {
         "address": "address"
       }
@@ -136,6 +186,19 @@
         "customerId": "customer_id",
         "id": "id",
         "label": "label"
+      },
+      "documentPath": {
+        "address.city": "address:city",
+        "address.geo": "address:geo",
+        "address.geo.country": "address:geo.country",
+        "address.geo.elevation": "address:geo.elevation",
+        "address.geo.point": "address:geo.point",
+        "address.geo.point.lat": "address:geo.point.lat",
+        "address.geo.point.lon": "address:geo.point.lon",
+        "address.phones": "address:phones",
+        "address.phones.number": "address:phones.number",
+        "address.phones.type": "address:phones.type",
+        "address.street": "address:street"
       },
       "valueObject": {
         "address": "address"
@@ -149,12 +212,14 @@
         "id": "id",
         "title": "title"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.FinancialDocument": {
       "attribute": {
         "currency": "currency"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Folder": {
@@ -162,24 +227,28 @@
         "id": "id",
         "name": "name"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Invoice": {
       "attribute": {
         "amountDue": "amount_due"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Memo": {
       "attribute": {
         "body": "body"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Receipt": {
       "attribute": {
         "paidAmount": "paid_amount"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -189,6 +258,7 @@
         "id": "id",
         "v": "v"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Tag": {
@@ -196,6 +266,7 @@
         "id": "id",
         "name": "name"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Widget": {
@@ -203,6 +274,7 @@
         "id": "id",
         "label": "label"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -212,6 +284,7 @@
         "id": "id",
         "occurredAt": "occurred_at"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -222,6 +295,7 @@
         "label": "label",
         "ordinal": "order"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -230,6 +304,7 @@
       "attribute": {
         "coupon": "coupon"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Instrument": {
@@ -241,12 +316,14 @@
         "valid_end": "thru_z",
         "valid_start": "from_z"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Stock": {
       "attribute": {
         "ticker": "ticker"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -258,6 +335,7 @@
         "tx_end": "out_z",
         "tx_start": "in_z"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.InvoiceLine": {
@@ -268,6 +346,7 @@
         "tx_end": "out_z",
         "tx_start": "in_z"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -280,6 +359,7 @@
         "tx_end": "out_z",
         "tx_start": "in_z"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.LeaseNote": {
@@ -288,6 +368,7 @@
         "leaseId": "lease_id",
         "text": "note_text"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Tenant": {
@@ -295,6 +376,7 @@
         "id": "id",
         "name": "name"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -307,6 +389,7 @@
         "tx_start": "in_z",
         "value": "val"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -315,6 +398,7 @@
       "attribute": {
         "archiveLabel": "parallax_attr_0"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "catalog.Record": {
@@ -322,18 +406,23 @@
         "id": "id",
         "variantMarker": "family_variant"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "catalog.SharedVariant": {
       "attribute": {
         "catalogLabel": "parallax_attr_0"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "compatibility.overlap.ProfileOwner": {
       "attribute": {
         "id": "id",
         "targetId": "target_id"
+      },
+      "documentPath": {
+        "profile.label": "details:label"
       },
       "valueObject": {
         "profile": "details"
@@ -343,19 +432,25 @@
       "attribute": {
         "id": "id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "compatibility.overlap.VariantMemo": {
       "attribute": {},
+      "documentPath": {},
       "valueObject": {}
     },
     "compatibility.overlap.VariantNote": {
       "attribute": {},
+      "documentPath": {},
       "valueObject": {}
     },
     "compatibility.overlap.VariantRecord": {
       "attribute": {
         "id": "id"
+      },
+      "documentPath": {
+        "profile.label": "familyVariant:label"
       },
       "valueObject": {
         "profile": "familyVariant"
@@ -371,6 +466,9 @@
         "line2Item": "line2_item",
         "personId": "person_id",
         "taxID": "tax_i_d"
+      },
+      "documentPath": {
+        "mailingAddress.city": "mailing_address:city"
       },
       "valueObject": {
         "mailingAddress": "mailing_address"
@@ -388,6 +486,7 @@
         "qty": "qty",
         "sku": "sku"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.OrderItem": {
@@ -398,6 +497,7 @@
         "shippedOn": "shipped_on",
         "sku": "sku"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.OrderNote": {
@@ -407,6 +507,7 @@
         "orderId": "order_id",
         "resolvedOn": "resolved_on"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.OrderStatus": {
@@ -416,6 +517,7 @@
         "orderId": "order_id",
         "orderItemId": "order_item_id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.OrderTag": {
@@ -425,6 +527,7 @@
         "orderId": "order_id",
         "priority": "priority"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -433,12 +536,14 @@
       "attribute": {
         "cardNetwork": "card_network"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.CashPayment": {
       "attribute": {
         "tendered": "tendered"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Payment": {
@@ -446,6 +551,7 @@
         "amount": "amount",
         "id": "id"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -456,6 +562,7 @@
         "number": "number",
         "personId": "person_id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Person": {
@@ -463,6 +570,7 @@
         "id": "id",
         "name": "name"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -474,6 +582,7 @@
         "tx_end": "out_z",
         "tx_start": "in_z"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.AuditSeq": {
@@ -481,6 +590,7 @@
         "name": "name",
         "nextVal": "next_val"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -490,6 +600,7 @@
         "id": "id",
         "name": "name"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -499,6 +610,7 @@
         "holder": "holder",
         "id": "id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Pass": {
@@ -506,6 +618,7 @@
         "id": "id",
         "zone": "zone"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.PkSequence": {
@@ -513,6 +626,7 @@
         "name": "name",
         "nextVal": "next_val"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Ticket": {
@@ -520,6 +634,7 @@
         "id": "id",
         "tier": "tier"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Voucher": {
@@ -527,6 +642,7 @@
         "id": "id",
         "label": "label"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -541,6 +657,7 @@
         "valid_end": "thru_z",
         "valid_start": "from_z"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Coverage": {
@@ -553,6 +670,7 @@
         "valid_end": "thru_z",
         "valid_start": "from_z"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Policy": {
@@ -564,6 +682,7 @@
         "valid_end": "thru_z",
         "valid_start": "from_z"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -578,6 +697,7 @@
         "valid_start": "from_z",
         "value": "val"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -589,12 +709,14 @@
         "tx_end": "out_z",
         "tx_start": "in_z"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.SpotQuote": {
       "attribute": {
         "symbol": "symbol"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -603,12 +725,14 @@
       "attribute": {
         "grade": "grade"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.LoanRate": {
       "attribute": {
         "spread": "spread"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Rate": {
@@ -620,12 +744,14 @@
         "valid_end": "thru_z",
         "valid_start": "from_z"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
   "models/reading.yaml": {
     "parallax.compatibility.MeterReading": {
       "attribute": {},
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Reading": {
@@ -635,6 +761,7 @@
         "tx_end": "out_z",
         "tx_start": "in_z"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -648,6 +775,7 @@
         "localTime": "local_time",
         "payload": "payload"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -657,6 +785,7 @@
         "archiveLabel": "archive_label",
         "id": "id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "catalog.SharedVariant": {
@@ -664,6 +793,7 @@
         "catalogLabel": "catalog_label",
         "id": "id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Register": {
@@ -671,6 +801,7 @@
         "id": "id",
         "variantId": "variant_id"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -679,6 +810,10 @@
       "attribute": {
         "id": "id",
         "name": "name"
+      },
+      "documentPath": {
+        "destination.city": "destination:city",
+        "destination.street": "destination:street"
       },
       "valueObject": {
         "destination": "destination"
@@ -690,24 +825,28 @@
       "attribute": {
         "auditor": "detail"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.LayoutCardPayment": {
       "attribute": {
         "cardNetwork": "card_network"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.LayoutCashPayment": {
       "attribute": {
         "tendered": "tendered"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.LayoutMeterReading": {
       "attribute": {
         "celsius": "celsius"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.LayoutPayment": {
@@ -715,6 +854,7 @@
         "amount": "amount",
         "id": "id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.LayoutProfile": {
@@ -722,6 +862,10 @@
         "id": "id",
         "label": "label",
         "note": "note"
+      },
+      "documentPath": {
+        "contact.email": "contact:email",
+        "contact.phone": "contact:phone"
       },
       "valueObject": {
         "contact": "contact"
@@ -734,6 +878,9 @@
         "tx_end": "out_z",
         "tx_start": "in_z"
       },
+      "documentPath": {
+        "probe.model": "probe:model"
+      },
       "valueObject": {
         "probe": "probe"
       }
@@ -743,12 +890,14 @@
         "id": "id",
         "title": "title"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.LayoutSurvey": {
       "attribute": {
         "respondent": "detail"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -757,6 +906,12 @@
       "attribute": {
         "id": "id",
         "version": "version"
+      },
+      "documentPath": {
+        "address.city": "address:city",
+        "address.geo": "address:geo",
+        "address.geo.country": "address:geo.country",
+        "address.street": "address:street"
       },
       "valueObject": {
         "address": "address"
@@ -771,6 +926,15 @@
         "tx_end": "out_z",
         "tx_start": "in_z"
       },
+      "documentPath": {
+        "address.city": "address:city",
+        "address.geo": "address:geo",
+        "address.geo.country": "address:geo.country",
+        "address.phones": "address:phones",
+        "address.phones.number": "address:phones.number",
+        "address.phones.type": "address:phones.type",
+        "address.street": "address:street"
+      },
       "valueObject": {
         "address": "address"
       }
@@ -783,6 +947,7 @@
         "name": "name",
         "taxID": "tax_id"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -791,12 +956,14 @@
       "attribute": {
         "doors": "doors"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Truck": {
       "attribute": {
         "axles": "axles"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Vehicle": {
@@ -805,6 +972,7 @@
         "name": "name",
         "version": "version"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -815,6 +983,7 @@
         "id": "id",
         "owner": "owner"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -823,6 +992,7 @@
       "attribute": {
         "gripSize": "grip_size"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Material": {
@@ -831,24 +1001,28 @@
         "name": "name",
         "workshopId": "workshop_id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.PowerTool": {
       "attribute": {
         "wattage": "wattage"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Steel": {
       "attribute": {
         "alloy": "alloy"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Timber": {
       "attribute": {
         "grade": "grade"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Tool": {
@@ -857,6 +1031,7 @@
         "name": "name",
         "workshopId": "workshop_id"
       },
+      "documentPath": {},
       "valueObject": {}
     },
     "parallax.compatibility.Workshop": {
@@ -864,6 +1039,7 @@
         "id": "id",
         "name": "name"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   },
@@ -879,6 +1055,7 @@
         "localTime": "local_time",
         "payload": "payload"
       },
+      "documentPath": {},
       "valueObject": {}
     }
   }

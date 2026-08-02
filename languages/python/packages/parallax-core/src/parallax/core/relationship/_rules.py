@@ -31,9 +31,9 @@ from parallax.core.metamodel import (
     RelationshipLocation,
     RelationshipOrder,
     ReverseRelationshipDeclaration,
-    inheritance_parent,
 )
 from parallax.core.model_formation import ModuleIdentity
+from parallax.core.relationship._endpoints import AttributePositions, endpoint
 from parallax.core.relationship._facet import RELATIONSHIP_MODULE
 
 __all__ = [
@@ -108,59 +108,6 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
 declares it."""
 
 
-class _Attributes:
-    """Attribute lookup by local name at a candidate position, ancestry included.
-
-    A declared inheritance parent extends a position's Attribute set, so a join
-    endpoint or ordering term may name an Attribute an ancestor declares. The
-    walk is purely structural over the parent links the candidate carries and
-    stops on a cycle; family coherence is ``m-inheritance``'s rule. Each position
-    is collected once, so repeated lookups over one candidate stay cheap.
-    """
-
-    __slots__ = ("_candidate", "_positions")
-
-    _candidate: CandidateMetamodel
-    _positions: dict[EntityIdentity, Mapping[str, AttributeMetadata]]
-
-    def __init__(self, candidate: CandidateMetamodel) -> None:
-        self._candidate = candidate
-        self._positions = {}
-
-    def at(self, entity: EntityIdentity) -> Mapping[str, AttributeMetadata]:
-        """Every Attribute applicable at ``entity``, keyed by local name."""
-        collected = self._positions.get(entity)
-        if collected is None:
-            collected = self._collect(entity)
-            self._positions[entity] = collected
-        return collected
-
-    def _collect(self, entity: EntityIdentity) -> Mapping[str, AttributeMetadata]:
-        collected: dict[str, AttributeMetadata] = {}
-        visited: set[EntityIdentity] = set()
-        position = self._candidate.entity(entity)
-        while position is not None and position.identity not in visited:
-            visited.add(position.identity)
-            for attribute in position.attributes:
-                collected.setdefault(attribute.identity.name, attribute)
-            parent = inheritance_parent(position.inheritance)
-            position = None if parent is None else self._candidate.entity(parent)
-        return collected
-
-
-def _endpoint(
-    entity: EntityIdentity, attribute: AttributeIdentity, attributes: _Attributes
-) -> AttributeMetadata | None:
-    """The Attribute ``attribute`` denotes at ``entity``, or absence.
-
-    An endpoint is addressed at one Entity, so an Identity naming a different
-    Entity denotes nothing here however that Attribute is declared elsewhere.
-    """
-    if attribute.entity != entity:
-        return None
-    return attributes.at(entity).get(attribute.name)
-
-
 def _identifies_a_one_side(
     cardinality: Cardinality, source: AttributeMetadata, target: AttributeMetadata
 ) -> bool:
@@ -180,7 +127,7 @@ def _order_issues(
     location: RelationshipLocation,
     order_by: Sequence[RelationshipOrder],
     target: EntityIdentity,
-    attributes: _Attributes,
+    positions: AttributePositions,
 ) -> list[MetamodelIssue]:
     """The ordering terms of one direction that name no Attribute of its target.
 
@@ -190,7 +137,7 @@ def _order_issues(
     issues: list[MetamodelIssue] = []
     reported: set[AttributeIdentity] = set()
     for term in order_by:
-        if _endpoint(target, term.attribute, attributes) is not None:
+        if endpoint(target, term.attribute, positions) is not None:
             continue
         if term.attribute in reported:
             continue
@@ -212,13 +159,13 @@ def _order_issues(
 def _defining_issues(
     owner: EntityIdentity,
     declaration: DefiningRelationshipDeclaration,
-    attributes: _Attributes,
+    positions: AttributePositions,
 ) -> list[MetamodelIssue]:
     """The defects of one defining declaration, which owns every mapping fact."""
     location = RelationshipLocation(declaration.identity)
     join = declaration.join
     issues: list[MetamodelIssue] = []
-    source = _endpoint(owner, join.source, attributes)
+    source = endpoint(owner, join.source, positions)
     if source is None:
         issues.append(
             MetamodelIssue(
@@ -228,7 +175,7 @@ def _defining_issues(
                 message=f"the join source names no Attribute of {owner.canonical!r}",
             )
         )
-    target = _endpoint(join.target.entity, join.target, attributes)
+    target = endpoint(join.target.entity, join.target, positions)
     if target is None:
         issues.append(
             MetamodelIssue(
@@ -251,7 +198,7 @@ def _defining_issues(
                 message="no side declared One is joined on its Entity's primary key",
             )
         )
-    issues.extend(_order_issues(location, declaration.order_by, join.target.entity, attributes))
+    issues.extend(_order_issues(location, declaration.order_by, join.target.entity, positions))
     if declaration.cardinality.target is Multiplicity.ONE and declaration.order_by:
         issues.append(
             MetamodelIssue(
@@ -286,7 +233,7 @@ def _reverse_issues(
     owner: EntityIdentity,
     declaration: ReverseRelationshipDeclaration,
     declarations: Mapping[RelationshipIdentity, RelationshipDeclaration],
-    attributes: _Attributes,
+    positions: AttributePositions,
 ) -> list[MetamodelIssue]:
     """The defects of one reverse declaration, which derives from its peer."""
     location = RelationshipLocation(declaration.identity)
@@ -325,7 +272,7 @@ def _reverse_issues(
             )
         )
     target = peer.identity.source_entity
-    issues.extend(_order_issues(location, declaration.order_by, target, attributes))
+    issues.extend(_order_issues(location, declaration.order_by, target, positions))
     # Inversion exchanges the sides, so this direction's target Multiplicity is
     # the defining direction's source Multiplicity.
     if peer.cardinality.source is Multiplicity.ONE and declaration.order_by:
@@ -379,7 +326,7 @@ def _duplicate_claim_issues(candidate: CandidateMetamodel) -> list[MetamodelIssu
 
 def validate_relationships(candidate: CandidateMetamodel) -> tuple[MetamodelIssue, ...]:
     """Every relationship defect of ``candidate``, reported rather than the first."""
-    attributes = _Attributes(candidate)
+    positions = AttributePositions(candidate)
     declarations: dict[RelationshipIdentity, RelationshipDeclaration] = {
         declaration.identity: declaration
         for entity in candidate.entities
@@ -390,10 +337,10 @@ def validate_relationships(candidate: CandidateMetamodel) -> tuple[MetamodelIssu
         for declaration in entity.relationships:
             match declaration:
                 case DefiningRelationshipDeclaration():
-                    issues.extend(_defining_issues(entity.identity, declaration, attributes))
+                    issues.extend(_defining_issues(entity.identity, declaration, positions))
                 case ReverseRelationshipDeclaration():
                     issues.extend(
-                        _reverse_issues(entity.identity, declaration, declarations, attributes)
+                        _reverse_issues(entity.identity, declaration, declarations, positions)
                     )
     issues.extend(_duplicate_claim_issues(candidate))
     return tuple(issues)
