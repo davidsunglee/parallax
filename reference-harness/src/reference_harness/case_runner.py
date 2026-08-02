@@ -1109,12 +1109,6 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
 
-    # An inheritance narrow constrains the queried polymorphic position; validate it
-    # pre-execution (the read-side counterpart of the write-derivation oracle).
-    validate_operation_inheritance(
-        case.model.entity_defs, case.operation, position=case.when.get("targetEntity")
-    )
-
     # Temporal composition (m-sql / m-temporal-read): a table-per-concrete-subtype
     # abstract read over a TEMPORAL family applies the injected as-of predicate PER
     # `union all` branch; recompute the per-branch as-of binds from the read's pin and
@@ -1152,14 +1146,19 @@ def _read_effective_set(case: Case, family: Family, target_name: str) -> list[st
     """The effective concrete-subtype set an abstract-target read resolves over.
 
     The queried position is *target_name*, further constrained when the operation's
-    leading node (after result-directive / temporal wrappers) is a ``narrow`` — then
-    the narrowed ``to`` set drives the projection superset. A ``narrow`` buried in an
-    ``or`` (grouped branch predicates) leaves the target's full family in scope.
+    leading node is a ``narrow`` — then the narrowed ``to`` set drives the projection
+    superset. The wrappers descended to reach it are the closed set `m-op-algebra`
+    enumerates as returning their operand's own rows: the result directives, the
+    temporal wrappers, and ``deepFetch``, which attaches fetched levels to the rows its
+    operand yields rather than replacing them, so a deep fetch's ROOT projection follows
+    its operand's narrow. A ``narrow`` buried in an ``or`` (grouped branch predicates)
+    leaves the target's full family in scope, as does a deep-fetch path's own root
+    guard, which qualifies a path's source objects rather than the read's result.
     """
     node: Any = case.operation
     while isinstance(node, dict) and len(node) == 1:
         tag = next(iter(node))
-        if tag in ("distinct", "orderBy", "limit", "asOf", "asOfRange", "history"):
+        if tag in ("distinct", "orderBy", "limit", "deepFetch", "asOf", "asOfRange", "history"):
             node = node[tag].get("operand")
         elif tag == "narrow":
             return family.resolve_to_set(node["narrow"].get("to", []) or [])
@@ -2464,10 +2463,6 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
     entity = case.model.entity(case.when["targetEntity"])
-
-    validate_operation_inheritance(
-        case.model.entity_defs, case.operation, position=case.when.get("targetEntity")
-    )
 
     value_object_columns = {vo["column"] for vo in entity.value_objects}
     rows: list[dict[str, Any]] = [
@@ -5577,6 +5572,14 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_conflict(case, db)  # given.apply + golden write, affected rows
         return
 
+    # Every remaining shape is a read, and every read's narrow / attribute positions are
+    # validated once here rather than per result form (the read-side counterpart of the
+    # write-derivation oracle). It runs before provisioning because the rule it enforces
+    # is a pre-SQL refusal: a read whose reference escapes its active position must fail
+    # the case, not reach a database.
+    validate_operation_inheritance(
+        case.model.entity_defs, case.operation, position=case.when.get("targetEntity")
+    )
     _assert_round_trip_count(case, dialect)  # layer 5 (count)
     _provision(case, db)
     if _is_deep_fetch(case):
