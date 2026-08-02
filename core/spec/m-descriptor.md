@@ -132,7 +132,33 @@ implementation **MUST** accept both.
 | `namespace` | logical namespace (language-neutral; replaces Java-style "package") |
 | `table` | physical table name (**conditionally** required — see below) |
 | `persistence` | `read-write` (default for standalone/root) \| `read-only`; descendants omit and inherit |
+| `layout` | the root-owned Storage Layout: omitted for conventional Columns storage, or `{document: {column: <name>}}` for Relational Document Layout; descendants omit and inherit |
 | children | `attributes` (**conditionally** required, non-empty); `relationships`, `indices`, `asOfAxes`, `valueObjects`, `inheritance` (optional) |
+
+`layout` selects how the Entity's members are placed physically
+(`m-storage-layout`). Its sole spelling is the closed one-member object
+`{document: {column: <name>}}`, whose `column` is REQUIRED: the canonical
+descriptor always carries the resolved Structured Column name, so no consumer,
+schema position, or diagnostic ever handles an unresolved one. A frontend that
+supplies a conventional name the author omitted resolves it during
+normalization, before export. There is no `columns` spelling and no `path`
+authoring form — a Document Path is derived from canonical member names and
+Value Object containment, never written.
+
+Like `persistence`, `layout` is family-wide and root-owned: a descendant MUST
+omit it even when repeating the root's value, which whole-model formation
+reports as `inheritance-layout-not-root-owned`. The schema places the property
+at the same entity position for every family participant rather than
+structurally forbidding it on a descendant, because the family rule is not
+expressible per entity.
+
+A member's `column` under Relational Document Layout stays schema-valid and is
+judged semantically. A document-resident Attribute or top-level Value Object
+carrying a `column` is a schema-valid document whose *model* is defective, so it
+is rejected in formation as
+`storage-layout-document-member-column-override` — not by a descriptor phase.
+Ingestion refuses malformed authoring syntax and types; it never performs role
+classification, which needs the whole model.
 
 `persistence` describes whether Parallax accepts persistence writes. It does
 not describe object mutability, security access, transaction demarcation, or a
@@ -402,6 +428,7 @@ import, so its explicit spelling carries no information:
 |---|---|
 | `column` | equal to `defaultColumn(name)` (an Attribute or a top-level Value Object occurrence) |
 | `persistence` | on a standalone Entity or family root whose normalized mode is Read Write (a descendant never spells `persistence` at all) |
+| `layout` | the normalized Storage Layout is Columns (a descendant never spells `layout` at all) |
 | `pkGeneration` | on a `primaryKey: true` Attribute whose normalized generation is Application Assigned |
 | Sequence `batchSize` / `initialValue` / `incrementSize` | equal to the semantic defaults (`1` / `1` / `1`) |
 | `primaryKey`, `nullable`, `readOnly`, `optimisticLocking`, `dependent`, `unique` | equal to the schema-declared default `false` |
@@ -411,6 +438,15 @@ import, so its explicit spelling carries no information:
 
 A one-Entity model's canonical spelling is the single-`entity` form;
 `entities` is canonical exactly for a multi-Entity model.
+
+Omission is the *only* wire form of Columns layout: `layout` has no `columns`
+spelling to omit, so an Entity mapped conventionally simply carries no `layout`
+property, and import normalizes that absence to Columns in compiled metadata.
+The `layout` property therefore appears exactly where Relational Document Layout
+is actually used. This leans the opposite way from the resolved Structured
+Column name, which is always explicit, and the two are consistent: a resolved
+value a downstream consumer needs is made explicit, while a default selection
+carrying nothing a reader could not derive from its absence is normalized away.
 
 ## Descriptor ingestion
 

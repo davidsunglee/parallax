@@ -159,6 +159,7 @@ m-inheritance --> m-model-formation
 m-storage-layout --> m-metamodel
 m-storage-layout --> m-model-formation
 m-storage-layout --> m-inheritance
+m-storage-layout --> m-relationship
 m-value-object --> m-metamodel
 m-value-object --> m-model-formation
 m-relationship --> m-metamodel
@@ -250,6 +251,15 @@ construction it may reference any behavioral module it harnesses.
   table-group projection, then compiles immutable Table Layouts from Compiled
   Metadata plus the Inheritance Facet. It depends on Formation for those phase
   contracts and does not move family topology into physical storage.
+- **`m-storage-layout --> m-relationship`.** Accepted Relationship Joins
+  *designate* direct-role Attributes: under Relational Document Layout both
+  endpoints of every join stay ordinary columns so navigation, joins, and
+  referential DDL keep one relational shape, which Storage Layout can only
+  compose if it knows the endpoints. It reads them the same two ways it reads
+  Inheritance — a pure, total, issue-free Candidate Metamodel projection during
+  validation, then the compiled Relationship Facet — so the edge adds no
+  Rule Set ordering dependency. This is the direction the placement question
+  runs: Relationship never asks where an Attribute is stored.
 - **`m-sql --> m-metamodel`, `m-sql --> m-inheritance`, `m-sql -->
   m-storage-layout`.** SQL lowering reads resolved model Identities directly,
   lowers a `narrow` node's tag/branch predicate against the inheritance family

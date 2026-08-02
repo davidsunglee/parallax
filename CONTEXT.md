@@ -382,10 +382,19 @@ Table; a future Document Collection is a different container form.
 _Avoid_: repeated table mapping, member location, database
 
 **Member Placement**:
-The immutable `m-storage-layout` answer locating one applicable top-level
-Entity Attribute or Value Object occurrence in a Table Layout: either one
-Direct Column or one Document Path beneath a Structured Column Slot.
+The immutable `m-storage-layout` answer locating one applicable member in a
+Table Layout: either one Direct Column or one Document Path beneath a Structured
+Column Slot. It is the sole authority for where a member lives, is total over
+the members applicable to its Table, and is derived from accepted metadata
+rather than declared.
 _Avoid_: Storage Location, declared column, member identity, SQL expression
+
+**Member Identity**:
+The closed union of the identity types addressing one logical member of an
+Entity — Attribute Identity, Value Object Identity, and Value Object Attribute
+Identity. It is what a consumer denotes a member with when it does not care
+where that member is stored, and the successor to dotted member-path strings.
+_Avoid_: dotted member string, column name, contributor, result key
 
 **Direct Column**:
 The Member Placement storing one top-level Entity member directly in one Column
@@ -426,8 +435,11 @@ _Avoid_: framework columns, per-entity prefix, module load order
 **Document Path**:
 The Member Placement consisting of one Structured Column Slot and a nonempty
 ordered sequence of canonical member-name segments locating a value inside its
-document. A nested Value Object member's full path derives from its top-level
-occurrence without giving that nested member an independently owned placement.
+document. Every segment is derived from a canonical declared name, so a Document
+Path is never authored and is never a declared Storage Location. A nested Value
+Object member's full path extends its top-level occurrence's rather than coming
+from a declaration of its own. Only a top-level member is assignable, so every
+assignment path has exactly one segment.
 _Avoid_: dotted path, JSON Pointer, column-plus-path concatenation
 
 **Storage Layout**:

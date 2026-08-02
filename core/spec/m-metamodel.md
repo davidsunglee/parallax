@@ -76,7 +76,30 @@ ValueObjectIdentity(entity: EntityIdentity,
                     path: nonempty sequence<nonempty string>)
 ValueObjectAttributeIdentity(value_object: ValueObjectIdentity,
                              name: nonempty string)
+
+MemberIdentity =
+    AttributeIdentity
+  | ValueObjectIdentity
+  | ValueObjectAttributeIdentity
 ```
+
+`MemberIdentity` is the closed union of the identity types that address one
+logical member of an Entity: a top-level Attribute, a Value Object occurrence at
+any containment depth, or a scalar field inside one. Relationships, Indices, and
+Temporal Dimensions are not members in this sense and are not union arms.
+The union names no new identity and adds no lookup; it is the addressing
+vocabulary a consumer uses when it must denote a member without caring where
+that member is stored, and it is what `m-storage-layout` accepts when it answers
+where a member lives.
+
+`MemberIdentity` is the successor to dotted-string member addressing. Nested
+members travel some existing surfaces as an authored `Entity.occurrence.field`
+string that each consumer re-splits; every such string denotes exactly one
+`MemberIdentity`, and a consumer that resolves the string once and then carries
+the identity is conforming. Replacing those authored spellings is not required
+by this contract: the operation algebra's wire form is unchanged, and no
+descriptor or operation position accepts a `MemberIdentity` as a serialized
+value.
 
 An empty namespace is invalid. The canonical Entity spelling is
 `<namespace>.<name>` when namespaced and `<name>` otherwise. Namespaced export
@@ -374,8 +397,20 @@ is family-wide and root-owned: a descendant's absent
 Persistence Mode is unrelated to in-memory mutation, security policy,
 Transaction Time, or Unit-of-Work demarcation.
 
-The reserved future variants `DocumentCollection`, `DocumentPath`, and
-`ContainerDocument` are not constructible in this contract.
+`Table` is the only constructible Storage Container and `Column` the only
+constructible Storage Location. The reserved future variants
+`DocumentCollection` and `ContainerDocument` are not constructible in this
+contract.
+
+`DocumentPath` was reserved alongside them and is no longer a reserved Storage
+Location. The name now belongs to `m-storage-layout`, where it is one arm of the
+compiled `MemberPlacement` union, and it is constructible there. The two are
+distinguished by kind rather than by spelling: a Storage Location is a
+**declared** fact a member carries, while a Document Path is a **derived** fact
+Storage Layout computes from the accepted model. Nothing declares a Document
+Path — there is no authoring form for one, and a member's `storage` remains
+`Column(name)` under every layout — so no declaration position ever needs the
+reserved variant this contract gave up.
 
 ## Attributes and primary keys
 

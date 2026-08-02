@@ -339,6 +339,20 @@ separately deployable adapter per supported database.
 Delete every subsection whose applicability condition is false and record that
 capability as deferred in §1 when appropriate.
 
+### Relational Document Layout
+
+- **(decide and record — When claimed: `m-storage-layout`)** Whether this target
+  supports the root-owned `Document` Storage Layout, and — when it does not —
+  that the capability is recorded as deferred in §1 and that formation refuses
+  every declaration it cannot execute end to end rather than accepting a subset.
+- **(decide and record — When claimed: `m-storage-layout`)** When supported: the
+  authoring spelling of the layout selection and of the Structured Column name,
+  including any conventional name the frontend resolves on the author's behalf;
+  how Member Placement is exposed to this target's own consumers; and which
+  capability shapes — standalone, table-per-hierarchy, table-per-concrete-subtype,
+  relationships, optimistic locking, and each temporal flavor — are executable
+  end to end.
+
 ### Process cache
 
 - **(decide and record — When claimed: `m-process-cache`)** Process-wide identity

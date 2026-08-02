@@ -409,6 +409,33 @@ second read (ADR 0042). Successors retain or view that state rather than copying
 it, and bulk materialization MAY expose a logical Predecessor Row view over
 columnar storage instead of allocating one row object per observation.
 
+Under Relational Document Layout a Predecessor Row additionally retains the
+**raw Structured Column document**, as a distinct named field beside its member
+state and never as an entry in it. The compact columnar form carries the same
+value as an aligned raw-document column beside its decoded Attribute and Value
+Object columns, so a logical Predecessor Row view over columnar storage exposes
+the raw document without allocating a second per-row carrier.
+
+The field is **absent — not empty — under Columns layout**, so its presence is
+itself the signal that the row came from a document-mapped Table. It is not a
+member: the member map stays purely logical, and a consumer that iterates
+members can never surface the raw document as a result field or an Entity
+member.
+
+Retention costs no additional query. A temporal write already materializes its
+predecessor to obtain the key, milestone bounds, complete state, and concurrency
+basis; the resolving read projects the Structured Column for that observation
+anyway, and this rule says only that the observation path carries the value
+forward instead of discarding it once known members are decoded.
+
+The successor is then built by patching that retained document
+(`m-document-codec`) rather than by re-encoding decoded members. That is what
+preserves keys a newer application version wrote: an application that predates a
+key it never declares still carries that key across a close-and-insert. The one
+deliberate exception is an explicitly assigned Value Object occurrence, which
+replaces its subtree and drops undeclared keys inside it while keys outside
+survive.
+
 The **Transaction-Time Basis** records only whether the read licenses an ungated
 locking-mode write. It is not a claim about lock scope (`m-read-lock`).
 

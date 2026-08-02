@@ -137,6 +137,13 @@ nested-attribute access form over a dotted path (`Class.valueObject.path`), whic
 has no identity of its own, it is accessed by value only and is never a
 relationship target.
 
+An extracted leaf is decoded by its **declared** Neutral Type through
+`m-document-codec`, never by inspecting the extracted JSON value's shape, and a
+compared literal is encoded through the same table before it is bound. That is
+what makes a `date`, `decimal`, `bytes`, `time`, `timestamp`, or `uuid` leaf
+comparable at all: both sides of the comparison are the one spelling the codec
+defines.
+
 ## Writing — one atomic document bind
 
 A top-level value object is **written atomically as one document**. On an insert
@@ -150,6 +157,17 @@ its layout position), and the concrete document value is adapted to the
 dialect's structured-document type at bind time (`m-dialect` — e.g. Postgres
 `jsonb`, MariaDB `json`). This mirrors Reladomo's embedded value riding the
 owner's row, expressed as one atomic document rather than flattened columns.
+
+**The bind is atomic; the document's contents are not this module's.** How each
+inner leaf is spelled inside that one document — and how presence, an empty
+`many`, and an explicit null are represented — is owned by `m-document-codec`,
+which owns the same question for a Relational Document Layout Entity document so
+the two representations cannot diverge. This module keeps the column count, the
+bind count, and the whole-document replace semantics; the codec keeps the bytes.
+A write path MUST build the document through the codec rather than handing a
+host-language value graph to a JSON serializer, which is what leaves a
+`decimal`, `bytes`, `date`, `time`, `timestamp`, or `uuid` leaf with no defined
+storage form.
 
 A **null** value object (`nullable: true`, written absent) binds SQL `NULL` — the
 whole column is null, not a document of nulls. A `nullable: false` value object
