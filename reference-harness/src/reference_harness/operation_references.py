@@ -10,11 +10,37 @@ Two callers share the walk: the read ``targetEntity`` cross-check
 (``predicate_write_validate``). They differ only in what surrounds the predicate:
 a read wraps it in result / temporal directives (``orderBy``, ``deepFetch``, …),
 whereas a predicate write is a BARE predicate that carries none of them.
+
+A vocabulary also lives here when its consumers ask DIFFERENT questions of the
+same closed set — :data:`OPERAND_ROW_WRAPPER_TAGS` is shared by walks that do not
+otherwise resemble each other — so that one ``m-op-algebra`` set has one owner
+whatever it is being asked.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+# The closed set `m-op-algebra` names as the wrappers "returning their operand's
+# OWN rows": the result-shaping directives (``orderBy`` / ``limit`` / ``distinct``
+# / ``deepFetch``, which attaches fetched levels to those rows rather than
+# replacing them) and the temporal wrappers (``asOf`` / ``asOfRange`` /
+# ``history``). None of them re-roots the rows its operand yields, so a walk
+# looking for the node that fixed those rows descends through this set AND NO
+# OTHER NODE. Deliberately purpose-neutral: what a walk does when it stops is its
+# own — resolving the position an order key is measured at, or the narrow an
+# abstract read's projection superset follows — and only the vocabulary is shared.
+OPERAND_ROW_WRAPPER_TAGS = frozenset(
+    {
+        "orderBy",
+        "limit",
+        "distinct",
+        "deepFetch",
+        "asOf",
+        "asOfRange",
+        "history",
+    }
+)
 
 ATTRIBUTE_REFERENCE_TAGS = frozenset(
     {

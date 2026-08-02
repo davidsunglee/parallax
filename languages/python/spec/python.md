@@ -111,20 +111,28 @@ mutations, exceptions, or exports.
   both parameters, for the opposite reason: its source narrows which queried
   objects a path starts from, so any descendant of the queried Entity is a legal
   include source. Composing a value from the wrong Entity is therefore a static
-  error where the call is written. Such a static rejection has an equivalent
-  model-aware rejection at execution preflight — which is what covers the
-  serialized ingress and any untyped caller — whenever the composition it
-  refuses reaches the wire as an operation a validator can refuse. Where that
-  composition lowers to a **valid** canonical operation instead, the parameter
-  is the only place the mistake is visible and no preflight rule could restate
-  it, because the wire carries no record of what was refused. That is the case
-  in exactly three places, each stated again where it arises: `Entity.all`,
-  since an `all` node names no position and nothing distinguishes `Dog.all`
-  from `Animal.all`; an **inherited** member spelled through a descendant, since
-  the wire keeps the declaring Entity; and the two clause-order rules below
-  (a `where` argument or a sort key written before the `narrow` that scopes
-  it), since a Find Query retains clauses rather than wrapping them, so the
-  refused spelling and the accepted one lower to one operation. The converse
+  error where the call is written. Such a static rejection is restated at run
+  time — which is what covers the serialized ingress and any untyped caller —
+  whenever the composition it refuses either reaches the wire as an operation a
+  model-aware validator can refuse at execution preflight, or is one the
+  frontend itself refuses with no model at all. Where that composition lowers to
+  a **valid** canonical operation instead, the parameter is the only place the
+  mistake is visible and no preflight rule could restate it, because the wire
+  carries no record of what was refused. A parameter can outrun the wire in only
+  three ways — the wire records less than the parameter read, the query flattens
+  the clause order the parameter read it in, or a signature deliberately answers
+  wider than the narrowing it describes — so those ways enumerate the places,
+  each stated again where it arises: `Entity.all`, since an `all` node names no
+  position and nothing distinguishes `Dog.all` from `Animal.all`; an
+  **inherited** member spelled through a descendant, since the wire keeps the
+  declaring Entity; the two clause-order rules below (a `where` argument or a
+  sort key written before the `narrow` that scopes it), since a Find Query
+  retains clauses rather than wrapping them, so the refused spelling and the
+  accepted one lower to one operation; and `FindQuery.narrow`'s **conservative
+  variadic overload**, which leaves the result parameter where it was for any
+  subtype list a fixed overload set cannot read — one expanded from a sequence,
+  or one naming more than three alternatives — while the narrow itself reaches
+  the wire and scopes exactly the sort keys preflight then accepts. The converse
   direction has exactly one exception of its own — narrowing relatedness
   (below) is refused at preflight and stated nowhere statically. Class access
   reads the **accessing** class rather than the declaring one, so `Dog.name`
@@ -382,7 +390,7 @@ mutations, exceptions, or exports.
   constructor; `Entity.where(...)` remains the sole query constructor.
   `AllPredicate[E]`'s parameter is the **only** place an unfiltered query
   written at another position is refused: `Animal.where(Dog.all)` is a static
-  error, and it is one of the three static rejections with no model-aware twin,
+  error, and it is one of the static rejections with no model-aware twin,
   because an `all` node names no position — `Dog.all` and `Animal.all` lower to
   the byte-identical `{"all": {}}` at the same target, which is a valid
   operation there is nothing for preflight to refuse.
@@ -721,8 +729,19 @@ mutations, exceptions, or exports.
   *produces*: `Entity.narrow(*subtypes, where=...)` measures the scoped `where=`
   against them, and `FindQuery.narrow(*subtypes)` moves the result parameter to
   their union, so a subtype-declared Sort Key becomes applicable exactly where
-  the narrow makes it so. Neither can also constrain what the narrowing starts
-  *from*, and the two are mutually exclusive in one signature because `type[…]`
+  the narrow makes it so. The overload set that moves it is fixed at one, two,
+  and three alternatives, so an argument list it cannot read — one expanded from
+  a sequence, or one naming more than three — falls to a **conservative variadic
+  overload** that leaves the result parameter where it was. That is the widest
+  honest answer to a list whose length the checker cannot see, and it is one of
+  the static rejections with no model-aware twin: the narrow itself reaches the
+  wire, so `.narrow(*subtypes).order_by(Dog.bark_volume.desc())` with
+  `subtypes = [Dog]` draws `reportArgumentType` while lowering to the very
+  operation `.narrow(Dog)` produces and preflight accepts. Spelling the
+  alternatives directly is what restores the narrowed result parameter, up to
+  the three the overload set reaches. Neither form can also constrain what the
+  narrowing starts *from*, and the two are mutually exclusive in one signature
+  because `type[…]`
   is covariant: a parameter naming the position accepts a descendant and
   rejects an unrelated class but cannot name the narrowed result, while one
   naming the result carries it and accepts anything. So

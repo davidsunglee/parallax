@@ -39,7 +39,11 @@ import copy
 from typing import TYPE_CHECKING, Any
 
 from .naming import default_column_name
-from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
+from .operation_references import (
+    ATTRIBUTE_REFERENCE_TAGS,
+    OPERAND_ROW_WRAPPER_TAGS,
+    PATH_REFERENCE_TAGS,
+)
 from .value_object_resolve import RejectionError
 
 if TYPE_CHECKING:
@@ -1304,11 +1308,6 @@ def _check_having_references(family: Family, node: Any) -> None:
     _check_aggregate_reference(family, body.get("agg"))
 
 
-_ORDERED_POSITION_WRAPPERS: frozenset[str] = frozenset(
-    {"orderBy", "limit", "distinct", "deepFetch", "asOf", "asOfRange", "history"}
-)
-
-
 def _ordered_position(
     family: Family, current_set: list[str], node: Any, outside_rule: str
 ) -> list[str]:
@@ -1316,13 +1315,10 @@ def _ordered_position(
 
     A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
     wrapper, so an order key is asked of that narrow's resolved set, reached
-    through every wrapper `m-op-algebra` names as carrying it: the result-shaping
-    directives (``orderBy`` / ``limit`` / ``distinct`` / ``deepFetch``) and the
-    temporal wrappers (``asOf`` / ``asOfRange`` / ``history``). None of them
-    re-roots the rows its operand yields — ``deepFetch`` attaches fetched levels
-    to those same rows — so all of them pass the position through. A ``narrow``
-    inside a boolean combinator is a predicate term over the same position and
-    moves nothing (m-op-algebra).
+    through the wrappers that return their operand's own rows
+    (:data:`OPERAND_ROW_WRAPPER_TAGS`) and no other node. A ``narrow`` inside a
+    boolean combinator is a predicate term over the same position and moves
+    nothing (m-op-algebra).
     """
     if not isinstance(node, dict) or len(node) != 1:
         return current_set
@@ -1333,7 +1329,7 @@ def _ordered_position(
         return resolve_clamped_narrow(
             family, current_set, body.get("entity"), body.get("to", []) or [], outside_rule
         )
-    if tag in _ORDERED_POSITION_WRAPPERS:
+    if tag in OPERAND_ROW_WRAPPER_TAGS:
         return _ordered_position(family, current_set, body.get("operand"), outside_rule)
     return current_set
 
