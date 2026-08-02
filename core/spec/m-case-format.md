@@ -209,6 +209,18 @@ whitespace sensitive, so structural comparison needs `json_equals`
 document cell, so a case author must be able to write it in the order that reads
 best and get the same verdict on both dialects.
 
+**A document-valued bind is authored as the document, never as its rendered text.**
+Wherever a `?` carries a structured document — the atomic value-object write bind,
+and the MariaDB `json_contains` candidate an element predicate binds (`m-sql`) — the
+`binds` entry is the document itself, in the same style as a document cell, and the
+provider adapts it at bind time (Postgres wraps it as `jsonb`, MariaDB serializes it
+to `json` text). A text spelling would put a key order and a separator convention
+into the golden that no contract fixes, and would compare two documents
+`m-document-codec` says are one value as two different binds. A JSON *string* bind
+stays a string: the array guard's `cast(? as jsonb)` takes the two characters `[]`
+because that `?` is a text argument the dialect spells (`m-dialect`), not a document
+the codec built.
+
 The complementary rule is on the construction side, not here: binds are built in
 canonical logical placement order so a golden document is deterministic to
 author (`m-storage-layout`). Deterministic construction and order-insensitive

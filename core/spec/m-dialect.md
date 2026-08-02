@@ -235,8 +235,8 @@ containment / length test.
 |---|---|---|
 | array guard | `<array-guard>` = `case when jsonb_typeof(jsonb_extract_path(col, ?)) = ? then jsonb_extract_path(col, ?) else cast(? as jsonb) end` — yields the array only when it **is** a JSON array, else an empty `[]`; the path binds **twice**, plus the type name `array` and `[]` | `<g>` = `json_type(json_extract(col, ?)) = ?` — true only when the member **is** a JSON array (bind: the path, then the type name `ARRAY`) |
 | element unnest | `jsonb_array_elements(<array-guard>)` inside a correlated `exists (select 1 from … t1 where <element-predicate>)` — the element alias binds one row per element; `jsonb_array_elements` is **strict** and errors on a non-array, so the guard is required — a NULL column / missing key / JSON `null` / JSON scalar / JSON object all yield **zero** elements | none — MariaDB has no set-returning array unnest usable as golden SQL (see below); the containment family under `<g>` expresses the same predicates directly |
-| any-element predicate | `exists (select 1 from jsonb_array_elements(<array-guard>) t1 where <ext>(t1.value, ?) = ?)` | `<g> and json_contains(col, ?, ?)` — bind a candidate JSON document (`'{"type":"home"}'`) and the array path (`'$.phones'`); containment against an array is **any-element**. The `<g>` guard is required because `json_contains` matches a JSON **object** that contains the candidate |
-| same-element (`where`) | one `exists` with every element predicate on the **same** `t1` alias | one `<g> and json_contains(col, ?, ?)` whose candidate object carries **every** required field — a single element must contain all of them |
+| any-element predicate | `exists (select 1 from jsonb_array_elements(<array-guard>) t1 where <ext>(t1.value, ?) = ?)` | `<g> and json_contains(col, ?, ?)` — bind a candidate JSON **document** (the codec's `{"type": "home"}`, adapted to this dialect's structured-document type at bind time exactly as a written document is) and the array path (`'$.phones'`); containment against an array is **any-element**. The `<g>` guard is required because `json_contains` matches a JSON **object** that contains the candidate |
+| same-element (`where`) | one `exists` with every element predicate on the **same** `t1` alias | one `<g> and json_contains(col, ?, ?)` whose candidate object carries **every** required field, one key per constrained path — a single element must contain all of them |
 | non-empty (`exists`, no `where`) | `exists (select 1 from jsonb_array_elements(<array-guard>) t1)` | `<g> and json_length(col, ?) > ?` (`> 0`) — the `<g>` guard is required because `json_length` of a JSON scalar (or JSON `null`) is `1` |
 | empty-or-absent (`notExists`) | `not exists (…)` — `not exists` over zero elements is **true**, so an empty array, a NULL column, and a non-array value all match | wrap the guarded containment / length in `coalesce(<g> and …, ?)` so a NULL column, missing key, non-array value, and empty array all read as the "no match" value the leading `not` then admits |
 
@@ -248,7 +248,11 @@ rather than extracted text, so neither of this seam's two comparison forms fits:
 the managed `boolean` this dialect's cast takes is `1`, and `{"flag": 1}` matches
 no element storing a JSON boolean. What this seam owns is the containment
 *spelling* — the function family, the guard, and the bind order — exactly as it
-owns the extraction spelling without owning the text the codec writes.
+owns the extraction spelling without owning the text the codec writes. The
+candidate reaches the driver the way a written document does: SQL binds the
+finished `Document`, and **serializing it to this dialect's `json` text happens
+here, below the bind**, so no golden and no lowering ever names a key order or a
+separator (`m-sql`, `m-case-format`).
 
 **Why MariaDB uses the containment family, not `JSON_TABLE`.** The natural
 element-unnest on MariaDB is `JSON_TABLE(col, '$.phones[*]' columns (…))`, and it is
@@ -271,8 +275,9 @@ point.
 **containment** predicate: it expresses element predicates that are equality against
 a fixed candidate. It covers exactly two shapes: an **any-element `nestedEq`**
 through a `many` segment, and a **same-element `where` whose compound is a
-conjunction of equalities** (`nestedEq` and/or nested `and`) carried in one
-candidate object. It **cannot** express any other element predicate, even though
+conjunction of equalities over distinct paths** (`nestedEq` and/or nested `and`)
+carried in one candidate object. It **cannot** express any other element predicate,
+even though
 `m-op-algebra` admits the whole scoped `nested*` family inside `where` and the flat
 `nested*` family through a `many` segment. Concretely, `json_contains` cannot lower:
 
@@ -291,11 +296,21 @@ candidate object. It **cannot** express any other element predicate, even though
   (`elementNestedIsNull` / `elementNestedIsNotNull`);
 - an element-scoped **`where` whose combinator is not a plain conjunction** — an
   `or`, a `not`, or a `group` around a disjunction (only a flat `and` of equalities
-  maps to a single candidate object).
+  over distinct paths maps to a single candidate object);
+- an element-scoped **`where` whose equalities constrain one element-relative path
+  with two different values** — `type = 'home' and type = 'work'` on the same
+  element. A candidate object carries **one value per key**, so the two constraints
+  cannot both ride it, and lowering either one alone produces a `json_contains` that
+  matches elements the predicate excludes: the conjunction is unsatisfiable and must
+  return **no** row, while `{"type":"work"}` returns every row with a work phone.
+  Two equalities on one path that carry the **same** value are one constraint, not
+  two, and the candidate expresses them exactly (`m-sql`).
 
 Each of those requires a **set-returning element unnest** that binds one row per
-element (`JSON_TABLE`), which the current reference harness cannot normalize as
-golden SQL (above). **These non-equality to-many element predicates on MariaDB are
+element (`JSON_TABLE`) — the last one included, since two constraints on one path
+are two ordinary predicates on one unnested row — which the current reference
+harness cannot normalize as
+golden SQL (above). **These to-many element predicates on MariaDB are
 therefore a documented deferred limitation**: the algebra and the Postgres lowering
 (`jsonb_array_elements`, fully general — its `<array-guard>` unnest expresses every
 element predicate and combinator) support them; the MariaDB **golden** does not until
