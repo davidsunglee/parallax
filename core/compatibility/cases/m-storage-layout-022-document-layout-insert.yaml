@@ -13,11 +13,12 @@
 #
 #   * step 1 names every member — the document carries all of them, with `address`
 #     nested at its containment path and `tags` as an ordered array.
-#   * step 2 names the two members it sets plus the empty `tags` array a required
-#     `many` occurrence must be given. The four members it omits contribute NO key —
-#     a writer that emitted JSON null for an omitted nullable member would store a
-#     different document — while `tags` writes `[]`, the sole zero-element
-#     representation (m-document-codec).
+#   * step 2 names one scalar and nothing else. The five members it omits divide in
+#     two: the four nullable ones contribute NO key — a writer that emitted JSON null
+#     for an omitted nullable member would store a different document — while the
+#     unnamed `tags` occurrence writes `[]`, the sole zero-element representation, so
+#     a writer that echoed the input rather than composing the document would store
+#     no `tags` key at all (m-document-codec).
 #   * step 3 inserts a `Beacon`, which declares the layout and no document-resident
 #     member at all: the Structured Column still binds, carrying the empty object.
 #
@@ -49,11 +50,10 @@ when:
     - mutation: insert
       entity: Traveler
       statements: 1
-      note: one scalar plus the empty `many` — every other member absent, contributing no key
+      note: one scalar — the nullable members absent contribute no key, the absent `many` writes []
       rows:
         - id: 5
           displayName: Eli
-          tags: []
     - mutation: insert
       entity: Beacon
       statements: 1

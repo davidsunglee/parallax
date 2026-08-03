@@ -2832,7 +2832,9 @@ def _classify_write_row(
     makes the golden bind graded rather than trusted: the harness derives the document
     a conforming writer must produce from the case's own member values, and
     :func:`_assert_write_values` compares it to the authored bind — so a leaf spelled
-    any other way fails the case instead of surviving it.
+    any other way fails the case instead of surviving it. An OPENING statement
+    additionally binds every `many` occurrence's column whether ① names it or not:
+    absence and the empty array are one logical zero state (m-value-object).
 
     Under Relational Document Layout the members the layout moved inside the shared
     Structured Column resolve to THAT one column rather than to columns of their own,
@@ -2877,6 +2879,18 @@ def _classify_write_row(
             pk_value = value
         else:
             set_columns[column] = value
+    if opening:
+        # A `many` occurrence with a Column of its own binds on every opening
+        # statement whether or not the row names it: absence and the empty array are
+        # one logical zero state, so an unnamed `many` stores `[]` (m-value-object) —
+        # the same answer the codec composes for one inside a document.
+        for value_object in entity.value_objects:
+            column = value_object["column"]
+            if value_object.get("multiplicity", "one") != "many" or column in resident_columns:
+                continue
+            if value_object["name"] not in row:
+                columns[column] = encode_document(value_object, [])
+                set_columns[column] = columns[column]
     if document_column and opening:
         # The Structured Column binds on EVERY opening statement, including one for
         # an Entity whose members are all direct: it is `NOT NULL` and every governed

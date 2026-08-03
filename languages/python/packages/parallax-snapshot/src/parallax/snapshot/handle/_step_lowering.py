@@ -428,6 +428,12 @@ def _member_cells(
     fills with the row's complete document and a revising one with the ordered
     path assignments it patches.
 
+    An ``opening`` statement binds a `many` occurrence's Column whether or not
+    the row names it: absence and the empty array are one logical zero state, so
+    an unnamed `many` stores ``[]`` (`m-value-object`), which is the same answer
+    the codec composes for one inside a document. A revising statement leaves an
+    unnamed occurrence alone, because patching touches only what it assigns.
+
     ``stamp_tag`` additionally emits the table-per-hierarchy discriminator at its
     own slot. An opening row writes it because the row's concrete subtype is being
     established; a revising statement leaves it alone, since revising a row never
@@ -457,12 +463,15 @@ def _member_cells(
         elif isinstance(contributor, AttributeIdentity) and contributor in attributes:
             cells.append((slot.column.name, attributes[contributor]))
             matched += 1
-        elif isinstance(contributor, ValueObjectIdentity) and contributor in value_objects:
+        elif isinstance(contributor, ValueObjectIdentity):
             occurrence = _occurrence_of(placed, contributor)
-            value = value_objects[contributor]
-            document = None if value is None else _occurrence_document(occurrence, value)
-            cells.append((slot.column.name, JsonDocument(document)))
-            matched += 1
+            if contributor in value_objects:
+                value = value_objects[contributor]
+                document = None if value is None else _occurrence_document(occurrence, value)
+                cells.append((slot.column.name, JsonDocument(document)))
+                matched += 1
+            elif opening and occurrence.multiplicity is Multiplicity.MANY:
+                cells.append((slot.column.name, JsonDocument(_occurrence_document(occurrence, ()))))
     _require_placed(matched, len(attributes) + len(value_objects), entity)
     return cells
 

@@ -182,8 +182,8 @@ _STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
 # text-compared half's five spellings (008-012), plus the non-string containment
 # candidate (013), whose Postgres lowering puts every element predicate on one
 # unnested alias. Row-form, compiled and run below. The two writeSequence cases
-# (001/002) are the ENCODING and PRESENCE witnesses rather than comparison ones;
-# `-001` joins `WRITE_EXERCISED` and `-002` is reasoned-out there.
+# (001/002) are the ENCODING and PRESENCE witnesses rather than comparison ones, and
+# both join `WRITE_EXERCISED` instead.
 _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
     f"m-document-codec-{n:03d}" for n in range(3, 14)
 )
@@ -340,9 +340,10 @@ _STORAGE_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-storage-layout-011",
     }
 )
-# Relational Document Layout writes, plus the two per-leaf encoding witnesses that
-# were waiting on them. `m-storage-layout-022` is the whole-document INSERT (the
-# Structured Column binds on every row, the codec fixes presence);
+# Relational Document Layout writes, plus the two conventional Value Object encoding
+# witnesses that grade the same composition. `m-storage-layout-022` is the
+# whole-document INSERT (the Structured Column binds on every row, the codec fixes
+# presence);
 # `m-storage-layout-023` is the two-assignment patch UPDATE, whose `set` term is the
 # dialect's mutation expression rather than one bind; `m-value-object-067` replaces a
 # whole occurrence in place, one path and one composite value.
@@ -352,20 +353,17 @@ _STORAGE_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # received: an exact-decimal STRING, lowercase-hex `bytes`, zero-padded ISO `time`,
 # UTC-microsecond `timestamp`, and canonical-lowercase `uuid`, at every depth.
 #
-# Its presence sibling `m-document-codec-002` is deliberately absent. Its neutral
-# write input omits the required `many` occurrence `profile.entries`, which is the
-# very state it witnesses — an omitted `many` still stores `[]` — and the
-# developer-facing write validator refuses a required value object the input does not
-# name (`write-required-value-object-missing`) before any SQL. The compile lane never
-# runs that validator, so the case's golden compiles byte-exact here; the run lane
-# does, so it cannot execute there. Its claim is graded by the reference harness on
-# both engines instead.
+# Its presence sibling `m-document-codec-002` is the same claim about presence rather
+# than spelling: its neutral write input names neither the nullable `origin` occurrence
+# nor the `many` `profile.entries`, and only a lane that composes the document through
+# the codec stores the first as no key and the second as `[]`.
 _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-storage-layout-022",
         "m-storage-layout-023",
         "m-value-object-067",
         "m-document-codec-001",
+        "m-document-codec-002",
     }
 )
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
