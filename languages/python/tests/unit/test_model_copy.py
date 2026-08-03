@@ -29,6 +29,9 @@ from parallax.core.entity import (
     primary_key_row,
     wire_names_of,
 )
+from parallax.core.entity._entity import (
+    _assignment_matches_original,  # pyright: ignore[reportPrivateUsage]
+)
 from parallax.core.metamodel import Column
 
 
@@ -77,6 +80,27 @@ def test_effective_change_set_includes_only_touched_and_different_fields() -> No
     original = _account(balance="100.00")
     edited = original.model_copy(update={"balance": Decimal("175.00")})
     assert effective_change_set(edited) == {"balance": Decimal("175.00")}
+
+
+def test_effective_change_set_compares_only_authored_occurrence_members() -> None:
+    original = mm.Traveler(
+        id=1,
+        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
+        tags=(),
+    )
+    edited = original.model_copy(update={"address": mm.TravelerAddress(city="Oslo")})
+
+    assert effective_change_set(edited) == {}
+
+
+def test_assignment_scoped_comparison_covers_nested_and_many_boundaries() -> None:
+    assert _assignment_matches_original({}, {"future": 1})
+    assert not _assignment_matches_original({"city": "Oslo"}, None)
+    assert not _assignment_matches_original({"city": "Oslo"}, {"city": "Bergen"})
+    assert _assignment_matches_original([{"city": "Oslo"}], [{"city": "Oslo", "future": 1}])
+    assert not _assignment_matches_original([{"city": "Oslo"}], [])
+    assert not _assignment_matches_original([{"city": "Oslo"}], {"city": "Oslo"})
+    assert not _assignment_matches_original("Oslo", "Bergen")
 
 
 def test_a_plain_copy_with_no_update_carries_forward_the_existing_record() -> None:

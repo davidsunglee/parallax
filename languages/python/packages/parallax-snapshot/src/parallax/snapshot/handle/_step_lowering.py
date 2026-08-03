@@ -101,12 +101,12 @@ __all__ = ["lower_step"]
 
 @dataclass(frozen=True, slots=True)
 class _DocumentAssignments:
-    """The ordered paths one revising statement assigns inside one Structured Column.
+    """The ordered mutation trees for one revising statement's Structured Column.
 
-    A revising statement PATCHES rather than replaces (`m-storage-layout`): each
-    entry is one Document Path paired with the encoded document value landing
-    there, and the sequence is canonical logical placement order, which both
-    dialects' mutation expressions apply left to right (`m-dialect`).
+    A revising statement PATCHES rather than replaces (`m-storage-layout`): leaf
+    and ``many`` entries assign encoded values, while ``one`` entries recursively
+    guard and patch nested occurrences. The sequence is canonical logical
+    placement order, which both dialects apply left to right (`m-dialect`).
     """
 
     assignments: tuple[DocumentAssignment, ...]

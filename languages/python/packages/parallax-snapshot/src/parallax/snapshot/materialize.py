@@ -30,11 +30,11 @@ row reuses (never re-decoded, never a second copy) — the mechanism a
 back-reference level's resolution depends on and what a future identity-check
 observation compares by Python reference (`is`), never by value.
 
-Per the amended dependency graph, ``m-snapshot-read`` depends on ``m-deep-fetch``
-alone (transitively reaching ``m-metamodel`` / ``m-inheritance`` /
-``m-temporal-read``, whose accepted Metadata and Inheritance Facet this module
-reads directly — the same transitive-reachability latitude every other scope in
-this DAG already uses). It never imports ``m-sql`` / ``m-dialect``:
+``m-snapshot-read`` depends directly on ``m-deep-fetch`` and
+``m-document-codec``. The former transitively reaches ``m-metamodel`` /
+``m-inheritance`` / ``m-temporal-read``, whose accepted Metadata and Inheritance
+Facet this module reads directly; the latter supplies declared-member reduction
+for document-resident occurrences. It never imports ``m-sql`` / ``m-dialect``:
 `familyVariant` materialization (the raw tag column -> subtype name, or the
 projected literal rename) is `m-sql`-owned, carried by the compiled read itself
 (`~parallax.core.sql_gen.CompiledRead.transform_row`) and applied by the CALLER
@@ -321,7 +321,9 @@ def _decode_element(raw: object, container: _VoContainer) -> dict[str, object] |
     (:func:`_decoded_leaf`).
     """
     try:
-        reduced = reduce_declared_members(occurrence_shape(container), raw)
+        reduced = reduce_declared_members(
+            occurrence_shape(container), raw, collapse_invalid_occurrences=True
+        )
     except LeafEncodingError as exc:
         identity = container.identity
         member = ".".join(identity.path)

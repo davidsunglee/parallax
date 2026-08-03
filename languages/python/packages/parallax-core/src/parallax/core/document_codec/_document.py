@@ -413,15 +413,27 @@ def _occurrence_patches(
 
 
 def reduce_declared_members(
-    shape: DocumentShape, document: object, *, named_by: object | None = None
+    shape: DocumentShape,
+    document: object,
+    *,
+    named_by: object | None = None,
+    collapse_invalid_occurrences: bool = False,
 ) -> object:
     """Reduce stored content to one codec-owned view of the shape's declared members.
 
     A ``one`` is reduced recursively, a ``many`` element-wise in stored order, and
     absent or JSON-null members reduce to ``None``. Undeclared keys never contribute.
+    When ``named_by`` is a mapping, it is the authored-presence mask: only members
+    named there contribute, recursively through ``one`` occurrences.
+    ``collapse_invalid_occurrences`` is reserved for logical read materialization,
+    where operation-algebra absence collapse treats a wrong-kind occurrence as
+    not present. Mutation comparison leaves it false so invalid storage cannot
+    compare equal to a replacement value.
     """
-    if not isinstance(document, Mapping):
+    if document is None:
         return None
+    if not isinstance(document, Mapping):
+        raise LeafEncodingError(f"expected object, got {type(document).__name__}")
     source = cast("Mapping[str, object]", document)
     names = cast("Mapping[str, object]", named_by) if isinstance(named_by, Mapping) else None
     reduced: dict[str, object] = {}
@@ -438,19 +450,41 @@ def reduce_declared_members(
                 except LeafEncodingError as exc:
                     raise LeafEncodingError(f"{member.name}: {exc}") from exc
         elif member.multiplicity is Multiplicity.MANY:
-            values = cast("Sequence[object]", raw) if isinstance(raw, list) else ()
+            if raw is None:
+                values: Sequence[object] = ()
+            elif isinstance(raw, list):
+                values = cast("Sequence[object]", raw)
+            elif collapse_invalid_occurrences:
+                values = ()
+            else:
+                raise LeafEncodingError(f"{member.name}: expected array, got {type(raw).__name__}")
             try:
                 reduced[member.name] = [
-                    reduce_declared_members(member.shape, value) for value in values
+                    reduce_declared_members(
+                        member.shape,
+                        value,
+                        collapse_invalid_occurrences=collapse_invalid_occurrences,
+                    )
+                    for value in values
                 ]
             except LeafEncodingError as exc:
                 raise LeafEncodingError(f"{member.name}.{exc}") from exc
         else:
             nested_names = None if names is None else names.get(member.name)
             try:
-                reduced[member.name] = reduce_declared_members(
-                    member.shape, raw, named_by=nested_names
-                )
+                if (
+                    raw is not None
+                    and not isinstance(raw, Mapping)
+                    and collapse_invalid_occurrences
+                ):
+                    reduced[member.name] = None
+                else:
+                    reduced[member.name] = reduce_declared_members(
+                        member.shape,
+                        cast("object", raw),
+                        named_by=nested_names,
+                        collapse_invalid_occurrences=collapse_invalid_occurrences,
+                    )
             except LeafEncodingError as exc:
                 raise LeafEncodingError(f"{member.name}.{exc}") from exc
     return reduced
