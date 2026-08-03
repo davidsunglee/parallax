@@ -56,6 +56,7 @@ from parallax.core import (
 from parallax.core.base import InstantError
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import occurrence_shape
 from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
@@ -63,8 +64,14 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     instructions,
 )
+from parallax.core.unit_work.write_planner import (
+    _assigned_many_path as planner_many_path,  # pyright: ignore[reportPrivateUsage]
+)
 from parallax.snapshot import QueryTargetError
 from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle._predicate_writes import (
+    _assigned_many_path as snapshot_many_path,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 # A local Transaction-Time-Only, value-object-bearing entity with the
@@ -166,6 +173,30 @@ class WhereCharter(
 _WHERE_CHARTER_META = DomainModel(WhereCharter)
 
 
+class NestedReadlessStop(ValueObject):
+    port: Attr[str]
+
+
+class NestedReadlessSegment(ValueObject):
+    stops: Attr[tuple[NestedReadlessStop, ...]]
+
+
+class NestedReadlessRoute(ValueObject):
+    name: Attr[str]
+    segment: Attr[NestedReadlessSegment]
+
+
+class NestedReadlessVoyage(
+    Entity, table="nested_readless_voyage", namespace="parallax.compatibility", layout=Document()
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str | None]
+    route: Attr[NestedReadlessRoute]
+
+
+_NESTED_READLESS_META = DomainModel(NestedReadlessVoyage)
+
+
 # --------------------------------------------------------------------------- #
 # Predicate-selected `_where` verb family (`python.md` §5): the mutation-      #
 # compatibility guard, Assignment composition, inheritance rejection, Valid-   #
@@ -200,6 +231,59 @@ def test_readless_document_many_assignment_is_refused_before_write_sql() -> None
         Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED)).transact(fn)
     assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
     assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
+def test_readless_nested_document_many_assignment_is_refused_before_write_sql() -> None:
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            NestedReadlessVoyage.where(NestedReadlessVoyage.id == 1),
+            NestedReadlessVoyage.route.set(
+                NestedReadlessRoute(
+                    name="Coastal",
+                    segment=NestedReadlessSegment(stops=(NestedReadlessStop(port="Oslo"),)),
+                )
+            ),
+        )
+
+    with pytest.raises(WriteRejectedError) as raised:
+        Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED)).transact(fn)
+    assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
+    assert "route.segment.stops" in str(raised.value)
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
+def test_nested_document_many_detection_follows_only_authored_occurrences() -> None:
+    entity = _NESTED_READLESS_META.entities[0]
+    occurrence = entity.declared_value_objects[0]
+    authored_without_many: dict[str, object] = {"name": "Coastal", "segment": {}}
+    authored_with_many: dict[str, object] = {
+        "name": "Coastal",
+        "segment": {"stops": [{"port": "Oslo"}]},
+    }
+
+    assert snapshot_many_path(occurrence_shape(occurrence), authored_without_many) is None
+    assert snapshot_many_path(occurrence_shape(occurrence), authored_with_many) == (
+        "segment",
+        "stops",
+    )
+    assert planner_many_path(occurrence, authored_without_many) is None
+    assert planner_many_path(occurrence, authored_with_many) == ("segment", "stops")
+    assert planner_many_path(occurrence, None) is None
+
+
+def test_readless_document_scalar_assignment_still_reaches_planning() -> None:
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            NestedReadlessVoyage.where(NestedReadlessVoyage.id == 1),
+            NestedReadlessVoyage.title.set("Coastal"),
+        )
+
+    Database.connect(port, _NESTED_READLESS_META, clock=FixedClock(FIXED)).transact(fn)
+    assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
 
 
 def test_readless_delete_where_buffers_one_statement_no_read() -> None:

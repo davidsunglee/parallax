@@ -545,6 +545,13 @@ def test_declared_member_reduction_is_recursive_and_assignment_scoped() -> None:
         reduce_declared_members(_SHAPE, {"entries": [{"kind": 7}]})
 
 
+def test_declared_member_reduction_refuses_wrong_occurrence_kinds() -> None:
+    with pytest.raises(LeafEncodingError, match="expected object"):
+        reduce_declared_members(_SHAPE, {"origin": "Oslo"})
+    with pytest.raises(LeafEncodingError, match="expected array"):
+        reduce_declared_members(_SHAPE, {"entries": {"kind": "home"}})
+
+
 def test_patches_apply_left_to_right_each_over_the_result_of_the_last() -> None:
     patched = apply_patches(
         _SHAPE,

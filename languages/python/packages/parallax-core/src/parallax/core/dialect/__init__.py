@@ -67,13 +67,23 @@ class DocumentManyAssignment:
 
 @dataclass(frozen=True, slots=True)
 class DocumentOneAssignment:
-    """A guarded ``one`` occurrence mutation relative to a document expression."""
+    """A guarded ``one`` occurrence mutation relative to a document expression.
+
+    ``assignments=None`` nulls the occurrence. An empty tuple instead guards and
+    writes back the occurrence without assigning any named child.
+    """
 
     path: tuple[str, ...]
     assignments: tuple[DocumentAssignment, ...] | None
 
 
 type DocumentAssignment = DocumentLeafAssignment | DocumentManyAssignment | DocumentOneAssignment
+"""One node in a recursive document-mutation tree.
+
+Leaf and ``many`` nodes assign complete encoded values at their relative paths.
+A ``one`` node guards its occurrence as an object and recursively applies its
+children, or stores JSON null when its children are absent.
+"""
 
 # A "simple" identifier needs no quoting: lowercase, starts with a letter.
 _SIMPLE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -262,14 +272,15 @@ class Dialect:
         form*).
 
         ``document`` is an ALREADY-RENDERED Structured Column reference, for the
-        same reason :meth:`nested_extract` takes one. Each assignment is its
-        Document Path segments paired with the encoded document value
-        (`m-document-codec`), and the sequence is applied left to right in the
-        order given — canonical logical placement order, which `m-sql` fixes and
-        this seam MUST NOT reorder, deduplicate, or merge. Postgres composes the
-        assignments as NESTED `jsonb_set` calls (the innermost is the first
-        assignment) while MariaDB uses one native N-pair `json_set`; either way
-        the binds read path, value, path, value in assignment order.
+        same reason :meth:`nested_extract` takes one. Leaf and ``many`` nodes
+        assign encoded values. A ``one`` node recursively guards the occurrence
+        with an object type test and empty-object fallback, applies its children,
+        and writes the result back; absent children store JSON null. Paths are
+        absolute extraction and write-back paths and may therefore occur more
+        than once in the ordered binds alongside type tags, fallback objects,
+        encoded values, and child binds. The sequence is applied left to right in
+        canonical logical placement order, which `m-sql` fixes and this seam MUST
+        NOT reorder, deduplicate, or merge.
 
         The value hole is a per-dialect **expression**, not a bare `?`: Postgres
         resolves a bare parameter there to `jsonb_set`'s declared `jsonb` and

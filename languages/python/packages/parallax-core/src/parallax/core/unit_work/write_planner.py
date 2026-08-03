@@ -53,6 +53,7 @@ from parallax.core.metamodel import (
     Multiplicity,
     TemporalDimension,
     ValueObjectIdentity,
+    ValueObjectMetadata,
 )
 from parallax.core.unit_work.clock import TransactionInstant
 from parallax.core.unit_work.columns import (
@@ -1270,19 +1271,40 @@ def reject_readless_document_many(entity: EntityMetadata, instruction: Predicate
     """Refuse the readless document-array assignment shape before planning."""
     if not isinstance(entity.declared_layout, Document):
         return
-    many = {
-        occurrence.identity.path[-1]
-        for occurrence in entity.declared_value_objects
-        if occurrence.multiplicity is Multiplicity.MANY
+    occurrences = {
+        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
     }
     for assignment in instruction.assignments:
         member = _assignment_member(assignment.attr)
-        if member in many:
+        occurrence = occurrences.get(member)
+        if occurrence is None:
+            continue
+        nested_many = _assigned_many_path(occurrence, assignment.value)
+        if occurrence.multiplicity is Multiplicity.MANY or nested_many is not None:
+            path = member if nested_many is None else ".".join((member, *nested_many))
             raise WriteRejectedError(
                 "predicate-write-readless-document-many-unsupported",
-                f"{entity.identity.canonical}.{member}: a readless predicate write cannot "
+                f"{entity.identity.canonical}.{path}: a readless predicate write cannot "
                 "assign a document-resident `many` occurrence",
             )
+
+
+def _assigned_many_path(
+    occurrence: ValueObjectMetadata, authored: object
+) -> tuple[str, ...] | None:
+    if not isinstance(authored, Mapping):
+        return None
+    authored_members = cast("Mapping[object, object]", authored)
+    for nested in occurrence.value_objects:
+        name = nested.identity.path[-1]
+        if name not in authored_members:
+            continue
+        if nested.multiplicity is Multiplicity.MANY:
+            return (name,)
+        path = _assigned_many_path(cast("ValueObjectMetadata", nested), authored_members[name])
+        if path is not None:
+            return (name, *path)
+    return None
 
 
 def _require_entity(resolved: Targets, spelling: str) -> EntityMetadata:
