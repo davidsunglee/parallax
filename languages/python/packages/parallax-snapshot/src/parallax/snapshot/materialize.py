@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from parallax.core import inheritance
-from parallax.core.base import decode_neutral_literal
+from parallax.core.base import decode_neutral_literal, matches_neutral_type
 from parallax.core.deep_fetch import FetchLevel
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -61,6 +61,7 @@ from parallax.core.metamodel import (
     NestedValueObjectMetadata,
     PrimaryKey,
     TablePerConcreteSubtype,
+    ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
 )
@@ -313,19 +314,42 @@ def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
 # is present (null / [] where the document does not supply it) — the same     #
 # absence-state vocabulary the predicate side collapses (m-op-algebra).       #
 # --------------------------------------------------------------------------- #
+def _decoded_leaf(stored: object, attribute: ValueObjectAttributeMetadata) -> object:
+    """One present leaf as a value of its DECLARED Neutral Type.
+
+    The declared type decides, never the JSON value's own shape, because a document
+    stores a portable spelling and a member's materialized value is its managed one: a
+    ``decimal`` is stored as an exact digit string, ``bytes`` as lowercase
+    hexadecimal, and a ``timestamp`` as a UTC ISO instant, so copying the stored value
+    through would hand a caller a ``str`` where the model declares a ``Decimal``,
+    ``bytes``, or ``datetime``.
+
+    Decoding a literal is total and nonthrowing, so membership is what separates a
+    spelling the declared type has from one it does not. A stored value that decodes
+    into no member of its declared value space is invalid stored data
+    (`m-document-codec`) and raises here: this module defines no repair and no
+    defaulting, so it never hands a caller the raw stored value under a member the
+    model types otherwise.
+    """
+    decoded = decode_neutral_literal(stored, attribute.type)
+    if not matches_neutral_type(decoded, attribute.type):
+        identity = attribute.identity
+        member = ".".join((*identity.value_object.path, identity.name))
+        raise MaterializeError(
+            f"{identity.value_object.entity.canonical}.{member}: {stored!r} does not decode "
+            f"into its declared type {attribute.type!r} — invalid stored data"
+        )
+    return decoded
+
+
 def _decode_element(raw: object, container: _VoContainer) -> dict[str, object] | None:
     """Decode one ``one``-shaped value-object document (or array element) to its
     DECLARED shape: a non-mapping (SQL NULL, JSON null, a non-object scalar)
     collapses to ``None`` — the whole composite absent — never a partial dict.
 
-    Each leaf decodes by its DECLARED Neutral Type rather than by the JSON value's
-    own shape, because a document stores a portable spelling and a member's
-    materialized value is its managed one: a ``decimal`` is stored as an exact digit
-    string, ``bytes`` as lowercase hexadecimal, and a ``timestamp`` as a UTC ISO
-    instant, so copying the stored value through would hand a caller a ``str`` where
-    the model declares a ``Decimal``, ``bytes``, or ``datetime``. A value the
-    declared type does not spell passes through unchanged and stays whatever the row
-    held.
+    An absent or JSON-null leaf is that member's own not-present state and answers
+    ``None``; a present one decodes by its declared Neutral Type
+    (:func:`_decoded_leaf`).
     """
     if not isinstance(raw, Mapping):
         return None
@@ -334,7 +358,7 @@ def _decode_element(raw: object, container: _VoContainer) -> dict[str, object] |
     for attribute in container.attributes:
         stored = document.get(attribute.identity.name)
         result[attribute.identity.name] = (
-            None if stored is None else decode_neutral_literal(stored, attribute.type)
+            None if stored is None else _decoded_leaf(stored, attribute)
         )
     for nested in container.value_objects:
         member_name = nested.identity.path[-1]

@@ -130,6 +130,33 @@ def test_decode_row_decodes_every_nested_leaf_by_its_declared_neutral_type() -> 
     assert element["issued"] == dt.date(2026, 2, 1)
 
 
+def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_collapses() -> None:
+    # The two halves of one boundary. A member the document does not supply is a
+    # presence state the model HAS — a missing key, a JSON null, an occurrence of the
+    # wrong kind — and collapses to null / [] as the read predicates do (m-op-algebra).
+    # A leaf that IS supplied and decodes into no member of its declared value space is
+    # a state the model does not have: it is invalid stored data (m-document-codec), so
+    # it raises here instead of reaching a caller as the raw stored value.
+    collapsing = {
+        "id": 3,
+        "label": "Cyd",
+        "profile": {"small": None, "origin": "unknown", "entries": "not-an-array"},
+    }
+    profile = _doc(decode_row(DOCUMENT_CODEC, "Sample", collapsing), "profile")
+    assert profile["small"] is None
+    assert profile["amount"] is None
+    assert profile["origin"] is None
+    assert profile["entries"] == []
+
+    wrong_typed = {"id": 1, "label": "Ada", "profile": {"amount": "bogus"}}
+    with pytest.raises(MaterializeError, match=r"profile\.amount.*invalid stored data"):
+        decode_row(DOCUMENT_CODEC, "Sample", wrong_typed)
+
+    nested = {"id": 1, "label": "Ada", "profile": {"entries": [{"issued": "2026-13-40"}]}}
+    with pytest.raises(MaterializeError, match=r"profile\.entries\.issued.*invalid stored data"):
+        decode_row(DOCUMENT_CODEC, "Sample", nested)
+
+
 def test_decode_row_drops_undeclared_members() -> None:
     row = {"id": 1, "name": "Ada", "address": {"street": "x", "city": "y", "zip": "00000"}}
     decoded = decode_row(CUSTOMER, "Customer", row)

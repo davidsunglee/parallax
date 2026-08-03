@@ -33,7 +33,7 @@ from reference_harness.case_runner import (
     _project_value_object,
     _reference_identity_row,
 )
-from reference_harness.document_codec import decode_stored
+from reference_harness.document_codec import DocumentEncodingError, decode_stored
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -235,6 +235,33 @@ def test_projection_decodes_every_leaf_by_its_declared_type() -> None:
     element = cast("list[dict[str, Any]]", projected["entries"])[0]
     assert element["price"] == Decimal("19.99")
     assert element["issued"] == "2026-02-01"
+
+
+def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_collapses() -> None:
+    # The two halves of one boundary, at the projection the graph comparison reads. A
+    # member the document does not supply is a presence state the model HAS — a
+    # missing key, a JSON null, an occurrence of the wrong kind — and collapses to
+    # null / [] as the read predicates do (m-op-algebra). A leaf that IS supplied and
+    # is not an encoding of its declared type is a state the model does not have, so
+    # it is refused instead of reaching the projected node as the raw stored value.
+    profile = (
+        load_model(COMPATIBILITY_ROOT, "models/document-codec.yaml")
+        .entity("Sample")
+        .value_objects[0]
+    )
+    collapsing = cast(
+        "dict[str, Any]",
+        _project_value_object(profile, {"small": None, "origin": "unknown", "entries": None}),
+    )
+    assert collapsing["small"] is None
+    assert collapsing["amount"] is None
+    assert collapsing["origin"] is None
+    assert collapsing["entries"] == []
+
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        _project_value_object(profile, {"amount": "bogus"})
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        _project_value_object(profile, {"entries": [{"issued": "2026-13-40"}]})
 
 
 def test_decode_document_is_dialect_agnostic() -> None:

@@ -190,13 +190,13 @@ def test_decode_stored_is_dialect_agnostic() -> None:
 
 
 def test_decode_leaf_is_the_identity_wherever_the_document_spelling_is_the_wire_one() -> None:
-    # Nine of the twelve rows: a member the layout moved into a Structured Column
+    # Eight of the twelve rows: a member the layout moved into a Structured Column
     # reaches a result row spelled exactly as a Column of its own would spell it, so
     # the layout is not observable through the value.
     for spelling, value in (
         ("boolean", True),
+        ("int32", -7),
         ("int64", 7),
-        ("float64", 2.25),
         ("string", "alpha"),
         ("date", "2026-01-15"),
         ("time", "09:30:00"),
@@ -224,6 +224,43 @@ def test_decode_leaf_reads_a_float32_at_its_declared_width() -> None:
     # narrows.
     assert decode_leaf("float32", 1.5) == 1.5
     assert decode_leaf("float64", 1048576.2) == 1048576.2
+
+
+def test_a_float_document_number_reads_as_a_float_of_its_declared_width() -> None:
+    # `20` and `20.0` are one JSON number and either rendering may be written, so an
+    # integer-rendered float carries the float value a Column of that width reads
+    # back, not a Python `int`. An integer NO float of the width holds exactly names
+    # no value of that space at all: `2**24 + 1` is invalid stored data for a
+    # `float32` rather than the nearest binary32 to it.
+    assert decode_leaf("float32", 20) == 20.0
+    assert isinstance(decode_leaf("float32", 20), float)
+    assert isinstance(decode_leaf("float64", 20), float)
+    assert decode_leaf("float64", 2**24 + 1) == float(2**24 + 1)
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        decode_leaf("float32", 2**24 + 1)
+
+
+def test_a_stored_leaf_outside_its_declared_type_is_refused_rather_than_read() -> None:
+    # The domain `decode_leaf` inverts is the encoding table's own codomain, so a
+    # stored value outside it contradicts the shape that declares the member and is
+    # invalid stored data (m-document-codec) rather than a value to hand back. Each
+    # row below is a leaf the JSON kind, the declared width, or the spelling refuses.
+    for spelling, stored in (
+        ("decimal(12,2)", "bogus"),
+        ("decimal(12,2)", "1.005"),
+        ("boolean", 1),
+        ("int32", "5"),
+        ("int32", 2**31),
+        ("int64", 2.5),
+        ("string", False),
+        ("bytes", "zz"),
+        ("date", "2026-13-40"),
+        ("time", "09:30:00+02:00"),
+        ("timestamp", "2026-01-15T09:30:00"),
+        ("uuid", "not-a-uuid"),
+    ):
+        with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+            decode_leaf(spelling, stored)
 
 
 def test_decode_leaf_carries_absence_through_and_refuses_an_uncovered_type() -> None:
