@@ -167,6 +167,52 @@ def test_decode_reads_a_float32_leaf_at_its_declared_width() -> None:
     assert decode_path(shape, stored, ("ratio",)) == Present(1048576.25)
 
 
+def _one_leaf(neutral_type: NeutralType) -> DocumentShape:
+    return DocumentShape(members=(Leaf(name="leaf", type=neutral_type, nullable=True),))
+
+
+@pytest.mark.parametrize(
+    ("neutral_type", "stored"),
+    [
+        (Decimal(12, 2), "1.5"),
+        (Decimal(12, 2), 1.5),
+        (Decimal(12, 2), "01.50"),
+        (BYTES, "0A1B"),
+        (DATE, "20260115"),
+        (TIME, "09:30"),
+        (TIMESTAMP, "2026-01-15T11:30:00+02:00"),
+        (TIMESTAMP, "2026-01-15T09:30:00Z"),
+        (UUID, "123E4567-E89B-12D3-A456-426614174000"),
+        (UUID, "123e4567e89b12d3a456426614174000"),
+        (FLOAT32, 1048576.3),
+    ],
+    ids=lambda param: repr(param),
+)
+def test_a_stored_leaf_that_is_not_the_tables_own_spelling_is_refused(
+    neutral_type: NeutralType, stored: object
+) -> None:
+    # Every type has exactly ONE document spelling, and it is what a predicate binds
+    # and an ordering compares for the six text-compared types. Each row here decodes
+    # cleanly into its declared value space and is still a DIFFERENT document from the
+    # one a writer of the same value stores, so decoding it would answer with a value
+    # whose own row no comparison against that member finds.
+    with pytest.raises(ValueError, match="invalid stored data"):
+        decode_path(_one_leaf(neutral_type), {"leaf": stored}, ("leaf",))
+
+
+def test_an_integral_float_number_answers_the_same_whichever_rendering_carries_it() -> None:
+    # `20` and `20.0` are one JSON number, so validity cannot turn on which of them a
+    # parser handed back as an `int` and which as a `float`. `2**24 + 1` names a value
+    # binary32 does not hold in either rendering, so both are invalid stored data
+    # rather than the silently rounded `16777216.0` a narrow-first reader answers.
+    shape = _one_leaf(FLOAT32)
+    for rendering in (2**24 + 1, float(2**24 + 1)):
+        with pytest.raises(ValueError, match="invalid stored data"):
+            decode_path(shape, {"leaf": rendering}, ("leaf",))
+    assert decode_path(shape, {"leaf": 20}, ("leaf",)) == Present(20.0)
+    assert decode_path(shape, {"leaf": 20.0}, ("leaf",)) == Present(20.0)
+
+
 def test_only_the_six_text_compared_types_have_a_comparison_text() -> None:
     assert comparison_text(BYTES, b"\x0a\x1b") == "0a1b"
     assert comparison_text(UUID, _TOKEN) == "123e4567-e89b-12d3-a456-426614174000"

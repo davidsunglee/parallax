@@ -20,8 +20,24 @@ import pytest
 
 from parallax.conformance import models
 from parallax.core import op_algebra as oa
+from parallax.core.base import (
+    BOOLEAN,
+    BYTES,
+    DATE,
+    FLOAT32,
+    FLOAT64,
+    INT32,
+    INT64,
+    STRING,
+    TIME,
+    TIMESTAMP,
+    UUID,
+    Decimal,
+    NeutralType,
+)
 from parallax.core.deep_fetch import FetchLevel, LevelRef, RootRef
 from parallax.core.dialect import POSTGRES
+from parallax.core.document_codec import encode_leaf
 from parallax.core.metamodel import EntityIdentity, EntityMetadata
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import compile_read
@@ -155,6 +171,82 @@ def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_coll
     nested = {"id": 1, "label": "Ada", "profile": {"entries": [{"issued": "2026-13-40"}]}}
     with pytest.raises(MaterializeError, match=r"profile\.entries\.issued.*invalid stored data"):
         decode_row(DOCUMENT_CODEC, "Sample", nested)
+
+
+@pytest.mark.parametrize(
+    ("member", "stored"),
+    [
+        ("amount", "10.2"),
+        ("amount", 10.25),
+        ("blob", "0A1B"),
+        ("day", "20260115"),
+        ("clock", "09:30"),
+        ("instant", "2026-01-15T11:30:00+02:00"),
+        ("instant", "2026-01-15T09:30:00Z"),
+        ("token", "123E4567-E89B-12D3-A456-426614174000"),
+        ("ratio", 1048576.3),
+    ],
+    ids=lambda param: repr(param),
+)
+def test_a_stored_leaf_that_is_not_the_tables_own_spelling_is_refused(
+    member: str, stored: object
+) -> None:
+    # Every Neutral Type has exactly ONE document spelling, and for the six
+    # text-compared ones those characters are what SQL compares and orders by. Each
+    # row here decodes into its declared value space and is still a DIFFERENT document
+    # from the one a writer of the same value stores, so materializing it would hand a
+    # caller a value whose own row no predicate over that member finds.
+    row = {"id": 1, "label": "Ada", "profile": {member: stored}}
+    with pytest.raises(MaterializeError, match=rf"profile\.{member}.*invalid stored data"):
+        decode_row(DOCUMENT_CODEC, "Sample", row)
+
+
+def test_an_integral_float_leaf_answers_the_same_whichever_rendering_carries_it() -> None:
+    # `20` and `20.0` are one JSON number, so validity cannot turn on which of them
+    # the parser handed back as an `int` and which as a `float`. `2**24 + 1` names a
+    # value binary32 does not hold in either rendering, so both are invalid stored
+    # data rather than the silently rounded `16777216.0` a narrow-first reader gives.
+    for rendering in (2**24 + 1, float(2**24 + 1)):
+        with pytest.raises(MaterializeError, match=r"profile\.ratio.*invalid stored data"):
+            decode_row(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"ratio": rendering}})
+    for rendering in (20, 20.0):
+        decoded = decode_row(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"ratio": rendering}})
+        assert _doc(decoded, "profile")["ratio"] == 20.0
+
+
+# One value per declarable Neutral Type, under the `document-codec` model's own
+# member declaring it. Four carry a value whose document spelling is a decision rather
+# than an identity — the exact digit string, the shortest float number at the declared
+# width, and the UTC instant a non-UTC offset names.
+_PLUS_TWO = dt.timezone(dt.timedelta(hours=2))
+_SAMPLE_LEAVES: list[tuple[str, NeutralType, object]] = [
+    ("flag", BOOLEAN, True),
+    ("small", INT32, -7),
+    ("big", INT64, 2**40),
+    ("ratio", FLOAT32, 1048576.25),
+    ("measure", FLOAT64, 562949953421312.25),
+    ("text", STRING, "alpha"),
+    ("amount", Decimal(12, 2), decimal.Decimal("1.5")),
+    ("blob", BYTES, b"\x0a\x1b"),
+    ("day", DATE, dt.date(2026, 1, 15)),
+    ("clock", TIME, dt.time(23, 59, 59, 500000)),
+    ("instant", TIMESTAMP, dt.datetime(2026, 1, 15, 11, 30, tzinfo=_PLUS_TWO)),
+    ("token", UUID, uuid.UUID("123e4567-e89b-12d3-a456-426614174000")),
+]
+
+
+def test_every_document_the_codec_encodes_is_one_this_module_reads_back() -> None:
+    # `m-snapshot-read` declares no dependency on `m-document-codec`
+    # (`core/spec/modules.md`), so this module states the encoding table it recognizes
+    # rather than calling the codec's. The two have to agree row for row, or a
+    # document the codec writes is one this refuses — so the claim is asserted over
+    # every declarable Neutral Type, and through the encoder itself rather than
+    # against a second list of spellings that could drift with it.
+    profile = {name: encode_leaf(neutral, value) for name, neutral, value in _SAMPLE_LEAVES}
+    row = {"id": 1, "label": "Ada", "profile": profile}
+    decoded = _doc(decode_row(DOCUMENT_CODEC, "Sample", row), "profile")
+    for name, _neutral, value in _SAMPLE_LEAVES:
+        assert decoded[name] == value
 
 
 def test_decode_row_drops_undeclared_members() -> None:

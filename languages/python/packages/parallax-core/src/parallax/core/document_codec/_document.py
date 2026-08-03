@@ -10,8 +10,13 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from parallax.core.base import NeutralType, decode_neutral_literal, matches_neutral_type
-from parallax.core.document_codec._leaf import encode_leaf, is_text_compared
+from parallax.core.base import NeutralType
+from parallax.core.document_codec._leaf import (
+    LeafEncodingError,
+    decode_leaf,
+    encode_leaf,
+    is_text_compared,
+)
 from parallax.core.document_codec._shape import (
     MISSING,
     NULL,
@@ -142,10 +147,11 @@ def decode_path(shape: DocumentShape, document: object, path: Sequence[str]) -> 
 
     Stored content that contradicts the shape — a required path that is absent or JSON
     null, an occurrence holding something other than the object or array its
-    multiplicity stores, a leaf whose value does not decode into its declared type — is
-    **invalid stored data** and raises. This module defines no repair and no
-    defaulting, so a not-present answer here always means the row is genuinely not
-    carrying that member rather than that the codec chose a value for it.
+    multiplicity stores, a leaf that is no declared-type value's document encoding
+    (:func:`~parallax.core.document_codec.encode_leaf`'s own codomain) — is **invalid
+    stored data** and raises. This module defines no repair and no defaulting, so a
+    not-present answer here always means the row is genuinely not carrying that member
+    rather than that the codec chose a value for it.
     """
     member = resolve(shape, path)
     many = isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
@@ -173,12 +179,12 @@ def decode_path(shape: DocumentShape, document: object, path: Sequence[str]) -> 
                 path, f"holds {raw!r}, which is not the object a `one` occurrence stores"
             )
         return Present(_detached(cast("dict[str, object]", raw)))
-    decoded = decode_neutral_literal(raw, member.type)
-    if not matches_neutral_type(decoded, member.type):
+    try:
+        return Present(decode_leaf(member.type, raw))
+    except LeafEncodingError as exc:
         raise _invalid(
-            path, f"holds {raw!r}, which does not decode into its declared type {member.type!r}"
-        )
-    return Present(decoded)
+            path, f"holds {raw!r}, which is no {member.type!r} value's document encoding"
+        ) from exc
 
 
 def _invalid(path: Sequence[str], detail: str) -> ValueError:

@@ -240,6 +240,68 @@ def test_a_float_document_number_reads_as_a_float_of_its_declared_width() -> Non
         decode_leaf("float32", 2**24 + 1)
 
 
+def test_an_integral_float_number_answers_the_same_whichever_rendering_carries_it() -> None:
+    # `20` and `20.0` are one JSON number, so validity cannot depend on which of them
+    # the parser handed back as an `int` and which as a `float`. `2**24 + 1` names a
+    # value binary32 does not hold, in either rendering, so both are invalid stored
+    # data — never the silently rounded `16777216.0` a narrow-first reader answers.
+    for rendering in (2**24 + 1, float(2**24 + 1)):
+        with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+            decode_leaf("float32", rendering)
+    assert decode_leaf("float32", 20) == decode_leaf("float32", 20.0) == 20.0
+    # The same law one width up: binary64 holds neither `2**53 + 1` nor any decimal
+    # naming it, so that integer is a member of no float space either.
+    with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+        decode_leaf("float64", 2**53 + 1)
+
+
+def test_a_stored_leaf_that_is_not_the_tables_own_spelling_is_refused() -> None:
+    # Every type has exactly ONE document spelling (m-document-codec), so a stored
+    # leaf that parses into the declared value space is still invalid stored data
+    # unless it IS that spelling. Each row below decodes cleanly and is a different
+    # document from the one a writer of the same value stores — and the six
+    # text-compared spellings are the characters SQL compares and orders by, so
+    # reading one back would answer with a row no predicate over that member finds.
+    for spelling, stored in (
+        ("decimal(12,2)", "1.5"),  # short of the declared scale
+        ("decimal(12,2)", 1.5),  # a JSON number, not the exact digit string
+        ("decimal(12,2)", "01.50"),  # a leading zero
+        ("bytes", "0A1B"),  # uppercase hexadecimal
+        ("bytes", "0a 1b"),  # separated octets
+        ("date", "20260115"),  # ISO basic format
+        ("time", "09:30"),  # not zero-padded to seconds
+        ("timestamp", "2026-01-15T11:30:00+02:00"),  # a non-UTC offset
+        ("timestamp", "2026-01-15T09:30:00Z"),  # not at microsecond precision
+        ("uuid", "123E4567-E89B-12D3-A456-426614174000"),  # uppercase
+        ("uuid", "123e4567e89b12d3a456426614174000"),  # hyphenless
+        ("float32", 1048576.3),  # binary32 1048576.25's encoding is `1048576.2`
+    ):
+        with pytest.raises(DocumentEncodingError, match="invalid stored data"):
+            decode_leaf(spelling, stored)
+
+
+def test_every_admitted_leaf_is_exactly_what_the_encoder_produces() -> None:
+    # The inverse law, stated over the table itself: `decode_leaf`'s domain is
+    # `encode_leaf`'s codomain and nothing wider, so re-encoding what a stored leaf
+    # decodes to reproduces that leaf character for character.
+    for spelling, literal in (
+        ("boolean", True),
+        ("int32", -7),
+        ("int64", 2**40),
+        ("float32", 1.5),
+        ("float64", 2.25),
+        ("string", "alpha"),
+        ("decimal(12,2)", 10.25),
+        ("bytes", "0A1B"),
+        ("date", "2026-01-15"),
+        ("time", "09:30"),
+        ("timestamp", "2026-01-15T11:30:00+02:00"),
+        ("uuid", "123E4567-E89B-12D3-A456-426614174000"),
+    ):
+        document = encode_leaf(spelling, literal)
+        assert encode_leaf(spelling, decode_leaf(spelling, document)) == document
+
+
 def test_a_stored_leaf_outside_its_declared_type_is_refused_rather_than_read() -> None:
     # The domain `decode_leaf` inverts is the encoding table's own codomain, so a
     # stored value outside it contradicts the shape that declares the member and is
