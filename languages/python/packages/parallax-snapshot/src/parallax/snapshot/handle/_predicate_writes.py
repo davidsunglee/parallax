@@ -43,9 +43,16 @@ from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment, FindQuery
 from parallax.core.entity._query import mutation_selection
-from parallax.core.metamodel import AttributeMetadata, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import (
+    AttributeMetadata,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    Multiplicity,
+)
 from parallax.core.op_algebra import QueryDefinitionError
 from parallax.core.sql_gen import Statement, compile_read
+from parallax.core.storage_layout import DocumentPath
 from parallax.core.unit_work import (
     LATEST_PINNED,
     ChunkedColumnBuilder,
@@ -57,6 +64,7 @@ from parallax.core.unit_work import (
     TemporalColumns,
     UnitOfWork,
     VersionColumns,
+    WriteRejectedError,
     instructions,
     whole,
 )
@@ -293,11 +301,35 @@ def buffer_predicate_instruction(
     if not declaring_entity.declared_as_of_axes and version_attr is None:
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.
+        _reject_readless_document_many(meta, entity, instruction)
         uow.buffer(instruction)
         return
     _materialize_predicate_write(
         uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr
     )
+
+
+def _reject_readless_document_many(
+    meta: Metamodel, entity: EntityMetadata, instruction: PredicateWrite
+) -> None:
+    layout = entity_layout(meta, entity)
+    if layout is None:  # pragma: no cover - accepted entities always have a layout view
+        return
+    by_name = {
+        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
+    }
+    assigned = {assignment_member(assignment.attr) for assignment in instruction.assignments}
+    for name in assigned:
+        occurrence = by_name.get(name)
+        if occurrence is None or occurrence.multiplicity is not Multiplicity.MANY:
+            continue
+        placement = layout.layout.placement(occurrence.identity)
+        if isinstance(placement, DocumentPath):
+            raise WriteRejectedError(
+                "predicate-write-readless-document-many-unsupported",
+                f"{entity.identity.canonical}.{name}: a readless predicate write cannot assign "
+                "a document-resident `many` occurrence",
+            )
 
 
 def _materialize_predicate_write(
@@ -387,6 +419,9 @@ def _materialize_predicate_write(
     assignment_bearing = instruction.mutation in _ASSIGNMENT_BEARING
     predecessor_need = version_attr is None and is_temporal
     member_columns = members(placed_members(meta, entity, layout))
+    occurrences = {
+        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
+    }
     needs_documents: bool | frozenset[str]
     if predecessor_need:
         needs_documents = True
@@ -436,7 +471,9 @@ def _materialize_predicate_write(
     if version_attr is not None:
         version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
         for row in rows:
-            if assignment_bearing and is_no_op_assignment(member_columns, assignments, row):
+            if assignment_bearing and is_no_op_assignment(
+                member_columns, assignments, row, occurrences
+            ):
                 continue  # per-row no-op elimination (assignment-bearing verbs only)
             append_key(row)
             version_builder.append(cast("int", row[slot_column(layout, version_attr.identity)]))
@@ -460,7 +497,9 @@ def _materialize_predicate_write(
     document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
     for materialized in resolved:
         row = materialized.values
-        if assignment_bearing and is_no_op_assignment(member_columns, assignments, row):
+        if assignment_bearing and is_no_op_assignment(
+            member_columns, assignments, row, occurrences
+        ):
             continue  # per-row no-op elimination (assignment-bearing verbs only)
         append_key(row)
         payload = predecessor_payload(member_columns, row)

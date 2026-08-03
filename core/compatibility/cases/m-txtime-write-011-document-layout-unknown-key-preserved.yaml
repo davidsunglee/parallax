@@ -1,5 +1,5 @@
 # A key no model member declares survives a milestone chain (m-storage-layout x
-# m-document-codec "Patching, unknown keys, and subtree replacement"), on Postgres
+# m-document-codec "Patching, unknown keys, and occurrence assignments"), on Postgres
 # AND MariaDB.
 #
 # This is the reason a temporal successor is built by PATCHING the predecessor's
@@ -18,8 +18,8 @@
 # successor from `title`, `crew`, and `manifest` would produce a document that reads
 # back identically for every declared member and has silently destroyed the rest.
 #
-# The contrast is m-txtime-write-012, which assigns the occurrence and therefore does
-# drop the key inside it.
+# The contrast is m-txtime-write-012, which assigns both occurrence kinds and pins
+# preservation inside a `one` against whole-array replacement for a `many`.
 model: models/document-layout.yaml
 tags: [m-txtime-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -40,6 +40,7 @@ given:
           manifest:
             cargo: grain
             sealNumber: S-4021
+          legs: []
 when:
   writeSequence:
     - mutation: update
@@ -72,6 +73,7 @@ then:
           manifest:
             cargo: grain
             sealNumber: S-4021
+          legs: []
   tableState:
     voyage:
       - id: 7
@@ -84,6 +86,7 @@ then:
           manifest:
             cargo: grain
             sealNumber: S-4021
+          legs: []
       - id: 7
         in_z: "2026-06-01T00:00:00+00:00"
         out_z: infinity
@@ -94,4 +97,5 @@ then:
           manifest:
             cargo: grain
             sealNumber: S-4021
+          legs: []
   roundTrips: 2

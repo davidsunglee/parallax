@@ -38,11 +38,42 @@ __all__ = [
     "INFINITY",
     "POSTGRES",
     "Dialect",
+    "DocumentAssignment",
+    "DocumentLeafAssignment",
+    "DocumentManyAssignment",
+    "DocumentOneAssignment",
     "LockMode",
     "dialect_for",
 ]
 
 LockMode = Literal["locking", "optimistic"]
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentLeafAssignment:
+    """One encoded leaf value assigned relative to a document expression."""
+
+    path: tuple[str, ...]
+    value: object
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentManyAssignment:
+    """One complete encoded array assigned relative to a document expression."""
+
+    path: tuple[str, ...]
+    value: object
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentOneAssignment:
+    """A guarded ``one`` occurrence mutation relative to a document expression."""
+
+    path: tuple[str, ...]
+    assignments: tuple[DocumentAssignment, ...] | None
+
+
+type DocumentAssignment = DocumentLeafAssignment | DocumentManyAssignment | DocumentOneAssignment
 
 # A "simple" identifier needs no quoting: lowercase, starts with a letter.
 _SIMPLE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -224,7 +255,7 @@ class Dialect:
         return "{" + ",".join(segments) + "}"
 
     def document_mutation(
-        self, document: str, assignments: Sequence[tuple[Sequence[str], object]]
+        self, document: str, assignments: Sequence[DocumentAssignment]
     ) -> tuple[str, list[object]]:
         """The `SET` expression assigning each path of ``assignments`` inside
         ``document``, and its ordered binds (m-dialect *Document mutation-expression
@@ -253,11 +284,54 @@ class Dialect:
         """
         expression = document
         binds: list[object] = []
-        for segments, value in assignments:
-            expression = f"jsonb_set({expression}, ?, cast(? as jsonb))"
-            binds.append(self.document_path(segments))
-            binds.append(_document_value_bind(value))
+        for assignment in assignments:
+            expression, assignment_binds = self._document_assignment(
+                expression, document, assignment
+            )
+            binds.extend(assignment_binds)
         return expression, binds
+
+    def _document_assignment(
+        self, document: str, source: str, assignment: DocumentAssignment
+    ) -> tuple[str, list[object]]:
+        path = self.document_path(assignment.path)
+        if isinstance(assignment, (DocumentLeafAssignment, DocumentManyAssignment)):
+            return (
+                f"jsonb_set({document}, ?, cast(? as jsonb))",
+                [path, _document_value_bind(assignment.value)],
+            )
+        if assignment.assignments is None:
+            return f"jsonb_set({document}, ?, cast(? as jsonb))", [path, "null"]
+        inner, inner_binds = self._one_document(source, (), assignment)
+        return f"jsonb_set({document}, ?, {inner})", [path, *inner_binds]
+
+    def _one_document(
+        self,
+        source: str,
+        prefix: tuple[str, ...],
+        assignment: DocumentOneAssignment,
+    ) -> tuple[str, list[object]]:
+        absolute = (*prefix, *assignment.path)
+        absolute_path = self.document_path(absolute)
+        extracted = f"{source} #> ?"
+        guarded = (
+            f"case when jsonb_typeof({extracted}) = ? then {extracted} else cast(? as jsonb) end"
+        )
+        inner = guarded
+        binds: list[object] = [absolute_path, "object", absolute_path, "{}"]
+        assert assignment.assignments is not None
+        for child in assignment.assignments:
+            child_path = self.document_path(child.path)
+            if isinstance(child, DocumentOneAssignment) and child.assignments is not None:
+                child_value, child_binds = self._one_document(source, absolute, child)
+                inner = f"jsonb_set({inner}, ?, {child_value})"
+                binds.extend([child_path, *child_binds])
+                continue
+            value = None if isinstance(child, DocumentOneAssignment) else child.value
+            inner = f"jsonb_set({inner}, ?, cast(? as jsonb))"
+            child_binds = [child_path, _document_value_bind(value)]
+            binds.extend(child_binds)
+        return inner, binds
 
     def document_equals(self, left: str, right: str) -> str:
         """The predicate deciding whether two documents are structurally equal.

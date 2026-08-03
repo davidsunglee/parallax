@@ -360,10 +360,11 @@ one canonical name.
 
 ## Assignment paths and mutation composition order
 
-**Every assignment path has exactly one segment.** It follows from what is
-assignable: only a top-level Attribute or a complete top-level Value Object
-occurrence may be assigned, and both derive a one-segment path. No accepted
-write names a path of depth two or more.
+**Every assignment names a top-level member.** A scalar assignment reaches its
+one Document Path. A complete top-level `one` occurrence assignment recursively
+reaches only the declared members its authored document names; a `many`
+assignment replaces its array whole. Nested members remain unassignable on their
+own.
 
 Two consequences depend on it, and both are stated here so a later contract that
 made a nested member assignable would have to revisit them together.
@@ -373,22 +374,25 @@ When one statement applies several assignments to one Structured Column, it
 applies them in the order the assigned members appear in the Table's logical
 placement order — never caller mapping order, and never a per-statement
 arbitrary order — so the emitted expression is deterministic and stable to
-author as golden SQL. No dependency sort is needed, because at depth 1 every
-assignment's parent is the document root, which always exists, so no assignment
-can create a location another assignment needs.
+author as golden SQL. No dependency sort is needed because top-level assignments
+name disjoint subtrees.
 
-Second, **depth 1 constrains what an assignment may name, not what the statement
-does to the Column.** The two are independent:
+Second, **an occurrence assignment establishes every parent it descends
+through.** Each occurrence level type-tests its stored subtree, substitutes an
+empty object for absent, JSON-null, or non-object state, applies its inner
+mutations, and writes the object back at that level. This order is internal to
+one assignment tree and independent of the top-level placement order.
 
 | Assignment | Effect on the Structured Column | What survives |
 |---|---|---|
 | a document-resident top-level Attribute | patches that one path in place | every other key, including keys no accepted member declares |
-| a whole top-level Value Object occurrence | replaces that one subtree in place | every key outside the subtree; undeclared keys *inside* it are intentionally dropped |
+| a top-level `one` Value Object occurrence | patches named declared members recursively | every key outside it and every undeclared or omitted key inside it |
+| a top-level `many` Value Object occurrence | replaces that one array in place | every key outside the array; nothing inside a replaced element |
 | an insert, including a temporal successor | binds one complete document | whatever the bound document carries |
 
 No ordinary update replaces the whole Structured Column. Changing a member
-nested inside a Value Object means assigning the whole occurrence, which
-replaces that subtree and nothing else.
+nested inside a Value Object means assigning the whole occurrence, whose named
+declared members are patched recursively.
 
 This is strictly finer-grained than conventional Value Object storage, where a
 top-level occurrence's own Structured Column is bound atomically and every

@@ -354,6 +354,10 @@ class Trip(
     traveler: Rel[Traveler | None] = rel(reverse_of="trips")
 
 
+class LedgerDetails(ValueObject):
+    code: Attr[str | None]
+
+
 class Ledger(
     Entity,
     table="ledger",
@@ -369,6 +373,7 @@ class Ledger(
     version: Attr[int] = attr(type=Int32, optimistic_locking=True)
     label: Attr[str | None] = attr(max_length=64)
     balance: Attr[Decimal | None] = attr(precision=18, scale=2)
+    details: Attr[LedgerDetails | None]
 
 
 class Beacon(
@@ -388,6 +393,10 @@ class VoyageManifest(ValueObject):
     cargo: Attr[str | None]
 
 
+class VoyageLeg(ValueObject):
+    port: Attr[str | None]
+
+
 class Voyage(
     TxTemporal,
     table="voyage",
@@ -404,6 +413,7 @@ class Voyage(
     title: Attr[str | None] = attr(max_length=64)
     crew: Attr[int | None] = attr(type=Int32)
     manifest: Attr[VoyageManifest | None]
+    legs: Attr[tuple[VoyageLeg, ...]]
 
 
 class CharterTerms(ValueObject):

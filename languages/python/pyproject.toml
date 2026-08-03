@@ -1324,7 +1324,6 @@ forbidden_modules = [
     "parallax.core.bitemp_write",
     "parallax.core.db_error",
     "parallax.core.dialect",
-    "parallax.core.document_codec",
     "parallax.core.entity",
     "parallax.core.opt_lock",
     "parallax.core.pk_gen",

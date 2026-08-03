@@ -107,6 +107,8 @@ DocumentPatch =
             value: Presence)
   | SetOccurrence(path: nonempty sequence<MemberName>,
                   document: Document | Null)
+  | SetMany(path: nonempty sequence<MemberName>,
+            elements: sequence<Document>)
 ```
 
 `encode` builds one complete document from a shape and one presence-classified
@@ -363,12 +365,11 @@ other version of an application. Decoding never fails on one and never turns one
 into a member value: a `Leaf` path answers only for the member the shape names,
 so an unknown key is never a result member and never reaches an Entity member. An
 `Occurrence` path answers with the stored subtree as it is, unknown keys and all,
-because its two consumers — whole-occurrence comparison (`m-unit-work`) and
-subtree replacement — ask what the row holds rather than what the model declares.
+because a patch must see the state it writes over in order to preserve it.
 That subtree is a carrier, exactly like the raw Structured Column document, and
 is never a member value or a result field.
 
-## Patching, unknown keys, and subtree replacement
+## Patching, unknown keys, and occurrence assignments
 
 `patch` preserves every key it is not told to change, including unknown keys.
 That is the whole point of patching rather than re-encoding: an application that
@@ -377,22 +378,26 @@ rebuilt a document from the members it knows would silently drop the rest.
 - `SetLeaf` writes one path and leaves every other key untouched. Its value is a
   leaf presence — a `NeutralValue`, `ExplicitNull`, or `Missing`: writing
   `ExplicitNull` stores JSON null and writing `Missing` removes the key. A whole
-  occurrence is replaced through `SetOccurrence`, never through `SetLeaf`.
-- `SetOccurrence` replaces the subtree at its path in place. It carries that
-  occurrence's own **document** — an `encode` object for a `One`, an `encodeMany`
-  array for a `Many` — or `Null`, rather than a presence, because a leaf's value
-  is a `NeutralValue` this module still has to spell while an occurrence's is
-  already the document a subtree-replacing `UPDATE` binds (`m-sql`), which is what
-  keeps the in-memory successor and the statement interchangeable. Every key
-  outside the subtree survives; unknown keys **inside** the replaced subtree do
-  not. That asymmetry is deliberate — an author who assigns a whole occurrence has
-  stated what that occurrence now is — and it is the one case where patching loses
-  data a newer writer stored.
+  occurrence is stated only through its matching occurrence arm.
+- `SetOccurrence` states a `one` occurrence's named declared members. It patches
+  each named leaf or nested occurrence recursively, leaves omitted nullable
+  members and every undeclared key untouched, and stores JSON null when its
+  document is `Null`. At every nested level an absent, JSON-null, or non-object
+  target is treated as an empty object before applying the named members.
+- `SetMany` replaces its encoded ordered array whole. Elements have no identity,
+  so no stored element state survives the replacement.
+
+The exported declared-member reduction is the sole shape-aware operation used by
+materialization and write comparison. It decodes leaves by declared Neutral Type,
+reduces a `one` recursively and a `many` element-wise, and excludes every key the
+shape does not declare. Consumers MUST NOT implement another local reduction.
 
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical
-placement order, which is sufficient because every assignment path has exactly
-one segment and therefore never needs a parent another patch would create.
+placement order. Top-level assignments name disjoint subtrees. Within a
+`SetOccurrence`, each occurrence level establishes its own object parent before
+applying its nested assignments, so no dependency sort exists between top-level
+members.
 
 A temporal successor is built by patching the retained raw predecessor document
 rather than by re-encoding decoded members, so keys the running application does

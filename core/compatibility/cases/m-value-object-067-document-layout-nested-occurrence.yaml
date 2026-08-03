@@ -1,30 +1,10 @@
-# A top-level Value Object inside an Entity document keeps its leaves at its
-# containment path, and assigning the whole occurrence replaces THAT SUBTREE alone
-# (m-value-object x m-storage-layout), on Postgres AND MariaDB.
-#
-# Under `Columns` layout an occurrence owns a Structured Column of its own and its
-# leaves start at that column's root. Under `Document` layout it is a subtree of the
-# Entity's one shared column, and its own Document Path prefixes everything below it:
-# step 1's stored document nests `city` and `geo.country` under `address`, never at
-# the document root beside `displayName`. A layout that flattened an occurrence's
-# leaves would produce a different document here AND would make two occurrences
-# declaring the same inner member name collide, which nothing in the contract
-# permits them to do.
-#
-# Step 2 assigns the whole occurrence, and the assignment addresses `("address")` —
-# one path, one pair — not the leaves inside it. Two consequences are asserted
-# together in `then.tableState`:
-#
-#   * the subtree is REPLACED rather than merged: the new document carries `city` and
-#     no `geo`, so the `geo` the row held is gone. An author who assigns a whole
-#     occurrence has stated what that occurrence now is.
-#   * everything OUTSIDE the subtree survives: `displayName`, `score`, and `tags` are
-#     untouched, because a document update patches the paths it names and nothing
-#     else. Replacement is scoped to the assigned subtree, never to the row.
-#
-# The value bind is a COMPOSITE, so it rides as the portable document itself and each
-# provider adapts it (m-case-format) — the contrast with m-storage-layout-023, whose
-# two scalar assignments ride as JSON text through the same value expression.
+# A document-resident top-level `one` occurrence keeps its containment path while an
+# assignment recursively patches only the declared members its authored document
+# names on PostgreSQL and MariaDB. The stored `address.geo` occurrence is omitted by
+# step 2 and therefore survives beside the changed `address.city`; root siblings also
+# survive. The golden requires an object guard and write-back at `address`, separating
+# declared-member assignment from whole-subtree replacement and from a flat deep-path
+# mutation that would silently lose the write when the occurrence parent is absent.
 model: models/document-layout.yaml
 tags: [m-value-object, m-storage-layout, m-document-codec, m-sql, write-sequence, update, json, nested, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -47,7 +27,7 @@ when:
     - mutation: update
       entity: Traveler
       statements: 1
-      note: assign the whole occurrence — one path, one pair, and the nested `geo` goes with it
+      note: assign the occurrence while omitting its nullable nested `geo`
       rows:
         - id: 7
           address:
@@ -68,11 +48,11 @@ then:
           tags:
             - { label: pilot }
     - sql:
-        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
-        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+        postgres: 'update traveler set payload = jsonb_set(payload, ?, jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb))) where id = ?'
+        mariadb: update traveler set payload = json_set(payload, ?, json_set(case when json_type(json_extract(payload, ?)) = ? then json_extract(payload, ?) else json_object() end, ?, json_extract(?, '$'))) where id = ?
       binds:
-        postgres: ['{address}', { city: Bodo }, 7]
-        mariadb: ['$.address', { city: Bodo }, 7]
+        postgres: ['{address}', '{address}', object, '{address}', '{}', '{city}', '"Bodo"', 7]
+        mariadb: ['$.address', '$.address', OBJECT, '$.address', '$.city', '"Bodo"', 7]
   tableState:
     traveler:
       - id: 7
@@ -81,6 +61,8 @@ then:
           score: 9
           address:
             city: Bodo
+            geo:
+              country: "NO"
           tags:
             - { label: pilot }
   roundTrips: 2

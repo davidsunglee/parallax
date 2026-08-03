@@ -1,0 +1,59 @@
+# Three stored rows place the same nullable document-resident `one` parent in the
+# absent, JSON-null, and non-object states. Assigning a named declared member must
+# establish an object parent and retain the write on PostgreSQL and MariaDB. Every
+# golden contains the object type-test, empty-object fallback, inner member mutation,
+# and write-back at the occurrence path, distinguishing guarded occurrence mutation
+# from a flat deep path that both engines silently discard for all three states.
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-dialect, m-document-codec, m-value-object, m-sql, write-sequence, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "out-of-band stored parent states"
+given:
+  apply:
+    - sql: insert into traveler(id, payload) values (?, ?), (?, ?), (?, ?)
+      binds:
+        - 40
+        - { displayName: absent }
+        - 41
+        - { displayName: null, address: null }
+        - 42
+        - { displayName: scalar, address: 7 }
+when:
+  writeSequence:
+    - mutation: update
+      entity: Traveler
+      statements: 3
+      note: different assigned cities keep the batch in per-key form
+      rows:
+        - { id: 40, address: { city: Alta } }
+        - { id: 41, address: { city: Bodo } }
+        - { id: 42, address: { city: Tromso } }
+then:
+  statements:
+    - sql:
+        postgres: 'update traveler set payload = jsonb_set(payload, ?, jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb))) where id = ?'
+        mariadb: update traveler set payload = json_set(payload, ?, json_set(case when json_type(json_extract(payload, ?)) = ? then json_extract(payload, ?) else json_object() end, ?, json_extract(?, '$'))) where id = ?
+      binds:
+        postgres: ['{address}', '{address}', object, '{address}', '{}', '{city}', '"Alta"', 40]
+        mariadb: ['$.address', '$.address', OBJECT, '$.address', '$.city', '"Alta"', 40]
+    - sql:
+        postgres: 'update traveler set payload = jsonb_set(payload, ?, jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb))) where id = ?'
+        mariadb: update traveler set payload = json_set(payload, ?, json_set(case when json_type(json_extract(payload, ?)) = ? then json_extract(payload, ?) else json_object() end, ?, json_extract(?, '$'))) where id = ?
+      binds:
+        postgres: ['{address}', '{address}', object, '{address}', '{}', '{city}', '"Bodo"', 41]
+        mariadb: ['$.address', '$.address', OBJECT, '$.address', '$.city', '"Bodo"', 41]
+    - sql:
+        postgres: 'update traveler set payload = jsonb_set(payload, ?, jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb))) where id = ?'
+        mariadb: update traveler set payload = json_set(payload, ?, json_set(case when json_type(json_extract(payload, ?)) = ? then json_extract(payload, ?) else json_object() end, ?, json_extract(?, '$'))) where id = ?
+      binds:
+        postgres: ['{address}', '{address}', object, '{address}', '{}', '{city}', '"Tromso"', 42]
+        mariadb: ['$.address', '$.address', OBJECT, '$.address', '$.city', '"Tromso"', 42]
+  tableState:
+    traveler:
+      - { id: 40, payload: { displayName: absent, address: { city: Alta } } }
+      - { id: 41, payload: { displayName: null, address: { city: Bodo } } }
+      - { id: 42, payload: { displayName: scalar, address: { city: Tromso } } }
+  roundTrips: 3

@@ -224,7 +224,10 @@ reads under a lock or gates on the observed optimistic version and treats
 and splits rectangles. Parallax adopts those runtime semantics, not Reladomo's
 Java API or implementation structure.
 
-The one exception is an **unversioned, non-temporal** target. It remains readless:
+The one exception is an **unversioned, non-temporal** target. It remains readless
+unless it assigns a document-resident `many`, which is refused before SQL as
+`predicate-write-readless-document-many-unsupported` until that narrow shape can
+materialize without changing the scalar and `one` route:
 `update` emits exactly one `update <table> set <column> = ?, … where <predicate>`
 and `delete` exactly one `delete from <table> where <predicate>`. The readless
 update has no equality-elimination pass. Its `set` columns follow `m-sql`'s

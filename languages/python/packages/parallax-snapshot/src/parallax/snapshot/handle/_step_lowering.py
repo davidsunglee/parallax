@@ -27,7 +27,13 @@ from typing import cast
 
 from parallax.core.base import INFINITY_LITERAL, NeutralType, decode_neutral_literal
 from parallax.core.db_port import JsonDocument
-from parallax.core.dialect import Dialect
+from parallax.core.dialect import (
+    Dialect,
+    DocumentAssignment,
+    DocumentLeafAssignment,
+    DocumentManyAssignment,
+    DocumentOneAssignment,
+)
 from parallax.core.document_codec import (
     NULL,
     DocumentPatch,
@@ -36,6 +42,7 @@ from parallax.core.document_codec import (
     Presence,
     Present,
     SetLeaf,
+    SetMany,
     SetOccurrence,
     apply_patches,
     encode_document,
@@ -102,7 +109,7 @@ class _DocumentAssignments:
     dialects' mutation expressions apply left to right (`m-dialect`).
     """
 
-    assignments: tuple[tuple[tuple[str, ...], object], ...]
+    assignments: tuple[DocumentAssignment, ...]
 
 
 # One rendered cell: the physical Column it occupies and the value that lands
@@ -650,9 +657,12 @@ def _successor_patches(
         ):
             continue
         raw = value_objects[occurrence.identity]
-        patches.append(
-            SetOccurrence(path, None if raw is None else _occurrence_document(occurrence, raw))
-        )
+        if occurrence.multiplicity is Multiplicity.MANY:
+            patches.append(SetMany(path, _occurrence_document(occurrence, raw)))
+        else:
+            patches.append(
+                SetOccurrence(path, None if raw is None else _occurrence_document(occurrence, raw))
+            )
     return tuple(patches)
 
 
@@ -660,26 +670,75 @@ def _patches(
     resident: _ResidentMembers,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
-) -> tuple[tuple[tuple[str, ...], object], ...]:
+) -> tuple[DocumentAssignment, ...]:
     """The ordered path assignments a revising statement applies.
 
     A revising statement patches only the paths it assigns, so every key it does
     not name survives — a model member the step left alone and a key a newer
     application version wrote alike (`m-storage-layout`). An assigned ``None``
     writes JSON null rather than removing the key, which is the one not-present
-    state a NULL Column also has, and an assigned occurrence replaces its whole
-    subtree.
+    state a NULL Column also has. A ``one`` recursively patches only named declared
+    members, while a ``many`` replaces its ordered array whole.
     """
-    patches: list[tuple[tuple[str, ...], object]] = []
+    patches: list[DocumentAssignment] = []
     for attribute, path in resident.attributes:
         if attribute.identity in attributes:
             raw = attributes[attribute.identity]
-            patches.append((path, None if raw is None else _leaf(attribute.type, raw)))
+            patches.append(
+                DocumentLeafAssignment(path, None if raw is None else _leaf(attribute.type, raw))
+            )
     for occurrence, path in resident.value_objects:
         if occurrence.identity in value_objects:
             raw = value_objects[occurrence.identity]
-            patches.append((path, None if raw is None else _occurrence_document(occurrence, raw)))
+            patches.append(_occurrence_assignment(occurrence, path, raw))
     return tuple(patches)
+
+
+def _occurrence_assignment(
+    occurrence: ValueObjectMetadata, path: tuple[str, ...], raw: object
+) -> DocumentAssignment:
+    if occurrence.multiplicity is Multiplicity.MANY:
+        return DocumentManyAssignment(path, _occurrence_document(occurrence, raw))
+    if raw is None:
+        return DocumentOneAssignment(path, None)
+    shape = occurrence_shape(occurrence)
+    return DocumentOneAssignment(path, _element_assignments(shape, raw))
+
+
+def _element_assignments(shape: DocumentShape, value: object) -> tuple[DocumentAssignment, ...]:
+    raw: Mapping[str, object] = (
+        cast("Mapping[str, object]", value)
+        if isinstance(value, Mapping)
+        else cast("Mapping[str, object]", {})
+    )
+    assignments: list[DocumentAssignment] = []
+    for member in shape.members:
+        if member.name not in raw:
+            continue
+        nested = raw[member.name]
+        path = (member.name,)
+        if isinstance(member, Leaf):
+            assignments.append(
+                DocumentLeafAssignment(path, None if nested is None else _leaf(member.type, nested))
+            )
+        elif member.multiplicity is Multiplicity.MANY:
+            elements = cast("Sequence[object]", nested)
+            assignments.append(
+                DocumentManyAssignment(
+                    path,
+                    encode_many(
+                        member.shape,
+                        [_element_presences(member.shape, element) for element in elements],
+                    ),
+                )
+            )
+        else:
+            assignments.append(
+                DocumentOneAssignment(
+                    path, None if nested is None else _element_assignments(member.shape, nested)
+                )
+            )
+    return tuple(assignments)
 
 
 def _occurrence_of(placed: PlacedMembers, identity: ValueObjectIdentity) -> ValueObjectMetadata:

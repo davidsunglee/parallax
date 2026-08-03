@@ -689,7 +689,8 @@
         },
         "write": {
           "description": "conflict cases, single-attempt form. The neutral write input (①) for this conflict's keyed UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+, on a Bitemporal target, `valid_end` — the address's Valid-Time exclusive upper bound, which the close binds in BOTH concurrency modes and which may be finite or infinity); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. An ORDERED ARRAY of rows is the MULTI-KEY form: one unit of work buffers every row and the batching rule collapses them into a single set-based statement whose one Key Target holds every key, so `then.affectedRows` is the AGGREGATE that complete target owns (m-batch-write; m-unit-work affected-row attribution). The array form is keyed and non-temporal — a versioned or temporal target materializes to per-row writes instead of collapsing.",
-          "oneOf": [
+          "anyOf": [
+            { "$ref": "#/$defs/predicateWrite" },
             { "$ref": "#/$defs/writeRow" },
             {
               "type": "array",
@@ -835,6 +836,7 @@
             "write-required-attribute-missing",
             "write-required-value-object-missing",
             "write-value-type-mismatch",
+            "predicate-write-readless-document-many-unsupported",
             "subtype-write-sibling-attribute",
             "subtype-write-metadata-field",
             "abstract-write-target",

@@ -431,10 +431,12 @@ forward instead of discarding it once known members are decoded.
 The successor is then built by patching that retained document
 (`m-document-codec`) rather than by re-encoding decoded members. That is what
 preserves keys a newer application version wrote: an application that predates a
-key it never declares still carries that key across a close-and-insert. The one
-deliberate exception is an explicitly assigned Value Object occurrence, which
-replaces its subtree and drops undeclared keys inside it while keys outside
-survive.
+key it never declares still carries that key across a close-and-insert. An
+explicitly assigned `one` occurrence follows the same rule recursively: it
+patches only the declared members its authored document names. An omitted
+nullable member remains stored, an explicitly null occurrence stores JSON null,
+and a key no member declares is untouched. A `many` assignment replaces its
+ordered array whole because its elements have no identity by which to merge.
 
 The **Transaction-Time Basis** records only whether the read licenses an ungated
 locking-mode write. It is not a claim about lock scope (`m-read-lock`).
@@ -454,11 +456,12 @@ its consumer, which is this rule). Assigning null to a member whose key is absen
 is therefore a no-op — it issues no DML, advances no version, and consults no
 clock — exactly as assigning null to an already-null Column is.
 
-A **whole Value Object occurrence** compares **structurally as a document**
-(`m-document-codec`): the encoded assignment against the persisted subtree as
-stored, unknown keys included. An occurrence that differs only in a key no member
-declares is therefore not equal, which is the answer the write itself gives —
-replacing that subtree would drop the key, so the write is not a no-op. Key order
+A **whole Value Object occurrence** compares through `m-document-codec`'s one
+declared-member reduction: recursively for a `one` and element-wise in stored
+order for a `many`. A key no member declares takes no part on either side. A
+`one` member omitted by the authored document takes no part either, because the
+assignment leaves it untouched. An occurrence that differs only in undeclared
+keys is therefore equal, matching the mutation's observable effect. Key order
 and insignificant whitespace never make two otherwise equal documents differ.
 
 ### Write Gate and the concurrency decision

@@ -21,9 +21,11 @@ import pytest
 from _document_layout_support import PERSON, columns_model, document_model, entity
 
 from _support.lowering_probes import lower_instruction
+from parallax.core.base import STRING
 from parallax.core.db_port import JsonDocument
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel
+from parallax.core.dialect import POSTGRES, DocumentManyAssignment
+from parallax.core.document_codec import DocumentShape, Leaf, Occurrence
+from parallax.core.metamodel import Metamodel, Multiplicity
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import KeyedWrite, PredecessorRow, WriteInstruction
 from parallax.core.unit_work.planned import (
@@ -34,8 +36,10 @@ from parallax.core.unit_work.planned import (
     PlannedInsert,
     PlannedRow,
 )
+from parallax.snapshot.handle import _step_lowering as step_lowering
 from parallax.snapshot.handle import lower_step
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
+from parallax.snapshot.handle._write_inputs import is_no_op_assignment
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -128,17 +132,63 @@ def test_an_assigned_none_writes_json_null_rather_than_removing_the_key() -> Non
     assert statement.binds == ("{displayName}", "null", 1)
 
 
-def test_assigning_a_whole_occurrence_binds_one_composite_at_its_own_path() -> None:
-    # One path and one pair: the occurrence's own Document Path, and its document as
-    # the managed carrier the adapter hands to the driver — never its rendered text,
-    # which would put a key order into the statement.
+def test_assigning_a_one_occurrence_binds_a_guarded_declared_member_patch() -> None:
     (statement,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "address": {"city": "Bodo"}},)))
-    assert statement.sql == (
-        "update person set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?"
+    assert statement.sql.count("jsonb_typeof") == 1
+    assert statement.sql.startswith("update person set payload = jsonb_set(payload, ?, ")
+    assert statement.binds == (
+        "{address}",
+        "{address}",
+        "object",
+        "{address}",
+        "{}",
+        "{city}",
+        '"Bodo"',
+        1,
     )
-    assert statement.binds[0] == "{address}"
-    assert statement.binds[1] == JsonDocument({"city": "Bodo"})
-    assert statement.binds[2] == 1
+
+
+def test_assigning_null_to_a_one_occurrence_writes_json_null() -> None:
+    (statement,) = _lower(KeyedWrite("update", "Person", ({"id": 1, "address": None},)))
+    assert statement.binds == ("{address}", "null", 1)
+
+
+def test_assigning_a_many_occurrence_replaces_its_array_whole() -> None:
+    (statement,) = _lower(
+        KeyedWrite("update", "Person", ({"id": 1, "tags": [{"label": "member"}]},))
+    )
+    assert statement.binds == ("{tags}", JsonDocument([{"label": "member"}]), 1)
+
+
+def test_assigning_a_nested_one_builds_a_guard_at_each_occurrence_level() -> None:
+    (statement,) = _lower(
+        KeyedWrite(
+            "update",
+            "Person",
+            ({"id": 1, "address": {"geo": {"country": "NO"}}},),
+        )
+    )
+    assert statement.sql.count("jsonb_typeof") == 2
+    assert statement.binds[-3:] == ("{country}", '"NO"', 1)
+
+
+def test_a_nested_many_is_encoded_as_one_whole_array_assignment() -> None:
+    item_shape = DocumentShape((Leaf("label", STRING, True),))
+    shape = DocumentShape(
+        (
+            Occurrence(
+                name="items",
+                multiplicity=Multiplicity.MANY,
+                nullable=False,
+                shape=item_shape,
+            ),
+        )
+    )
+    element_assignments = step_lowering._element_assignments  # pyright: ignore[reportPrivateUsage]
+    assignments = element_assignments(shape, {"items": [{"label": "member"}]})
+    assert len(assignments) == 1
+    assert isinstance(assignments[0], DocumentManyAssignment)
+    assert assignments[0].path == ("items",)
 
 
 def test_a_direct_member_still_assigns_its_own_column() -> None:
@@ -234,6 +284,21 @@ def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
     assert collapse_group_key(
         DOCUMENT, person, "delete", {"id": 1, "displayName": "Ada"}
     ) == collapse_group_key(DOCUMENT, person, "delete", {"id": 2, "score": 7})
+
+
+def test_many_no_op_comparison_reduces_each_element_to_declared_members() -> None:
+    person = entity(DOCUMENT, "Person")
+    tags = next(
+        occurrence
+        for occurrence in person.declared_value_objects
+        if occurrence.identity.path[-1] == "tags"
+    )
+    occurrences = {"tags": tags}
+    columns = {"tags": ("tags", False)}
+    stored: dict[str, object] = {"tags": [{"label": "founder", "future": "keep"}]}
+
+    assert is_no_op_assignment(columns, {"tags": [{"label": "founder"}]}, stored, occurrences)
+    assert not is_no_op_assignment(columns, {"tags": [{"label": "member"}]}, stored, occurrences)
 
 
 # --------------------------------------------------------------------------- #
@@ -351,10 +416,7 @@ def test_a_carried_occurrence_rides_forward_however_its_observation_spelled_it()
     assert successor == {**_STORED, "score": 21}
 
 
-def test_an_assigned_occurrence_replaces_its_subtree_and_drops_what_is_inside_it() -> None:
-    # The deliberate asymmetry: an author who assigns a whole occurrence has stated
-    # what that occurrence now is, so the key outside it survives and the one inside
-    # it does not.
+def test_an_assigned_one_patches_named_members_and_preserves_the_rest() -> None:
     successor = _successor(
         {**_DECODED, "address": {"city": "Alta"}}, document=_STORED, origin=ChangedFrom
     )
@@ -362,9 +424,20 @@ def test_an_assigned_occurrence_replaces_its_subtree_and_drops_what_is_inside_it
         "displayName": "Ada",
         "score": 7,
         "charterCode": "NB-118",
-        "address": {"city": "Alta"},
+        "address": {
+            "city": "Alta",
+            "geo": {"country": "NO"},
+            "sealNumber": "S-4021",
+        },
         "tags": [{"label": "founder"}],
     }
+
+
+def test_an_assigned_many_replaces_the_predecessors_array() -> None:
+    successor = _successor(
+        {**_DECODED, "tags": [{"label": "member"}]}, document=_STORED, origin=ChangedFrom
+    )
+    assert successor == {**_STORED, "tags": [{"label": "member"}]}
 
 
 def test_a_successor_that_changes_nothing_binds_the_retained_document_itself() -> None:

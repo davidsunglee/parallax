@@ -31,7 +31,15 @@ from parallax.core.base import (
     UUID,
     Decimal,
 )
-from parallax.core.dialect import INFINITY, POSTGRES, Dialect, dialect_for
+from parallax.core.dialect import (
+    INFINITY,
+    POSTGRES,
+    Dialect,
+    DocumentLeafAssignment,
+    DocumentManyAssignment,
+    DocumentOneAssignment,
+    dialect_for,
+)
 
 DIALECTS: list[Dialect] = [POSTGRES]
 IDS = [d.name for d in DIALECTS]
@@ -161,7 +169,9 @@ def test_document_mutation_composes_one_assignment_through_the_value_expression(
     # per-dialect EXPRESSION, not a bare `?`. A bare parameter there resolves to
     # `jsonb_set`'s declared `jsonb` and rejects every scalar bind, so the cast
     # is what makes one authored bind form work at all.
-    sql, binds = dialect.document_mutation("payload", [(("displayName",), "Solveig")])
+    sql, binds = dialect.document_mutation(
+        "payload", [DocumentLeafAssignment(("displayName",), "Solveig")]
+    )
     assert sql == "jsonb_set(payload, ?, cast(? as jsonb))"
     assert binds == ["{displayName}", '"Solveig"']
 
@@ -173,7 +183,11 @@ def test_document_mutation_nests_n_assignments_innermost_first(dialect: Dialect)
     # assignment order — which is what keeps canonical logical placement order
     # observable (m-storage-layout / m-sql).
     sql, binds = dialect.document_mutation(
-        "t0.payload", [(("displayName",), "Solveig"), (("score",), 7)]
+        "t0.payload",
+        [
+            DocumentLeafAssignment(("displayName",), "Solveig"),
+            DocumentLeafAssignment(("score",), 7),
+        ],
     )
     assert sql == "jsonb_set(jsonb_set(t0.payload, ?, cast(? as jsonb)), ?, cast(? as jsonb))"
     assert binds == ["{displayName}", '"Solveig"', "{score}", "7"]
@@ -191,16 +205,52 @@ def test_document_mutation_carries_a_composite_as_the_document_and_a_scalar_as_j
     _, binds = dialect.document_mutation(
         "payload",
         [
-            (("address",), {"city": "Oslo"}),
-            (("tags",), [{"label": "x"}]),
-            (("score",), None),
-            (("active",), True),
+            DocumentLeafAssignment(("address",), {"city": "Oslo"}),
+            DocumentManyAssignment(("tags",), [{"label": "x"}]),
+            DocumentLeafAssignment(("score",), None),
+            DocumentLeafAssignment(("active",), True),
         ],
     )
     assert binds[1] == {"city": "Oslo"}
     assert binds[3] == [{"label": "x"}]
     assert binds[5] == "null"
     assert binds[7] == "true"
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_occurrence_mutation_guards_and_writes_back_each_parent(dialect: Dialect) -> None:
+    sql, binds = dialect.document_mutation(
+        "payload",
+        [
+            DocumentOneAssignment(
+                ("manifest",),
+                (
+                    DocumentOneAssignment(
+                        ("origin",),
+                        (DocumentLeafAssignment(("city",), "Oslo"),),
+                    ),
+                ),
+            )
+        ],
+    )
+    assert sql.count("jsonb_typeof") == 2
+    assert sql.count("else cast(? as jsonb) end") == 2
+    assert sql.startswith("jsonb_set(payload, ?, ")
+    assert "jsonb_set(case when" in sql
+    assert binds == [
+        "{manifest}",
+        "{manifest}",
+        "object",
+        "{manifest}",
+        "{}",
+        "{origin}",
+        "{manifest,origin}",
+        "object",
+        "{manifest,origin}",
+        "{}",
+        "{city}",
+        '"Oslo"',
+    ]
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

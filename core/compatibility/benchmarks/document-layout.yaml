@@ -83,3 +83,15 @@ workloads:
         binds:
           postgres: ['{displayName}', '"Ada-$i"', '{score}', '21', 1]
           mariadb: ['$.displayName', '"Ada-$i"', '$.score', '21', 1]
+  - name: guarded-occurrence-assignment
+    kind: write
+    note: depth 2, two named leaves, one guarded object write-back per occurrence level, one statement and one round trip
+    iterations: 100
+    expectRoundTrips: 1
+    statements:
+      - sql:
+          postgres: 'update traveler set payload = jsonb_set(payload, ?, jsonb_set(jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb)), ?, jsonb_set(case when jsonb_typeof(payload #> ?) = ? then payload #> ? else cast(? as jsonb) end, ?, cast(? as jsonb)))) where id = ?'
+          mariadb: update traveler set payload = json_set(payload, ?, json_set(json_set(case when json_type(json_extract(payload, ?)) = ? then json_extract(payload, ?) else json_object() end, ?, json_extract(?, '$')), ?, json_set(case when json_type(json_extract(payload, ?)) = ? then json_extract(payload, ?) else json_object() end, ?, json_extract(?, '$')))) where id = ?
+        binds:
+          postgres: ['{address}', '{address}', object, '{address}', '{}', '{city}', '"Oslo-$i"', '{geo}', '{address,geo}', object, '{address,geo}', '{}', '{country}', '"NO"', 1]
+          mariadb: ['$.address', '$.address', OBJECT, '$.address', '$.city', '"Oslo-$i"', '$.geo', '$.address.geo', OBJECT, '$.address.geo', '$.country', '"NO"', 1]
