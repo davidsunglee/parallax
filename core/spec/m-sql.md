@@ -162,14 +162,21 @@ For each physical branch, SQL selects from the layout values as follows:
    placeholders and collision-safe aliases are likewise SQL renderings over a
    branch's absent slot entries.
 5. Under Relational Document Layout, the shared Structured Column slot is
-   projected **once** for a branch that needs any document-resident member, and
-   not at all for a branch that needs none. An instance-form read always needs
-   it, because instances carry document-resident members. A row-form read
-   projects it only when the members it was asked for include one whose
-   placement is a Document Path, so a row-form read of direct members alone
-   emits no document extraction and no document projection at all. The
+   projected **once** for a branch that needs it, and not at all for a branch
+   that does not. Two independent needs reach it. A read whose requested members
+   include one placed at a Document Path needs it to produce that member. An
+   **observation-bearing** read — an instance-form read, and the internal
+   materialized-predicate-write resolving read that widens its own projection
+   (*Result form*, below) — needs it whenever the branch's Table carries one at
+   all, because the stored document is itself part of what such a read observes:
+   a Predecessor Row retains the raw document (`m-unit-work`), and an owner
+   declaring no document-resident member still holds whatever keys a newer
+   application version wrote. Outside that lane a row-form read projects it only
+   for a requested document-resident member, so a row-form read of direct members
+   alone emits no document extraction and no document projection at all. The
    Structured Column is never a result field: the row transform fans it out into
-   the requested logical members and the raw value is not among them.
+   the requested logical members — none, where the read requested none — and the
+   raw value is not among them.
 
 Within one Table, selected physical slots retain `TableLayout.columns` order:
 `Identity`, `Discriminator`, `Domain`, `Temporal`, `Audit`, then `Document`, with

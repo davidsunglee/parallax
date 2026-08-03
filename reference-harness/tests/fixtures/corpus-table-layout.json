@@ -755,6 +755,75 @@
         0
       ]
     },
+    "mooring": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Mooring"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Mooring.id",
+          "declaringOwner": "parallax.compatibility.Mooring",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Mooring"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.Mooring.valid_start",
+          "declaringOwner": "parallax.compatibility.Mooring",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Mooring"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.Mooring.valid_end",
+          "declaringOwner": "parallax.compatibility.Mooring",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Mooring"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Mooring.tx_start",
+          "declaringOwner": "parallax.compatibility.Mooring",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Mooring"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Mooring.tx_end",
+          "declaringOwner": "parallax.compatibility.Mooring",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Mooring"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Mooring",
+          "declaringOwner": "parallax.compatibility.Mooring",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        1,
+        3
+      ]
+    },
     "traveler": {
       "columns": [
         {

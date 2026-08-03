@@ -39,12 +39,16 @@
 # spelling, so a resolving read that skipped the decode would compare the wrong
 # thing.
 #
-# `Beacon` exists for the projection rule alone. It declares the same layout and NO
-# document-resident member at all, so its Structured Column is physically present,
-# `NOT NULL`, and holds the empty object in every row — and a read of its one member
-# projects no document extraction whatsoever. A read projects the Structured Column
-# because some member it was ASKED FOR lives inside it, never because the Entity
-# declares the layout.
+# `Beacon` and `Mooring` exist for the projection rule alone, and they divide its two
+# halves. Both declare the same layout and NO document-resident member at all, so each
+# one's Structured Column is physically present, `NOT NULL`, and holds a document
+# nothing ever extracts from. `Beacon` is the half that projects nothing: a row-form
+# read of its one member emits no document extraction whatsoever, because no member it
+# was asked for lives inside one. `Mooring` is the half that projects anyway: it is
+# Bitemporal, and a read that OBSERVES it — an instance-form find, or the resolving
+# read a predicate write materializes from — carries the stored document itself,
+# because that is what its Predecessor Row retains and what every rectangle a split
+# chains is built from.
 #
 # Row data lives in the sibling fixtures/document-layout.yaml. Each fixture row
 # authors its document-resident members under their own member names, in the spelling
@@ -273,4 +277,43 @@ entities:
     indices:
       - name: beacon_pk
         attributes: [id]
+        unique: true
+  # Mooring: Beacon's Bitemporal twin. Its primary key and all four axis bounds hold
+  # direct-column roles, so like Beacon it has no document-resident member — but every
+  # observation of it retains the whole Structured Column, and the rectangles a split
+  # chains carry that document forward. A key no member declares therefore survives a
+  # close-and-insert on a model that decodes nothing out of the document at all, which
+  # is the state a newer application version leaves behind for an older one.
+  - name: Mooring
+    namespace: parallax.compatibility
+    table: mooring
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: valid_start
+        type: timestamp
+        column: from_z
+      - name: valid_end
+        type: timestamp
+        column: thru_z
+      - name: tx_start
+        type: timestamp
+        column: in_z
+      - name: tx_end
+        type: timestamp
+        column: out_z
+    asOfAxes:
+      - dimension: validTime
+        startAttribute: valid_start
+        endAttribute: valid_end
+      - dimension: transactionTime
+        startAttribute: tx_start
+        endAttribute: tx_end
+    indices:
+      - name: mooring_pk
+        attributes: [id, valid_start, tx_start]
         unique: true

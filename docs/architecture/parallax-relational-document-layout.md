@@ -333,8 +333,13 @@ applicable paths under their logical result keys. The raw Structured Column is
 not an extra result field. A row-form resolving read for an observed write
 widens that requested set exactly as it does under Columns layout: assigned
 members for equality comparison, or complete predecessor state for a temporal
-target. A row-form result that needs no document-resident member does not
-project the Structured Column merely because the Entity declares the layout.
+target. Where it widens to complete predecessor state it also observes the
+stored document itself, so it projects the Structured Column wherever the
+governed table has one — an owner whose every member holds a direct-column role
+included, since its retained document still carries keys no member declares.
+Outside that observation lane, a row-form result that needs no
+document-resident member does not project the Structured Column merely because
+the Entity declares the layout.
 
 The developer-facing Entity remains logically unchanged. The Structured Column
 is not exposed as an extra Entity attribute, and callers use the same scalar

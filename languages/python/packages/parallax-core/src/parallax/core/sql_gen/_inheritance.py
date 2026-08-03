@@ -95,6 +95,7 @@ from parallax.core.storage_layout import (
     InheritanceDiscriminator,
     PositionBranch,
     PositionLayoutView,
+    RelationalDocument,
     StorageLayoutFacet,
     TableLayout,
 )
@@ -248,6 +249,10 @@ class _DocumentTransform:
     makes one read's logical output the same under either layout. A member that
     is absent or explicitly null in the document reads as `None`, the same one
     logical answer a NULL Column gives.
+
+    ``members`` may be empty: an observation-bearing read of an owner with no
+    document-resident member projects the column for the stored document itself,
+    and naming it here is what keeps that document off the row's values.
     """
 
     column: str
@@ -493,22 +498,43 @@ def position_documents(
     )
 
 
+def _structured_column_slot(layout: TableLayout) -> ColumnSlot | None:
+    """``layout``'s shared Structured Column slot, or absence under `Columns`.
+
+    A governed Table carries exactly one whatever its members' placements are,
+    an owner whose every member holds a direct-column role included: its
+    Structured Column is still physically present and still holds a document.
+    """
+    return next(
+        (slot for slot in layout.columns if isinstance(slot.contributor, RelationalDocument)), None
+    )
+
+
 def document_projection(
     layout: TableLayout,
     attributes: Sequence[AttributeMetadata],
     value_objects: Sequence[ValueObjectMetadata],
+    *,
+    observation: bool = False,
 ) -> tuple[ProjectedColumn | None, RowTransform]:
-    """The Structured Column a read projects for the members it was asked for,
-    and the transform that fans it back out (`m-sql` *Read projection*, rule 5).
+    """The Structured Column a read projects, and the transform that fans it back
+    out (`m-sql` *Read projection*, rule 5).
 
     ``attributes`` and ``value_objects`` are the members this read must produce.
     Each one's Member Placement decides whether it already has a Column of its
     own; the ones placed at a Document Path are what make the Structured Column
-    needed, and it is then projected **once**, raw, whatever their number. A read
-    whose members are all direct — every read under `Columns` layout, and a
-    `Document`-layout read of direct members alone — projects no document column
-    and transforms by identity, so this is inert rather than conditional at the
-    call site.
+    needed, and it is then projected **once**, raw, whatever their number.
+
+    ``observation`` is the read's own lane: an instance-form read, or the
+    materializing predicate-write resolve that widens its projection to every
+    declared member. Such a read observes the stored document itself and not only
+    the members decoded out of it — a Predecessor Row retains the raw document
+    (`m-unit-work`) — so it projects the Table's Structured Column wherever there
+    is one, fanning out however many members it asked for, zero included. Outside
+    that lane a read whose members are all direct — every read under `Columns`
+    layout, and a `Document`-layout row-form read of direct members alone —
+    projects no document column and transforms by identity, so this is inert
+    rather than conditional at the call site.
     """
     document_slot: ColumnSlot | None = None
     document_attributes: list[AttributeMetadata] = []
@@ -526,6 +552,8 @@ def document_projection(
             document_slot = placement.slot
             document_occurrences.append(value_object)
             members.append((value_object.storage.name, placement.path))
+    if document_slot is None and observation:
+        document_slot = _structured_column_slot(layout)
     if document_slot is None:
         return None, IDENTITY_TRANSFORM
     return (

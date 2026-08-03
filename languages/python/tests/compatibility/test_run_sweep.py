@@ -214,6 +214,13 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # its resolving read must decode a Document Path out of the Structured Column
 # before the per-row no-op comparison, and only running it proves the comparison
 # saw the member's value rather than an absent column.
+# `m-bitemp-write-020` is the member-free member of it: no member its resolve asks
+# for lives inside the Structured Column, so only the emitted select list proves
+# the observation projected it anyway, and only the emitted insert binds prove the
+# rectangles it chains were built from the document that read retained. It is
+# `single-connection` run-only rather than query-result-dependent (its `given.apply`
+# writes the key no authored member could), which changes nothing here: this set is
+# the admission clause for every run-only materializing pair whatever its reason.
 _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-003",
@@ -227,6 +234,7 @@ _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = froz
         "m-bitemp-write-011",
         "m-bitemp-write-012",
         "m-bitemp-write-013",
+        "m-bitemp-write-020",
         "m-value-object-047",
         "m-value-object-066",
     }

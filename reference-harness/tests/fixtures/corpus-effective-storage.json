@@ -277,6 +277,17 @@
       },
       "valueObject": {}
     },
+    "parallax.compatibility.Mooring": {
+      "attribute": {
+        "id": "id",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
     "parallax.compatibility.Traveler": {
       "attribute": {
         "displayName": "display_name",
