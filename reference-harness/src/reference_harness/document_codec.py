@@ -27,9 +27,11 @@ from __future__ import annotations
 import datetime as _dt
 import decimal
 import json
+import math
 import re
 import struct
 import uuid as _uuid
+from collections.abc import Callable
 from typing import Any
 
 __all__ = [
@@ -50,13 +52,11 @@ __all__ = [
 # no fixed width, so `10.00` sorts below `9.00` as text.
 _TEXT_COMPARED = frozenset({"string", "bytes", "date", "time", "timestamp", "uuid"})
 
-# The declared types whose document spelling is already the value a Column of the
-# same type reads back as here, so decoding one out of a document is the identity.
-_IDENTITY_DECODED = frozenset(
-    {"boolean", "int32", "int64", "float64", "string", "bytes", "date", "time", "uuid"}
-)
-
 _DECIMAL_TYPE = re.compile(r"^decimal\((\d+),\s*(\d+)\)$")
+
+# The two's-complement bound of each integer value space: a member satisfies
+# `-bound <= value < bound`.
+_INTEGER_BOUNDS = {"int32": 2**31, "int64": 2**63}
 
 
 class DocumentEncodingError(Exception):
@@ -132,45 +132,144 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
     arrive in a result row spelled exactly as the same member does when it holds a
     Column, or one logical value would differ by layout.
 
-    Nine of the twelve rows are the identity, because the document spelling IS what
-    the corpus authors and what a Column of that type reads back as here. Three are
+    Eight of the twelve rows are the identity, because the document spelling IS what
+    the corpus authors and what a Column of that type reads back as here. Four are
     not. Two of those were spelled for the document rather than for the wire: a
     ``decimal(p, s)`` is stored as its exact digit string and read back from a Column
     as a number, and a ``timestamp`` is stored at UTC with a ``Z`` terminator and
-    read back from a Column with an explicit ``+00:00`` offset. The third is
-    ``float32``, whose document number is the shortest one that round-trips at the
-    DECLARED width, so it is read at that width too.
+    read back from a Column with an explicit ``+00:00`` offset. The other two are
+    ``float32`` and ``float64``, whose document number is the shortest one that
+    round-trips at the DECLARED width, so it is read as a float of that width.
+
+    A stored value outside the domain this inverts — a ``decimal`` holding
+    ``"bogus"``, an ``int32`` holding a JSON string or a number past its width, a
+    malformed hex / ISO / UUID string — is **invalid stored data**
+    (m-document-codec) and raises rather than reaching a result row under a member
+    the model types otherwise.
     """
     if value is None:
         return None
+    if not _is_encoding(type_spelling, value):
+        raise DocumentEncodingError(
+            f"{value!r} is not a {type_spelling!r} encoding — invalid stored data"
+        )
     decimal_type = _DECIMAL_TYPE.match(type_spelling)
     if decimal_type is not None:
         return decimal.Decimal(str(value))
     if type_spelling == "timestamp":
         return _instant(value).isoformat()
-    if type_spelling == "float32":
-        return _binary32(value)
-    if type_spelling in _IDENTITY_DECODED:
-        return value
+    if type_spelling in ("float32", "float64"):
+        return _float_at_width(value, binary32=type_spelling == "float32")
+    return value
+
+
+def _is_encoding(type_spelling: str, value: Any) -> bool:
+    """Whether ``value`` is a document encoding of ``type_spelling`` — the domain
+    :func:`decode_leaf` inverts.
+
+    A stored leaf outside it contradicts the shape that declares the member, so this
+    is where the two answers part: a well-formed encoding decodes, and anything else
+    is invalid stored data. Membership is of the declared value space rather than of
+    a canonical rendering, so a ``decimal(12,2)`` admits ``"1.5"`` as well as
+    ``"1.50"`` and refuses ``"1.005"``, which needs a third fraction digit.
+
+    A type spelling the table does not cover has no domain at all and raises, because
+    the caller named a member type this module cannot read.
+    """
+    decimal_type = _DECIMAL_TYPE.match(type_spelling)
+    if decimal_type is not None:
+        return _is_exact_decimal(value, int(decimal_type.group(1)), int(decimal_type.group(2)))
+    if type_spelling == "boolean":
+        return isinstance(value, bool)
+    if type_spelling in _INTEGER_BOUNDS:
+        bound = _INTEGER_BOUNDS[type_spelling]
+        return _is_integer(value) and -bound <= value < bound
+    if type_spelling in ("float32", "float64"):
+        return _float_at_width(value, binary32=type_spelling == "float32") is not None
+    if type_spelling == "string":
+        return isinstance(value, str)
+    if type_spelling == "bytes":
+        return _parsed_string(_hex, value) is not None
+    if type_spelling == "date":
+        return _parsed_string(_date, value) is not None
+    if type_spelling == "time":
+        parsed = _parsed_string(_time, value)
+        return parsed is not None and parsed.tzinfo is None
+    if type_spelling == "timestamp":
+        return _parsed_string(_instant, value) is not None
+    if type_spelling == "uuid":
+        return _parsed_string(_as_uuid, value) is not None
     raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
 
 
-def _binary32(value: Any) -> Any:
-    """A ``float32`` document number as the binary32 value whose encoding it is.
+def _float_at_width(value: Any, *, binary32: bool) -> float | None:
+    """A document number as the float of the declared width it names, or ``None``
+    when it names none.
 
-    The document spelling is the shortest number that decodes back to the value at
-    the member's declared width, so reading it at binary64 would answer a number no
-    binary32 holds: ``1048576.2`` is the encoding of ``1048576.25``, not of itself,
-    and a Column of the same type reads back the latter. An integer names a value
-    rather than a rendering of one, and a magnitude binary32 cannot hold has no
-    counterpart to narrow to, so both are returned as they are.
+    A JSON number is a number rather than a rendering of one: ``20`` and ``20.0`` are
+    the same one (m-document-codec), so an integer names a float exactly when a float
+    of the width holds it exactly — ``2**24 + 1`` names no binary32 value and is
+    invalid stored data rather than a rounded one. A fractional number is read at the
+    declared width, because its encoding is the shortest number that decodes back to
+    the value at that width: ``1048576.2`` is the encoding of binary32
+    ``1048576.25``, which is what a Column of the same type reads back. A magnitude
+    the width cannot hold names no value of it either.
     """
-    if not isinstance(value, float):
-        return value
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
     try:
-        return struct.unpack("<f", struct.pack("<f", value))[0]
+        widened = float(value)
     except OverflowError:
-        return value
+        return None
+    if not math.isfinite(widened):
+        return None
+    narrowed = widened
+    if binary32:
+        try:
+            narrowed = struct.unpack("<f", struct.pack("<f", widened))[0]
+        except OverflowError:
+            return None
+    return None if isinstance(value, int) and narrowed != value else narrowed
+
+
+def _is_exact_decimal(value: Any, precision: int, scale: int) -> bool:
+    """Whether ``value`` spells a decimal ``precision`` and ``scale`` represent
+    exactly.
+
+    Trailing zeros carry no value, so ``"1.500"`` and ``"1.5"`` are one member of a
+    ``decimal(12,2)``; a value needing more fraction digits than ``scale`` admits, or
+    more significant digits than ``precision``, is a member of none, because storing
+    it would require rounding.
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return False
+    try:
+        parsed = decimal.Decimal(str(value))
+    except decimal.InvalidOperation:
+        return False
+    _sign, digits, exponent = parsed.normalize().as_tuple()
+    if not isinstance(exponent, int):
+        return False
+    if digits == (0,):
+        return True
+    return -exponent <= scale and len(digits) + exponent + scale <= precision
+
+
+def _is_integer(value: Any) -> bool:
+    """Whether ``value`` is a JSON integer rather than a truth value: ``bool`` is a
+    Python ``int`` subclass but a distinct value space."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _parsed_string(parse: Callable[[Any], Any], value: Any) -> Any:
+    """``value`` parsed by the spelling its declared type stores, or ``None`` when it
+    is not a string or does not spell one."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return parse(value)
+    except DocumentEncodingError:
+        return None
 
 
 def comparison_text(type_spelling: str, value: Any) -> str:

@@ -70,7 +70,7 @@ then:
           street: 1 Park Ave
           city: Oslo
           geo:
-            country: NO
+            country: "NO"
             elevation: 10.5
             point: { lat: 59.9, lon: 10.7 }
           phones:
@@ -84,7 +84,7 @@ then:
               street: 1 Harbour Way
               city: Oslo
               geo:
-                country: NO
+                country: "NO"
                 elevation: 12.0
                 point: { lat: 59.91, lon: 10.75 }
               phones:
@@ -99,7 +99,7 @@ then:
           street: 2 Main St
           city: Oslo
           geo:
-            country: NO
+            country: "NO"
             elevation: 20.0
             point: { lat: 59.9, lon: 10.8 }
           phones:
@@ -112,7 +112,7 @@ then:
               street: 5 Karl Johans Gate
               city: Oslo
               geo:
-                country: NO
+                country: "NO"
                 elevation: 8.0
                 point: { lat: 59.92, lon: 10.74 }
               phones: []

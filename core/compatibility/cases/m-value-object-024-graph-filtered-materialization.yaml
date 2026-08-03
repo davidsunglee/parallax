@@ -47,7 +47,7 @@ then:
           street: 1 Park Ave
           city: Oslo
           geo:
-            country: NO
+            country: "NO"
             elevation: 10.5
             point: { lat: 59.9, lon: 10.7 }
           phones:
@@ -59,7 +59,7 @@ then:
           street: 2 Main St
           city: Oslo
           geo:
-            country: NO
+            country: "NO"
             elevation: 20.0
             point: { lat: 59.9, lon: 10.8 }
           phones:
