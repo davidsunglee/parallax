@@ -1,0 +1,88 @@
+# A deep fetch across two document-mapped Entities projects each level's Structured
+# Column exactly once (m-deep-fetch x m-storage-layout x m-sql *Read projection*), on
+# Postgres AND MariaDB.
+#
+# Two statements, roundTrips = 2 — the same 1 + (levels) accounting a `Columns` model
+# gets, because the layout changes what a level SELECTS and never how many levels
+# there are. Each level is instance-form, so each needs members inside its own
+# document and projects that one column: `t0.payload` at the root beside `t0.id`, and
+# `t0.payload` at the child beside `t0.id` and `t0.traveler_id`. Neither level
+# projects a member column, because under this layout there are none to project, and
+# neither projects the column twice however many members it decodes from it.
+#
+# The child level is keyed on `traveler_id in (?, ?, ?)`, gathered from the DISTINCT
+# root keys — a plain Column `IN`, for the same reason m-navigate-025's correlation is
+# plain column equality: both endpoints of the join hold direct-column role 2. The
+# declared `orderBy: id` likewise orders on a Column.
+#
+# Cyd owns no trips and still appears with an empty `trips` list, which is the
+# key-attach contract (an inner join would drop her). Her `address` is an explicit
+# JSON null and her `tags` decode to the empty array, so the graph shows the
+# document-side absence collapse and the relationship-side empty fan-out in one row
+# without confusing them.
+#
+# compileEligibility is run-only / query-result-dependent: the child level's
+# IN-list binds are the distinct parent keys gathered from the root query result,
+# so the emissions are not a pure function of `when` + `given`.
+model: models/document-layout.yaml
+tags: [m-deep-fetch, m-storage-layout, m-relationship, m-sql, m-value-object, read, json, to-many, relationship, document-layout, graph, materialization, slice-snapshot-1, slice-managed-1]
+shape: read
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "deep-fetch child level - the Traveler.trips IN-list binds are the distinct parent keys gathered from the root query result, so the child emissions depend on a query result"
+when:
+  targetEntity: Traveler
+  operation:
+    deepFetch:
+      operand:
+        all: {}
+      paths:
+        - { segments: [{ rel: Traveler.trips }] }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload from traveler t0
+        mariadb: select t0.id, t0.payload from traveler t0
+    - sql:
+        postgres: select t0.id, t0.traveler_id, t0.payload from trip t0 where t0.traveler_id in (?, ?, ?) order by t0.id asc
+        mariadb: select t0.id, t0.traveler_id, t0.payload from trip t0 where t0.traveler_id in (?, ?, ?) order by t0.id asc
+      binds: [1, 2, 3]
+  graph:
+    Traveler:
+      - id: 1
+        display_name: Ada
+        score: 7
+        joined_on: '2026-01-15'
+        note: north wing
+        address:
+          city: Oslo
+          geo:
+            country: "NO"
+        tags:
+          - { label: founder }
+          - { label: staff }
+        trips:
+          - { id: 51, traveler_id: 1, destination: Oslo, nights: 3 }
+          - { id: 52, traveler_id: 1, destination: Bergen, nights: 1 }
+      - id: 2
+        display_name: Bo
+        score: 30
+        joined_on: '2025-12-31'
+        note: null
+        address:
+          city: Bergen
+          geo:
+            country: "NO"
+        tags: []
+        trips:
+          - { id: 53, traveler_id: 2, destination: Bergen, nights: 7 }
+      - id: 3
+        display_name: Cyd
+        score: null
+        joined_on: null
+        note: null
+        address: null
+        tags: []
+        trips: []
+  roundTrips: 2

@@ -17,7 +17,6 @@ from parallax.core.metamodel import (
     AbstractRoot,
     AttributeIdentity,
     AttributeLocation,
-    AttributeMetadata,
     CandidateMetamodel,
     Column,
     Document,
@@ -84,19 +83,12 @@ class DocumentLayoutOwner:
 
     ``declaration`` is the accepted Entity Declaration that selected the layout.
     ``strategy`` is the family's root-owned inheritance strategy, or absent for a
-    standalone Entity. ``attributes`` is every Attribute contributing to the
-    Tables this layout governs — one Table for a standalone Entity or a
-    table-per-hierarchy family, one per concrete Entity under
-    table-per-concrete-subtype — which is the set the direct-column roles are
-    stated over. ``joined`` names the Attributes an accepted Relationship Join
-    designates anywhere in the model.
+    standalone Entity.
     """
 
     declaration: EntityDeclaration
     layout: Document
     strategy: InheritanceStrategy | None
-    attributes: tuple[AttributeMetadata, ...]
-    joined: frozenset[AttributeIdentity]
 
     @property
     def axes(self) -> frozenset[TemporalDimension]:
@@ -110,14 +102,6 @@ def _is_table_per_hierarchy(owner: DocumentLayoutOwner) -> bool:
 
 def _is_table_per_concrete_subtype(owner: DocumentLayoutOwner) -> bool:
     return isinstance(owner.strategy, TablePerConcreteSubtype)
-
-
-def _joins_a_relationship(owner: DocumentLayoutOwner) -> bool:
-    return any(attribute.identity in owner.joined for attribute in owner.attributes)
-
-
-def _locks_optimistically(owner: DocumentLayoutOwner) -> bool:
-    return any(attribute.optimistic_locking for attribute in owner.attributes)
 
 
 def _is_transaction_time_only(owner: DocumentLayoutOwner) -> bool:
@@ -144,8 +128,6 @@ class CapabilityScopeEntry:
 CAPABILITY_SCOPE: Final[tuple[CapabilityScopeEntry, ...]] = (
     CapabilityScopeEntry("a table-per-hierarchy family", _is_table_per_hierarchy),
     CapabilityScopeEntry("a table-per-concrete-subtype family", _is_table_per_concrete_subtype),
-    CapabilityScopeEntry("an Attribute named by a Relationship Join", _joins_a_relationship),
-    CapabilityScopeEntry("an explicit optimistic-lock Attribute", _locks_optimistically),
     CapabilityScopeEntry("a Transaction-Time axis", _is_transaction_time_only),
     CapabilityScopeEntry("a Bitemporal axis pair", _is_bitemporal),
 )
@@ -373,17 +355,9 @@ def _layout_owners(
     under one root, so the groups are folded back onto their owner and the gate
     fires once per layout declaration rather than once per governed Table.
     """
-    governed: dict[EntityIdentity, list[AttributeMetadata]] = {}
     layouts: dict[EntityIdentity, Document] = {}
-    joined: frozenset[AttributeIdentity] = frozenset()
     for document in document_groups:
-        joined = document.roles.joined
         layouts[document.group.root] = document.layout
-        governed.setdefault(document.group.root, []).extend(
-            contributor.attribute
-            for contributor in document.group.declaration_contributors
-            if isinstance(contributor, AttributeTableContributor)
-        )
     owners: list[DocumentLayoutOwner] = []
     for identity in sorted(layouts, key=lambda entity: entity.sort_key):
         declaration = candidate.entity(identity)
@@ -394,8 +368,6 @@ def _layout_owners(
                 declaration=declaration,
                 layout=layouts[identity],
                 strategy=_strategy(declaration),
-                attributes=tuple(governed[identity]),
-                joined=joined,
             )
         )
     return tuple(owners)

@@ -269,6 +269,20 @@ def _entry_statements(entries: Any, dialect: str) -> list[str]:
     ]
 
 
+def _entry_bind_values(entry: Mapping[str, Any], dialect: str) -> list[Any]:
+    """One golden entry's binds for *dialect* (default ``[]``).
+
+    A flat array is dialect-agnostic and answers for every dialect; a map is keyed
+    by dialect, covering exactly the dialects its own ``sql`` map declares
+    (asserted by :func:`_assert_binds_dialect_keys` and its scenario twin). Both
+    forms are authorable wherever a golden statement is, because a document
+    mutation's path bind differs between the two dialects while the value bind
+    beside it does not (m-dialect).
+    """
+    binds = entry.get("binds", [])
+    return list(binds[dialect]) if isinstance(binds, dict) else list(binds)
+
+
 def _entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
     """The ``(sql, binds)`` pairs a `statements` entry list declares for *dialect*.
 
@@ -281,7 +295,7 @@ def _entry_pairs(entries: Any, dialect: str) -> list[tuple[str, list[Any]]]:
     for entry in entries:
         sql = entry.get("sql") if isinstance(entry, dict) else None
         if isinstance(sql, dict) and dialect in sql:
-            pairs.append((sql[dialect], list(entry.get("binds", []))))
+            pairs.append((sql[dialect], _entry_bind_values(entry, dialect)))
     return pairs
 
 
@@ -1126,7 +1140,9 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     # oracle is deliberately NOT put through this: it is an independent formulation
     # and extracts each path itself, so both arms reach `then.rows` by different
     # routes.
-    golden_rows = _materialize_document_layout(case, golden_rows, include_value_objects=False)
+    golden_rows = _materialize_target_document_layout(
+        case, golden_rows, include_value_objects=False
+    )
     expected = case.expected_rows
     tolerance = case.tolerance
 
@@ -1322,8 +1338,31 @@ def _document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_Do
     return slot.column, tuple(members)
 
 
-def _materialize_document_layout(
+def _materialize_target_document_layout(
     case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
+) -> list[dict[str, Any]]:
+    """:func:`_materialize_document_layout` over the case's own read target.
+
+    A top-level read's rows belong to ``when.targetEntity``; a deep fetch's child
+    level does not, which is why the entity is an argument there and resolved here.
+    """
+    target_name = case.when.get("targetEntity")
+    if not isinstance(target_name, str):
+        return rows
+    return _materialize_document_layout(
+        case,
+        case.model.entity(target_name),
+        rows,
+        include_value_objects=include_value_objects,
+    )
+
+
+def _materialize_document_layout(
+    case: Case,
+    entity: Entity,
+    rows: list[dict[str, Any]],
+    *,
+    include_value_objects: bool,
 ) -> list[dict[str, Any]]:
     """Fan a Relational Document Layout read's Structured Column out into the members
     it was asked for, under the result names a ``Columns`` layout would have used.
@@ -1335,14 +1374,14 @@ def _materialize_document_layout(
     instance form additionally carries every applicable occurrence — so the caller
     states it rather than this deriving a second projection rule of its own.
 
+    ``entity`` owns ``rows``, which is the level of a deep fetch they came from
+    rather than always the case's read target: every level projects its own
+    Structured Column and decodes its own members out of it.
+
     Each leaf decodes by its DECLARED type (:func:`decode_leaf`), not by the JSON
     value's own shape, and an absent key and an explicit JSON null both read as one
     absence — the single not-present state a NULL Column has.
     """
-    target_name = case.when.get("targetEntity")
-    if not isinstance(target_name, str):
-        return rows
-    entity = case.model.entity(target_name)
     column, members = _document_layout_members(case, entity)
     if not members:
         return rows
@@ -1944,7 +1983,16 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     # both because the graph's root nodes carry it and because a path-root guard
     # selects the participating roots by it.
     root_binds = case.statement_binds(0, dialect)
-    root_rows = _materialize_family_variant(case, _query_rows(db, statements[0], root_binds))
+    # Every level of a deep fetch is instance-form and fans its own Structured Column
+    # out into its own members (a no-op under `Columns` layout). The join columns the
+    # levels are keyed on are direct under either layout, so the fan-out changes what
+    # a node CARRIES and never how the levels are matched up.
+    root_rows = _materialize_family_variant(
+        case,
+        _materialize_target_document_layout(
+            case, _query_rows(db, statements[0], root_binds), include_value_objects=True
+        ),
+    )
 
     # rows_by_hop[hop key] -> the result-rows that hop fetched.
     rows_by_hop: dict[_HopKey, list[dict[str, Any]]] = {}
@@ -2014,10 +2062,15 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
                 f"this temporal child (matched by axis), appended after the IN list."
             )
 
-        child_rows = _query_rows(
-            db,
-            statements[statement_index],
-            list(parent_keys) + list(step.tag_binds) + expected_suffix,
+        child_rows = _materialize_document_layout(
+            case,
+            step.child_entity,
+            _query_rows(
+                db,
+                statements[statement_index],
+                list(parent_keys) + list(step.tag_binds) + expected_suffix,
+            ),
+            include_value_objects=True,
         )
         # A polymorphic (multi-concrete, table-per-hierarchy) hop projects the raw tag
         # column; materialize each row's `familyVariant` from the tag map (never a
@@ -2563,7 +2616,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     # Relational Document Layout read fans those out of its one Structured Column
     # too — after which each occurrence sits under the very column name a `Columns`
     # layout would have given it and the node assembly below is layout-blind.
-    projected = _materialize_document_layout(
+    projected = _materialize_target_document_layout(
         case,
         _query_rows(db, golden, case.statement_binds(0, dialect)),
         include_value_objects=True,
@@ -3376,7 +3429,14 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             _assert_delete_input(case, classified, step_binds)
         elif _version_column(entity) is not None:
             _assert_versioned_update_input(
-                case, entity, case.concurrency_mode, classified, step_statements, step_binds
+                case,
+                entity,
+                case.concurrency_mode,
+                classified,
+                step_statements,
+                step_binds,
+                dialect=dialect,
+                rows=rows,
             )
         else:
             _assert_update_input(
@@ -3500,6 +3560,9 @@ def _assert_versioned_update_input(
     classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
     step_statements: list[str],
     step_binds: list[list[Any]],
+    *,
+    dialect: str,
+    rows: list[dict[str, Any]],
 ) -> None:
     """Cross-check a VERSIONED writeSequence update step's ① against its golden (②).
 
@@ -3510,13 +3573,33 @@ def _assert_versioned_update_input(
     the write correct, so no
     ``and version = ?`` gate) or ``[…, newVersion, pk, observedVersion]`` in
     optimistic mode. One golden statement per ① row.
+
+    Under Relational Document Layout the Structured Column is one further `set`
+    term, carrying the dialect's mutation expression and contributing one
+    ``(path, value)`` PAIR per assigned Document Path in the layout's own order —
+    the same contribution :func:`_assert_update_input` derives for an unversioned
+    row. The version Column stays a plain assignment after it, because an explicit
+    optimistic-lock Attribute keeps a Column of its own under either layout.
     """
     version_col = _version_column(entity)
-    for (_, pk, set_cols, observed), statement, binds in zip(
-        classified, step_statements, step_binds, strict=True
+    document_column, _resident = _document_layout_members(case, entity)
+    assignments = (
+        [_document_assignments(case, entity, row) for row in rows] if document_column else []
+    )
+    patches_document = any(assignments)
+    for (_, pk, set_cols, observed), patches, statement, binds in zip(
+        classified,
+        assignments or [()] * len(classified),
+        step_statements,
+        step_binds,
+        strict=True,
     ):
         golden_set = _parse_set_columns(case, statement)
-        set_present = [c for c in _write_column_order(case, entity) if c in set_cols]
+        set_present = [
+            c
+            for c in _write_column_order(case, entity)
+            if c in set_cols or (patches_document and c == document_column)
+        ]
         expected_cols = [*set_present, version_col]
         if golden_set != expected_cols:
             raise CaseFailure(
@@ -3529,7 +3612,14 @@ def _assert_versioned_update_input(
                 f"{case.path.name}: a versioned update's neutral write input (①) MUST "
                 f"carry observedVersion — the version advance is derived from it."
             )
-        set_values = [set_cols[column] for column in set_present]
+        set_values: list[Any] = []
+        for column in set_present:
+            if column == document_column and patches_document:
+                for path, value in patches:
+                    set_values.append(_document_path_bind(path, dialect))
+                    set_values.append(_document_value_bind(value))
+                continue
+            set_values.append(set_cols[column])
         expected = [*set_values, observed + 1, pk]
         # A TABLE-PER-HIERARCHY concrete subtype's existing-row UPDATE carries the tag
         # GUARD among the identity predicates — canonically right after the primary key
@@ -5015,6 +5105,13 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 # carrying no document column passes through byte-identical. The referenceSql
                 # oracle above already ran on the raw rows, so the value-object columns never
                 # route through that identity compare.
+                #
+                # Under Relational Document Layout the fan-out comes FIRST, because it is
+                # what puts each occurrence back under the very column name the projection
+                # below reads it from — after which that projection is layout-blind.
+                rows = _materialize_document_layout(
+                    case, read_entity, rows, include_value_objects=True
+                )
                 rows = [_materialize_owner_node(read_entity, row) for row in rows]
             else:
                 # A cache hit (or an m-op-list construction that has not resolved yet): no

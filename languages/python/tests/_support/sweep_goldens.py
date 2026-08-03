@@ -196,8 +196,12 @@ _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
 # asked for lives inside one; `-020` puts a path predicate and an ordering key through
 # the typed-cast seam under a `limit`, which is what makes the ordering observable;
 # `-021` collapses a missing key and an explicit JSON null to one absence.
+# `m-navigate-025` joins them: a hop between two document-mapped Entities, whose one
+# statement carries both forms — the correlation on plain Columns because both join
+# endpoints hold a direct-column role, and the interior predicate through the
+# extraction because that member is document-resident.
 _DOCUMENT_LAYOUT_READS: Final[frozenset[str]] = frozenset(
-    f"m-storage-layout-{n:03d}" for n in range(17, 22)
+    {f"m-storage-layout-{n:03d}" for n in range(17, 22)} | {"m-navigate-025"}
 )
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
@@ -357,6 +361,10 @@ _STORAGE_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # than spelling: its neutral write input names neither the nullable `origin` occurrence
 # nor the `many` `profile.entries`, and only a lane that composes the document through
 # the codec stores the first as no key and the second as `[]`.
+#
+# `m-opt-lock-018` is the versioned member of the same family: the Structured
+# Column's mutation expression and the version Column's plain advance compose into
+# one `set` clause, and the gate stays a direct-column predicate beside the key.
 _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-storage-layout-022",
@@ -364,6 +372,7 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-value-object-067",
         "m-document-codec-001",
         "m-document-codec-002",
+        "m-opt-lock-018",
     }
 )
 _WRITE_SEQUENCES: Final[frozenset[str]] = (

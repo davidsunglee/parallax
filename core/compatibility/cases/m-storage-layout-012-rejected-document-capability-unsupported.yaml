@@ -2,38 +2,47 @@
 # Layout is refused because its SHAPE is one the implementation's declared
 # capability scope names, not because anything about the declaration is wrong.
 #
-# `Order` is a standalone Entity declaring `layout.document` with a resolved
-# Structured Column name, and nothing about it is malformed — the layout is
-# root-owned, no member overrides a column, no Index reaches into the document,
-# and `payload` collides with no direct column. It is refused anyway, because an
-# implementation MUST NOT accept a layout whose reads and writes it cannot both
-# execute, and a model is accepted or refused whole, so the refusal is a
-# formation rejection rather than a per-operation failure.
+# `Order` is a table-per-hierarchy root declaring `layout.document` with a
+# resolved Structured Column name, and nothing about it is malformed — the
+# layout is root-owned, no member overrides a column, no Index reaches into the
+# document, and `payload` collides with neither a direct column nor the variant
+# tag. It is refused anyway, because an implementation MUST NOT accept a layout
+# whose reads and writes it cannot both execute, and a model is accepted or
+# refused whole, so the refusal is a formation rejection rather than a
+# per-operation failure.
 #
-# The refusal turns on exactly one member: the explicit optimistic-lock
-# Attribute. The layout keeps it in a Column of its own (direct-column role 3),
-# and lowering its version gate over a document-mapped row is one of the shapes
-# the scope list declares refused. The standalone shape alone raises nothing —
-# models/document-layout.yaml and m-storage-layout-017…023 read and write one —
-# so this case pins the version Attribute as the discriminator rather than the
-# layout declaration. An implementation whose scope list drops that entry accepts
-# this model, and one whose scope list is empty owns neither the rule nor this
-# case.
+# The refusal turns on exactly one fact: the family. One shared Structured
+# Column holds every variant's applicable members, so a path a sibling variant
+# does not declare is absent rather than null and a predicate over it must not
+# evaluate against the wrong variant's row — the partitioning the scope list
+# declares refused. A standalone Entity carrying the same members raises nothing
+# (models/document-layout.yaml and m-storage-layout-017…023 read and write one),
+# so this case pins the family as the discriminator rather than the layout
+# declaration. An implementation whose scope list drops that entry accepts this
+# model, and one whose scope list is empty owns neither the rule nor this case.
 model: models/member-column-defaults.yaml
-tags: [m-storage-layout, m-opt-lock, m-model-formation, m-descriptor, rejected, negative, document-layout, capability, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-inheritance, m-model-formation, m-descriptor, rejected, negative, document-layout, table-per-hierarchy, capability, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   model:
-    entity:
-      name: Order
-      table: orders
-      layout:
-        document:
-          column: payload
-      attributes:
-        - { name: id, type: int64, primaryKey: true }
-        - { name: displayName, type: string }
-        - { name: total, type: "decimal(12,2)" }
-        - { name: version, type: int64, optimisticLocking: true }
+    entities:
+      - name: Order
+        table: orders
+        inheritance:
+          role: root
+          strategy: table-per-hierarchy
+          tag: { column: kind }
+        layout:
+          document:
+            column: payload
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+          - { name: displayName, type: string }
+          - { name: total, type: "decimal(12,2)" }
+      - name: RushOrder
+        inheritance:
+          role: concrete-subtype
+          parent: Order
+          tagValue: rush
 then:
   rejectedRule: storage-layout-document-capability-unsupported

@@ -670,12 +670,7 @@ def _direct_roles(
     )
 
 
-def _refused_shapes(
-    owner: str,
-    root_definition: dict[str, Any],
-    groups: Sequence[_Group],
-    joined: frozenset[tuple[str, str]],
-) -> tuple[str, ...]:
+def _refused_shapes(root_definition: dict[str, Any]) -> tuple[str, ...]:
     """The declared capability-scope entries this layout owner matches.
 
     Each entry names one layout shape this build cannot execute end to end, and
@@ -684,9 +679,6 @@ def _refused_shapes(
     """
     block = inheritance_of(root_definition)
     strategy = block.get("strategy") if block is not None else None
-    attributes = tuple(
-        pair for group in groups if group.root == owner for pair in _group_attributes(group)
-    )
     axes = {
         axis["dimension"]
         for axis in root_definition.get("asOfAxes", []) or []
@@ -697,10 +689,6 @@ def _refused_shapes(
         refused.append("a table-per-hierarchy family")
     if strategy == STRATEGY_TPCS:
         refused.append("a table-per-concrete-subtype family")
-    if any((declaring, attribute["name"]) in joined for declaring, attribute in attributes):
-        refused.append("an Attribute named by a Relationship Join")
-    if any(attribute.get("optimisticLocking") for _, attribute in attributes):
-        refused.append("an explicit optimistic-lock Attribute")
     if axes == {"transactionTime"}:
         refused.append("a Transaction-Time axis")
     if "validTime" in axes:
@@ -718,13 +706,12 @@ def _validate_capability(index: _ModelIndex, groups: Sequence[_Group]) -> None:
     Column claims validate, so a model with a genuine physical defect reports
     that defect instead.
     """
-    joined = _joined_attributes(index)
     for owner in sorted({group.root for group in groups}, key=_identity_sort_key):
         root_definition = index.family.defs[owner]
         column = _layout_column(root_definition)
         if column is None:
             continue
-        refused = _refused_shapes(owner, root_definition, groups, joined)
+        refused = _refused_shapes(root_definition)
         if not refused:
             continue
         raise RejectionError(

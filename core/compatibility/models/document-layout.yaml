@@ -1,4 +1,5 @@
-# Traveler / Beacon: the shared model for every Relational Document Layout witness.
+# Traveler / Trip / Ledger / Beacon: the shared model for every Relational Document
+# Layout witness.
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. What makes it
 # different from every other model in the corpus is one entity-level property:
@@ -22,6 +23,21 @@
 # `note` is the presence pair: one row omits the key entirely and one writes an
 # explicit JSON null, so a case can assert that a NULL Column's single not-present
 # state and a document's two collapse to one logical answer (m-op-algebra).
+#
+# `Trip` is the join side. `travelerId` is one endpoint of `Traveler.trips`, so the
+# layout keeps it in a Column of its own (direct-column role 2) beside the primary
+# key, while `destination` and `nights` are document-resident. That is what makes a
+# hop between two document-mapped Entities plain column equality: both endpoints are
+# Columns under either layout, so no correlation predicate ever extracts from a
+# document, and `trip_traveler_id` is an Index over a Column that really exists.
+#
+# `Ledger` is the versioned side. `version` carries `optimisticLocking`, which the
+# layout keeps direct (role 5), so the per-object gate stays `and version = ?` over a
+# Column while `label` and `balance` live in the document the same UPDATE patches.
+# `balance` is a `decimal(18,2)`, whose document form is an exact digit string
+# (m-document-codec) — a member whose stored spelling differs from its Column
+# spelling, so a resolving read that skipped the decode would compare the wrong
+# thing.
 #
 # `Beacon` exists for the projection rule alone. It declares the same layout and NO
 # document-resident member at all, so its Structured Column is physically present,
@@ -79,8 +95,72 @@ entities:
           - name: label
             type: string
             nullable: true
+    relationships:
+      - name: trips
+        cardinality: one-to-many
+        join:
+          source: id
+          target: { entity: parallax.compatibility.Trip, attribute: travelerId }
+        orderBy:
+          - { attribute: id }
     indices:
       - name: traveler_pk
+        attributes: [id]
+        unique: true
+  # Trip: the far side of a relationship between two document-mapped Entities. Its
+  # own primary key and the join endpoint `travelerId` are Columns; everything else
+  # is document-resident.
+  - name: Trip
+    namespace: parallax.compatibility
+    table: trip
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: travelerId
+        type: int64
+      - name: destination
+        type: string
+        maxLength: 64
+        nullable: true
+      - name: nights
+        type: int32
+        nullable: true
+    relationships:
+      - name: traveler
+        reverseOf: parallax.compatibility.Traveler.trips
+    indices:
+      - name: trip_pk
+        attributes: [id]
+        unique: true
+      - name: trip_traveler_id
+        attributes: [travelerId]
+  # Ledger: a document-mapped Entity carrying an explicit optimistic-lock version.
+  - name: Ledger
+    namespace: parallax.compatibility
+    table: ledger
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: version
+        type: int32
+        optimisticLocking: true
+      - name: label
+        type: string
+        maxLength: 64
+        nullable: true
+      - name: balance
+        type: decimal(18,2)
+        nullable: true
+    indices:
+      - name: ledger_pk
         attributes: [id]
         unique: true
   # Beacon: a document-layout Entity whose only member is its primary key, which the

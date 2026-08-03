@@ -1,0 +1,87 @@
+# A set-based UPDATE of a document-mapped Entity eliminates the row whose assigned
+# member already equals its stored state, where "already equals" spans a Document
+# Path the row does not carry at all (m-opt-lock x m-storage-layout), on Postgres AND
+# MariaDB.
+#
+# The predicate resolves both ledgers; the assignment is `label = null`; the two rows
+# answer differently:
+#
+#   * row 100 stores `label: "opening"`, so the assignment changes it — one gated
+#     UPDATE, version 1 -> 2.
+#   * row 200 stores no `label` key at all. A missing Document Path and an explicit
+#     JSON null are one logical not-present state (m-op-algebra), which is the state
+#     `null` assigns, so the row is a NO-OP: no DML, no version advance, and no
+#     flush-time work of any kind on its behalf.
+#
+# What makes this falsifiable rather than decorative is that BOTH answers come out of
+# one authored write. The resolving read is row-form and must still project the
+# Structured Column and decode `label` out of it, because that is the only place the
+# comparison value exists: an implementation whose resolve read the layout's physical
+# slots would find no `label` column, compare `None` against `None` for BOTH rows, and
+# emit nothing at all — a silent zero-statement flush that leaves row 100 wrong. The
+# opposite error, comparing against the raw document, would make both rows differ and
+# emit two updates.
+#
+# The trailing read shows the collapse from the other side: row 100 now carries an
+# explicit JSON null and row 200 still carries no key, and both read back as one
+# absence.
+#
+# The unit of work runs `optimistic`, so the resolve takes no lock and each per-row
+# UPDATE gates on `and version = ?` binding the version that resolve observed.
+# roundTrips = 3 (the resolving read + one real UPDATE + the verify read).
+model: models/document-layout.yaml
+tags: [m-opt-lock, m-storage-layout, m-sql, m-unit-work, materialize, predicate-write, no-op, json, document-layout, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "predicate write materializes per-row from a resolving read - the surviving row's keys and observed version depend on the query result"
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Ledger
+      find:
+        greaterThan: { attr: Ledger.id, value: 0 }
+      roundTrips: 1
+      note: the materialize read — both ledgers resolve, and `label` is decoded out of the Structured Column
+      statements:
+        - sql:
+            postgres: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
+            mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
+          binds: [0]
+      expectRows:
+        - { id: 100, version: 1, label: opening, balance: 250.00 }
+        - { id: 200, version: 1, label: null, balance: 40.00 }
+    - write:
+        mutation: update
+        target:
+          entity: Ledger
+          predicate:
+            greaterThan: { attr: Ledger.id, value: 0 }
+        assignments:
+          - { attr: Ledger.label, value: null }
+      roundTrips: 1
+      note: only row 100 changes — row 200's missing Document Path already IS the assigned state
+      statements:
+        - sql:
+            postgres: update ledger set payload = jsonb_set(payload, ?, cast(? as jsonb)), version = ? where id = ? and version = ?
+            mariadb: update ledger set payload = json_set(payload, ?, json_extract(?, '$')), version = ? where id = ? and version = ?
+          binds:
+            postgres: ['{label}', 'null', 2, 100, 1]
+            mariadb: ['$.label', 'null', 2, 100, 1]
+    - targetEntity: Ledger
+      find:
+        greaterThan: { attr: Ledger.id, value: 0 }
+      roundTrips: 1
+      note: an explicit JSON null on 100 and a missing key on 200 read back as one absence; only 100's version moved
+      statements:
+        - sql:
+            postgres: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
+            mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
+          binds: [0]
+      expectRows:
+        - { id: 100, version: 2, label: null, balance: 250.00 }
+        - { id: 200, version: 1, label: null, balance: 40.00 }
+then:
+  roundTrips: 3

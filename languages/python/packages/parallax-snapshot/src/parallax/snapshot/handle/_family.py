@@ -39,13 +39,11 @@ from dataclasses import dataclass
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
-    AttributeIdentity,
     AttributeMetadata,
     EntityMetadata,
     Metamodel,
     PrimaryKey,
     TemporalDimension,
-    ValueObjectIdentity,
     ValueObjectMetadata,
     entity_by_name,
 )
@@ -240,17 +238,25 @@ def placed_members(
     )
 
 
-def members(layout: EntityLayoutView) -> dict[str, tuple[str, bool]]:
-    """Map each writable member name to `(column, is_value_object)` over
-    ``layout``'s applicable slots.
+def members(placed: PlacedMembers) -> dict[str, tuple[str, bool]]:
+    """Map each writable member name to `(row key, is_value_object)`.
 
-    The framework-owned discriminator slot is not a member: a write derives it
-    from the layout's own discriminator assignment rather than from row data."""
-    resolved: dict[str, tuple[str, bool]] = {}
-    for slot in layout.columns:
-        contributor = slot.contributor
-        if isinstance(contributor, AttributeIdentity):
-            resolved[contributor.name] = (slot.column.name, False)
-        elif isinstance(contributor, ValueObjectIdentity):
-            resolved[contributor.path[-1]] = (slot.column.name, True)
+    The row key is the name a resolved row carries that member's value under,
+    which is the member's own Column name under either layout: a direct
+    placement selects that Column, and a document-mapped read fans the shared
+    Structured Column back out under the same name (`m-sql`), so one logical
+    member is read the same way whichever place the layout put it.
+
+    Membership is ``placed``'s own: every applicable logical member of the
+    row-owning Entity, and nothing else. The framework-owned discriminator is
+    not a member — a write derives it from the layout's own discriminator
+    assignment rather than from row data."""
+    resolved: dict[str, tuple[str, bool]] = {
+        attribute.identity.name: (attribute.storage.name, False)
+        for attribute, _placement in placed.attributes
+    }
+    resolved.update(
+        (occurrence.identity.path[-1], (occurrence.storage.name, True))
+        for occurrence, _placement in placed.value_objects
+    )
     return resolved

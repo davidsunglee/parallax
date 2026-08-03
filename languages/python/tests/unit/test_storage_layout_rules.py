@@ -7,7 +7,15 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
-from _metamodel_support import Declaration, accepted, attribute, identity, key, source
+from _metamodel_support import (
+    Declaration,
+    accepted,
+    attribute,
+    identity,
+    instant,
+    key,
+    source,
+)
 
 from parallax.conformance import case_format
 from parallax.core import inheritance, storage_layout
@@ -17,9 +25,9 @@ from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     AbstractRoot,
     AbstractSubtype,
+    AsOfAxisMetadata,
     AttributeIdentity,
     AttributeLocation,
-    AttributeMetadata,
     AttributeReference,
     Cardinality,
     Column,
@@ -37,6 +45,7 @@ from parallax.core.metamodel import (
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
+    TemporalDimension,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipJoin,
     ValueObjectAttributeDeclaration,
@@ -545,17 +554,15 @@ def _refused_shapes(*declarations: Declaration) -> tuple[str, ...]:
     )
 
 
-def _versioned_document(*, column: str = "payload") -> Declaration:
-    versioned = attribute(_SIBLING, "revision")
+def _transaction_time_document(*, column: str = "payload") -> Declaration:
+    tx_start = instant(_SIBLING, "txStart")
+    tx_end = instant(_SIBLING, "txEnd")
     return _standalone_document(
         column=column,
-        attributes=(
-            key(_SIBLING),
-            AttributeMetadata(
-                identity=versioned.identity,
-                type=versioned.type,
-                storage=versioned.storage,
-                optimistic_locking=True,
+        attributes=(key(_SIBLING), tx_start, tx_end),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                TemporalDimension.TRANSACTION_TIME, tx_start.identity, tx_end.identity
             ),
         ),
     )
@@ -566,24 +573,23 @@ def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
     # root-owned declaration, so a model matching several is refused once and
     # names all of them. Removing one matched entry therefore leaves the others
     # matched, and the owner is still refused for every shape that remains.
+    tx_start = instant(_ROOT, "txStart")
+    tx_end = instant(_ROOT, "txEnd")
     root = Declaration(
         identity=_ROOT,
         container=Table("record"),
         layout=Document(Column("doc")),
-        attributes=(
-            key(_ROOT),
-            AttributeMetadata(
-                identity=attribute(_ROOT, "revision").identity,
-                type=attribute(_ROOT, "revision").type,
-                storage=attribute(_ROOT, "revision").storage,
-                optimistic_locking=True,
+        attributes=(key(_ROOT), tx_start, tx_end),
+        as_of_axes=(
+            AsOfAxisMetadata(
+                TemporalDimension.TRANSACTION_TIME, tx_start.identity, tx_end.identity
             ),
         ),
         inheritance=AbstractRoot(TablePerHierarchy("kind")),
     )
     assert _refused_shapes(root, _concrete(_LEAF)) == (
         "a table-per-hierarchy family",
-        "an explicit optimistic-lock Attribute",
+        "a Transaction-Time axis",
     )
 
 
@@ -595,7 +601,7 @@ def test_a_standalone_layout_owner_matches_no_declared_shape() -> None:
 
 
 def test_the_gate_locates_the_refusal_at_the_layout_owner_with_no_related_location() -> None:
-    (issue,) = _rule_issues(_versioned_document(column="body"))
+    (issue,) = _rule_issues(_transaction_time_document(column="body"))
     assert issue.code == _CAPABILITY
     assert issue.location == EntityLocation(_SIBLING)
     assert issue.related == ()
@@ -798,7 +804,7 @@ def test_a_join_endpoint_stays_direct_so_neither_layout_rule_fires_on_it() -> No
     # projection before any facet exists, which is what lets it decide whether an
     # Index component is document-resident. `ownerId` is an endpoint, so it keeps
     # its Column, its override, and its Index.
-    assert [issue.code for issue in _rule_issues(*_note_owning_a_holder())] == [_CAPABILITY]
+    assert _rule_issues(*_note_owning_a_holder()) == ()
 
 
 def test_an_inherited_join_endpoint_is_direct_at_the_declaration_that_bears_it() -> None:

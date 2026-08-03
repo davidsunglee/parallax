@@ -121,6 +121,7 @@ from parallax.core.sql_gen._navigation import open_branch as _open_branch
 from parallax.core.sql_gen._navigation import plan_hop as _plan_hop
 from parallax.core.storage_layout import (
     ColumnContributor,
+    DirectColumn,
     DocumentPath,
     StorageLayoutFacet,
     TableLayout,
@@ -255,13 +256,26 @@ class EntityScope:
     def column_of(self, attr_ref: str) -> str:
         """Render one DIRECT Attribute Column of the active target.
 
-        The join lane's front door: a Relationship Join endpoint is a direct role
-        under either layout (`m-storage-layout`), so a hop's correlation always
-        has a Column to name and never extracts from a document. An Attribute
-        with no Column in this Table raises, which is exactly what an endpoint
-        the layout put inside the document would be.
+        The join lane's front door. Member Placement is the sole authority here
+        too (`m-storage-layout`), and what it must answer is `DirectColumn`:
+        both endpoints of a Relationship Join hold a direct-column role under
+        either layout, so a hop's correlation always has a Column to name and
+        never extracts from a document.
+
+        The reference resolves by name against the active target's family
+        (:meth:`entity_attribute`), so an endpoint addressed at a descendant
+        position reaches the ancestor declaration the placement is keyed by.
         """
-        return self.own_column(self.slot_column(self.entity_attribute(attr_ref).identity))
+        attribute = self.entity_attribute(attr_ref)
+        placement = self.layout.placement(attribute.identity)
+        # pragma: no cover on the refusal — a join endpoint holds a direct-column
+        # role, so no accepted model places one at a Document Path.
+        if not isinstance(placement, DirectColumn):  # pragma: no cover
+            raise SqlGenError(
+                f"{attr_ref!r} is not a direct Column of table {self.layout.table.name!r}, "
+                "so it cannot carry a join correlation"
+            )
+        return self.own_column(placement.slot.column.name)
 
     def subject_of(self, attr_ref: str) -> MemberSubject:
         """Resolve one Attribute reference to the expression a comparison reads.
