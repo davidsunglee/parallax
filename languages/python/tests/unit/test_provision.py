@@ -599,9 +599,9 @@ def test_fixture_statements_omit_an_absent_cell_and_keep_the_document_last() -> 
 
 
 # --------------------------------------------------------------------------- #
-# Relational Document Layout (m-storage-layout). The capability gate still      #
-# refuses the shape at whole-model formation, so the model is accepted directly #
-# (`_document_layout_support`); DDL derivation and fixture composition below    #
+# Relational Document Layout (m-storage-layout). The model is compiled from     #
+# Declarations and accepted directly (`_document_layout_support`), installing   #
+# only the facets this lane reads; DDL derivation and fixture composition below #
 # are the production ones.                                                      #
 # --------------------------------------------------------------------------- #
 _DOCUMENT = document_model()

@@ -45,10 +45,9 @@ def _member_addresses(
 
     Answered from Member Placement rather than from the Table's slots, because a
     document-resident member claims no slot of its own: several members share one
-    Structured Column and are told apart by their Document Paths, which is
-    exactly the distinction a collapse decision needs — two rows naming different
-    document members select the same Column but write different paths, so their
-    shapes differ even though their column lists agree.
+    Structured Column and are told apart by their Document Paths, which is exactly
+    the distinction a collapse decision needs — under this layout the column list
+    alone no longer separates two rows that name different members.
 
     The framework-owned discriminator is no member and is absent: no write input
     ever names it, and every form that emits it derives it from the view's own
@@ -89,10 +88,15 @@ def collapse_group_key(
     here — two legal deletes always share one `IN`-list statement.
 
     Under Relational Document Layout the selection is Column *and* Document Path,
-    because several members share one Structured Column: two rows naming
-    different document members emit the same column list but write different
-    paths, and one shared statement would bind the later row's document against
-    the first row's shape.
+    because several members share one Structured Column. Two rows naming different
+    document members do emit the same column list — an `INSERT` binds the whole
+    document at that one `NOT NULL` Column whatever the row names — so the paths
+    are what still tells their shapes apart, and they must: every entry of one
+    Planned Insert has the same canonical member set, and incompatible entries form
+    separate steps (`m-unit-work`, "Membership *is* the batching decision"). Under
+    `Columns` layout the column list already carries that distinction; here the
+    Document Path is what carries it, and dropping it would hand the planner a run
+    it refuses rather than a wider batch.
 
     TOTAL: the planner asks this of every collapse candidate, long before any
     lowering decides the row is renderable at all. A target owning no table, a

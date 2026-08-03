@@ -18,8 +18,9 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -202,6 +203,38 @@ def test_projection_drops_undeclared_keys_and_collapses_absence() -> None:
 
     # A null / absent top-level value object is null.
     assert _project_value_object(address, None) is None
+
+
+def test_projection_decodes_every_leaf_by_its_declared_type() -> None:
+    # A document stores the codec's portable spelling for each declared type, and a
+    # getter yields what a Column of that type reads back as. Six of the twelve rows
+    # differ between the two — the ones models/customer.yaml does not reach — so the
+    # projection is exercised here against the model that declares one leaf of every
+    # type, at both depths.
+    profile = (
+        load_model(COMPATIBILITY_ROOT, "models/document-codec.yaml")
+        .entity("Sample")
+        .value_objects[0]
+    )
+    stored = {
+        "amount": "10.25",
+        "blob": "0a1b",
+        "day": "2026-01-15",
+        "clock": "09:30:00",
+        "instant": "2026-01-15T09:30:00.000000Z",
+        "token": "123e4567-e89b-12d3-a456-426614174000",
+        "entries": [{"price": "19.99", "issued": "2026-02-01"}],
+    }
+    projected = cast("dict[str, Any]", _project_value_object(profile, stored))
+    assert projected["amount"] == Decimal("10.25")
+    assert projected["instant"] == "2026-01-15T09:30:00+00:00"
+    assert projected["blob"] == "0a1b"
+    assert projected["day"] == "2026-01-15"
+    assert projected["clock"] == "09:30:00"
+    assert projected["token"] == "123e4567-e89b-12d3-a456-426614174000"
+    element = cast("list[dict[str, Any]]", projected["entries"])[0]
+    assert element["price"] == Decimal("19.99")
+    assert element["issued"] == "2026-02-01"
 
 
 def test_decode_document_is_dialect_agnostic() -> None:

@@ -8,9 +8,11 @@ predicate and ordering term over a document-resident member lowers through the
 `m-dialect` extraction and typed-cast seams the conventional nested vocabulary
 already uses.
 
-The capability gate still refuses this shape at whole-model formation, so the
-model is accepted directly (`_document_layout_support`); everything below it is
-the production read lane.
+The model is compiled from Declarations and accepted directly
+(`_document_layout_support`), which installs exactly the facets this lane reads and
+nothing else, so a failure names the seam rather than whole-model formation;
+everything below it is the production read lane. The corpus carries the end-to-end
+proof (`models/document-layout.yaml`).
 """
 
 from __future__ import annotations

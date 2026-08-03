@@ -685,3 +685,23 @@ def test_a_set_clause_splits_on_the_commas_that_separate_its_assignments() -> No
     assert _parse_set_columns(case, pairs) == ["payload"]
     plain = "update t set a = ?, b = ? where id = ?"
     assert _parse_set_columns(case, plain) == ["a", "b"]
+
+
+def test_a_set_clause_reads_no_syntax_inside_a_quoted_identifier() -> None:
+    # A column name is any nonempty string and a dialect quotes one that is reserved
+    # or otherwise non-simple, so a comma, a bracket, an `=`, and the word `where`
+    # can each sit INSIDE an identifier. A parse that read one as syntax would split
+    # a legal one-assignment clause into two, or end the clause early.
+    case = _write_case_by_id("m-storage-layout-023")
+    assert _parse_set_columns(case, 'update t set "payload,archive" = ? where id = ?') == [
+        '"payload,archive"'
+    ]
+    assert _parse_set_columns(case, "update t set `a(b` = ?, `c=d` = ? where id = ?") == [
+        "`a(b`",
+        "`c=d`",
+    ]
+    assert _parse_set_columns(case, 'update t set "where" = ?, note = ? where id = ?') == [
+        '"where"',
+        "note",
+    ]
+    assert _parse_set_columns(case, "update t set note = 'a, b' where id = ?") == ["note"]

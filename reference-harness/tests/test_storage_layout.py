@@ -896,11 +896,10 @@ def test_the_capability_gate_names_every_declared_shape_the_owner_matches() -> N
     assert "'doc'" in caught.value.detail
 
 
-def test_a_standalone_document_layout_owner_is_no_longer_refused() -> None:
-    # The standalone entry left the scope list once this build executed that
-    # shape's reads and writes alike, so the gate is silent for a well-formed
-    # standalone declaration — which is what lets models/document-layout.yaml sit
-    # in the corpus at all.
+def test_a_standalone_document_layout_owner_matches_no_refused_shape() -> None:
+    # The refused-shape list names no standalone entry, so the gate is silent for a
+    # well-formed standalone declaration — which is what lets
+    # models/document-layout.yaml sit in the corpus at all.
     validate_storage_layout([_document_standalone()])
 
 
@@ -1280,9 +1279,10 @@ def test_a_fixture_row_naming_the_discriminator_is_not_an_authorable_member() ->
 def _document_note_model(rows: list[dict[str, Any]]) -> Model:
     """A standalone Relational Document Layout Entity plus its fixture rows.
 
-    The capability gate still refuses the shape, so no corpus model can carry it;
-    the layout compiler and the fixture loader below are the ones the corpus will
-    reach once the gate opens.
+    Built inline rather than loaded from the corpus so the loader's own answer is
+    pinned member by member — a leaf's spelling, an omitted `many`'s empty array,
+    and the one shared Structured Column they all land in — against a declaration
+    this file states in full.
     """
     definition = _document_standalone(
         attributes=[

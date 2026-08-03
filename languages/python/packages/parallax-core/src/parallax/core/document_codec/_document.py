@@ -70,8 +70,12 @@ class SetOccurrence:
 
 
 type DocumentPatch = SetLeaf | SetOccurrence
-"""The closed patch algebra: a whole occurrence is replaced through
-:class:`SetOccurrence`, never through :class:`SetLeaf`."""
+"""The closed patch algebra, and the pairing is exclusive both ways: a whole
+occurrence is replaced through :class:`SetOccurrence` and never through
+:class:`SetLeaf`, and a leaf is written through :class:`SetLeaf` and never through
+:class:`SetOccurrence`. Either mismatch is refused rather than applied, because
+applying one produces a document whose own shape would read it back as invalid
+stored data."""
 
 
 def encode_document(shape: DocumentShape, values: Mapping[str, Presence]) -> dict[str, object]:
@@ -91,7 +95,9 @@ def encode_document(shape: DocumentShape, values: Mapping[str, Presence]) -> dic
     for member in shape.members:
         presence = values.get(member.name, MISSING)
         if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
-            document[member.name] = presence.value if isinstance(presence, Present) else []
+            document[member.name] = (
+                _detached(presence.value) if isinstance(presence, Present) else []
+            )
             continue
         if isinstance(presence, Missing):
             continue
@@ -99,7 +105,9 @@ def encode_document(shape: DocumentShape, values: Mapping[str, Presence]) -> dic
             document[member.name] = None
             continue
         document[member.name] = (
-            encode_leaf(member.type, presence.value) if isinstance(member, Leaf) else presence.value
+            encode_leaf(member.type, presence.value)
+            if isinstance(member, Leaf)
+            else _detached(presence.value)
         )
     return document
 
@@ -131,42 +139,110 @@ def decode_path(shape: DocumentShape, document: object, path: Sequence[str]) -> 
     itself a document over that same shape — the elements are decoded one at a time by
     passing an element back here with the occurrence's own shape, which is what makes a
     ``many`` traversable without an element index.
+
+    Stored content that contradicts the shape — a required path that is absent or JSON
+    null, an occurrence holding something other than the object or array its
+    multiplicity stores, a leaf whose value does not decode into its declared type — is
+    **invalid stored data** and raises. This module defines no repair and no
+    defaulting, so a not-present answer here always means the row is genuinely not
+    carrying that member rather than that the codec chose a value for it.
     """
     member = resolve(shape, path)
-    raw = _walk(document, path)
-    if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
-        elements = cast("list[object]", raw) if isinstance(raw, list) else []
-        return Present(elements)
+    many = isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY
+    holder = _holder(shape, document, path)
+    raw: object | Missing = MISSING if holder is None else holder.get(path[-1], MISSING)
+    if many:
+        if isinstance(raw, Missing) or raw is None:
+            return Present([])
+        if not isinstance(raw, list):
+            raise _invalid(
+                path, f"holds {raw!r}, which is not the array a `many` occurrence stores"
+            )
+        return Present(_detached(cast("list[object]", raw)))
     if isinstance(raw, Missing):
+        if holder is not None and not member.nullable:
+            raise _invalid(path, "is required and its key is absent")
         return MISSING
     if raw is None:
+        if not member.nullable:
+            raise _invalid(path, "is required and its key holds JSON null")
         return NULL
     if isinstance(member, Occurrence):
-        return Present(raw)
+        if not isinstance(raw, dict):
+            raise _invalid(
+                path, f"holds {raw!r}, which is not the object a `one` occurrence stores"
+            )
+        return Present(_detached(cast("dict[str, object]", raw)))
     decoded = decode_neutral_literal(raw, member.type)
     if not matches_neutral_type(decoded, member.type):
-        raise ValueError(
-            f"{'.'.join(path)!r} holds {raw!r}, which does not decode into its declared "
-            f"type {member.type!r} — invalid stored data"
+        raise _invalid(
+            path, f"holds {raw!r}, which does not decode into its declared type {member.type!r}"
         )
     return Present(decoded)
 
 
-def _walk(document: object, path: Sequence[str]) -> object | Missing:
-    """The raw JSON value at ``path``, or :data:`MISSING` where the walk stops.
+def _invalid(path: Sequence[str], detail: str) -> ValueError:
+    return ValueError(f"{'.'.join(path)!r} {detail} — invalid stored data")
 
-    A non-object intermediate blocks descent exactly as an absent key does, so every
-    not-present state the stored document can hold arrives here as one answer.
+
+def _holder(
+    shape: DocumentShape, document: object, path: Sequence[str]
+) -> dict[str, object] | None:
+    """The object that would carry ``path``'s last key, or ``None`` when an ancestor
+    occurrence is not present.
+
+    Descent stops with ``None`` at an absent key and at a nullable ``ONE`` occurrence
+    written as JSON null: both are presence states the shape admits, so a path below
+    one names nothing rather than contradicting the shape — and a required member
+    below such an ancestor is not a missing required path, because the whole subtree
+    is legitimately absent. A key present with a value of the wrong kind raises
+    instead, because answering "not present" there would invent an absence the row
+    does not hold.
+
+    A path descending through a ``MANY`` is a caller error rather than stored data: an
+    element is decoded by passing it back with the occurrence's own shape, so a path
+    never addresses an array position.
     """
-    current = document
-    for name in path:
-        if not isinstance(current, dict):
-            return MISSING
-        members = cast("dict[str, object]", current)
-        if name not in members:
-            return MISSING
-        current = members[name]
+    if not isinstance(document, dict):
+        raise _invalid(path, f"is read out of {document!r}, which is not a document object")
+    current = cast("dict[str, object]", document)
+    scope = shape
+    for depth, name in enumerate(path[:-1]):
+        occurrence = scope.member(name)
+        if not isinstance(occurrence, Occurrence):  # pragma: no cover - resolve() proved it
+            raise KeyError(f"{'.'.join(path)!r}: the path continues past the leaf {name!r}")
+        if occurrence.multiplicity is Multiplicity.MANY:
+            raise KeyError(
+                f"{'.'.join(path)!r}: {name!r} is a `many` occurrence, and a path never "
+                "addresses an array position — decode an element against its own shape"
+            )
+        held = current.get(name, MISSING)
+        if isinstance(held, Missing) or held is None:
+            return None
+        if not isinstance(held, dict):
+            raise _invalid(
+                path[: depth + 1],
+                f"holds {held!r}, which is not the object a `one` occurrence stores",
+            )
+        current = cast("dict[str, object]", held)
+        scope = occurrence.shape
     return current
+
+
+def _detached(document: object) -> object:
+    """A copy of ``document`` that shares no mutable state with it.
+
+    Every operation here returns a document a caller may keep while the one it was
+    built from stays reachable elsewhere — a row's stored subtree, a retained raw
+    predecessor, an occurrence document a caller still holds — so a JSON object or
+    array crossing this interface is copied rather than aliased. Scalars are immutable
+    and are returned as they are.
+    """
+    if isinstance(document, dict):
+        return {key: _detached(value) for key, value in cast("dict[str, object]", document).items()}
+    if isinstance(document, list):
+        return [_detached(item) for item in cast("list[object]", document)]
+    return document
 
 
 def comparison_text(neutral_type: NeutralType, value: object) -> str:
@@ -243,11 +319,17 @@ def apply_patches(
 
     ``shape`` is what makes a :class:`SetLeaf`'s ``NeutralValue`` spellable here rather
     than by its caller; it also refuses a path the model does not declare, so a patch
-    can never introduce a key no member names.
+    can never introduce a key no member names, and it refuses a patch whose kind
+    contradicts the member it names, so patching can never build a document the shape
+    would then read back as invalid stored data.
+
+    The input document is copied before the first patch, so the result shares no
+    mutable state with it: an in-memory successor never aliases the retained
+    predecessor it was patched from.
     """
     if not patches:
         raise ValueError("a patch sequence is nonempty")
-    current = document
+    current = _detached(document)
     for patch in patches:
         current = _apply(shape, current, patch)
     return current
@@ -264,7 +346,9 @@ def _apply(shape: DocumentShape, document: object, patch: DocumentPatch) -> obje
         target = replacement
     name = patch.path[-1]
     if isinstance(patch, SetOccurrence):
-        target[name] = patch.document
+        if not isinstance(member, Occurrence):
+            raise ValueError(f"{'.'.join(patch.path)!r} names a leaf; use SetLeaf")
+        target[name] = _detached(patch.document)
     elif isinstance(patch.value, Missing):
         target.pop(name, None)
     elif isinstance(patch.value, ExplicitNull):

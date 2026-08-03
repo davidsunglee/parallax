@@ -76,6 +76,15 @@ def test_iteration_substitution_replaces_sentinel() -> None:
     assert _substitute_iteration(binds, 7)[1:] == binds[1:]
 
 
+def test_a_sentinel_inside_text_interpolates_rather_than_replacing_the_bind() -> None:
+    # A document mutation's value hole takes JSON TEXT (m-case-format), which no
+    # host integer can carry: Postgres resolves a bare parameter there to
+    # `jsonb_set`'s declared `jsonb` and refuses an integer outright. Interpolating
+    # the index into the text is how an iteration reaches such a hole, and it leaves
+    # the bare-sentinel form (a milestone insert's own primary key) alone.
+    assert _substitute_iteration(['"Ada-$i"', "{score}", "$i"], 3) == ['"Ada-3"', "{score}", 3]
+
+
 def test_binds_per_statement_reads_each_entry() -> None:
     # Each statement entry carries its own binds inline (default []); the reader
     # returns one list per entry, aligned with `_statements`.
