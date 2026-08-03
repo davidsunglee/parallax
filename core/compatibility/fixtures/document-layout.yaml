@@ -91,3 +91,13 @@ Ledger:
 Beacon:
   - id: 10
   - id: 11
+# The one Mooring row is a single open rectangle: current on both axes, and — like
+# Beacon's rows — carrying the empty object, since every member it declares holds a
+# direct-column role. What its Structured Column ends up holding is not authorable
+# here, which is the point; the case that needs a key inside it writes one out of band.
+Mooring:
+  - id: 1
+    valid_start: "2026-01-01T00:00:00+00:00"
+    valid_end: infinity
+    tx_start: "2026-01-01T00:00:00+00:00"
+    tx_end: infinity

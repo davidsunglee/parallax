@@ -426,7 +426,21 @@ class Charter(
     terms: Attr[CharterTerms | None]
 
 
-DOCUMENT_LAYOUT_MODEL = DomainModel(Traveler, Trip, Ledger, Beacon, Voyage, Charter)
+class Mooring(
+    Bitemporal,
+    table="mooring",
+    namespace=_NS,
+    layout=Document(),
+    indices=(index("mooring_pk", "id", "valid_start", "tx_start", unique=True),),
+):
+    """Mirror of ``models/document-layout.yaml``'s member-free Bitemporal Entity: it
+    declares the layout, and its primary key and four axis bounds are all the layout
+    keeps direct, so nothing it declares lives inside its Structured Column."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+
+DOCUMENT_LAYOUT_MODEL = DomainModel(Traveler, Trip, Ledger, Beacon, Voyage, Charter, Mooring)
 
 MIRRORED: list[tuple[str, DomainModel]] = [
     ("account", ACCOUNT_MODEL),

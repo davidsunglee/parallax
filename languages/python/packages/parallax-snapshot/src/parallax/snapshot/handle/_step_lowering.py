@@ -616,13 +616,16 @@ def _successor_patches(
 ) -> tuple[DocumentPatch, ...]:
     """The in-memory patches carrying one successor's changes onto its predecessor.
 
-    A member the row assigns the value its predecessor already held is carried
-    rather than changed — a temporal successor's row restates every member,
-    changed or not (`m-unit-work`) — so comparing against the observed value is
-    what tells the two apart. A whole occurrence compares against the subtree as
-    stored, unknown keys included, which is the same comparison per-row no-op
-    elimination makes and gives the answer the write itself gives: an assignment
-    that differs only in a key no member declares does replace that subtree.
+    A successor's row restates every member, changed or not (`m-unit-work`), and
+    its carried half is copied straight out of the observation's own member map —
+    so comparing each member against that same map is what tells a carried member
+    from a changed one. The comparison is deliberately against the observation
+    rather than against the retained document: the map is the row's own
+    provenance, while the document is a value the observation's two paths spell
+    differently (a materialized occurrence carries the declared members decoded by
+    type, the stored subtree carries every key as written), and a carried
+    occurrence misread as changed would be rebuilt from declared members and drop
+    every key no member names.
 
     Order is canonical logical placement order, which both the in-memory patch and
     the equivalent path-patched `UPDATE` apply left to right (`m-storage-layout`).

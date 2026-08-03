@@ -3268,6 +3268,12 @@ def run_scenario_case(
     lowered: list[_LoweredStep] = []
     try:
         _seed_shadow_from_fixtures(case, meta, shadow)
+        # After the fixtures and before the first step, exactly where the
+        # write-sequence and conflict lanes apply it (:func:`_apply_given_apply`).
+        # The shadow is deliberately not re-seeded from it: a keyed write's own
+        # observation is case state, while a predicate write resolves through a
+        # real read that sees whatever this wrote.
+        _apply_given_apply(case, dialect, port)
         index = 0
         while index < len(steps):
             label = span_start_labels.get(index)
@@ -3422,10 +3428,14 @@ def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statemen
 # mutation verb produces on its own.                                          #
 # --------------------------------------------------------------------------- #
 def _apply_given_apply(case: case_format.Case, dialect: Dialect, port: DbPort) -> None:
-    """Apply a conflict case's out-of-band ``given.apply`` naive statements
-    VERBATIM, immediately (never inside our own transaction) — they simulate a
-    CONCURRENT transaction that already committed, so they must survive our
-    own unit of work's eventual rollback (a stale-version conflict)."""
+    """Apply a case's out-of-band ``given.apply`` naive statements VERBATIM,
+    immediately (never inside our own transaction).
+
+    They stand for a writer this unit of work is not: a CONCURRENT transaction
+    that already committed, so its effect must survive our own eventual rollback
+    (a stale-version conflict), or a newer application version that stored state
+    no authored member of this model could produce (a Structured Column key the
+    model declares nowhere)."""
     given = case.document.get("given")
     if not isinstance(given, Mapping):
         return

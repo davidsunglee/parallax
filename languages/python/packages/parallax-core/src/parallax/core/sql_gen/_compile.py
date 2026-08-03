@@ -274,11 +274,18 @@ def _projection(
     Structured Column, which is then projected once, last, and fanned back out
     per row; under `Columns` layout none of them does, so the select list is
     unchanged and the transform is the identity.
+
+    The two lanes that widen to every declared member — instance-form and
+    ``include_value_objects is True`` — are also the OBSERVATION lane, and they
+    project that Structured Column wherever the Table has one, even where no
+    member lives inside it: what such a read observes includes the stored
+    document a Predecessor Row retains (`m-sql` *Read projection*, rule 5).
     """
     declared_vos = entity.declared_value_objects
-    if result_form == "instance" or include_value_objects is True:
+    observation = result_form == "instance" or include_value_objects is True
+    if observation:
         projected_vos = tuple(declared_vos)
-    elif include_value_objects:
+    elif isinstance(include_value_objects, frozenset):
         projected_vos = tuple(
             member for member in declared_vos if member.identity.path[-1] in include_value_objects
         )
@@ -290,7 +297,9 @@ def _projection(
         projected_vos,
         project_discriminator=False,
     )
-    document, transform = _document_projection(layout, entity.declared_attributes, projected_vos)
+    document, transform = _document_projection(
+        layout, entity.declared_attributes, projected_vos, observation=observation
+    )
     if document is not None:
         columns = (*columns, document)
     sql, binds = _render_projection(dialect, alias, columns)

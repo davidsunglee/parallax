@@ -1,0 +1,111 @@
+# An observation of a document-mapped Entity with NO document-resident member still
+# projects and retains the Structured Column, so a rectangle split carries a key the
+# model decodes nowhere (m-storage-layout x m-sql *Read projection* rule 5 x
+# m-unit-work), on Postgres AND MariaDB.
+#
+# `Mooring` declares the layout and five members, and every one of them holds a
+# direct-column role: the primary key and the four axis bounds. Nothing the model
+# declares lives inside its Structured Column, so no member a read asks for could ever
+# make it project one — and it projects one anyway, because an OBSERVING read carries
+# the stored document itself. That is the half of the projection rule `Mooring` exists
+# for, and `m-storage-layout-019` is the other half: the same shape read row-form for
+# its direct members alone projects nothing.
+#
+# `given.apply` writes `berthCode` into the fixture row's Structured Column out of
+# band, because no authored member of this model can produce a key it declares
+# nowhere. That is exactly the state a newer version of an application writing this
+# table leaves behind for an older one.
+#
+# The sequence:
+#   step 1 resolve         : the materializing read of the one open rectangle — its
+#                            select list carries `t0.payload`, which is the whole
+#                            claim, since no member the read asked for lives there
+#   step 2 terminateUntil  : excise Valid-Time [2026-03-01, 2026-09-01) — close the
+#                            rectangle and chain head and tail, each binding the
+#                            document the closed rectangle held
+#   step 3 verify          : an instance-form find inside the excised window resolves
+#                            no rectangle, and it too projects the Structured Column
+#
+# The teeth are step 2's two INSERT binds. An implementation whose resolve projected
+# no Structured Column would observe no document, rebuild `{}` from the members this
+# model declares, and write two rectangles that read back identically for every
+# declared member while `berthCode` is gone.
+model: models/document-layout.yaml
+tags: [m-bitemp-write, m-storage-layout, m-document-codec, m-sql, m-unit-work, bitemporal, temporal, materialize, predicate-write, json, document-layout, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "out-of-band given.apply seeds a Structured Column key no authored member can produce"
+given:
+  apply:
+    - sql: update mooring set payload = '{"berthCode":"NB-118"}'
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Mooring
+      find:
+        eq: { attr: Mooring.id, value: 1 }
+      roundTrips: 1
+      note: the materializing read — `t0.payload` is projected for the observation, not for any member
+      statements:
+        - sql:
+            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from mooring t0 where t0.id = ? and t0.thru_z = ? and t0.out_z = ?
+            mariadb: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from mooring t0 where t0.id = ? and t0.thru_z = ? and t0.out_z = ?
+          binds: [1, infinity, infinity]
+      expectRows:
+        - { id: 1, from_z: "2026-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2026-01-01T00:00:00+00:00", out_z: infinity }
+    - write:
+        mutation: terminateUntil
+        target:
+          entity: Mooring
+          predicate:
+            eq: { attr: Mooring.id, value: 1 }
+        at: "2026-02-15T00:00:00+00:00"
+        validFrom: "2026-03-01T00:00:00+00:00"
+        until: "2026-09-01T00:00:00+00:00"
+      roundTrips: 3
+      note: head and tail each bind the closed rectangle's own document, `berthCode` included
+      statements:
+        - sql:
+            postgres: update mooring set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?
+            mariadb: update mooring set out_z = ? where id = ? and thru_z = ? and out_z = ? and in_z = ?
+          binds: ["2026-02-15T00:00:00+00:00", 1, infinity, infinity, "2026-01-01T00:00:00+00:00"]
+        - sql:
+            postgres: insert into mooring(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+            mariadb: insert into mooring(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+          binds:
+            - 1
+            - "2026-01-01T00:00:00+00:00"
+            - "2026-03-01T00:00:00+00:00"
+            - "2026-02-15T00:00:00+00:00"
+            - infinity
+            - berthCode: NB-118
+        - sql:
+            postgres: insert into mooring(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+            mariadb: insert into mooring(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+          binds:
+            - 1
+            - "2026-09-01T00:00:00+00:00"
+            - infinity
+            - "2026-02-15T00:00:00+00:00"
+            - infinity
+            - berthCode: NB-118
+    - targetEntity: Mooring
+      find:
+        asOf:
+          operand:
+            eq: { attr: Mooring.id, value: 1 }
+          dimension: validTime
+          coordinate: "2026-05-01T00:00:00+00:00"
+      roundTrips: 1
+      note: no rectangle covers the excised window, and this read projects the Structured Column too
+      statements:
+        - sql:
+            postgres: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from mooring t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+            mariadb: select t0.id, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.payload from mooring t0 where t0.id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [1, "2026-05-01T00:00:00+00:00", "2026-05-01T00:00:00+00:00", infinity]
+      expectRows: []
+then:
+  roundTrips: 5

@@ -260,9 +260,19 @@ _DECODED: Final[dict[str, object]] = {
     "address": {"city": "Oslo", "geo": {"country": "NO"}, "sealNumber": "S-4021"},
     "tags": [{"label": "founder"}],
 }
-"""The members a read of `_STORED` decodes: an occurrence answers with the stored
-subtree as it is, unknown keys included, while a key no member declares reaches no
-member at all (`m-document-codec`)."""
+"""The members a MATERIALIZING resolve observes over `_STORED`: its fan-out reads
+each member through the codec, so an occurrence answers with the stored subtree as
+it is, unknown keys included, while a key no member declares reaches no member at
+all (`m-document-codec`)."""
+
+
+_MATERIALIZED: Final[dict[str, object]] = {
+    **_DECODED,
+    "address": {"city": "Oslo", "geo": {"country": "NO"}},
+}
+"""The members a real `find` observes over the same row: materialization rebuilds
+each occurrence from the members the model declares, so `sealNumber` is not among
+them even though the stored subtree still carries it."""
 
 
 def _successor(
@@ -270,11 +280,12 @@ def _successor(
     *,
     document: object | None,
     origin: type[CarriedFrom] | type[ChangedFrom] | None,
+    observed: Mapping[str, object] = _DECODED,
 ) -> object:
     """The Structured Column one opened row binds, given the milestone it succeeds.
 
     ``members`` is the successor's own complete row, exactly as temporal expansion
-    composes one: the predecessor's members with the mutation's changes overlaid.
+    composes one: ``observed`` with the mutation's changes overlaid.
     """
     person = entity(DOCUMENT, "Person")
     attributes = {
@@ -287,7 +298,7 @@ def _successor(
         for occurrence in person.declared_value_objects
         if occurrence.identity.path[-1] in members
     }
-    predecessor = PredecessorRow(_DECODED, document=document)
+    predecessor = PredecessorRow(observed, document=document)
     step = PlannedInsert(
         entity=PERSON,
         entries=(
@@ -321,6 +332,22 @@ def test_a_carried_occurrence_keeps_the_unknown_keys_inside_its_own_subtree() ->
     # observed one. `address` does not, so its subtree is never rebuilt and
     # `sealNumber` rides forward with it.
     successor = _successor({**_DECODED, "score": 21}, document=_STORED, origin=ChangedFrom)
+    assert successor == {**_STORED, "score": 21}
+
+
+def test_a_carried_occurrence_rides_forward_however_its_observation_spelled_it() -> None:
+    # The two observation paths spell one occurrence differently — a materializing
+    # resolve retains the stored subtree, a real find the members materialized out of
+    # it — and a successor's carried half is copied out of whichever map its own
+    # observation held. Carrying is decided against that same map, so `address` is
+    # carried on both paths and `sealNumber` rides forward even where no observed
+    # member names it.
+    successor = _successor(
+        {**_MATERIALIZED, "score": 21},
+        document=_STORED,
+        origin=ChangedFrom,
+        observed=_MATERIALIZED,
+    )
     assert successor == {**_STORED, "score": 21}
 
 

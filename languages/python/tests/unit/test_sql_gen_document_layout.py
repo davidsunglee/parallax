@@ -18,13 +18,15 @@ proof (`models/document-layout.yaml`).
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 
 import pytest
 from _document_layout_support import columns_model, document_model, entity
 
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen import compile_read, compile_write_predicate
+from parallax.core.metamodel import EntityMetadata
+from parallax.core.sql_gen import CompiledRead, compile_read, compile_write_predicate
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -67,13 +69,54 @@ def test_a_read_projects_the_structured_column_once_and_never_a_member_column() 
     assert instance.statement.sql == "select t0.id, t0.payload from person t0"
 
 
-def test_a_read_needing_no_document_member_projects_no_document_at_all() -> None:
-    # `Marker` declares the layout and nothing document-resident, so the
-    # Structured Column exists physically and is projected by nothing: the rule
-    # is keyed to the members the read was asked for, never to the declaration.
+def test_a_row_form_read_needing_no_document_member_projects_no_document_at_all() -> None:
+    # `Marker` declares the layout and nothing document-resident, so outside the
+    # observation lane its Structured Column exists physically and is projected by
+    # nothing: the rule is keyed to the members the read was asked for.
     compiled = compile_read(oa.All(), DOCUMENT, POSTGRES, entity(DOCUMENT, "Marker"))
     assert compiled.statement.sql == "select t0.id from marker t0"
+    assert compiled.structured_column is None
     assert compiled.transform_row({"id": 1}) == {"id": 1}
+
+
+def _instance_form(target: EntityMetadata) -> CompiledRead:
+    return compile_read(oa.All(), DOCUMENT, POSTGRES, target, result_form="instance")
+
+
+def _widened_resolve(target: EntityMetadata) -> CompiledRead:
+    return compile_read(oa.All(), DOCUMENT, POSTGRES, target, include_value_objects=True)
+
+
+@pytest.mark.parametrize("lane", [_instance_form, _widened_resolve], ids=["instance", "resolve"])
+def test_an_observing_read_of_the_same_shape_projects_the_structured_column(
+    lane: Callable[[EntityMetadata], CompiledRead],
+) -> None:
+    # The contrasting half: an instance-form read, and the resolving read a
+    # materializing predicate write widens to every declared member, both observe the
+    # stored document itself — which a Predecessor Row retains — so each projects the
+    # Structured Column wherever the Table has one, however few members live inside.
+    compiled = lane(entity(DOCUMENT, "Marker"))
+    assert compiled.statement.sql == "select t0.id, t0.payload from marker t0"
+    assert compiled.structured_column == "payload"
+    # The column is still never a result field: it fans out no member here and the
+    # raw value leaves the row all the same.
+    materialized = compiled.materialize_row({"id": 1, "payload": {"berthCode": "NB-118"}})
+    assert materialized.values == {"id": 1}
+    assert materialized.document == {"berthCode": "NB-118"}
+
+
+def test_a_versioned_targets_narrowed_widening_still_projects_only_what_it_needs() -> None:
+    # A `frozenset` widening is the versioned target's comparison-only need rather
+    # than an observation, so it leaves the rule where it was: no member the read
+    # asked for is document-resident, so no Structured Column is projected.
+    compiled = compile_read(
+        oa.All(),
+        DOCUMENT,
+        POSTGRES,
+        entity(DOCUMENT, "Marker"),
+        include_value_objects=frozenset({"address"}),
+    )
+    assert compiled.statement.sql == "select t0.id from marker t0"
 
 
 def test_a_row_form_read_fans_the_document_out_under_the_columns_own_result_keys() -> None:

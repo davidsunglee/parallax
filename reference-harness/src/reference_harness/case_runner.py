@@ -1381,9 +1381,14 @@ def _materialize_document_layout(
     Each leaf decodes by its DECLARED type (:func:`decode_leaf`), not by the JSON
     value's own shape, and an absent key and an explicit JSON null both read as one
     absence — the single not-present state a NULL Column has.
+
+    An owner with a Structured Column and no member inside it fans out nothing and
+    still drops the column: an observation-bearing read projects it for the stored
+    document itself (`m-sql` *Read projection*, rule 5), which is provenance rather
+    than a result field.
     """
     column, members = _document_layout_members(case, entity)
-    if not members:
+    if not column:
         return rows
     selected = [
         member for member in members if include_value_objects or member.type_spelling is not None
@@ -6024,6 +6029,12 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_equivalent_encodings(case)  # layer 4c
         _assert_scenario_count_consistency(case, dialect)  # layer 5 (count)
         _provision(case, db)
+        # An out-of-band `given.apply` runs AFTER the fixtures load and BEFORE the
+        # first step — the scenario analogue of the write-sequence and conflict
+        # setup. It is what puts state into a row that no authored member could
+        # produce, a key the model declares nowhere included.
+        for entry in case.apply:
+            db.execute(entry["sql"], list(entry.get("binds", [])))
         _assert_scenario(case, db)  # layer 2 + identity
         return
 

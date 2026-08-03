@@ -1,17 +1,20 @@
-# A read that needs no document-resident member projects no Structured Column at
-# all, even though the Entity declares the layout (m-storage-layout x m-sql *Read
-# projection*), on Postgres AND MariaDB.
+# A ROW-FORM read that needs no document-resident member projects no Structured
+# Column at all, even though the Entity declares the layout (m-storage-layout x m-sql
+# *Read projection*), on Postgres AND MariaDB.
 #
 # `Beacon` declares `layout.document` and exactly one member: its primary key, which
 # direct-column role 1 keeps in a Column of its own. Its Structured Column therefore
 # exists physically — `NOT NULL`, holding the empty object in every row, which the
-# DDL and the fixture load both produce — and no read ever reaches into it.
+# DDL and the fixture load both produce — and this read never reaches into it.
 #
-# The rule the projection follows is "some member this read was ASKED FOR lives
-# inside the Structured Column", never "this Entity declares a Document layout". An
-# implementation that keyed the projection off the declaration would emit
-# `select t0.id, t0.payload` here, project a column it decodes nothing from, and
-# carry the whole document of every row across the wire for nothing.
+# The rule a row-form read outside the observation lane follows is "some member this
+# read was ASKED FOR lives inside the Structured Column". An implementation that keyed
+# this projection off the declaration would emit `select t0.id, t0.payload` here,
+# project a column it decodes nothing from, and carry the whole document of every row
+# across the wire for nothing. The contrasting half is an OBSERVING read, which does
+# project it whatever its members are, because the stored document is itself part of
+# what such a read carries — m-bitemp-write-020 reads the same member-free shape that
+# way.
 model: models/document-layout.yaml
 tags: [m-storage-layout, m-sql, read, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: read
