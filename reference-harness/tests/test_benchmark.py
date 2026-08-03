@@ -18,6 +18,7 @@ from reference_harness.benchmark import (
     _build_dataset,
     _dataset_row_count,
     _generate_accounts_sequential,
+    _generate_document_milestones,
     _generate_orders_tree,
     _percentile,
     _statements,
@@ -51,12 +52,31 @@ def test_orders_tree_fans_out() -> None:
     assert [i["id"] for i in first_order_items] == [1, 2, 3, 4, 5]
 
 
+def test_document_milestones_opens_one_current_row_per_id() -> None:
+    # Each write iteration addresses the milestone whose primary key is its own
+    # `$i` index, so ids must be contiguous per entity and every row must be left
+    # open on Transaction Time for a close to address it.
+    rows = _generate_document_milestones(50)
+    assert {v["id"] for v in rows["Voyage"]} == set(range(1, 51))
+    assert {c["id"] for c in rows["Charter"]} == set(range(1, 51))
+    assert all(v["tx_end"] == "infinity" for v in rows["Voyage"])
+    assert all(c["tx_end"] == "infinity" and c["valid_end"] == "infinity" for c in rows["Charter"])
+    # Both are document-mapped, so each row carries an occurrence the Structured
+    # Column composes rather than a column of its own.
+    assert rows["Voyage"][0]["manifest"] == {"cargo": "timber"}
+    assert rows["Charter"][0]["terms"] == {"clause": "standard"}
+
+
 def test_build_dataset_dispatches_recipes() -> None:
     assert _dataset_row_count(_build_dataset({"dataset": {"empty": True}})) == 0
     accounts = _build_dataset(
         {"dataset": {"generate": {"recipe": "accounts-sequential", "rows": 5}}}
     )
     assert _dataset_row_count(accounts) == 5
+    milestones = _build_dataset(
+        {"dataset": {"generate": {"recipe": "document-milestones", "rows": 5}}}
+    )
+    assert _dataset_row_count(milestones) == 10  # one Voyage and one Charter per id
 
 
 # --- timing + binds ----------------------------------------------------------
@@ -131,7 +151,13 @@ def _fixtures() -> list[Path]:
 
 def test_benchmark_fixtures_exist() -> None:
     names = {p.name for p in _fixtures()}
-    assert {"read-mix.yaml", "deep-fetch.yaml", "milestone-write.yaml"} <= names
+    assert {
+        "read-mix.yaml",
+        "deep-fetch.yaml",
+        "milestone-write.yaml",
+        "document-layout.yaml",
+        "document-layout-temporal.yaml",
+    } <= names
 
 
 def test_every_workload_declares_iterations_and_golden() -> None:
@@ -158,3 +184,31 @@ def test_deep_fetch_round_trips_match_statement_count() -> None:
     for workload in fixture["workloads"]:
         statements = _statements(workload, "postgres")
         assert workload["expectRoundTrips"] == len(statements), workload["name"]
+
+
+def test_temporal_document_layout_declares_the_milestone_write_shapes() -> None:
+    # A temporal successor binds ONE complete document, so the statement count is a
+    # property of the milestone topology rather than of the member count: a chain
+    # closes and inserts once, a rectangle split closes and inserts three times.
+    fixture = yaml.safe_load(
+        (BENCHMARKS_ROOT / "document-layout-temporal.yaml").read_text(encoding="utf-8")
+    )
+    by_name = {w["name"]: w for w in fixture["workloads"]}
+    for dialect in ("postgres", "mariadb"):
+        assert by_name["predecessor-resolve"]["expectRoundTrips"] == len(
+            _statements(by_name["predecessor-resolve"], dialect)
+        )
+        assert by_name["milestone-chain"]["expectRoundTrips"] == len(
+            _statements(by_name["milestone-chain"], dialect)
+        )
+        assert by_name["rectangle-split"]["expectRoundTrips"] == len(
+            _statements(by_name["rectangle-split"], dialect)
+        )
+    assert by_name["milestone-chain"]["expectRoundTrips"] == 2
+    assert by_name["rectangle-split"]["expectRoundTrips"] == 4
+    # Every write iteration addresses its own seeded milestone, so the dataset must
+    # carry at least one row per iteration.
+    seeded = fixture["dataset"]["generate"]["rows"]
+    assert by_name["milestone-chain"]["iterations"] <= seeded
+    assert by_name["rectangle-split"]["iterations"] <= seeded
+    assert by_name["predecessor-resolve"]["iterations"] <= seeded

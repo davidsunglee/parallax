@@ -398,11 +398,13 @@ def _materialize_predicate_write(
     # non-family target (a family predicate write is rejected before SQL), so
     # its compiled row transform is the identity under `Columns` layout. Under
     # Relational Document Layout it is the document fan-out instead, and every
-    # per-row helper below reads a member by name, so the transform is applied
-    # here rather than skipped. The fan-out drops the raw Structured Column it
-    # decoded from, so each row's own is taken off the driver row first: a
-    # temporal target's Predecessor Row retains it (`m-unit-work`), which is what
-    # lets a successor be patched from the document the row actually held.
+    # per-row helper below reads a member by name, so each driver row is
+    # materialized here rather than consumed raw. Materializing is what answers
+    # BOTH needs at once: the fan-out drops the raw Structured Column it decoded
+    # from, and the materialized row carries that document beside its values, so
+    # a temporal target's Predecessor Row retains it (`m-unit-work`) — which is
+    # what lets a successor be patched from the document the row actually held —
+    # without a second extraction that could disagree with the first.
     compiled = compile_read(
         plan_.root_operation,
         meta,
@@ -414,12 +416,12 @@ def _materialize_predicate_write(
     )
     structured_column = compiled.structured_column
     resolved = [
-        (compiled.transform_row(row), None if structured_column is None else row[structured_column])
+        compiled.materialize_row(row)
         for row in uow.read(lambda: _resolve_rows(conn, dialect, compiled.statement))
     ]
     if not resolved:
         return
-    rows = [row for row, _document in resolved]
+    rows = [materialized.values for materialized in resolved]
     pk_attrs = family_primary_key(meta, entity)
     key_attributes = tuple(attr.identity.name for attr in pk_attrs)
     key_builders = tuple(ChunkedColumnBuilder[object]() for _ in pk_attrs)
@@ -456,7 +458,8 @@ def _materialize_predicate_write(
     attribute_builders = {name: ChunkedColumnBuilder[object]() for name in attribute_names}
     value_object_builders = {name: ChunkedColumnBuilder[object]() for name in value_object_names}
     document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    for row, document in resolved:
+    for materialized in resolved:
+        row = materialized.values
         if assignment_bearing and is_no_op_assignment(member_columns, assignments, row):
             continue  # per-row no-op elimination (assignment-bearing verbs only)
         append_key(row)
@@ -466,7 +469,7 @@ def _materialize_predicate_write(
         for name in value_object_names:
             value_object_builders[name].append(payload[name])
         if structured_column is not None:
-            document_builder.append(document)
+            document_builder.append(materialized.document)
         matched += 1
     if matched == 0:
         return

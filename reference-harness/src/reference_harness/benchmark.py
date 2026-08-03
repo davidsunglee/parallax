@@ -107,6 +107,45 @@ def _generate_orders_tree(rows: int, fanout: int) -> dict[str, list[dict[str, An
     return {"Order": orders, "OrderItem": items, "OrderStatus": statuses}
 
 
+def _generate_document_milestones(rows: int) -> dict[str, list[dict[str, Any]]]:
+    """``rows`` current ``Voyage`` milestones and ``rows`` current ``Charter`` rectangles.
+
+    Ids run ``1..rows`` per entity, so a write workload's ``$i`` iteration index
+    addresses a milestone of its own and each iteration closes a row no earlier
+    iteration touched. Every row is opened at one instant and left open on
+    Transaction Time, which is what makes each one a predecessor a close can
+    address.
+
+    Both entities are document-mapped, so each row's domain members compose into
+    one Structured Column and its axis bounds keep Columns of their own.
+    """
+    return {
+        "Voyage": [
+            {
+                "id": index,
+                "title": f"voyage-{index}",
+                "crew": 4,
+                "manifest": {"cargo": "timber"},
+                "tx_start": "2026-01-01T00:00:00+00:00",
+                "tx_end": "infinity",
+            }
+            for index in range(1, rows + 1)
+        ],
+        "Charter": [
+            {
+                "id": index,
+                "route": f"route-{index}",
+                "terms": {"clause": "standard"},
+                "valid_start": "2026-01-01T00:00:00+00:00",
+                "valid_end": "infinity",
+                "tx_start": "2026-01-01T00:00:00+00:00",
+                "tx_end": "infinity",
+            }
+            for index in range(1, rows + 1)
+        ],
+    }
+
+
 def _build_dataset(fixture: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Return the rows (keyed by class name) the benchmark loads, per its ``dataset``."""
     dataset = fixture.get("dataset", {})
@@ -125,6 +164,8 @@ def _build_dataset(fixture: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     if recipe == "orders-tree":
         fanout = int(generate.get("fanout", 1))
         return _generate_orders_tree(count, fanout)
+    if recipe == "document-milestones":
+        return _generate_document_milestones(count)
     raise BenchmarkError(f"unknown dataset generator recipe {recipe!r}")
 
 
