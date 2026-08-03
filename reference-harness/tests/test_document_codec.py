@@ -81,6 +81,30 @@ def test_a_value_the_table_cannot_spell_is_refused_rather_than_passed_through() 
         encode_leaf("geography", "POINT(0 0)")
 
 
+def test_an_authored_number_naming_no_float_of_the_width_is_refused_rather_than_rounded() -> None:
+    # Nothing between a case's authored value and the document it stores asks whether
+    # that value is a member of the declared space, so rendering `2**24 + 1` as the
+    # nearest binary32 would put `16777216` into a fixture row and a golden bind under
+    # a member the case wrote `16777217` for.
+    for spelling, authored in (
+        ("float32", 2**24 + 1),
+        ("float64", 2**53 + 1),
+        ("float32", 1e39),
+        ("float64", float("inf")),
+        ("float32", "1.5"),
+    ):
+        with pytest.raises(DocumentEncodingError, match="names no"):
+            encode_leaf(spelling, authored)
+    # A fractional number is a rendering, so it names the float of the width nearest
+    # it and encodes to THAT value's shortest number — which is how every `float32`
+    # the corpus authors is read.
+    assert encode_leaf("float32", 1048576.2) == 1048576.2
+    assert encode_leaf("float32", 1048576.3) == 1048576.2
+    # An integer a float of the width holds exactly names that float, at either width.
+    assert encode_leaf("float32", 20) == 20.0
+    assert encode_leaf("float64", 2**24 + 1) == float(2**24 + 1)
+
+
 def test_only_the_six_text_compared_types_have_a_comparison_text() -> None:
     for text_compared in ("string", "bytes", "date", "time", "timestamp", "uuid"):
         assert is_text_compared(text_compared)
