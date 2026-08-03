@@ -10,9 +10,11 @@ the row and raises
 
 * ``write-required-attribute-missing`` — a required (`nullable: false`) attribute is
   absent (or null) at any depth;
-* ``write-required-value-object-missing`` — a required nested value object is absent
-  (or null), or a required `many` array is absent (an EMPTY array is fine —
-  emptiness is not a nullability violation);
+* ``write-required-value-object-missing`` — a required `one` value object is absent
+  (or null) at any depth, or a `many` occurrence is present as an explicit null. An
+  ABSENT `many` is not a violation: absence and the empty array are one logical zero
+  state, so an unnamed `many` occurrence is the empty collection (m-value-object,
+  m-document-codec);
 * ``write-value-type-mismatch`` — a document field value's type differs from the
   attribute's declared neutral type.
 
@@ -53,10 +55,13 @@ def validate_write(entity: Entity, row: dict[str, Any]) -> None:
     violation, walking each value-object document depth-first in declaration order.
     Used ONLY for ``rejected`` cases.
     """
-    # A required top-level value object omitted ENTIRELY from the row is a violation
-    # (a present-but-null one is caught below via `_validate_member`).
+    # A required top-level `one` value object omitted ENTIRELY from the row is a
+    # violation (a present-but-null one is caught below via `_validate_member`). A
+    # `many` occurrence is exempt: its absence IS its empty collection.
     for value_object in entity.value_objects:
-        if not value_object.get("nullable", False) and value_object["name"] not in row:
+        if _is_many(value_object) or value_object.get("nullable", False):
+            continue
+        if value_object["name"] not in row:
             raise RejectionError(
                 WRITE_REQUIRED_VALUE_OBJECT_MISSING,
                 f"required value object {value_object['name']!r} is absent from the write input",
@@ -72,11 +77,18 @@ def validate_write(entity: Entity, row: dict[str, Any]) -> None:
         _validate_member(value_object, value)
 
 
+def _is_many(value_object: dict[str, Any]) -> bool:
+    return value_object.get("multiplicity", "one") == "many"
+
+
 def _validate_member(value_object: dict[str, Any], value: Any) -> None:
-    """Validate a value at a value-object member position against its declaration."""
+    """Validate a PRESENT value at a value-object member position against its
+    declaration — the caller decides whether an absent key is a violation."""
     nullable = value_object.get("nullable", False)
-    multiplicity = value_object.get("multiplicity", "one")
     if value is None:
+        # An explicit null at a `many` position names a state the model gives it
+        # none of: a `many` is never nullable, so the null is refused here even
+        # though its absence would not have been.
         if not nullable:
             raise RejectionError(
                 WRITE_REQUIRED_VALUE_OBJECT_MISSING,
@@ -84,9 +96,9 @@ def _validate_member(value_object: dict[str, Any], value: Any) -> None:
                 f"absent or null",
             )
         return
-    if multiplicity == "many":
-        # `nullable: false` requires the ARRAY be present (satisfied — value is not
-        # None here); an empty array is fine. Validate each element as a document.
+    if _is_many(value_object):
+        # An empty array is the sole zero-element representation, so writing one is
+        # writing a value. Validate each element as a document.
         if isinstance(value, list):
             for element in value:
                 _validate_document(value_object, element)
@@ -118,7 +130,18 @@ def _validate_document(value_object: dict[str, Any], document: Any) -> None:
                 f"declared type {attribute.get('type')!r}",
             )
     for nested in value_object.get("valueObjects", []):
-        _validate_member(nested, document.get(nested["name"]))
+        name = nested["name"]
+        if name not in document:
+            # An unnamed nested `many` is its empty collection, never a missing
+            # required member; every other unnamed occurrence answers to its own
+            # nullability, exactly as a present-but-null one does.
+            if not _is_many(nested) and not nested.get("nullable", False):
+                raise RejectionError(
+                    WRITE_REQUIRED_VALUE_OBJECT_MISSING,
+                    f"required value object {nested['name']!r} (nullable:false) is absent or null",
+                )
+            continue
+        _validate_member(nested, document[name])
 
 
 # --- concrete-subtype write validation (m-inheritance, Phase 7) --------------

@@ -178,9 +178,16 @@ host-language value graph to a JSON serializer, which is what leaves a
 storage form.
 
 A **null** value object (`nullable: true`, written absent) binds SQL `NULL` — the
-whole column is null, not a document of nulls. A `nullable: false` value object
-MUST be present at write time (`m-op-algebra` / the `rejected` write-validation
-cases).
+whole column is null, not a document of nulls. A `nullable: false` `one`
+occurrence MUST be present at write time (`m-op-algebra` / the `rejected`
+write-validation cases). A `many` occurrence carries no such requirement, because
+it has no absent state to require: `m-document-codec` fixes `Missing` and `[]` as
+one logical zero state for a `Many`, so a write input that does not name one has
+said it holds no elements, and `[]` is what the write stores — at every depth, and
+whether the array rides its own structured-document column or a Relational
+Document Layout's shared Structured Column. Naming one explicitly **null** is
+still refused, because the model gives a `many` no null state to name (see [One
+column](#one-column--never-extra-columns-rows-or-joins)).
 
 A value-object column's write value is **always the literal document** — the
 object, the array, or the `NULL` above — and is **never** interpreted as a
@@ -213,8 +220,10 @@ document in its Storage Layout position and whose `then.tableState` reads it bac
 nested-plus-to-many `address` document binds as one value; `m-value-object-026`
 replaces that whole document with an update (`set address = ?`), proving no
 path-level merge; `m-value-object-027` nulls a nullable value object out to SQL
-`NULL`. A required-member-missing write is refused pre-SQL as a `rejected` case
-(`m-case-format`).
+`NULL`. A write omitting a required attribute or a required `one` occurrence is
+refused pre-SQL as a `rejected` case (`m-case-format`); a write omitting a `many`
+occurrence is neither, and `m-document-codec-002` is its `writeSequence` witness —
+the unnamed occurrence stores `[]` beside the members the input did name.
 
 ## Materialization and navigation contract
 

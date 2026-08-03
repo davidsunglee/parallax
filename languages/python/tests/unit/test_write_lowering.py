@@ -37,6 +37,7 @@ from types import MappingProxyType
 from typing import cast
 
 import pytest
+from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import inert_instant
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
@@ -44,14 +45,23 @@ from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
+from parallax.core._formation_profile import form_metamodel
+from parallax.core.base import STRING
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
+    Multiplicity,
+    ValueObjectAttributeDeclaration,
     ValueObjectIdentity,
+    ValueObjectOccurrenceDeclaration,
+    ValueObjectShapeDeclaration,
+    ValueObjectShapeKey,
     entity_by_name,
 )
+from parallax.core.metamodel import Column as CoreColumn
+from parallax.core.metamodel import Table as CoreTable
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
@@ -1280,6 +1290,64 @@ def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> N
         statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
     )
     assert statement.binds == (1, "card", 10.00, "Visa")
+
+
+# No corpus model declares a top-level `many` occurrence — every one of them nests a
+# `many` inside a `one`, where the codec composes the array while building the outer
+# document. Here the array IS the column, so the cell has to be composed by the
+# lowering itself, which is what this synthetic owner isolates.
+_CRATE = identity("Crate")
+_CRATE_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_CRATE,
+            container=CoreTable("crate"),
+            attributes=(key(_CRATE), attribute(_CRATE, "note", type=STRING)),
+            value_objects=(
+                ValueObjectOccurrenceDeclaration(
+                    name="labels",
+                    storage=CoreColumn("labels"),
+                    multiplicity=Multiplicity.MANY,
+                    shape=ValueObjectShapeDeclaration(
+                        key=ValueObjectShapeKey(),
+                        attributes=(ValueObjectAttributeDeclaration("text", type=STRING),),
+                    ),
+                ),
+            ),
+        )
+    )
+)
+_CRATE_ID = AttributeIdentity(_CRATE, "id")
+_CRATE_NOTE = AttributeIdentity(_CRATE, "note")
+
+
+def test_an_insert_binds_the_empty_array_for_a_many_occurrence_the_row_never_names() -> None:
+    # Absence and `[]` are one logical zero state, so the occurrence's own `NOT NULL`
+    # column still binds — the empty array the codec composes, never a skipped column
+    # (m-value-object "Writing").
+    step = PlannedInsert(
+        entity=_CRATE,
+        entries=(InsertEntry(row=PlannedRow(attributes={_CRATE_ID: 7}), origin=NEW_LINEAGE),),
+    )
+    statement = lower_step(step, _CRATE_MODEL, POSTGRES)
+    assert statement.sql == "insert into crate(id, labels) values (?, ?)"
+    assert statement.binds == (7, JsonDocument([]))
+
+
+def test_an_update_leaves_a_many_occurrence_its_assignments_never_name_alone() -> None:
+    # The zero state is what an opening statement writes, not what a revising one
+    # imposes: a patch touches only what it assigns, so an unnamed occurrence keeps
+    # whatever the stored row holds.
+    step = PlannedUpdate(
+        entity=_CRATE,
+        target=KeyTarget(key_attributes=(_CRATE_ID,), key_values=((7,),)),
+        assignments=PlannedAssignments(attributes={_CRATE_NOTE: "fragile"}),
+        concurrency=UNVERSIONED,
+        affected_rows=ExactCount(expected=1, on_shortfall=MISSING_TARGET),
+    )
+    statement = lower_step(step, _CRATE_MODEL, POSTGRES)
+    assert statement.sql == "update crate set note = ? where id = ?"
+    assert statement.binds == ("fragile", 7)
 
 
 def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:

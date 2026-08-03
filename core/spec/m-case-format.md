@@ -1142,9 +1142,11 @@ atomically as one whole document):
 
 - `write-required-attribute-missing` — a required (`nullable: false`) attribute is
   absent (or null) at any depth.
-- `write-required-value-object-missing` — a required nested value object is absent
-  (or null), or a required `many` array is absent (an **empty** array is fine —
-  emptiness is not a nullability violation).
+- `write-required-value-object-missing` — a required `one` value object is absent
+  (or null) at any depth, or a `many` occurrence is present as an explicit null. An
+  **absent** `many` is not a violation: `Missing` and the empty array are one
+  logical zero state, so an unnamed `many` occurrence stores `[]`
+  (`m-value-object`, `m-document-codec`).
 - `write-value-type-mismatch` — a document field value's type differs from the
   attribute's declared neutral type.
 

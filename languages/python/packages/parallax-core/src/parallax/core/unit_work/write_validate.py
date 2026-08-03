@@ -73,6 +73,7 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
     Metamodel,
+    Multiplicity,
     ValueObjectMetadata,
     VoDocumentViolation,
     vo_document_violation,
@@ -190,7 +191,10 @@ def _check_entity_attribute(
 
 # --------------------------------------------------------------------------- #
 # Value-object members: a PRESENT document is always validated as a whole,     #
-# regardless of the outer mutation.                                           #
+# regardless of the outer mutation. An UNNAMED `many` occurrence is not an     #
+# absence to require -- `m-document-codec` fixes Missing and [] as one logical #
+# zero state, so the write stores the empty array. Naming one explicitly null  #
+# stays refused: the model gives a `many` no null state to name.               #
 # --------------------------------------------------------------------------- #
 def _check_value_object_member(
     row: Mapping[str, object], vo: ValueObjectMetadata, *, required: bool, owner: str
@@ -198,7 +202,8 @@ def _check_value_object_member(
     name = vo.identity.path[-1]
     value = row.get(name)
     if name not in row or value is None:
-        if required and not vo.nullable:
+        zero_state = name not in row and vo.multiplicity is Multiplicity.MANY
+        if required and not vo.nullable and not zero_state:
             raise WriteRejectedError(
                 "write-required-value-object-missing",
                 f"{owner}.{name}: required value object is absent (or null)",

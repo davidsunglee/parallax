@@ -47,10 +47,13 @@ class VoDocumentViolation:
     - ``"not-a-document"`` — a to-one occurrence's value, or a to-many
       occurrence's element, is not a mapping.
     - ``"attribute-missing"`` — a non-nullable scalar leaf is absent or null.
-    - ``"value-object-missing"`` — a non-nullable nested occurrence is absent or
-      null. A nested occurrence is required-if-declared the moment its parent
+    - ``"value-object-missing"`` — a non-nullable nested ``one`` occurrence is
+      absent or null, or a nested ``many`` occurrence is present as an explicit
+      null. A nested ``one`` is required-if-declared the moment its parent
       document is present: a document binds atomically, so there is no sparse
-      write below its boundary.
+      write below its boundary. An **absent** ``many`` is not a violation —
+      absence and the empty array are one logical zero state, so an unnamed
+      ``many`` occurrence is the empty collection rather than a missing member.
     - ``"type-mismatch"`` — a scalar leaf's value is neither a member of its
       declared value space nor one of the adjacent forms the developer input
       policy widens (`~parallax.core.base.coerce_neutral_input`).
@@ -111,7 +114,8 @@ def _element_violation(container: _Container, value: object) -> VoDocumentViolat
         name = nested.identity.path[-1]
         nested_value = document.get(name)
         if name not in document or nested_value is None:
-            if not nested.nullable:
+            zero_state = name not in document and nested.multiplicity is Multiplicity.MANY
+            if not nested.nullable and not zero_state:
                 return VoDocumentViolation(name, "value-object-missing")
             continue
         violation = vo_document_violation(nested, nested_value)

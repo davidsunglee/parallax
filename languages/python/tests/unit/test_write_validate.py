@@ -177,7 +177,8 @@ def _entity(model: Metamodel, name: str) -> EntityMetadata:
 _WIDGET_METADATA = _entity(_WIDGET_MODEL, "Widget")
 
 # `tags` is a to-many occurrence, so it may not also be nullable (only a to-one
-# may) — an insert row therefore always carries it, even empty.
+# may). The baseline carries it explicitly so the tests below vary one member at a
+# time; an insert omitting it is legal too, and is pinned on its own.
 _BASE_ROW: dict[str, object] = {"id": 1, "label": "L", "tags": []}
 
 
@@ -285,8 +286,26 @@ def test_many_value_object_must_be_a_sequence() -> None:
 
 
 def test_many_value_object_empty_array_is_fine() -> None:
-    # "emptiness is not a nullability violation" (m-value-object).
+    # The empty array is the sole zero-element representation, so writing one is
+    # writing a value rather than omitting a required member (m-value-object).
     _accept(_row(tags=[]))
+
+
+def test_an_unnamed_many_value_object_is_its_empty_collection() -> None:
+    # A `many` occurrence has no absent state to require: absence and `[]` are one
+    # logical zero state, so an insert naming neither `tags` nor the nested
+    # `book.phones` is complete (m-value-object "Writing", m-document-codec presence).
+    row = _row(book={})
+    del row["tags"]
+    _accept(row)
+
+
+def test_a_many_value_object_named_null_is_still_refused() -> None:
+    # The model gives a `many` no null state to name: `value-object-many-nullable`
+    # rejects a nullable one at formation, so naming one null in a write input names
+    # a state that does not exist — refused at both depths.
+    assert _rejects(_row(tags=None)).rule == "write-required-value-object-missing"
+    assert _rejects(_row(book={"phones": None})).rule == "write-required-value-object-missing"
 
 
 def test_many_value_object_element_must_be_a_mapping() -> None:
