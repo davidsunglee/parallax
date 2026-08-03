@@ -986,7 +986,7 @@ class _MaterializedTemporalSegment:
                 strict=True,
             )
         )
-        predecessor = PredecessorRow(self.predecessors.row(row))
+        predecessor = self.predecessors.row(row)
         steps: list[PlannedStep] = []
         if self.close_cause is not None:
             assert self.gate_start_attribute is not None  # settled alongside close_cause

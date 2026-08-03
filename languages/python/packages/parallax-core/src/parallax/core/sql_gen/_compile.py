@@ -67,6 +67,9 @@ from parallax.core.sql_gen._inheritance import position_documents as _position_d
 from parallax.core.sql_gen._inheritance import render_projection as _render_projection
 from parallax.core.sql_gen._inheritance import select_projection as _select_projection
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
+from parallax.core.sql_gen._inheritance import (
+    transform_structured_column as _transform_structured_column,
+)
 
 # The predicate lane: an entity resolution scope in, one `where`-clause fragment
 # out, with this statement's binds pushed on the shared context in order. Same
@@ -129,11 +132,18 @@ class MaterializedReadRow:
     document column with that physical spelling remains intact. ``family_variant``
     is the optional wire/graph spelling and ``resolved_entity`` is always the exact
     accepted Entity Identity the row denotes.
+
+    ``document`` is the raw Structured Column this row arrived with under
+    Relational Document Layout, kept beside ``values`` for the same reason
+    ``family_variant`` is: it is provenance rather than a field, and the fan-out
+    drops it from the values a result form renders. Absent for every read that
+    projected no Structured Column.
     """
 
     values: dict[str, object]
     resolved_entity: EntityIdentity
     family_variant: str | None
+    document: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +183,18 @@ class CompiledRead:
     documents: tuple[ValueObjectMetadata, ...]
     _transform: _RowTransform
 
+    @property
+    def structured_column(self) -> str | None:
+        """The Structured Column this read projected, or absence when it projected
+        none — under `Columns` layout, and for a `Document`-layout read whose
+        members are all direct.
+
+        The fan-out drops that column from a row's values, so a caller retaining
+        the stored document (`m-unit-work`'s Predecessor Row) reads it by this name
+        off the driver row rather than out of the transformed one.
+        """
+        return _transform_structured_column(self._transform)
+
     def transform_row(self, row: Mapping[str, object]) -> dict[str, object]:
         """Materialize `familyVariant` on one observed row.
 
@@ -192,12 +214,15 @@ class CompiledRead:
 
     def materialize_row(self, row: Mapping[str, object]) -> MaterializedReadRow:
         """Resolve one driver row without flattening synthetic field provenance."""
+        column = self.structured_column
         values, resolved, family_variant = self._transform.materialize(row)
         if resolved is None:
             resolved = (
                 self.resolved_position[0] if len(self.resolved_position) == 1 else self.target
             )
-        return MaterializedReadRow(values, resolved, family_variant)
+        return MaterializedReadRow(
+            values, resolved, family_variant, None if column is None else row.get(column)
+        )
 
 
 # --------------------------------------------------------------------------- #

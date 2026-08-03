@@ -273,6 +273,18 @@ RowTransform = _IdentityTransform | _TagTransform | _LiteralTransform | _Documen
 IDENTITY_TRANSFORM = _IdentityTransform()
 
 
+def transform_structured_column(transform: RowTransform) -> str | None:
+    """The Structured Column ``transform`` fans out, or absence when it fans out none.
+
+    The document fan-out drops the raw column, so a caller that needs the stored
+    document — a temporal observation, which retains it (`m-unit-work`) — reads it
+    off the driver row by this name BEFORE the transform runs. Absence is the
+    honest answer for every read that projected no Structured Column, `Columns`
+    layout included.
+    """
+    return transform.column if isinstance(transform, _DocumentTransform) else None
+
+
 # --------------------------------------------------------------------------- #
 # Position resolution.                                                         #
 # --------------------------------------------------------------------------- #

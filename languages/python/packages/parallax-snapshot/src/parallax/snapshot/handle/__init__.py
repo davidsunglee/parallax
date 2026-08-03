@@ -47,7 +47,7 @@ public-surface check promises. Where the exported names live:
   the one production find executor, plus the result surface they build
   (:class:`Snapshot`, :class:`Execution`, :class:`ExecutedStatement`,
   :class:`FindResult`, :class:`HistoryFindResult`, :class:`MilestoneGraph`,
-  :class:`NoResultFound`, :class:`TooManyResultsFound`).
+  :class:`NoResultFound`, :class:`ObservedNode`, :class:`TooManyResultsFound`).
 - :mod:`~parallax.snapshot.handle._write_lowering` — :func:`stream_lowered`,
   which lowers an already-settled Write Plan's steps into the one seam DML
   becomes through.
@@ -85,6 +85,7 @@ from parallax.snapshot.handle._read import (
     HistoryFindResult,
     MilestoneGraph,
     NoResultFound,
+    ObservedNode,
     Snapshot,
     TooManyResultsFound,
     find,
@@ -108,6 +109,7 @@ __all__ = [
     "HistoryFindResult",
     "MilestoneGraph",
     "NoResultFound",
+    "ObservedNode",
     "QueryTargetError",
     "Snapshot",
     "SnapshotConnectionError",

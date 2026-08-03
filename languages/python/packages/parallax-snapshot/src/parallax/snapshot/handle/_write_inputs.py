@@ -183,10 +183,16 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
     merging a node's scalar fields with its decoded documents yields the COMPLETE
     persisted row a Predecessor Row requires. The two categories are kept apart on
     the node so a document's storage key can equal a relationship name; they are
-    disjoint here because each occupies its own Column slot.
+    disjoint here because each occupies its own Column slot. Under Relational
+    Document Layout the read ALSO carried the row's raw Structured Column past the
+    fan-out that decoded those members, and a temporal observation retains it
+    (`m-unit-work`) so a successor is patched from what the row held rather than
+    rebuilt from the members this model declares — at no extra query, because the
+    predecessor read already materialized it.
     """
     basis = LATEST_PINNED if pin.tx_time is None or pin.tx_time is LATEST else HISTORICAL_PINNED
-    for entity_name, node in result.all_nodes:
+    for observed in result.all_nodes:
+        entity_name, node = observed.entity, observed.node
         observed_fields = {**node.fields, **node.value_objects}
         entity = entity_of(meta, entity_name)
         declaring_entity = declaring(meta, entity)
@@ -226,7 +232,10 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
         uow.observe(
             key,
             _temporal_observation(
-                members(placed_members(meta, entity, layout)), observed_fields, basis
+                members(placed_members(meta, entity, layout)),
+                observed_fields,
+                basis,
+                observed.document,
             ),
         )
 
@@ -235,6 +244,7 @@ def _temporal_observation(
     member_columns: Mapping[str, tuple[str, bool]],
     fields: Mapping[str, object],
     basis: TransactionTimeBasis,
+    document: object | None = None,
 ) -> TemporalObservation:
     """The :class:`TemporalObservation` a materialized TEMPORAL row licenses: its
     complete Predecessor Row plus the observing read's Transaction-Time Basis.
@@ -261,10 +271,15 @@ def _temporal_observation(
     already carries; wire-rendering for REPORTING is the conformance ADAPTER's
     own boundary concern (`parallax.conformance.engine._json_bind`), never this
     seam's.
+
+    ``document`` is the row's raw Structured Column under Relational Document
+    Layout, which the Predecessor Row retains beside — never among — those
+    members, so a successor built from it keeps keys no member declares. It is
+    absent under `Columns` layout, where the row has no such column.
     """
     return TemporalObservation(
         predecessor=PredecessorRow(
-            _row_payload(member_columns, fields, include_value_objects=True)
+            _row_payload(member_columns, fields, include_value_objects=True), document=document
         ),
         transaction_time_basis=basis,
     )

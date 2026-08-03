@@ -649,6 +649,75 @@
         0
       ]
     },
+    "charter": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charter"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Charter.id",
+          "declaringOwner": "parallax.compatibility.Charter",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charter"
+          ],
+          "column": "from_z",
+          "contributor": "attribute:parallax.compatibility.Charter.valid_start",
+          "declaringOwner": "parallax.compatibility.Charter",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charter"
+          ],
+          "column": "thru_z",
+          "contributor": "attribute:parallax.compatibility.Charter.valid_end",
+          "declaringOwner": "parallax.compatibility.Charter",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charter"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Charter.tx_start",
+          "declaringOwner": "parallax.compatibility.Charter",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charter"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Charter.tx_end",
+          "declaringOwner": "parallax.compatibility.Charter",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Charter"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Charter",
+          "declaringOwner": "parallax.compatibility.Charter",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        1,
+        3
+      ]
+    },
     "ledger": {
       "columns": [
         {
@@ -748,6 +817,54 @@
       ],
       "physicalPrimaryKey": [
         0
+      ]
+    },
+    "voyage": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Voyage"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Voyage.id",
+          "declaringOwner": "parallax.compatibility.Voyage",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Voyage"
+          ],
+          "column": "in_z",
+          "contributor": "attribute:parallax.compatibility.Voyage.tx_start",
+          "declaringOwner": "parallax.compatibility.Voyage",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Voyage"
+          ],
+          "column": "out_z",
+          "contributor": "attribute:parallax.compatibility.Voyage.tx_end",
+          "declaringOwner": "parallax.compatibility.Voyage",
+          "effectiveNullable": false,
+          "tier": "temporal"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Voyage"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Voyage",
+          "declaringOwner": "parallax.compatibility.Voyage",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0,
+        1
       ]
     }
   },

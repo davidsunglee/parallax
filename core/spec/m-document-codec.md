@@ -106,7 +106,7 @@ DocumentPatch =
     SetLeaf(path: nonempty sequence<MemberName>,
             value: Presence)
   | SetOccurrence(path: nonempty sequence<MemberName>,
-                  value: Document | Null)
+                  document: Document | Null)
 ```
 
 `encode` builds one complete document from a shape and one presence-classified
@@ -378,14 +378,16 @@ rebuilt a document from the members it knows would silently drop the rest.
   leaf presence — a `NeutralValue`, `ExplicitNull`, or `Missing`: writing
   `ExplicitNull` stores JSON null and writing `Missing` removes the key. A whole
   occurrence is replaced through `SetOccurrence`, never through `SetLeaf`.
-- `SetOccurrence` replaces the subtree at its path in place. Its value is that
-  occurrence's own document — an `encode` object for a `One`, an `encodeMany`
-  array for a `Many` — or `Null`, and it is the same value a subtree-replacing
-  `UPDATE` binds (`m-sql`), which is what keeps the in-memory successor and the
-  statement interchangeable. Every key outside the subtree survives; unknown keys
-  **inside** the replaced subtree do not. That asymmetry is deliberate — an
-  author who assigns a whole occurrence has stated what that occurrence now is —
-  and it is the one case where patching loses data a newer writer stored.
+- `SetOccurrence` replaces the subtree at its path in place. It carries that
+  occurrence's own **document** — an `encode` object for a `One`, an `encodeMany`
+  array for a `Many` — or `Null`, rather than a presence, because a leaf's value
+  is a `NeutralValue` this module still has to spell while an occurrence's is
+  already the document a subtree-replacing `UPDATE` binds (`m-sql`), which is what
+  keeps the in-memory successor and the statement interchangeable. Every key
+  outside the subtree survives; unknown keys **inside** the replaced subtree do
+  not. That asymmetry is deliberate — an author who assigns a whole occurrence has
+  stated what that occurrence now is — and it is the one case where patching loses
+  data a newer writer stored.
 
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical

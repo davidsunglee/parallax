@@ -245,18 +245,26 @@ def _holder(
 
 
 def _detached(document: object) -> object:
-    """A copy of ``document`` that shares no mutable state with it.
+    """A copy of ``document`` in this module's own container kinds.
 
     Every operation here returns a document a caller may keep while the one it was
     built from stays reachable elsewhere — a row's stored subtree, a retained raw
     predecessor, an occurrence document a caller still holds — so a JSON object or
     array crossing this interface is copied rather than aliased. Scalars are immutable
     and are returned as they are.
+
+    This is also the boundary that normalizes container KIND. A caller may hold a
+    document in whatever mapping or sequence its own retention uses — a read-only
+    view over state it must not let a later reader mutate is the ordinary case — and
+    what this module builds and walks is a JSON object and a JSON array, so the copy
+    is one of those whatever it was given.
     """
-    if isinstance(document, dict):
-        return {key: _detached(value) for key, value in cast("dict[str, object]", document).items()}
-    if isinstance(document, list):
-        return [_detached(item) for item in cast("list[object]", document)]
+    if isinstance(document, Mapping):
+        return {
+            key: _detached(value) for key, value in cast("Mapping[str, object]", document).items()
+        }
+    if isinstance(document, (list, tuple)):
+        return [_detached(item) for item in cast("Sequence[object]", document)]
     return document
 
 

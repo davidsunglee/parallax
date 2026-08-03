@@ -1,0 +1,90 @@
+# An assigned Value Object occurrence REPLACES its subtree, so a key no model member
+# declares survives outside it and does not survive inside it (m-storage-layout
+# "Assignment paths and mutation composition order"; m-document-codec
+# "SetOccurrence"), on Postgres AND MariaDB.
+#
+# The asymmetry is deliberate rather than a limitation, and this is its witness. The
+# seed is the SAME shape m-txtime-write-011 uses — `charterCode` at the top level and
+# `sealNumber` inside `manifest`, neither declared by any member — and the only
+# difference is what the write assigns. Here the write assigns `manifest` a different
+# value, which states what that occurrence NOW IS, so its whole subtree is replaced
+# and `sealNumber` goes with it. `charterCode` is outside the replaced subtree and
+# rides forward untouched.
+#
+# `then.tableState` carries both halves at once: an implementation that replaced the
+# whole Structured Column would lose `charterCode` too, and one that merged the
+# assigned occurrence into the stored subtree would keep `sealNumber` — a key the
+# author has just said the occurrence does not have.
+model: models/document-layout.yaml
+tags: [m-txtime-write, m-storage-layout, m-document-codec, m-value-object, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply)"
+given:
+  apply:
+    - sql: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 8
+        - "2026-01-01T00:00:00+00:00"
+        - infinity
+        - title: Island Run
+          crew: 3
+          charterCode: NB-204
+          manifest:
+            cargo: ore
+            sealNumber: S-9930
+when:
+  writeSequence:
+    - mutation: update
+      entity: Voyage
+      statements: 2
+      note: assign the whole occurrence — its subtree is replaced, and the key outside it is not
+      rows:
+        - id: 8
+          title: Island Run
+          crew: 3
+          manifest:
+            cargo: salt
+      at: "2026-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update voyage set out_z = ? where id = ? and out_z = ?
+        mariadb: update voyage set out_z = ? where id = ? and out_z = ?
+      binds: ["2026-06-01T00:00:00+00:00", 8, infinity]
+    - sql:
+        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 8
+        - "2026-06-01T00:00:00+00:00"
+        - infinity
+        - title: Island Run
+          crew: 3
+          charterCode: NB-204
+          manifest:
+            cargo: salt
+  tableState:
+    voyage:
+      - id: 8
+        in_z: "2026-01-01T00:00:00+00:00"
+        out_z: "2026-06-01T00:00:00+00:00"
+        payload:
+          title: Island Run
+          crew: 3
+          charterCode: NB-204
+          manifest:
+            cargo: ore
+            sealNumber: S-9930
+      - id: 8
+        in_z: "2026-06-01T00:00:00+00:00"
+        out_z: infinity
+        payload:
+          title: Island Run
+          crew: 3
+          charterCode: NB-204
+          manifest:
+            cargo: salt
+  roundTrips: 2

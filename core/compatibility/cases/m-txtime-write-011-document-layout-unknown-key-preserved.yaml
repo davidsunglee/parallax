@@ -1,0 +1,97 @@
+# A key no model member declares survives a milestone chain (m-storage-layout x
+# m-document-codec "Patching, unknown keys, and subtree replacement"), on Postgres
+# AND MariaDB.
+#
+# This is the reason a temporal successor is built by PATCHING the predecessor's
+# retained document rather than by re-encoding the members the running application
+# knows. `given.apply` seeds one current milestone whose Structured Column carries
+# `charterCode` at the top level and `sealNumber` inside the `manifest` occurrence —
+# two keys `models/document-layout.yaml` declares nowhere, exactly what a newer
+# version of an application writing the same table would leave behind. The seed is
+# out-of-band SQL because no authored member can produce a key the model has no
+# member for.
+#
+# The write assigns ONE known scalar. Both unknown keys ride into the successor:
+# `charterCode` because a patch touches only the paths it assigns, and `sealNumber`
+# because `manifest` is CARRIED rather than assigned, so its subtree is never
+# rebuilt. `then.tableState` is the whole claim — an implementation that composed the
+# successor from `title`, `crew`, and `manifest` would produce a document that reads
+# back identically for every declared member and has silently destroyed the rest.
+#
+# The contrast is m-txtime-write-012, which assigns the occurrence and therefore does
+# drop the key inside it.
+model: models/document-layout.yaml
+tags: [m-txtime-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (given.apply)"
+given:
+  apply:
+    - sql: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 7
+        - "2026-01-01T00:00:00+00:00"
+        - infinity
+        - title: Coastal Run
+          crew: 6
+          charterCode: NB-118
+          manifest:
+            cargo: grain
+            sealNumber: S-4021
+when:
+  writeSequence:
+    - mutation: update
+      entity: Voyage
+      statements: 2
+      note: assign one known scalar — the successor's document is the closed row's own, patched
+      rows:
+        - id: 7
+          title: Coastal Return
+          crew: 6
+          manifest:
+            cargo: grain
+      at: "2026-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update voyage set out_z = ? where id = ? and out_z = ?
+        mariadb: update voyage set out_z = ? where id = ? and out_z = ?
+      binds: ["2026-06-01T00:00:00+00:00", 7, infinity]
+    - sql:
+        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 7
+        - "2026-06-01T00:00:00+00:00"
+        - infinity
+        - title: Coastal Return
+          crew: 6
+          charterCode: NB-118
+          manifest:
+            cargo: grain
+            sealNumber: S-4021
+  tableState:
+    voyage:
+      - id: 7
+        in_z: "2026-01-01T00:00:00+00:00"
+        out_z: "2026-06-01T00:00:00+00:00"
+        payload:
+          title: Coastal Run
+          crew: 6
+          charterCode: NB-118
+          manifest:
+            cargo: grain
+            sealNumber: S-4021
+      - id: 7
+        in_z: "2026-06-01T00:00:00+00:00"
+        out_z: infinity
+        payload:
+          title: Coastal Return
+          crew: 6
+          charterCode: NB-118
+          manifest:
+            cargo: grain
+            sealNumber: S-4021
+  roundTrips: 2

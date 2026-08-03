@@ -879,11 +879,11 @@ def _document_standalone(**overrides: Any) -> dict[str, Any]:
     return definition
 
 
-def test_the_capability_gate_names_every_declared_shape_the_owner_matches() -> None:
-    # The scope list is a set of independent predicates over one accepted
-    # root-owned declaration, so a model matching several is refused once and
-    # names all of them. Removing one matched entry therefore leaves the others
-    # matched, and the owner is still refused for every shape that remains.
+def test_a_document_hierarchy_root_is_refused_for_its_mapping_shape_alone() -> None:
+    # The refused-shape list is a set of independent predicates over one accepted
+    # root-owned declaration, and the gate names every entry the owner matches. A
+    # temporal axis is not among them, so a temporal family is refused for the
+    # mapping shape it declares and for nothing else.
     definitions = _document_hierarchy()
     definitions[0]["attributes"].extend(
         [{"name": "txStart", "type": "timestamp"}, {"name": "txEnd", "type": "timestamp"}]
@@ -899,7 +899,7 @@ def test_the_capability_gate_names_every_declared_shape_the_owner_matches() -> N
         validate_storage_layout(definitions)
     assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
     assert "a table-per-hierarchy family" in caught.value.detail
-    assert "a Transaction-Time axis" in caught.value.detail
+    assert "Transaction-Time" not in caught.value.detail
     assert "'doc'" in caught.value.detail
 
 
@@ -908,6 +908,21 @@ def test_a_standalone_document_layout_owner_matches_no_refused_shape() -> None:
     # well-formed standalone declaration — which is what lets
     # models/document-layout.yaml sit in the corpus at all.
     validate_storage_layout([_document_standalone()])
+
+
+@pytest.mark.parametrize("dimension", ["transactionTime", "validTime"])
+def test_a_temporal_document_layout_owner_matches_no_refused_shape(dimension: str) -> None:
+    # A temporal axis names no refused shape, on either dimension, so a
+    # document-mapped Entity that chains milestones validates rather than being
+    # refused — the acceptance every temporal document-layout witness rests on.
+    definition = _document_standalone()
+    definition["attributes"].extend(
+        [{"name": "start", "type": "timestamp"}, {"name": "end", "type": "timestamp"}]
+    )
+    definition["asOfAxes"] = [
+        {"dimension": dimension, "startAttribute": "start", "endAttribute": "end"}
+    ]
+    validate_storage_layout([definition])
 
 
 def _document_hierarchy() -> list[dict[str, Any]]:

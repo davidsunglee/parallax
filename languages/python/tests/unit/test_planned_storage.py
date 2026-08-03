@@ -148,17 +148,38 @@ def _predecessor_columns(
     rows: Sequence[Mapping[str, object]],
     *,
     value_objects: tuple[str, ...] = (),
+    documents: Sequence[object] = (),
 ) -> PredecessorColumns:
     attribute_names = tuple(name for name in rows[0] if name not in value_objects)
     builders = {name: ChunkedColumnBuilder[object]() for name in rows[0]}
     for row in rows:
         for name in builders:
             builders[name].append(row[name])
+    document_builder: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
+    for document in documents:
+        document_builder.append(document)
     return PredecessorColumns(
         shape=PredecessorShape(attributes=attribute_names, value_objects=value_objects),
         attribute_columns=tuple(whole(builders[name].build()) for name in attribute_names),
         value_object_columns=tuple(whole(builders[name].build()) for name in value_objects),
+        documents=whole(document_builder.build()) if documents else None,
     )
+
+
+def test_predecessor_columns_freeze_the_raw_document_they_retain() -> None:
+    # The raw Structured Column is retained beside the decoded members rather than
+    # among them, and it is snapshotted for the same reason they are: a row's
+    # Predecessor Row is built on demand, once per access, and must answer with the
+    # state the read observed however long the caller holds it.
+    stored: dict[str, object] = {"title": "Ada", "manifest": {"cargo": "timber"}}
+    predecessors = _predecessor_columns([{"id": 1}], documents=[stored])
+    retained = cast("Mapping[str, object]", predecessors.row(0).document)
+
+    cast("dict[str, object]", stored["manifest"])["cargo"] = "ore"
+
+    assert retained["manifest"] == {"cargo": "timber"}
+    with pytest.raises(TypeError):
+        cast("dict[str, object]", retained)["title"] = "Bo"
 
 
 def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> None:
@@ -169,14 +190,15 @@ def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> N
         ]
     )
     assert predecessors.length == 2
-    assert predecessors.row(0) == {
+    assert predecessors.row(0).members == {
         "id": 1,
         "acctNum": "A",
         "value": 100.00,
         "tx_start": "t0",
         "tx_end": "infinity",
     }
-    assert predecessors.row(1)["id"] == 2
+    assert predecessors.row(0).document is None
+    assert predecessors.row(1).member("id") == 2
     # Materialize-on-demand: two calls for the same index build an equal but
     # independently allocated view, never a shared mutable flyweight.
     assert predecessors.row(0) == predecessors.row(0)
@@ -189,14 +211,14 @@ def test_predecessor_columns_freezes_nested_documents_after_an_immutable_prefix(
         [{"id": 1, "address": None}, {"id": 2, "address": address}],
         value_objects=("address",),
     )
-    planned = cast("Mapping[str, object]", predecessors.row(1)["address"])
+    planned = cast("Mapping[str, object]", predecessors.row(1).member("address"))
     geo = cast("Mapping[str, object]", planned["geo"])
     phones = cast("Sequence[Mapping[str, object]]", planned["phones"])
 
     cast("dict[str, object]", address["geo"])["country"] = "SE"
     cast("list[dict[str, object]]", address["phones"])[0]["number"] = "999"
 
-    assert predecessors.row(0)["address"] is None
+    assert predecessors.row(0).member("address") is None
     assert geo["country"] == "FI"
     assert phones[0]["number"] == "111"
     with pytest.raises(TypeError):

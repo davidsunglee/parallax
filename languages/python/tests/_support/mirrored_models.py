@@ -61,6 +61,7 @@ from parallax.core import (
     MAX,
     ONE_TO_MANY,
     Attr,
+    Bitemporal,
     Document,
     DomainModel,
     Entity,
@@ -68,6 +69,7 @@ from parallax.core import (
     Int32,
     Rel,
     Sequence,
+    TxTemporal,
     ValueObject,
     attr,
     index,
@@ -382,7 +384,49 @@ class Beacon(
     id: Attr[int] = attr(primary_key=True)
 
 
-DOCUMENT_LAYOUT_MODEL = DomainModel(Traveler, Trip, Ledger, Beacon)
+class VoyageManifest(ValueObject):
+    cargo: Attr[str | None]
+
+
+class Voyage(
+    TxTemporal,
+    table="voyage",
+    namespace=_NS,
+    layout=Document(),
+    indices=(index("voyage_pk", "id", "tx_start", unique=True),),
+):
+    """Mirror of ``models/document-layout.yaml``'s Transaction-Time-Only Entity: the
+    framework-supplied axis bounds are designated Attributes, which the layout keeps
+    direct, while every domain member rides the Structured Column a chained
+    successor patches."""
+
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str | None] = attr(max_length=64)
+    crew: Attr[int | None] = attr(type=Int32)
+    manifest: Attr[VoyageManifest | None]
+
+
+class CharterTerms(ValueObject):
+    clause: Attr[str | None]
+
+
+class Charter(
+    Bitemporal,
+    table="charter",
+    namespace=_NS,
+    layout=Document(),
+    indices=(index("charter_pk", "id", "valid_start", "tx_start", unique=True),),
+):
+    """Mirror of ``models/document-layout.yaml``'s Bitemporal Entity: all four axis
+    bounds stay direct and each rectangle a split chains carries a whole
+    document."""
+
+    id: Attr[int] = attr(primary_key=True)
+    route: Attr[str | None] = attr(max_length=64)
+    terms: Attr[CharterTerms | None]
+
+
+DOCUMENT_LAYOUT_MODEL = DomainModel(Traveler, Trip, Ledger, Beacon, Voyage, Charter)
 
 MIRRORED: list[tuple[str, DomainModel]] = [
     ("account", ACCOUNT_MODEL),

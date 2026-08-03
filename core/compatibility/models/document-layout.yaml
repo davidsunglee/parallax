@@ -1,5 +1,5 @@
-# Traveler / Trip / Ledger / Beacon: the shared model for every Relational Document
-# Layout witness.
+# Traveler / Trip / Ledger / Voyage / Charter / Beacon: the shared model for every
+# Relational Document Layout witness.
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. What makes it
 # different from every other model in the corpus is one entity-level property:
@@ -162,6 +162,100 @@ entities:
     indices:
       - name: ledger_pk
         attributes: [id]
+        unique: true
+  # Voyage: the Transaction-Time-Only member of the family. The two axis bounds are
+  # designated Attributes, so the layout keeps both in Columns of their own
+  # (direct-column role 3) while `title`, `crew`, and the `manifest` occurrence are
+  # document-resident. A milestone-chaining update closes the current row and chains
+  # a successor whose Structured Column is the closed row's own document with the
+  # assignment patched into it, so every key that document carried — one no member
+  # declares included — survives the close-and-insert.
+  - name: Voyage
+    namespace: parallax.compatibility
+    table: voyage
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: title
+        type: string
+        maxLength: 64
+        nullable: true
+      - name: crew
+        type: int32
+        nullable: true
+      - name: tx_start
+        type: timestamp
+        column: in_z
+      - name: tx_end
+        type: timestamp
+        column: out_z
+    valueObjects:
+      - name: manifest
+        nullable: true
+        attributes:
+          - name: cargo
+            type: string
+            nullable: true
+    asOfAxes:
+      - dimension: transactionTime
+        startAttribute: tx_start
+        endAttribute: tx_end
+    indices:
+      - name: voyage_pk
+        attributes: [id, tx_start]
+        unique: true
+  # Charter: the Bitemporal member. Four bound Attributes stay direct and the
+  # rectangle split chains head / middle / tail milestones, each carrying a whole
+  # document. `terms` is the occurrence the split's middle rectangle assigns, which
+  # is where patching's one deliberate loss shows: an assigned subtree is replaced,
+  # so a key no member declares INSIDE it does not survive while one outside does.
+  - name: Charter
+    namespace: parallax.compatibility
+    table: charter
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: route
+        type: string
+        maxLength: 64
+        nullable: true
+      - name: valid_start
+        type: timestamp
+        column: from_z
+      - name: valid_end
+        type: timestamp
+        column: thru_z
+      - name: tx_start
+        type: timestamp
+        column: in_z
+      - name: tx_end
+        type: timestamp
+        column: out_z
+    valueObjects:
+      - name: terms
+        nullable: true
+        attributes:
+          - name: clause
+            type: string
+            nullable: true
+    asOfAxes:
+      - dimension: validTime
+        startAttribute: valid_start
+        endAttribute: valid_end
+      - dimension: transactionTime
+        startAttribute: tx_start
+        endAttribute: tx_end
+    indices:
+      - name: charter_pk
+        attributes: [id, valid_start, tx_start]
         unique: true
   # Beacon: a document-layout Entity whose only member is its primary key, which the
   # layout keeps direct. Its Structured Column carries the empty object and nothing

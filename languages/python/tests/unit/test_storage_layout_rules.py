@@ -554,25 +554,23 @@ def _refused_shapes(*declarations: Declaration) -> tuple[str, ...]:
     )
 
 
-def _transaction_time_document(*, column: str = "payload") -> Declaration:
-    tx_start = instant(_SIBLING, "txStart")
-    tx_end = instant(_SIBLING, "txEnd")
-    return _standalone_document(
-        column=column,
-        attributes=(key(_SIBLING), tx_start, tx_end),
-        as_of_axes=(
-            AsOfAxisMetadata(
-                TemporalDimension.TRANSACTION_TIME, tx_start.identity, tx_end.identity
-            ),
+def _temporal_document(*, dimension: TemporalDimension) -> tuple[Declaration, ...]:
+    """A standalone document layout carrying one temporal axis of ``dimension``."""
+    start = instant(_SIBLING, "start")
+    end = instant(_SIBLING, "end")
+    return (
+        _standalone_document(
+            attributes=(key(_SIBLING), start, end),
+            as_of_axes=(AsOfAxisMetadata(dimension, start.identity, end.identity),),
         ),
     )
 
 
-def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
+def test_a_document_hierarchy_root_is_refused_for_its_mapping_shape_alone() -> None:
     # The scope list is a set of independent predicates over one accepted
-    # root-owned declaration, so a model matching several is refused once and
-    # names all of them. Removing one matched entry therefore leaves the others
-    # matched, and the owner is still refused for every shape that remains.
+    # root-owned declaration, and the gate names every entry the owner matches.
+    # A temporal axis is not among them, so a temporal family is refused for the
+    # mapping shape it declares and for nothing else.
     tx_start = instant(_ROOT, "txStart")
     tx_end = instant(_ROOT, "txEnd")
     root = Declaration(
@@ -587,10 +585,7 @@ def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
         ),
         inheritance=AbstractRoot(TablePerHierarchy("kind")),
     )
-    assert _refused_shapes(root, _concrete(_LEAF)) == (
-        "a table-per-hierarchy family",
-        "a Transaction-Time axis",
-    )
+    assert _refused_shapes(root, _concrete(_LEAF)) == ("a table-per-hierarchy family",)
 
 
 def test_a_standalone_layout_owner_matches_no_declared_shape() -> None:
@@ -600,8 +595,27 @@ def test_a_standalone_layout_owner_matches_no_declared_shape() -> None:
     assert _rule_issues(_standalone_document()) == ()
 
 
+@pytest.mark.parametrize(
+    "dimension", [TemporalDimension.TRANSACTION_TIME, TemporalDimension.VALID_TIME]
+)
+def test_a_temporal_layout_owner_matches_no_declared_shape(
+    dimension: TemporalDimension,
+) -> None:
+    # A temporal axis names no scope entry, on either dimension, so a
+    # document-mapped Entity that chains milestones forms rather than being
+    # refused — the acceptance every temporal document-layout witness rests on.
+    assert _rule_issues(*_temporal_document(dimension=dimension)) == ()
+
+
 def test_the_gate_locates_the_refusal_at_the_layout_owner_with_no_related_location() -> None:
-    (issue,) = _rule_issues(_transaction_time_document(column="body"))
+    root = Declaration(
+        identity=_SIBLING,
+        container=Table("note"),
+        layout=Document(Column("body")),
+        attributes=(key(_SIBLING),),
+        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+    )
+    (issue,) = _rule_issues(root, _concrete(_LEAF, parent=_SIBLING))
     assert issue.code == _CAPABILITY
     assert issue.location == EntityLocation(_SIBLING)
     assert issue.related == ()

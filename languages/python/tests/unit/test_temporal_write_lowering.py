@@ -67,6 +67,7 @@ from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
     Execution,
     FindResult,
+    ObservedNode,
     WriteLoweringError,
     build_write_planner,
     lower_step,
@@ -834,7 +835,9 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         },
         pk_columns=("id",),
     )
-    result = FindResult(nodes=(node,), execution=Execution(()), all_nodes=(("SpotQuote", node),))
+    result = FindResult(
+        nodes=(node,), execution=Execution(()), all_nodes=(ObservedNode("SpotQuote", node),)
+    )
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
         record_observations(uow, model, result, Pin(tx_time=LATEST))
@@ -864,6 +867,48 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         "insert into spot_quote(id, price, symbol, in_z, out_z) values (?, ?, ?, ?, ?)",
         (1, 60.00, "ACME", "2024-06-01T00:00:00+00:00", "infinity"),
     )
+
+
+def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation() -> None:
+    # The fan-out drops the Structured Column from a node's fields, so a temporal
+    # observation would lose it exactly where a successor needs it. `find` carries
+    # it beside the node instead, and the Predecessor Row retains it beside — never
+    # among — the members it was decoded from, so a key no member declares is still
+    # there when the successor is patched (`m-unit-work`).
+    model, _entity = _accepted("SpotQuote", QUOTE)
+    node = Node(
+        fields={
+            "id": 1,
+            "price": 50.00,
+            "symbol": "ACME",
+            "in_z": "2024-01-01T00:00:00+00:00",
+            "out_z": "infinity",
+        },
+        pk_columns=("id",),
+    )
+    stored = {"price": "50.00", "symbol": "ACME", "charterCode": "NB-118"}
+    result = FindResult(
+        nodes=(node,),
+        execution=Execution(()),
+        all_nodes=(ObservedNode("SpotQuote", node, stored),),
+    )
+
+    def observe(uow: UnitOfWork) -> WriteObservation | None:
+        record_observations(uow, model, result, Pin(tx_time=LATEST))
+        return uow.observation_for(("SpotQuote", (("id", 1),)))
+
+    observation = run_unit_of_work(
+        observe,
+        settings=TransactionSettings(),
+        clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
+        meta=model,
+        flush_executor=lambda _plan: None,
+        planner=build_write_planner(model),
+        subject_identity=TEST_SUBJECT_IDENTITY,
+    )
+    assert isinstance(observation, TemporalObservation)
+    assert observation.predecessor.document == stored
+    assert "charterCode" not in observation.predecessor.members
 
 
 def test_milestone_close_selects_operation_identities_not_the_physical_key() -> None:
