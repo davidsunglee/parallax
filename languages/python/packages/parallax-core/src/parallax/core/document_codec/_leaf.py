@@ -1,10 +1,11 @@
 """The portable leaf encoding table (m-document-codec, "Portable leaf encodings").
 
 One function answers "how is this leaf spelled inside a document", for both document
-kinds and at every depth. Decoding is its inverse and is not restated here: the
-portable literal inverse is :func:`~parallax.core.base.decode_neutral_literal`, which
-the float rule below also measures its own round trip through, so the two legs cannot
-drift.
+kinds and at every depth, and :func:`decode_leaf` inverts it over exactly that
+function's own codomain. Neither restates the table: the portable literal inverse is
+:func:`~parallax.core.base.decode_neutral_literal`, which the float rule below also
+measures its own round trip through, and the encoding question is then settled by
+re-encoding, so the two legs cannot drift.
 
 The string spellings are comparison-significant, not house style. SQL compares the six
 text-compared types by comparing the extracted text directly, so changing one changes
@@ -38,7 +39,7 @@ from parallax.core.base import (
     matches_neutral_type,
 )
 
-__all__ = ["LeafEncodingError", "encode_leaf", "is_text_compared"]
+__all__ = ["LeafEncodingError", "decode_leaf", "encode_leaf", "is_text_compared"]
 
 # The declared types whose document form is a JSON string AND whose SQL comparison is
 # of the extracted text rather than of a cast (`m-dialect`). `decimal(p, s)` is a JSON
@@ -52,11 +53,13 @@ _MAX_SIGNIFICANT_DIGITS = 17
 
 
 class LeafEncodingError(Exception):
-    """A value is not a member of the Neutral Type its leaf declares.
+    """A value and the Neutral Type its leaf declares do not pair through this table.
 
-    Raised rather than encoded. The table is total over the type algebra but says
-    nothing about a value outside a declared value space, and inventing a spelling for
-    one is exactly what this module exists to prevent.
+    Raised rather than encoded or decoded, in both directions: a value outside the
+    declared value space has no spelling here, and a stored leaf that is not the one
+    spelling the table gives some value of that space is the encoding of nothing here.
+    The table is total over the type algebra and says nothing about either, and
+    inventing an answer for one is exactly what this module exists to prevent.
     """
 
 
@@ -95,6 +98,29 @@ def encode_leaf(neutral_type: NeutralType, value: object) -> object:
             return dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
         case Uuid():
             return str(cast("_uuid.UUID", value))
+
+
+def decode_leaf(neutral_type: NeutralType, value: object) -> object:
+    """The neutral value ``value`` is the document encoding of.
+
+    :func:`encode_leaf`'s inverse, and its domain is that function's own codomain: a
+    stored leaf must both name a member of the declared value space and be the ONE
+    spelling this table gives that member. The second condition is what a parse alone
+    does not ask. A ``decimal(p, s)`` short of its declared scale, uppercase
+    hexadecimal, a ``timestamp`` at a non-UTC offset, an uppercase or hyphenless UUID,
+    and a float number that is not the shortest one for the value it names all decode
+    into their declared type and are still a DIFFERENT document from the one a writer
+    of that value would have stored — and the six text-compared spellings are the
+    characters SQL compares and orders by, so reading one back as an ordinary value
+    would answer with a row that no predicate over the same member finds.
+
+    Raised rather than repaired: this module defines no defaulting and never invents a
+    value for stored data that contradicts its shape.
+    """
+    decoded = decode_neutral_literal(value, neutral_type)
+    if matches_neutral_type(decoded, neutral_type) and encode_leaf(neutral_type, decoded) == value:
+        return decoded
+    raise LeafEncodingError(f"{value!r} is not the document encoding of any {neutral_type!r} value")
 
 
 def _exact_decimal(value: _decimal.Decimal, scale: int) -> str:

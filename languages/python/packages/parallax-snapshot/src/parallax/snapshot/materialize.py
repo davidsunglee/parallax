@@ -45,12 +45,26 @@ string when present, and each declared value-object's own document column).
 
 from __future__ import annotations
 
+import datetime as _dt
+import decimal as _decimal
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast
 
 from parallax.core import inheritance
-from parallax.core.base import decode_neutral_literal, matches_neutral_type
+from parallax.core.base import (
+    Bytes,
+    Date,
+    Decimal,
+    Float32,
+    Float64,
+    NeutralType,
+    Time,
+    Timestamp,
+    Uuid,
+    decode_neutral_literal,
+    matches_neutral_type,
+)
 from parallax.core.deep_fetch import FetchLevel
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -324,22 +338,100 @@ def _decoded_leaf(stored: object, attribute: ValueObjectAttributeMetadata) -> ob
     through would hand a caller a ``str`` where the model declares a ``Decimal``,
     ``bytes``, or ``datetime``.
 
-    Decoding a literal is total and nonthrowing, so membership is what separates a
-    spelling the declared type has from one it does not. A stored value that decodes
-    into no member of its declared value space is invalid stored data
-    (`m-document-codec`) and raises here: this module defines no repair and no
-    defaulting, so it never hands a caller the raw stored value under a member the
-    model types otherwise.
+    Two conditions, because decoding a literal is total, nonthrowing, and deliberately
+    wider than the document form: the decoded value must be a member of the declared
+    value space, and the stored value must be the ONE document spelling that member
+    has (:func:`_document_spelling`). A value failing either is invalid stored data
+    (`m-document-codec`) and raises here. The second condition is not decoration: a
+    ``decimal(12,2)`` holding ``"1.5"``, uppercase hexadecimal, a ``timestamp`` at a
+    non-UTC offset, a non-canonical UUID, and a float number that is not the shortest
+    one for the value it names all decode into their declared type, and SQL compares
+    and orders the six text-compared members by those very characters — so
+    materializing one would answer with a row that no predicate over the same member
+    finds. This module defines no repair and no defaulting.
     """
     decoded = decode_neutral_literal(stored, attribute.type)
-    if not matches_neutral_type(decoded, attribute.type):
+    spelled = matches_neutral_type(decoded, attribute.type) and (
+        _document_spelling(decoded, attribute.type) == stored
+    )
+    if not spelled:
         identity = attribute.identity
         member = ".".join((*identity.value_object.path, identity.name))
         raise MaterializeError(
-            f"{identity.value_object.entity.canonical}.{member}: {stored!r} does not decode "
-            f"into its declared type {attribute.type!r} — invalid stored data"
+            f"{identity.value_object.entity.canonical}.{member}: {stored!r} is no "
+            f"{attribute.type!r} value's document encoding — invalid stored data"
         )
     return decoded
+
+
+# The widest decimal rendering `%.{p}g` can need to round-trip a binary64, and so the
+# upper bound of the shortest-number search below.
+_MAX_SIGNIFICANT_DIGITS = 17
+
+
+def _document_spelling(value: object, declared: NeutralType) -> object:
+    """``value``'s one document spelling under ``declared`` — m-document-codec's
+    portable leaf encoding table, for a value already known to be a member of that
+    space.
+
+    A twin of the codec's own encoder rather than a call to it: `m-snapshot-read`
+    declares no dependency on `m-document-codec` (`core/spec/modules.md`), so the read
+    seam that has to recognize an encoding states the table it recognizes. The two
+    have to agree row for row, because a spelling only the codec produces is one this
+    module refuses to read.
+    """
+    match declared:
+        case Float32() | Float64():
+            return _shortest_number(cast("float", value), declared)
+        case Decimal(_precision, scale):
+            return _exact_decimal(cast("_decimal.Decimal", value), scale)
+        case Bytes():
+            return cast("bytes", value).hex()
+        case Date() | Time():
+            return cast("_dt.date | _dt.time", value).isoformat()
+        case Timestamp():
+            instant = cast("_dt.datetime", value).astimezone(_dt.UTC)
+            return instant.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+        case Uuid():
+            return str(value)
+        case _:
+            return value
+
+
+def _exact_decimal(value: _decimal.Decimal, scale: int) -> str:
+    """The exact decimal spelling: a ``-`` only for a value below zero, the integer
+    digits with no leading zero (a single ``0`` when the integer part is zero), and —
+    when ``scale > 0`` — ``.`` and exactly ``scale`` fraction digits.
+
+    Rescaling is exact by construction rather than by a rounding context: membership
+    already established the value needs no more fraction digits than ``scale`` admits,
+    so the shift below only ever pads with zeros.
+    """
+    sign, digits, exponent = value.as_tuple()
+    unscaled = 0
+    for digit in digits:
+        unscaled = unscaled * 10 + digit
+    unscaled *= 10 ** (cast("int", exponent) + scale)
+    padded = str(unscaled).rjust(scale + 1, "0")
+    body = f"{padded[:-scale]}.{padded[-scale:]}" if scale else padded
+    return f"-{body}" if sign and unscaled else body
+
+
+def _shortest_number(value: float, declared: Float32 | Float64) -> float:
+    """The number with the fewest significant digits that decodes back to ``value``
+    under the declared width, nearest among equally short ones, and — where two are
+    equally near — the one whose last significant digit is even.
+
+    ``%.{p}g`` supplies all three levels at once, because it renders the
+    correctly-rounded ``p``-digit decimal and breaks its own tie to even, and "decodes
+    back to" is measured through the decode leg itself, so a number cannot be the
+    encoding on the write side and not on the read side.
+    """
+    for precision in range(1, _MAX_SIGNIFICANT_DIGITS + 1):
+        candidate = float(f"{value:.{precision}g}")
+        if decode_neutral_literal(candidate, declared) == value:
+            return candidate
+    return value  # pragma: no cover - 17 significant digits always round-trip
 
 
 def _decode_element(raw: object, container: _VoContainer) -> dict[str, object] | None:

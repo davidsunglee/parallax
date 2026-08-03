@@ -58,9 +58,19 @@ _DECIMAL_TYPE = re.compile(r"^decimal\((\d+),\s*(\d+)\)$")
 # `-bound <= value < bound`.
 _INTEGER_BOUNDS = {"int32": 2**31, "int64": 2**63}
 
+# The widest decimal rendering `%.{p}g` can need to round-trip a binary64, and so the
+# upper bound of the shortest-number search below.
+_MAX_SIGNIFICANT_DIGITS = 17
+
+# The answer to "which value is this leaf the encoding of" when it is the encoding of
+# none. Distinct from `None`, which is a stored JSON null and a presence state.
+_NOT_ENCODED = object()
+
 
 class DocumentEncodingError(Exception):
-    """A value has no document spelling under the type its member declares."""
+    """A value and the type its member declares do not pair through this table: a
+    value with no document spelling under it, or a stored leaf that is the encoding of
+    no value of it."""
 
 
 def is_text_compared(type_spelling: str) -> bool:
@@ -119,7 +129,9 @@ def encode_leaf(type_spelling: str, value: Any) -> Any:
         return _instant(value).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
     if type_spelling == "uuid":
         return str(_as_uuid(value))
-    if type_spelling in ("boolean", "int32", "int64", "float32", "float64", "string"):
+    if type_spelling in ("float32", "float64"):
+        return _shortest_number(value, binary32=type_spelling == "float32")
+    if type_spelling in ("boolean", "int32", "int64", "string"):
         return value
     raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
 
@@ -141,79 +153,93 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
     ``float32`` and ``float64``, whose document number is the shortest one that
     round-trips at the DECLARED width, so it is read as a float of that width.
 
-    A stored value outside the domain this inverts — a ``decimal`` holding
-    ``"bogus"``, an ``int32`` holding a JSON string or a number past its width, a
-    malformed hex / ISO / UUID string — is **invalid stored data**
-    (m-document-codec) and raises rather than reaching a result row under a member
-    the model types otherwise.
+    A stored value that is not the spelling :func:`encode_leaf` gives some value of
+    the declared type is **invalid stored data** (m-document-codec) and raises rather
+    than reaching a result row under a member the model types otherwise.
     """
     if value is None:
         return None
-    if not _is_encoding(type_spelling, value):
+    member = _encoded_member(type_spelling, value)
+    if member is _NOT_ENCODED:
         raise DocumentEncodingError(
             f"{value!r} is not a {type_spelling!r} encoding — invalid stored data"
         )
-    decimal_type = _DECIMAL_TYPE.match(type_spelling)
-    if decimal_type is not None:
-        return decimal.Decimal(str(value))
+    if _DECIMAL_TYPE.match(type_spelling) is not None or type_spelling in ("float32", "float64"):
+        return member
     if type_spelling == "timestamp":
-        return _instant(value).isoformat()
-    if type_spelling in ("float32", "float64"):
-        return _float_at_width(value, binary32=type_spelling == "float32")
+        return member.isoformat()
     return value
 
 
-def _is_encoding(type_spelling: str, value: Any) -> bool:
-    """Whether ``value`` is a document encoding of ``type_spelling`` — the domain
-    :func:`decode_leaf` inverts.
+def _encoded_member(type_spelling: str, value: Any) -> Any:
+    """The value ``value`` is the document encoding of, or :data:`_NOT_ENCODED` when
+    it is the encoding of none — the domain :func:`decode_leaf` inverts.
 
-    A stored leaf outside it contradicts the shape that declares the member, so this
-    is where the two answers part: a well-formed encoding decodes, and anything else
-    is invalid stored data. Membership is of the declared value space rather than of
-    a canonical rendering, so a ``decimal(12,2)`` admits ``"1.5"`` as well as
-    ``"1.50"`` and refuses ``"1.005"``, which needs a third fraction digit.
+    Two conditions, and the second is what makes the answer an *encoding* rather than
+    a parse. The value must name a member of the declared value space, and it must be
+    the one spelling :func:`encode_leaf` gives that member: every Neutral Type has
+    exactly one, so a ``decimal(12,2)`` holding ``"1.5"``, uppercase hexadecimal, a
+    ``timestamp`` at a non-UTC offset, an uppercase or hyphenless UUID, and a float
+    number that is not the shortest one for the value it narrows to are each some
+    OTHER document than the one this table admits. They parse, which is why a
+    membership test alone lets them through, and they are still wrong to read: the
+    six text-compared spellings are the characters SQL compares and orders by, so a
+    row storing one of them would materialize as a value that no predicate over the
+    same member finds.
 
-    A type spelling the table does not cover has no domain at all and raises, because
-    the caller named a member type this module cannot read.
+    A type spelling the table does not cover has no encoding at all and raises,
+    because the caller named a member type this module cannot read.
+    """
+    member = _value_space_member(type_spelling, value)
+    if member is _NOT_ENCODED:
+        return _NOT_ENCODED
+    return member if encode_leaf(type_spelling, member) == value else _NOT_ENCODED
+
+
+def _value_space_member(type_spelling: str, value: Any) -> Any:
+    """The value ``value`` names in ``type_spelling``'s declared value space, or
+    :data:`_NOT_ENCODED` when it names none.
+
+    The questions a spelling cannot answer, asked first: the JSON kind, the integer
+    width, the float width, and the exactness a declared precision and scale admit.
     """
     decimal_type = _DECIMAL_TYPE.match(type_spelling)
     if decimal_type is not None:
-        return _is_exact_decimal(value, int(decimal_type.group(1)), int(decimal_type.group(2)))
+        return _decimal_member(value, int(decimal_type.group(1)), int(decimal_type.group(2)))
     if type_spelling == "boolean":
-        return isinstance(value, bool)
+        return value if isinstance(value, bool) else _NOT_ENCODED
     if type_spelling in _INTEGER_BOUNDS:
         bound = _INTEGER_BOUNDS[type_spelling]
-        return _is_integer(value) and -bound <= value < bound
+        return value if _is_integer(value) and -bound <= value < bound else _NOT_ENCODED
     if type_spelling in ("float32", "float64"):
-        return _float_at_width(value, binary32=type_spelling == "float32") is not None
+        narrowed = _float_at_width(value, binary32=type_spelling == "float32")
+        return _NOT_ENCODED if narrowed is None else narrowed
     if type_spelling == "string":
-        return isinstance(value, str)
+        return value if isinstance(value, str) else _NOT_ENCODED
     if type_spelling == "bytes":
-        return _parsed_string(_hex, value) is not None
+        return _parsed_string(_octets, value)
     if type_spelling == "date":
-        return _parsed_string(_date, value) is not None
+        return _parsed_string(_date, value)
     if type_spelling == "time":
         parsed = _parsed_string(_time, value)
-        return parsed is not None and parsed.tzinfo is None
+        return _NOT_ENCODED if parsed is _NOT_ENCODED or parsed.tzinfo is not None else parsed
     if type_spelling == "timestamp":
-        return _parsed_string(_instant, value) is not None
+        return _parsed_string(_instant, value)
     if type_spelling == "uuid":
-        return _parsed_string(_as_uuid, value) is not None
+        return _parsed_string(_as_uuid, value)
     raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
 
 
 def _float_at_width(value: Any, *, binary32: bool) -> float | None:
-    """A document number as the float of the declared width it names, or ``None``
-    when it names none.
+    """A document number as the float of the declared width represents it, or ``None``
+    for a number no float of that width holds.
 
-    A JSON number is a number rather than a rendering of one: ``20`` and ``20.0`` are
-    the same one (m-document-codec), so an integer names a float exactly when a float
-    of the width holds it exactly — ``2**24 + 1`` names no binary32 value and is
-    invalid stored data rather than a rounded one. A fractional number is read at the
-    declared width, because its encoding is the shortest number that decodes back to
-    the value at that width: ``1048576.2`` is the encoding of binary32
-    ``1048576.25``, which is what a Column of the same type reads back. A magnitude
-    the width cannot hold names no value of it either.
+    A JSON number is a number rather than a rendering of one, so an integer and a
+    fractional literal are read the same way: ``1048576.2`` and ``1048576.25`` both
+    name binary32 ``1048576.25``, which is what a Column of the same type reads back.
+    Which of them is that value's *encoding* is :func:`_shortest_number`'s question,
+    not this one. A magnitude the width cannot hold, a truth value, and a non-number
+    name no float at all.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -223,36 +249,65 @@ def _float_at_width(value: Any, *, binary32: bool) -> float | None:
         return None
     if not math.isfinite(widened):
         return None
-    narrowed = widened
-    if binary32:
-        try:
-            narrowed = struct.unpack("<f", struct.pack("<f", widened))[0]
-        except OverflowError:
-            return None
-    return None if isinstance(value, int) and narrowed != value else narrowed
+    if not binary32:
+        return widened
+    try:
+        return struct.unpack("<f", struct.pack("<f", widened))[0]
+    except OverflowError:
+        return None
 
 
-def _is_exact_decimal(value: Any, precision: int, scale: int) -> bool:
-    """Whether ``value`` spells a decimal ``precision`` and ``scale`` represent
-    exactly.
+def _shortest_number(value: Any, *, binary32: bool) -> Any:
+    """A float's document number: the fewest significant digits that decode back to it
+    at the declared width, nearest among equally short ones, and — where two are
+    equally near — the one whose last significant digit is even.
 
-    Trailing zeros carry no value, so ``"1.500"`` and ``"1.5"`` are one member of a
-    ``decimal(12,2)``; a value needing more fraction digits than ``scale`` admits, or
+    All three levels are load-bearing: binary32 ``1048576.25`` is decoded from both
+    ``1048576.2`` and ``1048576.3``, so the first two alone still admit two numbers.
+    ``%.{p}g`` supplies all three at once, because it renders the correctly-rounded
+    ``p``-digit decimal and breaks its own tie to even. "Decodes back to" is measured
+    through :func:`_float_at_width`, the same leg a read narrows by, so one number
+    cannot be the encoding while writing and not while reading.
+
+    A value naming no float of the width is returned unchanged rather than refused,
+    because :func:`encode_leaf`'s domain is a case's authored wire literal and
+    classifying one outside its declared space is the write validator's job
+    (`write-value-type-mismatch`), not a spelling's.
+    """
+    target = _float_at_width(value, binary32=binary32)
+    if target is None:
+        return value
+    for precision in range(1, _MAX_SIGNIFICANT_DIGITS + 1):
+        candidate = float(f"{target:.{precision}g}")
+        if _float_at_width(candidate, binary32=binary32) == target:
+            return candidate
+    return target  # pragma: no cover - 17 significant digits always round-trip
+
+
+def _decimal_member(value: Any, precision: int, scale: int) -> Any:
+    """The exact decimal ``value`` names, or :data:`_NOT_ENCODED` when it names none.
+
+    A decimal's document form is a JSON string, so a JSON number names nothing here.
+    Trailing zeros carry no value, so ``"1.500"`` and ``"1.5"`` name one member of a
+    ``decimal(12,2)`` — which of the two is that member's *spelling* is settled
+    afterwards — while a value needing more fraction digits than ``scale`` admits, or
     more significant digits than ``precision``, is a member of none, because storing
     it would require rounding.
     """
-    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-        return False
+    if not isinstance(value, str):
+        return _NOT_ENCODED
     try:
-        parsed = decimal.Decimal(str(value))
+        parsed = decimal.Decimal(value)
     except decimal.InvalidOperation:
-        return False
+        return _NOT_ENCODED
     _sign, digits, exponent = parsed.normalize().as_tuple()
     if not isinstance(exponent, int):
-        return False
+        return _NOT_ENCODED
     if digits == (0,):
-        return True
-    return -exponent <= scale and len(digits) + exponent + scale <= precision
+        return parsed
+    if -exponent > scale or len(digits) + exponent + scale > precision:
+        return _NOT_ENCODED
+    return parsed
 
 
 def _is_integer(value: Any) -> bool:
@@ -262,14 +317,14 @@ def _is_integer(value: Any) -> bool:
 
 
 def _parsed_string(parse: Callable[[Any], Any], value: Any) -> Any:
-    """``value`` parsed by the spelling its declared type stores, or ``None`` when it
-    is not a string or does not spell one."""
+    """``value`` parsed by the spelling its declared type stores, or
+    :data:`_NOT_ENCODED` when it is not a string or does not spell one."""
     if not isinstance(value, str):
-        return None
+        return _NOT_ENCODED
     try:
         return parse(value)
     except DocumentEncodingError:
-        return None
+        return _NOT_ENCODED
 
 
 def comparison_text(type_spelling: str, value: Any) -> str:
@@ -413,11 +468,16 @@ def _hex(value: Any) -> str:
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value).hex()
     if isinstance(value, str):
-        try:
-            return bytes.fromhex(value).hex()
-        except ValueError as exc:
-            raise DocumentEncodingError(f"{value!r} is not a hex octet spelling") from exc
+        return _octets(value).hex()
     raise DocumentEncodingError(f"{value!r} is not a byte sequence")
+
+
+def _octets(value: str) -> bytes:
+    """The octets a hex spelling names, whatever case or spacing it was written in."""
+    try:
+        return bytes.fromhex(value)
+    except ValueError as exc:
+        raise DocumentEncodingError(f"{value!r} is not a hex octet spelling") from exc
 
 
 def _date(value: Any) -> _dt.date:
