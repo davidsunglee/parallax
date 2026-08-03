@@ -16,21 +16,36 @@ goes, while everything here renders a step that carries no undecided fact.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from types import MappingProxyType
+from dataclasses import dataclass
 from typing import cast
 
-from parallax.core.base import INFINITY_LITERAL
+from parallax.core.base import INFINITY_LITERAL, NeutralType, decode_neutral_literal
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
+from parallax.core.document_codec import (
+    NULL,
+    DocumentShape,
+    Leaf,
+    Presence,
+    Present,
+    encode_document,
+    encode_leaf,
+    encode_many,
+    entity_shape,
+    occurrence_shape,
+)
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    Multiplicity,
     ValueObjectIdentity,
+    ValueObjectMetadata,
 )
 from parallax.core.sql_gen import Statement, compile_write_predicate
-from parallax.core.storage_layout import EntityLayoutView
+from parallax.core.storage_layout import DocumentPath, EntityLayoutView, RelationalDocument
 from parallax.core.unit_work.planned import (
     Finite,
     KeyTarget,
@@ -52,13 +67,34 @@ from parallax.core.unit_work.planned import (
     VersionGate,
     WriteTarget,
 )
-from parallax.snapshot.handle._family import declaring, entity_layout, version_attribute
+from parallax.snapshot.handle._family import (
+    PlacedMembers,
+    declaring,
+    entity_layout,
+    placed_members,
+    version_attribute,
+)
 from parallax.snapshot.handle._write_types import WriteLoweringError
 
 __all__ = ["lower_step"]
 
+
+@dataclass(frozen=True, slots=True)
+class _DocumentAssignments:
+    """The ordered paths one revising statement assigns inside one Structured Column.
+
+    A revising statement PATCHES rather than replaces (`m-storage-layout`): each
+    entry is one Document Path paired with the encoded document value landing
+    there, and the sequence is canonical logical placement order, which both
+    dialects' mutation expressions apply left to right (`m-dialect`).
+    """
+
+    assignments: tuple[tuple[tuple[str, ...], object], ...]
+
+
 # One rendered cell: the physical Column it occupies and the value that lands
-# there — a bind, or the generated-value expression the statement folds in.
+# there — a bind, the ordered path assignments a Structured Column takes, or the
+# generated-value expression the statement folds in.
 type _Cell = tuple[str, object]
 
 # One rendered predicate: its SQL text and the binds it contributes, in order.
@@ -89,11 +125,25 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Sta
     list, in entry order. The table-per-hierarchy tag is derived from the
     layout's own discriminator assignment at its own slot; no entry ever names
     it.
+
+    Under Relational Document Layout every document-resident member the entry
+    names collapses into the one shared Structured Column cell, which each entry
+    binds whether or not it names any: the Column is `NOT NULL` and every governed
+    row carries a document, the empty object included (`m-storage-layout`).
     """
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
+    placed = placed_members(meta, entity, view)
     rows = [
-        _member_cells(view, entry.row.attributes, entry.row.value_objects, entity, stamp_tag=True)
+        _member_cells(
+            view,
+            placed,
+            entry.row.attributes,
+            entry.row.value_objects,
+            entity,
+            stamp_tag=True,
+            opening=True,
+        )
         for entry in step.entries
     ]
     columns = ", ".join(dialect.quote(column) for column, _ in rows[0])
@@ -191,27 +241,54 @@ def _assignment_clause(
     version_column = None if version is None else _column(view, version.identity, entity)
     cells = _member_cells(
         view,
+        placed_members(meta, entity, view),
         assignments.attributes,
         assignments.value_objects,
         entity,
         stamp_tag=False,
+        opening=False,
     )
     ordered = [cell for cell in cells if cell[0] != version_column]
     ordered.extend(cell for cell in cells if cell[0] == version_column)
-    parts = [_assignment(column, value, dialect) for column, value in ordered]
-    binds = tuple(_assignment_bind(value) for _, value in ordered)
-    return ", ".join(parts), binds
+    parts: list[str] = []
+    binds: list[object] = []
+    for column, value in ordered:
+        part, cell_binds = _assignment(column, value, dialect)
+        parts.append(part)
+        binds.extend(cell_binds)
+    return ", ".join(parts), tuple(binds)
 
 
-def _assignment(column: str, value: object, dialect: Dialect) -> str:
+def _assignment(column: str, value: object, dialect: Dialect) -> tuple[str, Sequence[object]]:
+    """One `set` term and the binds it contributes, in rendered order.
+
+    Three forms, each decided by what the planner settled rather than by the
+    value's shape: the registry advance self-references its own Column, a
+    Structured Column takes the dialect's document mutation expression over the
+    paths this step assigns, and every other Column takes one bind.
+    """
     quoted = dialect.quote(column)
     if isinstance(value, SelfIncrement):
-        return f"{quoted} = {quoted} + ?"
-    return f"{quoted} = ?"
+        return f"{quoted} = {quoted} + ?", (value.amount,)
+    if isinstance(value, _DocumentAssignments):
+        expression, mutation_binds = dialect.document_mutation(quoted, value.assignments)
+        return f"{quoted} = {expression}", _document_binds(mutation_binds)
+    return f"{quoted} = ?", (value,)
 
 
-def _assignment_bind(value: object) -> object:
-    return value.amount if isinstance(value, SelfIncrement) else value
+def _document_binds(binds: Sequence[object]) -> tuple[object, ...]:
+    """The document mutation expression's binds as managed carriers.
+
+    The dialect decides each assigned value's SQL-level form — the document
+    itself for a composite, its JSON text for a scalar (`m-dialect`) — and names
+    no Database Port, so wrapping a composite in the neutral `m-db-port` carrier
+    the adapter hands to its driver's structured-document bind happens here,
+    exactly as it does for a whole-document cell one clause family over.
+    """
+    return tuple(
+        JsonDocument(cast("object", bind)) if isinstance(bind, (dict, list)) else bind
+        for bind in binds
+    )
 
 
 def _target_predicate(
@@ -332,19 +409,24 @@ def _temporal_gate(
 
 def _member_cells(
     view: EntityLayoutView,
+    placed: PlacedMembers,
     attributes: Mapping[AttributeIdentity, object],
     value_objects: Mapping[ValueObjectIdentity, object],
     entity: EntityMetadata,
     *,
     stamp_tag: bool,
+    opening: bool,
 ) -> Sequence[_Cell]:
     """The named members as ``(column, value)`` pairs, in Table Layout slot order.
 
-    The view supplies both the physical Column each member identity occupies and
-    the one order every cell follows, so a caller's own member order never reaches
-    the statement. A Value Object occurrence binds as one
-    :class:`~parallax.core.db_port.JsonDocument` at its Document-tier slot — the
-    whole document, never decomposed.
+    The view supplies both the physical Column each member occupies and the one
+    order every cell follows, so a caller's own member order never reaches the
+    statement. A Value Object occurrence with a Column of its own binds as one
+    :class:`~parallax.core.db_port.JsonDocument` there — the whole document,
+    never decomposed — and every document-resident member instead collapses into
+    the Table's one shared Structured Column, whose cell an ``opening`` statement
+    fills with the row's complete document and a revising one with the ordered
+    path assignments it patches.
 
     ``stamp_tag`` additionally emits the table-per-hierarchy discriminator at its
     own slot. An opening row writes it because the row's concrete subtype is being
@@ -358,35 +440,191 @@ def _member_cells(
         contributor = slot.contributor
         if discriminator is not None and slot == discriminator.slot:
             cells.append((slot.column.name, discriminator.value))
+        elif isinstance(contributor, RelationalDocument):
+            resident = _resident_members(placed, slot.column.name)
+            if opening:
+                cells.append(
+                    (
+                        slot.column.name,
+                        JsonDocument(_row_document(resident, attributes, value_objects)),
+                    )
+                )
+            else:
+                patches = _patches(resident, attributes, value_objects)
+                if patches:
+                    cells.append((slot.column.name, _DocumentAssignments(patches)))
+            matched += _resident_count(resident, attributes, value_objects)
         elif isinstance(contributor, AttributeIdentity) and contributor in attributes:
             cells.append((slot.column.name, attributes[contributor]))
             matched += 1
         elif isinstance(contributor, ValueObjectIdentity) and contributor in value_objects:
-            cells.append(
-                (
-                    slot.column.name,
-                    JsonDocument(_document_bind_value(value_objects[contributor])),
-                )
-            )
+            occurrence = _occurrence_of(placed, contributor)
+            value = value_objects[contributor]
+            document = None if value is None else _occurrence_document(occurrence, value)
+            cells.append((slot.column.name, JsonDocument(document)))
             matched += 1
     _require_placed(matched, len(attributes) + len(value_objects), entity)
     return cells
 
 
-def _document_bind_value(value: object) -> object:
-    if isinstance(value, (MappingProxyType, tuple)):
-        return _mutable_document(cast("object", value))
-    return value
+@dataclass(frozen=True, slots=True)
+class _ResidentMembers:
+    """The members one Structured Column's document carries, canonical order."""
+
+    attributes: tuple[tuple[AttributeMetadata, tuple[str, ...]], ...]
+    value_objects: tuple[tuple[ValueObjectMetadata, tuple[str, ...]], ...]
 
 
-def _mutable_document(value: object) -> object:
-    if isinstance(value, Mapping):
-        mapping = cast("Mapping[object, object]", value)
-        return {key: _mutable_document(nested) for key, nested in mapping.items()}
-    if isinstance(value, tuple):
-        sequence = cast("Sequence[object]", value)
-        return [_mutable_document(nested) for nested in sequence]
-    return value
+def _resident_members(placed: PlacedMembers, column: str) -> _ResidentMembers:
+    return _ResidentMembers(
+        tuple(
+            (attribute, placement.path)
+            for attribute, placement in placed.attributes
+            if isinstance(placement, DocumentPath) and placement.slot.column.name == column
+        ),
+        tuple(
+            (occurrence, placement.path)
+            for occurrence, placement in placed.value_objects
+            if isinstance(placement, DocumentPath) and placement.slot.column.name == column
+        ),
+    )
+
+
+def _resident_count(
+    resident: _ResidentMembers,
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> int:
+    """How many of this step's named members the Structured Column accounts for."""
+    return sum(attribute.identity in attributes for attribute, _path in resident.attributes) + sum(
+        occurrence.identity in value_objects for occurrence, _path in resident.value_objects
+    )
+
+
+def _row_document(
+    resident: _ResidentMembers,
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> object:
+    """One opening row's complete Structured Column document.
+
+    Composed through the codec against the shape of every APPLICABLE
+    document-resident member rather than only the named ones, so presence
+    classification stays the codec's: a member the row omits is absent, one the
+    row sets to ``None`` is JSON null, and a `many` occurrence always contributes
+    its array even where the row never mentions it (`m-document-codec`).
+    """
+    shape = entity_shape(
+        tuple(attribute for attribute, _path in resident.attributes),
+        tuple(occurrence for occurrence, _path in resident.value_objects),
+    )
+    values: dict[str, Presence] = {}
+    for attribute, _path in resident.attributes:
+        if attribute.identity in attributes:
+            raw = attributes[attribute.identity]
+            values[attribute.identity.name] = (
+                NULL if raw is None else Present(decode_neutral_literal(raw, attribute.type))
+            )
+    for occurrence, _path in resident.value_objects:
+        if occurrence.identity in value_objects:
+            raw = value_objects[occurrence.identity]
+            values[occurrence.identity.path[-1]] = (
+                NULL if raw is None else Present(_occurrence_document(occurrence, raw))
+            )
+    return encode_document(shape, values)
+
+
+def _patches(
+    resident: _ResidentMembers,
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> tuple[tuple[tuple[str, ...], object], ...]:
+    """The ordered path assignments a revising statement applies.
+
+    A revising statement patches only the paths it assigns, so every key it does
+    not name survives — a model member the step left alone and a key a newer
+    application version wrote alike (`m-storage-layout`). An assigned ``None``
+    writes JSON null rather than removing the key, which is the one not-present
+    state a NULL Column also has, and an assigned occurrence replaces its whole
+    subtree.
+    """
+    patches: list[tuple[tuple[str, ...], object]] = []
+    for attribute, path in resident.attributes:
+        if attribute.identity in attributes:
+            raw = attributes[attribute.identity]
+            patches.append((path, None if raw is None else _leaf(attribute.type, raw)))
+    for occurrence, path in resident.value_objects:
+        if occurrence.identity in value_objects:
+            raw = value_objects[occurrence.identity]
+            patches.append((path, None if raw is None else _occurrence_document(occurrence, raw)))
+    return tuple(patches)
+
+
+def _occurrence_of(placed: PlacedMembers, identity: ValueObjectIdentity) -> ValueObjectMetadata:
+    for occurrence, _placement in placed.value_objects:
+        if occurrence.identity == identity:
+            return occurrence
+    raise WriteLoweringError(  # pragma: no cover - a slot's contributor is always placed
+        f"{identity.path[-1]!r}: the occurrence occupying a Column is not an applicable member"
+    )
+
+
+def _occurrence_document(occurrence: ValueObjectMetadata, value: object) -> object:
+    """One Value Object occurrence's document, spelled by the codec.
+
+    The write input carries each leaf in whatever portable spelling it was
+    authored or built in; the codec owns the ONE spelling stored, so the value
+    the statement binds is composed here rather than handed to a serializer as it
+    arrived. That is what gives a ``decimal``, ``bytes``, ``date``, ``time``,
+    ``timestamp``, or ``uuid`` leaf inside an occurrence its storage form on the
+    write lane, and it is idempotent over an already-encoded document because
+    every decode leg is the encode leg's inverse (`m-document-codec`).
+    """
+    shape = occurrence_shape(occurrence)
+    if occurrence.multiplicity is Multiplicity.MANY:
+        elements = cast("Sequence[object]", value)
+        return encode_many(shape, [_element_presences(shape, element) for element in elements])
+    return encode_document(shape, _element_presences(shape, value))
+
+
+def _element_presences(shape: DocumentShape, value: object) -> dict[str, Presence]:
+    """One document's members as presences, keyed by canonical name.
+
+    A key the input omits contributes no entry, so the codec classifies it
+    ``Missing``; an authored ``None`` is an explicit null. A nested occurrence
+    composes through the codec in turn, so nothing here assembles a JSON object
+    or array of its own.
+    """
+    raw: Mapping[str, object] = (
+        cast("Mapping[str, object]", value) if isinstance(value, Mapping) else {}
+    )
+    presences: dict[str, Presence] = {}
+    for member in shape.members:
+        if member.name not in raw:
+            continue
+        nested = raw[member.name]
+        if nested is None:
+            presences[member.name] = NULL
+        elif isinstance(member, Leaf):
+            presences[member.name] = Present(decode_neutral_literal(nested, member.type))
+        elif member.multiplicity is Multiplicity.MANY:
+            elements = cast("Sequence[object]", nested)
+            presences[member.name] = Present(
+                encode_many(
+                    member.shape,
+                    [_element_presences(member.shape, element) for element in elements],
+                )
+            )
+        else:
+            presences[member.name] = Present(
+                encode_document(member.shape, _element_presences(member.shape, nested))
+            )
+    return presences
+
+
+def _leaf(neutral_type: NeutralType, value: object) -> object:
+    """One leaf's document spelling, from whatever carrier it arrived in."""
+    return encode_leaf(neutral_type, decode_neutral_literal(value, neutral_type))
 
 
 def _require_placed(matched: int, named: int, entity: EntityMetadata) -> None:

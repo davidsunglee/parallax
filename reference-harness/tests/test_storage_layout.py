@@ -884,18 +884,24 @@ def test_the_capability_gate_names_every_declared_shape_the_owner_matches() -> N
     # root-owned declaration, so a model matching several is refused once and
     # names all of them. Removing one matched entry therefore leaves the others
     # matched, and the owner is still refused for every shape that remains.
-    definition = _document_standalone(
-        attributes=[
-            _attribute("id", primary_key=True),
-            {"name": "revision", "type": "int32", "optimisticLocking": True},
-        ]
+    definitions = _document_hierarchy()
+    definitions[0]["attributes"].append(
+        {"name": "revision", "type": "int32", "optimisticLocking": True}
     )
     with pytest.raises(RejectionError) as caught:
-        validate_storage_layout([definition])
+        validate_storage_layout(definitions)
     assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
-    assert "a standalone Entity" in caught.value.detail
+    assert "a table-per-hierarchy family" in caught.value.detail
     assert "an explicit optimistic-lock Attribute" in caught.value.detail
-    assert "'payload'" in caught.value.detail
+    assert "'doc'" in caught.value.detail
+
+
+def test_a_standalone_document_layout_owner_is_no_longer_refused() -> None:
+    # The standalone entry left the scope list once this build executed that
+    # shape's reads and writes alike, so the gate is silent for a well-formed
+    # standalone declaration — which is what lets models/document-layout.yaml sit
+    # in the corpus at all.
+    validate_storage_layout([_document_standalone()])
 
 
 def _document_hierarchy() -> list[dict[str, Any]]:
@@ -958,13 +964,11 @@ def test_document_resident_members_claim_no_column_and_cannot_collide() -> None:
 
 def test_a_direct_role_attribute_may_still_override_its_column() -> None:
     # Role 1 stays a direct Column, so its override names a Column the member
-    # really occupies. Only the capability gate refuses this model.
+    # really occupies and nothing refuses this model.
     definition = _document_standalone(
         attributes=[_attribute("id", column="note_key", primary_key=True)]
     )
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout([definition])
-    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+    validate_storage_layout([definition])
 
 
 def test_restating_a_document_resident_members_conventional_column_is_accepted() -> None:
@@ -974,9 +978,7 @@ def test_restating_a_document_resident_members_conventional_column_is_accepted()
             _attribute("displayName", column="display_name"),
         ]
     )
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout([definition])
-    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+    validate_storage_layout([definition])
 
 
 def test_an_index_over_a_document_resident_attribute_is_refused() -> None:
@@ -995,9 +997,7 @@ def test_an_index_over_a_direct_role_attribute_still_resolves() -> None:
         attributes=[_attribute("id", primary_key=True)],
         indices=[{"name": "byKey", "attributes": ["id"]}],
     )
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout([definition])
-    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+    validate_storage_layout([definition])
 
 
 def _note_owning_a_holder(*, join_source: str = "ownerId") -> list[dict[str, Any]]:
@@ -1277,6 +1277,87 @@ def test_a_fixture_row_naming_the_discriminator_is_not_an_authorable_member() ->
         load_fixture_rows(corrupted, cast("Any", _RecordingProvider()))
 
 
+def _document_note_model(rows: list[dict[str, Any]]) -> Model:
+    """A standalone Relational Document Layout Entity plus its fixture rows.
+
+    The capability gate still refuses the shape, so no corpus model can carry it;
+    the layout compiler and the fixture loader below are the ones the corpus will
+    reach once the gate opens.
+    """
+    definition = _document_standalone(
+        attributes=[
+            _attribute("id", primary_key=True),
+            {"name": "displayName", "type": "string", "nullable": True},
+            {"name": "joinedOn", "type": "date", "nullable": True},
+        ],
+        valueObjects=[
+            {
+                "name": "address",
+                "nullable": True,
+                "attributes": [{"name": "city", "type": "string"}],
+            },
+            {
+                "name": "tags",
+                "multiplicity": "many",
+                "attributes": [{"name": "label", "type": "string"}],
+            },
+        ],
+    )
+    return Model(
+        Path("models/note.yaml"),
+        {"entity": definition},
+        fixtures=cast("Any", {"Note": rows}),
+    )
+
+
+def test_fixture_load_composes_one_document_from_a_rows_own_members() -> None:
+    model = _document_note_model(
+        [
+            {
+                "id": 1,
+                "displayName": "Ada",
+                "joinedOn": "2026-01-15",
+                "address": {"city": "Oslo"},
+                "tags": [{"label": "founder"}],
+            }
+        ]
+    )
+    provider = _RecordingProvider()
+    load_fixture_rows(model, cast("Any", provider))
+    ((table, columns, rows),) = provider.loads
+    assert (table, columns) == ("note", ["id", "payload"])
+    # Each leaf is authored as the ordinary neutral wire value a direct Column
+    # would take and the codec spells it, so one fixture file describes one
+    # logical row under either layout.
+    assert rows == [
+        [
+            1,
+            {
+                "displayName": "Ada",
+                "joinedOn": "2026-01-15",
+                "address": {"city": "Oslo"},
+                "tags": [{"label": "founder"}],
+            },
+        ]
+    ]
+
+
+def test_fixture_load_keeps_the_document_presence_states_apart() -> None:
+    model = _document_note_model([{"id": 2, "displayName": None}])
+    provider = _RecordingProvider()
+    load_fixture_rows(model, cast("Any", provider))
+    ((_table, _columns, rows),) = provider.loads
+    # An omitted member contributes no key, an authored null contributes JSON
+    # null, and a `many` occurrence always contributes its array.
+    assert rows == [[2, {"displayName": None, "tags": []}]]
+
+
+def test_a_fixture_row_naming_no_document_member_is_still_refused() -> None:
+    model = _document_note_model([{"id": 3, "mystery": 1}])
+    with pytest.raises(ValueError, match="unknown member"):
+        load_fixture_rows(model, cast("Any", _RecordingProvider()))
+
+
 def test_case_runner_consumes_storage_layout_for_validation_reads_and_observation() -> None:
     source = Path(case_runner.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -1290,9 +1371,11 @@ def test_case_runner_consumes_storage_layout_for_validation_reads_and_observatio
         "ColumnContributor",
         "ColumnSlot",
         "ColumnTier",
+        "DocumentPath",
         "PositionBranch",
         "PositionColumn",
         "PositionLayoutView",
+        "RelationalDocument",
         "STORAGE_LAYOUT_MODEL_REJECTED_RULES",
         "TEMPORAL_DIMENSION_RANK",
         "TableLayout",

@@ -545,13 +545,10 @@ def _refused_shapes(*declarations: Declaration) -> tuple[str, ...]:
     )
 
 
-def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
-    # The scope list is a set of independent predicates over one accepted
-    # root-owned declaration, so a model matching several is refused once and
-    # names all of them. Removing one matched entry therefore leaves the others
-    # matched, and the owner is still refused for every shape that remains.
+def _versioned_document(*, column: str = "payload") -> Declaration:
     versioned = attribute(_SIBLING, "revision")
-    owner = _standalone_document(
+    return _standalone_document(
+        column=column,
         attributes=(
             key(_SIBLING),
             AttributeMetadata(
@@ -560,16 +557,46 @@ def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
                 storage=versioned.storage,
                 optimistic_locking=True,
             ),
-        )
+        ),
     )
-    assert _refused_shapes(owner) == (
-        "a standalone Entity",
+
+
+def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
+    # The scope list is a set of independent predicates over one accepted
+    # root-owned declaration, so a model matching several is refused once and
+    # names all of them. Removing one matched entry therefore leaves the others
+    # matched, and the owner is still refused for every shape that remains.
+    root = Declaration(
+        identity=_ROOT,
+        container=Table("record"),
+        layout=Document(Column("doc")),
+        attributes=(
+            key(_ROOT),
+            AttributeMetadata(
+                identity=attribute(_ROOT, "revision").identity,
+                type=attribute(_ROOT, "revision").type,
+                storage=attribute(_ROOT, "revision").storage,
+                optimistic_locking=True,
+            ),
+        ),
+        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+    )
+    assert _refused_shapes(root, _concrete(_LEAF)) == (
+        "a table-per-hierarchy family",
         "an explicit optimistic-lock Attribute",
     )
 
 
+def test_a_standalone_layout_owner_is_no_longer_refused() -> None:
+    # The standalone entry left the scope list once this build executed that
+    # shape's reads and writes alike, so a well-formed standalone declaration
+    # raises nothing here — which is what lets models/document-layout.yaml sit in
+    # the corpus and form at all.
+    assert _rule_issues(_standalone_document()) == ()
+
+
 def test_the_gate_locates_the_refusal_at_the_layout_owner_with_no_related_location() -> None:
-    (issue,) = _rule_issues(_standalone_document(column="body"))
+    (issue,) = _rule_issues(_versioned_document(column="body"))
     assert issue.code == _CAPABILITY
     assert issue.location == EntityLocation(_SIBLING)
     assert issue.related == ()
@@ -690,7 +717,7 @@ def test_a_direct_role_attribute_keeps_its_column_override_under_a_document_layo
             ),
         ),
     )
-    assert [issue.code for issue in _rule_issues(owner)] == [_CAPABILITY]
+    assert _rule_issues(owner) == ()
 
 
 def test_restating_a_document_resident_members_conventional_column_is_not_a_rejection() -> None:
@@ -700,7 +727,7 @@ def test_restating_a_document_resident_members_conventional_column_is_not_a_reje
     owner = _standalone_document(
         attributes=(key(_SIBLING), attribute(_SIBLING, "displayName", type=STRING))
     )
-    assert [issue.code for issue in _rule_issues(owner)] == [_CAPABILITY]
+    assert _rule_issues(owner) == ()
 
 
 def test_an_index_over_a_document_resident_attribute_is_located_at_the_index() -> None:
@@ -729,7 +756,7 @@ def test_an_index_over_a_direct_role_attribute_still_resolves_to_a_column() -> N
         attributes=(key_attribute,),
         indices=(IndexMetadata(IndexIdentity(_SIBLING, "byKey"), (key_attribute.identity,)),),
     )
-    assert [issue.code for issue in _rule_issues(owner)] == [_CAPABILITY]
+    assert _rule_issues(owner) == ()
 
 
 _HOLDER = identity("Holder")

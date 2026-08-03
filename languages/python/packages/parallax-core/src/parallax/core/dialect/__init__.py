@@ -11,9 +11,11 @@ It performs no I/O and imports no driver. ``m-dialect`` depends only on ``m-core
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 from parallax.core.base import (
     Boolean,
@@ -48,6 +50,21 @@ _SIMPLE = re.compile(r"^[a-z][a-z0-9_]*$")
 # The neutral infinity sentinel (the open upper bound of a temporal interval,
 # m-core); Postgres binds it as native `'infinity'::timestamptz` at the adapter.
 INFINITY: Final[str] = "infinity"
+
+
+def _document_value_bind(value: object) -> object:
+    """One assigned document value as the mutation expression's hole takes it.
+
+    A composite crosses the seam as the portable document it is, so the adapter
+    hands it to the driver's structured-document wrapper; a JSON scalar, which no
+    structural authoring form distinguishes from an ordinary scalar bind, crosses
+    as the JSON text both dialects' value expressions parse (`m-case-format`).
+    Serializing it here is what keeps a key order and a separator convention out
+    of every golden — a scalar has neither.
+    """
+    if isinstance(value, (dict, list)):
+        return cast("object", value)
+    return json.dumps(value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +210,67 @@ class Dialect:
             path_binds = []
         fragment = f"case when jsonb_typeof({extract}) = ? then {extract} else cast(? as jsonb) end"
         return fragment, [*path_binds, "array", *path_binds, "[]"]
+
+    # -- structured documents (m-storage-layout) --------------------------- #
+    def document_path(self, segments: Sequence[str]) -> str:
+        """The bind value addressing ``segments`` inside a document, for a mutation.
+
+        A dialect decision of its own, and it diverges from the extraction path
+        binds above: Postgres `jsonb_set` takes ONE text-array path (`{a,b}`)
+        where `jsonb_extract_path_text` takes one bind per segment, and MariaDB
+        `json_set` takes the same `$.a.b` JSON-path string its `json_value`
+        extraction does.
+        """
+        return "{" + ",".join(segments) + "}"
+
+    def document_mutation(
+        self, document: str, assignments: Sequence[tuple[Sequence[str], object]]
+    ) -> tuple[str, list[object]]:
+        """The `SET` expression assigning each path of ``assignments`` inside
+        ``document``, and its ordered binds (m-dialect *Document mutation-expression
+        form*).
+
+        ``document`` is an ALREADY-RENDERED Structured Column reference, for the
+        same reason :meth:`nested_extract` takes one. Each assignment is its
+        Document Path segments paired with the encoded document value
+        (`m-document-codec`), and the sequence is applied left to right in the
+        order given — canonical logical placement order, which `m-sql` fixes and
+        this seam MUST NOT reorder, deduplicate, or merge. Postgres composes the
+        assignments as NESTED `jsonb_set` calls (the innermost is the first
+        assignment) while MariaDB uses one native N-pair `json_set`; either way
+        the binds read path, value, path, value in assignment order.
+
+        The value hole is a per-dialect **expression**, not a bare `?`: Postgres
+        resolves a bare parameter there to `jsonb_set`'s declared `jsonb` and
+        rejects every scalar bind, while MariaDB accepts a scalar but silently
+        escapes a composite into a string. `cast(? as jsonb)` and
+        `json_extract(?, '$')` are the two expressions that accept one authored
+        bind form on both engines. That form is the document itself for a
+        composite — the adapter hands it to the driver's structured-document
+        wrapper — and the value's JSON **text** for a scalar, which no structural
+        authoring form could distinguish from an ordinary scalar bind
+        (`m-case-format`).
+        """
+        expression = document
+        binds: list[object] = []
+        for segments, value in assignments:
+            expression = f"jsonb_set({expression}, ?, cast(? as jsonb))"
+            binds.append(self.document_path(segments))
+            binds.append(_document_value_bind(value))
+        return expression, binds
+
+    def document_equals(self, left: str, right: str) -> str:
+        """The predicate deciding whether two documents are structurally equal.
+
+        A dialect decision because the two engines do not agree by default:
+        Postgres `jsonb` normalizes on storage — whitespace removed, duplicate
+        keys reduced, numerics canonicalized — so `=` is already structural,
+        while MariaDB `json` is a `longtext` alias whose `=` is a TEXT comparison
+        sensitive to key order and whitespace, and needs `json_equals`. A
+        consumer comparing documents MUST obtain the comparison here, or one
+        assertion would mean different things on the two engines.
+        """
+        return f"{left} = {right}"
 
     # -- placeholders ------------------------------------------------------ #
     def to_driver_sql(self, canonical_sql: str) -> str:

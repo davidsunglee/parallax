@@ -12,6 +12,7 @@ proven by the Docker provider lane.
 from __future__ import annotations
 
 import pytest
+from _document_layout_support import document_model
 
 from parallax.conformance import models, provision
 from parallax.core.db_port import JsonDocument
@@ -595,6 +596,81 @@ def test_fixture_statements_omit_an_absent_cell_and_keep_the_document_last() -> 
     # document keeps the final position among the columns that remain.
     assert omitted[0] == "insert into layout_profile (id, label, contact) values (?, ?, ?)"
     assert isinstance(omitted[1][2], JsonDocument)
+
+
+# --------------------------------------------------------------------------- #
+# Relational Document Layout (m-storage-layout). The capability gate still      #
+# refuses the shape at whole-model formation, so the model is accepted directly #
+# (`_document_layout_support`); DDL derivation and fixture composition below    #
+# are the production ones.                                                      #
+# --------------------------------------------------------------------------- #
+_DOCUMENT = document_model()
+
+
+def test_schema_statements_render_the_structured_column_last_and_not_null() -> None:
+    (marker, person) = provision.schema_statements(_DOCUMENT)
+    assert person == (
+        "create table person (id bigint not null, payload jsonb not null, primary key (id))"
+    )
+    # An Entity with no document-resident member still gets the column: the
+    # layout is root-owned and every governed row carries a document.
+    assert marker == (
+        "create table marker (id bigint not null, payload jsonb not null, primary key (id))"
+    )
+    assert "default" not in person
+
+
+def test_fixture_statements_compose_one_document_from_the_rows_own_members() -> None:
+    (statement,) = provision.fixture_statements(
+        _DOCUMENT,
+        {
+            "parallax.test.Person": [
+                {
+                    "id": 1,
+                    "displayName": "Ada",
+                    "score": 7,
+                    "joinedOn": "2026-01-15",
+                    "address": {"city": "Oslo", "geo": {"country": "NO"}},
+                    "tags": [{"label": "founder"}],
+                }
+            ]
+        },
+    )
+    sql, binds = statement
+    assert sql == "insert into person (id, payload) values (?, ?)"
+    # Each leaf is authored as the ordinary neutral wire value a direct Column
+    # would take and the codec spells it, so one fixture file describes one
+    # logical row under either layout.
+    assert binds == [
+        1,
+        JsonDocument(
+            {
+                "displayName": "Ada",
+                "score": 7,
+                "joinedOn": "2026-01-15",
+                "address": {"city": "Oslo", "geo": {"country": "NO"}},
+                "tags": [{"label": "founder"}],
+            }
+        ),
+    ]
+
+
+def test_fixture_statements_keep_the_three_presence_states_apart() -> None:
+    (statement,) = provision.fixture_statements(
+        _DOCUMENT,
+        {"parallax.test.Person": [{"id": 2, "displayName": None}]},
+    )
+    _, binds = statement
+    # An omitted member contributes no key, an authored null contributes JSON
+    # null, and a `many` occurrence always contributes its array.
+    assert binds[1] == JsonDocument({"displayName": None, "tags": []})
+
+
+def test_fixture_statements_bind_the_empty_document_for_a_row_with_no_document_member() -> None:
+    (statement,) = provision.fixture_statements(_DOCUMENT, {"parallax.test.Marker": [{"id": 3}]})
+    sql, binds = statement
+    assert sql == "insert into marker (id, payload) values (?, ?)"
+    assert binds == [3, JsonDocument({})]
 
 
 def test_an_axis_naming_an_unknown_attribute_never_reaches_provisioning() -> None:

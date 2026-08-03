@@ -1,0 +1,79 @@
+# Benchmark fixture (m-perf-bench): the Relational Document Layout query and write mix.
+#
+# The benchmark README's "Add Or Change Core Behavior" rule asks for a benchmark once
+# a change makes a query or write SHAPE part of the claim, which is what this layout
+# does: the same members read through one Structured Column rather than through five
+# columns, and the same members written as one document rather than five cells.
+#
+# The dataset is the corpus model's own three rows, loaded through the same fixture
+# path every case uses, so the document each row stores is the codec's rather than
+# this file's.
+#
+# Three workloads, each with `expectRoundTrips`, so the fixture doubles as a
+# round-trip regression check rather than only a wall-time reading:
+#
+#   - document-path-filter (200): a scalar path predicate through the typed-cast seam
+#   - instance-read (200):        the whole document projected once and fanned out
+#   - patch-update (100):         a two-assignment patch, ONE statement
+#
+# `patch-update` is the one that fails loudly on a regression rather than merely
+# reading slower: an implementation that reverted to read-modify-write of the whole
+# Structured Column would issue a SELECT before its UPDATE and take two round trips
+# where the contract takes one, which `expectRoundTrips: 1` refuses even when the
+# wall time looks fine. Its binds carry the `$i` sentinel so each repeat patches a
+# distinct path value and the timing loop stays idempotent.
+tags: [m-perf-bench, m-storage-layout, document-layout]
+model: models/document-layout.yaml
+dataset:
+  rows:
+    Traveler:
+      - id: 1
+        displayName: Ada
+        score: 7
+        joinedOn: "2026-01-15"
+        note: north wing
+        address: { city: Oslo, geo: { country: "NO" } }
+        tags: [{ label: founder }]
+      - id: 2
+        displayName: Bo
+        score: 30
+        joinedOn: "2025-12-31"
+        address: { city: Bergen, geo: { country: "NO" } }
+      - id: 3
+        displayName: Cyd
+        score: null
+        joinedOn: null
+        note: null
+        address: null
+workloads:
+  - name: document-path-filter
+    note: a scalar document-path predicate through the m-dialect typed cast — one statement, one round trip
+    iterations: 200
+    expectRoundTrips: 1
+    statements:
+      - sql:
+          postgres: select t0.id, t0.payload from traveler t0 where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ?
+          mariadb: select t0.id, t0.payload from traveler t0 where cast(json_value(t0.payload, ?) as signed) > ?
+        binds:
+          postgres: [score, 5]
+          mariadb: ['$.score', 5]
+  - name: instance-read
+    note: the instance-form read — the Structured Column projected ONCE, every member decoded from it
+    iterations: 200
+    expectRoundTrips: 1
+    statements:
+      - sql:
+          postgres: select t0.id, t0.payload from traveler t0
+          mariadb: select t0.id, t0.payload from traveler t0
+  - name: patch-update
+    kind: write
+    note: a two-assignment patch update — ONE statement, no resolving read; a read-modify-write regression takes two round trips
+    iterations: 100
+    expectRoundTrips: 1
+    statements:
+      - sql:
+          postgres: update traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+          mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
+        binds:
+          postgres: ['{displayName}', '"Ada"', '{score}', '$i', 1]
+          mariadb: ['$.displayName', '"Ada"', '$.score', '$i', 1]

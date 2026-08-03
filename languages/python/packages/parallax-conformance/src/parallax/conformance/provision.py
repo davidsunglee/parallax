@@ -20,20 +20,32 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from parallax.conformance import case_format, models
-from parallax.core import storage_layout
-from parallax.core.base import STRING
+from parallax.core import inheritance, storage_layout
+from parallax.core.base import JSON, STRING, decode_neutral_literal
 from parallax.core.db_port import DbPort, JsonDocument
 from parallax.core.dialect import POSTGRES, Dialect
+from parallax.core.document_codec import (
+    NULL,
+    DocumentShape,
+    Leaf,
+    Presence,
+    Present,
+    encode_document,
+    entity_shape,
+)
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
     Column,
+    EntityIdentity,
     IndexMetadata,
     Metamodel,
     ValueObjectIdentity,
+    ValueObjectMetadata,
 )
 from parallax.core.storage_layout import (
     ColumnSlot,
+    DocumentPath,
     EntityLayoutView,
     InheritanceDiscriminator,
     RelationalDocument,
@@ -79,20 +91,22 @@ def schema_statements(model: Metamodel, dialect: Dialect = POSTGRES) -> list[str
 _TAG_COLUMN_TYPE = STRING
 _TAG_COLUMN_MAX_LENGTH = 32
 
-# A top-level Value Object occupies one structured-document column
-# (m-value-object); nested occurrences and inner fields live inside it. A
-# Relational Document Layout's shared Structured Column is the same physical
-# type and carries the document-resident members of every governed row.
-_DOCUMENT_COLUMN_TYPE = "jsonb"
-
 
 def _slot_type(model: Metamodel, slot: ColumnSlot, dialect: Dialect) -> str:
-    """The physical column type of one slot's contributor."""
+    """The physical column type of one slot's contributor.
+
+    A top-level Value Object occupies one structured-document column
+    (m-value-object); nested occurrences and inner fields live inside it. A
+    Relational Document Layout's shared Structured Column is the same neutral
+    `json` type and carries the document-resident members of every governed row,
+    so both reach the dialect's own mapping rather than a spelling stated here.
+    Its `not null` comes from the slot's effective nullability, not from this.
+    """
     contributor = slot.contributor
     if isinstance(contributor, InheritanceDiscriminator):
         return dialect.column_type(_TAG_COLUMN_TYPE, _TAG_COLUMN_MAX_LENGTH)
     if isinstance(contributor, (ValueObjectIdentity, RelationalDocument)):
-        return _DOCUMENT_COLUMN_TYPE
+        return dialect.column_type(JSON, None)
     attribute = _declared_attribute(model, contributor)
     return dialect.column_type(attribute.type, attribute.max_length)
 
@@ -186,13 +200,74 @@ def _fixture_member(slot: ColumnSlot) -> tuple[str, bool] | None:
     return None
 
 
+def _document_members(
+    model: Metamodel, layout: TableLayout, entity: EntityIdentity
+) -> tuple[tuple[AttributeMetadata, ...], tuple[ValueObjectMetadata, ...]]:
+    """``entity``'s applicable members that live inside the shared Structured Column.
+
+    Member Placement decides residency (`m-storage-layout`), and the applicable
+    member sequences come from the Inheritance view rather than from the Entity's
+    own declarations, so an inheritance participant's inherited members reach the
+    document exactly as they reach a Column.
+    """
+    view = inheritance.view(model).entity(entity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return (), ()
+    return (
+        tuple(
+            attribute
+            for attribute in view.applicable_attributes
+            if isinstance(layout.placement(attribute.identity), DocumentPath)
+        ),
+        tuple(
+            value_object
+            for value_object in view.applicable_value_objects
+            if isinstance(layout.placement(value_object.identity), DocumentPath)
+        ),
+    )
+
+
+def _fixture_document(shape: DocumentShape, row: Mapping[str, object]) -> object:
+    """One fixture row's Structured Column, composed through the codec.
+
+    Each document-resident member is authored in the row under its own member
+    name, in the very spelling it would take if the layout had given it a Column
+    of its own — a leaf as the neutral wire value, an occurrence as that
+    occurrence's own document — so one fixture file describes one logical row
+    under either layout. The codec then spells every leaf and fixes presence: an
+    omitted key stays absent, an authored null becomes JSON null, and a `many`
+    occurrence always contributes its array.
+    """
+    values: dict[str, Presence] = {}
+    for member in shape.members:
+        if member.name not in row:
+            continue
+        raw = row[member.name]
+        if raw is None:
+            values[member.name] = NULL
+            continue
+        values[member.name] = Present(
+            decode_neutral_literal(raw, member.type) if isinstance(member, Leaf) else raw
+        )
+    return encode_document(shape, values)
+
+
 def _fixture_insert(
-    view: EntityLayoutView, row: Mapping[str, object], dialect: Dialect
+    view: EntityLayoutView, shape: DocumentShape, row: Mapping[str, object], dialect: Dialect
 ) -> tuple[str, list[object]]:
-    """One fixture row's ``insert``, following the Entity Layout slot order."""
+    """One fixture row's ``insert``, following the Entity Layout slot order.
+
+    The shared Structured Column always binds, even for a row authoring no
+    document-resident member: it is `NOT NULL` and every governed row carries a
+    document, the empty object included (`m-storage-layout`).
+    """
     columns: list[str] = []
     binds: list[object] = []
     for slot in view.columns:
+        if isinstance(slot.contributor, RelationalDocument):
+            columns.append(dialect.quote(slot.column.name))
+            binds.append(JsonDocument(_fixture_document(shape, row)))
+            continue
         member = _fixture_member(slot)
         if member is None:
             assert view.discriminator is not None  # only a shared table has a discriminator slot
@@ -237,8 +312,9 @@ def fixture_statements(
         rows = fixtures.get(entity.identity.canonical, fixtures.get(entity.identity.name))
         if not isinstance(rows, list):
             continue
+        shape = entity_shape(*_document_members(model, view.layout, entity.identity))
         statements.extend(
-            _fixture_insert(view, cast("Mapping[str, object]", row), dialect)
+            _fixture_insert(view, shape, cast("Mapping[str, object]", row), dialect)
             for row in cast("list[object]", rows)
             if isinstance(row, Mapping)
         )

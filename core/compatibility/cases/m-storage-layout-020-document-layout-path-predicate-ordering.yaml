@@ -1,0 +1,51 @@
+# A predicate and an ordering key over the same document path both lower through the
+# typed-cast seam, so a document-mapped member compares and orders in VALUE order
+# (m-storage-layout x m-sql x m-dialect), on Postgres AND MariaDB.
+#
+# `score` is an `int64`, which sits in m-dialect's cast table: its document form is a
+# JSON number and a JSON number's integer part has no fixed width, so `"30"` sorts
+# BELOW `"7"` as text. The fixtures are chosen so both halves are falsifiable rather
+# than merely exercised:
+#
+#   * `greaterThan(score, 5)` matches Ada (7) and Bo (30) through the cast. Under a
+#     text comparison `"30" > "5"` is FALSE, so the same predicate would match Ada
+#     alone — a wrong row set on both engines, not an error.
+#   * `score desc` then puts Bo first. Under a text ordering it would put Ada first.
+#
+# `limit 1` is what makes the ordering OBSERVABLE: result rows compare as a multiset,
+# so an ordering claim asserted over the whole set would be satisfied by any order.
+# With the limit the answer IS the ordering decision, and each wrong lowering above
+# answers Ada where the contract answers Bo.
+#
+# Cyd's `score` is an explicit JSON null; the cast yields SQL NULL, the comparison is
+# unknown, and she is excluded on both engines — the absence collapse a NULL Column
+# would give (m-op-algebra). MariaDB needs no `nulls last` spelling because DESC
+# already places NULLs last there (m-dialect *Null Placement*).
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-sql, m-dialect, m-op-algebra, read, json, document-layout, cast, order-by, limit, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Traveler
+  operation:
+    limit:
+      count: 1
+      operand:
+        orderBy:
+          keys:
+            - { attr: Traveler.score, direction: desc, nulls: last }
+          operand:
+            greaterThan: { attr: Traveler.score, value: 5 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload from traveler t0 where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? order by cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last limit ?
+        mariadb: select t0.id, t0.payload from traveler t0 where cast(json_value(t0.payload, ?) as signed) > ? order by cast(json_value(t0.payload, ?) as signed) desc limit ?
+      binds:
+        postgres: [score, 5, score, 1]
+        mariadb: ['$.score', 5, '$.score', 1]
+  referenceSql:
+    postgres: select id, payload ->> 'displayName' as display_name, cast(payload ->> 'score' as bigint) as score, payload ->> 'joinedOn' as joined_on, payload ->> 'note' as note from traveler where cast(payload ->> 'score' as bigint) > 5 order by cast(payload ->> 'score' as bigint) desc nulls last limit 1
+    mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from traveler where cast(json_value(payload, '$.score') as signed) > 5 order by cast(json_value(payload, '$.score') as signed) desc limit 1
+  rows:
+    - { id: 2, display_name: Bo, score: 30, joined_on: '2025-12-31', note: null }
+  roundTrips: 1

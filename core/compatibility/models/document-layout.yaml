@@ -1,0 +1,102 @@
+# Traveler / Beacon: the shared model for every Relational Document Layout witness.
+#
+# This descriptor is an instance of core/schemas/metamodel.schema.json. What makes it
+# different from every other model in the corpus is one entity-level property:
+# `layout.document.column`. The root owns it, and it moves every member the layout
+# does NOT keep in a Column of its own into ONE shared Structured Column
+# (m-storage-layout). Nothing else about the declaration changes — the members, their
+# types, their nullability, and their Index are what any `Columns` model would carry —
+# which is the point: one logical model, two physical shapes, one set of answers.
+#
+# `Traveler` keeps exactly one direct Column besides the Structured Column: `id`, the
+# primary key, which is direct-column role 1. Everything else — four scalars and two
+# Value Object occurrences — is document-resident and addressed by its Document Path:
+#
+#   displayName  ("displayName")     string    compares as the extracted text
+#   score        ("score")           int64     compares through a dialect cast
+#   joinedOn     ("joinedOn")        date      compares as the extracted text
+#   note         ("note")            string    the presence pair below
+#   address      ("address")         one       a subtree, with `geo` nested inside it
+#   tags         ("tags")            many      an array, never null (m-document-codec)
+#
+# `note` is the presence pair: one row omits the key entirely and one writes an
+# explicit JSON null, so a case can assert that a NULL Column's single not-present
+# state and a document's two collapse to one logical answer (m-op-algebra).
+#
+# `Beacon` exists for the projection rule alone. It declares the same layout and NO
+# document-resident member at all, so its Structured Column is physically present,
+# `NOT NULL`, and holds the empty object in every row — and a read of its one member
+# projects no document extraction whatsoever. A read projects the Structured Column
+# because some member it was ASKED FOR lives inside it, never because the Entity
+# declares the layout.
+#
+# Row data lives in the sibling fixtures/document-layout.yaml. Each fixture row
+# authors its document-resident members under their own member names, in the spelling
+# they would take if the layout had given each one a Column: the file describes one
+# logical row and the codec decides how it is stored.
+entities:
+  - name: Traveler
+    namespace: parallax.compatibility
+    table: traveler
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: displayName
+        type: string
+        maxLength: 64
+        nullable: true
+      - name: score
+        type: int64
+        nullable: true
+      - name: joinedOn
+        type: date
+        nullable: true
+      - name: note
+        type: string
+        maxLength: 64
+        nullable: true
+    valueObjects:
+      - name: address
+        nullable: true
+        attributes:
+          - name: city
+            type: string
+            nullable: true
+        valueObjects:
+          - name: geo
+            nullable: true
+            attributes:
+              - name: country
+                type: string
+                nullable: true
+      - name: tags
+        multiplicity: many
+        attributes:
+          - name: label
+            type: string
+            nullable: true
+    indices:
+      - name: traveler_pk
+        attributes: [id]
+        unique: true
+  # Beacon: a document-layout Entity whose only member is its primary key, which the
+  # layout keeps direct. Its Structured Column carries the empty object and nothing
+  # ever extracts from it.
+  - name: Beacon
+    namespace: parallax.compatibility
+    table: beacon
+    layout:
+      document:
+        column: payload
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+    indices:
+      - name: beacon_pk
+        attributes: [id]
+        unique: true

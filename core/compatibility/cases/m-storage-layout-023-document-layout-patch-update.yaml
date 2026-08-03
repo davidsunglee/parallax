@@ -1,0 +1,99 @@
+# An UPDATE of a document-mapped Entity PATCHES the assigned paths and leaves every
+# other key of the document standing (m-storage-layout x m-dialect *Document
+# mutation-expression form*), on Postgres AND MariaDB.
+#
+# Step 1 seeds a complete row. Step 2 assigns exactly two members, and the `set`
+# clause is ONE term over the Structured Column carrying the dialect's own mutation
+# expression: nested `jsonb_set` calls on Postgres, one native N-pair `json_set` on
+# MariaDB. `then.tableState` is the whole point — `joinedOn`, `note`, `address`, and
+# `tags` are untouched, so an implementation that read the document, rebuilt it from
+# the members it knows, and wrote the result back would lose every key it did not
+# assign. That is the difference the phrase "patch, not replace" names, and it is
+# what makes a document written by a newer application version survivable.
+#
+# Two spellings below are decision points, not house style, and both were measured
+# against the pinned engines:
+#
+#   * the PATH bind diverges — Postgres `jsonb_set` takes ONE text-array path
+#     (`{displayName}`) while MariaDB `json_set` takes the same `$.displayName`
+#     JSON-path string its extraction does — so `binds` is dialect-keyed here while
+#     the insert one case over carries a single shared array.
+#   * the VALUE hole is a per-dialect EXPRESSION, not a bare `?`. Postgres resolves a
+#     bare parameter there to `jsonb_set`'s declared `jsonb` and rejects every scalar
+#     bind outright; MariaDB accepts one but silently ESCAPES a composite into a
+#     string. `cast(? as jsonb)` and `json_extract(?, '$')` are the two expressions
+#     that take one authored bind form on both engines, and a JSON scalar rides as
+#     its JSON text (`"Dagny"`, `21`) because no structural authoring form
+#     distinguishes it from an ordinary scalar bind (m-case-format).
+#
+# Pair ORDER is canonical logical placement order — `displayName` precedes `score`
+# because the layout places them in that order, not because the ① row lists them so —
+# and both dialects apply their assignments left to right, so the order is observable
+# rather than decorative.
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-dialect, m-document-codec, m-sql, write-sequence, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Traveler
+      statements: 1
+      note: seed one complete row so the update has keys it must NOT touch
+      rows:
+        - id: 6
+          displayName: Frida
+          score: 4
+          joinedOn: '2026-04-01'
+          note: west wing
+          address:
+            city: Alta
+            geo:
+              country: "NO"
+          tags:
+            - { label: scout }
+    - mutation: update
+      entity: Traveler
+      statements: 1
+      note: assign two scalars — two ordered path patches inside the one Structured Column
+      rows:
+        - id: 6
+          displayName: Dagny
+          score: 21
+then:
+  statements:
+    - sql:
+        postgres: insert into traveler(id, payload) values (?, ?)
+        mariadb: insert into traveler(id, payload) values (?, ?)
+      binds:
+        - 6
+        - displayName: Frida
+          score: 4
+          joinedOn: '2026-04-01'
+          note: west wing
+          address:
+            city: Alta
+            geo:
+              country: "NO"
+          tags:
+            - { label: scout }
+    - sql:
+        postgres: update traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
+        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
+      binds:
+        postgres: ['{displayName}', '"Dagny"', '{score}', '21', 6]
+        mariadb: ['$.displayName', '"Dagny"', '$.score', '21', 6]
+  tableState:
+    traveler:
+      - id: 6
+        payload:
+          displayName: Dagny
+          score: 21
+          joinedOn: '2026-04-01'
+          note: west wing
+          address:
+            city: Alta
+            geo:
+              country: "NO"
+          tags:
+            - { label: scout }
+  roundTrips: 2

@@ -1,0 +1,31 @@
+# A read that needs no document-resident member projects no Structured Column at
+# all, even though the Entity declares the layout (m-storage-layout x m-sql *Read
+# projection*), on Postgres AND MariaDB.
+#
+# `Beacon` declares `layout.document` and exactly one member: its primary key, which
+# direct-column role 1 keeps in a Column of its own. Its Structured Column therefore
+# exists physically — `NOT NULL`, holding the empty object in every row, which the
+# DDL and the fixture load both produce — and no read ever reaches into it.
+#
+# The rule the projection follows is "some member this read was ASKED FOR lives
+# inside the Structured Column", never "this Entity declares a Document layout". An
+# implementation that keyed the projection off the declaration would emit
+# `select t0.id, t0.payload` here, project a column it decodes nothing from, and
+# carry the whole document of every row across the wire for nothing.
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-sql, read, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Beacon
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id from beacon t0
+        mariadb: select t0.id from beacon t0
+  referenceSql: select id from beacon
+  rows:
+    - { id: 10 }
+    - { id: 11 }
+  roundTrips: 1

@@ -154,6 +154,73 @@ def test_array_guard_fragment_top_level_many_needs_no_path_descent(dialect: Dial
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_document_mutation_composes_one_assignment_through_the_value_expression(
+    dialect: Dialect,
+) -> None:
+    # m-dialect *Document mutation-expression form*: the value hole is a
+    # per-dialect EXPRESSION, not a bare `?`. A bare parameter there resolves to
+    # `jsonb_set`'s declared `jsonb` and rejects every scalar bind, so the cast
+    # is what makes one authored bind form work at all.
+    sql, binds = dialect.document_mutation("payload", [(("displayName",), "Solveig")])
+    assert sql == "jsonb_set(payload, ?, cast(? as jsonb))"
+    assert binds == ["{displayName}", '"Solveig"']
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_document_mutation_nests_n_assignments_innermost_first(dialect: Dialect) -> None:
+    # Each call's target is the previous call's result, so the INNERMOST call is
+    # the first assignment and the binds read path, value, path, value in
+    # assignment order — which is what keeps canonical logical placement order
+    # observable (m-storage-layout / m-sql).
+    sql, binds = dialect.document_mutation(
+        "t0.payload", [(("displayName",), "Solveig"), (("score",), 7)]
+    )
+    assert sql == "jsonb_set(jsonb_set(t0.payload, ?, cast(? as jsonb)), ?, cast(? as jsonb))"
+    assert binds == ["{displayName}", '"Solveig"', "{score}", "7"]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_document_mutation_carries_a_composite_as_the_document_and_a_scalar_as_json_text(
+    dialect: Dialect,
+) -> None:
+    # m-case-format draws the boundary: a composite rides as the portable
+    # document the provider adapts, so no key order or separator convention
+    # reaches a golden; a JSON scalar — which no structural authoring form
+    # distinguishes from an ordinary scalar bind — rides as the JSON text both
+    # dialects' value expressions parse, and has neither to protect.
+    _, binds = dialect.document_mutation(
+        "payload",
+        [
+            (("address",), {"city": "Oslo"}),
+            (("tags",), [{"label": "x"}]),
+            (("score",), None),
+            (("active",), True),
+        ],
+    )
+    assert binds[1] == {"city": "Oslo"}
+    assert binds[3] == [{"label": "x"}]
+    assert binds[5] == "null"
+    assert binds[7] == "true"
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_document_path_is_the_dialects_own_mutation_path_spelling(dialect: Dialect) -> None:
+    # Divergent from the extraction path binds above on purpose: `jsonb_set`
+    # takes ONE text-array path where `jsonb_extract_path_text` takes one bind
+    # per segment.
+    assert dialect.document_path(("displayName",)) == "{displayName}"
+    assert dialect.document_path(("address", "city")) == "{address,city}"
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_structural_document_equality(dialect: Dialect) -> None:
+    # Postgres `jsonb` normalizes on storage, so `=` is already structural;
+    # MariaDB's `json` is a text alias and needs `json_equals`. Obtaining the
+    # comparison through the seam is what stops one assertion meaning two things.
+    assert dialect.document_equals("t0.payload", "?") == "t0.payload = ?"
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_placeholder_translation(dialect: Dialect) -> None:
     assert dialect.to_driver_sql("select t0.id from t where t0.id = ?") == (
         "select t0.id from t where t0.id = %s"

@@ -24,45 +24,50 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from parallax.core.metamodel import (
-    AttributeIdentity,
-    EntityMetadata,
-    Metamodel,
-    ValueObjectIdentity,
-)
-from parallax.core.storage_layout import ColumnContributor, EntityLayoutView
-from parallax.snapshot.handle._family import entity_layout, family_primary_key
+from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.storage_layout import DocumentPath, EntityLayoutView, MemberPlacement
+from parallax.snapshot.handle._family import entity_layout, family_primary_key, placed_members
 
 __all__ = [
     "collapse_group_key",
 ]
 
-
-def _member_contributor(contributor: ColumnContributor) -> str | None:
-    """The declared member name behind ``contributor``, or ``None`` for the
-    framework-owned discriminator (which no write input ever names)."""
-    if isinstance(contributor, AttributeIdentity):
-        return contributor.name
-    if isinstance(contributor, ValueObjectIdentity):
-        return contributor.path[-1]
-    return None
+# Where one member's value lands in a rendered statement: the slot's ordinal in
+# Table order, the physical Column, and the Document Path inside it — empty for a
+# member holding a Column of its own.
+type _MemberAddress = tuple[int, str, tuple[str, ...]]
 
 
-def _member_ordinals(layout: EntityLayoutView) -> dict[str, tuple[int, str, bool]]:
-    """Each member name the view carries, mapped to its
-    ``(slot ordinal, physical column, is a document slot)``.
+def _member_addresses(
+    meta: Metamodel, entity: EntityMetadata, layout: EntityLayoutView
+) -> dict[str, _MemberAddress]:
+    """Each member name this Entity writes, mapped to where its Table puts it.
 
-    The framework-owned discriminator has no member name and is absent: no write
-    input ever names it, and every form that emits it derives it from the view's
-    own assignment instead.
+    Answered from Member Placement rather than from the Table's slots, because a
+    document-resident member claims no slot of its own: several members share one
+    Structured Column and are told apart by their Document Paths, which is
+    exactly the distinction a collapse decision needs — two rows naming different
+    document members select the same Column but write different paths, so their
+    shapes differ even though their column lists agree.
+
+    The framework-owned discriminator is no member and is absent: no write input
+    ever names it, and every form that emits it derives it from the view's own
+    assignment instead.
     """
-    ordinals: dict[str, tuple[int, str, bool]] = {}
-    for ordinal, slot in enumerate(layout.columns):
-        member = _member_contributor(slot.contributor)
-        if member is not None:
-            is_document = isinstance(slot.contributor, ValueObjectIdentity)
-            ordinals[member] = (ordinal, slot.column.name, is_document)
-    return ordinals
+    ordinals = {slot.column.name: ordinal for ordinal, slot in enumerate(layout.layout.columns)}
+    placed = placed_members(meta, entity, layout)
+    named: list[tuple[str, MemberPlacement]] = [
+        (attribute.identity.name, placement) for attribute, placement in placed.attributes
+    ]
+    named.extend(
+        (occurrence.identity.path[-1], placement) for occurrence, placement in placed.value_objects
+    )
+    addresses: dict[str, _MemberAddress] = {}
+    for name, placement in named:
+        column = placement.slot.column.name
+        path = placement.path if isinstance(placement, DocumentPath) else ()
+        addresses[name] = (ordinals[column], column, path)
+    return addresses
 
 
 def collapse_group_key(
@@ -83,6 +88,12 @@ def collapse_group_key(
     selection is the key columns and its non-key payload members are invisible
     here — two legal deletes always share one `IN`-list statement.
 
+    Under Relational Document Layout the selection is Column *and* Document Path,
+    because several members share one Structured Column: two rows naming
+    different document members emit the same column list but write different
+    paths, and one shared statement would bind the later row's document against
+    the first row's shape.
+
     TOTAL: the planner asks this of every collapse candidate, long before any
     lowering decides the row is renderable at all. A target owning no table, a
     row naming a member its view does not carry, and a delete row omitting a key
@@ -92,17 +103,17 @@ def collapse_group_key(
     view = entity_layout(meta, entity)
     if view is None:
         return None
-    ordinals = _member_ordinals(view)
+    addresses = _member_addresses(meta, entity, view)
     members: Sequence[str] = (
         [attribute.identity.name for attribute in family_primary_key(meta, entity)]
         if mutation == "delete"
         else list(row)
     )
-    selection: list[tuple[int, str]] = []
+    selection: list[_MemberAddress] = []
     for name in members:
-        slot = ordinals.get(name)
-        if slot is None or name not in row:
+        address = addresses.get(name)
+        if address is None or name not in row:
             return None
-        selection.append((slot[0], slot[1]))
+        selection.append(address)
     selection.sort()
-    return (mutation, tuple(column for _, column in selection))
+    return (mutation, tuple((column, path) for _ordinal, column, path in selection))

@@ -119,7 +119,12 @@ from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 # of them) out. Same aliasing-down convention as the family lane above.
 from parallax.core.sql_gen._navigation import open_branch as _open_branch
 from parallax.core.sql_gen._navigation import plan_hop as _plan_hop
-from parallax.core.storage_layout import ColumnContributor, StorageLayoutFacet, TableLayout
+from parallax.core.storage_layout import (
+    ColumnContributor,
+    DocumentPath,
+    StorageLayoutFacet,
+    TableLayout,
+)
 
 _COMPARATORS: dict[str, str] = {
     "eq": "=",
@@ -147,6 +152,31 @@ _NESTED_STRING_KINDS: dict[NestedStringOp, StringOp] = {
     "nestedEndsWith": "endsWith",
     "nestedContains": "contains",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class MemberSubject:
+    """One resolved scalar member as a predicate or ordering term reads it.
+
+    ``extraction`` is what the member's value is read out of — an
+    alias-qualified Column under a `DirectColumn` placement, the dialect's
+    document text extraction under a `DocumentPath` one. ``compared`` is that
+    expression with the declared type's cast applied where the comparison casts
+    at all (`m-dialect`), and is identical to ``extraction`` for a direct Column,
+    which is already typed, and for a document-resident member of one of the six
+    text-compared types.
+
+    The two are not interchangeable: an equality, range, or membership test
+    compares ``compared`` while a null check and a string pattern read
+    ``extraction``, exactly as the conventional nested vocabulary already does.
+    ``document_resident`` is what decides which literal form a compared value
+    binds in.
+    """
+
+    extraction: str
+    compared: str
+    type: NeutralType
+    document_resident: bool
 
 
 # --------------------------------------------------------------------------- #
@@ -206,10 +236,11 @@ class EntityScope:
 
         The single consultant of :attr:`unaliased` — every reference to a column
         of the active target must route through here so a write's bare-column
-        form can never be bypassed. :meth:`column_of` is the attribute-resolving
-        front door; a value object's backing DOCUMENT column is not an
+        form can never be bypassed. :meth:`column_of` and :meth:`subject_of` are
+        the attribute-resolving front doors; a Structured Column is not an
         ``Attribute`` and so has no `attr_ref` to resolve, but it is just as much
-        this target's own column and takes the same rendering decision.
+        this target's own column and takes the same rendering decision, which is
+        why :meth:`document_root` returns a rendered reference rather than a name.
 
         Not every column reference is "this scope's own": an unnested array
         element's ``t1.value`` is always alias-qualified, because the subquery
@@ -222,11 +253,55 @@ class EntityScope:
         return self.dialect.qualified(self.alias, column)
 
     def column_of(self, attr_ref: str) -> str:
+        """Render one DIRECT Attribute Column of the active target.
+
+        The join lane's front door: a Relationship Join endpoint is a direct role
+        under either layout (`m-storage-layout`), so a hop's correlation always
+        has a Column to name and never extracts from a document. An Attribute
+        with no Column in this Table raises, which is exactly what an endpoint
+        the layout put inside the document would be.
+        """
         return self.own_column(self.slot_column(self.entity_attribute(attr_ref).identity))
 
-    def document_column(self, vo: ValueObjectMetadata) -> str:
-        """Render ``vo``'s backing document column against this scope."""
-        return self.own_column(self.slot_column(vo.identity))
+    def subject_of(self, attr_ref: str) -> MemberSubject:
+        """Resolve one Attribute reference to the expression a comparison reads.
+
+        Member Placement is the sole authority (`m-storage-layout`): a
+        `DirectColumn` renders the Column, and a `DocumentPath` renders the
+        dialect's extraction over the Structured Column the placement names,
+        binding that path's segments here — so the path comes from the compiled
+        placement rather than from splitting an authored string, and the segments
+        are already on the context before the caller binds its compared value.
+        """
+        attribute = self.entity_attribute(attr_ref)
+        placement = self.layout.placement(attribute.identity)
+        if not isinstance(placement, DocumentPath):
+            column = self.own_column(self.slot_column(attribute.identity))
+            return MemberSubject(column, column, attribute.type, document_resident=False)
+        document = self.own_column(placement.slot.column.name)
+        extraction, path_binds = self.dialect.nested_extract(document, placement.path)
+        self.ctx.binds.extend(path_binds)
+        return MemberSubject(
+            extraction,
+            self.dialect.nested_cast(extraction, attribute.type),
+            attribute.type,
+            document_resident=True,
+        )
+
+    def document_root(self, vo: ValueObjectMetadata) -> tuple[str, tuple[str, ...]]:
+        """The rendered document reference carrying ``vo``, and the path reaching it.
+
+        One occurrence sits in two places depending on the Entity's layout, and
+        its placement says which: under `Columns` it owns a Structured Column of
+        its own and the prefix is empty, while under `Document` it is a subtree of
+        the Table's one shared Structured Column and the prefix is its own path
+        from that document's root. Every path a nested predicate walks is
+        prefixed with it, so one extraction site serves both layouts.
+        """
+        placement = self.layout.placement(vo.identity)
+        if isinstance(placement, DocumentPath):
+            return self.own_column(placement.slot.column.name), placement.path
+        return self.own_column(self.slot_column(vo.identity)), ()
 
     def slot_column(self, contributor: ColumnContributor) -> str:
         """``contributor``'s physical Column in the Table this scope reads.
@@ -384,22 +459,28 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
         case NoneOp():
             return "1 = 0"
         case Comparison(op=tag, attr=attr, value=value):
-            scope.ctx.bind(value)
-            return f"{scope.column_of(attr)} {_COMPARATORS[tag]} ?"
+            # The subject resolves FIRST: a document-resident member's path
+            # segments bind ahead of the compared value, which is the order the
+            # emitted text puts their holes in.
+            subject = scope.subject_of(attr)
+            _bind_member_literal(value, subject, scope)
+            return f"{subject.compared} {_COMPARATORS[tag]} ?"
         case Between(attr=attr, lower=lower, upper=upper):
-            scope.ctx.bind(lower)
-            scope.ctx.bind(upper)
-            return f"{scope.column_of(attr)} between ? and ?"
+            subject = scope.subject_of(attr)
+            _bind_member_literal(lower, subject, scope)
+            _bind_member_literal(upper, subject, scope)
+            return f"{subject.compared} between ? and ?"
         case NullCheck(op=tag, attr=attr):
-            col = scope.column_of(attr)
+            col = scope.subject_of(attr).extraction
             return f"{col} is null" if tag == "isNull" else f"not {col} is null"
         case StringMatch():
             return _lower_string(op, scope)
         case Membership(op=tag, attr=attr, values=values):
+            subject = scope.subject_of(attr)
             holes = ", ".join("?" for _ in values)
             for value in values:
-                scope.ctx.bind(value)
-            fragment = f"{scope.column_of(attr)} in ({holes})"
+                _bind_member_literal(value, subject, scope)
+            fragment = f"{subject.compared} in ({holes})"
             return fragment if tag == "in" else f"not {fragment}"
         case NestedExists() | NestedNotExists():
             return _lower_nested_exists(op, scope)
@@ -433,7 +514,27 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
 
 
 def _lower_string(op: StringMatch, scope: EntityScope) -> str:
-    return _lower_like(op.op, op.value, op.case_insensitive, scope.column_of(op.attr), scope)
+    # The subject resolves as an ARGUMENT, so a document-resident member's path
+    # segments bind before `_lower_like` pushes the pattern — the same
+    # extraction-then-comparator order every other arm keeps.
+    subject = scope.subject_of(op.attr)
+    return _lower_like(op.op, op.value, op.case_insensitive, subject.extraction, scope)
+
+
+def _bind_member_literal(literal: object, subject: MemberSubject, scope: EntityScope) -> None:
+    """Bind one compared literal in the form ``subject``'s expression compares.
+
+    A direct Column is compared in the engine's own column type, so its literal
+    crosses the seam as authored — the wire spelling every `Columns`-layout
+    golden already binds. A document-resident member is compared through an
+    extraction, so it takes the same split the conventional nested vocabulary
+    does: the comparison text where the extraction compares as text, the managed
+    value in its declared Neutral Type where the extraction casts.
+    """
+    if not subject.document_resident:
+        scope.ctx.bind(literal)
+        return
+    _bind_nested_literal(literal, subject.type, scope)
 
 
 def _lower_like(
@@ -582,8 +683,11 @@ def _lower_nested(op: _FlatNested, scope: EntityScope) -> str:
         return _lower_any_element(op, vo, crossing, scope)
     leaf = _resolve_leaf(vo, segments)
     # The document column is the TARGET's own, so it renders through `own_column`
-    # and goes bare in a write's unaliased predicate (m-sql rule 1).
-    extraction, path_binds = scope.dialect.nested_extract(scope.document_column(vo), segments)
+    # and goes bare in a write's unaliased predicate (m-sql rule 1). Under
+    # Relational Document Layout the occurrence is a subtree of the Table's
+    # shared column, so its own placement prefixes every path walked below it.
+    document, prefix = scope.document_root(vo)
+    extraction, path_binds = scope.dialect.nested_extract(document, (*prefix, *segments))
     scope.ctx.binds.extend(path_binds)
     return _lower_comparator(op, extraction, leaf.type, scope)
 
@@ -729,7 +833,8 @@ def _lower_any_element(
     # The owning document column is the target's own (bare under `unaliased`); the
     # unnested ELEMENT is not, and stays alias-qualified either way — this very
     # subquery declares `array_alias`, so there is no alias here to leak.
-    guard_sql, guard_binds = scope.dialect.array_guard(scope.document_column(vo), pre)
+    document, prefix = scope.document_root(vo)
+    guard_sql, guard_binds = scope.dialect.array_guard(document, (*prefix, *pre))
     scope.ctx.binds.extend(guard_binds)
     element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
     extraction, path_binds = scope.dialect.nested_extract(element.element_reference(), post)
@@ -764,7 +869,8 @@ def _lower_nested_exists(op: NestedExists | NestedNotExists, scope: EntityScope)
             f"nestedExists/nestedNotExists over a `one`-multiplicity value object "
             f"({op.path!r}) has no goldened lowering yet"
         )
-    guard_sql, guard_binds = scope.dialect.array_guard(scope.document_column(vo), pre)
+    document, prefix = scope.document_root(vo)
+    guard_sql, guard_binds = scope.dialect.array_guard(document, (*prefix, *pre))
     scope.ctx.binds.extend(guard_binds)
     element = ElementScope(ctx=scope.ctx, container=container, alias=scope.next_alias())
     inner = f"select 1 from jsonb_array_elements({guard_sql}) {element.alias}"

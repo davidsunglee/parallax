@@ -104,10 +104,6 @@ class DocumentLayoutOwner:
         return frozenset(axis.dimension for axis in self.declaration.as_of_axes)
 
 
-def _is_standalone(owner: DocumentLayoutOwner) -> bool:
-    return owner.strategy is None
-
-
 def _is_table_per_hierarchy(owner: DocumentLayoutOwner) -> bool:
     return isinstance(owner.strategy, TablePerHierarchy)
 
@@ -146,7 +142,6 @@ class CapabilityScopeEntry:
 
 
 CAPABILITY_SCOPE: Final[tuple[CapabilityScopeEntry, ...]] = (
-    CapabilityScopeEntry("a standalone Entity", _is_standalone),
     CapabilityScopeEntry("a table-per-hierarchy family", _is_table_per_hierarchy),
     CapabilityScopeEntry("a table-per-concrete-subtype family", _is_table_per_concrete_subtype),
     CapabilityScopeEntry("an Attribute named by a Relationship Join", _joins_a_relationship),

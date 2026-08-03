@@ -238,6 +238,40 @@
       }
     }
   },
+  "models/document-layout.yaml": {
+    "parallax.compatibility.Beacon": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Traveler": {
+      "attribute": {
+        "displayName": "display_name",
+        "id": "id",
+        "joinedOn": "joined_on",
+        "note": "note",
+        "score": "score"
+      },
+      "documentPath": {
+        "address": "payload:address",
+        "address.city": "payload:address.city",
+        "address.geo": "payload:address.geo",
+        "address.geo.country": "payload:address.geo.country",
+        "displayName": "payload:displayName",
+        "joinedOn": "payload:joinedOn",
+        "note": "payload:note",
+        "score": "payload:score",
+        "tags": "payload:tags",
+        "tags.label": "payload:tags.label"
+      },
+      "valueObject": {
+        "address": "address",
+        "tags": "tags"
+      }
+    }
+  },
   "models/document.yaml": {
     "parallax.compatibility.Document": {
       "attribute": {

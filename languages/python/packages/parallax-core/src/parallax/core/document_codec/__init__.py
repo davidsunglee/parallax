@@ -42,6 +42,7 @@ from parallax.core.document_codec._shape import (
     Occurrence,
     Presence,
     Present,
+    entity_shape,
     occurrence_shape,
     shape_of_declaration,
 )
@@ -68,6 +69,7 @@ __all__ = [
     "encode_document",
     "encode_leaf",
     "encode_many",
+    "entity_shape",
     "is_text_compared",
     "occurrence_shape",
     "shape_of_declaration",

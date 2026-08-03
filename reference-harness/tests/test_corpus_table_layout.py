@@ -11,6 +11,7 @@ from reference_harness.storage_layout import (
     AttributeContributor,
     ColumnContributor,
     InheritanceDiscriminator,
+    RelationalDocument,
     ValueObjectContributor,
 )
 
@@ -35,6 +36,8 @@ def _contributor(contributor: ColumnContributor) -> str:
         return f"valueObject:{contributor.owner}.{contributor.name}"
     if isinstance(contributor, InheritanceDiscriminator):
         return f"discriminator:{contributor.root}"
+    if isinstance(contributor, RelationalDocument):
+        return f"relationalDocument:{contributor.layout_owner}"
     raise AssertionError(f"unknown contributor {contributor!r}")
 
 

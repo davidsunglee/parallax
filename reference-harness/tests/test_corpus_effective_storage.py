@@ -51,26 +51,40 @@ def _contained_paths(occurrence: dict[str, Any]) -> list[tuple[str, ...]]:
 
 
 def _document_paths(entity: Entity, layout: TableLayout | None) -> MemberColumns:
-    """Every member inside a top-level occurrence, rendered as its Member Placement.
+    """Every member the layout stores inside a document, as its Member Placement.
 
     The rendering is ``<structured column>:<dotted Document Path>``, taken from
     ``TableLayout.placement`` rather than re-derived, so the derivation this
     baseline freezes is the one consumers actually read.
+
+    A member inside a top-level occurrence is always here, under either layout.
+    A TOP-LEVEL member is here only where the Entity declares a Relational
+    Document Layout that moved it, and that entry is the authority: the
+    ``attribute`` / ``valueObject`` maps beside it freeze the DESCRIPTOR's derived
+    column name for every declared member, which such a member does not occupy.
     """
     if layout is None:
         return {}
     placements: MemberColumns = {}
+
+    def record(path: tuple[str, ...], *, contained: bool) -> None:
+        address = MemberAddress(entity.canonical_name, path)
+        placement = layout.placement(address)
+        if placement is None and not contained:
+            return  # a member of an ancestor's table this Entity does not own
+        assert not contained or isinstance(placement, DocumentPath), (
+            f"{entity.canonical_name}.{'.'.join(path)} is not document-resident"
+        )
+        if isinstance(placement, DocumentPath):
+            placements[".".join(path)] = f"{placement.slot.column}:{'.'.join(placement.path)}"
+
+    for attribute in entity.definition.get("attributes", []) or []:
+        record((attribute["name"],), contained=False)
     for occurrence in entity.definition.get("valueObjects", []) or []:
         name = occurrence["name"]
+        record((name,), contained=False)
         for relative in _contained_paths(occurrence):
-            address = MemberAddress(entity.canonical_name, (name, *relative))
-            placement = layout.placement(address)
-            assert isinstance(placement, DocumentPath), (
-                f"{entity.canonical_name}.{'.'.join(address.path)} is not document-resident"
-            )
-            placements[".".join(address.path)] = (
-                f"{placement.slot.column}:{'.'.join(placement.path)}"
-            )
+            record((name, *relative), contained=True)
     return placements
 
 
@@ -146,9 +160,12 @@ def test_corpus_effective_storage_matches_historical_baseline() -> None:
 def test_every_corpus_contributor_is_placed_over_the_slot_it_owns() -> None:
     """Placement agrees with contribution for every contributor in the corpus.
 
-    The whole corpus is conventional `Columns` storage, where the two lookups
-    answer the same question about a top-level member, so any table where they
-    disagree is a consumer-visible defect rather than a layout choice.
+    Wherever a top-level member holds a Column of its own the two lookups answer
+    the same question about it, so a table where they disagree is a
+    consumer-visible defect rather than a layout choice. This walks slots, so a
+    Relational Document Layout's document-resident members are outside it by
+    construction: they contribute no slot at all, and `documentPath` in the frozen
+    baseline is what states where they went instead.
     """
     for model_path in _model_paths():
         relative_path = model_path.relative_to(_COMPATIBILITY_ROOT).as_posix()

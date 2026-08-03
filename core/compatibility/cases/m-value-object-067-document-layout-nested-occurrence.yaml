@@ -1,0 +1,86 @@
+# A top-level Value Object inside an Entity document keeps its leaves at its
+# containment path, and assigning the whole occurrence replaces THAT SUBTREE alone
+# (m-value-object x m-storage-layout), on Postgres AND MariaDB.
+#
+# Under `Columns` layout an occurrence owns a Structured Column of its own and its
+# leaves start at that column's root. Under `Document` layout it is a subtree of the
+# Entity's one shared column, and its own Document Path prefixes everything below it:
+# step 1's stored document nests `city` and `geo.country` under `address`, never at
+# the document root beside `displayName`. A layout that flattened an occurrence's
+# leaves would produce a different document here AND would make two occurrences
+# declaring the same inner member name collide, which nothing in the contract
+# permits them to do.
+#
+# Step 2 assigns the whole occurrence, and the assignment addresses `("address")` —
+# one path, one pair — not the leaves inside it. Two consequences are asserted
+# together in `then.tableState`:
+#
+#   * the subtree is REPLACED rather than merged: the new document carries `city` and
+#     no `geo`, so the `geo` the row held is gone. An author who assigns a whole
+#     occurrence has stated what that occurrence now is.
+#   * everything OUTSIDE the subtree survives: `displayName`, `score`, and `tags` are
+#     untouched, because a document update patches the paths it names and nothing
+#     else. Replacement is scoped to the assigned subtree, never to the row.
+#
+# The value bind is a COMPOSITE, so it rides as the portable document itself and each
+# provider adapts it (m-case-format) — the contrast with m-storage-layout-023, whose
+# two scalar assignments ride as JSON text through the same value expression.
+model: models/document-layout.yaml
+tags: [m-value-object, m-storage-layout, m-document-codec, m-sql, write-sequence, update, json, nested, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Traveler
+      statements: 1
+      note: seed a row whose occurrence nests a further occurrence inside it
+      rows:
+        - id: 7
+          displayName: Gro
+          score: 9
+          address:
+            city: Narvik
+            geo:
+              country: "NO"
+          tags:
+            - { label: pilot }
+    - mutation: update
+      entity: Traveler
+      statements: 1
+      note: assign the whole occurrence — one path, one pair, and the nested `geo` goes with it
+      rows:
+        - id: 7
+          address:
+            city: Bodo
+then:
+  statements:
+    - sql:
+        postgres: insert into traveler(id, payload) values (?, ?)
+        mariadb: insert into traveler(id, payload) values (?, ?)
+      binds:
+        - 7
+        - displayName: Gro
+          score: 9
+          address:
+            city: Narvik
+            geo:
+              country: "NO"
+          tags:
+            - { label: pilot }
+    - sql:
+        postgres: update traveler set payload = jsonb_set(payload, ?, cast(? as jsonb)) where id = ?
+        mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?
+      binds:
+        postgres: ['{address}', { city: Bodo }, 7]
+        mariadb: ['$.address', { city: Bodo }, 7]
+  tableState:
+    traveler:
+      - id: 7
+        payload:
+          displayName: Gro
+          score: 9
+          address:
+            city: Bodo
+          tags:
+            - { label: pilot }
+  roundTrips: 2

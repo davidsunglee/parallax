@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import json
 import re
 import threading
 from collections.abc import Iterator, Mapping
@@ -43,7 +44,7 @@ from .ddl_builder import (
     placeholder_cast_type,
     quote_identifier,
 )
-from .document_codec import decode_stored, encode_document
+from .document_codec import decode_leaf, decode_stored, encode_document, encode_leaf, is_document
 from .inheritance import (
     MODEL_REJECTED_RULES,
     OPERATION_REJECTED_RULES,
@@ -73,9 +74,11 @@ from .storage_layout import (
     ColumnContributor,
     ColumnSlot,
     ColumnTier,
+    DocumentPath,
     PositionBranch,
     PositionColumn,
     PositionLayoutView,
+    RelationalDocument,
     TableLayout,
     position_projection,
     position_view,
@@ -1117,6 +1120,13 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     _assert_temporal_union_binds(case, dialect)
 
     golden_rows = _query_rows(db, golden, case.statement_binds(0, dialect))
+    # Relational Document Layout (m-storage-layout / m-sql): the golden projects the
+    # shared Structured Column once and the row-form result is the scalars it
+    # carries, under the names a Column of each would have had. A `referenceSql`
+    # oracle is deliberately NOT put through this: it is an independent formulation
+    # and extracts each path itself, so both arms reach `then.rows` by different
+    # routes.
+    golden_rows = _materialize_document_layout(case, golden_rows, include_value_objects=False)
     expected = case.expected_rows
     tolerance = case.tolerance
 
@@ -1264,6 +1274,106 @@ def _golden_projection_columns(case: Case) -> set[str]:
         for projection in select.expressions
         if (name := projection.output_name) and name != "*"
     }
+
+
+class _DocumentMember(NamedTuple):
+    """One member a Relational Document Layout keeps inside the shared Structured
+    Column: what a result row calls it, where it sits in the document, and — for a
+    leaf — the declared type its stored spelling decodes through."""
+
+    column: str
+    path: tuple[str, ...]
+    type_spelling: str | None
+
+
+def _document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_DocumentMember, ...]]:
+    """*entity*'s Structured Column and the top-level members it carries.
+
+    Answers ``("", ())`` for a conventional ``Columns`` entity, which is what makes
+    the fan-out below inert rather than conditional at its call sites. Residency
+    comes from the independently compiled Member Placements, never from the
+    declaration: a one-segment Document Path over the Structured Column is a
+    document-resident top-level member, and a longer one addresses a leaf inside an
+    occurrence, which the occurrence's own document already carries.
+    """
+    layout = case.model.storage_layout.table(entity.table)
+    if layout is None:
+        return "", ()
+    slot = next(
+        (slot for slot in layout.columns if isinstance(slot.contributor, RelationalDocument)), None
+    )
+    if slot is None:
+        return "", ()
+    resident = {
+        address.path[0]: placement.path
+        for address, placement in layout.placements.items()
+        if len(address.path) == 1 and isinstance(placement, DocumentPath) and placement.slot == slot
+    }
+    members = [
+        _DocumentMember(attribute["column"], resident[attribute["name"]], attribute["type"])
+        for attribute in entity.attributes
+        if attribute["name"] in resident
+    ]
+    members.extend(
+        _DocumentMember(occurrence["column"], resident[occurrence["name"]], None)
+        for occurrence in entity.value_objects
+        if occurrence["name"] in resident
+    )
+    return slot.column, tuple(members)
+
+
+def _materialize_document_layout(
+    case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
+) -> list[dict[str, Any]]:
+    """Fan a Relational Document Layout read's Structured Column out into the members
+    it was asked for, under the result names a ``Columns`` layout would have used.
+
+    The same shape as :func:`_materialize_family_variant`: the golden SQL projects a
+    raw column and the logical result is derived from it here, because the Structured
+    Column is never itself a result field (`m-sql`). Which members a read asked for
+    is the result form's answer — a row-form read takes the scalars alone while an
+    instance form additionally carries every applicable occurrence — so the caller
+    states it rather than this deriving a second projection rule of its own.
+
+    Each leaf decodes by its DECLARED type (:func:`decode_leaf`), not by the JSON
+    value's own shape, and an absent key and an explicit JSON null both read as one
+    absence — the single not-present state a NULL Column has.
+    """
+    target_name = case.when.get("targetEntity")
+    if not isinstance(target_name, str):
+        return rows
+    entity = case.model.entity(target_name)
+    column, members = _document_layout_members(case, entity)
+    if not members:
+        return rows
+    selected = [
+        member for member in members if include_value_objects or member.type_spelling is not None
+    ]
+    materialized: list[dict[str, Any]] = []
+    for row in rows:
+        if column not in row:
+            return rows
+        document = decode_stored(row[column])
+        node = {key: value for key, value in row.items() if key != column}
+        for member in selected:
+            stored = _document_value(document, member.path)
+            node[member.column] = (
+                stored
+                if member.type_spelling is None
+                else decode_leaf(member.type_spelling, stored)
+            )
+        materialized.append(node)
+    return materialized
+
+
+def _document_value(document: Any, path: tuple[str, ...]) -> Any:
+    """The raw stored value at *path*, or ``None`` where the walk stops."""
+    current = document
+    for name in path:
+        if not isinstance(current, dict) or name not in current:
+            return None
+        current = current[name]
+    return current
 
 
 def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2446,12 +2556,21 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     entity = case.model.entity(case.when["targetEntity"])
 
     value_object_columns = {vo["column"] for vo in entity.value_objects}
+    # An instance form additionally carries every applicable occurrence, so a
+    # Relational Document Layout read fans those out of its one Structured Column
+    # too — after which each occurrence sits under the very column name a `Columns`
+    # layout would have given it and the node assembly below is layout-blind.
+    projected = _materialize_document_layout(
+        case,
+        _query_rows(db, golden, case.statement_binds(0, dialect)),
+        include_value_objects=True,
+    )
     rows: list[dict[str, Any]] = [
         _MaterializedRow(
             row,
             value_object_columns={key: row[key] for key in value_object_columns if key in row},
         )
-        for row in _query_rows(db, golden, case.statement_binds(0, dialect))
+        for row in projected
     ]
     # `familyVariant` materialization happens on the RAW rows (also what a
     # referenceSql identity check below compares against — the matched ROW SET,
@@ -2687,7 +2806,7 @@ def _is_self_increment(statement: str, column: str) -> bool:
 
 
 def _classify_write_row(
-    case: Case, entity: Entity, row: dict[str, Any]
+    case: Case, entity: Entity, row: dict[str, Any], *, opening: bool
 ) -> tuple[dict[str, Any], Any, dict[str, Any], Any]:
     """Classify a flat attribute-named ① row against *entity*'s metamodel.
 
@@ -2712,8 +2831,18 @@ def _classify_write_row(
     a conforming writer must produce from the case's own member values, and
     :func:`_assert_write_values` compares it to the authored bind — so a leaf spelled
     any other way fails the case instead of surviving it.
+
+    Under Relational Document Layout the members the layout moved inside the shared
+    Structured Column resolve to THAT one column rather than to columns of their own,
+    and their derived value depends on what the statement does with them: an opening
+    statement writes the whole document, so they are composed into it here, while a
+    revising one patches only the assigned paths and takes them from
+    :func:`_document_assignments` instead. ``opening`` is therefore the caller's
+    answer, from the step's own mutation, and never inferred from the row.
     """
     pk_columns = {a["column"] for a in entity.attributes if a.get("primaryKey")}
+    document_column, resident = _document_layout_members(case, entity)
+    resident_columns = {member.column for member in resident}
     columns: dict[str, Any] = {}
     set_columns: dict[str, Any] = {}
     pk_value: Any = None
@@ -2737,13 +2866,99 @@ def _classify_write_row(
                     f"ATTRIBUTE / value-object names, not columns."
                 ) from exc
             column = value_object["column"]
-            value = encode_document(value_object, value)
+            if column not in resident_columns:
+                value = encode_document(value_object, value)
+        if column in resident_columns:
+            continue  # the Structured Column carries it; composed below
         columns[column] = value
         if column in pk_columns:
             pk_value = value
         else:
             set_columns[column] = value
+    if document_column and opening:
+        # The Structured Column binds on EVERY opening statement, including one for
+        # an Entity whose members are all direct: it is `NOT NULL` and every governed
+        # row carries a document, the empty object included (m-storage-layout).
+        document = _entity_document(case, entity, resident, row)
+        columns[document_column] = document
+        set_columns[document_column] = document
     return columns, pk_value, set_columns, observed_version
+
+
+def _entity_document(
+    case: Case, entity: Entity, resident: tuple[_DocumentMember, ...], row: dict[str, Any]
+) -> dict[str, Any]:
+    """The complete Structured Column document one opening ① row implies.
+
+    Composed over EVERY document-resident member rather than only the named ones,
+    because presence is the codec's classification: an omitted key stays absent, an
+    authored null becomes JSON null, and a ``many`` occurrence always contributes its
+    array. Members are emitted in canonical placement order — every attribute, then
+    every occurrence — so one set of member values yields exactly one document.
+    """
+    document: dict[str, Any] = {}
+    for member in resident:
+        name = member.path[0]
+        if member.type_spelling is None:
+            occurrence = entity.value_object_by_name(name)
+            if name in row:
+                document[name] = encode_document(occurrence, row[name])
+            elif occurrence.get("multiplicity", "one") == "many":
+                document[name] = []
+            continue
+        if name in row:
+            document[name] = encode_leaf(member.type_spelling, row[name])
+    return document
+
+
+def _document_path_bind(path: tuple[str, ...], dialect: str) -> str:
+    """The bind addressing *path* inside a document mutation, per dialect.
+
+    Postgres `jsonb_set` takes ONE text-array path; MariaDB `json_set` takes the
+    same ``$.a.b`` JSON-path string its `json_value` extraction does (m-dialect).
+    Spelled here rather than taken from any implementation: the ①↔② cross-check is
+    an independent derivation, so it must know the two spellings itself.
+    """
+    if dialect == "mariadb":
+        return "$." + ".".join(path)
+    return "{" + ",".join(path) + "}"
+
+
+def _document_value_bind(value: Any) -> Any:
+    """One assigned document value as the mutation expression's hole takes it.
+
+    A composite crosses the seam as the portable document it is and each provider
+    adapts it; a JSON scalar, which no structural authoring form distinguishes from
+    an ordinary scalar bind, crosses as the JSON text both dialects' value
+    expressions parse (m-case-format).
+    """
+    return value if is_document(value) else json.dumps(value)
+
+
+def _document_assignments(
+    case: Case, entity: Entity, row: dict[str, Any]
+) -> tuple[tuple[tuple[str, ...], Any], ...]:
+    """The ordered Document Paths one revising ① row assigns, canonical order.
+
+    A revising statement patches only the paths it names (`m-storage-layout`), so
+    this is the resident member sequence narrowed to the row's own keys — never the
+    whole document. Order is the layout's, not the row's, because both dialects'
+    mutation expressions apply left to right (`m-dialect`).
+    """
+    _column, resident = _document_layout_members(case, entity)
+    assignments: list[tuple[tuple[str, ...], Any]] = []
+    for member in resident:
+        name = member.path[0]
+        if name not in row:
+            continue
+        value = row[name]
+        if member.type_spelling is None:
+            assignments.append(
+                (member.path, encode_document(entity.value_object_by_name(name), value))
+            )
+        else:
+            assignments.append((member.path, encode_leaf(member.type_spelling, value)))
+    return tuple(assignments)
 
 
 def _version_column(entity: Entity) -> str | None:
@@ -2972,7 +3187,30 @@ def _parse_set_columns(case: Case, statement: str) -> list[str]:
         raise CaseFailure(
             f"{case.path.name}: could not parse the SET clause from golden {statement!r}."
         )
-    return [piece.strip().split("=")[0].strip() for piece in match.group(1).split(",")]
+    return [piece.strip().split("=")[0].strip() for piece in _top_level_commas(match.group(1))]
+
+
+def _top_level_commas(clause: str) -> list[str]:
+    """*clause* split on the commas that separate its assignments.
+
+    A `set` term's right-hand side may itself be a call taking commas — the
+    document mutation expression is nested `jsonb_set` calls on Postgres and one
+    N-pair `json_set` on MariaDB (m-dialect) — so only a comma at bracket depth
+    zero ends an assignment.
+    """
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for index, char in enumerate(clause):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append(clause[start:index])
+            start = index + 1
+    parts.append(clause[start:])
+    return parts
 
 
 def _assert_write_input_columns(case: Case, dialect: str) -> None:
@@ -3013,10 +3251,13 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
                 f"{case.path.name}: writeSequence step on {step['entity']} carries no "
                 f"neutral write input (① `rows`) — required on every writeSequence step."
             )
-        classified = [_classify_write_row(case, entity, row) for row in rows]
-        step_statements = statements[stmt_index : stmt_index + count]
-        step_binds = [case.statement_binds(stmt_index + offset) for offset in range(count)]
         mutation = step["mutation"]
+        classified = [
+            _classify_write_row(case, entity, row, opening=mutation in _OPENING_MUTATIONS)
+            for row in rows
+        ]
+        step_statements = statements[stmt_index : stmt_index + count]
+        step_binds = [case.statement_binds(stmt_index + offset, dialect) for offset in range(count)]
         # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
         # a plain (unbounded) `update` / `terminate` on a two-axis entity (the everyday
         # retroactive correction / termination, `m-bitemp-write-006` / `-007`). Both close
@@ -3038,7 +3279,15 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
                 case, entity, case.concurrency_mode, classified, step_statements, step_binds
             )
         else:
-            _assert_update_input(case, entity, classified, step_statements, step_binds)
+            _assert_update_input(
+                case,
+                entity,
+                classified,
+                step_statements,
+                step_binds,
+                dialect=dialect,
+                rows=rows,
+            )
         # Inheritance write routing: a TABLE-PER-HIERARCHY
         # existing-row statement (a plain update/delete OR a temporal close/inactivation)
         # carries the tag guard after the pk; a TABLE-PER-CONCRETE-SUBTYPE write targets
@@ -3200,11 +3449,29 @@ def _assert_update_input(
     classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
     step_statements: list[str],
     step_binds: list[list[Any]],
+    *,
+    dialect: str,
+    rows: list[dict[str, Any]],
 ) -> None:
+    """Cross-check a plain (unversioned, non-temporal) update step's ① against ②.
+
+    Under Relational Document Layout the Structured Column is one `set` term
+    carrying the dialect's mutation expression rather than one bind, so its
+    contribution to the golden binds is one ``(path, value)`` PAIR per assigned
+    Document Path, in the layout's own order. Everything else — which columns the
+    `set` clause names, and in what order — is unchanged, because a document
+    assignment is still one column assignment.
+    """
+    document_column, resident = _document_layout_members(case, entity)
+    assignments = (
+        [_document_assignments(case, entity, row) for row in rows] if document_column else []
+    )
+    patches_document = any(assignments)
     set_present = [
         c
         for c in _write_column_order(case, entity)
         if any(c in set_cols for _, _, set_cols, _ in classified)
+        or (patches_document and c == document_column)
     ]
     # Columns whose ① value is a self-referential `{ increment: <n> }` marker (a
     # sequence registry's `next_val`): the golden assigns `col = col + ?` and the bind
@@ -3235,24 +3502,36 @@ def _assert_update_input(
                     f"{statement!r}."
                 )
     per_key = len(step_statements) == len(classified) and len(step_statements) > 1
-    width = len(set_present)
+
+    def expected_values(
+        set_cols: dict[str, Any], patches: tuple[tuple[tuple[str, ...], Any], ...]
+    ) -> list[Any]:
+        values: list[Any] = []
+        for column in set_present:
+            if column == document_column and patches_document:
+                for path, value in patches:
+                    values.append(_document_path_bind(path, dialect))
+                    values.append(_document_value_bind(value))
+                continue
+            values.append(_set_bind_value(column, set_cols[column], document_columns))
+        return values
+
     if per_key:
-        for (_, _, set_cols, _), binds, statement in zip(
-            classified, step_binds, step_statements, strict=True
+        for (_, _, set_cols, _), patches, binds, statement in zip(
+            classified,
+            assignments or [()] * len(classified),
+            step_binds,
+            step_statements,
+            strict=True,
         ):
-            expected = [
-                _set_bind_value(column, set_cols[column], document_columns)
-                for column in set_present
-            ]
-            _assert_write_values(case, expected, binds[:width], statement)
+            expected = expected_values(set_cols, patches)
+            _assert_write_values(case, expected, binds[: len(expected)], statement)
         return
     first_set = classified[0][2] if classified else {}
-    expected = [
-        _set_bind_value(column, first_set[column], document_columns) for column in set_present
-    ]
+    expected = expected_values(first_set, assignments[0] if assignments else ())
     binds = step_binds[0] if step_binds else []
     statement = step_statements[0] if step_statements else ""
-    _assert_write_values(case, expected, binds[:width], statement)
+    _assert_write_values(case, expected, binds[: len(expected)], statement)
 
 
 def _assert_delete_input(
@@ -3630,7 +3909,9 @@ def _current_rectangles(
             break
         if prior["entity"] != current_step["entity"]:
             continue
-        prior_keys = [_classify_write_row(case, entity, row)[1] for row in prior.get("rows", [])]
+        prior_keys = [
+            _classify_write_row(case, entity, row, opening=True)[1] for row in prior.get("rows", [])
+        ]
         if not any(_write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
             continue
         valid_from, until, at = prior.get("validFrom"), prior.get("until"), prior.get("at")
@@ -3801,7 +4082,7 @@ def _assert_versioned_conflict_input(
             f"statement, but {len(statements)} were listed."
         )
     statement = statements[0]
-    _, pk, set_cols, observed = _classify_write_row(case, entity, write)
+    _, pk, set_cols, observed = _classify_write_row(case, entity, write, opening=False)
     if observed is None:
         raise CaseFailure(
             f"{case.path.name}: a versioned conflict's neutral write input ({pointer}) MUST "
@@ -3959,7 +4240,7 @@ def _assert_temporal_conflict_close(
     valid_time = next(
         (a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime"), None
     )
-    _, pk, set_cols, _ = _classify_write_row(case, entity, write)
+    _, pk, set_cols, _ = _classify_write_row(case, entity, write, opening=False)
     addressed: set[str] = set() if valid_time is None else {valid_time["end_column"]}
     if set(set_cols) != addressed:
         raise CaseFailure(
@@ -4056,7 +4337,7 @@ def _assert_write_sequence(case: Case, db: DatabaseProvider) -> None:
     statements = case.golden_statements(dialect)
 
     for index, statement in enumerate(statements):
-        binds = case.statement_binds(index)
+        binds = case.statement_binds(index, dialect)
         db.execute(statement, binds)
 
     expected = case.expected_table_state

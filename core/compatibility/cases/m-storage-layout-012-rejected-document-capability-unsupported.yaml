@@ -7,13 +7,20 @@
 # and `payload` collides with no direct column. It is refused anyway, because an
 # implementation MUST NOT accept a layout whose reads and writes it cannot both
 # execute: the Rule Set carries a declared capability scope list and this build
-# still refuses the standalone shape. A model is accepted or refused whole, so
-# the refusal is a formation rejection rather than a per-operation failure. A
-# build that executes the standalone shape end to end drops that entry and
-# accepts this model; a build whose scope list is empty refuses nothing and no
-# longer owns the rule or this case.
+# still refuses a layout owner carrying an explicit optimistic-lock Attribute. A
+# model is accepted or refused whole, so the refusal is a formation rejection
+# rather than a per-operation failure. A build that executes that shape end to
+# end drops the entry and accepts this model; a build whose scope list is empty
+# refuses nothing and no longer owns the rule or this case.
+#
+# The standalone shape itself is NOT what is refused here any more: this build
+# executes a standalone document Entity's reads and writes, which
+# models/document-layout.yaml and m-storage-layout-017…023 witness. What the
+# refusal turns on is the version Attribute, which the layout keeps in a Column
+# of its own (direct-column role 3) and whose version gate this build does not
+# yet lower over a document-mapped row.
 model: models/member-column-defaults.yaml
-tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, document-layout, capability, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-opt-lock, m-model-formation, m-descriptor, rejected, negative, document-layout, capability, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   model:
@@ -27,5 +34,6 @@ when:
         - { name: id, type: int64, primaryKey: true }
         - { name: displayName, type: string }
         - { name: total, type: "decimal(12,2)" }
+        - { name: version, type: int64, optimisticLocking: true }
 then:
   rejectedRule: storage-layout-document-capability-unsupported

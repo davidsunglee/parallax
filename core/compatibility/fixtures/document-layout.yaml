@@ -1,0 +1,61 @@
+# Fixture rows for the Relational Document Layout model
+# (models/document-layout.yaml).
+#
+# Each row is authored member by member, exactly as a `Columns`-layout fixture is:
+# `joinedOn` is the ISO-8601 wire spelling a `date` Column would take, `score` a JSON
+# number, `address` the occurrence's own document. The layout is what decides where
+# each one lands, and the codec is what spells it — so this file states one logical
+# row and never a physical document.
+#
+# The three Traveler rows are chosen so every Phase-5 witness discriminates:
+#
+#   id 1 Ada  score 7     joinedOn 2026-01-15  note "north wing"  address Oslo/NO
+#   id 2 Bo   score 30    joinedOn 2025-12-31  note ABSENT        address Bergen/NO
+#   id 3 Cyd  score null  joinedOn null        note JSON NULL     address null
+#
+# `note` is the presence pair: id 2 omits the key and id 3 writes an explicit JSON
+# null, so `isNull(note)` MUST answer both and `isNotNull(note)` MUST answer Ada
+# alone. A decode that told the two apart, or an extraction that handed back the four
+# characters `null` for id 3, would answer differently on the two dialects rather than
+# failing loudly.
+#
+# `score` is where the numeric family's cast is falsifiable: 30 > 7 as numbers and
+# `"30" < "7"` as text, because a JSON number's integer part has no fixed width. So
+# `greaterThan(score, 5)` answers both rows through the cast and Ada ALONE under a
+# text comparison, and `score desc` puts Bo first through the cast and Ada first
+# under a text ordering — a wrong lowering changes the answer instead of erroring.
+#
+# `tags` is omitted on ids 2 and 3: a `many` occurrence is never null, so the stored
+# document carries the empty array either way (m-document-codec).
+Traveler:
+  - id: 1
+    displayName: Ada
+    score: 7
+    joinedOn: "2026-01-15"
+    note: north wing
+    address:
+      city: Oslo
+      geo:
+        country: "NO"
+    tags:
+      - { label: founder }
+      - { label: staff }
+  - id: 2
+    displayName: Bo
+    score: 30
+    joinedOn: "2025-12-31"
+    address:
+      city: Bergen
+      geo:
+        country: "NO"
+  - id: 3
+    displayName: Cyd
+    score: null
+    joinedOn: null
+    note: null
+    address: null
+# Beacon rows carry no document-resident member at all, so each row's Structured
+# Column is the empty object — present and `NOT NULL`, extracted from by nothing.
+Beacon:
+  - id: 10
+  - id: 11

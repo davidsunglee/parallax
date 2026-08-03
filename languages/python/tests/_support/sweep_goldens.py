@@ -182,12 +182,22 @@ _STORAGE_LAYOUT_READS: Final[frozenset[str]] = frozenset(
 # text-compared half's five spellings (008-012), plus the non-string containment
 # candidate (013), whose Postgres lowering puts every element predicate on one
 # unnested alias. Row-form, compiled and run below. The two writeSequence cases
-# (001/002) are the ENCODING witnesses rather than comparison ones and stay outside
-# both write sets: the snapshot write lowering binds a Value Object occurrence's value
-# as it receives it, so routing an insert document through the codec is Phase 5 work
-# and the reference harness grades those two against real engines meanwhile.
+# (001/002) are the ENCODING and PRESENCE witnesses rather than comparison ones;
+# `-001` joins `WRITE_EXERCISED` and `-002` is reasoned-out there.
 _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
     f"m-document-codec-{n:03d}" for n in range(3, 14)
+)
+# Relational Document Layout reads (`m-storage-layout`): the whole read surface the
+# layout opens. `-017` grades the projection rule and the fan-out (one Structured
+# Column projected, never a result field, every member under the result name a Column
+# of its own would have carried); `-018` is its instance-form sibling, whose nested
+# predicate additionally walks the occurrence's containment path from the document
+# root; `-019` is the contrast that projects NO document because no member the read
+# asked for lives inside one; `-020` puts a path predicate and an ordering key through
+# the typed-cast seam under a `limit`, which is what makes the ordering observable;
+# `-021` collapses a missing key and an explicit JSON null to one absence.
+_DOCUMENT_LAYOUT_READS: Final[frozenset[str]] = frozenset(
+    f"m-storage-layout-{n:03d}" for n in range(17, 22)
 )
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
@@ -209,6 +219,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _DESCRIPTOR_DEFAULT_COLUMN_READS
     | _MATERIALIZATION_KEY_COMPATIBILITY_READS
     | _STORAGE_LAYOUT_READS
+    | _DOCUMENT_LAYOUT_READS
 )
 
 # Keyed, non-temporal unit-of-work writes graded byte-exact across `m-unit-work`,
@@ -329,12 +340,44 @@ _STORAGE_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-storage-layout-011",
     }
 )
+# Relational Document Layout writes, plus the two per-leaf encoding witnesses that
+# were waiting on them. `m-storage-layout-022` is the whole-document INSERT (the
+# Structured Column binds on every row, the codec fixes presence);
+# `m-storage-layout-023` is the two-assignment patch UPDATE, whose `set` term is the
+# dialect's mutation expression rather than one bind; `m-value-object-067` replaces a
+# whole occurrence in place, one path and one composite value.
+#
+# `m-document-codec-001` joins them here rather than in Phase 4 because the snapshot
+# write lowering used to bind a Value Object occurrence's value as it received it, so
+# an insert reached a serializer with native carriers and the encoding golden could
+# only be graded by the reference harness. The lowering now composes every occurrence
+# through the codec, which is exactly what that case witnesses: an exact-decimal
+# STRING, lowercase-hex `bytes`, zero-padded ISO `time`, UTC-microsecond `timestamp`,
+# and canonical-lowercase `uuid`, at every depth.
+#
+# Its presence sibling `m-document-codec-002` stays OUT, and for a different reason
+# than the encoding one Phase 4 recorded: its neutral write input deliberately omits
+# the required `many` occurrence `profile.entries` to witness that an omitted `many`
+# still stores `[]`, and the developer-facing write validator refuses a required
+# value object the input does not name (`write-required-value-object-missing`) before
+# any SQL. The compile lane never runs that validator, so the case's golden compiles
+# byte-exact; the run lane does, so it cannot execute. Its claim is graded by the
+# reference harness on both engines meanwhile.
+_DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
+    {
+        "m-storage-layout-022",
+        "m-storage-layout-023",
+        "m-value-object-067",
+        "m-document-codec-001",
+    }
+)
 _WRITE_SEQUENCES: Final[frozenset[str]] = (
     frozenset({"m-unit-work-003", "m-unit-work-007", "m-batch-write-002"})
     | _OPT_LOCK_AND_PK_GEN_WRITE_SEQUENCES
     | _BATCH_COLLAPSE_WRITE_SEQUENCES
     | _DECIMAL_PRECISION_WRITE_SEQUENCES
     | _STORAGE_LAYOUT_WRITE_SEQUENCES
+    | _DOCUMENT_LAYOUT_WRITE_SEQUENCES
 )
 # The `m-snapshot-read-010` mutate scenario emits no write DML. Its two `find`
 # steps' emissions and round trips grade byte-
@@ -437,5 +480,20 @@ def write_golden_statements(case: case_format.Case) -> list[tuple[str, list[obje
         for entry in group:
             sql: Any = entry["sql"]
             text = cast("dict[str, str]", sql)["postgres"] if isinstance(sql, dict) else sql
-            out.append((cast("str", text), list(cast("list[object]", entry.get("binds", [])))))
+            out.append((cast("str", text), _entry_binds(entry)))
     return out
+
+
+def _entry_binds(entry: dict[str, Any]) -> list[object]:
+    """One statement entry's Postgres binds.
+
+    A bind list follows the same flat-or-dialect-keyed polymorphism ``sql`` does
+    (`m-case-format`): flat where the hole structure is shared across dialects, and
+    keyed per dialect where it diverges — a document mutation's path bind is one
+    Postgres text-array path and one MariaDB JSON-path string, so those two cannot
+    be one authored list.
+    """
+    binds: Any = entry.get("binds", [])
+    if isinstance(binds, dict):
+        binds = cast("dict[str, list[object]]", binds)["postgres"]
+    return list(cast("list[object]", binds))

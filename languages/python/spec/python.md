@@ -2692,7 +2692,7 @@ legalizes a forbidden edge.
 | Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity._query`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
-| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
+| Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
@@ -2785,6 +2785,7 @@ parallax.snapshot.handle._family --> parallax.core.base
 parallax.snapshot.handle._family --> parallax.core.metamodel
 parallax.snapshot.handle._family --> parallax.core.inheritance
 parallax.snapshot.handle._family --> parallax.core.storage_layout
+parallax.snapshot.handle._family --> parallax.core.document_codec
 parallax.snapshot.handle._family --> parallax.core.temporal_read
 parallax.snapshot.handle._family --> parallax.core.dialect
 parallax.snapshot.handle._family --> parallax.core.db_port
@@ -2797,6 +2798,7 @@ parallax.snapshot.handle._write_types --> parallax.core.base
 parallax.snapshot.handle._write_types --> parallax.core.metamodel
 parallax.snapshot.handle._write_types --> parallax.core.inheritance
 parallax.snapshot.handle._write_types --> parallax.core.storage_layout
+parallax.snapshot.handle._write_types --> parallax.core.document_codec
 parallax.snapshot.handle._write_types --> parallax.core.temporal_read
 parallax.snapshot.handle._write_types --> parallax.core.dialect
 parallax.snapshot.handle._write_types --> parallax.core.db_port
@@ -2809,6 +2811,7 @@ parallax.snapshot.handle._keyed_sql --> parallax.core.base
 parallax.snapshot.handle._keyed_sql --> parallax.core.metamodel
 parallax.snapshot.handle._keyed_sql --> parallax.core.inheritance
 parallax.snapshot.handle._keyed_sql --> parallax.core.storage_layout
+parallax.snapshot.handle._keyed_sql --> parallax.core.document_codec
 parallax.snapshot.handle._keyed_sql --> parallax.core.temporal_read
 parallax.snapshot.handle._keyed_sql --> parallax.core.dialect
 parallax.snapshot.handle._keyed_sql --> parallax.core.db_port
@@ -2821,6 +2824,7 @@ parallax.snapshot.handle._write_lowering --> parallax.core.base
 parallax.snapshot.handle._write_lowering --> parallax.core.metamodel
 parallax.snapshot.handle._write_lowering --> parallax.core.inheritance
 parallax.snapshot.handle._write_lowering --> parallax.core.storage_layout
+parallax.snapshot.handle._write_lowering --> parallax.core.document_codec
 parallax.snapshot.handle._write_lowering --> parallax.core.temporal_read
 parallax.snapshot.handle._write_lowering --> parallax.core.dialect
 parallax.snapshot.handle._write_lowering --> parallax.core.db_port
@@ -2833,6 +2837,7 @@ parallax.snapshot.handle._step_lowering --> parallax.core.base
 parallax.snapshot.handle._step_lowering --> parallax.core.metamodel
 parallax.snapshot.handle._step_lowering --> parallax.core.inheritance
 parallax.snapshot.handle._step_lowering --> parallax.core.storage_layout
+parallax.snapshot.handle._step_lowering --> parallax.core.document_codec
 parallax.snapshot.handle._step_lowering --> parallax.core.temporal_read
 parallax.snapshot.handle._step_lowering --> parallax.core.dialect
 parallax.snapshot.handle._step_lowering --> parallax.core.db_port
