@@ -2689,7 +2689,6 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
         )
 
 
-_INSERT_COLUMNS_RE = re.compile(r"insert\s+into\s+\S+\s*\(([^)]*)\)", re.IGNORECASE)
 # The target table of a DML statement (m-inheritance table-per-concrete-subtype
 # routing): the identifier after `insert into` / `delete from` / `update`, stopping
 # at the following whitespace or `(` (the tight `insert into t(` column list).
@@ -3189,12 +3188,32 @@ def _assert_write_values(
 
 
 def _parse_insert_columns(case: Case, statement: str) -> list[str]:
-    match = _INSERT_COLUMNS_RE.search(statement)
-    if not match:
+    """The columns an INSERT names: the parenthesised list following its target table.
+
+    Read through :func:`_sql_scan` for the same reason its `set`-clause sibling is: a
+    quoted identifier may itself carry a bracket or a comma, and neither is syntax
+    there.
+    """
+    columns = _insert_column_list(statement)
+    if columns is None:
         raise CaseFailure(
             f"{case.path.name}: could not parse the INSERT column list from golden {statement!r}."
         )
-    return [column.strip() for column in match.group(1).split(",")]
+    return [column.strip() for column in _top_level_commas(columns)]
+
+
+def _insert_column_list(statement: str) -> str | None:
+    """The text between the parentheses that follow an INSERT's target table, or
+    ``None`` when the statement is not an INSERT or opens no such list."""
+    if not _keyword_at(statement.lstrip().lower(), 0, "insert"):
+        return None
+    opened: int | None = None
+    for index, char, depth in _sql_scan(statement):
+        if char == "(" and depth == 1 and opened is None:
+            opened = index + 1
+        elif char == ")" and depth == 0 and opened is not None:
+            return statement[opened:index]
+    return None
 
 
 def _parse_set_columns(case: Case, statement: str) -> list[str]:
@@ -3210,10 +3229,12 @@ def _sql_scan(sql: str) -> Iterator[tuple[int, str, int]]:
     """Each character of *sql* OUTSIDE a quoted identifier or string literal, with
     its index and its bracket depth.
 
-    Every structural read of a golden statement goes through here, because a column
-    name is any nonempty string and a dialect quotes one that is reserved or
-    otherwise non-simple (`m-dialect`): a comma, a bracket, an `=`, and the word
-    `where` can each sit inside an identifier, and none of them is syntax there.
+    Every reader that takes a golden statement apart by COLUMN goes through here —
+    an INSERT's column list, an UPDATE's `set` clause, its assignments, and each
+    assignment's own `=` — because a column name is any nonempty string and a
+    dialect quotes one that is reserved or otherwise non-simple (`m-dialect`): a
+    comma, a bracket, an `=`, and the word `where` can each sit inside an
+    identifier, and none of them is syntax there.
     """
     quote = ""
     depth = 0

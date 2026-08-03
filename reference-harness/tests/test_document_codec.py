@@ -190,7 +190,7 @@ def test_decode_stored_is_dialect_agnostic() -> None:
 
 
 def test_decode_leaf_is_the_identity_wherever_the_document_spelling_is_the_wire_one() -> None:
-    # Ten of the twelve rows: a member the layout moved into a Structured Column
+    # Nine of the twelve rows: a member the layout moved into a Structured Column
     # reaches a result row spelled exactly as a Column of its own would spell it, so
     # the layout is not observable through the value.
     for spelling, value in (
@@ -206,12 +206,24 @@ def test_decode_leaf_is_the_identity_wherever_the_document_spelling_is_the_wire_
         assert decode_leaf(spelling, value) == value
 
 
-def test_decode_leaf_converts_the_two_rows_whose_spellings_differ_by_layout() -> None:
+def test_decode_leaf_converts_the_three_rows_whose_spellings_differ_by_layout() -> None:
     # A `decimal` is stored as its exact digit STRING and read back from a Column as
     # a number; a `timestamp` is stored at UTC with a `Z` terminator and read back
     # from a Column with an explicit offset.
     assert decode_leaf("decimal(12,2)", "10.25") == Decimal("10.25")
     assert decode_leaf("timestamp", "2026-01-15T09:30:00.000000Z") == "2026-01-15T09:30:00+00:00"
+
+
+def test_decode_leaf_reads_a_float32_at_its_declared_width() -> None:
+    # `1048576.2` is the shortest number that decodes back to binary32 `1048576.25`,
+    # so it is that value's encoding and not its own: reading it at binary64 would
+    # answer a number no `float32` Column can hold, and the layout would be
+    # observable through the value.
+    assert decode_leaf("float32", 1048576.2) == 1048576.25
+    # A value binary32 holds exactly is unchanged, and a binary64 member never
+    # narrows.
+    assert decode_leaf("float32", 1.5) == 1.5
+    assert decode_leaf("float64", 1048576.2) == 1048576.2
 
 
 def test_decode_leaf_carries_absence_through_and_refuses_an_uncovered_type() -> None:

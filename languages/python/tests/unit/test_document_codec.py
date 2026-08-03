@@ -341,6 +341,27 @@ def test_stored_data_that_contradicts_its_shape_fails_the_decode() -> None:
         decode_path(_SHAPE, "not-a-document", ("day",))
 
 
+def test_a_required_intermediate_occurrence_is_a_missing_required_path() -> None:
+    # The tolerance above belongs to a NULLABLE ancestor: its absence is a state the
+    # shape names, so the subtree under it is legitimately not there. A required
+    # occurrence has no such state, so its absence or JSON null IS the missing
+    # required path, reported at the ancestor's own depth rather than as the leaf
+    # below it being absent.
+    shape = DocumentShape(
+        members=(
+            Occurrence(
+                name="origin",
+                multiplicity=Multiplicity.ONE,
+                nullable=False,
+                shape=shape_of_declaration(_ORIGIN),
+            ),
+        )
+    )
+    for document in ({}, {"origin": None}):
+        with pytest.raises(ValueError, match="'origin' is required"):
+            decode_path(shape, document, ("origin", "city"))
+
+
 def test_a_path_never_addresses_an_array_position() -> None:
     # A `many`'s elements are decoded one at a time against the occurrence's own
     # shape, so descending THROUGH one names no member — a caller error, never a

@@ -178,6 +178,44 @@ def test_two_rows_naming_different_document_members_do_not_share_one_statement()
         )
 
 
+def test_an_unnamed_many_occurrence_shares_a_statement_with_one_that_names_it() -> None:
+    # The contrast with the split above: these two rows do NOT name different
+    # members. Absence and the empty array are one logical zero state, so a row that
+    # never mentions `tags` has said it holds none, and both rows write the same
+    # document at the same column. Membership is what one Planned Insert's entries
+    # must share, so a row whose zero state stayed implicit would fail that rule over
+    # a statement it is byte-identical in.
+    (statement,) = _lower(
+        KeyedWrite(
+            "insert",
+            "Person",
+            ({"id": 1, "displayName": "Ada", "tags": []}, {"id": 2, "displayName": "Bo"}),
+        )
+    )
+    assert statement.sql == "insert into person(id, payload) values (?, ?), (?, ?)"
+    assert _document(statement, 1) == {"displayName": "Ada", "tags": []}
+    assert _document(statement, 3) == {"displayName": "Bo", "tags": []}
+
+
+def test_the_columns_layout_twin_shares_a_statement_the_same_way() -> None:
+    # The zero state is the model's, not the layout's: under `Columns` the occurrence
+    # holds a Column of its own, and an insert binds `[]` there whether the row named
+    # it or not — so the same two rows share one statement here too.
+    (statement,) = _lower(
+        KeyedWrite(
+            "insert",
+            "Person",
+            ({"id": 1, "displayName": "Ada", "tags": []}, {"id": 2, "displayName": "Bo"}),
+        ),
+        COLUMNS,
+    )
+    assert statement.sql == (
+        "insert into person(id, display_name, tags) values (?, ?, ?), (?, ?, ?)"
+    )
+    assert _document(statement, 2) == []
+    assert _document(statement, 5) == []
+
+
 def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
     # A delete renders its identity predicate alone, so its selection is the key
     # columns and the document members it happens to carry are invisible.

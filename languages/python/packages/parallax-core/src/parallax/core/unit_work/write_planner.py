@@ -218,6 +218,10 @@ class WritePlanner:
         inspected. ``request.transaction_instant`` is threaded unevaluated
         until a surviving temporal mutation needs it.
 
+        Every surviving opening row is canonicalized before batching and settling
+        (:func:`_canonical_item`), so membership — which decides both — reads one
+        answer rather than one per stage.
+
         A Materialized Write Group settles every group-wide semantic fact —
         temporal topology, the gate/concurrency decision, the affected-row
         policy, the assignment shape, and the resolved instant if the group
@@ -239,7 +243,8 @@ class WritePlanner:
             if isinstance(item, MaterializedWriteGroup)
             or not _is_empty_keyed_update(item, resolved)
         ]
-        batched = self._form_batches(survivors, resolved, request.observations)
+        canonical = [_canonical_item(item, resolved) for item in survivors]
+        batched = self._form_batches(canonical, resolved, request.observations)
         ordered = self._order(batched, resolved)
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
@@ -1447,3 +1452,44 @@ def _is_empty_keyed_update(instruction: WriteInstruction, resolved: Targets) -> 
         return False
     pk_names = {a.identity.name for a in resolved.family_primary_key(entity)}
     return all(all(key in pk_names for key in row) for row in instruction.rows)
+
+
+def _canonical_item(item: BufferItem, resolved: Targets) -> BufferItem:
+    """``item`` with every opening row's canonical member set spelled out.
+
+    An opening row that does not name a `many` Value Object occurrence has said the
+    occurrence holds no elements, so the empty collection is a member of that row as
+    surely as any value it wrote (`m-value-object`). Membership *is* the batching
+    decision and it is also what one step's entries must share, so the two rows
+    ``{id, tags: []}`` and ``{id}`` have to reach both with one member set: left
+    apart, they answer different group keys and then fail the Planned Insert's own
+    same-members rule, though they write the same row.
+
+    Only an OPENING row is canonicalized. A revising one is sparse — an unnamed
+    member there is untouched rather than zero — so adding the occurrence would turn
+    a member the caller left alone into one the statement assigns.
+    """
+    if not isinstance(item, KeyedWrite) or item.mutation not in _INSERT_VERBS:
+        return item
+    entity = resolved.entity(item.entity)
+    if entity is None:
+        return item
+    zero_state = resolved.zero_state_members(entity)
+    if not zero_state:
+        return item
+    rows = tuple(_with_zero_states(row, zero_state) for row in item.rows)
+    return KeyedWrite(
+        mutation=item.mutation,
+        entity=item.entity,
+        rows=rows,
+        valid_from=item.valid_from,
+        until=item.until,
+    )
+
+
+def _with_zero_states(row: Mapping[str, object], zero_state: Sequence[str]) -> Mapping[str, object]:
+    filled: dict[str, object] = dict(row)
+    for name in zero_state:
+        if name not in filled:
+            filled[name] = []
+    return filled

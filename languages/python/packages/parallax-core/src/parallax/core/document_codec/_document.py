@@ -191,13 +191,15 @@ def _holder(
     """The object that would carry ``path``'s last key, or ``None`` when an ancestor
     occurrence is not present.
 
-    Descent stops with ``None`` at an absent key and at a nullable ``ONE`` occurrence
-    written as JSON null: both are presence states the shape admits, so a path below
-    one names nothing rather than contradicting the shape — and a required member
-    below such an ancestor is not a missing required path, because the whole subtree
-    is legitimately absent. A key present with a value of the wrong kind raises
-    instead, because answering "not present" there would invent an absence the row
-    does not hold.
+    Descent stops with ``None`` only where the ancestor's own declaration admits its
+    absence: a **nullable** ``ONE`` occurrence whose key is absent or holds JSON null
+    is a presence state the shape names, so a path below one names nothing rather than
+    contradicting the shape — and a required member below such an ancestor is not a
+    missing required path, because the whole subtree is legitimately absent. A
+    **required** occurrence absent or null is itself the missing required path and
+    raises, named at its own depth rather than at the leaf below it. A key present
+    with a value of the wrong kind raises too, because answering "not present" there
+    would invent an absence the row does not hold.
 
     A path descending through a ``MANY`` is a caller error rather than stored data: an
     element is decoded by passing it back with the occurrence's own shape, so a path
@@ -218,6 +220,13 @@ def _holder(
             )
         held = current.get(name, MISSING)
         if isinstance(held, Missing) or held is None:
+            if not occurrence.nullable:
+                raise _invalid(
+                    path[: depth + 1],
+                    "is required and its key is absent"
+                    if isinstance(held, Missing)
+                    else "is required and its key holds JSON null",
+                )
             return None
         if not isinstance(held, dict):
             raise _invalid(
@@ -320,8 +329,12 @@ def apply_patches(
     ``shape`` is what makes a :class:`SetLeaf`'s ``NeutralValue`` spellable here rather
     than by its caller; it also refuses a path the model does not declare, so a patch
     can never introduce a key no member names, and it refuses a patch whose kind
-    contradicts the member it names, so patching can never build a document the shape
-    would then read back as invalid stored data.
+    contradicts the member it names, so no patch writes an object into a leaf or a
+    leaf's encoded value into an occurrence. What a patch *carries* stays the
+    caller's: removing a required member's key, writing JSON null over it, or
+    assigning an occurrence a document of some other shape all produce a document
+    this same shape then reads back as invalid stored data, and nothing here refuses
+    them.
 
     The input document is copied before the first patch, so the result shares no
     mutable state with it: an in-memory successor never aliases the retained
