@@ -1123,6 +1123,19 @@ def _provision_empty(case: Case, db: DatabaseProvider) -> None:
         load_model(case.model, db)
 
 
+def _apply_given(case: Case, db: DatabaseProvider) -> None:
+    """Apply a case's out-of-band ``given.apply`` entries verbatim.
+
+    Every lane that admits the key calls this at the same point — after its own
+    provisioning and before the lane's first golden statement or step — so the
+    timing and the interpretation are one thing rather than one per lane. Each
+    entry's ``sql`` is naive, dialect-agnostic text run as authored; ``binds``
+    defaults to empty. A case carrying none applies nothing.
+    """
+    for entry in case.apply:
+        db.execute(entry["sql"], list(entry.get("binds", [])))
+
+
 def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
@@ -5371,9 +5384,8 @@ def _assert_conflict(case: Case, db: DatabaseProvider) -> None:
             f"statement, but then.statements ({dialect}) lists {len(statements)}."
         )
 
-    # Apply any out-of-band given.apply setup (a concurrent mutation) before the write.
-    for entry in case.apply:
-        db.execute(entry["sql"], list(entry.get("binds", [])))
+    # Here the out-of-band setup is a concurrent transaction's own mutation.
+    _apply_given(case, db)
 
     affected = db.execute(statements[0], case.statement_binds(0))
     expected = case.expected_affected_rows
@@ -5441,8 +5453,7 @@ def _assert_conflict_retry(case: Case, db: DatabaseProvider) -> None:
     """
     dialect = db.dialect
 
-    for entry in case.apply:
-        db.execute(entry["sql"], list(entry.get("binds", [])))
+    _apply_given(case, db)
 
     for index, attempt in enumerate(case.attempts):
         statements = _attempt_statements(attempt, dialect)
@@ -6029,12 +6040,9 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_equivalent_encodings(case)  # layer 4c
         _assert_scenario_count_consistency(case, dialect)  # layer 5 (count)
         _provision(case, db)
-        # An out-of-band `given.apply` runs AFTER the fixtures load and BEFORE the
-        # first step — the scenario analogue of the write-sequence and conflict
-        # setup. It is what puts state into a row that no authored member could
-        # produce, a key the model declares nowhere included.
-        for entry in case.apply:
-            db.execute(entry["sql"], list(entry.get("binds", [])))
+        # Here the out-of-band setup puts state into a row no authored member could
+        # produce — a Structured Column key the model declares nowhere included.
+        _apply_given(case, db)
         _assert_scenario(case, db)  # layer 2 + identity
         return
 
@@ -6114,14 +6122,10 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_write_step_count(case, dialect)  # layer 5 (count)
         _assert_write_input_columns(case, dialect)  # layer 5c (① ↔ ② column/value)
         _provision_empty(case, db)
-        # An out-of-band `given.apply` runs AFTER the fixtures load and BEFORE the
-        # golden write sequence — the write-sequence analogue of a conflict case's
-        # concurrent-mutation setup. The m-detach merge-back-reinserts case uses it to
-        # DELETE the original persisted row (a concurrent transaction removed it), so
-        # the merge-back finds no original and INSERTs the copy as a new row. It is a
-        # no-op for the milestone-chaining / batched-write cases that carry none.
-        for entry in case.apply:
-            db.execute(entry["sql"], list(entry.get("binds", [])))
+        # Here the out-of-band setup is what the m-detach merge-back-reinserts case
+        # needs: DELETE the original persisted row, so the merge-back finds no
+        # original and INSERTs the copy as a new row.
+        _apply_given(case, db)
         _assert_write_sequence(case, db)  # apply DML, assert table state
         _assert_pk_allocation(case, db)  # layer 5b: PK-generation oracle (sequence)
         return

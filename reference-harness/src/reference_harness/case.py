@@ -704,12 +704,15 @@ class Case:
 
     @property
     def apply(self) -> list[dict[str, Any]]:
-        """The out-of-band naive statement entries a conflict case applies before
-        the golden write (``given.apply``).
+        """The out-of-band naive statement entries a case applies after its own
+        provisioning and before its lane's first golden statement or step
+        (``given.apply``).
 
         Each entry is a ``{sql, binds}`` statement whose ``sql`` is a plain string
         (dialect-agnostic naive SQL, run verbatim on every dialect); ``binds`` is
-        authored once and defaults to ``[]``.
+        authored once and defaults to ``[]``. What the entries stand for is the
+        lane's: a concurrent transaction's mutation on a conflict case, and
+        otherwise state no authored member of the model could produce.
         """
         return self.given.get("apply", [])
 

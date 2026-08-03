@@ -247,7 +247,7 @@ keeps the assertion honest across engines.
 | `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
 | `shape` | top-level | yes | the explicit shape discriminator — one of the nine shapes above; the schema `oneOf` keys on this `const` |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
-| `given.apply` | `given` | conflict | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after fixtures load and before the golden write — a concurrent transaction's stale-version mutation or row removal |
+| `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
 | `when.operation` | `when` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
 | `when.targetEntity` | `when` | read | the entity the read TARGETS — the queried position `when.operation` starts from (see *Read targeting*, below); REQUIRED on every read case and every scenario / coherence read step |
@@ -740,6 +740,16 @@ cache-hit read step. The rolled-back DML still executes, so it counts its
 statements as round trips exactly as a committed write does. The harness asserts
 per-step round-trip / golden-SQL count consistency, executes each step, and checks
 `sameObjectAs` identity assertions; it never compiles an operation to SQL.
+
+A scenario case MAY carry an out-of-band **`given.apply`**, applied after the
+model's fixtures load and **before the first step** — the same position the
+conflict and writeSequence lanes apply it in. Here it is setup rather than a
+concurrent writer: it is the only way to put state into a persisted row that no
+authored member of the model can produce, such as a key inside a Structured
+Column the model declares nowhere (`m-storage-layout`), which is what a newer
+version of an application writing that table leaves behind for an older one to
+read and carry forward. Carrying it makes the case `single-connection` run-only
+like any other (see *Compile eligibility*).
 
 #### Grouping steps into one unit of work (`uow`)
 
