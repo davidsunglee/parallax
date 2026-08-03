@@ -28,6 +28,16 @@
 #
 # `tags` is omitted on ids 2 and 3: a `many` occurrence is never null, so the stored
 # document carries the empty array either way (m-document-codec).
+#
+# The Trip rows hang off `Traveler.trips` and are chosen so a hop discriminates:
+# Ada owns two, Bo owns one, and Cyd owns none, so `exists(Traveler.trips)` answers
+# {1, 2} and a hop constrained to `destination = Oslo` answers Ada alone.
+#
+# The Ledger rows are the optimistic-lock pair, and their `label` is the presence
+# discriminator: id 100 carries one and id 200 omits the key entirely. Assigning
+# `label: null` is therefore a no-op on 200 and a real change on 100 — one authored
+# write, two different per-row outcomes, so a resolve that never decoded the document
+# would collapse both to one answer.
 Traveler:
   - id: 1
     displayName: Ada
@@ -55,6 +65,27 @@ Traveler:
     joinedOn: null
     note: null
     address: null
+Trip:
+  - id: 51
+    travelerId: 1
+    destination: Oslo
+    nights: 3
+  - id: 52
+    travelerId: 1
+    destination: Bergen
+    nights: 1
+  - id: 53
+    travelerId: 2
+    destination: Bergen
+    nights: 7
+Ledger:
+  - id: 100
+    version: 1
+    label: opening
+    balance: 250.00
+  - id: 200
+    version: 1
+    balance: 40.00
 # Beacon rows carry no document-resident member at all, so each row's Structured
 # Column is the empty object — present and `NOT NULL`, extracted from by nothing.
 Beacon:

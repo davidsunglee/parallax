@@ -77,6 +77,7 @@ from parallax.snapshot.handle._family import (
     entity_layout,
     entity_of,
     members,
+    placed_members,
     slot_column,
     tx_time_axis,
     version_attribute,
@@ -222,11 +223,16 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
         tx_start_column, _tx_end_column = axis_columns(layout, tx_axis)
         if tx_start_column not in observed_fields:  # pragma: no cover - malformed model/projection
             continue
-        uow.observe(key, _temporal_observation(layout, observed_fields, basis))
+        uow.observe(
+            key,
+            _temporal_observation(
+                members(placed_members(meta, entity, layout)), observed_fields, basis
+            ),
+        )
 
 
 def _temporal_observation(
-    layout: EntityLayoutView,
+    member_columns: Mapping[str, tuple[str, bool]],
     fields: Mapping[str, object],
     basis: TransactionTimeBasis,
 ) -> TemporalObservation:
@@ -245,8 +251,8 @@ def _temporal_observation(
 
     ``fields`` is a plain column-keyed mapping — a materialized
     :class:`~parallax.snapshot.materialize.Node`'s own ``.fields`` merged with
-    its documents (a real ``Transaction.find``), or a raw driver row (the
-    materializing predicate-write resolve, :func:`materialize_row`) — so both
+    its documents (a real ``Transaction.find``), or one resolved row of a
+    materializing predicate-write resolve (:func:`predecessor_payload`) — so both
     callers share the SAME extraction rather than duplicating it. Every extracted
     value passes through EXACTLY as the port returned it (a real ``timestamptz``
     column may be a driver-native ``datetime.datetime`` or the native-infinity
@@ -257,13 +263,15 @@ def _temporal_observation(
     seam's.
     """
     return TemporalObservation(
-        predecessor=PredecessorRow(_row_payload(layout, fields, include_value_objects=True)),
+        predecessor=PredecessorRow(
+            _row_payload(member_columns, fields, include_value_objects=True)
+        ),
         transaction_time_basis=basis,
     )
 
 
 def _row_payload(
-    layout: EntityLayoutView,
+    member_columns: Mapping[str, tuple[str, bool]],
     fields: Mapping[str, object],
     excluded: frozenset[str] = frozenset(),
     *,
@@ -271,24 +279,24 @@ def _row_payload(
 ) -> dict[str, object]:
     """``fields``'s own payload (every applicable member besides ``excluded``
     columns) — the extraction a real TEMPORAL find's Predecessor Row
-    (`_temporal_observation`, above) and an audit-only materializing resolve's
-    CHAINED full row (:func:`materialize_row`) share. A Predecessor Row excludes
-    nothing; the chained row excludes the axis bounds its own milestone plan
-    stamps afresh.
+    (`_temporal_observation`, above) and a materializing resolve's own
+    Predecessor Row (:func:`predecessor_payload`) share. A Predecessor Row
+    excludes nothing; a caller excluding the axis bounds its own milestone plan
+    stamps afresh names them.
 
-    Value-object columns are OMITTED by default (a plain row-form read projects
+    Value-object members are OMITTED by default (a plain row-form read projects
     no `Document` slot, `m-sql` *Read projection*). ``include_value_objects``
     opts in, and both callers are observation-side: `_temporal_observation`
     (every real ``Transaction.find``, always INSTANCE-form, and every
     materializing resolve on a temporal target, whose own projection carries
     every declared document so the Predecessor Row is complete) and
-    `materialize_row`'s audit-only chain merge (that same resolve). ``column in
-    fields`` still gates every member exactly as it does for scalars; a VO-free
-    entity's empty ``value_objects`` makes this flag a no-op either way.
+    `predecessor_payload` (that same resolve). ``column in fields`` still gates
+    every member exactly as it does for scalars; a VO-free entity's empty
+    value-object half makes this flag a no-op either way.
     """
     return {
         name: fields[column]
-        for name, (column, is_value_object) in members(layout).items()
+        for name, (column, is_value_object) in member_columns.items()
         if (include_value_objects or not is_value_object)
         and column in fields
         and column not in excluded
@@ -430,11 +438,19 @@ def validate_until(
 
 
 def is_no_op_assignment(
-    layout: EntityLayoutView, assignments: Mapping[str, object], row: Row
+    member_columns: Mapping[str, tuple[str, bool]], assignments: Mapping[str, object], row: Row
 ) -> bool:
     """Whether EVERY assigned member's new value already equals ``row``'s own
     (`m-opt-lock` per-row no-op elimination — structural equality, the SAME
     comparison a keyed no-op's effective-change-set test uses).
+
+    ``row`` is one resolved row of the write's own resolving read, after that
+    read's row transform: a document-mapped member is compared against the value
+    the fan-out decoded, in its declared Neutral Type, rather than against a
+    fragment of the raw Structured Column. An absent Document Path and an
+    explicit JSON null both decode to ``None``, which is the one logical
+    not-present state a NULL Column also carries, so a member assigned ``None``
+    is a no-op in either spelling.
 
     This is the ONE narrow result-dependent normalization a materializing
     resolve performs while streaming: a resolved row an assignment-bearing
@@ -442,7 +458,6 @@ def is_no_op_assignment(
     ``delete`` / ``terminate`` / ``terminateUntil`` have no assignments to
     compare and therefore never call this — every resolved row is retained.
     """
-    member_columns = members(layout)
     return all(value == row.get(member_columns[member][0]) for member, value in assignments.items())
 
 
@@ -455,7 +470,9 @@ def key_column_values(
     return tuple(row[slot_column(layout, attr.identity)] for attr in pk_attrs)
 
 
-def predecessor_payload(layout: EntityLayoutView, row: Row) -> dict[str, object]:
+def predecessor_payload(
+    member_columns: Mapping[str, tuple[str, bool]], row: Row
+) -> dict[str, object]:
     """One resolved row's COMPLETE Predecessor Row payload — every applicable
     member, value-object documents included — the SAME complete extraction
     :func:`record_observations` retains for a real find (`m-unit-work` "A
@@ -464,7 +481,7 @@ def predecessor_payload(layout: EntityLayoutView, row: Row) -> dict[str, object]
     the CURRENT milestone by construction, so every predecessor it retains is
     latest-pinned.
     """
-    return _row_payload(layout, row, include_value_objects=True)
+    return _row_payload(member_columns, row, include_value_objects=True)
 
 
 def metadata_of_instance(meta: Metamodel, instance: EntityBase) -> EntityMetadata:

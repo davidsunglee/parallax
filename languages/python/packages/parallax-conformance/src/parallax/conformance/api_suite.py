@@ -785,6 +785,19 @@ _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON: Final[str] = (
     "executable story would re-prove the identical mechanism, not a new one"
 )
 
+# The Relational Document Layout relationship witnesses. Both traverse the very
+# relationship shapes an executed story already spells; what they pin is where the
+# layout PUT each level's members, which no developer surface names.
+_DOCUMENT_LAYOUT_RELATIONSHIP_REASON: Final[str] = (
+    "a relationship traversal over Relational Document Layout: the developer spelling "
+    "is the ordinary hop / deep fetch the exercised orders stories already show, and "
+    "what this case pins is physical — that both join endpoints keep Columns while "
+    "every other member moves into each level's one Structured Column, which is "
+    "`m-storage-layout`'s subject and has no developer surface. The classes for "
+    "models/document-layout.yaml live in the test-support mirror rather than in this "
+    "package, so no story can be written against them here"
+)
+
 # Snapshot-graph siblings of the executed orders-family graph stories (diamond
 # identity, back-reference cycle, closed-world, empty root/intermediate): a
 # different relationship shape (to-one nullable, shared-prefix dedup, declared
@@ -1077,6 +1090,9 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-navigate-021": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     "m-navigate-022": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     "m-navigate-024": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
+    # -- m-navigate / m-deep-fetch: Relational Document Layout traversals ----- #
+    "m-navigate-025": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
+    "m-deep-fetch-024": _DOCUMENT_LAYOUT_RELATIONSHIP_REASON,
     "m-snapshot-read-002": _TEMPORAL_DEEPFETCH_GRAPH_SIBLING_REASON,
     # -- m-snapshot-read: orders-family graph siblings ----------------------- #
     "m-snapshot-read-003": _ORDERS_GRAPH_SIBLING_REASON,

@@ -12,9 +12,11 @@
 # `ownerId` as document-resident and reject this model with
 # `storage-layout-document-member-column-override`, refusing a legal override and
 # leaving the join with no Column to join on. What the model is refused for is
-# the capability gate alone: this build executes neither a
-# table-per-concrete-subtype family nor an Attribute named by a Relationship Join
-# under this layout.
+# the capability gate alone, and for one reason: the family is
+# table-per-concrete-subtype, which the declared capability scope names. The join
+# is not among the reasons — an Attribute a Relationship Join designates keeps a
+# Column of its own and carries a hop's correlation under this layout
+# (m-navigate-025, m-deep-fetch-024).
 model: models/member-column-defaults.yaml
 tags: [m-storage-layout, m-inheritance, m-relationship, m-model-formation, m-descriptor, rejected, negative, document-layout, table-per-concrete-subtype, capability, slice-snapshot-1, slice-managed-1]
 shape: rejected

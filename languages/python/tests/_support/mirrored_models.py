@@ -59,16 +59,19 @@ from parallax.conformance.vo_models import (
 )
 from parallax.core import (
     MAX,
+    ONE_TO_MANY,
     Attr,
     Document,
     DomainModel,
     Entity,
     Float32,
     Int32,
+    Rel,
     Sequence,
     ValueObject,
     attr,
     index,
+    rel,
 )
 
 _NS = "parallax.compatibility"
@@ -89,6 +92,7 @@ __all__ = [
     "Beacon",
     "Branch",
     "Contact",
+    "Ledger",
     "Pass",
     "Passport",
     "Payment",
@@ -99,6 +103,7 @@ __all__ = [
     "Taxpayer",
     "Ticket",
     "Traveler",
+    "Trip",
     "Voucher",
     "WritableScalar",
 ]
@@ -324,6 +329,44 @@ class Traveler(
     note: Attr[str | None] = attr(max_length=64)
     address: Attr[TravelerAddress | None]
     tags: Attr[tuple[TravelerTag, ...]]
+    trips: Rel[tuple["Trip", ...]] = rel(
+        cardinality=ONE_TO_MANY, join=("id", "traveler_id"), order_by=("id",)
+    )
+
+
+class Trip(
+    Entity,
+    table="trip",
+    namespace=_NS,
+    layout=Document(),
+    indices=(index("trip_pk", "id", unique=True), index("trip_traveler_id", "traveler_id")),
+):
+    """Mirror of ``models/document-layout.yaml``'s join side: `traveler_id` is a
+    Relationship Join endpoint, so the layout keeps it in a Column of its own while
+    `destination` and `nights` are document-resident."""
+
+    id: Attr[int] = attr(primary_key=True)
+    traveler_id: Attr[int]
+    destination: Attr[str | None] = attr(max_length=64)
+    nights: Attr[int | None] = attr(type=Int32)
+    traveler: Rel[Traveler | None] = rel(reverse_of="trips")
+
+
+class Ledger(
+    Entity,
+    table="ledger",
+    namespace=_NS,
+    layout=Document(),
+    indices=(index("ledger_pk", "id", unique=True),),
+):
+    """Mirror of ``models/document-layout.yaml``'s versioned Entity: `version`
+    carries the explicit optimistic lock, which the layout keeps direct, while the
+    members its gated UPDATE assigns live in the document."""
+
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    label: Attr[str | None] = attr(max_length=64)
+    balance: Attr[Decimal | None] = attr(precision=18, scale=2)
 
 
 class Beacon(
@@ -339,7 +382,7 @@ class Beacon(
     id: Attr[int] = attr(primary_key=True)
 
 
-DOCUMENT_LAYOUT_MODEL = DomainModel(Traveler, Beacon)
+DOCUMENT_LAYOUT_MODEL = DomainModel(Traveler, Trip, Ledger, Beacon)
 
 MIRRORED: list[tuple[str, DomainModel]] = [
     ("account", ACCOUNT_MODEL),

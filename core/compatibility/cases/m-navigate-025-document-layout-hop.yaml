@@ -1,0 +1,47 @@
+# A hop between two document-mapped Entities correlates on plain Columns
+# (m-navigate x m-storage-layout), on Postgres AND MariaDB.
+#
+# `Traveler` and `Trip` both declare `layout.document`, so almost every member of
+# both sits inside one Structured Column. The join does not: both endpoints of a
+# Relationship Join hold direct-column role 2, so `Traveler.id` and
+# `Trip.travelerId` keep Columns of their own and the correlated `EXISTS` reads
+# `t1.traveler_id = t0.id` — the byte-identical fragment the same relationship
+# would lower to under `Columns` layout.
+#
+# The interior predicate is the contrast that makes this observable in one
+# statement. `destination` IS document-resident, so it lowers to the dialect's
+# extraction over `t1.payload`. One `EXISTS` therefore carries both forms at
+# once: an extraction where a member lives in the document, and no extraction at
+# all where the layout kept a Column. An implementation that decided residency
+# from the Entity's layout declaration rather than from each member's own direct
+# role would extract the correlation too, and neither engine would then use the
+# `trip_traveler_id` Index — an Index the model may declare precisely because
+# `travelerId` really occupies a Column (m-storage-layout).
+#
+# Trip 51 is Ada's Oslo trip; Bo's single trip and Ada's other one both go to
+# Bergen, and Cyd owns none, so the answer is Ada alone. Cyd is what the semi-join
+# has to exclude on the correlation rather than on the interior.
+model: models/document-layout.yaml
+tags: [m-navigate, m-storage-layout, m-relationship, m-sql, read, json, navigate, relationship, document-layout, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Traveler
+  operation:
+    navigate:
+      rel: Traveler.trips
+      op:
+        eq: { attr: Trip.destination, value: Oslo }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload from traveler t0 where exists (select 1 from trip t1 where t1.traveler_id = t0.id and jsonb_extract_path_text(t1.payload, ?) = ?)
+        mariadb: select t0.id, t0.payload from traveler t0 where exists (select 1 from trip t1 where t1.traveler_id = t0.id and json_value(t1.payload, ?) = ?)
+      binds:
+        postgres: [destination, Oslo]
+        mariadb: ['$.destination', Oslo]
+  referenceSql:
+    postgres: select id, payload ->> 'displayName' as display_name, cast(payload ->> 'score' as bigint) as score, payload ->> 'joinedOn' as joined_on, payload ->> 'note' as note from traveler where id in (select traveler_id from trip where payload ->> 'destination' = 'Oslo')
+    mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from traveler where id in (select traveler_id from trip where json_value(payload, '$.destination') = 'Oslo')
+  rows:
+    - { id: 1, display_name: Ada, score: 7, joined_on: '2026-01-15', note: north wing }
+  roundTrips: 1

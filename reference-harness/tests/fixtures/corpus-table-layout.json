@@ -649,6 +649,43 @@
         0
       ]
     },
+    "ledger": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ledger"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Ledger.id",
+          "declaringOwner": "parallax.compatibility.Ledger",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ledger"
+          ],
+          "column": "version",
+          "contributor": "attribute:parallax.compatibility.Ledger.version",
+          "declaringOwner": "parallax.compatibility.Ledger",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Ledger"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Ledger",
+          "declaringOwner": "parallax.compatibility.Ledger",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
     "traveler": {
       "columns": [
         {
@@ -668,6 +705,43 @@
           "column": "payload",
           "contributor": "relationalDocument:parallax.compatibility.Traveler",
           "declaringOwner": "parallax.compatibility.Traveler",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "trip": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Trip"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Trip.id",
+          "declaringOwner": "parallax.compatibility.Trip",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Trip"
+          ],
+          "column": "traveler_id",
+          "contributor": "attribute:parallax.compatibility.Trip.travelerId",
+          "declaringOwner": "parallax.compatibility.Trip",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Trip"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Trip",
+          "declaringOwner": "parallax.compatibility.Trip",
           "effectiveNullable": false,
           "tier": "document"
         }

@@ -246,6 +246,19 @@
       "documentPath": {},
       "valueObject": {}
     },
+    "parallax.compatibility.Ledger": {
+      "attribute": {
+        "balance": "balance",
+        "id": "id",
+        "label": "label",
+        "version": "version"
+      },
+      "documentPath": {
+        "balance": "payload:balance",
+        "label": "payload:label"
+      },
+      "valueObject": {}
+    },
     "parallax.compatibility.Traveler": {
       "attribute": {
         "displayName": "display_name",
@@ -270,6 +283,19 @@
         "address": "address",
         "tags": "tags"
       }
+    },
+    "parallax.compatibility.Trip": {
+      "attribute": {
+        "destination": "destination",
+        "id": "id",
+        "nights": "nights",
+        "travelerId": "traveler_id"
+      },
+      "documentPath": {
+        "destination": "payload:destination",
+        "nights": "payload:nights"
+      },
+      "valueObject": {}
     }
   },
   "models/document.yaml": {

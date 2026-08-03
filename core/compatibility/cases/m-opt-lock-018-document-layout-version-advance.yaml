@@ -1,0 +1,60 @@
+# A versioned UPDATE of a document-mapped Entity gates on a direct Column while
+# patching the document in the same statement (m-opt-lock x m-storage-layout x
+# m-dialect), on Postgres AND MariaDB.
+#
+# `Ledger` declares `layout.document`, so `label` and `balance` live inside
+# `payload`. Its `version` does not: an explicit optimistic-lock Attribute holds
+# direct-column role 5, so the layout keeps it in a Column of its own. That is what
+# makes the gate expressible at all — `and version = ?` is a plain column
+# comparison, and the version the framework writes is a plain `version = ?`
+# assignment beside the document's own `set` term, never a key inside the document.
+#
+# One statement carries both halves, and their order is the Table Layout's: the
+# Structured Column's mutation expression first, then the version Column. The
+# document half patches `label` alone, so `balance` — an exact digit string, the
+# document form of a `decimal(18,2)` (m-document-codec) — stands untouched in
+# `then.tableState`. A writer that rebuilt the document from the members it knows
+# would have to re-encode it, and any drift there would show up as a different
+# stored row rather than as a different statement.
+#
+# The unit of work runs `optimistic`, which is the mode that emits the gate: under
+# `locking` the shared row lock guards the row instead and the same write emits
+# `where id = ?` alone (m-opt-lock-002). The version still advances in both.
+#
+# Row 200 is untouched here and carries no `label` key at all; m-opt-lock-019 is
+# what that absence discriminates.
+model: models/document-layout.yaml
+tags: [m-opt-lock, m-storage-layout, m-dialect, m-document-codec, m-sql, m-unit-work, write-sequence, update, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+given:
+  fixtures: true
+when:
+  uow:
+    concurrency: optimistic
+  writeSequence:
+    - mutation: update
+      entity: Ledger
+      statements: 1
+      note: one document path patched, the version Column advanced and gated
+      rows:
+        - { id: 100, label: closing, observedVersion: 1 }
+then:
+  statements:
+    - sql:
+        postgres: update ledger set payload = jsonb_set(payload, ?, cast(? as jsonb)), version = ? where id = ? and version = ?
+        mariadb: update ledger set payload = json_set(payload, ?, json_extract(?, '$')), version = ? where id = ? and version = ?
+      binds:
+        postgres: ['{label}', '"closing"', 2, 100, 1]
+        mariadb: ['$.label', '"closing"', 2, 100, 1]
+  tableState:
+    ledger:
+      - id: 100
+        version: 2
+        payload:
+          label: closing
+          balance: '250.00'
+      - id: 200
+        version: 1
+        payload:
+          balance: '40.00'
+  roundTrips: 1

@@ -67,6 +67,7 @@ from parallax.snapshot.handle._family import (
     entity_of,
     family_primary_key,
     members,
+    placed_members,
     slot_column,
     version_attribute,
 )
@@ -385,19 +386,21 @@ def _materialize_predicate_write(
     # declared one, matching an ordinary read's own need-driven projection.
     assignment_bearing = instruction.mutation in _ASSIGNMENT_BEARING
     predecessor_need = version_attr is None and is_temporal
+    member_columns = members(placed_members(meta, entity, layout))
     needs_documents: bool | frozenset[str]
     if predecessor_need:
         needs_documents = True
     elif assignment_bearing:
-        member_columns = members(layout)
         needs_documents = frozenset(member for member in assignments if member_columns[member][1])
     else:
         needs_documents = False
     # A materializing predicate write's resolving read is row-form over a
     # non-family target (a family predicate write is rejected before SQL), so
-    # its compiled row transform is always the identity — only the statement is
-    # consumed here.
-    statement = compile_read(
+    # its compiled row transform is the identity under `Columns` layout. Under
+    # Relational Document Layout it is the document fan-out instead, and every
+    # per-row helper below reads a member by name, so the transform is applied
+    # here rather than skipped.
+    compiled = compile_read(
         plan_.root_operation,
         meta,
         dialect,
@@ -405,8 +408,11 @@ def _materialize_predicate_write(
         result_form="row",
         lock=lock,
         include_value_objects=needs_documents,
-    ).statement
-    rows = uow.read(lambda: _resolve_rows(conn, dialect, statement))
+    )
+    rows = [
+        compiled.transform_row(row)
+        for row in uow.read(lambda: _resolve_rows(conn, dialect, compiled.statement))
+    ]
     if not rows:
         return
     pk_attrs = family_primary_key(meta, entity)
@@ -423,7 +429,7 @@ def _materialize_predicate_write(
     if version_attr is not None:
         version_builder: ChunkedColumnBuilder[int] = ChunkedColumnBuilder()
         for row in rows:
-            if assignment_bearing and is_no_op_assignment(layout, assignments, row):
+            if assignment_bearing and is_no_op_assignment(member_columns, assignments, row):
                 continue  # per-row no-op elimination (assignment-bearing verbs only)
             append_key(row)
             version_builder.append(cast("int", row[slot_column(layout, version_attr.identity)]))
@@ -440,16 +446,15 @@ def _materialize_predicate_write(
         )
         return
 
-    member_columns = members(layout)
     attribute_names = tuple(name for name, (_column, is_vo) in member_columns.items() if not is_vo)
     value_object_names = tuple(name for name, (_column, is_vo) in member_columns.items() if is_vo)
     attribute_builders = {name: ChunkedColumnBuilder[object]() for name in attribute_names}
     value_object_builders = {name: ChunkedColumnBuilder[object]() for name in value_object_names}
     for row in rows:
-        if assignment_bearing and is_no_op_assignment(layout, assignments, row):
+        if assignment_bearing and is_no_op_assignment(member_columns, assignments, row):
             continue  # per-row no-op elimination (assignment-bearing verbs only)
         append_key(row)
-        payload = predecessor_payload(layout, row)
+        payload = predecessor_payload(member_columns, row)
         for name in attribute_names:
             attribute_builders[name].append(payload[name])
         for name in value_object_names:

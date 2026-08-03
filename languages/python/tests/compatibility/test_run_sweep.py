@@ -13,6 +13,7 @@ gated; a skip is reported, never silent (spec §6).
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from typing import Any, Final, cast
 
 import jsonschema
@@ -34,8 +35,10 @@ from _support.sweep_goldens import (
     write_golden_statements,
 )
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
-from parallax.core import storage_layout
+from parallax.core import op_algebra, storage_layout
+from parallax.core.db_port import Row
 from parallax.core.dialect import dialect_for
+from parallax.core.sql_gen import compile_read
 
 # Multi-concrete polymorphic INSTANCE-FORM reads:
 # m-inheritance-106/-107/-108/-109 compile byte-identical to their row-form
@@ -207,12 +210,17 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # same way. Both are graded here precisely BECAUSE this lane compares each
 # emitted statement against its authored golden: the Document slot each
 # resolving read projects is observable nowhere else.
+# `m-opt-lock-019` is the Relational Document Layout member of that same family:
+# its resolving read must decode a Document Path out of the Structured Column
+# before the per-row no-op comparison, and only running it proves the comparison
+# saw the member's value rather than an absent column.
 _MATERIALIZING_PREDICATE_WRITE_SCENARIOS_EXERCISED: Final[frozenset[str]] = frozenset(
     {
         "m-opt-lock-003",
         "m-opt-lock-004",
         "m-opt-lock-014",
         "m-opt-lock-015",
+        "m-opt-lock-019",
         "m-txtime-write-007",
         "m-txtime-write-009",
         "m-bitemp-write-010",
@@ -295,6 +303,34 @@ def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] |
     return [step.get("expectRows") for step in steps if "find" in step]
 
 
+def _scenario_find_row_transforms(case: case_format.Case, meta: Any) -> list[Callable[[Row], Row]]:
+    """Each FIND step's own row transform, in step order.
+
+    The port seam these rows are captured at sits BELOW the read's own transform,
+    so under Relational Document Layout a captured row still carries the raw
+    Structured Column while ``expectRows`` states the logical row. The transform
+    is what turns one into the other, and it is a function of the target Entity
+    and its Table Layout rather than of the predicate — so compiling a bare
+    ``all()`` read of the same target recovers exactly the one the executed read
+    carried. A document-mapped read projects that one column in either result
+    form, so the instance form :func:`engine._lower_find` compiles a scenario
+    find as is the fan-out that answers here too. Under `Columns` layout every
+    transform is the identity, which is what makes this inert for every other
+    case in this lane.
+    """
+    model = engine.case_model(meta)
+    transforms: list[Callable[[Row], Row]] = []
+    for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
+        if "find" not in step:
+            continue
+        entity = engine.case_entity(model, meta.entity(step["targetEntity"]))
+        compiled = compile_read(
+            op_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
+        )
+        transforms.append(compiled.transform_row)
+    return transforms
+
+
 @pytest.mark.parametrize("case", _WRITE_CASES, ids=[c.case_id for c in _WRITE_CASES])
 def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     """Run each keyed unit-of-work write case end-to-end against a reset database.
@@ -338,10 +374,13 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     if case.shape == "scenario":
         expected_per_find = _scenario_expect_rows(case)
+        transforms = _scenario_find_row_transforms(case, meta)
         assert len(port.reads) == len(expected_per_find), (case.case_id, port.reads)
-        for observed, expected in zip(port.reads, expected_per_find, strict=True):
+        for observed, expected, transform in zip(
+            port.reads, expected_per_find, transforms, strict=True
+        ):
             if expected is not None:
-                compare_rows([engine.wire_row(row) for row in observed], expected)
+                compare_rows([engine.wire_row(transform(row)) for row in observed], expected)
         # `expectError` steps grade through the adapter's `errors` observation
         # (`m-conformance-adapter` / `errorObservation.errorClass`): one entry
         # per declaring step, in step order — and NO entry for any other

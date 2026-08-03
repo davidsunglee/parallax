@@ -885,14 +885,21 @@ def test_the_capability_gate_names_every_declared_shape_the_owner_matches() -> N
     # names all of them. Removing one matched entry therefore leaves the others
     # matched, and the owner is still refused for every shape that remains.
     definitions = _document_hierarchy()
-    definitions[0]["attributes"].append(
-        {"name": "revision", "type": "int32", "optimisticLocking": True}
+    definitions[0]["attributes"].extend(
+        [{"name": "txStart", "type": "timestamp"}, {"name": "txEnd", "type": "timestamp"}]
     )
+    definitions[0]["asOfAxes"] = [
+        {
+            "dimension": "transactionTime",
+            "startAttribute": "txStart",
+            "endAttribute": "txEnd",
+        }
+    ]
     with pytest.raises(RejectionError) as caught:
         validate_storage_layout(definitions)
     assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
     assert "a table-per-hierarchy family" in caught.value.detail
-    assert "an explicit optimistic-lock Attribute" in caught.value.detail
+    assert "a Transaction-Time axis" in caught.value.detail
     assert "'doc'" in caught.value.detail
 
 
@@ -1026,10 +1033,7 @@ def _note_owning_a_holder(*, join_source: str = "ownerId") -> list[dict[str, Any
 def test_a_join_endpoint_stays_direct_so_neither_layout_rule_fires_on_it() -> None:
     # Role 2 comes from the validation-time join-endpoint projection, so
     # `ownerId` keeps its Column, its Override, and its Index.
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(_note_owning_a_holder())
-    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
-    assert "an Attribute named by a Relationship Join" in caught.value.detail
+    validate_storage_layout(_note_owning_a_holder())
 
 
 def test_a_join_that_does_not_resolve_locally_designates_no_endpoint() -> None:
