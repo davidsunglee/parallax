@@ -25,6 +25,7 @@ from reference_harness.case_runner import (
     _assert_write_step_count,
     _increment_marker,
     _is_computed_marker,
+    _parse_set_columns,
     _read_table,
     _table_layout,
     _tag,
@@ -667,3 +668,20 @@ def test_balance_entity_is_unitemporal_transaction_time() -> None:
     (dimension,) = entity.temporal_runtime_axes
     assert dimension["dimension"] == "transactionTime"
     assert [axis["dimension"] for axis in entity.temporal_runtime_axes] == ["transactionTime"]
+
+
+def test_a_set_clause_splits_on_the_commas_that_separate_its_assignments() -> None:
+    # A document mutation expression takes commas of its own — nested `jsonb_set`
+    # calls on Postgres, one N-pair `json_set` on MariaDB — so only a comma at
+    # bracket depth zero ends an assignment. Splitting naively would read the
+    # expression's own arguments as further SET columns.
+    nested = (
+        "update t set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), "
+        "?, cast(? as jsonb)) where id = ?"
+    )
+    case = _write_case_by_id("m-storage-layout-023")
+    assert _parse_set_columns(case, nested) == ["payload"]
+    pairs = "update t set payload = json_set(payload, ?, json_extract(?, '$')) where id = ?"
+    assert _parse_set_columns(case, pairs) == ["payload"]
+    plain = "update t set a = ?, b = ? where id = ?"
+    assert _parse_set_columns(case, plain) == ["a", "b"]

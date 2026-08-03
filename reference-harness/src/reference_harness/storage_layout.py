@@ -693,8 +693,6 @@ def _refused_shapes(
         if isinstance(axis, dict)
     }
     refused: list[str] = []
-    if block is None:
-        refused.append("a standalone Entity")
     if strategy == STRATEGY_TPH:
         refused.append("a table-per-hierarchy family")
     if strategy == STRATEGY_TPCS:

@@ -60,6 +60,7 @@ from parallax.conformance.vo_models import (
 from parallax.core import (
     MAX,
     Attr,
+    Document,
     DomainModel,
     Entity,
     Float32,
@@ -74,6 +75,7 @@ _NS = "parallax.compatibility"
 
 __all__ = [
     "DOCUMENT_CODEC_MODEL",
+    "DOCUMENT_LAYOUT_MODEL",
     "MIRRORED",
     "PK_MAX_MODEL",
     "PK_SEQUENCE_MODEL",
@@ -84,6 +86,7 @@ __all__ = [
     "Attendee",
     "Badge",
     "Balance",
+    "Beacon",
     "Branch",
     "Contact",
     "Pass",
@@ -95,6 +98,7 @@ __all__ = [
     "Supplier",
     "Taxpayer",
     "Ticket",
+    "Traveler",
     "Voucher",
     "WritableScalar",
 ]
@@ -281,6 +285,62 @@ class Taxpayer(
 
 TAXPAYER_MODEL = DomainModel(Taxpayer)
 
+
+class TravelerGeo(ValueObject):
+    country: Attr[str | None]
+
+
+class TravelerAddress(ValueObject):
+    city: Attr[str | None]
+    geo: Attr[TravelerGeo | None]
+
+
+class TravelerTag(ValueObject):
+    label: Attr[str | None]
+
+
+class Traveler(
+    Entity,
+    table="traveler",
+    namespace=_NS,
+    layout=Document(),
+    indices=(index("traveler_pk", "id", unique=True),),
+):
+    """Mirror of ``models/document-layout.yaml``'s document-mapped Entity.
+
+    The only mirrored class whose header selects a layout, so it is the only one
+    proving the whole Relational Document Layout path from the class frontend: the
+    header keyword resolves the Structured Column's default name, the descriptor
+    re-exports it at ``layout.document.column``, and the accepted Metamodel it forms
+    equals the one the YAML forms. Nothing else about the declaration changes — every
+    member is spelled exactly as a `Columns` mirror spells it, which is the property
+    the layout exists to preserve.
+    """
+
+    id: Attr[int] = attr(primary_key=True)
+    display_name: Attr[str | None] = attr(max_length=64)
+    score: Attr[int | None]
+    joined_on: Attr[dt.date | None]
+    note: Attr[str | None] = attr(max_length=64)
+    address: Attr[TravelerAddress | None]
+    tags: Attr[tuple[TravelerTag, ...]]
+
+
+class Beacon(
+    Entity,
+    table="beacon",
+    namespace=_NS,
+    layout=Document(),
+    indices=(index("beacon_pk", "id", unique=True),),
+):
+    """Mirror of ``models/document-layout.yaml``'s member-free document Entity: it
+    declares the layout and only its primary key, which the layout keeps direct."""
+
+    id: Attr[int] = attr(primary_key=True)
+
+
+DOCUMENT_LAYOUT_MODEL = DomainModel(Traveler, Beacon)
+
 MIRRORED: list[tuple[str, DomainModel]] = [
     ("account", ACCOUNT_MODEL),
     ("pk-max", PK_MAX_MODEL),
@@ -303,6 +363,7 @@ MIRRORED: list[tuple[str, DomainModel]] = [
     ("writable-scalars", WRITABLE_SCALARS_MODEL),
     ("taxpayer", TAXPAYER_MODEL),
     ("document-codec", DOCUMENT_CODEC_MODEL),
+    ("document-layout", DOCUMENT_LAYOUT_MODEL),
 ]
 """Corpus model stem -> the Domain Model the idiomatic classes for it compose into."""
 

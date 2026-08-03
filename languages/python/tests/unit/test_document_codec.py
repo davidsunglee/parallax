@@ -51,6 +51,7 @@ from parallax.core.document_codec import (
     encode_document,
     encode_leaf,
     encode_many,
+    entity_shape,
     is_text_compared,
     occurrence_shape,
     shape_of_declaration,
@@ -428,3 +429,29 @@ def test_a_compiled_occurrence_yields_the_same_shape_as_its_declaration() -> Non
             ),
         )
     )
+
+
+def test_an_entity_shape_holds_its_document_resident_members_leaves_first() -> None:
+    # The Entity-document counterpart of `occurrence_shape`: one root object over
+    # the members that live inside a Relational Document Layout's shared
+    # Structured Column. Residency is the CALLER's answer, so this takes the
+    # already-filtered members — which is what lets the codec own the Entity
+    # document without reading a layout it may not depend on.
+    (entity,) = DomainModel(Holder).entities
+    shape = entity_shape(entity.declared_attributes, entity.declared_value_objects)
+    assert shape.members == (
+        Leaf(name="id", type=INT64, nullable=False),
+        Occurrence(
+            name="profile",
+            multiplicity=Multiplicity.ONE,
+            nullable=True,
+            shape=occurrence_shape(entity.declared_value_objects[0]),
+        ),
+    )
+
+
+def test_an_entity_shape_over_no_members_encodes_the_empty_document() -> None:
+    # An Entity declaring the layout but no document-resident member still
+    # carries a document: the Structured Column is NOT NULL and the empty object
+    # is what a row with nothing inside it holds (m-storage-layout).
+    assert encode_document(entity_shape((), ()), {}) == {}

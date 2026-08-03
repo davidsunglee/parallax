@@ -387,13 +387,23 @@ def run_read_case(
     identity. The lane is therefore exactly compile -> execute -> transform:
     `m-sql` decided at COMPILE time what each row needs, so this adapter never
     re-derives it from the operation.
+
+    Wire rendering FOLLOWS the transform, because a transform may itself produce
+    a managed value: a Relational Document Layout read projects one Structured
+    Column and fans it out into members decoded by their declared Neutral Type
+    (`m-sql`), so a `timestamp` member arrives here as a `datetime` exactly as
+    the same member does when it is a column of its own. Rendering first would
+    hand the wire that member's document spelling instead, making one logical
+    value observably different under the two layouts. Every other transform
+    leaves each value as it found it, so the order is behavior-identical for
+    every read that carries no document.
     """
     compiled = _compile_statement(case, dialect_name)
     statement = compiled.statement
     dialect = dialect_for(dialect_name)
     managed = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
     emission = Emission("/operation", statement.sql, statement.binds)
-    rows = [compiled.transform_row(wire_row(row)) for row in managed]
+    rows = [wire_row(compiled.transform_row(row)) for row in managed]
     return [emission], rows, 1
 
 

@@ -9,6 +9,7 @@ that a value the table does not cover is refused rather than passed through.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ import pytest
 from reference_harness.document_codec import (
     DocumentEncodingError,
     comparison_text,
+    decode_leaf,
     decode_stored,
     encode_candidate,
     encode_document,
@@ -185,3 +187,34 @@ def test_decode_stored_is_dialect_agnostic() -> None:
     assert decode_stored(b'{"a": 1}') == {"a": 1}  # MariaDB JSON bytes
     assert decode_stored({"a": 1}) == {"a": 1}  # Postgres parsed jsonb
     assert decode_stored(None) is None  # SQL NULL column
+
+
+def test_decode_leaf_is_the_identity_wherever_the_document_spelling_is_the_wire_one() -> None:
+    # Ten of the twelve rows: a member the layout moved into a Structured Column
+    # reaches a result row spelled exactly as a Column of its own would spell it, so
+    # the layout is not observable through the value.
+    for spelling, value in (
+        ("boolean", True),
+        ("int64", 7),
+        ("float64", 2.25),
+        ("string", "alpha"),
+        ("date", "2026-01-15"),
+        ("time", "09:30:00"),
+        ("uuid", "123e4567-e89b-12d3-a456-426614174000"),
+        ("bytes", "0a1b"),
+    ):
+        assert decode_leaf(spelling, value) == value
+
+
+def test_decode_leaf_converts_the_two_rows_whose_spellings_differ_by_layout() -> None:
+    # A `decimal` is stored as its exact digit STRING and read back from a Column as
+    # a number; a `timestamp` is stored at UTC with a `Z` terminator and read back
+    # from a Column with an explicit offset.
+    assert decode_leaf("decimal(12,2)", "10.25") == Decimal("10.25")
+    assert decode_leaf("timestamp", "2026-01-15T09:30:00.000000Z") == "2026-01-15T09:30:00+00:00"
+
+
+def test_decode_leaf_carries_absence_through_and_refuses_an_uncovered_type() -> None:
+    assert decode_leaf("string", None) is None
+    with pytest.raises(DocumentEncodingError, match="no neutral type"):
+        decode_leaf("interval", "P1D")

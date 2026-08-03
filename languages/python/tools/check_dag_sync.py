@@ -108,6 +108,7 @@ _LOWERING_GROUP_DEPS: frozenset[str] = frozenset(
         "parallax.core.metamodel",
         "parallax.core.inheritance",
         "parallax.core.storage_layout",
+        "parallax.core.document_codec",
         "parallax.core.temporal_read",
         "parallax.core.dialect",
         "parallax.core.db_port",

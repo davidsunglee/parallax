@@ -170,9 +170,20 @@ def _binds_per_statement(workload: dict[str, Any], dialect: str) -> list[list[An
     """One authored bind list per statement entry, aligned with :func:`_statements`.
 
     Each statement's binds ride inline on its own entry (default ``[]``) — there is
-    no positional pairing to interpret.
+    no positional pairing to interpret. A bind list follows the same
+    flat-or-dialect-keyed polymorphism ``sql`` does (m-case-format): flat where the
+    hole structure is shared, and keyed per dialect where it diverges — a document
+    mutation's path bind is one Postgres text-array path and one MariaDB JSON-path
+    string, so a workload over a Relational Document Layout cannot author one list.
     """
-    return [list(entry.get("binds", [])) for entry in _statement_entries(workload, dialect)]
+    return [_entry_binds(entry, dialect) for entry in _statement_entries(workload, dialect)]
+
+
+def _entry_binds(entry: dict[str, Any], dialect: str) -> list[Any]:
+    binds = entry.get("binds", [])
+    if isinstance(binds, dict):
+        return list(binds[dialect])
+    return list(binds)
 
 
 def _substitute_iteration(binds: list[Any], iteration: int) -> list[Any]:

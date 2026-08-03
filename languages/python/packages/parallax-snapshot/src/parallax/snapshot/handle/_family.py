@@ -34,6 +34,8 @@ Mirrors :mod:`parallax.core.entity._annotations`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
@@ -44,12 +46,14 @@ from parallax.core.metamodel import (
     PrimaryKey,
     TemporalDimension,
     ValueObjectIdentity,
+    ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.storage_layout import ColumnContributor, EntityLayoutView
+from parallax.core.storage_layout import ColumnContributor, EntityLayoutView, MemberPlacement
 from parallax.snapshot.handle._errors import QueryTargetError
 
 __all__ = [
+    "PlacedMembers",
     "assignment_member",
     "axis_columns",
     "declaring",
@@ -57,6 +61,7 @@ __all__ = [
     "entity_of",
     "family_primary_key",
     "members",
+    "placed_members",
     "slot_column",
     "tx_time_axis",
     "valid_time_axis",
@@ -187,6 +192,52 @@ def assignment_member(attr: str) -> str:
     """The declared member name of an assignment's ``Class.member`` reference."""
     _, _, member = attr.rpartition(".")
     return member
+
+
+@dataclass(frozen=True, slots=True)
+class PlacedMembers:
+    """One Entity's applicable logical members, each paired with its placement.
+
+    Attributes and Value Object occurrences stay apart because the two are
+    addressed and spelled differently, and the pair's order — every attribute,
+    then every occurrence, each in declaration order — IS the canonical logical
+    placement order a document's keys and a revising statement's assignments
+    follow. That order is semantically significant on the write side, because
+    both dialects apply their mutation expressions left to right (`m-dialect`).
+    """
+
+    attributes: tuple[tuple[AttributeMetadata, MemberPlacement], ...]
+    value_objects: tuple[tuple[ValueObjectMetadata, MemberPlacement], ...]
+
+
+def placed_members(
+    model: Metamodel, entity: EntityMetadata, layout: EntityLayoutView
+) -> PlacedMembers:
+    """Every applicable logical member of ``entity``, paired with where its Table
+    puts it.
+
+    Member Placement is the sole authority for locating a member
+    (`m-storage-layout`), and it is the only one that answers under both layouts:
+    under `Document` a member occupies no Column of its own, so a write reading
+    the Table's slots alone would not see it at all. The applicable member
+    sequences come from the Inheritance view, so an inherited member is placed
+    exactly as a locally declared one is.
+    """
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return PlacedMembers((), ())
+    return PlacedMembers(
+        tuple(
+            (attribute, placement)
+            for attribute in view.applicable_attributes
+            if (placement := layout.layout.placement(attribute.identity)) is not None
+        ),
+        tuple(
+            (occurrence, placement)
+            for occurrence in view.applicable_value_objects
+            if (placement := layout.layout.placement(occurrence.identity)) is not None
+        ),
+    )
 
 
 def members(layout: EntityLayoutView) -> dict[str, tuple[str, bool]]:

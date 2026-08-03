@@ -57,11 +57,11 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # above, which is the metamodel module. Each name is aliased down to the
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
-from parallax.core.sql_gen._inheritance import IDENTITY_TRANSFORM as _IDENTITY_TRANSFORM
 from parallax.core.sql_gen._inheritance import RowTransform as _RowTransform
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
+from parallax.core.sql_gen._inheritance import document_projection as _document_projection
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import position_documents as _position_documents
 from parallax.core.sql_gen._inheritance import render_projection as _render_projection
@@ -156,12 +156,14 @@ class CompiledRead:
     recover the row's own concrete identity. A deep-fetch CHILD level takes its
     narrow from its own ``FetchLevel.narrow_to`` instead.
 
-    ``documents`` is the resolved position's `Document` tier contributors in
-    Position Layout order — the scalar/document provenance a materializing caller
-    needs, carried here so no consumer re-projects a family superset of its own.
-    It is a property of the POSITION, not of the result form: a row-form read
-    projects no document column, yet its rows still render every applicable
-    document key as absent.
+    ``documents`` is the top-level Value Object occurrences the resolved position
+    can carry, in Position Layout order — the scalar/document provenance a
+    materializing caller needs, carried here so no consumer re-projects a family
+    superset of its own. It is a property of the POSITION, not of the result form
+    or the layout: a row-form read projects no document column, yet its rows
+    still render every applicable document key as absent, and an occurrence is
+    just as much a member when the layout stores it inside a shared Structured
+    Column rather than in one of its own.
     """
 
     statement: Statement
@@ -209,7 +211,7 @@ def _projection(
     result_form: _ResultForm,
     *,
     include_value_objects: bool | frozenset[str] = False,
-) -> tuple[str, list[object]]:
+) -> tuple[str, list[object], _RowTransform]:
     """The base read projection (m-sql *Read projection*), a function of the model.
 
     The Entity's own Table Layout fixes the whole order — `Identity`,
@@ -241,6 +243,12 @@ def _projection(
     versioned target's comparison-only need — minimal-read discipline,
     `m-sql`) — in EITHER case the layout's `Document` slot order is preserved,
     never the caller's own set iteration order.
+
+    The third result is the read's own row transform. Under Relational Document
+    Layout the members selected above may live inside the Table's one shared
+    Structured Column, which is then projected once, last, and fanned back out
+    per row; under `Columns` layout none of them does, so the select list is
+    unchanged and the transform is the identity.
     """
     declared_vos = entity.declared_value_objects
     if result_form == "instance" or include_value_objects is True:
@@ -257,8 +265,11 @@ def _projection(
         projected_vos,
         project_discriminator=False,
     )
+    document, transform = _document_projection(layout, entity.declared_attributes, projected_vos)
+    if document is not None:
+        columns = (*columns, document)
     sql, binds = _render_projection(dialect, alias, columns)
-    return sql, list(binds)
+    return sql, list(binds), transform
 
 
 # --------------------------------------------------------------------------- #
@@ -352,7 +363,7 @@ def compile_read(
     layout = _table_layout(storage, facet, target.identity)
     scope = _EntityScope(ctx, target, layout)
 
-    proj_sql, proj_binds = _projection(
+    proj_sql, proj_binds, transform = _projection(
         target,
         layout,
         dialect,
@@ -370,15 +381,15 @@ def compile_read(
     _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
 
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
-    # A non-family read projects no tag and no variant literal, so there is
-    # nothing to materialize.
+    # A non-family read projects no tag and no variant literal, so the only
+    # transform it can carry is the document fan-out its own projection decided.
     return CompiledRead(
         statement,
         narrow_to,
         target.identity,
         (target.identity,),
         _position_documents(facet, storage, (target.identity,)),
-        _IDENTITY_TRANSFORM,
+        transform,
     )
 
 
@@ -443,9 +454,15 @@ def _order_term(scope: _EntityScope, key: OrderKey) -> str:
     Placement is observationally irrelevant on a non-nullable key — there are no
     NULLs to place, so both placements denote the same order — and such a key
     therefore renders plain without consulting the dialect at all.
+
+    An ordering key over a document-resident member lowers through the same
+    extraction and typed-cast seams a predicate over it does (`m-sql`), which is
+    what keeps one ordering answer the same under either layout: the six
+    text-compared spellings order as their values do, and everything else orders
+    inside the engine's own type system through the cast.
     """
     direction = key.direction or "asc"
-    column_sql = scope.column_of(key.attr)
+    column_sql = scope.subject_of(key.attr).compared
     if scope.entity_attribute(key.attr).nullable:
         return scope.dialect.null_order(column_sql, direction, key.nulls or "last")
     return f"{column_sql} {direction}"

@@ -1137,6 +1137,16 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
     "m-value-object-047": _VO_SCENARIO_COMBO_REASON,
     "m-value-object-066": _VO_VERSIONED_RESOLVE_SCENARIO_REASON,
+    "m-value-object-067": (
+        "a top-level occurrence inside an ENTITY document (Relational Document Layout): "
+        "the developer spelling is the ordinary whole-occurrence assignment every "
+        "mirrored value-object story already shows, and what this case pins is where "
+        "the layout PUT that occurrence — its containment path inside the shared "
+        "Structured Column, and the subtree the assignment replaces there. That is a "
+        "physical composition question with no developer surface, exactly as the rest "
+        "of `m-storage-layout` is, and models/document-layout.yaml carries no class "
+        "mirror (`tests/_support/mirrored_models.py`'s own UNMIRRORED reason)"
+    ),
     # -- m-bitemp-write: the finite-pin mutation contrast pair ---------------- #
     "m-bitemp-write-015": _BITEMP_PIN_CONTRAST_REASON,
     "m-bitemp-write-016": _BITEMP_PIN_CONTRAST_REASON,

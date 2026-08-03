@@ -1,0 +1,114 @@
+# An INSERT into a document-mapped Entity binds ONE complete document at the shared
+# Structured Column, composed by the codec (m-storage-layout x m-document-codec x
+# m-sql), on Postgres AND MariaDB.
+#
+# The emitted column list is the Table Layout's, and under this layout that is two
+# columns whatever the row names: the direct primary key and the Structured Column,
+# which is `NOT NULL` and therefore binds on EVERY insert. The whole neutral write
+# input (①) reaches the statement as one document, so the golden bind is graded
+# against the case's own member values rather than trusted.
+#
+# The three steps pin the three presence states an insert can produce, and the second
+# and third are where a naive writer goes wrong:
+#
+#   * step 1 names every member — the document carries all of them, with `address`
+#     nested at its containment path and `tags` as an ordered array.
+#   * step 2 names the two members it sets plus the empty `tags` array a required
+#     `many` occurrence must be given. The four members it omits contribute NO key —
+#     a writer that emitted JSON null for an omitted nullable member would store a
+#     different document — while `tags` writes `[]`, the sole zero-element
+#     representation (m-document-codec).
+#   * step 3 inserts a `Beacon`, which declares the layout and no document-resident
+#     member at all: the Structured Column still binds, carrying the empty object.
+#
+# `then.tableState` is the physical row — the primary key and the stored document —
+# and a document cell compares structurally on both dialects (m-case-format), which
+# is what lets one authored expectation grade a Postgres `jsonb` and a MariaDB `json`
+# text alike.
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-document-codec, m-value-object, m-sql, write-sequence, insert, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Traveler
+      statements: 1
+      note: every member named — one document, occurrences at their containment paths
+      rows:
+        - id: 4
+          displayName: Dag
+          score: 12
+          joinedOn: '2026-03-01'
+          note: east wing
+          address:
+            city: Tromso
+            geo:
+              country: "NO"
+          tags:
+            - { label: guide }
+    - mutation: insert
+      entity: Traveler
+      statements: 1
+      note: one scalar plus the empty `many` — every other member absent, contributing no key
+      rows:
+        - id: 5
+          displayName: Eli
+          tags: []
+    - mutation: insert
+      entity: Beacon
+      statements: 1
+      note: no document-resident member at all — the NOT NULL Structured Column still binds
+      rows:
+        - id: 12
+then:
+  statements:
+    - sql:
+        postgres: insert into traveler(id, payload) values (?, ?)
+        mariadb: insert into traveler(id, payload) values (?, ?)
+      binds:
+        - 4
+        - displayName: Dag
+          score: 12
+          joinedOn: '2026-03-01'
+          note: east wing
+          address:
+            city: Tromso
+            geo:
+              country: "NO"
+          tags:
+            - { label: guide }
+    - sql:
+        postgres: insert into traveler(id, payload) values (?, ?)
+        mariadb: insert into traveler(id, payload) values (?, ?)
+      binds:
+        - 5
+        - displayName: Eli
+          tags: []
+    - sql:
+        postgres: insert into beacon(id, payload) values (?, ?)
+        mariadb: insert into beacon(id, payload) values (?, ?)
+      binds:
+        - 12
+        - {}
+  tableState:
+    traveler:
+      - id: 4
+        payload:
+          displayName: Dag
+          score: 12
+          joinedOn: '2026-03-01'
+          note: east wing
+          address:
+            city: Tromso
+            geo:
+              country: "NO"
+          tags:
+            - { label: guide }
+      - id: 5
+        payload:
+          displayName: Eli
+          tags: []
+    beacon:
+      - id: 12
+        payload: {}
+  roundTrips: 3

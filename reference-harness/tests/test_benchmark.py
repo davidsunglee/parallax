@@ -91,6 +91,21 @@ def test_binds_per_statement_reads_each_entry() -> None:
     assert _binds_per_statement(single, "postgres") == [[5]]
 
 
+def test_binds_may_be_keyed_per_dialect_where_the_hole_structure_diverges() -> None:
+    # A document mutation's path bind is one Postgres text-array path and one
+    # MariaDB JSON-path string, so the two dialects cannot share one authored list.
+    workload = {
+        "statements": [
+            {
+                "sql": {"postgres": "update t set p = ?", "mariadb": "update t set p = ?"},
+                "binds": {"postgres": ["{score}"], "mariadb": ["$.score"]},
+            }
+        ]
+    }
+    assert _binds_per_statement(workload, "postgres") == [["{score}"]]
+    assert _binds_per_statement(workload, "mariadb") == [["$.score"]]
+
+
 def test_statements_single_and_list() -> None:
     single = {"statements": [{"sql": {"postgres": "select 1"}}]}
     assert _statements(single, "postgres") == ["select 1"]

@@ -10,7 +10,9 @@ Three things live here rather than in three consumers:
 
 * :func:`encode_document` — one Value Object occurrence's neutral write input as the
   document a conforming writer must bind, so a golden bind can be graded against the
-  case's own ``rows`` instead of being trusted.
+  case's own ``rows`` instead of being trusted — and :func:`decode_leaf`, its per-leaf
+  inverse, which is how a member a Relational Document Layout moved inside the shared
+  Structured Column reaches a result row spelled as a Column of its own would spell it.
 * :func:`comparison_text` and :func:`encode_candidate` — the two literal forms SQL
   lowering takes from this module, for the text-compared half of the comparison split
   and for MariaDB's containment candidate.
@@ -32,6 +34,7 @@ from typing import Any
 __all__ = [
     "DocumentEncodingError",
     "comparison_text",
+    "decode_leaf",
     "decode_stored",
     "encode_candidate",
     "encode_document",
@@ -45,6 +48,12 @@ __all__ = [
 # deliberately absent: it casts with the numeric family, because its integer part has
 # no fixed width, so `10.00` sorts below `9.00` as text.
 _TEXT_COMPARED = frozenset({"string", "bytes", "date", "time", "timestamp", "uuid"})
+
+# The declared types whose document spelling is already the value a Column of the
+# same type reads back as here, so decoding one out of a document is the identity.
+_IDENTITY_DECODED = frozenset(
+    {"boolean", "int32", "int64", "float32", "float64", "string", "bytes", "date", "time", "uuid"}
+)
 
 _DECIMAL_TYPE = re.compile(r"^decimal\((\d+),\s*(\d+)\)$")
 
@@ -110,6 +119,34 @@ def encode_leaf(type_spelling: str, value: Any) -> Any:
     if type_spelling == "uuid":
         return str(_as_uuid(value))
     if type_spelling in ("boolean", "int32", "int64", "float32", "float64", "string"):
+        return value
+    raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
+
+
+def decode_leaf(type_spelling: str, value: Any) -> Any:
+    """One document leaf as the value a Column of its own would have carried.
+
+    :func:`encode_leaf`'s inverse, and the read side of "the layout is not
+    observable": a member the layout moved into the shared Structured Column must
+    arrive in a result row spelled exactly as the same member does when it holds a
+    Column, or one logical value would differ by layout.
+
+    Ten of the twelve rows are the identity, because the document spelling IS what
+    the corpus authors and what a Column of that type reads back as here. The two
+    that are not are the two whose spellings were chosen for the document rather
+    than for the wire: a ``decimal(p, s)`` is stored as its exact digit string and
+    read back from a Column as a number, and a ``timestamp`` is stored at UTC with
+    a ``Z`` terminator and read back from a Column with an explicit ``+00:00``
+    offset.
+    """
+    if value is None:
+        return None
+    decimal_type = _DECIMAL_TYPE.match(type_spelling)
+    if decimal_type is not None:
+        return decimal.Decimal(str(value))
+    if type_spelling == "timestamp":
+        return _instant(value).isoformat()
+    if type_spelling in _IDENTITY_DECODED:
         return value
     raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
 

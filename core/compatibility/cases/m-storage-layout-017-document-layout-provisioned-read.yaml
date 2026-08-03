@@ -1,0 +1,41 @@
+# Relational Document Layout, end to end: DDL derived from the layout, fixtures
+# loaded through it, and a read that answers what a `Columns` model would
+# (m-storage-layout x m-sql x m-document-codec), on Postgres AND MariaDB.
+#
+# The whole physical shape follows from ONE declaration. `Traveler` maps to a table
+# of exactly two columns — its primary key, which the layout keeps direct, and the
+# shared Structured Column `payload`, derived as `jsonb not null` on Postgres and
+# `json not null` on MariaDB (m-dialect) and holding every other member of the row.
+# The fixtures author each member under its own name, so the same rows would load
+# under either layout; what the layout decides is that they land inside one document
+# rather than in five columns.
+#
+# The read is the plain `all()`, and its two observable claims are both here:
+#
+#   * the SELECT projects the Structured Column ONCE and never a member column,
+#     because the read needs members that live inside it (m-sql *Read projection*);
+#   * `then.rows` is the LOGICAL row — one entry per member, under exactly the
+#     result name that member would have carried as a Column of its own. The
+#     Structured Column is never itself a result field, so `payload` appears in no
+#     row here even though the statement projects it.
+#
+# Row 2's `note` is absent from its document and row 3's is an explicit JSON null;
+# both read as one absence, the single not-present state a NULL Column has
+# (m-op-algebra). m-storage-layout-021 is the predicate half of that pair.
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-sql, m-document-codec, m-descriptor, read, json, document-layout, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Traveler
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload from traveler t0
+        mariadb: select t0.id, t0.payload from traveler t0
+  rows:
+    - { id: 1, display_name: Ada, score: 7, joined_on: '2026-01-15', note: north wing }
+    - { id: 2, display_name: Bo, score: 30, joined_on: '2025-12-31', note: null }
+    - { id: 3, display_name: Cyd, score: null, joined_on: null, note: null }
+  roundTrips: 1

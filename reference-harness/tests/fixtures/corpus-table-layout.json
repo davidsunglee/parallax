@@ -621,6 +621,62 @@
       ]
     }
   },
+  "models/document-layout.yaml": {
+    "beacon": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Beacon"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Beacon.id",
+          "declaringOwner": "parallax.compatibility.Beacon",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Beacon"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Beacon",
+          "declaringOwner": "parallax.compatibility.Beacon",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "traveler": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Traveler"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Traveler.id",
+          "declaringOwner": "parallax.compatibility.Traveler",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Traveler"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Traveler",
+          "declaringOwner": "parallax.compatibility.Traveler",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/document.yaml": {
     "folder": {
       "columns": [

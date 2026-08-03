@@ -1,0 +1,40 @@
+# A missing key and an explicit JSON null are ONE logical absence, on both engines
+# (m-storage-layout x m-op-algebra absence collapse), on Postgres AND MariaDB.
+#
+# A NULL Column has one not-present state; a document has two, and they are visibly
+# different data: Bo's document carries no `note` key at all, while Cyd's carries
+# `"note": null`. Neither is observable through the member. `isNull(note)` answers
+# BOTH rows and `then.rows` reports `note` as null for each, so a consumer cannot
+# tell which shape the row was stored in — which is what makes one model answer the
+# same under either layout.
+#
+# The two dialects reach that answer by different routes, and both were measured:
+# Postgres `jsonb_extract_path_text` yields SQL NULL for a missing key AND for a JSON
+# null, and MariaDB `json_value` does the same rather than handing back the four
+# characters `null`. Had either returned text for the JSON-null row, this case would
+# have answered one row on one engine and two on the other.
+#
+# Ada is excluded because her `note` is present with a value — the third state, and
+# the one the pair is measured against.
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-sql, m-op-algebra, m-document-codec, read, json, document-layout, null-handling, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Traveler
+  operation:
+    isNull: { attr: Traveler.note }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload from traveler t0 where jsonb_extract_path_text(t0.payload, ?) is null
+        mariadb: select t0.id, t0.payload from traveler t0 where json_value(t0.payload, ?) is null
+      binds:
+        postgres: [note]
+        mariadb: ['$.note']
+  referenceSql:
+    postgres: select id, payload ->> 'displayName' as display_name, cast(payload ->> 'score' as bigint) as score, payload ->> 'joinedOn' as joined_on, payload ->> 'note' as note from traveler where payload ->> 'note' is null
+    mariadb: select id, json_value(payload, '$.displayName') as display_name, cast(json_value(payload, '$.score') as signed) as score, json_value(payload, '$.joinedOn') as joined_on, json_value(payload, '$.note') as note from traveler where json_value(payload, '$.note') is null
+  rows:
+    - { id: 2, display_name: Bo, score: 30, joined_on: '2025-12-31', note: null }
+    - { id: 3, display_name: Cyd, score: null, joined_on: null, note: null }
+  roundTrips: 1

@@ -64,6 +64,7 @@ from typing import Literal, cast
 
 from parallax.core.base import NeutralType
 from parallax.core.dialect import Dialect, LockMode
+from parallax.core.document_codec import DocumentShape, Present, decode_path, entity_shape
 from parallax.core.inheritance import (
     InheritanceEntityView,
     InheritanceFacet,
@@ -90,6 +91,7 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 from parallax.core.storage_layout import (
     ColumnSlot,
     ColumnTier,
+    DocumentPath,
     InheritanceDiscriminator,
     PositionBranch,
     PositionLayoutView,
@@ -130,13 +132,15 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Row transforms: how a read's own `familyVariant` is materialized onto each   #
-# observed row (m-case-format / m-conformance-adapter). Table-per-hierarchy    #
-# derives it from the projected raw tag column, table-per-concrete-subtype     #
-# reads it straight from the projected literal column, and every other read    #
-# carries none.                                                               #
+# Row transforms: what a read's own projection decided each observed row still #
+# needs (m-case-format / m-conformance-adapter). Table-per-hierarchy derives   #
+# `familyVariant` from the projected raw tag column, table-per-concrete-       #
+# subtype reads it straight from the projected literal column, a Relational    #
+# Document Layout read fans its one projected Structured Column out into the   #
+# members it asked for, and every other read carries none. This lane is not    #
+# family-specific — it lives here because the projection it mirrors does.      #
 #                                                                              #
-# A UNION of three frozen forms rather than one class with a `kind` tag and    #
+# A UNION of frozen forms rather than one class with a `kind` tag and          #
 # optional fields: every field of every form is required, so there is no       #
 # illegal state to assert against at apply time, and each form's `apply` is    #
 # total — which is what lets `CompiledRead.transform_row` be a single          #
@@ -144,7 +148,7 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 # style (the `m-op-algebra` node union), and each form pickles, compares, and  #
 # reprs as a plain dataclass with no `__reduce__` and no stored callable.      #
 #                                                                              #
-# The three forms keep their module-private spelling: no sibling names them —  #
+# The forms keep their module-private spelling: no sibling names them —        #
 # `_compile` reaches them only through :data:`RowTransform` (the declared type #
 # of `CompiledRead._transform`) and :data:`IDENTITY_TRANSFORM`. Those two are  #
 # this module's published surface for the family; the forms themselves are     #
@@ -232,7 +236,36 @@ class _LiteralTransform:
         return values, dict(self.variants)[spelling], spelling
 
 
-RowTransform = _IdentityTransform | _TagTransform | _LiteralTransform
+@dataclass(frozen=True, slots=True)
+class _DocumentTransform:
+    """Relational Document Layout: fan the one projected Structured Column out
+    into the members the read asked for, and drop the raw document.
+
+    The Structured Column is never a result field (`m-sql`), so `column` is
+    popped rather than renamed. Each member is decoded by its DECLARED Neutral
+    Type through the codec, not by the JSON value's own shape, and lands under
+    the very result key it would have carried as a direct Column — which is what
+    makes one read's logical output the same under either layout. A member that
+    is absent or explicitly null in the document reads as `None`, the same one
+    logical answer a NULL Column gives.
+    """
+
+    column: str
+    shape: DocumentShape
+    members: tuple[tuple[str, tuple[str, ...]], ...]
+
+    def materialize(
+        self, row: Mapping[str, object]
+    ) -> tuple[dict[str, object], EntityIdentity | None, str | None]:
+        materialized = dict(row)
+        document = materialized.pop(self.column)
+        for key, path in self.members:
+            presence = decode_path(self.shape, document, path)
+            materialized[key] = presence.value if isinstance(presence, Present) else None
+        return materialized, None, None
+
+
+RowTransform = _IdentityTransform | _TagTransform | _LiteralTransform | _DocumentTransform
 
 # The identity form is stateless, so one shared instance serves every read that
 # carries no `familyVariant`; equality is structural, so a copied/unpickled
@@ -414,24 +447,82 @@ def position_documents(
     storage: StorageLayoutFacet,
     position: Sequence[EntityIdentity],
 ) -> tuple[ValueObjectMetadata, ...]:
-    """The `Document` tier contributors ``position``'s rows can carry.
+    """The top-level Value Object occurrences ``position``'s rows can carry.
 
     The compiled read carries this so materialization decodes documents from the
-    contributors the position actually has, in the Position Layout's own order,
+    occurrences the position actually has, in the Position Layout's own order,
     rather than re-projecting the family superset from a round-tripped name. It
     is keyed to the position and not to the read's result form: a row-form read
     projects no document column, yet its rows still render every applicable
     document key as absent.
+
+    Answered from the Position Layout's logical MEMBER sequence and each
+    branch's placements rather than from its physical columns, because an
+    occurrence is a member under either layout while it is a Column only under
+    `Columns` — under `Document` it is a subtree of the shared Structured Column
+    and contributes no column entry at all, which would leave this answering
+    nothing and materialization decoding nothing.
     """
     view = facet.position(tuple(position))
     layout_view = storage.position(tuple(position))
     if view is None or layout_view is None:  # pragma: no cover - a resolved position is total
         return ()
     by_identity = {member.identity: member for member in view.superset_value_objects}
+    placed = {
+        member
+        for branch in layout_view.branches
+        for member, placement in zip(layout_view.members, branch.placements, strict=True)
+        if placement is not None
+    }
     return tuple(
-        by_identity[column.contributor]
-        for column in layout_view.columns
-        if column.tier is ColumnTier.DOCUMENT and column.contributor in by_identity
+        by_identity[member]
+        for member in layout_view.members
+        if member in by_identity and member in placed
+    )
+
+
+def document_projection(
+    layout: TableLayout,
+    attributes: Sequence[AttributeMetadata],
+    value_objects: Sequence[ValueObjectMetadata],
+) -> tuple[ProjectedColumn | None, RowTransform]:
+    """The Structured Column a read projects for the members it was asked for,
+    and the transform that fans it back out (`m-sql` *Read projection*, rule 5).
+
+    ``attributes`` and ``value_objects`` are the members this read must produce.
+    Each one's Member Placement decides whether it already has a Column of its
+    own; the ones placed at a Document Path are what make the Structured Column
+    needed, and it is then projected **once**, raw, whatever their number. A read
+    whose members are all direct — every read under `Columns` layout, and a
+    `Document`-layout read of direct members alone — projects no document column
+    and transforms by identity, so this is inert rather than conditional at the
+    call site.
+    """
+    document_slot: ColumnSlot | None = None
+    document_attributes: list[AttributeMetadata] = []
+    document_occurrences: list[ValueObjectMetadata] = []
+    members: list[tuple[str, tuple[str, ...]]] = []
+    for attribute in attributes:
+        placement = layout.placement(attribute.identity)
+        if isinstance(placement, DocumentPath):
+            document_slot = placement.slot
+            document_attributes.append(attribute)
+            members.append((attribute.storage.name, placement.path))
+    for value_object in value_objects:
+        placement = layout.placement(value_object.identity)
+        if isinstance(placement, DocumentPath):
+            document_slot = placement.slot
+            document_occurrences.append(value_object)
+            members.append((value_object.storage.name, placement.path))
+    if document_slot is None:
+        return None, IDENTITY_TRANSFORM
+    return (
+        ProjectedColumn(document_slot.column.name, None),
+        _DocumentTransform(
+            document_slot.column.name,
+            entity_shape(document_attributes, document_occurrences),
+            tuple(members),
+        ),
     )
 
 

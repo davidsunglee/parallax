@@ -1,0 +1,64 @@
+# An instance-form read of a document-mapped Entity materializes every member from
+# the ONE Structured Column, occurrences included (m-storage-layout x m-sql x
+# m-value-object), on Postgres AND MariaDB.
+#
+# Two things are proven at once, and they need each other.
+#
+# The PROJECTION does not change between result forms: an instance form asks for the
+# occurrences too, and they are already inside the column the row form projected, so
+# the statement is byte-identical to m-storage-layout-017's. What differs is the
+# observation — `then.graph` carries `address` (with its nested `geo`) and `tags` as
+# declared members, decoded out of that same document. Under `Columns` layout the two
+# would be two further columns in the SELECT; here they are two subtrees.
+#
+# The PREDICATE walks the containment path from the document's root. `address` is a
+# top-level occurrence whose own Document Path is `("address")`, so `geo.country` is
+# addressed at `("address", "geo", "country")` — one segment longer than the same
+# predicate over models/customer.yaml, where the occurrence owns a column and the
+# walk starts below it. An implementation that flattened an occurrence's leaves to
+# the document root, or that started the walk at the column, would bind a path that
+# matches nothing.
+#
+# Cyd's `address` is an explicit JSON null, so the predicate excludes her and her
+# node is absent; her `tags` would still have materialized as the empty array
+# (m-document-codec), which m-storage-layout-017's sibling rows already carry.
+model: models/document-layout.yaml
+tags: [m-storage-layout, m-value-object, m-sql, m-document-codec, read, json, nested, document-layout, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Traveler
+  operation:
+    nestedEq: { path: Traveler.address.geo.country, value: "NO" }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload from traveler t0 where jsonb_extract_path_text(t0.payload, ?, ?, ?) = ?
+        mariadb: select t0.id, t0.payload from traveler t0 where json_value(t0.payload, ?) = ?
+      binds:
+        postgres: [address, geo, country, "NO"]
+        mariadb: ['$.address.geo.country', "NO"]
+  graph:
+    Traveler:
+      - id: 1
+        display_name: Ada
+        score: 7
+        joined_on: '2026-01-15'
+        note: north wing
+        address:
+          city: Oslo
+          geo:
+            country: "NO"
+        tags:
+          - { label: founder }
+          - { label: staff }
+      - id: 2
+        display_name: Bo
+        score: 30
+        joined_on: '2025-12-31'
+        note: null
+        address:
+          city: Bergen
+          geo:
+            country: "NO"
+        tags: []
+  roundTrips: 1

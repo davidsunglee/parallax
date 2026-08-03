@@ -34,6 +34,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import cast
 
 import pytest
 
@@ -235,13 +236,49 @@ def test_delete_is_keyed_by_the_primary_key() -> None:
 def test_value_object_document_binds_as_one_json_document_in_column_order() -> None:
     # A value-object member rides its Document-tier slot as one JsonDocument — the
     # whole document, never decomposed (m-sql valueObject atomic document write).
+    # The document is COMPOSED through the codec rather than bound as the write
+    # input carried it, so presence is the codec's answer: `phones` is a `many`
+    # occurrence and always contributes its array, the sole zero-element
+    # representation, exactly as the developer path's `to_document` already did.
     statement = _lower(
         KeyedWrite("insert", "Customer", ({"id": 1, "name": "Ada", "address": {"city": "Oslo"}},)),
         CUSTOMER,
     )[0]
     assert statement.sql == "insert into customer(id, name, address) values (?, ?, ?)"
     assert statement.binds[:2] == (1, "Ada")
-    assert statement.binds[2] == JsonDocument({"city": "Oslo"})
+    assert statement.binds[2] == JsonDocument({"city": "Oslo", "phones": []})
+
+
+def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() -> None:
+    # The write input carries each leaf in its portable wire spelling; what the
+    # statement binds is the ONE document spelling the codec owns, at every depth.
+    # `elevation` is a `float64`, so the shortest round-tripping number replaces
+    # the authored integer carrier rather than riding through to a serializer.
+    statement = _lower(
+        KeyedWrite(
+            "insert",
+            "Customer",
+            (
+                {
+                    "id": 2,
+                    "name": "Bo",
+                    "address": {
+                        "city": "Bergen",
+                        "geo": {"country": "NO", "elevation": 12},
+                        "phones": [{"type": "home", "number": "555-0100"}],
+                    },
+                },
+            ),
+        ),
+        CUSTOMER,
+    )[0]
+    assert statement.binds[2] == JsonDocument(
+        {
+            "city": "Bergen",
+            "geo": {"country": "NO", "elevation": 12.0},
+            "phones": [{"type": "home", "number": "555-0100"}],
+        }
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -919,7 +956,7 @@ def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
         "insert", "Customer", ({"id": 5, "name": "Vera", "address": {"city": "Berlin"}},)
     )
     statement = _lower(insert, CUSTOMER)[0]
-    assert statement.binds[-1] == JsonDocument({"city": "Berlin"})
+    assert statement.binds[-1] == JsonDocument({"city": "Berlin", "phones": []})
 
 
 # --------------------------------------------------------------------------- #
@@ -969,16 +1006,25 @@ def _value_object(meta: Metamodel, entity: str, member: str) -> ValueObjectIdent
     return value_object.identity
 
 
-def test_step_lowering_restores_an_immutable_value_object_array_to_json() -> None:
+def test_step_lowering_reads_an_immutable_write_input_into_a_plain_json_document() -> None:
+    # A Planned Row freezes what it carries, so the occurrence arrives as a
+    # read-only mapping over read-only elements. The codec READS it and builds the
+    # document, so what crosses the bind seam is a plain JSON structure the driver
+    # can serialize rather than the frozen carriers the planner held.
     row = PlannedRow(
         attributes={
             _attribute(CUSTOMER, "Customer", "id"): 1,
             _attribute(CUSTOMER, "Customer", "name"): "Ada",
         },
         value_objects={
-            _value_object(CUSTOMER, "Customer", "address"): (
-                MappingProxyType({"city": "Oslo"}),
-                MappingProxyType({"city": "Bergen"}),
+            _value_object(CUSTOMER, "Customer", "address"): MappingProxyType(
+                {
+                    "city": "Oslo",
+                    "phones": (
+                        MappingProxyType({"type": "home"}),
+                        MappingProxyType({"type": "work"}),
+                    ),
+                }
             )
         },
     )
@@ -989,7 +1035,12 @@ def test_step_lowering_restores_an_immutable_value_object_array_to_json() -> Non
 
     statement = lower_step(step, models.accepted_model(CUSTOMER), POSTGRES)
 
-    assert statement.binds[-1] == JsonDocument([{"city": "Oslo"}, {"city": "Bergen"}])
+    assert statement.binds[-1] == JsonDocument(
+        {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
+    )
+    document = cast("JsonDocument", statement.binds[-1]).value
+    assert type(document) is dict
+    assert type(cast("dict[str, object]", document)["phones"]) is list
 
 
 def test_finalization_settles_an_insert_into_one_step_of_new_lineage_entries() -> None:

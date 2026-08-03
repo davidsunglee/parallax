@@ -15,6 +15,7 @@ from typing import Final
 
 from parallax.core.base import NeutralType
 from parallax.core.metamodel import (
+    AttributeMetadata,
     Multiplicity,
     NestedValueObjectMetadata,
     NestedValueObjectOccurrenceDeclaration,
@@ -33,6 +34,7 @@ __all__ = [
     "Occurrence",
     "Presence",
     "Present",
+    "entity_shape",
     "occurrence_shape",
     "resolve",
     "shape_of_declaration",
@@ -141,6 +143,37 @@ def occurrence_shape(container: ValueObjectMetadata | NestedValueObjectMetadata)
         for attribute in container.attributes
     )
     return DocumentShape(members=leaves + tuple(map(_compiled_occurrence, container.value_objects)))
+
+
+def entity_shape(
+    attributes: Sequence[AttributeMetadata],
+    value_objects: Sequence[ValueObjectMetadata],
+) -> DocumentShape:
+    """The document shape of one Entity's Structured Column, from its
+    document-resident members.
+
+    The Entity-document counterpart of :func:`occurrence_shape`: one root object
+    holding every member of one row that lives inside the shared Structured
+    Column, each addressed by its canonical declared name. Residency is the
+    CALLER's answer — ``m-storage-layout``'s Member Placement decides it and this
+    module may not read a layout — so this takes the already-filtered members and
+    only unwinds their declarations into shape members, leaves before
+    occurrences, in the order given.
+    """
+    leaves: tuple[DocumentMember, ...] = tuple(
+        Leaf(name=attribute.identity.name, type=attribute.type, nullable=attribute.nullable)
+        for attribute in attributes
+    )
+    occurrences = tuple(
+        Occurrence(
+            name=value_object.identity.path[-1],
+            multiplicity=value_object.multiplicity,
+            nullable=value_object.nullable,
+            shape=occurrence_shape(value_object),
+        )
+        for value_object in value_objects
+    )
+    return DocumentShape(members=leaves + occurrences)
 
 
 def _compiled_occurrence(nested: NestedValueObjectMetadata) -> Occurrence:

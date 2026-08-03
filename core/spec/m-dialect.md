@@ -36,7 +36,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **nested extraction form** (`m-value-object` / `m-sql`) | `jsonb_extract_path_text(col, ?, …)` — one `?` bind per path segment | `json_value(col, ?)` — one `?` bind for the whole `'$.a.b'` path (see below) |
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
-| **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, ?)` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, ?, ?, ?, …)` — one call, one pair per assigned path (see below) |
+| **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, cast(? as jsonb))` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, json_extract(?, '$'), …)` — one call, one pair per assigned path (see below) |
 | **structural document equality** (`m-document-codec` / `m-case-format`) | `=` on `jsonb` — the type normalizes on storage, so `=` is already structural | `json_equals(a, b)` — `json` is a `longtext` alias, so `=` is textual and key-order sensitive (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
@@ -340,18 +340,42 @@ shapes:
 
 | Aspect | Postgres | MariaDB |
 |---|---|---|
-| one assignment | `jsonb_set(col, ?, ?)` | `json_set(col, ?, ?)` |
-| N assignments | **nested** — each call's target is the previous call's result: `jsonb_set(jsonb_set(col, ?, ?), ?, ?)` | **native N-pair** — one call: `json_set(col, ?, ?, ?, ?)` |
+| one assignment | `jsonb_set(col, ?, cast(? as jsonb))` | `json_set(col, ?, json_extract(?, '$'))` |
+| N assignments | **nested** — each call's target is the previous call's result: `jsonb_set(jsonb_set(col, ?, cast(? as jsonb)), ?, cast(? as jsonb))` | **native N-pair** — one call: `json_set(col, ?, json_extract(?, '$'), ?, json_extract(?, '$'))` |
 | path bind | one `?` carrying the Postgres text-array path (`{displayName}`) | one `?` carrying the JSON-path string (`$.displayName`) |
-| value bind | one `?` per assignment, the encoded document value | one `?` per assignment, the encoded document value |
+| value bind | one `?` per assignment, the encoded document value, wrapped in the **value expression** below | one `?` per assignment, the encoded document value, wrapped in the **value expression** below |
 
 ```sql
 -- two assignments, canonical logical placement order
 -- postgres
-set payload = jsonb_set(jsonb_set(payload, ?, ?), ?, ?)
+set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb))
 -- mariadb
-set payload = json_set(payload, ?, ?, ?, ?)
+set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$'))
 ```
+
+**The value hole needs a per-dialect expression, and a bare `?` works on
+neither engine.** Both spellings are this decision point's own, for reasons that
+are properties of the two engines rather than of the value being written:
+
+- On **Postgres** a bare `?` in `jsonb_set`'s value position resolves to the
+  function's declared `jsonb` parameter type, so nothing but a `jsonb`-typed
+  bind or JSON text is admissible there: an ordinary string bind is an
+  `invalid input syntax for type json` error and an ordinary integer bind is a
+  `function jsonb_set(jsonb, unknown, smallint) does not exist` error.
+  `cast(? as jsonb)` admits both a composite adapted to the driver's `jsonb`
+  type and a JSON scalar's text.
+- On **MariaDB** a bare `?` in `json_set`'s value position accepts a scalar but
+  **silently escapes a composite** — `json_set(payload, '$.addr', '{"city": "Oslo"}')`
+  stores the *string* `"{\"city\": \"Oslo\"}"` rather than an object — because
+  MariaDB's `json` is a `longtext` alias with no JSON-typed bind. `CAST(… AS JSON)`
+  is a MySQL feature MariaDB does not have, and of the two functions that do
+  unwrap a value only `json_extract(?, '$')` unwraps a scalar as well as a
+  composite, so it is the one expression that serves every assignment.
+
+A future dialect supplies its own value expression at this decision point.
+Nothing above this seam wraps, quotes, or type-tags an assigned value: `m-sql`
+hands the seam the encoded document value and the seam decides how it reaches
+the engine, exactly as it does for the containment candidate.
 
 **Both forms apply left to right, so assignment order is semantically
 significant on both dialects** — the innermost Postgres call and the first

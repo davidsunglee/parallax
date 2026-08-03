@@ -98,7 +98,8 @@ encodeCandidate(shape: DocumentShape,
                 constraints: nonempty Mapping<
                     nonempty sequence<MemberName>, NeutralValue>) -> Document
 
-patch(document: Document,
+patch(shape: DocumentShape,
+      document: Document,
       patches: nonempty ordered sequence<DocumentPatch>) -> Document
 
 DocumentPatch =
@@ -211,6 +212,15 @@ It never reads the database and never issues a statement; composing the
 equivalent database expression is `m-sql`'s and `m-dialect`'s job, and the two
 MUST agree, which is what makes an in-memory successor and a path-patched
 `UPDATE` interchangeable.
+
+`patch` resolves each path against `shape` for the same reason every other
+operation here takes one. A `SetLeaf` carries a `NeutralValue`, so writing it
+needs that leaf's declared Neutral Type; without the shape the caller would have
+to spell the encoding itself, which the consumer contract below forbids. The
+shape is also what makes a path the model does not declare a caller error rather
+than a new key, so patching can never introduce one. `comparisonText` is the one
+operation that takes an explicit `NeutralType` instead, because it is given a
+value rather than a position in a document.
 
 Every operation is a pure function of its arguments. None mutates its input
 document, and a returned document shares no mutable state with one passed in.
