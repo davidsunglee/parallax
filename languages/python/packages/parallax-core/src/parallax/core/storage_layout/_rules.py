@@ -31,7 +31,6 @@ from parallax.core.metamodel import (
     Table,
     TablePerConcreteSubtype,
     TablePerHierarchy,
-    TemporalDimension,
 )
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.relationship import project_join_endpoints
@@ -90,11 +89,6 @@ class DocumentLayoutOwner:
     layout: Document
     strategy: InheritanceStrategy | None
 
-    @property
-    def axes(self) -> frozenset[TemporalDimension]:
-        """The temporal axes the layout owner declares; empty when non-temporal."""
-        return frozenset(axis.dimension for axis in self.declaration.as_of_axes)
-
 
 def _is_table_per_hierarchy(owner: DocumentLayoutOwner) -> bool:
     return isinstance(owner.strategy, TablePerHierarchy)
@@ -102,14 +96,6 @@ def _is_table_per_hierarchy(owner: DocumentLayoutOwner) -> bool:
 
 def _is_table_per_concrete_subtype(owner: DocumentLayoutOwner) -> bool:
     return isinstance(owner.strategy, TablePerConcreteSubtype)
-
-
-def _is_transaction_time_only(owner: DocumentLayoutOwner) -> bool:
-    return owner.axes == frozenset({TemporalDimension.TRANSACTION_TIME})
-
-
-def _is_bitemporal(owner: DocumentLayoutOwner) -> bool:
-    return TemporalDimension.VALID_TIME in owner.axes
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,8 +114,6 @@ class CapabilityScopeEntry:
 CAPABILITY_SCOPE: Final[tuple[CapabilityScopeEntry, ...]] = (
     CapabilityScopeEntry("a table-per-hierarchy family", _is_table_per_hierarchy),
     CapabilityScopeEntry("a table-per-concrete-subtype family", _is_table_per_concrete_subtype),
-    CapabilityScopeEntry("a Transaction-Time axis", _is_transaction_time_only),
-    CapabilityScopeEntry("a Bitemporal axis pair", _is_bitemporal),
 )
 """The closed set of layout shapes this build refuses.
 

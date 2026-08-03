@@ -679,20 +679,11 @@ def _refused_shapes(root_definition: dict[str, Any]) -> tuple[str, ...]:
     """
     block = inheritance_of(root_definition)
     strategy = block.get("strategy") if block is not None else None
-    axes = {
-        axis["dimension"]
-        for axis in root_definition.get("asOfAxes", []) or []
-        if isinstance(axis, dict)
-    }
     refused: list[str] = []
     if strategy == STRATEGY_TPH:
         refused.append("a table-per-hierarchy family")
     if strategy == STRATEGY_TPCS:
         refused.append("a table-per-concrete-subtype family")
-    if axes == {"transactionTime"}:
-        refused.append("a Transaction-Time axis")
-    if "validTime" in axes:
-        refused.append("a Bitemporal axis pair")
     return tuple(refused)
 
 

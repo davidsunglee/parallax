@@ -3240,6 +3240,43 @@ def _assert_write_values(
             )
 
 
+def _assert_carried_document(
+    case: Case, derived: Any, golden: Any, statement: str, path: str = ""
+) -> None:
+    """Grade one chained milestone's Structured Column against the members ① names.
+
+    A temporal successor's document is its predecessor's, patched. ① states one
+    logical row and can therefore fix only what the model declares; every other key
+    the golden carries came from the row the successor supersedes, which is the
+    whole claim of retaining that document rather than rebuilding it. So every
+    position ① resolves — each top-level member and, inside an occurrence, each of
+    ITS declared members — MUST appear with the value the codec spells for it, while
+    a key ① names nowhere is admitted rather than refused.
+    """
+    if not isinstance(golden, dict) or not isinstance(derived, dict):
+        raise CaseFailure(
+            f"{case.path.name}: the golden chained-milestone Structured Column bind {golden!r} "
+            f"is not a document at {path or 'the document root'!r} for {statement!r}."
+        )
+    for key, want in derived.items():
+        location = f"{path}.{key}" if path else key
+        if key not in golden:
+            raise CaseFailure(
+                f"{case.path.name}: the neutral write input names {location!r} inside the "
+                f"Structured Column, and the golden chained-milestone document omits it for "
+                f"{statement!r}."
+            )
+        got = golden[key]
+        if isinstance(want, dict) and isinstance(got, dict):
+            _assert_carried_document(case, want, got, statement, location)
+            continue
+        if not _write_value_equal(want, got):
+            raise CaseFailure(
+                f"{case.path.name}: neutral write input value {want!r} != golden document key "
+                f"{location!r} value {got!r} for {statement!r}."
+            )
+
+
 def _parse_insert_columns(case: Case, statement: str) -> list[str]:
     """The columns an INSERT names: the parenthesised list following its target table.
 
@@ -3405,8 +3442,15 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
                 f"neutral write input (① `rows`) — required on every writeSequence step."
             )
         mutation = step["mutation"]
+        # Whether ① describes a row being OPENED whole or a sparse revision. The
+        # mutation decides it for a non-temporal step; a TEMPORAL step's every
+        # chained milestone writes the entity's full physical row whatever verb
+        # opened it (`m-txtime-write` / `m-bitemp-write`), so its ① is an opening
+        # row even under `update` / `terminate`.
         classified = [
-            _classify_write_row(case, entity, row, opening=mutation in _OPENING_MUTATIONS)
+            _classify_write_row(
+                case, entity, row, opening=mutation in _OPENING_MUTATIONS or entity.is_temporal
+            )
             for row in rows
         ]
         step_statements = statements[stmt_index : stmt_index + count]
@@ -3830,6 +3874,7 @@ def _assert_temporal_input(
     # as the non-temporal concrete-subtype write does. `None` for a table-per-concrete-
     # subtype / non-inheritance entity (an ordinary single-table milestone write).
     tag = _tag(entity)
+    document_column, _resident = _document_layout_members(case, entity)
 
     def assert_open(statement: str, binds: list[Any]) -> None:
         golden_columns = _parse_insert_columns(case, statement)
@@ -3849,7 +3894,22 @@ def _assert_temporal_input(
             else columns.get(column)
             for column in full_columns
         ]
-        _assert_write_values(case, expected, binds, statement)
+        if not document_column or len(binds) != len(expected):
+            _assert_write_values(case, expected, binds, statement)
+            return
+        # Under Relational Document Layout a chained milestone's Structured Column
+        # is the predecessor's own document with the mutation's changes patched
+        # into it, so ① fixes the members it names and NOT the whole document: a
+        # key no member declares rides forward from the row the successor
+        # supersedes, and `then.tableState` is what grades that it did.
+        position = full_columns.index(document_column)
+        _assert_carried_document(case, expected[position], binds[position], statement)
+        _assert_write_values(
+            case,
+            [*expected[:position], *expected[position + 1 :]],
+            [*binds[:position], *binds[position + 1 :]],
+            statement,
+        )
 
     def assert_close(statement: str, binds: list[Any]) -> None:
         # A close sets `out_z = at` on the milestone its address selects — no domain

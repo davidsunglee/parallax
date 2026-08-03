@@ -4,9 +4,15 @@
 :class:`~parallax.core.unit_work.PlannedWrite` leaves open: how one storage
 layout and one dialect express it. It reads the target's Storage Layout Entity
 view for column participation and order, derives the table-per-hierarchy tag at
-its own slot, quotes through the dialect, and orders binds — and it reads no
-concurrency mode, observation, Transaction Instant, or temporal topology,
-because a step arrives with all of those already decided.
+its own slot, quotes through the dialect, and orders binds — and it consults no
+concurrency mode, no unit of work, no Transaction Instant, and no temporal
+topology, because a step arrives with all of those already decided.
+
+The one thing a step carries that lowering still has to READ is what an insert
+entry's Insert Origin retains: the milestone that entry succeeds, whose own raw
+Structured Column document a successor is patched from (`m-unit-work`). That is
+state the plan settled rather than a decision left open — the origin says which
+milestone, and this module only spells what the row now holds.
 
 It sits beside :mod:`parallax.snapshot.handle._keyed_sql` rather than inside it:
 that module renders an instruction whose semantics are still being decided as it
@@ -24,10 +30,14 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import Dialect
 from parallax.core.document_codec import (
     NULL,
+    DocumentPatch,
     DocumentShape,
     Leaf,
     Presence,
     Present,
+    SetLeaf,
+    SetOccurrence,
+    apply_patches,
     encode_document,
     encode_leaf,
     encode_many,
@@ -46,11 +56,14 @@ from parallax.core.metamodel import (
 )
 from parallax.core.sql_gen import Statement, compile_write_predicate
 from parallax.core.storage_layout import DocumentPath, EntityLayoutView, RelationalDocument
+from parallax.core.unit_work import PredecessorRow
 from parallax.core.unit_work.planned import (
     Finite,
+    InsertOrigin,
     KeyTarget,
     MaxPlusOne,
     MilestoneTarget,
+    NewLineage,
     NonTemporalConcurrency,
     PlannedAssignments,
     PlannedClose,
@@ -130,6 +143,11 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Sta
     names collapses into the one shared Structured Column cell, which each entry
     binds whether or not it names any: the Column is `NOT NULL` and every governed
     row carries a document, the empty object included (`m-storage-layout`).
+
+    An entry whose Insert Origin carries a predecessor — a temporal successor —
+    composes that cell from the predecessor's own retained document instead
+    (:func:`_successor_document`), so the entries of one step may bind different
+    documents while naming the same members.
     """
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
@@ -143,6 +161,7 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Sta
             entity,
             stamp_tag=True,
             opening=True,
+            predecessor=_origin_predecessor(entry.origin),
         )
         for entry in step.entries
     ]
@@ -416,6 +435,7 @@ def _member_cells(
     *,
     stamp_tag: bool,
     opening: bool,
+    predecessor: PredecessorRow | None = None,
 ) -> Sequence[_Cell]:
     """The named members as ``(column, value)`` pairs, in Table Layout slot order.
 
@@ -438,6 +458,10 @@ def _member_cells(
     own slot. An opening row writes it because the row's concrete subtype is being
     established; a revising statement leaves it alone, since revising a row never
     changes what it is.
+
+    ``predecessor`` is the milestone an opening row succeeds, which decides how its
+    Structured Column is composed: from the retained document it observed, or from
+    the row's own members alone (:func:`_successor_document`).
     """
     discriminator = view.discriminator if stamp_tag else None
     cells: list[_Cell] = []
@@ -452,7 +476,9 @@ def _member_cells(
                 cells.append(
                     (
                         slot.column.name,
-                        JsonDocument(_row_document(resident, attributes, value_objects)),
+                        JsonDocument(
+                            _successor_document(resident, attributes, value_objects, predecessor)
+                        ),
                     )
                 )
             else:
@@ -541,6 +567,90 @@ def _row_document(
                 NULL if raw is None else Present(_occurrence_document(occurrence, raw))
             )
     return encode_document(shape, values)
+
+
+def _origin_predecessor(origin: InsertOrigin) -> PredecessorRow | None:
+    """The milestone one insert entry succeeds, or absence for a new lineage."""
+    return None if isinstance(origin, NewLineage) else origin.predecessor
+
+
+def _successor_document(
+    resident: _ResidentMembers,
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+    predecessor: PredecessorRow | None,
+) -> object:
+    """One opening row's Structured Column, given the milestone it succeeds.
+
+    A row that succeeds a milestone whose observation retained the predecessor's
+    raw document is composed by PATCHING that document, so every key it carries
+    survives the close-and-insert — a key a newer application version wrote
+    included (`m-document-codec`, `m-unit-work`). Only the members whose value the
+    mutation actually changed are patched: a member the successor carries forward
+    is already spelled in the retained document, and re-encoding it from its
+    decoded value would rebuild the subtree an occurrence holds and drop the
+    unknown keys inside it.
+
+    Without a retained document there is nothing to preserve — a new lineage opens
+    no predecessor, and an observation that read no row knows no key this model
+    does not declare — so the row's own complete member set composes the document
+    (:func:`_row_document`).
+    """
+    if predecessor is None or predecessor.document is None:
+        return _row_document(resident, attributes, value_objects)
+    patches = _successor_patches(resident, attributes, value_objects, predecessor)
+    if not patches:
+        return predecessor.document
+    shape = entity_shape(
+        tuple(attribute for attribute, _path in resident.attributes),
+        tuple(occurrence for occurrence, _path in resident.value_objects),
+    )
+    return apply_patches(shape, predecessor.document, patches)
+
+
+def _successor_patches(
+    resident: _ResidentMembers,
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+    predecessor: PredecessorRow,
+) -> tuple[DocumentPatch, ...]:
+    """The in-memory patches carrying one successor's changes onto its predecessor.
+
+    A member the row assigns the value its predecessor already held is carried
+    rather than changed — a temporal successor's row restates every member,
+    changed or not (`m-unit-work`) — so comparing against the observed value is
+    what tells the two apart. A whole occurrence compares against the subtree as
+    stored, unknown keys included, which is the same comparison per-row no-op
+    elimination makes and gives the answer the write itself gives: an assignment
+    that differs only in a key no member declares does replace that subtree.
+
+    Order is canonical logical placement order, which both the in-memory patch and
+    the equivalent path-patched `UPDATE` apply left to right (`m-storage-layout`).
+    """
+    patches: list[DocumentPatch] = []
+    for attribute, path in resident.attributes:
+        name = attribute.identity.name
+        if attribute.identity not in attributes or attributes[attribute.identity] == (
+            predecessor.members.get(name)
+        ):
+            continue
+        raw = attributes[attribute.identity]
+        patches.append(
+            SetLeaf(
+                path, NULL if raw is None else Present(decode_neutral_literal(raw, attribute.type))
+            )
+        )
+    for occurrence, path in resident.value_objects:
+        name = occurrence.identity.path[-1]
+        if occurrence.identity not in value_objects or value_objects[occurrence.identity] == (
+            predecessor.members.get(name)
+        ):
+            continue
+        raw = value_objects[occurrence.identity]
+        patches.append(
+            SetOccurrence(path, None if raw is None else _occurrence_document(occurrence, raw))
+        )
+    return tuple(patches)
 
 
 def _patches(

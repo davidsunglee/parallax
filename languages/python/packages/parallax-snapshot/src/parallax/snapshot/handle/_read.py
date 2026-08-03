@@ -51,6 +51,7 @@ __all__ = [
     "HistoryFindResult",
     "MilestoneGraph",
     "NoResultFound",
+    "ObservedNode",
     "Snapshot",
     "TooManyResultsFound",
     "find",
@@ -160,21 +161,36 @@ class Snapshot[T]:
 
 
 @dataclass(frozen=True, slots=True)
+class ObservedNode:
+    """One materialized node with everything a write-side observation needs of it.
+
+    ``entity`` is the node's OWN target entity name (the same name a subsequent
+    keyed write on that row would carry, `m-unit-work` `KeyedWrite.entity`),
+    because ``Node`` carries no entity identity of its own (m-snapshot-read: a
+    neutral, class-free field dict). ``document`` is the raw Structured Column the
+    row arrived with under Relational Document Layout — provenance the fan-out
+    drops from the node's fields, retained here so a Temporal Observation keeps it
+    without a second read (`m-unit-work`) and absent under `Columns` layout.
+    """
+
+    entity: str
+    node: materialize.Node
+    document: object | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class FindResult:
     """A single-graph find's root nodes plus its execution record.
 
     ``all_nodes`` is EVERY node this find materialized — root and every
-    attached deep-fetch level — paired with its OWN target entity name (the
-    same name a subsequent keyed write on that row would carry, `m-unit-work`
-    `KeyedWrite.entity`): the seam :meth:`Transaction.find` walks to record a
-    versioned row's observed version (`m-opt-lock`), since ``Node`` itself
-    carries no entity identity of its own (m-snapshot-read: a neutral,
-    class-free field dict).
+    attached deep-fetch level: the seam :meth:`Transaction.find` walks to record a
+    versioned row's observed version (`m-opt-lock`) and a temporal row's whole
+    predecessor milestone (`m-unit-work`).
     """
 
     nodes: tuple[materialize.Node, ...]
     execution: Execution
-    all_nodes: tuple[tuple[str, materialize.Node], ...] = ()
+    all_nodes: tuple[ObservedNode, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,7 +276,10 @@ def find(
         family_variants=[row.family_variant for row in root_materialized],
         documents=root_compiled.documents,
     )
-    all_nodes: list[tuple[str, materialize.Node]] = [(target, node) for node in root_nodes]
+    all_nodes: list[ObservedNode] = [
+        ObservedNode(target, node, materialized.document)
+        for node, materialized in zip(root_nodes, root_materialized, strict=True)
+    ]
 
     level_rows: list[Sequence[Row]] = []
     level_nodes: list[list[materialize.Node]] = []
@@ -306,7 +325,10 @@ def find(
         )
         level_rows.append(rows)
         level_nodes.append(nodes)
-        all_nodes.extend((child_target, node) for node in nodes)
+        all_nodes.extend(
+            ObservedNode(child_target, node, materialized.document)
+            for node, materialized in zip(nodes, child_materialized, strict=True)
+        )
 
     return FindResult(
         nodes=tuple(root_nodes), execution=Execution(tuple(statements)), all_nodes=tuple(all_nodes)

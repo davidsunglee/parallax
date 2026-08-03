@@ -1,0 +1,95 @@
+# A Transaction-Time-Only UPDATE of a document-mapped Entity closes the current
+# milestone and chains a successor carrying the WHOLE Structured Column
+# (m-txtime-write x m-storage-layout), on Postgres AND MariaDB.
+#
+# The layout changes nothing about the milestone contract: the two axis bounds are
+# designated Attributes, so `in_z` and `out_z` keep Columns of their own and the close
+# is the same `set out_z = ?` addressed on the one current row. What the layout does
+# change is where the carried state lives. Under `Columns` a chained successor binds
+# one column per domain member; here it binds ONE document, and the successor's
+# document is the closed row's own with the assignment patched into it.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert : open [2026-01-01, infinity) with the whole document   (1 statement)
+#   step 2 update : close the current row (out_z = 2026-06-01) and chain a new
+#                   current row [2026-06-01, infinity) carrying the changed
+#                   `title` beside the carried `crew` and `manifest`      (2 statements)
+#
+# `crew` and `manifest` are what make the chain observable rather than decorative:
+# neither changes, and both MUST still appear in the successor's document. An
+# implementation that patched the closed row in place would leave one milestone; one
+# that bound only the assigned member would chain a row that lost them.
+model: models/document-layout.yaml
+tags: [m-txtime-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Voyage
+      statements: 1
+      note: open the original current milestone carrying the whole document
+      rows:
+        - id: 1
+          title: Northern Run
+          crew: 4
+          manifest:
+            cargo: timber
+      at: "2026-01-01T00:00:00+00:00"
+    - mutation: update
+      entity: Voyage
+      statements: 2
+      note: close the current row, then chain a successor whose document carries the new title beside the unchanged members
+      rows:
+        - id: 1
+          title: Southern Run
+          crew: 4
+          manifest:
+            cargo: timber
+      at: "2026-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 1
+        - "2026-01-01T00:00:00+00:00"
+        - infinity
+        - title: Northern Run
+          crew: 4
+          manifest:
+            cargo: timber
+    - sql:
+        postgres: update voyage set out_z = ? where id = ? and out_z = ?
+        mariadb: update voyage set out_z = ? where id = ? and out_z = ?
+      binds: ["2026-06-01T00:00:00+00:00", 1, infinity]
+    - sql:
+        postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+      binds:
+        - 1
+        - "2026-06-01T00:00:00+00:00"
+        - infinity
+        - title: Southern Run
+          crew: 4
+          manifest:
+            cargo: timber
+  tableState:
+    voyage:
+      - id: 1
+        in_z: "2026-01-01T00:00:00+00:00"
+        out_z: "2026-06-01T00:00:00+00:00"
+        payload:
+          title: Northern Run
+          crew: 4
+          manifest:
+            cargo: timber
+      - id: 1
+        in_z: "2026-06-01T00:00:00+00:00"
+        out_z: infinity
+        payload:
+          title: Southern Run
+          crew: 4
+          manifest:
+            cargo: timber
+  roundTrips: 3

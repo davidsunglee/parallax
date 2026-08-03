@@ -1,0 +1,146 @@
+# A Bitemporal RECTANGLE SPLIT over a document-mapped Entity produces every
+# successor rectangle from the closed rectangle's own state (m-bitemp-write x
+# m-storage-layout), on Postgres AND MariaDB.
+#
+# A bounded `updateUntil` inactivates the Latest rectangle (closes its
+# Transaction-Time dimension at the transaction instant) and chains THREE rectangles
+# at fresh Transaction Time [txInstant, infinity):
+#   head   : valid [from_z, validFrom)  — the OLD state before the window
+#   middle : valid [validFrom, until)   — the NEW state, for the window
+#   tail   : valid [until, infinity)    — the OLD state after the window
+# so the state changes ONLY inside the window. All four axis bounds are designated
+# Attributes and stay in Columns of their own, which is why the DML is identical to
+# the `Columns`-layout split one model over: the layout moves WHERE the carried state
+# lives, not how the rectangle arithmetic works.
+#
+# What is layout-specific is that head and tail carry ONE document each rather than
+# one bind per member, and each is the closed rectangle's document unchanged — the
+# split moved where that state applies without altering it. The middle carries the
+# same document with the two assigned members patched in.
+#
+# The sequence (self-contained, from an empty table):
+#   step 1 insert      : open the Latest rectangle, valid [2026-01-01, infinity),
+#                        transaction [2026-01-01, infinity)                (1 statement)
+#   step 2 updateUntil : change the state for Valid-Time window
+#                        [2026-03-01, 2026-09-01) at txInstant 2026-02-15  (4 statements)
+model: models/document-layout.yaml
+tags: [m-bitemp-write, m-storage-layout, m-document-codec, m-sql, write-sequence, update-until, rectangle-split, temporal, bitemporal, json, document-layout, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Charter
+      statements: 1
+      note: open the original Latest rectangle carrying the whole document
+      rows:
+        - id: 1
+          route: Oslo-Bergen
+          terms:
+            clause: standard
+      validFrom: "2026-01-01T00:00:00+00:00"
+      at: "2026-01-01T00:00:00+00:00"
+    - mutation: updateUntil
+      entity: Charter
+      statements: 4
+      note: inactivate the original, then chain head / middle / tail carrying old / new / old
+      rows:
+        - id: 1
+          route: Oslo-Tromso
+          terms:
+            clause: winter
+      validFrom: "2026-03-01T00:00:00+00:00"
+      at: "2026-02-15T00:00:00+00:00"
+      until: "2026-09-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - "2026-01-01T00:00:00+00:00"
+        - infinity
+        - "2026-01-01T00:00:00+00:00"
+        - infinity
+        - route: Oslo-Bergen
+          terms:
+            clause: standard
+    - sql:
+        postgres: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
+        mariadb: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
+      binds: ["2026-02-15T00:00:00+00:00", 1, infinity, infinity]
+    - sql:
+        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - "2026-01-01T00:00:00+00:00"
+        - "2026-03-01T00:00:00+00:00"
+        - "2026-02-15T00:00:00+00:00"
+        - infinity
+        - route: Oslo-Bergen
+          terms:
+            clause: standard
+    - sql:
+        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - "2026-03-01T00:00:00+00:00"
+        - "2026-09-01T00:00:00+00:00"
+        - "2026-02-15T00:00:00+00:00"
+        - infinity
+        - route: Oslo-Tromso
+          terms:
+            clause: winter
+    - sql:
+        postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+      binds:
+        - 1
+        - "2026-09-01T00:00:00+00:00"
+        - infinity
+        - "2026-02-15T00:00:00+00:00"
+        - infinity
+        - route: Oslo-Bergen
+          terms:
+            clause: standard
+  tableState:
+    charter:
+      - id: 1
+        from_z: "2026-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2026-01-01T00:00:00+00:00"
+        out_z: "2026-02-15T00:00:00+00:00"
+        payload:
+          route: Oslo-Bergen
+          terms:
+            clause: standard
+      - id: 1
+        from_z: "2026-01-01T00:00:00+00:00"
+        thru_z: "2026-03-01T00:00:00+00:00"
+        in_z: "2026-02-15T00:00:00+00:00"
+        out_z: infinity
+        payload:
+          route: Oslo-Bergen
+          terms:
+            clause: standard
+      - id: 1
+        from_z: "2026-03-01T00:00:00+00:00"
+        thru_z: "2026-09-01T00:00:00+00:00"
+        in_z: "2026-02-15T00:00:00+00:00"
+        out_z: infinity
+        payload:
+          route: Oslo-Tromso
+          terms:
+            clause: winter
+      - id: 1
+        from_z: "2026-09-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2026-02-15T00:00:00+00:00"
+        out_z: infinity
+        payload:
+          route: Oslo-Bergen
+          terms:
+            clause: standard
+  roundTrips: 5

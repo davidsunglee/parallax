@@ -78,9 +78,20 @@ class PredecessorRow:
     expansion carries members the authored mutation never mentioned, and because
     a later decorator must tell carried state from changed state without a second
     read.
+
+    ``document`` is the raw Structured Column document the observing read
+    returned, retained unchanged beside the member state and never as an entry in
+    it, so a successor is built by patching what the row actually held rather
+    than by re-encoding the members this model happens to declare. It is
+    **absent** — not empty — under `Columns` layout, where the row has no
+    Structured Column, and absent likewise for an observation whose source read
+    no row; the member map stays purely logical either way, so a consumer
+    iterating members can never surface the document as a result field or an
+    Entity member.
     """
 
     members: Mapping[str, object]
+    document: object | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "members", MappingProxyType(dict(self.members)))

@@ -396,7 +396,19 @@ _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-
 # insert/close-and-chain-update/terminate (001-005), the full-bitemporal rectangle
 # split and its plain/bounded-insert degenerates (001-003/006-009), the TPH/TPCS
 # txtime and bitemporal composition (090/091/094-097), and the value-object
-# carry-through witnesses (m-value-object-032/033). The materializing predicate
+# carry-through witnesses (m-value-object-032/033).
+#
+# The two Relational Document Layout members are `m-txtime-write-010` and
+# `m-bitemp-write-019`: the milestone chain and the rectangle split over a
+# document-mapped Entity, where each opened milestone binds ONE Structured Column
+# rather than one bind per member and every carried member has to ride inside it.
+# Their unknown-key siblings (`m-txtime-write-011`/`-012`) are not here: the key no
+# member declares is seeded by out-of-band SQL, which makes them
+# `compileEligibility: run-only`, and the observation this lane supplies is
+# reconstructed from case state rather than read, so it carries no document to
+# preserve.
+#
+# The materializing predicate
 # forms (m-txtime-write-007/009, m-bitemp-write-010-013), the conflict-shape
 # close-only witnesses (run-only, graded by `test_run_sweep.py`), and the two
 # result-form witnesses (`m-value-object-047`/`-066`) stay skipped here because
@@ -429,6 +441,8 @@ _TEMPORAL_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-inheritance-097",
         "m-value-object-032",
         "m-value-object-033",
+        "m-txtime-write-010",
+        "m-bitemp-write-019",
     }
 )
 # The two same-transaction coalescing SCENARIO witnesses (m-unit-work-008's

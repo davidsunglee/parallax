@@ -246,6 +246,24 @@
       "documentPath": {},
       "valueObject": {}
     },
+    "parallax.compatibility.Charter": {
+      "attribute": {
+        "id": "id",
+        "route": "route",
+        "tx_end": "out_z",
+        "tx_start": "in_z",
+        "valid_end": "thru_z",
+        "valid_start": "from_z"
+      },
+      "documentPath": {
+        "route": "payload:route",
+        "terms": "payload:terms",
+        "terms.clause": "payload:terms.clause"
+      },
+      "valueObject": {
+        "terms": "terms"
+      }
+    },
     "parallax.compatibility.Ledger": {
       "attribute": {
         "balance": "balance",
@@ -296,6 +314,24 @@
         "nights": "payload:nights"
       },
       "valueObject": {}
+    },
+    "parallax.compatibility.Voyage": {
+      "attribute": {
+        "crew": "crew",
+        "id": "id",
+        "title": "title",
+        "tx_end": "out_z",
+        "tx_start": "in_z"
+      },
+      "documentPath": {
+        "crew": "payload:crew",
+        "manifest": "payload:manifest",
+        "manifest.cargo": "payload:manifest.cargo",
+        "title": "payload:title"
+      },
+      "valueObject": {
+        "manifest": "manifest"
+      }
     }
   },
   "models/document.yaml": {

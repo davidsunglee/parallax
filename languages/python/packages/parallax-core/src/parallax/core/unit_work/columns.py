@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Final, cast
 
+from parallax.core.unit_work.observe import PredecessorRow
+
 __all__ = [
     "ChunkedColumn",
     "ChunkedColumnBuilder",
@@ -183,11 +185,18 @@ class PredecessorColumns:
 
     :class:`~parallax.core.unit_work.observe.PredecessorRow` stays the logical
     complete-state contract; :meth:`row` builds one only when a consumer asks.
+
+    ``documents`` is the aligned raw Structured Column of each resolved row,
+    carried beside the decoded member columns rather than among them, so a
+    logical Predecessor Row view over columnar storage exposes the raw document
+    without a second per-row carrier. It is absent — not a column of nulls —
+    where the resolving read projected no Structured Column.
     """
 
     shape: PredecessorShape
     attribute_columns: tuple[ColumnSlice[object], ...]
     value_object_columns: tuple[ColumnSlice[object], ...] = ()
+    documents: ColumnSlice[object] | None = None
     length: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -201,7 +210,12 @@ class PredecessorColumns:
                 "Predecessor Columns carries one column per value object the shape names: "
                 f"expected {len(self.shape.value_objects)}, got {len(self.value_object_columns)}"
             )
-        lengths = {len(column) for column in (*self.attribute_columns, *self.value_object_columns)}
+        aligned = (
+            *self.attribute_columns,
+            *self.value_object_columns,
+            *(() if self.documents is None else (self.documents,)),
+        )
+        lengths = {len(column) for column in aligned}
         if len(lengths) > 1:
             raise ValueError("Predecessor Columns' member columns share one positive row count")
         length = next(iter(lengths), 0)
@@ -212,10 +226,17 @@ class PredecessorColumns:
             "value_object_columns",
             tuple(_freeze_column(column) for column in self.value_object_columns),
         )
+        if self.documents is not None:
+            object.__setattr__(self, "documents", _freeze_column(self.documents))
         object.__setattr__(self, "length", length)
 
-    def row(self, index: int) -> dict[str, object]:
-        """The complete member map one resolved row's Predecessor Row wraps."""
+    def row(self, index: int) -> PredecessorRow:
+        """The complete Predecessor Row one resolved row's columns compose.
+
+        Building it here rather than handing back a member map is what keeps the
+        retained document aligned with the members it was decoded from: the two
+        leave this class together or not at all.
+        """
         members: dict[str, object] = {
             name: column[index]
             for name, column in zip(self.shape.attributes, self.attribute_columns, strict=True)
@@ -226,4 +247,6 @@ class PredecessorColumns:
                 self.shape.value_objects, self.value_object_columns, strict=True
             )
         )
-        return members
+        return PredecessorRow(
+            members, document=None if self.documents is None else self.documents[index]
+        )

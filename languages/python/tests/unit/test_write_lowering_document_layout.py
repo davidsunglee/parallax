@@ -14,16 +14,27 @@ suites' claims are about one declaration seen from both sides.
 
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Mapping
+from typing import Final, cast
 
 import pytest
-from _document_layout_support import columns_model, document_model, entity
+from _document_layout_support import PERSON, columns_model, document_model, entity
 
 from _support.lowering_probes import lower_instruction
 from parallax.core.db_port import JsonDocument
+from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import Statement
-from parallax.core.unit_work import KeyedWrite, WriteInstruction
+from parallax.core.unit_work import KeyedWrite, PredecessorRow, WriteInstruction
+from parallax.core.unit_work.planned import (
+    NEW_LINEAGE,
+    CarriedFrom,
+    ChangedFrom,
+    InsertEntry,
+    PlannedInsert,
+    PlannedRow,
+)
+from parallax.snapshot.handle import lower_step
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
 
 DOCUMENT = document_model()
@@ -223,3 +234,121 @@ def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
     assert collapse_group_key(
         DOCUMENT, person, "delete", {"id": 1, "displayName": "Ada"}
     ) == collapse_group_key(DOCUMENT, person, "delete", {"id": 2, "score": 7})
+
+
+# --------------------------------------------------------------------------- #
+# A successor's Structured Column: patched from the predecessor's own retained #
+# document rather than re-encoded from the members this model declares.        #
+# --------------------------------------------------------------------------- #
+_STORED: Final[dict[str, object]] = {
+    "displayName": "Ada",
+    "score": 7,
+    "charterCode": "NB-118",
+    "address": {"city": "Oslo", "geo": {"country": "NO"}, "sealNumber": "S-4021"},
+    "tags": [{"label": "founder"}],
+}
+"""One stored document carrying two keys `_document_layout_support` declares
+nowhere — `charterCode` at the root and `sealNumber` inside the `address`
+occurrence — which is what a newer version of an application writing this table
+leaves behind."""
+
+
+_DECODED: Final[dict[str, object]] = {
+    "id": 1,
+    "displayName": "Ada",
+    "score": 7,
+    "address": {"city": "Oslo", "geo": {"country": "NO"}, "sealNumber": "S-4021"},
+    "tags": [{"label": "founder"}],
+}
+"""The members a read of `_STORED` decodes: an occurrence answers with the stored
+subtree as it is, unknown keys included, while a key no member declares reaches no
+member at all (`m-document-codec`)."""
+
+
+def _successor(
+    members: Mapping[str, object],
+    *,
+    document: object | None,
+    origin: type[CarriedFrom] | type[ChangedFrom] | None,
+) -> object:
+    """The Structured Column one opened row binds, given the milestone it succeeds.
+
+    ``members`` is the successor's own complete row, exactly as temporal expansion
+    composes one: the predecessor's members with the mutation's changes overlaid.
+    """
+    person = entity(DOCUMENT, "Person")
+    attributes = {
+        attribute.identity: members[attribute.identity.name]
+        for attribute in person.declared_attributes
+        if attribute.identity.name in members
+    }
+    value_objects = {
+        occurrence.identity: members[occurrence.identity.path[-1]]
+        for occurrence in person.declared_value_objects
+        if occurrence.identity.path[-1] in members
+    }
+    predecessor = PredecessorRow(_DECODED, document=document)
+    step = PlannedInsert(
+        entity=PERSON,
+        entries=(
+            InsertEntry(
+                row=PlannedRow(attributes=attributes, value_objects=value_objects),
+                origin=NEW_LINEAGE if origin is None else origin(predecessor),
+            ),
+        ),
+    )
+    return _document(lower_step(step, DOCUMENT, POSTGRES))
+
+
+def test_a_successor_patches_the_retained_document_so_an_unknown_key_survives() -> None:
+    # The whole reason a successor is patched rather than re-encoded: `charterCode`
+    # reaches no member, so a document rebuilt from the members this model declares
+    # would have destroyed it.
+    assert _successor(
+        {**_DECODED, "displayName": "Dagny"}, document=_STORED, origin=ChangedFrom
+    ) == {
+        "displayName": "Dagny",
+        "score": 7,
+        "charterCode": "NB-118",
+        "address": {"city": "Oslo", "geo": {"country": "NO"}, "sealNumber": "S-4021"},
+        "tags": [{"label": "founder"}],
+    }
+
+
+def test_a_carried_occurrence_keeps_the_unknown_keys_inside_its_own_subtree() -> None:
+    # A successor's row restates every member, changed or not, so what tells a
+    # carried occurrence from an assigned one is whether its value differs from the
+    # observed one. `address` does not, so its subtree is never rebuilt and
+    # `sealNumber` rides forward with it.
+    successor = _successor({**_DECODED, "score": 21}, document=_STORED, origin=ChangedFrom)
+    assert successor == {**_STORED, "score": 21}
+
+
+def test_an_assigned_occurrence_replaces_its_subtree_and_drops_what_is_inside_it() -> None:
+    # The deliberate asymmetry: an author who assigns a whole occurrence has stated
+    # what that occurrence now is, so the key outside it survives and the one inside
+    # it does not.
+    successor = _successor(
+        {**_DECODED, "address": {"city": "Alta"}}, document=_STORED, origin=ChangedFrom
+    )
+    assert successor == {
+        "displayName": "Ada",
+        "score": 7,
+        "charterCode": "NB-118",
+        "address": {"city": "Alta"},
+        "tags": [{"label": "founder"}],
+    }
+
+
+def test_a_successor_that_changes_nothing_binds_the_retained_document_itself() -> None:
+    # A Bitemporal head or tail carries its predecessor's state unchanged, so it has
+    # nothing to patch and the document it binds is the one the closed row held.
+    assert _successor(_DECODED, document=_STORED, origin=CarriedFrom) == _STORED
+
+
+def test_a_successor_whose_observation_retained_no_document_composes_from_members() -> None:
+    # Without a retained document there is nothing to preserve, so the row's own
+    # complete member set composes the document exactly as a new lineage's does.
+    assert _successor(_DECODED, document=None, origin=ChangedFrom) == _successor(
+        _DECODED, document=None, origin=None
+    )

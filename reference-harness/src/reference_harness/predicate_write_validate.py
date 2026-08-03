@@ -102,6 +102,16 @@ def validate_predicate_write_materialization(
     documents its own assignments compare against. A reassigned document comes from the
     write instruction, never from the read. A managed-object find/refresh step is instead
     instance-form (the object lane).
+
+    Under Relational Document Layout the resolve projects the shared Structured
+    Column once in place of those members' own columns and fans it back out under
+    exactly the names each of them would have carried (`m-sql`), so what a
+    materializing read must EXPOSE is member-named under either layout and the
+    requirement below is layout-independent. The raw document rides that same
+    projection: a temporal target's Predecessor Row retains it (`m-unit-work`), so
+    a chained successor is patched from the document the row held rather than
+    rebuilt from these members — which is why the Structured Column itself is
+    never a required observation of its own.
     """
     if not _requires_materialization(entity):
         return

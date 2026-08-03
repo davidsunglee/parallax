@@ -41,6 +41,7 @@ from parallax.core import (
     TX_TIME,
     Attr,
     Bitemporal,
+    Document,
     DomainModel,
     Entity,
     FindQuery,
@@ -118,6 +119,25 @@ class WhereSubscriber(Entity, table="where_subscriber", namespace="parallax.comp
 
 
 _WHERE_SUBSCRIBER_META = DomainModel(WhereSubscriber)
+
+
+# A local Transaction-Time-Only entity under Relational Document Layout: the two
+# axis bounds keep Columns of their own and every domain member lives in the
+# shared Structured Column, so its resolving read is the one lane that both
+# retains a real stored document and patches a successor from it.
+class WhereVoyageManifest(ValueObject):
+    cargo: Attr[str | None]
+
+
+class WhereVoyage(
+    TxTemporal, table="where_voyage", namespace="parallax.compatibility", layout=Document()
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str | None] = attr(max_length=64)
+    manifest: Attr[WhereVoyageManifest | None]
+
+
+_WHERE_VOYAGE_META = DomainModel(WhereVoyage)
 
 
 # --------------------------------------------------------------------------- #
@@ -510,6 +530,60 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
         "2024-06-01T00:00:00+00:00",
         "infinity",
         JsonDocument({"city": "Bergen"}),
+    )
+
+
+def test_materializing_update_where_document_layout_patches_the_retained_document() -> None:
+    # The materializing lane is the one that reads a real stored document rather
+    # than reconstructing one, so it is where retention is observable: the resolve
+    # projects the Structured Column, the observation keeps the row's raw document,
+    # and the chained successor is that document patched — which is why
+    # `charterCode`, a key this model declares nowhere, is still in the row the
+    # chain writes, and why `manifest` rides forward with the key inside IT too.
+    stored = {
+        "title": "Coastal Run",
+        "charterCode": "NB-118",
+        "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
+    }
+    port = RecordingPort(
+        rows=[
+            {
+                "id": 1,
+                "in_z": "2024-01-01T00:00:00+00:00",
+                "out_z": "infinity",
+                "payload": stored,
+            }
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereVoyage.where(WhereVoyage.id == 1), WhereVoyage.title.set("Coastal Return")
+        )
+
+    Database.connect(port, _WHERE_VOYAGE_META, clock=FixedClock(FIXED)).transact(fn)
+    reads = [op for op in port.ops if op[0] == "read"]
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert reads[0][1] == POSTGRES.to_driver_sql(
+        "select t0.id, t0.in_z, t0.out_z, t0.payload from where_voyage t0 "
+        "where t0.id = ? and t0.out_z = ? for share of t0"
+    )
+    assert len(writes) == 2  # close then chain
+    chain_sql, chain_binds = writes[1][1], writes[1][2]
+    assert chain_sql == POSTGRES.to_driver_sql(
+        "insert into where_voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)"
+    )
+    assert chain_binds == (
+        1,
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+        JsonDocument(
+            {
+                "title": "Coastal Return",
+                "charterCode": "NB-118",
+                "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
+            }
+        ),
     )
 
 
