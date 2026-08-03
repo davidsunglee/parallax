@@ -3266,15 +3266,36 @@ def _assert_carried_document(
                 f"Structured Column, and the golden chained-milestone document omits it for "
                 f"{statement!r}."
             )
-        got = golden[key]
-        if isinstance(want, dict) and isinstance(got, dict):
-            _assert_carried_document(case, want, got, statement, location)
-            continue
-        if not _write_value_equal(want, got):
+        _assert_carried_value(case, want, golden[key], statement, location)
+
+
+def _assert_carried_value(case: Case, derived: Any, golden: Any, statement: str, path: str) -> None:
+    """Grade one position of a carried document: a subtree, an array, or a leaf.
+
+    An array is the stored form of a `many` occurrence, which is ordered and
+    compares element by element at equal length (`m-document-codec`), so position
+    pairs the two sides and each element is graded on the same terms the enclosing
+    document is — an element that is itself a document admits a key ① names
+    nowhere, exactly as the document around it does.
+    """
+    if isinstance(derived, dict) and isinstance(golden, dict):
+        _assert_carried_document(case, derived, golden, statement, path)
+        return
+    if isinstance(derived, list) and isinstance(golden, list):
+        if len(derived) != len(golden):
             raise CaseFailure(
-                f"{case.path.name}: neutral write input value {want!r} != golden document key "
-                f"{location!r} value {got!r} for {statement!r}."
+                f"{case.path.name}: the neutral write input's {path!r} array carries "
+                f"{len(derived)} element(s) and the golden chained-milestone document carries "
+                f"{len(golden)} for {statement!r}."
             )
+        for index, (element, golden_element) in enumerate(zip(derived, golden, strict=True)):
+            _assert_carried_value(case, element, golden_element, statement, f"{path}[{index}]")
+        return
+    if not _write_value_equal(derived, golden):
+        raise CaseFailure(
+            f"{case.path.name}: neutral write input value {derived!r} != golden document key "
+            f"{path!r} value {golden!r} for {statement!r}."
+        )
 
 
 def _parse_insert_columns(case: Case, statement: str) -> list[str]:

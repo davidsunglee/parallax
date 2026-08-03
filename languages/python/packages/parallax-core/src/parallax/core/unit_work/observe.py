@@ -11,10 +11,10 @@ settled, in **both** concurrency modes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final
+from typing import Final, cast
 
 __all__ = [
     "HISTORICAL_PINNED",
@@ -67,6 +67,27 @@ class VersionObservation:
     observed_version: int
 
 
+def _retained_document(document: object) -> object:
+    """``document`` as the retaining row's own portable JSON value.
+
+    The value arrives in whatever container its producer holds it in — a driver
+    row's own mapping, or the read-only view compact columnar retention seals its
+    values behind — and a Predecessor Row is immutable persisted state, so it keeps
+    a private copy rather than an alias into either. The copy is by container kind
+    alone: an object becomes a JSON object, an array a JSON array, and every leaf
+    passes through as it is, so what is retained is the document the read returned,
+    in the container kinds a structured-document bind carries
+    (`m-document-codec`).
+    """
+    if isinstance(document, Mapping):
+        mapping = cast("Mapping[str, object]", document)
+        return {key: _retained_document(value) for key, value in mapping.items()}
+    if isinstance(document, (list, tuple)):
+        sequence = cast("Sequence[object]", document)
+        return [_retained_document(item) for item in sequence]
+    return document
+
+
 @dataclass(frozen=True, slots=True)
 class PredecessorRow:
     """The complete, immutable persisted state a Temporal Observation retains.
@@ -80,14 +101,15 @@ class PredecessorRow:
     read.
 
     ``document`` is the raw Structured Column document the observing read
-    returned, retained unchanged beside the member state and never as an entry in
-    it, so a successor is built by patching what the row actually held rather
-    than by re-encoding the members this model happens to declare. It is
-    **absent** — not empty — under `Columns` layout, where the row has no
-    Structured Column, and absent likewise for an observation whose source read
-    no row; the member map stays purely logical either way, so a consumer
-    iterating members can never surface the document as a result field or an
-    Entity member.
+    returned, retained beside the member state and never as an entry in it, so a
+    successor is built by patching what the row actually held rather than by
+    re-encoding the members this model happens to declare. The value is the read's
+    own, unchanged; what this row keeps of it is a private portable JSON copy
+    (:func:`_retained_document`). It is **absent** — not empty — under `Columns`
+    layout, where the row has no Structured Column, and absent likewise for an
+    observation whose source read no row; the member map stays purely logical
+    either way, so a consumer iterating members can never surface the document as
+    a result field or an Entity member.
     """
 
     members: Mapping[str, object]
@@ -95,6 +117,7 @@ class PredecessorRow:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "members", MappingProxyType(dict(self.members)))
+        object.__setattr__(self, "document", _retained_document(self.document))
         if not self.members:
             raise ValueError("a Predecessor Row carries the observed row's complete state")
 

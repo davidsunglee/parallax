@@ -12,6 +12,7 @@ non-temporal targets.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 from decimal import Decimal
 from typing import Any, cast
@@ -138,6 +139,30 @@ class WhereVoyage(
 
 
 _WHERE_VOYAGE_META = DomainModel(WhereVoyage)
+
+
+# A local Bitemporal entity under Relational Document Layout. A rectangle split's
+# head and tail CARRY the predecessor's document with nothing patched into them,
+# so they are where the retained document reaches a bind unaltered; `stops` makes
+# that document carry an array as well as a nested object.
+class WhereCharterStop(ValueObject):
+    port: Attr[str]
+
+
+class WhereCharterTerms(ValueObject):
+    clause: Attr[str | None]
+
+
+class WhereCharter(
+    Bitemporal, table="where_charter", namespace="parallax.compatibility", layout=Document()
+):
+    id: Attr[int] = attr(primary_key=True)
+    route: Attr[str | None] = attr(max_length=64)
+    terms: Attr[WhereCharterTerms | None]
+    stops: Attr[tuple[WhereCharterStop, ...]]
+
+
+_WHERE_CHARTER_META = DomainModel(WhereCharter)
 
 
 # --------------------------------------------------------------------------- #
@@ -585,6 +610,50 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
             }
         ),
     )
+
+
+def test_materializing_terminate_where_document_layout_binds_a_carried_document_as_json() -> None:
+    # A rectangle split's head CARRIES its predecessor's document with nothing
+    # patched into it, so the value the insert binds is the retained document
+    # itself. It must reach the bind as the portable JSON value a `Document` is
+    # (`m-document-codec`): the compact columnar retention behind it seals its
+    # containers read-only, and a read-only view is not something a structured-
+    # document bind can serialize, so a retained container reaching the statement
+    # would fail the whole write rather than insert the row it carried.
+    stored = {
+        "route": "Oslo-Bergen",
+        "charterCode": "NB-118",
+        "terms": {"clause": "standard", "sealNumber": "S-4021"},
+        "stops": [{"port": "Kristiansand", "berth": "7"}],
+    }
+    port = RecordingPort(
+        rows=[
+            {
+                "id": 1,
+                "from_z": "2024-01-01T00:00:00+00:00",
+                "thru_z": "infinity",
+                "in_z": "2024-01-01T00:00:00+00:00",
+                "out_z": "infinity",
+                "payload": stored,
+            }
+        ]
+    )
+    valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate_where(WhereCharter.where(WhereCharter.id == 1), valid_from=valid_from)
+
+    Database.connect(port, _WHERE_CHARTER_META, clock=FixedClock(FIXED)).transact(fn)
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 2  # close + head only (no tail)
+    head_binds = cast("tuple[object, ...]", writes[1][2])
+    carried = cast("JsonDocument", head_binds[-1]).value
+    assert carried == stored
+    # Equality alone does not settle it: a read-only mapping compares equal to its
+    # own contents, so a document of nothing but nested objects would pass that
+    # check while still failing the bind. Serializing is what a structured-document
+    # bind does, so serializing is what the retained document has to survive.
+    assert json.dumps(carried) == json.dumps(stored)
 
 
 def _position_row() -> Row:

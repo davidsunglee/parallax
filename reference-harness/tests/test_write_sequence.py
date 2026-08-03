@@ -20,6 +20,7 @@ import pytest
 from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
+    _assert_carried_document,
     _assert_scenario_count_consistency,
     _assert_write_input_columns,
     _assert_write_step_count,
@@ -722,3 +723,59 @@ def test_an_insert_column_list_reads_no_syntax_inside_a_quoted_identifier() -> N
     # still the one that follows the table.
     max_form = 'insert into t(id, note) select coalesce(max(t0."id"), ?) + ?, ? from t t0'
     assert _parse_insert_columns(case, max_form) == ["id", "note"]
+
+
+# --- the carried Structured Column (m-storage-layout x m-document-codec) ------
+#
+# A chained milestone's document is its predecessor's, patched, so ① fixes only the
+# positions it names and every other key rode forward from the row the successor
+# supersedes. These pin what that admits and what it still refuses.
+
+
+def test_a_carried_document_admits_a_key_the_write_input_names_nowhere() -> None:
+    case = _write_case_by_id("m-txtime-write-010")
+    _assert_carried_document(
+        case,
+        {"title": "Southern Run", "manifest": {"cargo": "timber"}},
+        {
+            "title": "Southern Run",
+            "charterCode": "NB-118",
+            "manifest": {"cargo": "timber", "sealNumber": "S-4021"},
+        },
+        "insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
+    )
+
+
+def test_a_carried_array_grades_element_by_element_and_admits_an_unknown_key() -> None:
+    # A `many` occurrence's array is ordered and equal-length, so position pairs the
+    # two sides; each element is a document and admits a key ① names nowhere just as
+    # the document around it does.
+    case = _write_case_by_id("m-txtime-write-010")
+    _assert_carried_document(
+        case,
+        {"stops": [{"port": "Bergen"}, {"port": "Tromso"}]},
+        {"stops": [{"port": "Bergen", "berth": "7"}, {"port": "Tromso"}]},
+        "insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
+    )
+
+
+def test_a_carried_array_of_a_different_length_is_refused() -> None:
+    case = _write_case_by_id("m-txtime-write-010")
+    with pytest.raises(CaseFailure, match="array carries"):
+        _assert_carried_document(
+            case,
+            {"stops": [{"port": "Bergen"}, {"port": "Tromso"}]},
+            {"stops": [{"port": "Bergen"}]},
+            "insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
+        )
+
+
+def test_a_carried_array_element_whose_named_value_differs_is_refused() -> None:
+    case = _write_case_by_id("m-txtime-write-010")
+    with pytest.raises(CaseFailure, match="stops\\[0\\].port"):
+        _assert_carried_document(
+            case,
+            {"stops": [{"port": "Bergen"}]},
+            {"stops": [{"port": "Oslo"}]},
+            "insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)",
+        )

@@ -1,0 +1,118 @@
+# Benchmark fixture (m-perf-bench): the temporal Relational Document Layout workload.
+#
+# The sibling `document-layout.yaml` fixture measures the non-temporal shapes — a
+# document-path filter, an instance read, and a patch update. This one measures the
+# shapes a temporal document-mapped Entity adds, because those are where the layout
+# makes round trips and write shape part of the claim:
+#
+#   - a milestone successor is built by PATCHING the predecessor's own retained raw
+#     document (m-unit-work), and retention is promised to cost no additional query;
+#   - a successor binds ONE complete document rather than one cell per member, so a
+#     chain writes two statements and a rectangle split writes four, whatever the
+#     member count.
+#
+# Three workloads, each with `expectRoundTrips`, so a regression fails loudly rather
+# than only reading slower:
+#
+#   - predecessor-resolve (200): the read that materializes one current milestone,
+#     carrying the Structured Column the observation retains — ONE statement. An
+#     implementation that fetched the raw document with a read of its own would take
+#     two round trips here where the contract takes one.
+#   - milestone-chain (100):     close the current milestone, then insert the
+#     successor carrying one whole document — TWO statements.
+#   - rectangle-split (100):     inactivate the Latest rectangle, then insert head,
+#     middle and tail, each carrying one whole document — FOUR statements.
+#
+# The dataset is generated rather than authored inline: each write iteration
+# addresses the milestone whose primary key is its own `$i` index, so every
+# iteration closes a row no earlier iteration touched and the timing loop stays
+# idempotent across `iterations` repeats. The row count therefore bounds the write
+# workloads' iteration counts.
+#
+# The documents the successors bind are authored here rather than derived, exactly
+# as a golden bind is: a workload is a timing fixture, not a grading one, and the
+# behavior these statements have is pinned by `m-txtime-write-010` and
+# `m-bitemp-write-019`.
+tags: [m-perf-bench, m-storage-layout, m-txtime-write, m-bitemp-write, document-layout]
+model: models/document-layout.yaml
+dataset:
+  generate:
+    recipe: document-milestones
+    rows: 200
+workloads:
+  - name: predecessor-resolve
+    note: the read that materializes one current milestone and its raw Structured Column — one statement, one round trip
+    iterations: 200
+    expectRoundTrips: 1
+    statements:
+      - sql:
+          postgres: select t0.id, t0.in_z, t0.out_z, t0.payload from voyage t0 where t0.id = ? and t0.out_z = ?
+          mariadb: select t0.id, t0.in_z, t0.out_z, t0.payload from voyage t0 where t0.id = ? and t0.out_z = ?
+        binds: ["$i", infinity]
+  - name: milestone-chain
+    kind: write
+    note: close the current milestone and chain a successor binding one whole document — two statements
+    iterations: 100
+    expectRoundTrips: 2
+    statements:
+      - sql:
+          postgres: update voyage set out_z = ? where id = ? and out_z = ?
+          mariadb: update voyage set out_z = ? where id = ? and out_z = ?
+        binds: ["2026-06-01T00:00:00+00:00", "$i", infinity]
+      - sql:
+          postgres: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+          mariadb: insert into voyage(id, in_z, out_z, payload) values (?, ?, ?, ?)
+        binds:
+          - "$i"
+          - "2026-06-01T00:00:00+00:00"
+          - infinity
+          - title: voyage-chained
+            crew: 4
+            manifest:
+              cargo: timber
+  - name: rectangle-split
+    kind: write
+    note: inactivate the Latest rectangle and chain head / middle / tail, each binding one whole document — four statements
+    iterations: 100
+    expectRoundTrips: 4
+    statements:
+      - sql:
+          postgres: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
+          mariadb: update charter set out_z = ? where id = ? and thru_z = ? and out_z = ?
+        binds: ["2026-02-15T00:00:00+00:00", "$i", infinity, infinity]
+      - sql:
+          postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+          mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        binds:
+          - "$i"
+          - "2026-01-01T00:00:00+00:00"
+          - "2026-03-01T00:00:00+00:00"
+          - "2026-02-15T00:00:00+00:00"
+          - infinity
+          - route: route-head
+            terms:
+              clause: standard
+      - sql:
+          postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+          mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        binds:
+          - "$i"
+          - "2026-03-01T00:00:00+00:00"
+          - "2026-09-01T00:00:00+00:00"
+          - "2026-02-15T00:00:00+00:00"
+          - infinity
+          - route: route-middle
+            terms:
+              clause: winter
+      - sql:
+          postgres: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+          mariadb: insert into charter(id, from_z, thru_z, in_z, out_z, payload) values (?, ?, ?, ?, ?, ?)
+        binds:
+          - "$i"
+          - "2026-09-01T00:00:00+00:00"
+          - infinity
+          - "2026-02-15T00:00:00+00:00"
+          - infinity
+          - route: route-tail
+            terms:
+              clause: standard

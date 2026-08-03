@@ -3082,11 +3082,12 @@ scope list is non-empty, a well-formed root-owned `Document` declaration
 matching an entry is refused at formation with
 `storage-layout-document-capability-unsupported`, so this implementation never
 accepts a layout whose reads *and* writes it cannot execute end to end. The
-shapes the list governs are the table-per-hierarchy and
-table-per-concrete-subtype mappings; relationships and navigation; the explicit
-non-temporal optimistic lock; and the Transaction-Time and Bitemporal flavors.
-A standalone, non-temporal, unversioned owner with no relationships matches no
-entry and is accepted.
+shapes the list governs are the two inheritance mappings — table-per-hierarchy
+and table-per-concrete-subtype — and they partition every inheritance family, so
+an owner matches at most one. An owner outside an inheritance family therefore
+matches no entry and is accepted, whatever else it declares: relationships and
+navigation, the explicit non-temporal optimistic lock, and the Transaction-Time
+and Bitemporal flavors are all supported end to end.
 The rule, its Issue Code, and its manifest entry are removed together once the
 list is empty; a permanently empty list is not a supported state.
 
