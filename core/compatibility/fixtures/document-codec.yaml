@@ -24,7 +24,7 @@
 #   MariaDB if a bound text were compared instead.
 #
 # The remaining three rows instantiate the presence states side by side, so a decode
-# that confuses them fails a case rather than a review:
+# that confuses two of them answers a different row set here:
 #
 #   id 3 Cyd   `profile` present, every leaf key ABSENT, `entries` an EMPTY ARRAY
 #   id 4 Dee   `profile` present, every leaf an explicit JSON NULL, `origin` null

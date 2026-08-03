@@ -187,12 +187,27 @@ def _entry_binds(entry: dict[str, Any], dialect: str) -> list[Any]:
 
 
 def _substitute_iteration(binds: list[Any], iteration: int) -> list[Any]:
-    """Replace the ``$i`` sentinel with the 1-based iteration index.
+    """Resolve the ``$i`` iteration sentinel against the 1-based iteration index.
 
-    Lets a re-run ``write`` workload (e.g. a milestone insert) write a DISTINCT
-    primary key each iteration, so the timing loop stays idempotent.
+    Lets a re-run ``write`` workload write something DISTINCT each iteration, so the
+    timing loop stays idempotent and an engine that skips a physically unchanged row
+    still does the work being measured.
+
+    A bind that IS the sentinel becomes the index as a host integer — a milestone
+    insert's own primary key. A bind that CONTAINS it is text, and the index's digits
+    are interpolated into it: a document mutation's value hole takes JSON text
+    (`m-case-format`), which no host integer can carry, so ``'"row-$i"'`` is how an
+    iteration reaches one.
     """
-    return [iteration if b == "$i" else b for b in binds]
+    return [_iteration_bind(bind, iteration) for bind in binds]
+
+
+def _iteration_bind(bind: Any, iteration: int) -> Any:
+    if bind == "$i":
+        return iteration
+    if isinstance(bind, str) and "$i" in bind:
+        return bind.replace("$i", str(iteration))
+    return bind
 
 
 def _percentile(samples: list[float], pct: float) -> float:

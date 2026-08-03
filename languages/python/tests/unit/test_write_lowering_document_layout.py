@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import cast
 
+import pytest
 from _document_layout_support import columns_model, document_model, entity
 
 from _support.lowering_probes import lower_instruction
@@ -146,16 +147,35 @@ def test_a_columns_layout_twin_writes_the_same_members_to_their_own_columns() ->
     assert statement.sql == "insert into person(id, display_name, tags) values (?, ?, ?)"
 
 
+def test_same_membered_rows_collapse_into_one_multi_row_insert() -> None:
+    # The collapse the shared shape below admits: one column list and one value
+    # tuple per row, each binding that row's own complete document.
+    (statement,) = _lower(
+        KeyedWrite(
+            "insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "displayName": "Bo"})
+        )
+    )
+    assert statement.sql == "insert into person(id, payload) values (?, ?), (?, ?)"
+    assert _document(statement, 1) == {"displayName": "Ada", "tags": []}
+    assert _document(statement, 3) == {"displayName": "Bo", "tags": []}
+
+
 def test_two_rows_naming_different_document_members_do_not_share_one_statement() -> None:
-    # Both rows select the same two columns, so a grouping decision made from the
-    # column list alone would collapse them and bind the second row's document
-    # against the first row's member set. Placement tells them apart by path.
+    # Both rows select the same two columns — the Structured Column is NOT NULL and
+    # binds on every insert — so under this layout the column list alone no longer
+    # separates them. The Document Path is what does, and it must: every entry of
+    # one Planned Insert has the same canonical member set (m-unit-work), so a run
+    # answered same-shaped here is one the planner then refuses.
     person = entity(DOCUMENT, "Person")
     display_name = collapse_group_key(DOCUMENT, person, "insert", {"id": 1, "displayName": "Ada"})
     score = collapse_group_key(DOCUMENT, person, "insert", {"id": 2, "score": 7})
     same = collapse_group_key(DOCUMENT, person, "insert", {"id": 3, "displayName": "Bo"})
     assert display_name != score
     assert display_name == same
+    with pytest.raises(ValueError, match="same members"):
+        _lower(
+            KeyedWrite("insert", "Person", ({"id": 1, "displayName": "Ada"}, {"id": 2, "score": 7}))
+        )
 
 
 def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:

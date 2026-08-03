@@ -7,7 +7,8 @@
 # each one lands, and the codec is what spells it — so this file states one logical
 # row and never a physical document.
 #
-# The three Traveler rows are chosen so every Phase-5 witness discriminates:
+# The three Traveler rows are chosen so each of them discriminates a decision a case
+# over this model makes, rather than merely populating the table:
 #
 #   id 1 Ada  score 7     joinedOn 2026-01-15  note "north wing"  address Oslo/NO
 #   id 2 Bo   score 30    joinedOn 2025-12-31  note ABSENT        address Bergen/NO

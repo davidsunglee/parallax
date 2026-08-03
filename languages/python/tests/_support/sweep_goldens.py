@@ -347,22 +347,19 @@ _STORAGE_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
 # dialect's mutation expression rather than one bind; `m-value-object-067` replaces a
 # whole occurrence in place, one path and one composite value.
 #
-# `m-document-codec-001` joins them here rather than in Phase 4 because the snapshot
-# write lowering used to bind a Value Object occurrence's value as it received it, so
-# an insert reached a serializer with native carriers and the encoding golden could
-# only be graded by the reference harness. The lowering now composes every occurrence
-# through the codec, which is exactly what that case witnesses: an exact-decimal
-# STRING, lowercase-hex `bytes`, zero-padded ISO `time`, UTC-microsecond `timestamp`,
-# and canonical-lowercase `uuid`, at every depth.
+# `m-document-codec-001` is what proves the write lane composes every Value Object
+# occurrence through the codec rather than handing its value to a serializer as
+# received: an exact-decimal STRING, lowercase-hex `bytes`, zero-padded ISO `time`,
+# UTC-microsecond `timestamp`, and canonical-lowercase `uuid`, at every depth.
 #
-# Its presence sibling `m-document-codec-002` stays OUT, and for a different reason
-# than the encoding one Phase 4 recorded: its neutral write input deliberately omits
-# the required `many` occurrence `profile.entries` to witness that an omitted `many`
-# still stores `[]`, and the developer-facing write validator refuses a required
-# value object the input does not name (`write-required-value-object-missing`) before
-# any SQL. The compile lane never runs that validator, so the case's golden compiles
-# byte-exact; the run lane does, so it cannot execute. Its claim is graded by the
-# reference harness on both engines meanwhile.
+# Its presence sibling `m-document-codec-002` is deliberately absent. Its neutral
+# write input omits the required `many` occurrence `profile.entries`, which is the
+# very state it witnesses — an omitted `many` still stores `[]` — and the
+# developer-facing write validator refuses a required value object the input does not
+# name (`write-required-value-object-missing`) before any SQL. The compile lane never
+# runs that validator, so the case's golden compiles byte-exact here; the run lane
+# does, so it cannot execute there. Its claim is graded by the reference harness on
+# both engines instead.
 _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
     {
         "m-storage-layout-022",

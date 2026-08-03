@@ -144,6 +144,29 @@ def test_equally_short_and_equally_near_floats_break_the_tie_to_an_even_last_dig
     assert encode_leaf(FLOAT32, 1048576.25) == 1048576.2
 
 
+def test_a_float_encoding_decodes_back_at_the_width_that_chose_it() -> None:
+    # The shortest number is the shortest one that decodes back to the value AT THE
+    # DECLARED WIDTH, so the width has to be on both legs: 1048576.2 is a `float32`
+    # encoding of 1048576.25 and a binary64 number in its own right, and reading it
+    # back at binary64 would answer a value no `float32` holds.
+    assert decode_neutral_literal(encode_leaf(FLOAT32, 1048576.25), FLOAT32) == 1048576.25
+    assert decode_neutral_literal(1048576.2, FLOAT64) == 1048576.2
+    for binary32_value in (1048576.25, 1.5, -2.5, 0.0, 3.4028234663852886e38):
+        assert (
+            decode_neutral_literal(encode_leaf(FLOAT32, binary32_value), FLOAT32) == binary32_value
+        )
+    # A magnitude binary32 cannot hold names no member and is left for membership to
+    # refuse rather than overflowed to infinity here.
+    assert decode_neutral_literal(3.5e38, FLOAT32) == 3.5e38
+
+
+def test_decode_reads_a_float32_leaf_at_its_declared_width() -> None:
+    shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
+    stored = encode_document(shape, {"ratio": Present(1048576.25)})
+    assert stored == {"ratio": 1048576.2}
+    assert decode_path(shape, stored, ("ratio",)) == Present(1048576.25)
+
+
 def test_only_the_six_text_compared_types_have_a_comparison_text() -> None:
     assert comparison_text(BYTES, b"\x0a\x1b") == "0a1b"
     assert comparison_text(UUID, _TOKEN) == "123e4567-e89b-12d3-a456-426614174000"
@@ -243,8 +266,15 @@ def test_nesting_composes_from_the_leaves_up_through_these_two_operations() -> N
 
 
 def test_decode_answers_by_declared_type_and_never_by_inspecting_the_value() -> None:
-    document = {"flag": True, "day": "2026-01-15", "entries": [{"price": "19.99"}]}
+    document = {
+        "flag": True,
+        "day": "2026-01-15",
+        "origin": {"city": "Oslo"},
+        "entries": [{"price": "19.99"}],
+    }
     assert decode_path(_SHAPE, document, ("day",)) == Present(dt.date(2026, 1, 15))
+    # The declared type comes from the member the path reaches, at any depth.
+    assert decode_path(_SHAPE, document, ("origin", "city")) == Present("Oslo")
     # The occurrence arm answers with the stored subtree as it is, so an element is
     # decoded by handing it back with that occurrence's own shape — which is what
     # makes a `many` traversable without an element index.
@@ -259,8 +289,11 @@ def test_decode_answers_by_declared_type_and_never_by_inspecting_the_value() -> 
 def test_decode_distinguishes_absent_from_explicitly_null_and_collapses_a_many() -> None:
     assert decode_path(_SHAPE, {}, ("day",)) is MISSING
     assert decode_path(_SHAPE, {"day": None}, ("day",)) is NULL
-    # A non-object intermediate blocks descent exactly as an absent key does.
-    assert decode_path(_SHAPE, {"origin": "unknown"}, ("origin", "city")) is MISSING
+    # An absent nullable occurrence carries its whole subtree with it, so a path
+    # below one is not present rather than invalid — including a REQUIRED leaf
+    # there, whose requiredness says nothing about a subtree the row never wrote.
+    assert decode_path(_SHAPE, {}, ("origin", "city")) is MISSING
+    assert decode_path(_SHAPE, {"origin": None}, ("origin", "city")) is MISSING
     zero_states: list[dict[str, object]] = [{}, {"entries": None}, {"entries": []}]
     for zero in zero_states:
         assert decode_path(_SHAPE, zero, ("entries",)) == Present([])
@@ -276,8 +309,44 @@ def test_a_path_naming_no_member_is_a_caller_error_rather_than_an_absence() -> N
 
 
 def test_stored_data_that_contradicts_its_shape_fails_the_decode() -> None:
+    # Every arm of "invalid stored data": a value that does not decode into its
+    # declared type, a nested structure that is not the declared kind, and a
+    # required path that is absent or JSON null. None of them may answer with a
+    # presence, because inventing one turns corrupt storage into a plausible row.
+    required = DocumentShape(
+        members=(
+            Leaf(name="label", type=STRING, nullable=False),
+            Occurrence(
+                name="entries",
+                multiplicity=Multiplicity.MANY,
+                nullable=False,
+                shape=shape_of_declaration(_ENTRY),
+            ),
+        )
+    )
+    for document, path in (
+        ({"day": "not-a-date"}, ("day",)),
+        ({"origin": "unknown"}, ("origin",)),
+        ({"origin": "unknown"}, ("origin", "city")),
+        ({"entries": 7}, ("entries",)),
+    ):
+        with pytest.raises(ValueError, match="invalid stored data"):
+            decode_path(_SHAPE, document, path)
+    for document, path in (({}, ("label",)), ({"label": None}, ("label",))):
+        with pytest.raises(ValueError, match="invalid stored data"):
+            decode_path(required, document, path)
+    # A document that is not an object at all carries no member, and answering
+    # "absent" for one would report a corrupt cell as an ordinary empty row.
     with pytest.raises(ValueError, match="invalid stored data"):
-        decode_path(_SHAPE, {"day": "not-a-date"}, ("day",))
+        decode_path(_SHAPE, "not-a-document", ("day",))
+
+
+def test_a_path_never_addresses_an_array_position() -> None:
+    # A `many`'s elements are decoded one at a time against the occurrence's own
+    # shape, so descending THROUGH one names no member — a caller error, never a
+    # verdict about what the row stores.
+    with pytest.raises(KeyError, match="array position"):
+        decode_path(_SHAPE, {"entries": [{"kind": "home"}]}, ("entries", "kind"))
 
 
 def test_an_unknown_key_never_becomes_a_member_value() -> None:
@@ -333,8 +402,42 @@ def test_patches_apply_left_to_right_each_over_the_result_of_the_last() -> None:
     assert patched == {"flag": False}
     with pytest.raises(ValueError, match="nonempty"):
         apply_patches(_SHAPE, {}, [])
+
+
+def test_a_patch_whose_kind_contradicts_its_member_is_refused_both_ways() -> None:
+    # The pairing is exclusive both ways. Applying either mismatch would build a
+    # document the same shape reads back as invalid stored data — a leaf holding an
+    # object, or an occurrence holding a scalar.
     with pytest.raises(ValueError, match="SetOccurrence"):
         apply_patches(_SHAPE, {}, [SetLeaf(("origin",), Present("Oslo"))])
+    with pytest.raises(ValueError, match="SetLeaf"):
+        apply_patches(_SHAPE, {}, [SetOccurrence(("day",), {})])
+
+
+def test_a_returned_document_shares_no_mutable_state_with_one_passed_in() -> None:
+    # Untouched subtrees included: patching copies the whole input rather than only
+    # the path it traverses, so a temporal successor can never write through into the
+    # retained predecessor it was built from.
+    stored: dict[str, object] = {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]}
+    patched = cast("dict[str, object]", apply_patches(_SHAPE, stored, [SetLeaf(("flag",), NULL)]))
+    cast("dict[str, object]", patched["origin"])["city"] = "Bergen"
+    cast("list[dict[str, object]]", patched["entries"])[0]["kind"] = "work"
+    assert stored == {"origin": {"city": "Oslo"}, "entries": [{"kind": "home"}]}
+    # The same holds for the occurrence documents `encode` composes and the subtrees
+    # `decode` and `SetOccurrence` hand back.
+    origin = {"city": "Oslo"}
+    encoded = encode_document(_SHAPE, {"origin": Present(origin)})
+    cast("dict[str, object]", encoded["origin"])["city"] = "Bergen"
+    assert origin == {"city": "Oslo"}
+    answered = decode_path(_SHAPE, {"origin": origin}, ("origin",))
+    assert isinstance(answered, Present)
+    cast("dict[str, object]", answered.value)["city"] = "Tromso"
+    assert origin == {"city": "Oslo"}
+    replaced = cast(
+        "dict[str, object]", apply_patches(_SHAPE, {}, [SetOccurrence(("origin",), origin)])
+    )
+    cast("dict[str, object]", replaced["origin"])["city"] = "Alta"
+    assert origin == {"city": "Oslo"}
 
 
 # --------------------------------------------------------------------------- #

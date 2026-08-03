@@ -11,6 +11,9 @@ somehow missing from the identity map).
 
 from __future__ import annotations
 
+import datetime as dt
+import decimal
+import uuid
 from typing import Any, cast
 
 import pytest
@@ -47,6 +50,7 @@ ORDERS = models.accepted_model(_MODELS["orders"])
 ANIMAL = models.accepted_model(_MODELS["animal"])
 CUSTOMER = models.accepted_model(_MODELS["customer"])
 DOCUMENT = models.accepted_model(_MODELS["document"])
+DOCUMENT_CODEC = models.accepted_model(_MODELS["document-codec"])
 
 
 def _doc(decoded: dict[str, object], key: str) -> dict[str, Any]:
@@ -93,6 +97,37 @@ def test_decode_row_decodes_a_recursive_value_object() -> None:
     assert geo["country"] == "NO"
     assert geo["point"] == {"lat": 1.0, "lon": 2.0}
     assert address["phones"] == [{"type": "home", "number": "555"}]
+
+
+def test_decode_row_decodes_every_nested_leaf_by_its_declared_neutral_type() -> None:
+    # A document stores the codec's portable spelling and a materialized member is
+    # the MANAGED value that spelling encodes, at every depth. Six of the twelve
+    # rows differ between the two — the ones models/customer.yaml does not reach —
+    # so copying the stored value through would hand a caller a `str` wherever the
+    # model declares a `Decimal`, `bytes`, `date`, `time`, `datetime`, or `UUID`.
+    row = {
+        "id": 1,
+        "label": "Ada",
+        "profile": {
+            "amount": "10.25",
+            "blob": "0a1b",
+            "day": "2026-01-15",
+            "clock": "09:30:00",
+            "instant": "2026-01-15T09:30:00.000000Z",
+            "token": "123e4567-e89b-12d3-a456-426614174000",
+            "entries": [{"price": "19.99", "issued": "2026-02-01"}],
+        },
+    }
+    profile = _doc(decode_row(DOCUMENT_CODEC, "Sample", row), "profile")
+    assert profile["amount"] == decimal.Decimal("10.25")
+    assert profile["blob"] == b"\x0a\x1b"
+    assert profile["day"] == dt.date(2026, 1, 15)
+    assert profile["clock"] == dt.time(9, 30)
+    assert profile["instant"] == dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC)
+    assert profile["token"] == uuid.UUID("123e4567-e89b-12d3-a456-426614174000")
+    element = cast("list[dict[str, Any]]", profile["entries"])[0]
+    assert element["price"] == decimal.Decimal("19.99")
+    assert element["issued"] == dt.date(2026, 2, 1)
 
 
 def test_decode_row_drops_undeclared_members() -> None:

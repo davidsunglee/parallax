@@ -587,11 +587,10 @@ def test_the_gate_names_every_declared_shape_the_owner_matches() -> None:
     )
 
 
-def test_a_standalone_layout_owner_is_no_longer_refused() -> None:
-    # The standalone entry left the scope list once this build executed that
-    # shape's reads and writes alike, so a well-formed standalone declaration
-    # raises nothing here — which is what lets models/document-layout.yaml sit in
-    # the corpus and form at all.
+def test_a_standalone_layout_owner_matches_no_declared_shape() -> None:
+    # The scope list names no standalone entry, so a well-formed standalone
+    # declaration raises nothing here — which is what lets
+    # models/document-layout.yaml sit in the corpus and form at all.
     assert _rule_issues(_standalone_document()) == ()
 
 

@@ -2476,16 +2476,19 @@ def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
 def _project_members(vo: dict[str, Any], obj: Any) -> dict[str, Any]:
     """Build the declared-member projection of one value-object document object.
 
-    Each declared ``attribute`` contributes its leaf value (``None`` for a missing
-    key or a JSON ``null``); each declared nested ``valueObject`` recurses. A
-    non-object element (e.g. a scalar inside a ``many`` array) yields all-null
-    declared members. Undeclared keys are omitted, so the projected node's key set
-    is exactly the declared members — the shape the typed getters expose.
+    Each declared ``attribute`` contributes its leaf value, decoded by its DECLARED
+    type (:func:`decode_leaf`) rather than copied out of the document, because the
+    document stores the codec's portable spelling and a getter yields the value a
+    Column of that type reads back as — ``None`` for a missing key or a JSON
+    ``null``. Each declared nested ``valueObject`` recurses. A non-object element
+    (e.g. a scalar inside a ``many`` array) yields all-null declared members.
+    Undeclared keys are omitted, so the projected node's key set is exactly the
+    declared members — the shape the typed getters expose.
     """
     source = obj if isinstance(obj, dict) else {}
     node: dict[str, Any] = {}
     for attribute in vo.get("attributes", []):
-        node[attribute["name"]] = source.get(attribute["name"])
+        node[attribute["name"]] = decode_leaf(attribute["type"], source.get(attribute["name"]))
     for nested in vo.get("valueObjects", []):
         node[nested["name"]] = _project_value_object(nested, source.get(nested["name"]))
     return node
@@ -2687,7 +2690,6 @@ def _assert_write_step_count(case: Case, dialect: str) -> None:
 
 
 _INSERT_COLUMNS_RE = re.compile(r"insert\s+into\s+\S+\s*\(([^)]*)\)", re.IGNORECASE)
-_SET_CLAUSE_RE = re.compile(r"\bset\s+(.+?)\s+where\b", re.IGNORECASE)
 # The target table of a DML statement (m-inheritance table-per-concrete-subtype
 # routing): the identifier after `insert into` / `delete from` / `update`, stopping
 # at the following whitespace or `(` (the tight `insert into t(` column list).
@@ -3182,12 +3184,79 @@ def _parse_insert_columns(case: Case, statement: str) -> list[str]:
 
 
 def _parse_set_columns(case: Case, statement: str) -> list[str]:
-    match = _SET_CLAUSE_RE.search(statement)
-    if not match:
+    clause = _set_clause(statement)
+    if clause is None:
         raise CaseFailure(
             f"{case.path.name}: could not parse the SET clause from golden {statement!r}."
         )
-    return [piece.strip().split("=")[0].strip() for piece in _top_level_commas(match.group(1))]
+    return [_assigned_column(piece) for piece in _top_level_commas(clause)]
+
+
+def _sql_scan(sql: str) -> Iterator[tuple[int, str, int]]:
+    """Each character of *sql* OUTSIDE a quoted identifier or string literal, with
+    its index and its bracket depth.
+
+    Every structural read of a golden statement goes through here, because a column
+    name is any nonempty string and a dialect quotes one that is reserved or
+    otherwise non-simple (`m-dialect`): a comma, a bracket, an `=`, and the word
+    `where` can each sit inside an identifier, and none of them is syntax there.
+    """
+    quote = ""
+    depth = 0
+    for index, char in enumerate(sql):
+        if quote:
+            if char == quote:
+                quote = ""
+            continue
+        if char in "\"`'":
+            quote = char
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        yield index, char, depth
+
+
+def _keyword_at(lowered: str, index: int, keyword: str) -> bool:
+    """Whether *keyword* occupies a whole word at *index* of a lowercased statement."""
+    if not lowered.startswith(keyword, index):
+        return False
+    before = lowered[index - 1] if index else " "
+    after = lowered[index + len(keyword) :][:1] or " "
+    return not _word_char(before) and not _word_char(after)
+
+
+def _word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+def _set_clause(statement: str) -> str | None:
+    """An UPDATE's `set` clause: what sits between its own `set` and `where` keywords.
+
+    Both delimiters are read at bracket depth zero and outside quotes, so neither a
+    subquery's own keyword nor a column named `set` or `where` — legal, and quoted
+    for exactly that reason — delimits the clause.
+    """
+    lowered = statement.lower()
+    start: int | None = None
+    for index, _char, depth in _sql_scan(statement):
+        if depth:
+            continue
+        if start is None:
+            if _keyword_at(lowered, index, "set"):
+                start = index + len("set")
+        elif _keyword_at(lowered, index, "where"):
+            return statement[start:index].strip()
+    return None
+
+
+def _assigned_column(assignment: str) -> str:
+    """The column one `set` term names: what sits left of its own top-level `=`."""
+    for index, char, depth in _sql_scan(assignment):
+        if char == "=" and depth == 0:
+            return assignment[:index].strip()
+    return assignment.strip()
 
 
 def _top_level_commas(clause: str) -> list[str]:
@@ -3196,17 +3265,13 @@ def _top_level_commas(clause: str) -> list[str]:
     A `set` term's right-hand side may itself be a call taking commas — the
     document mutation expression is nested `jsonb_set` calls on Postgres and one
     N-pair `json_set` on MariaDB (m-dialect) — so only a comma at bracket depth
-    zero ends an assignment.
+    zero ends an assignment. A comma inside a quoted identifier or a string literal
+    ends nothing at all: `set "payload,archive" = ?` is one assignment, not two.
     """
     parts: list[str] = []
-    depth = 0
     start = 0
-    for index, char in enumerate(clause):
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        elif char == "," and depth == 0:
+    for index, char, depth in _sql_scan(clause):
+        if char == "," and depth == 0:
             parts.append(clause[start:index])
             start = index + 1
     parts.append(clause[start:])

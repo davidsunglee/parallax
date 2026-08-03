@@ -246,19 +246,32 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     Every other space is already carried natively, so its literal decodes to
     itself.
 
+    A fractional number literal is read at the **declared width**: a
+    :class:`Float32` literal names the binary32 value nearest it, because a
+    binary32's portable literal is the shortest decimal that decodes back to it
+    *at that width* (``parallax.core.document_codec``), so reading ``1048576.2``
+    as a binary64 would answer a number no binary32 holds and the encode/decode
+    inverse would fail for exactly the values the shortest-number rule pins
+    down. An INTEGER literal stays exact instead, and the difference is not an
+    oversight: an integer names a value rather than a rendering of one, so an
+    integer no float of the width represents exactly is a literal of no float
+    space and decodes to itself.
+
     Total and nonthrowing: a value that is not a literal of ``declared`` — a
     malformed spelling, a truth value where a number belongs, an integer no
     float of the width represents exactly, a :class:`Time` or :class:`Timestamp`
     literal carrying non-zero sub-microsecond precision, or an unrelated
     object — is returned unchanged, so :func:`matches_neutral_type` alone decides
-    membership and this function never rounds, truncates, overflows, or
-    classifies a defect on its own.
+    membership and this function never truncates, overflows, or classifies a
+    defect on its own.
     """
     match declared:
         case Float64() if _is_integer(value):
             return _integer_as_float(value, binary32=False)
         case Float32() if _is_integer(value):
             return _integer_as_float(value, binary32=True)
+        case Float32() if isinstance(value, float):
+            return _narrowed_binary32(value)
         case Decimal() if _is_integer(value):
             return _decimal.Decimal(value)
         case Decimal() if isinstance(value, float):
@@ -330,6 +343,19 @@ def _canonical_uuid_input(value: str) -> object:
     """
     decoded = _decoded(_uuid.UUID, value)
     return decoded if isinstance(decoded, _uuid.UUID) and str(decoded) == value else value
+
+
+def _narrowed_binary32(value: float) -> float:
+    """``value`` as binary32 represents it.
+
+    A magnitude binary32 cannot hold is left unchanged so
+    :func:`matches_neutral_type` refuses it, rather than overflowing to infinity
+    here.
+    """
+    try:
+        return cast("float", _struct.unpack("<f", _struct.pack("<f", value))[0])
+    except OverflowError:
+        return value
 
 
 def _integer_as_float(value: int, *, binary32: bool) -> float | int:

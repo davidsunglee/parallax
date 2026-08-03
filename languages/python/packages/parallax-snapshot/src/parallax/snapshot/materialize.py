@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from parallax.core import inheritance
+from parallax.core.base import decode_neutral_literal
 from parallax.core.deep_fetch import FetchLevel
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -315,13 +316,26 @@ def _pk_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
 def _decode_element(raw: object, container: _VoContainer) -> dict[str, object] | None:
     """Decode one ``one``-shaped value-object document (or array element) to its
     DECLARED shape: a non-mapping (SQL NULL, JSON null, a non-object scalar)
-    collapses to ``None`` — the whole composite absent — never a partial dict."""
+    collapses to ``None`` — the whole composite absent — never a partial dict.
+
+    Each leaf decodes by its DECLARED Neutral Type rather than by the JSON value's
+    own shape, because a document stores a portable spelling and a member's
+    materialized value is its managed one: a ``decimal`` is stored as an exact digit
+    string, ``bytes`` as lowercase hexadecimal, and a ``timestamp`` as a UTC ISO
+    instant, so copying the stored value through would hand a caller a ``str`` where
+    the model declares a ``Decimal``, ``bytes``, or ``datetime``. A value the
+    declared type does not spell passes through unchanged and stays whatever the row
+    held.
+    """
     if not isinstance(raw, Mapping):
         return None
     document = cast("Mapping[str, object]", raw)
     result: dict[str, object] = {}
     for attribute in container.attributes:
-        result[attribute.identity.name] = document.get(attribute.identity.name)
+        stored = document.get(attribute.identity.name)
+        result[attribute.identity.name] = (
+            None if stored is None else decode_neutral_literal(stored, attribute.type)
+        )
     for nested in container.value_objects:
         member_name = nested.identity.path[-1]
         nested_raw = document.get(member_name)

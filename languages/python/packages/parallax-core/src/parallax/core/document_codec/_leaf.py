@@ -2,8 +2,9 @@
 
 One function answers "how is this leaf spelled inside a document", for both document
 kinds and at every depth. Decoding is its inverse and is not restated here: the
-portable literal inverse is :func:`~parallax.core.base.decode_neutral_literal`, so the
-two legs cannot drift.
+portable literal inverse is :func:`~parallax.core.base.decode_neutral_literal`, which
+the float rule below also measures its own round trip through, so the two legs cannot
+drift.
 
 The string spellings are comparison-significant, not house style. SQL compares the six
 text-compared types by comparing the extracted text directly, so changing one changes
@@ -15,7 +16,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import decimal as _decimal
-import struct as _struct
 import uuid as _uuid
 from typing import cast
 
@@ -34,6 +34,7 @@ from parallax.core.base import (
     Time,
     Timestamp,
     Uuid,
+    decode_neutral_literal,
     matches_neutral_type,
 )
 
@@ -79,10 +80,8 @@ def encode_leaf(neutral_type: NeutralType, value: object) -> object:
     match neutral_type:
         case Boolean() | Int32() | Int64() | String() | Json():
             return value
-        case Float32():
-            return _shortest_float(cast("float", value), binary32=True)
-        case Float64():
-            return _shortest_float(cast("float", value), binary32=False)
+        case Float32() | Float64():
+            return _shortest_float(cast("float", value), neutral_type)
         case Decimal(_precision, scale):
             return _exact_decimal(cast("_decimal.Decimal", value), scale)
         case Bytes():
@@ -117,7 +116,7 @@ def _exact_decimal(value: _decimal.Decimal, scale: int) -> str:
     return f"-{body}" if sign and unscaled else body
 
 
-def _shortest_float(value: float, *, binary32: bool) -> float:
+def _shortest_float(value: float, neutral_type: Float32 | Float64) -> float:
     """The number with the fewest significant digits that decodes back to ``value``
     under the declared width, nearest among equally short ones, and — where two are
     equally near — the one whose last significant digit is even.
@@ -127,20 +126,18 @@ def _shortest_float(value: float, *, binary32: bool) -> float:
     admit two numbers. ``%.{p}g`` supplies all three at once, because it renders the
     correctly-rounded ``p``-digit decimal and breaks its own tie to even.
 
+    "Decodes back to" is measured through the decode leg itself, so the phrase cannot
+    mean one thing while encoding and another while reading: a ``float32``'s decode
+    reads a number at binary32, which is why ``1048576.2`` is admissible for
+    ``1048576.25`` at that width and for nothing at binary64.
+
     The answer is the float, not its rendering: ``20`` and ``20.0`` are one JSON
     number, while ``0.1`` and ``0.10000000000000001`` are two and only the first is
     admissible.
     """
-    target = _narrowed(value, binary32=binary32)
+    target = cast("float", decode_neutral_literal(value, neutral_type))
     for precision in range(1, _MAX_SIGNIFICANT_DIGITS + 1):
         candidate = float(f"{target:.{precision}g}")
-        if _narrowed(candidate, binary32=binary32) == target:
+        if decode_neutral_literal(candidate, neutral_type) == target:
             return candidate
     return target  # pragma: no cover - 17 significant digits always round-trip
-
-
-def _narrowed(value: float, *, binary32: bool) -> float:
-    """``value`` as the declared width represents it — the identity for binary64."""
-    if not binary32:
-        return value
-    return cast("float", _struct.unpack("<f", _struct.pack("<f", value))[0])

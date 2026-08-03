@@ -20,8 +20,14 @@
 # reading slower: an implementation that reverted to read-modify-write of the whole
 # Structured Column would issue a SELECT before its UPDATE and take two round trips
 # where the contract takes one, which `expectRoundTrips: 1` refuses even when the
-# wall time looks fine. Its binds carry the `$i` sentinel so each repeat patches a
-# distinct path value and the timing loop stays idempotent.
+# wall time looks fine.
+#
+# Its `displayName` value carries the `$i` iteration sentinel INSIDE the JSON text,
+# so each repeat writes a distinct value and an engine that skips a physically
+# unchanged row still does the work being measured. The sentinel cannot ride as a
+# bare bind here: the mutation expression's value hole takes JSON text
+# (m-case-format), and a host integer bound into `cast(? as jsonb)` is a typed
+# parameter Postgres refuses outright.
 tags: [m-perf-bench, m-storage-layout, document-layout]
 model: models/document-layout.yaml
 dataset:
@@ -75,5 +81,5 @@ workloads:
           postgres: update traveler set payload = jsonb_set(jsonb_set(payload, ?, cast(? as jsonb)), ?, cast(? as jsonb)) where id = ?
           mariadb: update traveler set payload = json_set(payload, ?, json_extract(?, '$'), ?, json_extract(?, '$')) where id = ?
         binds:
-          postgres: ['{displayName}', '"Ada"', '{score}', '$i', 1]
-          mariadb: ['$.displayName', '"Ada"', '$.score', '$i', 1]
+          postgres: ['{displayName}', '"Ada-$i"', '{score}', '21', 1]
+          mariadb: ['$.displayName', '"Ada-$i"', '$.score', '21', 1]
