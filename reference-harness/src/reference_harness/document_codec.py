@@ -130,7 +130,7 @@ def encode_leaf(type_spelling: str, value: Any) -> Any:
     if type_spelling == "uuid":
         return str(_as_uuid(value))
     if type_spelling in ("float32", "float64"):
-        return _shortest_number(value, binary32=type_spelling == "float32")
+        return _shortest_number(type_spelling, value)
     if type_spelling in ("boolean", "int32", "int64", "string"):
         return value
     raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
@@ -257,7 +257,7 @@ def _float_at_width(value: Any, *, binary32: bool) -> float | None:
         return None
 
 
-def _shortest_number(value: Any, *, binary32: bool) -> Any:
+def _shortest_number(type_spelling: str, value: Any) -> Any:
     """A float's document number: the fewest significant digits that decode back to it
     at the declared width, nearest among equally short ones, and — where two are
     equally near — the one whose last significant digit is even.
@@ -269,14 +269,23 @@ def _shortest_number(value: Any, *, binary32: bool) -> Any:
     through :func:`_float_at_width`, the same leg a read narrows by, so one number
     cannot be the encoding while writing and not while reading.
 
-    A value naming no float of the width is returned unchanged rather than refused,
-    because :func:`encode_leaf`'s domain is a case's authored wire literal and
-    classifying one outside its declared space is the write validator's job
-    (`write-value-type-mismatch`), not a spelling's.
+    Which float the authored value names is settled BEFORE any of that, and a value
+    naming none is refused here rather than rendered as the nearest one. A fractional
+    number is a rendering, so it names the float of the declared width nearest it:
+    ``1048576.2`` names binary32 ``1048576.25`` and is that value's own encoding. An
+    integer names a value rather than a rendering, so an integer no float of the width
+    holds exactly names nothing — ``2**24 + 1`` at binary32 and ``2**53 + 1`` at
+    binary64 are outside the space, not values to round into it — and neither does a
+    magnitude the width overflows, a non-finite float, or a non-number. Refusing them
+    is what the ``decimal``, ``bytes``, ``date``, ``time``, ``timestamp`` and ``uuid``
+    rows already do with a literal they cannot spell. The integer arm needs it most:
+    narrowing first and rendering afterwards answers ``2**24 + 1`` with ``16777216``,
+    which is not the value it was given.
     """
+    binary32 = type_spelling == "float32"
     target = _float_at_width(value, binary32=binary32)
-    if target is None:
-        return value
+    if target is None or (_is_integer(value) and target != value):
+        raise DocumentEncodingError(f"{value!r} names no {type_spelling} value")
     for precision in range(1, _MAX_SIGNIFICANT_DIGITS + 1):
         candidate = float(f"{target:.{precision}g}")
         if _float_at_width(candidate, binary32=binary32) == target:
