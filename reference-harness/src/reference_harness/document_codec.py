@@ -28,6 +28,7 @@ import datetime as _dt
 import decimal
 import json
 import re
+import struct
 import uuid as _uuid
 from typing import Any
 
@@ -52,7 +53,7 @@ _TEXT_COMPARED = frozenset({"string", "bytes", "date", "time", "timestamp", "uui
 # The declared types whose document spelling is already the value a Column of the
 # same type reads back as here, so decoding one out of a document is the identity.
 _IDENTITY_DECODED = frozenset(
-    {"boolean", "int32", "int64", "float32", "float64", "string", "bytes", "date", "time", "uuid"}
+    {"boolean", "int32", "int64", "float64", "string", "bytes", "date", "time", "uuid"}
 )
 
 _DECIMAL_TYPE = re.compile(r"^decimal\((\d+),\s*(\d+)\)$")
@@ -131,13 +132,14 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
     arrive in a result row spelled exactly as the same member does when it holds a
     Column, or one logical value would differ by layout.
 
-    Ten of the twelve rows are the identity, because the document spelling IS what
-    the corpus authors and what a Column of that type reads back as here. The two
-    that are not are the two whose spellings were chosen for the document rather
-    than for the wire: a ``decimal(p, s)`` is stored as its exact digit string and
-    read back from a Column as a number, and a ``timestamp`` is stored at UTC with
-    a ``Z`` terminator and read back from a Column with an explicit ``+00:00``
-    offset.
+    Nine of the twelve rows are the identity, because the document spelling IS what
+    the corpus authors and what a Column of that type reads back as here. Three are
+    not. Two of those were spelled for the document rather than for the wire: a
+    ``decimal(p, s)`` is stored as its exact digit string and read back from a Column
+    as a number, and a ``timestamp`` is stored at UTC with a ``Z`` terminator and
+    read back from a Column with an explicit ``+00:00`` offset. The third is
+    ``float32``, whose document number is the shortest one that round-trips at the
+    DECLARED width, so it is read at that width too.
     """
     if value is None:
         return None
@@ -146,9 +148,29 @@ def decode_leaf(type_spelling: str, value: Any) -> Any:
         return decimal.Decimal(str(value))
     if type_spelling == "timestamp":
         return _instant(value).isoformat()
+    if type_spelling == "float32":
+        return _binary32(value)
     if type_spelling in _IDENTITY_DECODED:
         return value
     raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
+
+
+def _binary32(value: Any) -> Any:
+    """A ``float32`` document number as the binary32 value whose encoding it is.
+
+    The document spelling is the shortest number that decodes back to the value at
+    the member's declared width, so reading it at binary64 would answer a number no
+    binary32 holds: ``1048576.2`` is the encoding of ``1048576.25``, not of itself,
+    and a Column of the same type reads back the latter. An integer names a value
+    rather than a rendering of one, and a magnitude binary32 cannot hold has no
+    counterpart to narrow to, so both are returned as they are.
+    """
+    if not isinstance(value, float):
+        return value
+    try:
+        return struct.unpack("<f", struct.pack("<f", value))[0]
+    except OverflowError:
+        return value
 
 
 def comparison_text(type_spelling: str, value: Any) -> str:

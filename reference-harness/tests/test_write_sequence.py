@@ -25,6 +25,7 @@ from reference_harness.case_runner import (
     _assert_write_step_count,
     _increment_marker,
     _is_computed_marker,
+    _parse_insert_columns,
     _parse_set_columns,
     _read_table,
     _table_layout,
@@ -705,3 +706,19 @@ def test_a_set_clause_reads_no_syntax_inside_a_quoted_identifier() -> None:
         "note",
     ]
     assert _parse_set_columns(case, "update t set note = 'a, b' where id = ?") == ["note"]
+
+
+def test_an_insert_column_list_reads_no_syntax_inside_a_quoted_identifier() -> None:
+    # The same rule one clause family over: a quoted identifier may carry a comma or
+    # a bracket, so a raw split would report a one-column INSERT as two columns and a
+    # quoted `)` would end the list early.
+    case = _write_case_by_id("m-storage-layout-022")
+    assert _parse_insert_columns(case, 'insert into t(id, "payload,archive") values (?, ?)') == [
+        "id",
+        '"payload,archive"',
+    ]
+    assert _parse_insert_columns(case, "insert into t(`a)b`, c) values (?, ?)") == ["`a)b`", "c"]
+    # The pk-gen `max` form folds a call into its value list; the column list is
+    # still the one that follows the table.
+    max_form = 'insert into t(id, note) select coalesce(max(t0."id"), ?) + ?, ? from t t0'
+    assert _parse_insert_columns(case, max_form) == ["id", "note"]

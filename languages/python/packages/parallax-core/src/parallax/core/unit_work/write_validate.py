@@ -37,12 +37,17 @@ second, over ``entity``'s family-effective scalar attributes and value objects
 inherited Attribute's declared type are enforced on a concrete-subtype write.
 
 ``mutation`` classifies whether ``row`` is expected to be a FULL document
-(``insert`` / ``insertUntil`` -- every declared member must be present) or a
-SPARSE row (``update`` / ``delete`` / ``terminate`` / ``updateUntil`` /
+(``insert`` / ``insertUntil`` -- every declared member must be present, save a
+``many`` Value Object occurrence, whose absence IS its empty collection rather
+than a member to require, `m-value-object`) or a SPARSE row (``update`` /
+``delete`` / ``terminate`` / ``updateUntil`` /
 ``terminateUntil`` -- an ABSENT top-level member is simply untouched, never a
 violation; the corpus's own sparse keyed-update goldens, e.g.
 ``m-unit-work-005``'s ``{id, balance}`` omitting the required ``owner``, are
-exactly this shape). A value-object document, once PRESENT in
+exactly this shape). Sparseness licenses an absent member, never a VALUE, so
+naming a ``many`` occurrence explicitly NULL is refused under either
+classification: null is a state the model gives it none of, so a row carrying
+one has not left the member alone. A value-object document, once PRESENT in
 the row at any mutation kind, is always validated as a whole (`m-value-object`
 "one atomic document bind" -- there is no sparse write below the document
 boundary): every declared member the document's OWN composite requires must be
@@ -81,7 +86,8 @@ from parallax.core.metamodel import (
 
 __all__ = ["WriteRejectedError", "validate_write"]
 
-# The full-document mutations: every declared member must be present. Every
+# The full-document mutations: every declared member must be present, except a
+# `many` Value Object occurrence, which has no absent state to require. Every
 # other keyed mutation carries a SPARSE row (the primary key plus whichever
 # members the caller actually touched) -- an absent top-level member there is
 # untouched, never a violation.
@@ -194,7 +200,10 @@ def _check_entity_attribute(
 # regardless of the outer mutation. An UNNAMED `many` occurrence is not an     #
 # absence to require -- `m-document-codec` fixes Missing and [] as one logical #
 # zero state, so the write stores the empty array. Naming one explicitly null  #
-# stays refused: the model gives a `many` no null state to name.               #
+# is refused at EVERY mutation, sparse ones included: the model gives a `many` #
+# no null state to name, so the null is not a member left untouched but a      #
+# value the occurrence cannot hold -- one that would bind SQL NULL to a NOT    #
+# NULL Column or patch JSON null at the occurrence's Document Path.            #
 # --------------------------------------------------------------------------- #
 def _check_value_object_member(
     row: Mapping[str, object], vo: ValueObjectMetadata, *, required: bool, owner: str
@@ -202,8 +211,14 @@ def _check_value_object_member(
     name = vo.identity.path[-1]
     value = row.get(name)
     if name not in row or value is None:
-        zero_state = name not in row and vo.multiplicity is Multiplicity.MANY
-        if required and not vo.nullable and not zero_state:
+        if vo.multiplicity is Multiplicity.MANY:
+            if name in row:
+                raise WriteRejectedError(
+                    "write-required-value-object-missing",
+                    f"{owner}.{name}: a `many` value object is never null",
+                )
+            return
+        if required and not vo.nullable:
             raise WriteRejectedError(
                 "write-required-value-object-missing",
                 f"{owner}.{name}: required value object is absent (or null)",

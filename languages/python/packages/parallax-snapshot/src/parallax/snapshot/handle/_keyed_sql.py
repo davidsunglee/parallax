@@ -87,6 +87,14 @@ def collapse_group_key(
     selection is the key columns and its non-key payload members are invisible
     here — two legal deletes always share one `IN`-list statement.
 
+    ``row`` is a CANONICAL write row, which for an opening mutation means one whose
+    `many` Value Object occurrences are spelled out whether the caller named them or
+    not — `m-unit-work`'s own canonicalization, since absence and the empty array are
+    one logical zero state. So a row that left its zero state implicit never answers
+    a different shape from an otherwise identical one that wrote `[]`, which is what
+    `m-sql` means by grouping the caller-present and framework-derived cells alike
+    ("Physical DML ordering").
+
     Under Relational Document Layout the selection is Column *and* Document Path,
     because several members share one Structured Column. Two rows naming different
     document members do emit the same column list — an `INSERT` binds the whole

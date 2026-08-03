@@ -308,6 +308,22 @@ def test_a_many_value_object_named_null_is_still_refused() -> None:
     assert _rejects(_row(book={"phones": None})).rule == "write-required-value-object-missing"
 
 
+def test_a_sparse_update_may_omit_a_many_occurrence_but_never_name_it_null() -> None:
+    # Sparseness licenses an ABSENT member, which is untouched. It licenses no VALUE,
+    # and null is a value: naming a `many` null on an update would bind SQL NULL to
+    # its NOT NULL Column, or patch JSON null at its Document Path, which is exactly
+    # the state the model has none of.
+    _accept({"id": 1}, mutation="update")
+    assert (
+        _rejects({"id": 1, "tags": None}, mutation="update").rule
+        == "write-required-value-object-missing"
+    )
+    assert (
+        _rejects({"id": 1, "book": {"phones": None}}, mutation="update").rule
+        == "write-required-value-object-missing"
+    )
+
+
 def test_many_value_object_element_must_be_a_mapping() -> None:
     assert _rejects(_row(tags=[123])).rule == "write-value-type-mismatch"
 

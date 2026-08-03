@@ -520,8 +520,8 @@ def test_a_container_less_concrete_subtype_projects_no_table_group() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The capability gate: the shapes this build refuses to execute, and the       #
-# defects that report themselves instead of it.                                #
+# The capability gate: the shapes the declared scope list refuses, and the    #
+# defects that report themselves instead of it.                               #
 # --------------------------------------------------------------------------- #
 
 
@@ -602,15 +602,15 @@ def test_the_gate_locates_the_refusal_at_the_layout_owner_with_no_related_locati
     assert "body" in issue.message
 
 
-def test_an_owner_matching_no_declared_shape_is_executed_rather_than_refused(
+def test_an_owner_matching_no_declared_shape_is_accepted_rather_than_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The gate refuses exactly the shapes the scope list declares, so an owner
-    # matching none of them is one this build executes and reports nothing. No
-    # model produces such an owner while the scope keeps its mapping-shape
-    # entries: standalone, table-per-hierarchy, and table-per-concrete-subtype
-    # partition every layout owner. Emptying the scope is what states the rule
-    # rather than the list.
+    # matching none of them raises nothing. An empty scope is the only way to
+    # reach that state through a mapping shape: standalone, table-per-hierarchy,
+    # and table-per-concrete-subtype partition every layout owner, so while the
+    # scope keeps any mapping-shape entry some owner matches it. Emptying the
+    # scope is what states the rule rather than the list.
     monkeypatch.setattr("parallax.core.storage_layout._rules.CAPABILITY_SCOPE", ())
     assert _rule_issues(_standalone_document()) == ()
 
