@@ -46,9 +46,11 @@ from parallax.core.metamodel import (
     AttributeIdentity,
     Cardinality,
     DefiningRelationshipDeclaration,
+    Document,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    Multiplicity,
     TemporalDimension,
     ValueObjectIdentity,
 )
@@ -130,6 +132,7 @@ from parallax.core.unit_work.temporal import (
     expand_milestone,
     resolve_successors,
 )
+from parallax.core.unit_work.write_validate import WriteRejectedError
 
 __all__ = ["PlanningRequest", "SubjectIdentity", "WritePlanner", "plan_temporal_close"]
 
@@ -514,6 +517,7 @@ class WritePlanner:
                 "names a milestone, and every legal milestone target materializes to keyed "
                 "writes before planning (m-batch-write 'Predicate-selected readless forms')"
             )
+        reject_readless_document_many(entity, instruction)
         target = PredicateTarget(predicate=instruction.target.predicate)
         if instruction.mutation == "delete":
             return (
@@ -1260,6 +1264,25 @@ def _tx_time_axis(declaring_entity: EntityMetadata) -> AsOfAxisMetadata:
     if axis is None:  # pragma: no cover - callers guard on a temporal declaring Entity
         raise WritePlanningError(f"{declaring_entity.identity.canonical}: no Transaction-Time axis")
     return axis
+
+
+def reject_readless_document_many(entity: EntityMetadata, instruction: PredicateWrite) -> None:
+    """Refuse the readless document-array assignment shape before planning."""
+    if not isinstance(entity.declared_layout, Document):
+        return
+    many = {
+        occurrence.identity.path[-1]
+        for occurrence in entity.declared_value_objects
+        if occurrence.multiplicity is Multiplicity.MANY
+    }
+    for assignment in instruction.assignments:
+        member = _assignment_member(assignment.attr)
+        if member in many:
+            raise WriteRejectedError(
+                "predicate-write-readless-document-many-unsupported",
+                f"{entity.identity.canonical}.{member}: a readless predicate write cannot "
+                "assign a document-resident `many` occurrence",
+            )
 
 
 def _require_entity(resolved: Targets, spelling: str) -> EntityMetadata:

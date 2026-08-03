@@ -34,6 +34,7 @@ when:
           crew: 4
           manifest:
             cargo: timber
+          legs: []
       at: "2026-01-01T00:00:00+00:00"
     - mutation: update
       entity: Voyage
@@ -45,6 +46,7 @@ when:
           crew: 4
           manifest:
             cargo: timber
+          legs: []
       at: "2026-06-01T00:00:00+00:00"
 then:
   statements:
@@ -59,6 +61,7 @@ then:
           crew: 4
           manifest:
             cargo: timber
+          legs: []
     - sql:
         postgres: update voyage set out_z = ? where id = ? and out_z = ?
         mariadb: update voyage set out_z = ? where id = ? and out_z = ?
@@ -74,6 +77,7 @@ then:
           crew: 4
           manifest:
             cargo: timber
+          legs: []
   tableState:
     voyage:
       - id: 1
@@ -84,6 +88,7 @@ then:
           crew: 4
           manifest:
             cargo: timber
+          legs: []
       - id: 1
         in_z: "2026-06-01T00:00:00+00:00"
         out_z: infinity
@@ -92,4 +97,5 @@ then:
           crew: 4
           manifest:
             cargo: timber
+          legs: []
   roundTrips: 3

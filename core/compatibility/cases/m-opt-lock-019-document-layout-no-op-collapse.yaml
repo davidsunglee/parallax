@@ -51,8 +51,8 @@ when:
             mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
           binds: [0]
       expectRows:
-        - { id: 100, version: 1, label: opening, balance: 250.00 }
-        - { id: 200, version: 1, label: null, balance: 40.00 }
+        - { id: 100, version: 1, label: opening, balance: 250.00, details: { code: opening } }
+        - { id: 200, version: 1, label: null, balance: 40.00, details: { code: settled } }
     - write:
         mutation: update
         target:
@@ -81,7 +81,7 @@ when:
             mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id > ?
           binds: [0]
       expectRows:
-        - { id: 100, version: 2, label: null, balance: 250.00 }
-        - { id: 200, version: 1, label: null, balance: 40.00 }
+        - { id: 100, version: 2, label: null, balance: 250.00, details: { code: opening } }
+        - { id: 200, version: 1, label: null, balance: 40.00, details: { code: settled } }
 then:
   roundTrips: 3

@@ -273,9 +273,13 @@
       },
       "documentPath": {
         "balance": "payload:balance",
+        "details": "payload:details",
+        "details.code": "payload:details.code",
         "label": "payload:label"
       },
-      "valueObject": {}
+      "valueObject": {
+        "details": "details"
+      }
     },
     "parallax.compatibility.Mooring": {
       "attribute": {
@@ -336,11 +340,14 @@
       },
       "documentPath": {
         "crew": "payload:crew",
+        "legs": "payload:legs",
+        "legs.port": "payload:legs.port",
         "manifest": "payload:manifest",
         "manifest.cargo": "payload:manifest.cargo",
         "title": "payload:title"
       },
       "valueObject": {
+        "legs": "legs",
         "manifest": "manifest"
       }
     }

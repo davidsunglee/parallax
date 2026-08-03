@@ -149,6 +149,7 @@ ALL_REJECTED_RULES = (
     | STORAGE_LAYOUT_MODEL_REJECTED_RULES
     | OPERATION_REJECTED_RULES
     | WRITE_REJECTED_RULES
+    | {"predicate-write-readless-document-many-unsupported"}
 )
 
 
@@ -1313,6 +1314,14 @@ class _DocumentMember(NamedTuple):
     column: str
     path: tuple[str, ...]
     type_spelling: str | None
+
+
+class _DocumentAssignment(NamedTuple):
+    """One independently derived leaf, ``one``, or ``many`` assignment node."""
+
+    kind: str
+    path: tuple[str, ...]
+    value: Any
 
 
 def _document_layout_members(case: Case, entity: Entity) -> tuple[str, tuple[_DocumentMember, ...]]:
@@ -2706,7 +2715,13 @@ def _assert_rejected(case: Case) -> None:
             # the value-object validation without disturbing the existing cases.
             validate_operation_inheritance(case.model.entity_defs, case.when["operation"])
         elif "write" in case.when:
-            validate_write(entity, case.write or {})
+            write = case.write or {}
+            if "target" in write:
+                _validate_rejected_predicate_write(case, write)
+                raise CaseFailure(
+                    f"{case.path.name}: predicate write did not match its pre-SQL refusal"
+                )
+            validate_write(entity, write)
             # Concrete-subtype write validation is a no-op on a non-inheritance
             # model, so it runs after
             # the value-object write validation without disturbing the existing cases.
@@ -2733,6 +2748,29 @@ def _assert_rejected(case: Case) -> None:
         f"{case.path.name}: expected a pre-SQL rejection ({expected!r}) but model-aware "
         f"validation ACCEPTED the input."
     )
+
+
+def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> None:
+    target = write.get("target", {})
+    target_name = target.get("entity") if isinstance(target, dict) else None
+    entity = case.model.entity(str(target_name))
+    if entity is None:
+        return
+    document_layout = entity.runtime_facts.get("layout", {}).get("document")
+    if not document_layout:
+        return
+    many = {
+        occurrence["name"]
+        for occurrence in entity.value_objects
+        if occurrence.get("multiplicity", "one") == "many"
+    }
+    for assignment in write.get("assignments", []):
+        name = str(assignment.get("attr", "")).rsplit(".", 1)[-1]
+        if name in many:
+            raise RejectionError(
+                "predicate-write-readless-document-many-unsupported",
+                f"{target_name}.{name}: readless document-resident many assignment",
+            )
 
 
 # --- write sequences (m-txtime-write) ---------------------------------------------------
@@ -3023,7 +3061,7 @@ def _document_value_bind(value: Any) -> Any:
 
 def _document_assignments(
     case: Case, entity: Entity, row: dict[str, Any]
-) -> tuple[tuple[tuple[str, ...], Any], ...]:
+) -> tuple[_DocumentAssignment, ...]:
     """The ordered Document Paths one revising ① row assigns, canonical order.
 
     A revising statement patches only the paths it names (`m-storage-layout`), so
@@ -3032,19 +3070,89 @@ def _document_assignments(
     mutation expressions apply left to right (`m-dialect`).
     """
     _column, resident = _document_layout_members(case, entity)
-    assignments: list[tuple[tuple[str, ...], Any]] = []
+    assignments: list[_DocumentAssignment] = []
     for member in resident:
         name = member.path[0]
         if name not in row:
             continue
         value = row[name]
         if member.type_spelling is None:
-            assignments.append(
-                (member.path, encode_document(entity.value_object_by_name(name), value))
-            )
+            occurrence = entity.value_object_by_name(name)
+            if occurrence.get("multiplicity", "one") == "many":
+                assignments.append(
+                    _DocumentAssignment("many", member.path, encode_document(occurrence, value))
+                )
+            elif value is None:
+                assignments.append(_DocumentAssignment("one-null", member.path, None))
+            else:
+                assignments.append(
+                    _DocumentAssignment(
+                        "one", member.path, _occurrence_assignments(occurrence, value)
+                    )
+                )
         else:
-            assignments.append((member.path, encode_leaf(member.type_spelling, value)))
+            assignments.append(
+                _DocumentAssignment("leaf", member.path, encode_leaf(member.type_spelling, value))
+            )
     return tuple(assignments)
+
+
+def _occurrence_assignments(
+    occurrence: dict[str, Any], value: Any
+) -> tuple[_DocumentAssignment, ...]:
+    raw = value if isinstance(value, dict) else {}
+    assignments: list[_DocumentAssignment] = []
+    for attribute in occurrence.get("attributes", []):
+        name = attribute["name"]
+        if name in raw:
+            assignments.append(
+                _DocumentAssignment("leaf", (name,), encode_leaf(attribute["type"], raw[name]))
+            )
+    for nested in occurrence.get("valueObjects", []):
+        name = nested["name"]
+        if name not in raw:
+            continue
+        nested_value = raw[name]
+        if nested.get("multiplicity", "one") == "many":
+            assignments.append(
+                _DocumentAssignment("many", (name,), encode_document(nested, nested_value))
+            )
+        elif nested_value is None:
+            assignments.append(_DocumentAssignment("one-null", (name,), None))
+        else:
+            assignments.append(
+                _DocumentAssignment("one", (name,), _occurrence_assignments(nested, nested_value))
+            )
+    return tuple(assignments)
+
+
+def _document_assignment_binds(
+    assignments: tuple[_DocumentAssignment, ...], dialect: str
+) -> list[Any]:
+    binds: list[Any] = []
+
+    def append(assignment: _DocumentAssignment, prefix: tuple[str, ...]) -> None:
+        path = _document_path_bind(assignment.path, dialect)
+        if assignment.kind in {"leaf", "many", "one-null"}:
+            binds.extend([path, _document_value_bind(assignment.value)])
+            return
+        absolute = (*prefix, *assignment.path)
+        binds.extend(
+            [
+                path,
+                _document_path_bind(absolute, dialect),
+                "OBJECT" if dialect == "mariadb" else "object",
+                _document_path_bind(absolute, dialect),
+            ]
+        )
+        if dialect == "postgres":
+            binds.append("{}")
+        for child in assignment.value:
+            append(child, absolute)
+
+    for assignment in assignments:
+        append(assignment, ())
+    return binds
 
 
 def _version_column(entity: Entity) -> str | None:
@@ -3698,9 +3806,7 @@ def _assert_versioned_update_input(
         set_values: list[Any] = []
         for column in set_present:
             if column == document_column and patches_document:
-                for path, value in patches:
-                    set_values.append(_document_path_bind(path, dialect))
-                    set_values.append(_document_value_bind(value))
+                set_values.extend(_document_assignment_binds(patches, dialect))
                 continue
             set_values.append(set_cols[column])
         expected = [*set_values, observed + 1, pk]
@@ -3777,14 +3883,12 @@ def _assert_update_input(
     per_key = len(step_statements) == len(classified) and len(step_statements) > 1
 
     def expected_values(
-        set_cols: dict[str, Any], patches: tuple[tuple[tuple[str, ...], Any], ...]
+        set_cols: dict[str, Any], patches: tuple[_DocumentAssignment, ...]
     ) -> list[Any]:
         values: list[Any] = []
         for column in set_present:
             if column == document_column and patches_document:
-                for path, value in patches:
-                    values.append(_document_path_bind(path, dialect))
-                    values.append(_document_value_bind(value))
+                values.extend(_document_assignment_binds(patches, dialect))
                 continue
             values.append(_set_bind_value(column, set_cols[column], document_columns))
         return values

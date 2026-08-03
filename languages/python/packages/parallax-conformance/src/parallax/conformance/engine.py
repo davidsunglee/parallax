@@ -82,6 +82,7 @@ from parallax.core.unit_work import (
     validate_write,
 )
 from parallax.core.unit_work.instructions import WriteInstruction
+from parallax.core.unit_work.write_planner import reject_readless_document_many
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._records import Attribute, Entity, Metamodel, declaring_entity
 from parallax.descriptor._serde import deserialize as deserialize_metamodel
@@ -4073,6 +4074,28 @@ def run_rejected_case(case: case_format.Case) -> str:
         )
     row = cast("Mapping[str, object]", when["write"])
     model = case_model(meta)
+    if "target" in row:
+        try:
+            instruction = instructions.deserialize(_canonical_predicate_doc(row))
+        except (
+            WritePlanningError
+        ) as exc:  # pragma: no cover - schema validation owns malformed writes
+            raise EngineError(f"{case.path.name}: {exc}") from exc
+        if not isinstance(
+            instruction, PredicateWrite
+        ):  # pragma: no cover - target implies predicate
+            raise EngineError(f"{case.path.name}: rejected predicate write decoded as keyed")
+        decoded = _decoded_predicate_write(instruction, meta, model)
+        try:
+            instructions.validate_instruction(decoded, model)
+            target = case_entity(model, meta.entity(decoded.target.entity))
+            reject_readless_document_many(target, decoded)
+        except WriteRejectedError as exc:
+            return exc.rule
+        raise EngineError(  # pragma: no cover - rejected cases must classify
+            f"{case.path.name}: the model-aware validator accepted a predicate write the "
+            "case expects rejected pre-SQL"
+        )
     target = case_entity(model, meta.entity(_rejected_target(meta)))
     try:
         validate_write(target, decode_write_row(target, row, model), model)

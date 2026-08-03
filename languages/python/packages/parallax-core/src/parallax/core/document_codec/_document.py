@@ -10,7 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from parallax.core.base import NeutralType
+from parallax.core.base import NeutralType, detach_json_container
 from parallax.core.document_codec._leaf import (
     LeafEncodingError,
     decode_leaf,
@@ -34,6 +34,7 @@ from parallax.core.metamodel import Multiplicity
 __all__ = [
     "DocumentPatch",
     "SetLeaf",
+    "SetMany",
     "SetOccurrence",
     "apply_patches",
     "comparison_text",
@@ -41,6 +42,7 @@ __all__ = [
     "encode_candidate",
     "encode_document",
     "encode_many",
+    "reduce_declared_members",
 ]
 
 
@@ -62,21 +64,29 @@ class SetLeaf:
 
 @dataclass(frozen=True, slots=True)
 class SetOccurrence:
-    """Replace the subtree at ``path`` in place.
+    """Patch the named declared members of a ``one`` occurrence at ``path``.
 
-    ``document`` is that occurrence's own document — an :func:`encode_document` object
-    for a ``ONE``, an :func:`encode_many` array for a ``MANY`` — or ``None``, and it is
-    the same value a subtree-replacing ``UPDATE`` binds. Every key outside the subtree
-    survives; unknown keys **inside** the replaced subtree do not.
+    ``document`` is that occurrence's authored document or ``None``. Named members are
+    applied recursively; omitted declared members and undeclared keys survive. ``None``
+    stores JSON null for the occurrence as a whole.
     """
 
     path: tuple[str, ...]
     document: object
 
 
-type DocumentPatch = SetLeaf | SetOccurrence
+@dataclass(frozen=True, slots=True)
+class SetMany:
+    """Replace a ``many`` occurrence's complete ordered array at ``path``."""
+
+    path: tuple[str, ...]
+    document: object
+
+
+type DocumentPatch = SetLeaf | SetOccurrence | SetMany
 """The closed patch algebra, and the pairing is exclusive both ways: a whole
-occurrence is replaced through :class:`SetOccurrence` and never through
+    ``one`` occurrence is patched through :class:`SetOccurrence`, a ``many`` is
+    replaced through :class:`SetMany`, and neither is written through
 :class:`SetLeaf`, and a leaf is written through :class:`SetLeaf` and never through
 :class:`SetOccurrence`. Either mismatch is refused rather than applied, because
 applying one produces a document whose own shape would read it back as invalid
@@ -101,7 +111,7 @@ def encode_document(shape: DocumentShape, values: Mapping[str, Presence]) -> dic
         presence = values.get(member.name, MISSING)
         if isinstance(member, Occurrence) and member.multiplicity is Multiplicity.MANY:
             document[member.name] = (
-                _detached(presence.value) if isinstance(presence, Present) else []
+                detach_json_container(presence.value) if isinstance(presence, Present) else []
             )
             continue
         if isinstance(presence, Missing):
@@ -112,7 +122,7 @@ def encode_document(shape: DocumentShape, values: Mapping[str, Presence]) -> dic
         document[member.name] = (
             encode_leaf(member.type, presence.value)
             if isinstance(member, Leaf)
-            else _detached(presence.value)
+            else detach_json_container(presence.value)
         )
     return document
 
@@ -164,7 +174,7 @@ def decode_path(shape: DocumentShape, document: object, path: Sequence[str]) -> 
             raise _invalid(
                 path, f"holds {raw!r}, which is not the array a `many` occurrence stores"
             )
-        return Present(_detached(cast("list[object]", raw)))
+        return Present(detach_json_container(cast("list[object]", raw)))
     if isinstance(raw, Missing):
         if holder is not None and not member.nullable:
             raise _invalid(path, "is required and its key is absent")
@@ -178,7 +188,7 @@ def decode_path(shape: DocumentShape, document: object, path: Sequence[str]) -> 
             raise _invalid(
                 path, f"holds {raw!r}, which is not the object a `one` occurrence stores"
             )
-        return Present(_detached(cast("dict[str, object]", raw)))
+        return Present(detach_json_container(cast("dict[str, object]", raw)))
     try:
         return Present(decode_leaf(member.type, raw))
     except LeafEncodingError as exc:
@@ -242,30 +252,6 @@ def _holder(
         current = cast("dict[str, object]", held)
         scope = occurrence.shape
     return current
-
-
-def _detached(document: object) -> object:
-    """A copy of ``document`` in this module's own container kinds.
-
-    Every operation here returns a document a caller may keep while the one it was
-    built from stays reachable elsewhere — a row's stored subtree, a retained raw
-    predecessor, an occurrence document a caller still holds — so a JSON object or
-    array crossing this interface is copied rather than aliased. Scalars are immutable
-    and are returned as they are.
-
-    This is also the boundary that normalizes container KIND. A caller may hold a
-    document in whatever mapping or sequence its own retention uses — a read-only
-    view over state it must not let a later reader mutate is the ordinary case — and
-    what this module builds and walks is a JSON object and a JSON array, so the copy
-    is one of those whatever it was given.
-    """
-    if isinstance(document, Mapping):
-        return {
-            key: _detached(value) for key, value in cast("Mapping[str, object]", document).items()
-        }
-    if isinstance(document, (list, tuple)):
-        return [_detached(item) for item in cast("Sequence[object]", document)]
-    return document
 
 
 def comparison_text(neutral_type: NeutralType, value: object) -> str:
@@ -335,10 +321,9 @@ def apply_patches(
     Every key a patch is not told to change survives, unknown keys included. That is
     the whole point of patching rather than re-encoding: an application that rebuilt a
     document from the members it knows would silently drop the rest. A
-    :class:`SetOccurrence` replaces its subtree whole, so unknown keys **inside** it do
-    not survive — the one case where patching loses data a newer writer stored, and
-    deliberate, because an author who assigns a whole occurrence has stated what that
-    occurrence now is.
+    :class:`SetOccurrence` recursively patches the declared members its document names,
+    while a :class:`SetMany` replaces its ordered array whole because its elements have
+    no identity by which stored and assigned elements could be matched.
 
     ``shape`` is what makes a :class:`SetLeaf`'s ``NeutralValue`` spellable here rather
     than by its caller; it also refuses a path the model does not declare, so a patch
@@ -356,7 +341,7 @@ def apply_patches(
     """
     if not patches:
         raise ValueError("a patch sequence is nonempty")
-    current = _detached(document)
+    current = detach_json_container(document)
     for patch in patches:
         current = _apply(shape, current, patch)
     return current
@@ -372,10 +357,30 @@ def _apply(shape: DocumentShape, document: object, patch: DocumentPatch) -> obje
         target[name] = replacement
         target = replacement
     name = patch.path[-1]
-    if isinstance(patch, SetOccurrence):
+    if isinstance(patch, SetMany):
+        if not isinstance(member, Occurrence) or member.multiplicity is not Multiplicity.MANY:
+            raise ValueError(f"{'.'.join(patch.path)!r} does not name a `many` occurrence")
+        target[name] = detach_json_container(patch.document)
+    elif isinstance(patch, SetOccurrence):
         if not isinstance(member, Occurrence):
             raise ValueError(f"{'.'.join(patch.path)!r} names a leaf; use SetLeaf")
-        target[name] = _detached(patch.document)
+        if member.multiplicity is Multiplicity.MANY:
+            raise ValueError(f"{'.'.join(patch.path)!r} names a `many`; use SetMany")
+        if patch.document is None:
+            target[name] = None
+        else:
+            authored = cast("Mapping[str, object]", patch.document)
+            nested = tuple(_occurrence_patches(member.shape, authored))
+            current = target.get(name)
+            target[name] = (
+                apply_patches(member.shape, current, nested)
+                if nested
+                else detach_json_container(
+                    cast("Mapping[str, object]", current)
+                    if isinstance(current, Mapping)
+                    else cast("Mapping[str, object]", {})
+                )
+            )
     elif isinstance(patch.value, Missing):
         target.pop(name, None)
     elif isinstance(patch.value, ExplicitNull):
@@ -385,3 +390,67 @@ def _apply(shape: DocumentShape, document: object, patch: DocumentPatch) -> obje
     else:
         raise ValueError(f"{'.'.join(patch.path)!r} names an occurrence; use SetOccurrence")
     return root
+
+
+def _occurrence_patches(
+    shape: DocumentShape, document: Mapping[str, object]
+) -> Sequence[DocumentPatch]:
+    patches: list[DocumentPatch] = []
+    for member in shape.members:
+        if member.name not in document:
+            continue
+        value = document[member.name]
+        path = (member.name,)
+        if isinstance(member, Leaf):
+            patches.append(
+                SetLeaf(path, NULL if value is None else Present(decode_leaf(member.type, value)))
+            )
+        elif member.multiplicity is Multiplicity.MANY:
+            patches.append(SetMany(path, detach_json_container(value)))
+        else:
+            patches.append(SetOccurrence(path, detach_json_container(value)))
+    return patches
+
+
+def reduce_declared_members(
+    shape: DocumentShape, document: object, *, named_by: object | None = None
+) -> object:
+    """Reduce stored content to one codec-owned view of the shape's declared members.
+
+    A ``one`` is reduced recursively, a ``many`` element-wise in stored order, and
+    absent or JSON-null members reduce to ``None``. Undeclared keys never contribute.
+    """
+    if not isinstance(document, Mapping):
+        return None
+    source = cast("Mapping[str, object]", document)
+    names = cast("Mapping[str, object]", named_by) if isinstance(named_by, Mapping) else None
+    reduced: dict[str, object] = {}
+    for member in shape.members:
+        if names is not None and member.name not in names:
+            continue
+        raw = source.get(member.name)
+        if isinstance(member, Leaf):
+            if raw is None:
+                reduced[member.name] = None
+            else:
+                try:
+                    reduced[member.name] = decode_leaf(member.type, raw)
+                except LeafEncodingError as exc:
+                    raise LeafEncodingError(f"{member.name}: {exc}") from exc
+        elif member.multiplicity is Multiplicity.MANY:
+            values = cast("Sequence[object]", raw) if isinstance(raw, list) else ()
+            try:
+                reduced[member.name] = [
+                    reduce_declared_members(member.shape, value) for value in values
+                ]
+            except LeafEncodingError as exc:
+                raise LeafEncodingError(f"{member.name}.{exc}") from exc
+        else:
+            nested_names = None if names is None else names.get(member.name)
+            try:
+                reduced[member.name] = reduce_declared_members(
+                    member.shape, raw, named_by=nested_names
+                )
+            except LeafEncodingError as exc:
+                raise LeafEncodingError(f"{member.name}.{exc}") from exc
+    return reduced

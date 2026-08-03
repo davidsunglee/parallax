@@ -1,0 +1,55 @@
+# A materializing predicate update assigns a document-resident `one` occurrence whose
+# declared-member reduction already equals the stored subtree, while that subtree also
+# carries a key no member declares. The assignment collapses as a no-op: no UPDATE and
+# no version advance. This distinguishes declared-member comparison from raw-subtree
+# equality without weakening whole-array replacement for a `many` occurrence.
+model: models/document-layout.yaml
+tags: [m-opt-lock, m-storage-layout, m-document-codec, m-unit-work, materialize, predicate-write, no-op, json, document-layout, scenario, slice-snapshot-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "out-of-band undeclared occurrence state precedes materializing no-op comparison"
+given:
+  apply:
+    - sql: update ledger set payload = '{"balance":"40.00","details":{"code":"settled","future":"keep"}}' where id = 200
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - targetEntity: Ledger
+      find:
+        eq: { attr: Ledger.id, value: 200 }
+      roundTrips: 1
+      note: the resolving read retains the raw subtree and materializes its declared members
+      statements:
+        - sql:
+            postgres: select t0.id, t0.version, t0.payload from ledger t0 where t0.id = ?
+            mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id = ?
+          binds: [200]
+      expectRows:
+        - { id: 200, version: 1, label: null, balance: 40.00, details: { code: settled } }
+    - write:
+        mutation: update
+        target:
+          entity: Ledger
+          predicate:
+            eq: { attr: Ledger.id, value: 200 }
+        assignments:
+          - { attr: Ledger.details, value: { code: settled } }
+      roundTrips: 0
+      note: equality over declared members eliminates the write despite the stored future key
+    - targetEntity: Ledger
+      find:
+        eq: { attr: Ledger.id, value: 200 }
+      roundTrips: 1
+      note: the row remains version 1 and the declared occurrence still reads identically
+      statements:
+        - sql:
+            postgres: select t0.id, t0.version, t0.payload from ledger t0 where t0.id = ?
+            mariadb: select t0.id, t0.version, t0.payload from ledger t0 where t0.id = ?
+          binds: [200]
+      expectRows:
+        - { id: 200, version: 1, label: null, balance: 40.00, details: { code: settled } }
+then:
+  roundTrips: 2

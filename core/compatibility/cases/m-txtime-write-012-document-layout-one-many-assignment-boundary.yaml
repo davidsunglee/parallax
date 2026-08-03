@@ -1,20 +1,9 @@
-# An assigned Value Object occurrence REPLACES its subtree, so a key no model member
-# declares survives outside it and does not survive inside it (m-storage-layout
-# "Assignment paths and mutation composition order"; m-document-codec
-# "SetOccurrence"), on Postgres AND MariaDB.
-#
-# The asymmetry is deliberate rather than a limitation, and this is its witness. The
-# seed is the SAME shape m-txtime-write-011 uses — `charterCode` at the top level and
-# `sealNumber` inside `manifest`, neither declared by any member — and the only
-# difference is what the write assigns. Here the write assigns `manifest` a different
-# value, which states what that occurrence NOW IS, so its whole subtree is replaced
-# and `sealNumber` goes with it. `charterCode` is outside the replaced subtree and
-# rides forward untouched.
-#
-# `then.tableState` carries both halves at once: an implementation that replaced the
-# whole Structured Column would lose `charterCode` too, and one that merged the
-# assigned occurrence into the stored subtree would keep `sealNumber` — a key the
-# author has just said the occurrence does not have.
+# One temporal observation-bearing assignment applies the two occurrence rules at
+# once on PostgreSQL and MariaDB: a `one` recursively patches its named declared
+# member and preserves the stored undeclared `sealNumber`, while a `many` replaces
+# its ordered array whole and therefore drops the stored element's undeclared
+# `berth`. The root-level undeclared `charterCode` survives both, distinguishing
+# declared-member patching from whole-document replacement and positional array merge.
 model: models/document-layout.yaml
 tags: [m-txtime-write, m-storage-layout, m-document-codec, m-value-object, m-sql, write-sequence, update, audit-only, temporal, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
@@ -35,18 +24,23 @@ given:
           manifest:
             cargo: ore
             sealNumber: S-9930
+          legs:
+            - port: Oslo
+              berth: B7
 when:
   writeSequence:
     - mutation: update
       entity: Voyage
       statements: 2
-      note: assign the whole occurrence — its subtree is replaced, and the key outside it is not
+      note: assign one and many occurrences in the same observed successor
       rows:
         - id: 8
           title: Island Run
           crew: 3
           manifest:
             cargo: salt
+          legs:
+            - port: Bergen
       at: "2026-06-01T00:00:00+00:00"
 then:
   statements:
@@ -66,6 +60,9 @@ then:
           charterCode: NB-204
           manifest:
             cargo: salt
+            sealNumber: S-9930
+          legs:
+            - port: Bergen
   tableState:
     voyage:
       - id: 8
@@ -78,6 +75,9 @@ then:
           manifest:
             cargo: ore
             sealNumber: S-9930
+          legs:
+            - port: Oslo
+              berth: B7
       - id: 8
         in_z: "2026-06-01T00:00:00+00:00"
         out_z: infinity
@@ -87,4 +87,7 @@ then:
           charterCode: NB-204
           manifest:
             cargo: salt
+            sealNumber: S-9930
+          legs:
+            - port: Bergen
   roundTrips: 2

@@ -163,6 +163,13 @@ entities:
       - name: balance
         type: decimal(18,2)
         nullable: true
+    valueObjects:
+      - name: details
+        nullable: true
+        attributes:
+          - name: code
+            type: string
+            nullable: true
     indices:
       - name: ledger_pk
         attributes: [id]
@@ -202,6 +209,12 @@ entities:
         nullable: true
         attributes:
           - name: cargo
+            type: string
+            nullable: true
+      - name: legs
+        multiplicity: many
+        attributes:
+          - name: port
             type: string
             nullable: true
     asOfAxes:

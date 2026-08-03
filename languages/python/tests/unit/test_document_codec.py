@@ -43,6 +43,7 @@ from parallax.core.document_codec import (
     Occurrence,
     Present,
     SetLeaf,
+    SetMany,
     SetOccurrence,
     apply_patches,
     comparison_text,
@@ -54,6 +55,7 @@ from parallax.core.document_codec import (
     entity_shape,
     is_text_compared,
     occurrence_shape,
+    reduce_declared_members,
     shape_of_declaration,
 )
 from parallax.core.entity import Attr, DomainModel, Entity, ValueObject, attr
@@ -450,14 +452,97 @@ def test_a_leaf_patch_spells_its_value_through_the_encoding_table() -> None:
     assert apply_patches(_SHAPE, {"flag": True}, [SetLeaf(("flag",), MISSING)]) == {}
 
 
-def test_a_subtree_replacement_drops_unknown_keys_inside_it_and_nowhere_else() -> None:
+def test_an_occurrence_patch_preserves_omitted_and_undeclared_members() -> None:
     stored = {"unknown": 1, "origin": {"city": "Oslo", "unknown": 2}}
     replaced = apply_patches(
         _SHAPE,
         stored,
         [SetOccurrence(("origin",), encode_document(shape_of_declaration(_ORIGIN), {}))],
     )
-    assert replaced == {"unknown": 1, "origin": {}}
+    assert replaced == {"unknown": 1, "origin": {"city": "Oslo", "unknown": 2}}
+
+
+def test_occurrence_patch_arms_keep_one_and_many_semantics_distinct() -> None:
+    stored = {
+        "origin": {"city": "Oslo", "unknown": 2},
+        "entries": [{"kind": "old", "unknown": 3}],
+    }
+    patched = apply_patches(
+        _SHAPE,
+        stored,
+        [
+            SetOccurrence(("origin",), {"city": "Bergen"}),
+            SetMany(("entries",), [{"kind": "new"}]),
+        ],
+    )
+    assert patched == {
+        "origin": {"city": "Bergen", "unknown": 2},
+        "entries": [{"kind": "new"}],
+    }
+    assert apply_patches(_SHAPE, stored, [SetOccurrence(("origin",), None)]) == {
+        "origin": None,
+        "entries": [{"kind": "old", "unknown": 3}],
+    }
+
+
+def test_an_occurrence_document_recursively_selects_one_and_many_patch_arms() -> None:
+    wrapper = DocumentShape(
+        (
+            Occurrence(
+                name="profile",
+                shape=_SHAPE,
+                multiplicity=Multiplicity.ONE,
+                nullable=False,
+            ),
+        )
+    )
+    patched = apply_patches(
+        wrapper,
+        {
+            "profile": {
+                "origin": {"city": "Oslo", "unknown": 1},
+                "entries": [{"kind": "old", "unknown": 2}],
+            }
+        },
+        [
+            SetOccurrence(
+                ("profile",),
+                {"origin": {"city": "Bergen"}, "entries": [{"kind": "new"}]},
+            )
+        ],
+    )
+    assert patched == {
+        "profile": {
+            "origin": {"city": "Bergen", "unknown": 1},
+            "entries": [{"kind": "new"}],
+        }
+    }
+
+
+def test_occurrence_patch_kind_mismatches_are_refused() -> None:
+    with pytest.raises(ValueError, match="many"):
+        apply_patches(_SHAPE, {}, [SetMany(("day",), [])])
+    with pytest.raises(ValueError, match="SetMany"):
+        apply_patches(_SHAPE, {}, [SetOccurrence(("entries",), [])])
+
+
+def test_declared_member_reduction_is_recursive_and_assignment_scoped() -> None:
+    stored = {
+        "flag": True,
+        "day": "2026-01-15",
+        "origin": {"city": "Oslo", "unknown": 1},
+        "entries": [{"kind": "home", "unknown": 2}],
+        "unknown": 3,
+    }
+    assert reduce_declared_members(_SHAPE, stored, named_by={"origin": {"city": "Bergen"}}) == {
+        "origin": {"city": "Oslo"}
+    }
+    reduced = cast("dict[str, object]", reduce_declared_members(_SHAPE, stored))
+    assert reduced["entries"] == [{"kind": "home", "price": None}]
+    with pytest.raises(LeafEncodingError, match=r"origin\.city"):
+        reduce_declared_members(_SHAPE, {"origin": {"city": 7}})
+    with pytest.raises(LeafEncodingError, match=r"entries\.kind"):
+        reduce_declared_members(_SHAPE, {"entries": [{"kind": 7}]})
 
 
 def test_patches_apply_left_to_right_each_over_the_result_of_the_last() -> None:

@@ -54,8 +54,10 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     EntityMetadata,
     Metamodel,
+    Multiplicity,
     PrimaryKey,
     TemporalDimension,
+    ValueObjectMetadata,
 )
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import LATEST, Latest, Pin
@@ -453,7 +455,10 @@ def validate_until(
 
 
 def is_no_op_assignment(
-    member_columns: Mapping[str, tuple[str, bool]], assignments: Mapping[str, object], row: Row
+    member_columns: Mapping[str, tuple[str, bool]],
+    assignments: Mapping[str, object],
+    row: Row,
+    occurrences: Mapping[str, ValueObjectMetadata] | None = None,
 ) -> bool:
     """Whether EVERY assigned member's new value already equals ``row``'s own
     (`m-opt-lock` per-row no-op elimination — structural equality, the SAME
@@ -473,7 +478,35 @@ def is_no_op_assignment(
     ``delete`` / ``terminate`` / ``terminateUntil`` have no assignments to
     compare and therefore never call this — every resolved row is retained.
     """
-    return all(value == row.get(member_columns[member][0]) for member, value in assignments.items())
+    from parallax.core.document_codec import occurrence_shape, reduce_declared_members
+
+    occurrence_index: Mapping[str, ValueObjectMetadata] = (
+        cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
+    )
+    for member, value in assignments.items():
+        stored = row.get(member_columns[member][0])
+        occurrence = occurrence_index.get(member)
+        if occurrence is None:
+            if value != stored:
+                return False
+            continue
+        shape = occurrence_shape(occurrence)
+        if occurrence.multiplicity is Multiplicity.MANY:
+            stored_items: Sequence[object] = (
+                cast("Sequence[object]", stored) if isinstance(stored, list) else ()
+            )
+            assigned_items: Sequence[object] = (
+                cast("Sequence[object]", value) if isinstance(value, (list, tuple)) else ()
+            )
+            if [reduce_declared_members(shape, item) for item in stored_items] != [
+                reduce_declared_members(shape, item) for item in assigned_items
+            ]:
+                return False
+        elif reduce_declared_members(shape, stored, named_by=value) != reduce_declared_members(
+            shape, value, named_by=value
+        ):
+            return False
+    return True
 
 
 def key_column_values(

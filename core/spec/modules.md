@@ -206,6 +206,7 @@ m-deep-fetch --> m-navigate
 m-deep-fetch --> m-relationship
 m-op-list --> m-deep-fetch
 m-snapshot-read --> m-deep-fetch
+m-snapshot-read --> m-document-codec
 m-temporal-read --> m-op-algebra
 m-temporal-read --> m-metamodel
 m-temporal-read --> m-model-formation
@@ -328,6 +329,10 @@ construction it may reference any behavioral module it harnesses.
   deep fetch; navigation, as-of propagation, and lists are reached transitively.
   Snapshot reads and managed reads (`m-identity-map`) are alternative
   materializations over the same query stack — neither depends on the other.
+- **`m-snapshot-read --> m-document-codec`.** Snapshot materialization decodes
+  document leaves and reduces occurrences to their declared members through the
+  codec's single shape-aware operation. The codec remains independent of lifecycle
+  and graph construction.
 - **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
   optimistic-lock version analogue is derived from `tx_start` / physical `in_z`, so
   an optimistic close references the milestoning read model.

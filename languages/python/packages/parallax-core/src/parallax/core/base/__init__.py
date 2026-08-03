@@ -15,7 +15,8 @@ from __future__ import annotations
 import datetime as dt
 import enum
 import re
-from typing import Final
+from collections.abc import Mapping, Sequence
+from typing import Final, cast
 
 from parallax.core.base._inference import NEUTRAL_FROM_PYTHON, infer_neutral_type
 from parallax.core.base._neutral import (
@@ -86,11 +87,30 @@ __all__ = [
     "Uuid",
     "coerce_neutral_input",
     "decode_neutral_literal",
+    "detach_json_container",
     "infer_neutral_type",
     "is_neutral_type",
     "matches_neutral_type",
     "normalize_instant",
 ]
+
+
+def detach_json_container(value: object) -> object:
+    """Recursively copy JSON-shaped containers into plain ``dict`` and ``list`` values.
+
+    Mapping and sequence implementations may be immutable views owned by another
+    boundary. The returned tree shares no container with ``value``; scalar values
+    pass through unchanged. Strings and bytes are scalars, not JSON arrays.
+    """
+    if isinstance(value, Mapping):
+        return {
+            key: detach_json_container(item)
+            for key, item in cast("Mapping[str, object]", value).items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [detach_json_container(item) for item in cast("Sequence[object]", value)]
+    return value
+
 
 # The closed base neutral-type vocabulary (m-core). ``decimal`` is parametric —
 # a descriptor spells it ``decimal(p,s)`` — and ``is_neutral_type`` accepts that

@@ -25,7 +25,7 @@ value.
 
 A `Dialect` is the abstract authority for every dialect-specific decision. With
 the second concrete dialect (**MariaDB**) added behind the seam, the full
-decision-point catalog is now fixed. Two dialects legitimately make *different*
+decision-point catalog covers every construct currently emitted. Two dialects legitimately make *different*
 choices at each point; both are normative for their dialect (`m-sql`). The catalog
 (derived from the research matrix, research §11):
 
@@ -37,6 +37,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | **typed cast form** (`m-value-object` / `m-sql`) | `cast(<extraction> as double precision)` / `… as bigint` (the `<extraction>::type` surface normalizes to the same) | `cast(<extraction> as double)` / `… as signed` (see below) — the numeric family and `boolean`; the six text-compared types compare as the canonical document text on both dialects |
 | **array traversal form** (`m-value-object` / `m-sql`) | correlated `exists (select 1 from jsonb_array_elements(<array-guard>) t1 …)` — a set-returning unnest, the array reached through a `case`/`jsonb_typeof` guard so a non-array yields zero elements | the JSON **containment family** — `json_contains(col, ?, ?)` / `json_length(col, ?)` under a `json_type(json_extract(col, ?)) = 'ARRAY'` guard (see below) |
 | **document mutation-expression form** (`m-storage-layout` / `m-sql`) | **nested** `jsonb_set(<inner>, ?, cast(? as jsonb))` — one call per assigned path, innermost first | **native N-pair** `json_set(col, ?, json_extract(?, '$'), …)` — one call, one pair per assigned path (see below) |
+| **occurrence-scoped mutation form** (`m-storage-layout` / `m-document-codec`) | nested `jsonb_set` over a `jsonb_typeof` object guard at every occurrence level | nested `json_set` over a `json_type` object guard at every occurrence level |
 | **structural document equality** (`m-document-codec` / `m-case-format`) | `=` on `jsonb` — the type normalizes on storage, so `=` is already structural | `json_equals(a, b)` — `json` is a `longtext` alias, so `=` is textual and key-order sensitive (see below) |
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
@@ -383,12 +384,14 @@ MariaDB pair are the first assignment. The dialect does not choose that order:
 it renders the sequence `m-sql` hands it, which is canonical logical placement
 order. A dialect MUST NOT reorder, deduplicate, or merge assignments.
 
-Both engines also create only the **final** path segment: an assignment whose
-parent path is absent silently leaves the document unchanged rather than
-creating the parent or failing. Parallax never reaches that case, because every
-assignment path has exactly one segment and the document root always exists
-(`m-storage-layout`). A future contract admitting a deeper assignment path would
-have to revisit this decision point, not merely its spelling.
+Both engines create only the **final** path segment: a flat assignment whose
+parent is absent, JSON null, or a non-object silently leaves the document
+unchanged. An occurrence-scoped mutation therefore MUST type-test the stored
+subtree at every occurrence level, retain it only when it is an object, otherwise
+substitute an empty object, apply the inner mutation, and write the result back at
+that level. PostgreSQL uses `jsonb_typeof` and nested `jsonb_set`; MariaDB uses
+`json_type` and nested `json_set`. A dialect MUST NOT emit a standalone flat deep
+path for an occurrence assignment, even when fixtures happen to store its parent.
 
 Because the bind-hole structure diverges — the same two assignments are four
 holes inside two nested Postgres calls and four holes inside one MariaDB call,

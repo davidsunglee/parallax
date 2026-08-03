@@ -268,6 +268,11 @@ mutations, exceptions, or exports.
   an assignment-bearing mutation checks nonemptiness, duplicates, and exact
   target compatibility when combining already-valid Assignments with its
   Find Query.
+  Under Relational Document Layout, assigning a `one` recursively patches only
+  the declared members that rendered document names; omitted nullable members
+  remain stored and explicit `None` stores JSON null. Assigning a `many` replaces
+  its ordered array whole. This changes physical mutation granularity without
+  making a nested member independently assignable.
 - **Opaque immutable Find Query.** `FindQuery[E, S]` — the Entity QUERIED and
   the Entity the result RETURNS, which `narrow` and only `narrow` moves — is
   exported for annotations
@@ -2432,7 +2437,12 @@ or descriptor authoring form and performs no audit stamping.
   — plain SQL set semantics, so already-equal rows are matched and affected
   like any SQL `UPDATE` — because the readless path observes nothing to
   compare against, and inventing a null-safe difference filter would add SQL
-  shape no golden pins. That readless lowering is itself pinned so nothing is
+  shape no golden pins. Assigning a document-resident `many` on this route raises
+  `WriteRejectedError` with rule
+  `predicate-write-readless-document-many-unsupported` before buffering or I/O.
+  Scalar and `one` assignments remain one-statement readless writes; the intended
+  later widening is to materialize only the refused shape. The remaining readless
+  lowering is pinned so nothing is
   left to invent: `update_where` emits exactly one
   `update <table> set <col> = ?, … where <predicate>` whose `set` columns
   filter the target's Entity Layout slots in table order — the same
@@ -2687,7 +2697,7 @@ legalizes a forbidden edge.
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship` | generated forbidden contracts |
-| `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch` | generated forbidden contracts + cross-package contract |
+| `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch`, `m-document-codec` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity._query`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts |

@@ -5,6 +5,14 @@ algebra, the `NeutralValue` value spaces, the timezone/UTC rules, and the
 temporal-infinity representation. `m-core` depends on nothing; every other
 module depends on it, directly or transitively.
 
+## JSON container detachment
+
+`detachJsonContainer(value)` recursively copies JSON-shaped mappings and
+sequences into plain object and array container kinds. It retains scalar values,
+normalizes no leaf spelling, consults no model shape or path, and shares no
+container with its input. Modules use it when an immutable observation or pure
+document operation must break aliases without acquiring document-codec semantics.
+
 ## The `NeutralType` algebra
 
 `NeutralType` is the closed structured type algebra every typed model fact

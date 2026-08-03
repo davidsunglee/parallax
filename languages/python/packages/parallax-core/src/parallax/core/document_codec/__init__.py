@@ -22,6 +22,7 @@ from __future__ import annotations
 from parallax.core.document_codec._document import (
     DocumentPatch,
     SetLeaf,
+    SetMany,
     SetOccurrence,
     apply_patches,
     comparison_text,
@@ -29,6 +30,7 @@ from parallax.core.document_codec._document import (
     encode_candidate,
     encode_document,
     encode_many,
+    reduce_declared_members,
 )
 from parallax.core.document_codec._leaf import LeafEncodingError, encode_leaf, is_text_compared
 from parallax.core.document_codec._shape import (
@@ -61,6 +63,7 @@ __all__ = [
     "Presence",
     "Present",
     "SetLeaf",
+    "SetMany",
     "SetOccurrence",
     "apply_patches",
     "comparison_text",
@@ -72,5 +75,6 @@ __all__ = [
     "entity_shape",
     "is_text_compared",
     "occurrence_shape",
+    "reduce_declared_members",
     "shape_of_declaration",
 ]

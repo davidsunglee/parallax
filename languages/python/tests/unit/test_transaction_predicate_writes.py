@@ -60,6 +60,7 @@ from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
     PredicateWrite,
+    WriteRejectedError,
     instructions,
 )
 from parallax.snapshot import QueryTargetError
@@ -184,6 +185,21 @@ def test_readless_update_where_buffers_one_statement_no_read() -> None:
         ("write", POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Ada", 1)),
         ("commit",),
     ]
+
+
+def test_readless_document_many_assignment_is_refused_before_write_sql() -> None:
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            mm.Traveler.where(mm.Traveler.id == 1),
+            mm.Traveler.tags.set((mm.TravelerTag(label="founder"),)),
+        )
+
+    with pytest.raises(WriteRejectedError) as raised:
+        Database.connect(port, mm.DOCUMENT_LAYOUT_MODEL, clock=FixedClock(FIXED)).transact(fn)
+    assert raised.value.rule == "predicate-write-readless-document-many-unsupported"
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
 
 
 def test_readless_delete_where_buffers_one_statement_no_read() -> None:

@@ -212,7 +212,7 @@ best and get the same verdict on both dialects.
 **A document-valued bind is authored as the document, never as its rendered text.**
 Wherever a `?` carries a **composite** structured document — an object or an array:
 the atomic value-object write bind, a Relational Document Layout `INSERT`'s complete
-document, a whole-occurrence subtree replacement, and the MariaDB `json_contains`
+document, a complete `many`-occurrence array replacement, and the MariaDB `json_contains`
 candidate an element predicate binds (`m-sql`) — the `binds` entry is the document
 itself, in the same style as a document cell, and the provider adapts it at bind time
 (Postgres wraps it as `jsonb`, MariaDB serializes it to `json` text). A text spelling
@@ -1159,6 +1159,10 @@ atomically as one whole document):
   (`m-value-object`, `m-document-codec`).
 - `write-value-type-mismatch` — a document field value's type differs from the
   attribute's declared neutral type.
+- `predicate-write-readless-document-many-unsupported` — an unversioned,
+  non-temporal predicate-selected update assigns a document-resident `many`.
+  The predicate, target, and assignment are individually valid; their readless
+  combination is refused before buffering or SQL (`m-batch-write`).
 
 **Subtype-write** rules (`m-inheritance` concrete-subtype write protocol — a
 schema-valid neutral write input a model-aware validator MUST refuse pre-SQL,

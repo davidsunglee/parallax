@@ -53,8 +53,10 @@ then:
         payload:
           label: closing
           balance: '250.00'
+          details: { code: opening }
       - id: 200
         version: 1
         payload:
           balance: '40.00'
+          details: { code: settled }
   roundTrips: 1
