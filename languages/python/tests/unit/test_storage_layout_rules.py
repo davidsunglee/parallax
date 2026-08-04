@@ -868,7 +868,7 @@ def test_one_ancestors_override_is_one_defect_however_many_branches_reach_it() -
     ]
 
 
-def test_a_layout_owner_with_an_override_defect_reports_it_instead_of_the_gate() -> None:
+def test_a_layout_owner_with_an_override_defect_reports_the_permanent_diagnostic() -> None:
     owner = _standalone_document(
         attributes=(key(_SIBLING), attribute(_SIBLING, "displayName", type=STRING, column="dn"))
     )

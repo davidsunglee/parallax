@@ -31,8 +31,10 @@ For Relational Document Layout, complete predecessor state additionally retains
 the raw Structured Column document alongside its decoded known members. A
 temporal successor starts from that raw document and applies its declared path
 assignments before binding the complete successor value, preserving unknown
-keys written by a newer model version without another database read. A `one`
-Value Object assignment recursively patches only the declared members it names,
-while a `many` assignment replaces its array whole. Retaining only decoded
-members would satisfy the current model's shape while silently destroying
-forward-version state during temporal chaining.
+keys written by a newer model version without another database read except
+where the authored assignment replaces their containing structure. A `one`
+Value Object assignment with an authored document recursively patches only the
+declared members it names; assigning null replaces the occurrence with JSON null
+and discards its descendants. A `many` assignment replaces its array whole.
+Retaining only decoded members would satisfy the current model's shape while
+silently destroying forward-version state during temporal chaining.

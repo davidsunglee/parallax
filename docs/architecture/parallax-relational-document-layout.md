@@ -388,8 +388,9 @@ count.
 A `one` Value Object assignment compares the declared-member reduction of its
 authored and stored occurrences for observed no-op detection. Omitted nullable
 members are not assignments and unknown members do not participate; explicit
-null remains distinct from omission. A `many` assignment compares and replaces
-its encoded array whole.
+null remains distinct from omission. A `many` assignment compares its elements
+in stored order through the codec's declared-member reduction, then replaces its
+encoded array whole when they differ.
 
 ### Temporal successors and unknown keys
 
@@ -449,9 +450,11 @@ Predecessor Row view therefore exposes the raw document without allocating
 another per-row carrier.
 
 Ordinary path updates preserve unknown keys in place. Fresh inserts have no
-predecessor to preserve. A `one` Value Object assignment also preserves unknown
-and omitted descendant keys; only a `many` assignment replaces its array and
-therefore its elements whole.
+predecessor to preserve. A `one` Value Object assignment with an authored
+document preserves unknown and omitted descendant keys while recursively
+patching its named members. Assigning null replaces the occurrence with JSON
+null and therefore discards its descendants. A `many` assignment replaces its
+array and therefore its elements whole.
 
 ## Missing, null, and invalid stored data
 
@@ -464,7 +467,8 @@ Presence has these canonical meanings:
 - empty Many Value Object: key present with `[]`.
 
 Unknown keys are valid forward-version data. Reads ignore them and mutations
-preserve them, except inside an array replaced by a `many` assignment.
+preserve them, except below a `one` occurrence replaced with JSON null or inside
+an array replaced by a `many` assignment.
 
 Missing required paths, malformed nested structures, and values that do not
 decode into their declared Neutral Type are invalid stored data. Relational
