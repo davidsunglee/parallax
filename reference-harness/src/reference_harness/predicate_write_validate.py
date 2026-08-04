@@ -425,7 +425,9 @@ def _assert_value_object_document(ref: str, value_object: dict[str, Any], docume
                 f"declared type {attribute.get('type')!r}"
             )
     for nested in value_object.get("valueObjects", []):
-        if nested["name"] not in document:
+        if nested["name"] not in document and (
+            nested.get("multiplicity", "one") == "many" or nested.get("nullable", False)
+        ):
             continue
         _assert_value_object_assignment(
             f"{ref}.{nested['name']}", nested, document.get(nested["name"])
