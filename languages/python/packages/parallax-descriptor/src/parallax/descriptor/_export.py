@@ -51,7 +51,6 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     default_column_name,
     derive_primary_key_index,
-    derive_temporal_structure,
     temporality_profile,
 )
 from parallax.descriptor._type_spelling import format_type_spelling
@@ -161,21 +160,30 @@ def _temporality(entity: EntityMetadata) -> str | None:
 
 
 def _authored_attributes(entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
-    """The Entity's Attributes minus the endpoints its profile derives.
+    """The Entity's Attributes minus the endpoints its declared axes point at.
 
     Canonical form spells what an author writes. Both endpoints of every axis are
     derived from the profile, so exporting them would put members in the document
-    that re-importing would derive a second time.
+    that re-importing would derive a second time. Endpoints are matched by
+    Identity rather than by canonical name, which is what keeps a profile from
+    ever being exported beside the very Attributes it derives.
+
+    Identity matching removes the extra members, not every difference. The
+    document language denotes an axis only through its profile, so an endpoint
+    bearing a nonconventional name, or a conventional name over a nonconventional
+    Column, re-imports under the canonical name over the framework-fixed Column.
+    Reaching either shape takes a Metamodel built directly against the
+    ``m-metamodel`` seam, which accepts an axis over any distinct pair of local
+    Timestamp Attributes; every Entity a descriptor document produces carries the
+    canonical pair, so export inverts ingestion exactly over that set.
     """
     derived = {
-        endpoint.name
-        for axis in derive_temporal_structure(_temporality(entity))
-        for endpoint in (axis.start, axis.end)
+        endpoint
+        for axis in entity.declared_as_of_axes
+        for endpoint in (axis.start_attribute, axis.end_attribute)
     }
     return tuple(
-        attribute
-        for attribute in entity.declared_attributes
-        if attribute.identity.name not in derived
+        attribute for attribute in entity.declared_attributes if attribute.identity not in derived
     )
 
 

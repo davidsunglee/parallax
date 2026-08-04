@@ -17,9 +17,10 @@ import pytest
 
 from _support import fake_metamodel
 from parallax.conformance import case_format, models
-from parallax.core.base import STRING
+from parallax.core.base import STRING, TIMESTAMP
 from parallax.core.metamodel import (
     AbstractSubtype,
+    AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
     Column,
@@ -30,6 +31,7 @@ from parallax.core.metamodel import (
     Metamodel,
     Multiplicity,
     Table,
+    TemporalDimension,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
 )
@@ -233,6 +235,41 @@ def test_export_spells_read_only_cross_namespace_parent_and_a_many_value_object(
     assert exported["inheritance"] == {"role": "abstract-subtype", "parent": "other.ns.Parent"}
     value_objects = cast("list[dict[str, object]]", exported["valueObjects"])
     assert value_objects[0]["multiplicity"] == "many"
+
+
+def test_export_drops_the_endpoints_the_axes_point_at_not_the_conventional_names() -> None:
+    # The `m-metamodel` seam accepts an As-Of Axis over any distinct pair of local
+    # Timestamp Attributes, so an axis can run over endpoints the convention table
+    # does not name. The Temporality Profile is the axis's whole wire form, so
+    # those endpoints leave the document with it: emitting them would produce a
+    # `transaction-time` Entity whose re-import derives `txStart`/`txEnd` beside
+    # them. What the round trip does not preserve is the endpoints' own names and
+    # Columns, which come back canonical.
+    identity = EntityIdentity(None, "Session")
+    entity = fake_metamodel.FakeEntity(
+        identity,
+        declared_container=Table("session"),
+        declared_attributes=(
+            AttributeMetadata(AttributeIdentity(identity, "label"), STRING, Column("label")),
+            AttributeMetadata(AttributeIdentity(identity, "openedAt"), TIMESTAMP, Column("in_z")),
+            AttributeMetadata(AttributeIdentity(identity, "closedAt"), TIMESTAMP, Column("out_z")),
+        ),
+        declared_as_of_axes=(
+            AsOfAxisMetadata(
+                dimension=TemporalDimension.TRANSACTION_TIME,
+                start_attribute=AttributeIdentity(identity, "openedAt"),
+                end_attribute=AttributeIdentity(identity, "closedAt"),
+            ),
+        ),
+    )
+    exported = cast(
+        "dict[str, object]", export_document(fake_metamodel.FakeMetamodel((entity,)))["entity"]
+    )
+    assert exported["temporality"] == "transaction-time"
+    names = [
+        attribute["name"] for attribute in cast("list[dict[str, object]]", exported["attributes"])
+    ]
+    assert names == ["label"]
 
 
 def test_export_is_deterministic_and_a_canonical_fixpoint() -> None:
