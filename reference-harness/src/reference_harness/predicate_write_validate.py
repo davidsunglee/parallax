@@ -113,7 +113,7 @@ def validate_predicate_write_materialization(
     rebuilt from these members — which is why the Structured Column itself is
     never a required observation of its own.
     """
-    if not _requires_materialization(entity):
+    if not requires_predicate_write_materialization(entity):
         return
 
     target = instruction.get("target")
@@ -159,7 +159,8 @@ def validate_predicate_write_materialization(
     )
 
 
-def _requires_materialization(entity: Entity) -> bool:
+def requires_predicate_write_materialization(entity: Entity) -> bool:
+    """Whether predicate writes for *entity* require an observed row set."""
     return entity.is_temporal or any(
         attribute.get("optimisticLocking") for attribute in entity.attributes
     )
@@ -424,6 +425,8 @@ def _assert_value_object_document(ref: str, value_object: dict[str, Any], docume
                 f"declared type {attribute.get('type')!r}"
             )
     for nested in value_object.get("valueObjects", []):
+        if nested["name"] not in document:
+            continue
         _assert_value_object_assignment(
             f"{ref}.{nested['name']}", nested, document.get(nested["name"])
         )

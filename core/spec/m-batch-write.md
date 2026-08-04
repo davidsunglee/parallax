@@ -164,7 +164,7 @@ versioned per-key delete. The predicate-write witnesses prove a distinct target:
 | `m-batch-write-005` | non-versioned `Wallet` delete | one readless `delete … where <predicate>` |
 | `m-batch-write-006` | non-versioned `Wallet` update | one readless update; reversed authored assignments still emit Entity Layout order and assignment-before-predicate binds |
 | `m-batch-write-009` | unversioned, non-temporal document-mapped `Voyage` update | refuse a top-level document-resident `many` assignment before buffering or SQL |
-| `m-batch-write-010` | unversioned, non-temporal document-mapped `Route` update | refuse an authored nested document-resident `many` assignment while an omitted sibling `many` does not trigger the rule |
+| `m-batch-write-010` | unversioned, non-temporal document-mapped `NestedRoute` update | refuse an authored nested document-resident `many` assignment before buffering or SQL |
 | `m-opt-lock-015` | versioned `Account` delete | materialize plus one optimistic per-row delete for each match |
 
 The two families share SQL terminology but not an observation contract: an `IN`
