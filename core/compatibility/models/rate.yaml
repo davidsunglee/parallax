@@ -61,10 +61,6 @@ entities:
       - dimension: transaction-time
         startAttribute: txStart
         endAttribute: txEnd
-    indices:
-      - name: rate_pk
-        attributes: [id, validStart, txStart]
-        unique: true
   - name: DepositRate
     namespace: parallax.compatibility
     table: deposit_rate

@@ -582,13 +582,10 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # rule collapses them into one `delete ... where id in (?, ?, ?)`, and the     #
 # aggregate that ONE complete Key Target owns is what the count is held to —   #
 # a partial match is refused rather than accepted on the grounds that the      #
-# statement was set-based. `m-unit-work-015` drives the other direction: a     #
-# close whose key holds two current milestones matches 2 where its Milestone   #
-# Target addresses 1, and an excess is invariantly cardinality corruption      #
-# rather than any concurrency outcome. Neither of the last two authors         #
-# `then.tableState`: their write is refused, so this lane's unit of work rolls #
-# back where the reference harness's bare golden does not, and the two lanes   #
-# legitimately disagree on the rows that remain.                               #
+# statement was set-based. It authors no `then.tableState`: its write is       #
+# refused, so this lane's unit of work rolls back where the reference          #
+# harness's bare golden does not, and the two lanes legitimately disagree on   #
+# the rows that remain.                                                        #
 # --------------------------------------------------------------------------- #
 _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
     {
@@ -601,7 +598,6 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-opt-lock-017",
         "m-unit-work-013",
         "m-unit-work-014",
-        "m-unit-work-015",
         "m-batch-write-008",
         "m-temporal-read-009",
         "m-temporal-read-010",

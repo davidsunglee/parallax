@@ -72,7 +72,3 @@ entity:
             - name: expires
               type: date
               nullable: true
-  indices:
-    - name: contact_pk
-      attributes: [id]
-      unique: true

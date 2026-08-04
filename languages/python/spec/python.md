@@ -2506,7 +2506,11 @@ or descriptor authoring form and performs no audit stamping.
   reporting **more** rows than its target's cardinality permits — an accepted
   identity, storage, or lowering invariant broken, never a concurrency outcome
   — raises the never-retriable `CardinalityCorruptionError` in either mode,
-  for a keyed write or a temporal close alike (`m-unit-work-015`). The four
+  for a keyed write or a temporal close alike. No compatibility case drives it:
+  a temporal close addresses its Milestone Target by what is now the physical
+  primary key, so no corpus fixture can stage state a correctly addressed close
+  matches twice, and the class is reachable only from corruption a writer
+  outside Parallax introduced. The four
   classes — `MissingTargetError`, `StaleWriteError`,
   `OptimisticLockConflictError`, `CardinalityCorruptionError` — are the public
   Write Effect Error family `parallax.core.unit_work` owns; each carries only

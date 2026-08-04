@@ -107,10 +107,6 @@ entities:
           target: { entity: parallax.compatibility.Trip, attribute: travelerId }
         orderBy:
           - { attribute: id }
-    indices:
-      - name: traveler_pk
-        attributes: [id]
-        unique: true
   # Trip: the far side of a relationship between two document-mapped Entities. Its
   # own primary key and the join endpoint `travelerId` are Columns; everything else
   # is document-resident.
@@ -137,9 +133,6 @@ entities:
       - name: traveler
         reverseOf: parallax.compatibility.Traveler.trips
     indices:
-      - name: trip_pk
-        attributes: [id]
-        unique: true
       - name: trip_traveler_id
         attributes: [travelerId]
   # Ledger: a document-mapped Entity carrying an explicit optimistic-lock version.
@@ -170,10 +163,6 @@ entities:
           - name: code
             type: string
             nullable: true
-    indices:
-      - name: ledger_pk
-        attributes: [id]
-        unique: true
   # Voyage: the Transaction-Time-Only member of the family. The two axis bounds are
   # designated Attributes, so the layout keeps both in Columns of their own
   # (direct-column role 3) while `title`, `crew`, and the `manifest` occurrence are
@@ -221,10 +210,6 @@ entities:
       - dimension: transaction-time
         startAttribute: txStart
         endAttribute: txEnd
-    indices:
-      - name: voyage_pk
-        attributes: [id, txStart]
-        unique: true
   # Charter: the Bitemporal member. Four bound Attributes stay direct and the
   # rectangle split chains head / middle / tail milestones, each carrying a whole
   # document. Assigning `terms` recursively patches only its named declared members,
@@ -269,10 +254,6 @@ entities:
       - dimension: transaction-time
         startAttribute: txStart
         endAttribute: txEnd
-    indices:
-      - name: charter_pk
-        attributes: [id, validStart, txStart]
-        unique: true
   # Beacon: a document-layout Entity whose only member is its primary key, which the
   # layout keeps direct. Its Structured Column carries the empty object and nothing
   # ever extracts from it.
@@ -286,10 +267,6 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-    indices:
-      - name: beacon_pk
-        attributes: [id]
-        unique: true
   # Mooring: Beacon's Bitemporal twin. Its primary key and all four axis bounds hold
   # direct-column roles, so like Beacon it has no document-resident member — but every
   # observation of it retains the whole Structured Column, and the rectangles a split
@@ -325,10 +302,6 @@ entities:
       - dimension: transaction-time
         startAttribute: txStart
         endAttribute: txEnd
-    indices:
-      - name: mooring_pk
-        attributes: [id, validStart, txStart]
-        unique: true
   # Payment: a table-per-hierarchy family whose root owns one Structured Column.
   # The sibling declarations intentionally reuse the `detail` Document Path with
   # incompatible declared types. CardPayment additionally declares
@@ -347,10 +320,6 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-    indices:
-      - name: payment_document_pk
-        attributes: [id]
-        unique: true
   - name: CardPayment
     namespace: parallax.compatibility
     inheritance:

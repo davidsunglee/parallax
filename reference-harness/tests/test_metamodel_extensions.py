@@ -668,7 +668,6 @@ def _model_with_unique_index() -> Model:
                     {"name": "name", "type": "string", "column": "name", "maxLength": 64},
                 ],
                 "indices": [
-                    {"name": "tag_pk", "attributes": ["id"], "unique": True},
                     {"name": "tag_name_uq", "attributes": ["name"], "unique": True},
                 ],
             }
@@ -678,9 +677,10 @@ def _model_with_unique_index() -> Model:
 
 def test_non_pk_unique_index_emits_unique_constraint() -> None:
     (ddl,) = ddl_for(_model_with_unique_index(), "postgres")
+    # The derived primary-key Index becomes `primary key (...)`; the authored
+    # business-key unique Index becomes a `unique (...)` beside it.
     assert "primary key (id)" in ddl
     assert "unique (name)" in ddl
-    # The PK-backed unique index is NOT re-emitted as a separate UNIQUE clause.
     assert "unique (id)" not in ddl
 
 
@@ -689,10 +689,10 @@ def test_unique_index_emitted_for_mariadb_too() -> None:
     assert "unique (name)" in ddl
 
 
-def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
-    # A temporal entity whose unique index lists the FULL physical key (declared
-    # PK + the as-of start columns) is the primary key, not a secondary unique
-    # index -- it must NOT produce a redundant `unique (...)` alongside the PK.
+def test_temporal_key_is_derived_and_emits_no_second_constraint() -> None:
+    # A temporal entity authors no primary-key Index at all: the physical key is
+    # derived from the declared key plus each axis's END Attribute, and it is the
+    # ONLY constraint the table carries.
     model = Model(
         Path("milestone.yaml"),
         {
@@ -711,12 +711,9 @@ def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
                         "endAttribute": "txEnd",
                     },
                 ],
-                "indices": [
-                    {"name": "milestone_pk", "attributes": ["id", "txStart"], "unique": True},
-                ],
             }
         },
     )
     (ddl,) = ddl_for(model, "postgres")
-    assert "primary key (id, in_z)" in ddl
-    assert "unique (" not in ddl  # the PK-backed unique index is not re-emitted
+    assert "primary key (id, out_z)" in ddl
+    assert "unique (" not in ddl

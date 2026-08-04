@@ -269,14 +269,14 @@ def _tpcs_model() -> tuple[Any, EntityIdentity, EntityIdentity, EntityIdentity]:
 
 
 def _ranked_temporal_model(
-    mapping: Literal["standalone", "tph", "tpcs"], *, duplicate_start: bool
+    mapping: Literal["standalone", "tph", "tpcs"], *, duplicate_end: bool
 ) -> tuple[Any, str, EntityIdentity]:
     root = identity(f"{mapping.title()}Temporal")
     concrete = identity(f"{mapping.title()}TemporalRow")
     valid_start = instant(root, "validStart")
     valid_end = instant(root, "validEnd")
-    tx_start = valid_start if duplicate_start else instant(root, "txStart")
-    tx_end = instant(root, "txEnd")
+    tx_start = instant(root, "txStart")
+    tx_end = valid_end if duplicate_end else instant(root, "txEnd")
     attributes = tuple(dict.fromkeys((key(root), valid_start, valid_end, tx_start, tx_end)))
     axes = (
         AsOfAxisMetadata(
@@ -463,39 +463,39 @@ def test_temporal_revision_alias_is_one_temporal_slot_not_an_audit_duplicate() -
     assert matches[0].tier is storage_layout.ColumnTier.TEMPORAL
 
 
-def test_physical_key_selects_existing_model_key_then_temporal_start_slots() -> None:
+def test_physical_key_selects_existing_model_key_then_temporal_end_slots() -> None:
     model, root, _, _ = _tiered_tph_model()
     layout = _require_layout(storage_layout.view(model), "record")
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeIdentity(root, "id"),
-        AttributeIdentity(root, "txStart"),
+        AttributeIdentity(root, "txEnd"),
     ]
-    assert [layout.columns.index(key_slot) for key_slot in layout.physical_primary_key] == [0, 6]
+    assert [layout.columns.index(key_slot) for key_slot in layout.physical_primary_key] == [0, 7]
     assert all(not key_slot.effective_nullable for key_slot in layout.physical_primary_key)
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_temporal_starts_follow_dimension_rank_not_authored_axis_order(
+def test_physical_key_temporal_ends_follow_dimension_rank_not_authored_axis_order(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
-    model, table, root = _ranked_temporal_model(mapping, duplicate_start=False)
+    model, table, root = _ranked_temporal_model(mapping, duplicate_end=False)
     layout = _require_layout(storage_layout.view(model), table)
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeIdentity(root, "id"),
-        AttributeIdentity(root, "validStart"),
-        AttributeIdentity(root, "txStart"),
+        AttributeIdentity(root, "validEnd"),
+        AttributeIdentity(root, "txEnd"),
     ]
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_deduplicates_a_start_designated_by_two_dimensions(
+def test_physical_key_deduplicates_an_end_designated_by_two_dimensions(
     mapping: Literal["standalone", "tph", "tpcs"],
 ) -> None:
-    model, table, root = _ranked_temporal_model(mapping, duplicate_start=True)
+    model, table, root = _ranked_temporal_model(mapping, duplicate_end=True)
     layout = _require_layout(storage_layout.view(model), table)
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeIdentity(root, "id"),
-        AttributeIdentity(root, "validStart"),
+        AttributeIdentity(root, "validEnd"),
     ]
 
 

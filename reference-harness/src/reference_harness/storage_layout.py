@@ -799,20 +799,46 @@ start slots, and a milestone close's one exclusive upper bound per axis.
 """
 
 
-def _temporal_start_designations(
-    root: Mapping[str, Any], root_identity: str
-) -> tuple[AttributeContributor, ...]:
-    """Temporal starts in canonical dimension rank with duplicates removed."""
-    starts: list[AttributeContributor] = []
-    seen: set[AttributeContributor] = set()
-    axes = (axis for axis in root.get("asOfAxes", []) or [] if isinstance(axis, dict))
+def derived_primary_key_index(definition: Mapping[str, Any]) -> dict[str, Any] | None:
+    """One Entity's derived unique primary-key Index, or absence when it declares no key.
+
+    The Index is derived on the Entity that DECLARES the primary key rather than
+    the one that owns the table, because every Index component is a distinct
+    local Attribute of the Index's Entity: under `table-per-concrete-subtype` the
+    concrete subtype declares neither the key nor the axes, both being
+    root-owned. A storage consumer resolves each component through the applicable
+    table layout's contributor lookup, which reaches a root-declared Attribute
+    from every concrete table.
+
+    Components are the local primary-key Attributes in declaration order followed
+    by each declared axis's END Attribute in canonical dimension rank — the
+    columns a Latest predicate and a milestone close both pin. The name is the
+    table's when the Entity owns one, and the Entity's own name folded to the
+    same lowercase shape otherwise.
+    """
+    attributes = [
+        attribute["name"]
+        for attribute in definition.get("attributes", []) or []
+        if isinstance(attribute, dict) and bool(attribute.get("primaryKey"))
+    ]
+    if not attributes:
+        return None
+    seen = set(attributes)
+    axes = (axis for axis in definition.get("asOfAxes", []) or [] if isinstance(axis, dict))
     for axis in sorted(axes, key=lambda axis: TEMPORAL_DIMENSION_RANK[axis["dimension"]]):
-        contributor = AttributeContributor(root_identity, axis["startAttribute"])
-        if contributor in seen:
+        end = axis["endAttribute"]
+        if end in seen:
             continue
-        seen.add(contributor)
-        starts.append(contributor)
-    return tuple(starts)
+        seen.add(end)
+        attributes.append(end)
+    table = definition.get("table")
+    name = definition["name"]
+    stem = (
+        table
+        if isinstance(table, str) and table
+        else default_column_name(name[:1].lower() + name[1:])
+    )
+    return {"name": f"{stem}_pk", "attributes": attributes, "unique": True}
 
 
 def classify_attribute_tier(
@@ -936,15 +962,12 @@ def _compile_layout(
     temporal = _temporal_designations(root, group.root)
     attribute_applicability, value_object_applicability = _applicability(family, group.row_owners)
     row_owners = _interned(set(group.row_owners), applicability_intern)
-    key_contributors = [
-        _attribute_contributor(definition, attribute)
-        for definition in group.declarations
-        for attribute in definition.get("attributes", []) or []
-        if isinstance(attribute, dict) and bool(attribute.get("primaryKey"))
-    ]
-    for contributor in _temporal_start_designations(root, group.root):
-        if contributor not in key_contributors:
-            key_contributors.append(contributor)
+    derived_key = derived_primary_key_index(root)
+    key_contributors = (
+        []
+        if derived_key is None
+        else [AttributeContributor(group.root, name) for name in derived_key["attributes"]]
+    )
     key_set = frozenset(key_contributors)
 
     drafts: list[_Draft] = []

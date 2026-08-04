@@ -109,6 +109,11 @@ def test_the_class_header_supplies_every_entity_level_fact() -> None:
     assert declaration.persistence is PersistenceMode.READ_ONLY
     assert declaration.indices == (
         IndexMetadata(
+            identity=IndexIdentity(declaration.identity, "warehouse_pk"),
+            attributes=(AttributeIdentity(declaration.identity, "id"),),
+            unique=True,
+        ),
+        IndexMetadata(
             identity=IndexIdentity(declaration.identity, "warehouse_code"),
             attributes=(AttributeIdentity(declaration.identity, "code"),),
             unique=True,

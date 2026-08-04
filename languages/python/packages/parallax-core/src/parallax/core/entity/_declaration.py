@@ -86,6 +86,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
     default_column_name,
+    derive_primary_key_index,
     resolve_entity_reference,
     value_object_metadata,
 )
@@ -982,9 +983,10 @@ def _build_entity(
     _install_fields(
         annotations, ns, shapes, vo_classes, many_py, axis_governed=frozenset(axis_governed_py)
     )
+    container = _container(cls_name, header)
     ns[_DECLARATION] = EntityDeclaration(
         identity=identity,
-        container=_container(cls_name, header),
+        container=container,
         persistence=_persistence(cls_name, header),
         layout=_layout(cls_name, header),
         attributes=tuple(attributes),
@@ -992,7 +994,9 @@ def _build_entity(
         value_objects=tuple(occurrences),
         as_of_axes=axis_members,
         inheritance=_accepted_inheritance(role, parent),
-        indices=_indices(identity, header.indices, py_to_name),
+        indices=_indices(
+            identity, container, tuple(attributes), axis_members, header.indices, py_to_name
+        ),
     )
     ns[_MEMBERS] = MemberNames(
         column_to_py=column_to_py,
@@ -1230,13 +1234,29 @@ def _parent_reference(parent: type | None) -> EntityReference:
 
 
 def _indices(
+    identity: EntityIdentity,
+    container: StorageContainer | None,
+    attributes: tuple[AttributeMetadata, ...],
+    as_of_axes: tuple[AsOfAxisMetadata, ...],
+    declared: object,
+    py_to_name: dict[str, str],
+) -> tuple[IndexMetadata, ...]:
+    """The derived primary-key Index followed by the declared ones.
+
+    A declared component names a Python member; an unknown name lowers through
+    the deterministic conversion so foundational resolution can locate and report
+    it. The primary-key Index is never declared, so the two sets are disjoint.
+    """
+    derived = derive_primary_key_index(
+        entity=identity, container=container, attributes=attributes, as_of_axes=as_of_axes
+    )
+    authored = _declared_indices(identity, declared, py_to_name)
+    return authored if derived is None else (derived, *authored)
+
+
+def _declared_indices(
     identity: EntityIdentity, declared: object, py_to_name: dict[str, str]
 ) -> tuple[IndexMetadata, ...]:
-    """The declared indices, with components lowered to Attribute Identities.
-
-    A component names a Python member; an unknown name lowers through the
-    deterministic conversion so foundational resolution can locate and report it.
-    """
     if not isinstance(declared, tuple):
         raise EntityDefinitionError(
             code="entity-header-invalid-value",

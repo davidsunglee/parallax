@@ -136,7 +136,3 @@ entities:
         join:
           source: id
           target: { entity: parallax.compatibility.Pet, attribute: ownerId }
-    indices:
-      - name: person_pk
-        attributes: [id]
-        unique: true

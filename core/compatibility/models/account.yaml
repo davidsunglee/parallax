@@ -34,8 +34,5 @@ entity:
       type: int32
       optimisticLocking: true
   indices:
-    - name: account_pk
-      attributes: [id]
-      unique: true
     - name: account_owner
       attributes: [owner]

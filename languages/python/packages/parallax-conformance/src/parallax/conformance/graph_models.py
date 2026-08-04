@@ -33,7 +33,6 @@ class Policy(
     Bitemporal,
     table="policy",
     namespace=_NS,
-    indices=(index("policy_pk", "id", "valid_start", "tx_start", unique=True),),
 ):
     """Mirror of ``models/policy.yaml`` ``Policy`` (bitemporal, root of the
     ``coverages`` to-many relationship)."""
@@ -49,10 +48,7 @@ class Coverage(
     Bitemporal,
     table="coverage",
     namespace=_NS,
-    indices=(
-        index("coverage_pk", "id", "valid_start", "tx_start", unique=True),
-        index("coverage_policy", "policy_id"),
-    ),
+    indices=(index("coverage_policy", "policy_id"),),
 ):
     """Mirror of ``models/policy.yaml`` ``Coverage`` (bitemporal; the temporal
     navigate hop ``Policy.coverages`` reaches)."""
@@ -70,10 +66,7 @@ class Claim(
     Bitemporal,
     table="claim",
     namespace=_NS,
-    indices=(
-        index("claim_pk", "id", "valid_start", "tx_start", unique=True),
-        index("claim_coverage", "coverage_id"),
-    ),
+    indices=(index("claim_coverage", "coverage_id"),),
 ):
     """Mirror of ``models/policy.yaml`` ``Claim`` (bitemporal leaf, no
     relationships of its own)."""

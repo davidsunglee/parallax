@@ -348,11 +348,39 @@ locking, or Entity identity facts. Full recursive semantics belong to
 |---|---|
 | `name` | index name (REQUIRED) |
 | `attributes` | ordered attribute-name list (REQUIRED, non-empty) |
-| `unique` | bool, default `false` — a unique index enables the cache fast-path |
+| `unique` | bool, default `false` |
 
 Indices are metadata: they declare the storage indices an implementation
-**SHOULD** create and the **unique** keys the identity cache can exploit. A
-unique index over the primary-key attributes is the canonical fast-path key.
+**SHOULD** create and the **unique** keys a storage consumer may exploit. An
+authored index is a secondary index — a genuine business key or a lookup path.
+The primary-key index is not authored.
+
+### The derived primary-key index
+
+Every Entity that declares a primary key derives one unique index, placed before
+its authored indices. Its components are that Entity's own primary-key
+Attributes in declaration order, followed by each declared axis's **end**
+Attribute in canonical dimension order (Valid Time, then Transaction Time). Its
+name is `<table>_pk` when the Entity declares a `table`, and otherwise the
+Entity's `name` with its first character lowercased and then folded by
+`defaultColumn`, suffixed `_pk` — so a tableless `table-per-concrete-subtype`
+root named `Rate` derives `rate_pk`.
+
+The derivation reads one declaration and resolves nothing across the model. It
+triggers on the Entity that *declares* the key rather than the one that owns the
+table because every index component is a distinct local Attribute of the index's
+Entity and indices are not inherited (`m-metamodel`): under
+`table-per-concrete-subtype` the concrete subtype declares neither the key nor
+the axes, both being root-owned. A storage consumer resolves each component
+through the applicable layout's contributor lookup, which reaches a
+root-declared Attribute from every concrete table.
+
+`m-storage-layout` defines the Physical Primary Key as this index's slot
+selection, so the emitted key constraint and the index that declares it can
+never disagree. Keying on the axis end Attributes is the shape a Latest
+predicate and a milestone close both pin.
+
+Canonical export writes only authored facts, so it omits the derived index.
 
 ## `asOfAxes` — temporal dimensions
 
@@ -551,6 +579,12 @@ JSON-Schema keywords:
 | Rule | Meaning |
 |---|---|
 | `type-spelling-invalid` | a `type` spelling whose parameters break the `m-core` bounds or carry non-canonical digits — e.g. `decimal(0,9)`, `decimal(2,5)`, `decimal(09,2)` |
+| `index-temporal-attribute` | an authored `index` component naming an `asOfAxes` start or end Attribute of its own Entity |
+
+`index-temporal-attribute` fires once per offending component, at that
+component's own document path. The physical key over the axis endpoints is
+derived, so an authored index naming one either restates it in an author-chosen
+position or contradicts it; neither is a shape the contract admits.
 
 The vocabulary grows only with a rejection named in this specification. A
 conforming adapter evaluates the whole document, and violation equality,
@@ -601,7 +635,10 @@ validation and no state change. Export is deterministic and all-or-none:
   the canonicalization law above: a model authored in canonical form
   re-exports to a structurally equal document (source comments and formatting
   are not preserved, so authored bytes are not reproduced);
-- export returns its complete result or fails with no partial output.
+- export returns its complete result or fails with no partial output;
+- export writes only authored facts, so a member phase 3 derives — the
+  primary-key index — is absent from the exported document. Writing it would
+  put a member in the document that re-importing derives a second time.
 
 An unexpected conversion or serialization defect raises:
 

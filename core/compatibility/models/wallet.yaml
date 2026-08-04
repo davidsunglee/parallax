@@ -25,8 +25,5 @@ entity:
     - name: balance
       type: decimal(18,2)
   indices:
-    - name: wallet_pk
-      attributes: [id]
-      unique: true
     - name: wallet_owner
       attributes: [owner]

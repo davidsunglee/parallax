@@ -270,10 +270,6 @@ entities:
             attributes:
               - name: number
                 type: string
-    indices:
-      - name: account_pk
-        attributes: [id]
-        unique: true
   - name: Ledger
     table: ledger
     attributes:
@@ -319,6 +315,22 @@ entities:
         endAttribute: txEnd
 """
 """The parity model as descriptor text, matching :func:`parity_model` exactly."""
+
+
+def _primary_key_index(entity: EntityIdentity, table: str, *ends: str) -> IndexMetadata:
+    """The unique primary-key Index an accepted Metamodel derives for ``entity``.
+
+    An alternate implementation carries the derived Index like any other, so the
+    parity descriptor beside it authors none.
+    """
+    return IndexMetadata(
+        identity=IndexIdentity(entity, f"{table}_pk"),
+        attributes=(
+            AttributeIdentity(entity, "id"),
+            *(AttributeIdentity(entity, end) for end in ends),
+        ),
+        unique=True,
+    )
 
 
 def _attribute(
@@ -407,13 +419,7 @@ def _account() -> EntityMetadata:
                 ),
             ),
         ),
-        indices=(
-            IndexMetadata(
-                identity=IndexIdentity(ACCOUNT, "account_pk"),
-                attributes=(AttributeIdentity(ACCOUNT, "id"),),
-                unique=True,
-            ),
-        ),
+        indices=(_primary_key_index(ACCOUNT, "account"),),
     )
 
 
@@ -429,6 +435,7 @@ def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamo
                     _attribute(LEDGER, "id", INT64, key=True),
                     _attribute(LEDGER, "label", STRING, max_length=40),
                 ),
+                indices=(_primary_key_index(LEDGER, "ledger"),),
             ),
             FakeEntity(
                 ENTRY,
@@ -444,6 +451,7 @@ def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamo
                         reverse_of=RelationshipIdentity(ACCOUNT, "entries"),
                     ),
                 ),
+                indices=(_primary_key_index(ENTRY, "entry"),),
             ),
             FakeEntity(
                 AUDIT,
@@ -461,6 +469,7 @@ def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamo
                         end_attribute=AttributeIdentity(AUDIT, "txEnd"),
                     ),
                 ),
+                indices=(_primary_key_index(AUDIT, "audit", "txEnd"),),
             ),
         ),
         facets,

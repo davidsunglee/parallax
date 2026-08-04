@@ -30,8 +30,6 @@ entities:
           source: id
           target: { entity: parallax.compatibility.Coverage, attribute: policyId }
         dependent: true
-    indices:
-      - { name: policy_pk, attributes: [id, validStart, txStart], unique: true }
   - name: Coverage
     namespace: parallax.compatibility
     table: coverage
@@ -56,7 +54,6 @@ entities:
       - name: policy
         reverseOf: parallax.compatibility.Policy.coverages
     indices:
-      - { name: coverage_pk, attributes: [id, validStart, txStart], unique: true }
       - { name: coverage_policy, attributes: [policyId] }
   - name: Claim
     namespace: parallax.compatibility
@@ -73,5 +70,4 @@ entities:
       - { dimension: valid-time, startAttribute: validStart, endAttribute: validEnd }
       - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     indices:
-      - { name: claim_pk, attributes: [id, validStart, txStart], unique: true }
       - { name: claim_coverage, attributes: [coverageId] }

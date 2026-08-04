@@ -25,6 +25,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     ValueObjectIdentity,
     ValueObjectMetadata,
+    derive_primary_key_index,
 )
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.relationship import FACET_KEY as RELATIONSHIP_FACET_KEY
@@ -313,16 +314,21 @@ def _temporal_designations(root: EntityMetadata) -> frozenset[AttributeIdentity]
     )
 
 
-def _temporal_start_designations(root: EntityMetadata) -> tuple[AttributeIdentity, ...]:
-    """Temporal starts in canonical dimension rank with duplicates removed."""
-    starts: list[AttributeIdentity] = []
-    seen: set[AttributeIdentity] = set()
-    for axis in sorted(root.declared_as_of_axes, key=lambda axis: axis.dimension.value):
-        if axis.start_attribute in seen:
-            continue
-        seen.add(axis.start_attribute)
-        starts.append(axis.start_attribute)
-    return tuple(starts)
+def _key_contributors(root: EntityMetadata) -> tuple[AttributeIdentity, ...]:
+    """The derived primary-key Index's components, in its own order.
+
+    The family root declares both the key and the axes, so the Index it derives
+    is the whole physical key of every Table the family maps — a shared
+    table-per-hierarchy Table and each table-per-concrete-subtype concrete Table
+    alike.
+    """
+    derived = derive_primary_key_index(
+        entity=root.identity,
+        container=root.declared_container,
+        attributes=root.declared_attributes,
+        as_of_axes=root.declared_as_of_axes,
+    )
+    return () if derived is None else derived.attributes
 
 
 def _applicability(
@@ -453,14 +459,7 @@ def _layout(
     root = index.entities_by_identity[group.root]
     attribute_applicability, value_object_applicability = _applicability(index, group.row_owners)
     row_owners = _interned(set(group.row_owners), applicability_intern)
-    key_contributors: list[AttributeIdentity] = [
-        attribute.identity
-        for attribute in group.attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    ]
-    for contributor in _temporal_start_designations(root):
-        if contributor not in key_contributors:
-            key_contributors.append(contributor)
+    key_contributors = _key_contributors(root)
     key_set: frozenset[ColumnContributor] = frozenset(key_contributors)
 
     drafts: list[_SlotDraft] = []

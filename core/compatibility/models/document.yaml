@@ -129,7 +129,3 @@ entities:
         join:
           source: id
           target: { entity: parallax.compatibility.Document, attribute: folderId }
-    indices:
-      - name: folder_pk
-        attributes: [id]
-        unique: true

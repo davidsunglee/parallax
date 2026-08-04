@@ -91,8 +91,5 @@ entity:
               type: string
               nullable: true
   indices:
-    - name: branch_pk
-      attributes: [id, validStart, txStart]
-      unique: true
     - name: branch_name
       attributes: [name]

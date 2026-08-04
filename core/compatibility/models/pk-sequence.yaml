@@ -18,8 +18,6 @@ entities:
     attributes:
       - { name: name, type: string, primaryKey: true, maxLength: 64 }
       - { name: nextVal, type: int64 }
-    indices:
-      - { name: pk_sequence_pk, attributes: [name], unique: true }
   - name: Badge
     namespace: parallax.compatibility
     table: badge
@@ -29,8 +27,6 @@ entities:
         primaryKey: true
         pkGeneration: { strategy: sequence, name: badge_seq }
       - { name: holder, type: string, maxLength: 64 }
-    indices:
-      - { name: badge_pk, attributes: [id], unique: true }
   - name: Ticket
     namespace: parallax.compatibility
     table: ticket
@@ -40,8 +36,6 @@ entities:
         primaryKey: true
         pkGeneration: { strategy: sequence, name: ticket_seq, initialValue: 1000, incrementSize: 5 }
       - { name: tier, type: string, maxLength: 64 }
-    indices:
-      - { name: ticket_pk, attributes: [id], unique: true }
   - name: Pass
     namespace: parallax.compatibility
     table: pass
@@ -51,8 +45,6 @@ entities:
         primaryKey: true
         pkGeneration: { strategy: sequence, name: pass_seq, batchSize: 3 }
       - { name: zone, type: string, maxLength: 64 }
-    indices:
-      - { name: pass_pk, attributes: [id], unique: true }
   - name: Voucher
     namespace: parallax.compatibility
     table: voucher
@@ -62,5 +54,3 @@ entities:
         primaryKey: true
         pkGeneration: { strategy: sequence, name: voucher_seq, initialValue: 100, incrementSize: 10, batchSize: 2 }
       - { name: label, type: string, maxLength: 64 }
-    indices:
-      - { name: voucher_pk, attributes: [id], unique: true }

@@ -912,17 +912,18 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
 
 
 def test_milestone_close_selects_operation_identities_not_the_physical_key() -> None:
-    # The physical key spans the model key AND both axis STARTS, but a close
-    # still selects its own operation identities — the model key, the
-    # discriminator, both axis ENDS, and the observed start gate — and only maps
-    # each one onto its slot. Neither addressed end is a physical-key slot.
+    # The physical key spans the model key AND both axis ENDS, so a close's own
+    # operation identities land on key slots — but they are still its own: the
+    # close also gates on the discriminator and the observed start, neither of
+    # which the key selects, and it maps each identity onto its slot rather than
+    # reading the key.
     model, entity = _accepted("Bond", INSTRUMENT)
     view = storage_layout.view(model).entity(entity.identity)
     assert view is not None
     assert tuple(slot.column.name for slot in view.layout.physical_primary_key) == (
         "id",
-        "from_z",
-        "in_z",
+        "thru_z",
+        "out_z",
     )
     terminate = KeyedWrite(
         "terminate", "Bond", ({"id": 1},), valid_from="2024-06-01T00:00:00+00:00"

@@ -16,8 +16,6 @@ entities:
         join:
           source: id
           target: { entity: parallax.compatibility.Lease, attribute: tenantId }
-    indices:
-      - { name: tenant_pk, attributes: [id], unique: true }
   - name: Lease
     namespace: parallax.compatibility
     table: lease
@@ -37,7 +35,6 @@ entities:
           target: { entity: parallax.compatibility.LeaseNote, attribute: leaseId }
         dependent: true
     indices:
-      - { name: lease_pk, attributes: [id, txStart], unique: true }
       - { name: lease_tenant, attributes: [tenantId] }
   - name: LeaseNote
     namespace: parallax.compatibility
@@ -47,5 +44,4 @@ entities:
       - { name: leaseId, type: int64 }
       - { name: text, type: string, column: note_text, maxLength: 64 }
     indices:
-      - { name: lease_note_pk, attributes: [id], unique: true }
       - { name: lease_note_lease, attributes: [leaseId] }

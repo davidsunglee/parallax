@@ -537,7 +537,10 @@ def test_a_one_to_one_join_names_members_by_their_python_spelling() -> None:
 
 
 def test_indices_are_local_declaration_ordered_and_lowered_to_identities() -> None:
-    (declared,) = Order.indices
+    derived, declared = Order.indices
+    assert derived.identity.name == "orders_pk"
+    assert [component.name for component in derived.attributes] == ["id"]
+    assert derived.unique is True
     assert declared.identity.name == "order_customer"
     assert [component.name for component in declared.attributes] == ["customerId"]
     assert declared.unique is False

@@ -12,7 +12,7 @@ lookup, and no descriptor record reaches a consumer through it.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -66,6 +66,7 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+    derive_primary_key_index,
 )
 from parallax.core.metamodel import Sequence as SequenceGeneration
 from parallax.descriptor import _records
@@ -163,18 +164,41 @@ def _adapted(entity: _records.Entity) -> UnresolvedEntityDeclaration:
 def _declaration(entity: _records.Entity) -> UnresolvedEntityDeclaration:
     identity = EntityIdentity(entity.namespace, entity.name)
     where = f"entity {identity.canonical!r}"
+    container = None if entity.table is None else Table(entity.table)
+    attributes = tuple(_attribute(identity, member, where) for member in entity.attributes)
+    as_of_axes = tuple(_axis(identity, axis) for axis in entity.as_of_axes)
     return _EntityDeclaration(
         identity=identity,
-        container=None if entity.table is None else Table(entity.table),
+        container=container,
         persistence=_persistence(entity),
         layout=_layout(entity),
-        attributes=tuple(_attribute(identity, member, where) for member in entity.attributes),
+        attributes=attributes,
         relationships=tuple(_relationship(identity, member) for member in entity.relationships),
         value_objects=tuple(_value_object(member, where) for member in entity.value_objects),
-        as_of_axes=tuple(_axis(identity, axis) for axis in entity.as_of_axes),
+        as_of_axes=as_of_axes,
         inheritance=None if entity.inheritance is None else _inheritance(entity.inheritance, where),
-        indices=tuple(_index(identity, member) for member in entity.indices),
+        indices=_indices(identity, container, attributes, as_of_axes, entity.indices),
     )
+
+
+def _indices(
+    identity: EntityIdentity,
+    container: StorageContainer | None,
+    attributes: tuple[AttributeMetadata, ...],
+    as_of_axes: tuple[AsOfAxisMetadata, ...],
+    declared: Sequence[_records.Index],
+) -> tuple[IndexMetadata, ...]:
+    """The Entity's derived primary-key Index followed by its authored Indices.
+
+    The primary-key Index is never authored, so the two sets are disjoint and a
+    storage consumer emitting the key constraint from the derived one never
+    emits a second, redundant constraint for an authored twin.
+    """
+    derived = derive_primary_key_index(
+        entity=identity, container=container, attributes=attributes, as_of_axes=as_of_axes
+    )
+    authored = tuple(_index(identity, member) for member in declared)
+    return authored if derived is None else (derived, *authored)
 
 
 def _persistence(entity: _records.Entity) -> PersistenceMode | None:

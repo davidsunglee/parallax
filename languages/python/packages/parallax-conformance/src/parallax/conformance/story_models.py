@@ -59,7 +59,7 @@ class Account(
     Entity,
     table="account",
     namespace=_NS,
-    indices=(index("account_pk", "id", unique=True), index("account_owner", "owner")),
+    indices=(index("account_owner", "owner"),),
 ):
     """Mirror of ``models/account.yaml``."""
 
@@ -76,7 +76,7 @@ class Wallet(
     Entity,
     table="wallet",
     namespace=_NS,
-    indices=(index("wallet_pk", "id", unique=True), index("wallet_owner", "owner")),
+    indices=(index("wallet_owner", "owner"),),
 ):
     """Mirror of ``models/wallet.yaml``: Account minus the optimistic-lock
     ``version`` column and no temporal axis — the readless set-based write
@@ -96,10 +96,7 @@ class Position(
     Bitemporal,
     table="position",
     namespace=_NS,
-    indices=(
-        index("position_pk", "id", "valid_start", "tx_start", unique=True),
-        index("position_acct", "acct_num"),
-    ),
+    indices=(index("position_acct", "acct_num"),),
 ):
     """Mirror of ``models/position.yaml`` (full bitemporal): the write-family
     stories' own bitemporal-insert / ``insertUntil`` / ``updateUntil`` witness
@@ -120,7 +117,7 @@ class Order(
     Entity,
     table="orders",
     namespace=_NS,
-    indices=(index("orders_pk", "id", unique=True), index("orders_sku", "sku")),
+    indices=(index("orders_sku", "sku"),),
 ):
     """Mirror of the ``Order`` entity of ``models/orders.yaml`` (the full
     relationship set: to-many ``items``/``statuses``/``tags`` plus the
@@ -174,10 +171,7 @@ class OrderItem(
     Entity,
     table="order_item",
     namespace=_NS,
-    indices=(
-        index("order_item_pk", "id", unique=True),
-        index("order_item_order_id", "order_id"),
-    ),
+    indices=(index("order_item_order_id", "order_id"),),
 ):
     """Mirror of the ``OrderItem`` entity of ``models/orders.yaml`` (the
     to-one ``order`` back-reference and the item-level ``statuses`` hop)."""
@@ -200,10 +194,7 @@ class OrderStatus(
     Entity,
     table="order_status",
     namespace=_NS,
-    indices=(
-        index("order_status_pk", "id", unique=True),
-        index("order_status_order_id", "order_id"),
-    ),
+    indices=(index("order_status_order_id", "order_id"),),
 ):
     """Mirror of the ``OrderStatus`` entity of ``models/orders.yaml``: each
     status belongs to an ``Order`` and OPTIONALLY to a specific ``OrderItem``
@@ -221,10 +212,7 @@ class OrderTag(
     Entity,
     table="order_tag",
     namespace=_NS,
-    indices=(
-        index("order_tag_pk", "id", unique=True),
-        index("order_tag_order_id", "order_id"),
-    ),
+    indices=(index("order_tag_order_id", "order_id"),),
 ):
     """Mirror of the ``OrderTag`` entity of ``models/orders.yaml``."""
 
@@ -239,10 +227,7 @@ class OrderNote(
     Entity,
     table="order_note",
     namespace=_NS,
-    indices=(
-        index("order_note_pk", "id", unique=True),
-        index("order_note_order_id", "order_id"),
-    ),
+    indices=(index("order_note_order_id", "order_id"),),
 ):
     """Mirror of the ``OrderNote`` entity of ``models/orders.yaml``.
 

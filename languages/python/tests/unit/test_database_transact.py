@@ -250,7 +250,7 @@ def _equal_account_model() -> DomainModel:
         Entity,
         table="account",
         namespace="parallax.compatibility",
-        indices=(index("account_pk", "id", unique=True), index("account_owner", "owner")),
+        indices=(index("account_owner", "owner"),),
     ):
         id: Attr[int] = attr(primary_key=True)
         owner: Attr[str] = attr(max_length=64)

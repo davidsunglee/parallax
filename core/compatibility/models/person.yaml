@@ -36,10 +36,6 @@ entities:
         # concern only; navigation / deep fetch (which drive the person read cases)
         # ignore it, so those cases are unaffected.
         dependent: true
-    indices:
-      - name: person_pk
-        attributes: [id]
-        unique: true
   - name: Passport
     namespace: parallax.compatibility
     table: passport
@@ -56,9 +52,6 @@ entities:
       - name: holder
         reverseOf: parallax.compatibility.Person.passport
     indices:
-      - name: passport_pk
-        attributes: [id]
-        unique: true
       - name: passport_person
         attributes: [personId]
         unique: true

@@ -32,6 +32,7 @@ from reference_harness.case_runner import (
     _write_column_order,
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
+from reference_harness.storage_layout import derived_primary_key_index
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -69,46 +70,45 @@ def test_position_is_bitemporal_with_both_axes() -> None:
     assert axes == {"valid-time", "transaction-time"}
 
 
-def test_bitemporal_ddl_primary_key_spans_both_as_of_from_columns() -> None:
+def test_bitemporal_ddl_primary_key_spans_both_as_of_to_columns() -> None:
     (create,) = ddl_for(_position_model(), "postgres")
     # The business key alone (pos_id) is not unique across rectangles; the
-    # physical primary key MUST include BOTH axes' start columns (from_z, in_z) so a
-    # valid-time-bounded rectangle and its inactivated original coexist.
-    assert "primary key (pos_id, from_z, in_z)" in create
+    # physical primary key MUST include BOTH axes' end columns (thru_z, out_z) so a
+    # valid-time-bounded rectangle and its inactivated original coexist. The ends
+    # are also what every close-update and Latest predicate pins.
+    assert "primary key (pos_id, thru_z, out_z)" in create
     for column in ("from_z", "thru_z", "in_z", "out_z"):
         assert f"{column} timestamptz not null" in create
 
 
 def test_bitemporal_ddl_key_is_the_layout_selection_in_dimension_order() -> None:
     # The DDL key is not re-derived: it is the layout's ordered slot selection —
-    # every model primary-key slot, then each temporal dimension's start slot in
-    # canonical dimension rank (Valid Time before Transaction Time). Both start
+    # every model primary-key slot, then each temporal dimension's end slot in
+    # canonical dimension rank (Valid Time before Transaction Time). Both end
     # slots keep their single Temporal-tier position in the complete sequence.
     layout = _position_model().storage_layout.table("position")
     assert layout is not None
-    assert [slot.column for slot in layout.physical_primary_key] == ["pos_id", "from_z", "in_z"]
+    assert [slot.column for slot in layout.physical_primary_key] == ["pos_id", "thru_z", "out_z"]
     assert [slot.tier.value for slot in layout.physical_primary_key] == [
         "identity",
         "temporal",
         "temporal",
     ]
-    assert [layout.columns.index(slot) for slot in layout.physical_primary_key] == [0, 3, 5]
+    assert [layout.columns.index(slot) for slot in layout.physical_primary_key] == [0, 4, 6]
     (create,) = ddl_for(_position_model(), "postgres")
     assert (
         f"primary key ({', '.join(slot.column for slot in layout.physical_primary_key)})" in create
     )
 
 
-def test_bitemporal_unique_index_matches_physical_primary_key() -> None:
+def test_bitemporal_derived_index_is_the_physical_primary_key() -> None:
     entity = _position_model().root_entity
-    unique_index = next(
-        index for index in entity.definition["indices"] if index["name"] == "position_pk"
-    )
-    assert unique_index == {
+    assert derived_primary_key_index(entity.definition) == {
         "name": "position_pk",
-        "attributes": ["id", "validStart", "txStart"],
+        "attributes": ["id", "validEnd", "txEnd"],
         "unique": True,
     }
+    assert not any(index["name"] == "position_pk" for index in entity.definition.get("indices", []))
 
 
 def test_bitemporal_history_case_suppresses_both_axes() -> None:
@@ -572,7 +572,7 @@ def test_temporal_axes_are_inherited_by_concrete_subtypes() -> None:
         "transaction-time",
     }
     (create,) = ddl_for(model, "postgres")  # one shared `instrument` table
-    assert "primary key (id, from_z, in_z)" in create
+    assert "primary key (id, thru_z, out_z)" in create
     assert "kind" in create  # the framework-owned tag column, synthesized for the DDL
 
     # The table-per-concrete-subtype counterpart: each concrete owns its table, inherits the
@@ -581,7 +581,7 @@ def test_temporal_axes_are_inherited_by_concrete_subtypes() -> None:
     deposit = rate.entity("DepositRate")
     assert deposit.is_temporal
     deposit_ddl = next(s for s in ddl_for(rate, "postgres") if "deposit_rate" in s)
-    assert "primary key (id, from_z, in_z)" in deposit_ddl
+    assert "primary key (id, thru_z, out_z)" in deposit_ddl
     assert "kind" not in deposit_ddl
 
 
@@ -650,7 +650,7 @@ class _RecordingReadProvider:
 def test_bitemporal_observation_projects_the_temporal_slots_last() -> None:
     # The committed-rectangle read-back follows the Table Layout's canonical tier
     # order, so both dimensions' bounds trail every domain slot even though the
-    # physical primary key selects the two starts from the identity and temporal
+    # physical primary key selects the two ends from the identity and temporal
     # tiers alike.
     case = _inheritance_case("m-inheritance-094")
     layout = case.model.storage_layout.table("instrument")
@@ -661,7 +661,7 @@ def test_bitemporal_observation_projects_the_temporal_slots_last() -> None:
         "select t0.id, t0.kind, t0.price, t0.coupon, t0.ticker, "
         "t0.from_z, t0.thru_z, t0.in_z, t0.out_z from instrument t0"
     ]
-    assert [slot.column for slot in layout.physical_primary_key] == ["id", "from_z", "in_z"]
+    assert [slot.column for slot in layout.physical_primary_key] == ["id", "thru_z", "out_z"]
 
 
 def test_bitemporal_committed_rows_cover_every_shared_table_slot() -> None:
