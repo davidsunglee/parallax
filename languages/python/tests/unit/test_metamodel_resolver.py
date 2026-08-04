@@ -29,6 +29,7 @@ from parallax.core.metamodel import (
     INDEX_ATTRIBUTE_MISSING,
     INDEX_ATTRIBUTE_NOT_LOCAL,
     INDEX_EMPTY,
+    INDEX_IDENTITY_DUPLICATE,
     INVALID_ENTITY_IDENTITY,
     LOCAL_MEMBER_COLLISION,
     PRIMARY_KEY_MISSING,
@@ -683,6 +684,49 @@ def test_index_components_are_local_distinct_and_nonempty(
     assert expected in codes(source(declaration))
 
 
+def test_two_indices_of_one_entity_may_not_bear_one_name() -> None:
+    """Identity alone decides, so equal components neither cause nor excuse it.
+
+    The frontends hand the derived primary-key Index over as an ordinary Index,
+    so this is also what refuses an authored Index that claims the derived name.
+    """
+    component = AttributeIdentity(_ORDER, "id")
+    declaration = Declaration(
+        identity=_ORDER,
+        attributes=(key(_ORDER), attribute(_ORDER, "sku")),
+        indices=(
+            IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (component,), unique=True),
+            IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (AttributeIdentity(_ORDER, "sku"),)),
+        ),
+    )
+    assert codes(source(declaration)) == (INDEX_IDENTITY_DUPLICATE,)
+
+    twinned = Declaration(
+        identity=_ORDER,
+        attributes=(key(_ORDER),),
+        indices=(
+            IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (component,), unique=True),
+            IndexMetadata(IndexIdentity(_ORDER, "orders_pk"), (component,), unique=True),
+        ),
+    )
+    assert codes(source(twinned)) == (INDEX_IDENTITY_DUPLICATE,)
+
+
+def test_a_defect_two_indices_of_one_name_share_is_reported_once() -> None:
+    absent = AttributeIdentity(_ORDER, "absent")
+    declaration = Declaration(
+        identity=_ORDER,
+        attributes=(key(_ORDER),),
+        indices=(
+            IndexMetadata(IndexIdentity(_ORDER, "orders_ix"), (absent,)),
+            IndexMetadata(IndexIdentity(_ORDER, "orders_ix"), (absent,)),
+        ),
+    )
+    issues = rejection(source(declaration))
+    assert [issue.code for issue in issues] == [INDEX_ATTRIBUTE_MISSING, INDEX_IDENTITY_DUPLICATE]
+    assert len(set(issues)) == len(issues)
+
+
 def test_an_inherited_index_component_is_reported_as_not_local() -> None:
     root, middle, leaf = _family()
     indexed = Declaration(
@@ -753,7 +797,7 @@ def test_the_issue_sequence_is_stable_under_frontend_permutation() -> None:
 
 
 def test_the_resolver_owns_exactly_the_manifest_issue_code_set() -> None:
-    assert len(RESOLVER_ISSUE_CODES) == 18
+    assert len(RESOLVER_ISSUE_CODES) == 19
     assert all(code.startswith("metamodel-") for code in RESOLVER_ISSUE_CODES)
 
 

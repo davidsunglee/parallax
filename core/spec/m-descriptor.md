@@ -380,6 +380,16 @@ selection, so the emitted key constraint and the index that declares it can
 never disagree. Keying on the axis end Attributes is the shape a Latest
 predicate and a milestone close both pin.
 
+The derived index claims its name: an authored index bearing it is a second
+index of one identity, which Model Formation refuses
+(`metamodel-index-identity-duplicate`). The refusal turns on the name alone,
+because the primary-key index is not authored — authoring the very components
+the derivation would have produced is still authoring it, so the author's
+remedy is a different name. The claim reaches exactly as far as the derivation
+does: an Entity that declares no primary key derives no index and reserves
+nothing, so a `table-per-concrete-subtype` concrete subtype, whose key is
+root-owned, admits an authored index named after its own table.
+
 Canonical export writes only authored facts, so it omits the derived index.
 
 ## `asOfAxes` — temporal dimensions

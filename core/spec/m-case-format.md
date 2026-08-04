@@ -1186,6 +1186,9 @@ checked payload-shape-first then target-validity):
 **Model** rules (accepted-model formation — foundational, Inheritance, and
 Storage Layout invariants that per-entity schema validation cannot express,
 carried inline under `when.model`):
+`metamodel-index-identity-duplicate`: two Indices of one Entity bear one name,
+counting the derived primary-key Index a frontend hands over
+(see `m-metamodel`),
 `inheritance-unknown-parent`, `inheritance-cycle`,
 `inheritance-missing-root`,
 `inheritance-concrete-without-abstract-root`,

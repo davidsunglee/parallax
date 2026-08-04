@@ -488,6 +488,12 @@ preserves declaration order. Indices are not inherited and do not repeat
 physical column names; storage consumers resolve those through Attribute
 Metadata.
 
+Index Identities are distinct within one Entity, so `EntityMetadata.index` has
+exactly one answer for every name. A frontend that derives an Index hands it
+over as an ordinary Index, so it claims its name against the rest: identity
+alone decides the collision, and matching components neither cause nor excuse
+one.
+
 ## As-Of Axes
 
 ```text
@@ -554,6 +560,7 @@ in [`m-model-formation`](m-model-formation.md). No other module may emit a
 | `metamodel-temporal-member-reserved` | A non-framework member uses a conventional temporal Attribute name reserved by the Entity's temporal shape. |
 | `metamodel-primary-key-missing` | A standalone Entity has no local primary-key Attribute. |
 | `metamodel-primary-key-multiple` | A standalone Entity has more than one local primary-key Attribute. |
+| `metamodel-index-identity-duplicate` | Two Indices of one Entity bear the same name. |
 | `metamodel-index-empty` | Index Metadata has no Attribute component. |
 | `metamodel-index-attribute-missing` | An index component names no declared Attribute. |
 | `metamodel-index-attribute-not-local` | An index component is inherited or belongs to another Entity; indices contain local components only. |

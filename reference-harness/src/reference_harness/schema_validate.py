@@ -29,6 +29,7 @@ from referencing import Registry
 
 from .case import Entity
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
+from .metamodel import validate_index_identities
 from .operation_references import collect_reference_classes
 from .predicate_write_validate import (
     PredicateWriteValidationError,
@@ -362,11 +363,12 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     operation_schema = schema_map["operation.schema.json"]
     case_schema = schema_map["compatibility-case.schema.json"]
 
-    # 2. Every model descriptor validates against the metamodel schema and the
-    #    unconditional semantic validators for Inheritance and Storage Layout.
-    #    Inheritance validates family topology when present; Storage Layout also
-    #    validates standalone Table ownership and Column claims. A family resolver
-    #    per model backs the family-aware targetEntity cross-check below.
+    # 2. Every model descriptor validates against the metamodel schema, the
+    #    foundational Index-identity rule, and the unconditional semantic
+    #    validators for Inheritance and Storage Layout. Inheritance validates
+    #    family topology when present; Storage Layout also validates standalone
+    #    Table ownership and Column claims. A family resolver per model backs the
+    #    family-aware targetEntity cross-check below.
     models_dir = compatibility_root / "models"
     families: dict[str, Family] = {}
     model_entities: dict[str, list[dict[str, Any]]] = {}
@@ -377,6 +379,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         families[model_path.name] = Family(entity_defs)
         model_entities[model_path.name] = entity_defs
         try:
+            validate_index_identities(entity_defs)
             validate_family_defs(entity_defs)
             validate_storage_layout(entity_defs)
         except RejectionError as exc:

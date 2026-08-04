@@ -823,7 +823,7 @@
           ]
         },
         "rejectedRule": {
-          "description": "The stable pre-SQL validation rule violated by a rejected case. The closed enum below is authoritative. Model-formation codes distinguish Inheritance-owned TPH/TPCS topology, root-owned temporal/persistence/optimistic facts and materialized-key collisions from Storage Layout-owned independent Table-mapping and within-owner physical-column collisions; operation and write codes retain declaration-owned member identity while validating effective applicability.",
+          "description": "The stable pre-SQL validation rule violated by a rejected case. The closed enum below is authoritative. Model-formation codes distinguish the fixed resolver's foundational Metamodel invariants, Inheritance-owned TPH/TPCS topology, root-owned temporal/persistence/optimistic facts and materialized-key collisions, and Storage Layout-owned independent Table-mapping and within-owner physical-column collisions; operation and write codes retain declaration-owned member identity while validating effective applicability.",
           "enum": [
             "between-bounds-inverted",
             "nested-path-first-segment-not-value-object",
@@ -841,6 +841,7 @@
             "subtype-write-metadata-field",
             "abstract-write-target",
             "subtype-write-set-based-unsupported",
+            "metamodel-index-identity-duplicate",
             "inheritance-unknown-parent",
             "inheritance-cycle",
             "inheritance-missing-root",

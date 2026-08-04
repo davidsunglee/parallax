@@ -45,6 +45,12 @@ from reference_harness.inheritance import (
     resolve_effective_definition,
     validate_family,
 )
+from reference_harness.metamodel import (
+    METAMODEL_INDEX_IDENTITY_DUPLICATE,
+)
+from reference_harness.metamodel import (
+    MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
+)
 from reference_harness.op_validate import validate_operation
 from reference_harness.storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
@@ -102,11 +108,13 @@ def test_rejected_cases_exist() -> None:
 
 
 def test_model_negatives_use_closed_owner_vocabularies() -> None:
-    """Every model rejection belongs to Inheritance or Storage Layout."""
+    """Every model rejection belongs to the resolver, Inheritance, or Storage Layout."""
     model_cases = [c for c in _rejected_cases() if "model" in c.when]
     assert model_cases, "no `when.model` rejected cases discovered"
     used = {c.rejected_rule for c in model_cases}
-    allowed = MODEL_REJECTED_RULES | STORAGE_LAYOUT_MODEL_REJECTED_RULES
+    allowed = (
+        METAMODEL_MODEL_REJECTED_RULES | MODEL_REJECTED_RULES | STORAGE_LAYOUT_MODEL_REJECTED_RULES
+    )
     assert not (unexpected := used - allowed), (
         f"model rejection rules are outside the closed owner vocabularies: {sorted(unexpected)}"
     )
@@ -116,6 +124,7 @@ def test_model_negatives_use_closed_owner_vocabularies() -> None:
         STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
         STORAGE_LAYOUT_COLUMN_COLLISION,
     } <= used
+    assert METAMODEL_INDEX_IDENTITY_DUPLICATE in used
 
 
 # --- inheritance family invariants -------------------------------------------
