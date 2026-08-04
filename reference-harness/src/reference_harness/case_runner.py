@@ -2759,18 +2759,33 @@ def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> Non
     document_layout = entity.runtime_facts.get("layout", {}).get("document")
     if not document_layout:
         return
-    many = {
-        occurrence["name"]
-        for occurrence in entity.value_objects
-        if occurrence.get("multiplicity", "one") == "many"
-    }
     for assignment in write.get("assignments", []):
         name = str(assignment.get("attr", "")).rsplit(".", 1)[-1]
-        if name in many:
+        occurrence = next((item for item in entity.value_objects if item.get("name") == name), None)
+        if occurrence is None:
+            continue
+        nested_many = _authored_many_path(occurrence, assignment.get("value"))
+        if occurrence.get("multiplicity", "one") == "many" or nested_many is not None:
+            path = name if nested_many is None else ".".join((name, *nested_many))
             raise RejectionError(
                 "predicate-write-readless-document-many-unsupported",
-                f"{target_name}.{name}: readless document-resident many assignment",
+                f"{target_name}.{path}: readless document-resident many assignment",
             )
+
+
+def _authored_many_path(occurrence: dict[str, Any], authored: object) -> tuple[str, ...] | None:
+    if not isinstance(authored, dict):
+        return None
+    for nested in occurrence.get("valueObjects", []):
+        name = nested["name"]
+        if name not in authored:
+            continue
+        if nested.get("multiplicity", "one") == "many":
+            return (name,)
+        path = _authored_many_path(nested, authored[name])
+        if path is not None:
+            return (name, *path)
+    return None
 
 
 # --- write sequences (m-txtime-write) ---------------------------------------------------

@@ -478,7 +478,11 @@ def is_no_op_assignment(
     ``delete`` / ``terminate`` / ``terminateUntil`` have no assignments to
     compare and therefore never call this — every resolved row is retained.
     """
-    from parallax.core.document_codec import occurrence_shape, reduce_declared_members
+    from parallax.core.document_codec import (
+        LeafEncodingError,
+        occurrence_shape,
+        reduce_declared_members,
+    )
 
     occurrence_index: Mapping[str, ValueObjectMetadata] = (
         cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
@@ -492,9 +496,9 @@ def is_no_op_assignment(
             continue
         shape = occurrence_shape(occurrence)
         if occurrence.multiplicity is Multiplicity.MANY:
-            stored_items: Sequence[object] = (
-                cast("Sequence[object]", stored) if isinstance(stored, list) else ()
-            )
+            if not isinstance(stored, list):
+                raise LeafEncodingError(f"{member}: expected array, got {type(stored).__name__}")
+            stored_items = cast("Sequence[object]", stored)
             assigned_items: Sequence[object] = (
                 cast("Sequence[object]", value) if isinstance(value, (list, tuple)) else ()
             )

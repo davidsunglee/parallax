@@ -35,13 +35,12 @@ underscores.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.document_codec import DocumentShape, Occurrence, occurrence_shape
 from parallax.core.entity import AttributeAssignment, FindQuery
 from parallax.core.entity._query import mutation_selection
 from parallax.core.metamodel import (
@@ -69,6 +68,7 @@ from parallax.core.unit_work import (
     instructions,
     whole,
 )
+from parallax.core.unit_work.write_planner import assigned_many_path
 from parallax.snapshot.handle._family import (
     assignment_member,
     declaring,
@@ -328,7 +328,7 @@ def _reject_readless_document_many(
         assignment = next(
             item for item in instruction.assignments if assignment_member(item.attr) == name
         )
-        nested_many = _assigned_many_path(occurrence_shape(occurrence), assignment.value)
+        nested_many = assigned_many_path(occurrence, assignment.value)
         if isinstance(placement, DocumentPath) and (
             occurrence.multiplicity is Multiplicity.MANY or nested_many is not None
         ):
@@ -338,21 +338,6 @@ def _reject_readless_document_many(
                 f"{entity.identity.canonical}.{path}: a readless predicate write cannot assign "
                 "a document-resident `many` occurrence",
             )
-
-
-def _assigned_many_path(shape: DocumentShape, authored: object) -> tuple[str, ...] | None:
-    if not isinstance(authored, Mapping):
-        return None
-    authored_members = cast("Mapping[object, object]", authored)
-    for member in shape.members:
-        if not isinstance(member, Occurrence) or member.name not in authored_members:
-            continue
-        if member.multiplicity is Multiplicity.MANY:
-            return (member.name,)
-        nested = _assigned_many_path(member.shape, authored_members[member.name])
-        if nested is not None:
-            return (member.name, *nested)
-    return None
 
 
 def _materialize_predicate_write(

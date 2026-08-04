@@ -1,0 +1,28 @@
+# A minimal Relational Document Layout model whose top-level `route` is a `one`,
+# whose named `segment` member is another `one`, and whose named `stops` member is
+# a `many`. It exists so rejected predicate-write cases can distinguish recursive
+# authored-shape inspection from checking only top-level occurrence multiplicity.
+entity:
+  name: NestedRoute
+  namespace: parallax.compatibility
+  table: nested_route
+  layout:
+    document:
+      column: payload
+  attributes:
+    - { name: id, type: int64, primaryKey: true }
+  valueObjects:
+    - name: route
+      attributes:
+        - { name: name, type: string }
+      valueObjects:
+        - name: segment
+          valueObjects:
+            - name: stops
+              multiplicity: many
+              attributes:
+                - { name: port, type: string }
+  indices:
+    - name: nested_route_pk
+      attributes: [id]
+      unique: true

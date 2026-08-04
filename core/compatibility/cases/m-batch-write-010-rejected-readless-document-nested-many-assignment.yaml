@@ -1,0 +1,23 @@
+# An unversioned, non-temporal predicate-selected update assigns a top-level
+# document-resident `one` whose authored nested `one` names a `many`. The complete
+# write is refused before buffering or SQL, distinguishing recursive authored-shape
+# inspection from a refusal limited to top-level `many` occurrences.
+model: models/document-layout-nested-many.yaml
+tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, rejected, document-layout, nested, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: update
+    target:
+      entity: NestedRoute
+      predicate:
+        eq: { attr: NestedRoute.id, value: 1 }
+    assignments:
+      - attr: NestedRoute.route
+        value:
+          name: Coastal
+          segment:
+            stops:
+              - { port: Oslo }
+then:
+  rejectedRule: predicate-write-readless-document-many-unsupported
