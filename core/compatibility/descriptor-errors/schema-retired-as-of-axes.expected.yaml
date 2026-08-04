@@ -1,0 +1,13 @@
+# The retired temporal container `asOfAxes` is replaced by the `temporality`
+# profile: an entity family declares one temporal fact and every axis, both
+# endpoint Attributes of each axis, and their framework-fixed columns are
+# derived from it, so no axis, endpoint reference, or column is authored. The
+# entity's closed key set rejects the retired container itself, whatever its
+# entries carry, as one `additionalProperties` violation at the entity — the
+# spelling can never be re-admitted silently by loosening the entry shape
+# alone.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity]
+    rule: additionalProperties

@@ -1,0 +1,11 @@
+# The Temporality Profile admits only the nontemporal / transaction-time /
+# bitemporal vocabulary; a value outside the closed enum reports `enum` at the
+# offending value. The rejected spelling is `valid-time` on purpose: a lone
+# Valid-Time axis is the separately catalogued Valid-Time-Only formation, which
+# stays deferred and therefore unspellable, so activating it later is a purely
+# additive enum member rather than a reinterpretation of an accepted document.
+phase: schema
+code: descriptor-schema-invalid
+violations:
+  - path: [entity, temporality]
+    rule: enum

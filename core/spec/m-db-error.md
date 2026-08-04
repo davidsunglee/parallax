@@ -39,7 +39,7 @@ naive cross-dialect `SQLSTATE` compare would misclassify. The mapping:
 ## What the suite pins down
 
 The compatibility suite exercises all three classes on both dialects (cases
-`m-db-error-001`–`m-db-error-008`): a case triggers a real error and asserts the
+`m-db-error-001`–`m-db-error-010`): a case triggers a real error and asserts the
 neutral category, the per-dialect native code, and the call-site predicate
 partition. `uniqueViolation` cases trigger single-connection (a duplicate insert /
 colliding update whose final statement raises); `deadlock` and `lockWaitTimeout`

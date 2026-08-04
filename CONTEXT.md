@@ -906,7 +906,7 @@ The single temporal fact an entity family's root declares — `nontemporal`,
 `transaction-time`, or `bitemporal`. Every As-Of Axis, both endpoint attributes
 of each axis, and their framework-fixed columns are derived from it, so a
 descriptor spells nothing else temporal.
-_Avoid_: temporal classification property, authored axis, axis block
+_Avoid_: temporal classification property, authored axis, axis block, asOfAxes
 
 **Valid Time**:
 The Temporal Dimension describing when a fact is true in the modeled world.
