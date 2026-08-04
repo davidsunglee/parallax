@@ -11,7 +11,8 @@ import pytest
 import yaml
 from jsonschema import Draft202012Validator
 
-from reference_harness.case import Entity, load_model
+from reference_harness.case import Case, Entity, Model, load_model
+from reference_harness.case_runner import _validate_rejected_predicate_write
 from reference_harness.predicate_write_validate import (
     PredicateWriteValidationError,
     validate_predicate_write,
@@ -583,6 +584,52 @@ def test_model_validator_accepts_omitted_nested_many_assignment() -> None:
     }
 
     validate_predicate_write(entity, instruction)
+
+
+def test_model_validator_accepts_omitted_nullable_nested_one_assignment() -> None:
+    entity = _customer_entity()
+    instruction = {
+        "mutation": "update",
+        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "assignments": [
+            {
+                "attr": "Customer.address",
+                "value": {"street": "Main", "city": "Oslo", "phones": []},
+            }
+        ],
+    }
+
+    validate_predicate_write(entity, instruction)
+
+
+def test_rejected_many_oracle_does_not_certify_assignment_missing_required_nested_one() -> None:
+    model = deepcopy(load_model(_COMPATIBILITY_ROOT, "models/contact.yaml"))
+    model.entity_defs[0]["layout"] = {"document": {"column": "payload"}}
+    assert isinstance(model, Model)
+    instruction = {
+        "mutation": "update",
+        "target": {"entity": "Contact", "predicate": {"all": {}}},
+        "assignments": [
+            {
+                "attr": "Contact.address",
+                "value": {"street": "Main", "city": "Oslo", "phones": []},
+            }
+        ],
+    }
+    case = Case(
+        path=Path("predicate-write-required-nested-one.yaml"),
+        raw={
+            "model": "models/contact.yaml",
+            "tags": ["m-batch-write"],
+            "shape": "rejected",
+            "when": {"write": instruction},
+            "then": {"rejectedRule": "predicate-write-readless-document-many-unsupported"},
+        },
+        model=model,
+    )
+
+    with pytest.raises(PredicateWriteValidationError, match="Contact.address.geo.*non-nullable"):
+        _validate_rejected_predicate_write(case, instruction)
 
 
 def test_model_validator_accepts_array_for_many_value_object_assignment() -> None:
