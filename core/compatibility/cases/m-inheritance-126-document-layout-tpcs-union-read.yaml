@@ -1,4 +1,6 @@
-# A broad TPCS instance read projects and decodes each concrete table's own document.
+# A broad TPCS instance read projects and decodes each concrete table's document with
+# that branch's own shape. The observed instance contains only the selected concrete's
+# members; sibling-only members are omitted rather than represented by null padding.
 model: models/document-layout.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-concrete-subtype, document-layout, union-all, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read

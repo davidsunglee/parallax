@@ -1,4 +1,6 @@
-# A concrete TPCS write targets that subtype's own table and Structured Column.
+# A concrete TPCS write targets the subtype's own table and binds one encoded document
+# to that table's Structured Column, producing the shown concrete table state. It never
+# targets an abstract family's nonexistent shared root table or Structured Column.
 model: models/document-layout.yaml
 tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, table-per-concrete-subtype, document-layout, write-sequence, insert, slice-snapshot-1, slice-managed-1]
 shape: writeSequence
