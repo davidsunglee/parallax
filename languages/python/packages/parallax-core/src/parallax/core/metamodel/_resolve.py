@@ -24,6 +24,7 @@ from parallax.core.metamodel._identities import (
     AttributeIdentity,
     EntityIdentity,
     EntityReference,
+    IndexIdentity,
     RelationshipIdentity,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
@@ -86,6 +87,7 @@ __all__ = [
     "INDEX_ATTRIBUTE_MISSING",
     "INDEX_ATTRIBUTE_NOT_LOCAL",
     "INDEX_EMPTY",
+    "INDEX_IDENTITY_DUPLICATE",
     "INVALID_ENTITY_IDENTITY",
     "LOCAL_MEMBER_COLLISION",
     "PRIMARY_KEY_MISSING",
@@ -145,6 +147,12 @@ PRIMARY_KEY_MULTIPLE: Final[IssueCode] = "metamodel-primary-key-multiple"
 """A standalone Entity declares more than one primary-key Attribute. Composite
 keys are not part of the contract, so this is a defect rather than a shape."""
 
+INDEX_IDENTITY_DUPLICATE: Final[IssueCode] = "metamodel-index-identity-duplicate"
+"""Two Indices of one Entity bear one name, so ``EntityMetadata.index`` has no
+single answer for it. Identity alone decides: a frontend hands a derived Index
+over as an ordinary one, so it claims its name like any other, and components
+neither cause nor excuse the collision."""
+
 INDEX_EMPTY: Final[IssueCode] = "metamodel-index-empty"
 """An Index declares no Attribute component."""
 
@@ -189,6 +197,7 @@ RESOLVER_ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         TEMPORAL_MEMBER_RESERVED,
         PRIMARY_KEY_MISSING,
         PRIMARY_KEY_MULTIPLE,
+        INDEX_IDENTITY_DUPLICATE,
         INDEX_EMPTY,
         INDEX_ATTRIBUTE_MISSING,
         INDEX_ATTRIBUTE_NOT_LOCAL,
@@ -532,18 +541,35 @@ def _index_issues(
     declaration: UnresolvedEntityDeclaration,
     index: Mapping[EntityIdentity, Sequence[UnresolvedEntityDeclaration]],
 ) -> list[MetamodelIssue]:
-    """The Index defects of one declaration, each component judged once.
+    """The Index defects of one declaration, each position and component judged once.
 
-    A component occurring several times in one Index is one repetition defect
-    and one component, so the repetition is reported when it is first observed
-    and the component's locality is judged on its first occurrence alone.
+    An Index position is one name of one Entity, so every Index bearing that
+    name shares a Model Location: bearing it twice is one repetition defect, and
+    a component defect two such Indices both carry is one defect reached twice.
+    A component occurring several times in one Index is likewise one repetition
+    defect and one component, so the repetition is reported when it is first
+    observed and the component's locality is judged on its first occurrence
+    alone.
     """
     local = {attribute.identity.name for attribute in declaration.attributes}
     issues: list[MetamodelIssue] = []
+    names: Counter[IndexIdentity] = Counter()
+    reached: dict[IndexIdentity, set[MetamodelIssue]] = {}
     for declared_index in declaration.indices:
-        location = IndexLocation(declared_index.identity)
-        if not declared_index.attributes:
+        identity = declared_index.identity
+        location = IndexLocation(identity)
+        names[identity] += 1
+        if names[identity] == 2:
             issues.append(
+                MetamodelIssue(
+                    INDEX_IDENTITY_DUPLICATE,
+                    location,
+                    message=f"two Indices of this Entity bear the name {identity.name!r}",
+                )
+            )
+        declared: list[MetamodelIssue] = []
+        if not declared_index.attributes:
+            declared.append(
                 MetamodelIssue(
                     INDEX_EMPTY, location, message="an Index declares at least one Attribute"
                 )
@@ -553,7 +579,7 @@ def _index_issues(
             related = (AttributeLocation(component),)
             occurrences[component] += 1
             if occurrences[component] == 2:
-                issues.append(
+                declared.append(
                     MetamodelIssue(
                         INDEX_ATTRIBUTE_DUPLICATE,
                         location,
@@ -564,7 +590,7 @@ def _index_issues(
             if occurrences[component] > 1:
                 continue
             if component.entity != declaration.identity:
-                issues.append(
+                declared.append(
                     MetamodelIssue(
                         INDEX_ATTRIBUTE_NOT_LOCAL,
                         location,
@@ -574,7 +600,7 @@ def _index_issues(
                 )
             elif component.name not in local:
                 inherited = _applicable_attribute((declaration,), component.name, index)
-                issues.append(
+                declared.append(
                     MetamodelIssue(
                         INDEX_ATTRIBUTE_NOT_LOCAL if inherited else INDEX_ATTRIBUTE_MISSING,
                         location,
@@ -586,6 +612,9 @@ def _index_issues(
                         ),
                     )
                 )
+        position = reached.setdefault(identity, set())
+        issues.extend(issue for issue in declared if issue not in position)
+        position.update(declared)
     return issues
 
 

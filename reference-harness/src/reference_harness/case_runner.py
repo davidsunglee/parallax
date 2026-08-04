@@ -62,6 +62,12 @@ from .inheritance import (
     validate_family,
     validate_operation_inheritance,
 )
+from .metamodel import (
+    MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
+)
+from .metamodel import (
+    validate_index_identities,
+)
 from .op_validate import validate_operation
 from .operation_references import OPERAND_ROW_WRAPPER_TAGS
 from .predicate_write_validate import (
@@ -149,6 +155,7 @@ def _write_column_order(case: Case, entity: Entity) -> tuple[str, ...]:
 # with it.
 ALL_REJECTED_RULES = (
     REJECTED_RULES
+    | METAMODEL_MODEL_REJECTED_RULES
     | MODEL_REJECTED_RULES
     | STORAGE_LAYOUT_MODEL_REJECTED_RULES
     | OPERATION_REJECTED_RULES
@@ -2884,7 +2891,8 @@ def _assert_rejected(case: Case) -> None:
     ``when.write``, or inline ``when.model`` and names the violated rule in
     ``then.rejectedRule``. Operations run ``validate_operation`` and Inheritance's
     ``validate_operation_inheritance``. Writes run ``validate_write`` and
-    Inheritance's ``validate_subtype_write``. Inline models run Inheritance's
+    Inheritance's ``validate_subtype_write``. Inline models run the foundational
+    ``validate_index_identities`` before the semantic rule sets — Inheritance's
     ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
     standalone Table ownership and Column claims. The referenced top-level model
     remains valid and loadable.
@@ -2914,11 +2922,12 @@ def _assert_rejected(case: Case) -> None:
             # the value-object write validation without disturbing the existing cases.
             validate_subtype_write(entity, case.model.entity_defs, case.write or {})
         elif "model" in case.when:
-            validate_family(case.when["model"])
             inline_entities = case.when["model"].get("entities")
             if not isinstance(inline_entities, list):
                 inline_entity = case.when["model"].get("entity")
                 inline_entities = [inline_entity] if isinstance(inline_entity, dict) else []
+            validate_index_identities(inline_entities)
+            validate_family(case.when["model"])
             validate_storage_layout(inline_entities)
         else:  # pragma: no cover - guarded by _assert_schema
             raise CaseFailure(

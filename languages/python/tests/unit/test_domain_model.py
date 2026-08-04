@@ -27,6 +27,7 @@ from parallax.core import (
     TxTemporal,
     ValueObject,
     attr,
+    index,
     rel,
 )
 from parallax.core.entity import METAMODEL_DEFINITION_CODES, MetamodelLookupError
@@ -115,6 +116,19 @@ def test_two_distinct_classes_sharing_one_identity_reach_whole_model_validation(
     with pytest.raises(MetamodelValidationError) as caught:
         DomainModel(First, Second)
     assert [issue.code for issue in caught.value.issues] == ["metamodel-duplicate-entity-identity"]
+
+
+def test_a_declared_index_may_not_claim_the_derived_primary_key_name() -> None:
+    """The derived Index is handed to the resolver like any other, so it claims
+    its name; matching the derived components would not rescue the collision."""
+
+    class Person(Entity, table="person", indices=(index("person_pk", "name"),)):
+        id: Attr[int] = attr(primary_key=True)
+        name: Attr[str]
+
+    with pytest.raises(MetamodelValidationError) as caught:
+        DomainModel(Person)
+    assert [issue.code for issue in caught.value.issues] == ["metamodel-index-identity-duplicate"]
 
 
 def test_a_target_outside_the_candidate_set_is_a_model_defect() -> None:

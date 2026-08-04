@@ -962,6 +962,16 @@ _VO_VERSIONED_RESOLVE_SCENARIO_REASON: Final[str] = (
     "idiomatic story was authored for this multi-capability combination scenario"
 )
 
+_METAMODEL_MODEL_REJECT_UNREACHABLE_REASON: Final[str] = (
+    "a `when.model` foundational Metamodel invariant the fixed resolver classifies at "
+    "model construction (a `MetamodelValidationError` issue), not an operation or write "
+    "the Usage Guide's statement- and verb-level examples could spell. The class "
+    "frontend reaches the SAME issue — it derives the primary-key Index and hands it to "
+    "the same resolver, so an `indices=` entry claiming the derived name is refused "
+    "identically (`test_domain_model.py` exercises it at that seam) — but the "
+    "observable is a rejected model, not a developer verb an idiomatic story can narrate"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
@@ -1098,6 +1108,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-117": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-121": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-122": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    # -- m-metamodel: foundational model-declaration reject ------------------ #
+    "m-metamodel-001": _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON,
     # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #
     "m-navigate-001": _NAVIGATE_TAG_REDUNDANT_REASON,
     "m-navigate-005": _NAVIGATE_TAG_REDUNDANT_REASON,

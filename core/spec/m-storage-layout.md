@@ -766,8 +766,9 @@ their spellings equals a physical Column.
   `physicalPrimaryKey`; dialects only render the already-selected values. Every
   constraint it emits comes from an Index: the derived primary-key Index is
   rendered as the key constraint and each other unique Index as a unique
-  constraint, and the two sets are disjoint, so no consumer suppresses one
-  constraint because another happens to span the same Columns. The Structured
+  constraint, and the two sets are disjoint because Model Formation refuses an
+  Entity whose Indices share one name, so no consumer suppresses one constraint
+  because another happens to span the same Columns. The Structured
   Column appears in DDL purely as a consequence of the layout owning one more
   `Document`-tier slot.
 - Fixture loading resolves logical members and derived discriminator values

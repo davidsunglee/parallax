@@ -1,0 +1,30 @@
+# Negative (m-metamodel): an authored Index claims the name the Entity's derived
+# primary-key Index already bears.
+#
+# `Person` declares the primary key `id`, so the frontend hands Model Formation
+# the derived unique Index `person_pk` ahead of every authored Index; the
+# authored `person_pk` is then a second Index of one Identity and
+# `EntityMetadata.index('person_pk')` has no single answer, so the model is
+# refused before any consumer can silently keep one of the two. The refusal
+# turns on the Identity alone: the authored components here (`name`) are not the
+# derived ones (`id`), and choosing the derived ones instead would change
+# nothing, because the primary-key Index is not authored (`m-descriptor`) and
+# guessing its shape correctly is still authoring it. The remedy is a different
+# name, which is what distinguishes this from a merely redundant Index — every
+# unique Index is rendered, and none is suppressed for spanning the same Columns
+# (`m-storage-layout`).
+model: models/person.yaml
+tags: [m-metamodel, m-model-formation, m-descriptor, rejected, negative, index, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entity:
+      name: Person
+      table: person
+      attributes:
+        - { name: id, type: int64, primaryKey: true }
+        - { name: name, type: string, maxLength: 64 }
+      indices:
+        - { name: person_pk, attributes: [name], unique: true }
+then:
+  rejectedRule: metamodel-index-identity-duplicate
