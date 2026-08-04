@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, assert_never, cast
+from typing import Literal, assert_never
 
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.inheritance import InheritanceFacet
@@ -44,7 +44,6 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    PrimaryKey,
     ValueObjectMetadata,
 )
 from parallax.core.op_algebra import (
@@ -85,7 +84,6 @@ from parallax.core.sql_gen._inheritance import (
 # aliasing-down convention as the family lane above.
 from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
 from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
-from parallax.core.storage_layout import ColumnSlot as _ColumnSlot
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
@@ -714,19 +712,29 @@ def _compile_tph_partitioned(
     branch_sqls: list[str] = []
     binds: list[object] = []
     layout = _table_layout(storage, facet, entity.identity)
-    root = _entity_view(facet, entity.identity).root
-    key_columns = tuple(
-        cast(_ColumnSlot, layout.contribution(attribute.identity)).column.name
-        for attribute in _entity_view(facet, root).applicable_attributes
-        if isinstance(attribute.primary_key, PrimaryKey)
-    )
+    key_columns = tuple(slot.column.name for slot in layout.physical_primary_key)
     for branch_index, concrete in enumerate(plan.position):
         branch_ctx = _Ctx(model, facet, storage, dialect)
-        branch_scope = _EntityScope(
+        base_scope = _EntityScope(
             branch_ctx,
             entity,
             layout,
             alias=f"t{branch_index + 1}" if lock is not None else "t0",
+            position=plan.position,
+            variant=concrete,
+        )
+        tag = _TagPredicate(
+            _tag_column(layout, _entity_view(facet, entity.identity).root),
+            (concrete,),
+        )
+        tag_sql, tag_binds = _tph_tag_guard(base_scope, facet, tag)
+        tagged_alias = f"p{branch_index + 1}"
+        tagged = f"select * from {plan.table} {base_scope.alias} where {tag_sql}"
+        branch_scope = _EntityScope(
+            branch_ctx,
+            entity,
+            layout,
+            alias=tagged_alias,
             position=plan.position,
             variant=concrete,
         )
@@ -737,17 +745,11 @@ def _compile_tph_partitioned(
         else:
             projection, projection_binds = plan.projection(dialect, branch_scope.alias)
             branch_ctx.binds.extend(projection_binds)
-        parts = [f"select {projection}", f"from {plan.table} {branch_scope.alias}"]
-        inner = _lower_predicate(plan.inner, branch_scope)
-        tag = _TagPredicate(
-            _tag_column(layout, _entity_view(facet, entity.identity).root),
-            (concrete,),
-        )
-        tag_sql, tag_binds = _tph_tag_guard(branch_scope, facet, tag)
-        terms = [f"({inner})"] if inner else []
-        terms.append(tag_sql)
-        parts.append("where " + " and ".join(terms))
         branch_ctx.binds.extend(tag_binds)
+        inner = _lower_predicate(plan.inner, branch_scope)
+        parts = [f"select {projection}", f"from ({tagged}) {tagged_alias}"]
+        if inner:
+            parts.append(f"where {inner}")
         branch_sqls.append(" ".join(parts))
         binds.extend(branch_ctx.binds)
 
@@ -772,7 +774,9 @@ def _compile_tph_partitioned(
             f"join ({union}) u on {join_terms}",
         ]
         _append_result_shape(parts, outer_scope, distinct, order_keys, limit, lock)
-        return _normalize(Statement(" ".join(parts), tuple(outer_ctx.binds) + tuple(binds)))
+        tail_binds = outer_ctx.binds[len(projection_binds) :]
+        ordered_binds = (*projection_binds, *binds, *tail_binds)
+        return _normalize(Statement(" ".join(parts), ordered_binds))
 
     if not distinct and not order_keys and limit is None:
         return _normalize(Statement(union, tuple(binds)))
