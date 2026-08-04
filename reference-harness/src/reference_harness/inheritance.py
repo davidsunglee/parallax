@@ -18,8 +18,8 @@ follow, raising the shared
 ``then.rejectedRule``.
 
 Temporality is a FAMILY-WIDE property, not an ordinary inherited member: only
-the root may declare ``asOfAxes``, and every descendant inherits the
-root's complete axis set unchanged (never redeclaring, adding, removing,
+the root may declare ``temporality``, and every descendant inherits the profile
+and the axes it derives unchanged (never redeclaring, adding, removing,
 overriding, or shadowing one), regardless of whether the root itself is
 temporal.
 
@@ -98,10 +98,10 @@ INHERITANCE_STRATEGY_REDECLARED = "inheritance-strategy-redeclared"
 INHERITANCE_MISSING_TAG_VALUE = "inheritance-missing-tag-value"
 INHERITANCE_DUPLICATE_TAG_VALUE = "inheritance-duplicate-tag-value"
 INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY = "inheritance-tag-on-concrete-subtype-strategy"
-# Temporality is a family-wide property: only the root may declare `asOfAxes`;
-# an `abstract-subtype` or `concrete-subtype` that declares its own — whether
-# the root is itself non-temporal or temporal — is rejected.
-INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED = "inheritance-temporal-axes-not-root-owned"
+# Temporality is a family-wide property: only the root may declare
+# `temporality`; an `abstract-subtype` or `concrete-subtype` that declares its
+# own — whether the root is itself non-temporal or temporal — is rejected.
+INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED = "inheritance-temporality-not-root-owned"
 # Optimistic locking is likewise a family-wide property (D-25 / ADR 0027): only
 # the root may declare an `optimisticLocking` attribute; an `abstract-subtype`
 # or `concrete-subtype` that declares its own — whether the root is itself
@@ -132,7 +132,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
         INHERITANCE_MISSING_TAG_VALUE,
         INHERITANCE_DUPLICATE_TAG_VALUE,
         INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY,
-        INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
+        INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED,
         INHERITANCE_OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         INHERITANCE_PERSISTENCE_NOT_ROOT_OWNED,
         INHERITANCE_LAYOUT_NOT_ROOT_OWNED,
@@ -555,22 +555,22 @@ def resolve_effective_definition(entity_defs: list[dict[str, Any]], name: str) -
     resolved["attributes"] = merged
     resolved["valueObjects"] = _merge_ancestry_value_objects(family, key)
 
-    # Inherit As-Of Axes from
+    # Inherit the Temporality Profile from
     # the family ROOT ALONE (the binding root-ownership decision: temporality is
     # family-wide, not an ordinary inherited member — `validate_family_defs`
-    # check 4a rejects any OTHER participant that declares its own axes, so a
-    # valid descriptor's non-root `resolved` never carries them locally). The
-    # harness surfaces the root's axes here, exactly as it derives the inherited
-    # attribute chain, so the DDL builds the milestone key, is_temporal is true,
-    # and the milestone-write / as-of-read oracles treat the concrete as the
-    # milestone-owning row it is. A per-entity metamodel reader (which does not
-    # flatten inheritance) still classifies the concrete non-temporal from its
-    # own empty axes — this is the inheritance-aware view.
-    if "asOfAxes" not in resolved:
+    # check 4a rejects any OTHER participant that declares its own profile, so a
+    # valid descriptor's non-root `resolved` never carries one locally). The
+    # harness surfaces the root's profile here, exactly as it derives the
+    # inherited attribute chain, so the DDL builds the milestone key, is_temporal
+    # is true, and the milestone-write / as-of-read oracles treat the concrete as
+    # the milestone-owning row it is. A per-entity metamodel reader (which does
+    # not flatten inheritance) still classifies the concrete non-temporal from
+    # its own absent profile — this is the inheritance-aware view.
+    if "temporality" not in resolved:
         root_name = family.root_of(key)
         root_def = family.defs.get(root_name, {}) if root_name is not None else {}
-        if "asOfAxes" in root_def:
-            resolved["asOfAxes"] = copy.deepcopy(root_def["asOfAxes"])
+        if "temporality" in root_def:
+            resolved["temporality"] = root_def["temporality"]
 
     role = role_of(definition)
     strategy = family.strategy_of(key)
@@ -739,16 +739,16 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 f"root declares it",
             )
 
-    # 4a. A non-root participant MUST NOT declare its own temporal axes (the
-    #     binding root-ownership decision): temporality is family-wide, so only
-    #     the root may declare `asOfAxes`, regardless of whether the root
+    # 4a. A non-root participant MUST NOT declare its own Temporality Profile
+    #     (the binding root-ownership decision): temporality is family-wide, so
+    #     only the root may declare `temporality`, regardless of whether the root
     #     itself is temporal.
     for definition in participants:
-        if role_of(definition) != ROLE_ROOT and "asOfAxes" in definition:
+        if role_of(definition) != ROLE_ROOT and "temporality" in definition:
             raise RejectionError(
-                INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
-                f"non-root {definition['name']!r} declares its own as-of axes; temporal axes "
-                f"are family-wide and MUST be declared only on the root",
+                INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED,
+                f"non-root {definition['name']!r} declares its own temporality; the "
+                f"Temporality Profile is family-wide and MUST be declared only on the root",
             )
 
     # 4b. A non-root participant MUST NOT declare its own `optimisticLocking`

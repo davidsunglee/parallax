@@ -113,7 +113,7 @@ def validate(metamodel: Metamodel) -> None:
     _reject_unknown_parent(participants, by_name)
     _reject_cycles(participants)
     _reject_strategy_redeclared(participants)
-    _reject_descendant_temporal_axes(participants)
+    _reject_descendant_temporality(participants)
     _reject_descendant_optimistic_locking(participants)
     _reject_descendant_layout(participants)
     _reject_concrete_without_root(participants, by_name)
@@ -204,26 +204,26 @@ def _reject_strategy_redeclared(participants: tuple[Entity, ...]) -> None:
             )
 
 
-def _reject_descendant_temporal_axes(participants: tuple[Entity, ...]) -> None:
+def _reject_descendant_temporality(participants: tuple[Entity, ...]) -> None:
     """Reject any ``abstract-subtype`` or ``concrete-subtype`` that declares its
-    own ``asOfAttributes``.
+    own ``temporality``.
 
-    Temporality is a family-wide property: only the family ROOT may declare
-    as-of axes, and every descendant inherits exactly that set (never
-    redeclares, adds, removes, overrides, or shadows an axis) — regardless of
+    The Temporality Profile is a family-wide property: only the family ROOT may
+    declare it, and every descendant inherits exactly the axes it derives (never
+    redeclares, adds, removes, overrides, or shadows one) — regardless of
     whether the root itself is temporal. A non-temporal root with a temporal
     descendant would leave the family's root-owned coordinate system
     ill-defined (mixed temporality is not supported); a temporal root whose
-    descendant redeclares or adds an axis would make the descendant's own
-    temporal profile diverge from the family it belongs to. Both shapes are
-    rejected here, uniformly, before any SQL.
+    descendant repeats the profile would make the descendant's own temporal
+    shape a second source of truth. Both shapes are rejected here, uniformly,
+    before any SQL.
     """
     for entity in participants:
-        if _inh(entity).role != "root" and entity.as_of_axes:
+        if _inh(entity).role != "root" and entity.temporality is not None:
             raise InheritanceError(
-                "inheritance-temporal-axes-not-root-owned",
-                f"non-root {entity.name} declares its own as-of axes; temporal axes are a "
-                "family-wide property and MUST be declared only on the root",
+                "inheritance-temporality-not-root-owned",
+                f"non-root {entity.name} declares its own temporality; the Temporality "
+                "Profile is family-wide and MUST be declared only on the root",
                 entity=entity.name,
             )
 

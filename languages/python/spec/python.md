@@ -1005,11 +1005,16 @@ is never an implicit role. Both fail at class creation
 (`entity-base-invalid`).
 
 Temporality is selected by the base class — `Entity`, `TxTemporal`, or
-`Bitemporal` — never by a keyword. `TxTemporal` supplies the reserved
-read-only `tx_start`/`tx_end`
-attributes (canonical `txStart`/`txEnd`, physical `in_z`/`out_z`); `Bitemporal`
-additionally supplies `valid_start`/`valid_end` (canonical
-`validStart`/`validEnd`, physical `from_z`/`thru_z`). A descendant inherits its
+`Bitemporal` — never by a keyword, and each base names the `temporality`
+profile a descriptor spells: none, `transaction-time`, and `bitemporal`. Both
+frontends then reach the `m-metamodel` seam through the one derivation
+`m-descriptor` fixes, so `TxTemporal` supplies the reserved read-only
+`tx_start`/`tx_end` attributes (canonical `txStart`/`txEnd`, framework-fixed
+`in_z`/`out_z`) and `Bitemporal` additionally supplies
+`valid_start`/`valid_end` (canonical `validStart`/`validEnd`, framework-fixed
+`from_z`/`thru_z`). The Python spelling of each is the canonical name folded by
+`default_column_name`, the inverse of the snake-to-camel conversion the
+authoring boundary applies to every other member. A descendant inherits its
 root's temporal base and cannot change shape. Redeclaring a reserved temporal
 name is the shared `metamodel-temporal-member-reserved` rule; the Python
 frontend enforces it earlier and more broadly, rejecting the redeclaration at

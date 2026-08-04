@@ -38,6 +38,7 @@ from .predicate_write_validate import (
 )
 from .schemas import build_registry, load_schemas
 from .storage_layout import validate_storage_layout
+from .temporality import derive_temporal_structure
 from .value_object_resolve import RejectionError
 
 
@@ -375,7 +376,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     for model_path in sorted(models_dir.glob("**/*.y*ml")):
         descriptor = _load_yaml(model_path)
         _validate(descriptor, metamodel_schema, f"model {model_path.name}", errors)
-        entity_defs = _descriptor_entity_defs(descriptor)
+        entity_defs = _descriptor_entity_defs(derive_temporal_structure(descriptor))
         families[model_path.name] = Family(entity_defs)
         model_entities[model_path.name] = entity_defs
         try:

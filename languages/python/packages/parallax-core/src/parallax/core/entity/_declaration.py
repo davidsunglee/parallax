@@ -54,6 +54,7 @@ from parallax.core.metamodel import (
     AttributePrimaryKey,
     AttributeReference,
     Column,
+    DerivedAxis,
     EntityIdentity,
     EntityReference,
     ExactEntityReference,
@@ -87,12 +88,15 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     default_column_name,
     derive_primary_key_index,
+    derive_temporal_structure,
     resolve_entity_reference,
+    temporality_profile,
     value_object_metadata,
 )
 from parallax.core.metamodel import AbstractSubtype as AcceptedAbstractSubtype
 from parallax.core.metamodel import ConcreteSubtype as AcceptedConcreteSubtype
 from parallax.core.metamodel import Document as AcceptedDocument
+from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 
 __all__ = [
     "DECLARATION_MEMBER_NAMES",
@@ -178,24 +182,28 @@ RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
     }
 )
 
-STANDARD_TEMPORAL_NAMES: Final[tuple[str, ...]] = (
-    "valid_start",
-    "valid_end",
-    "tx_start",
-    "tx_end",
+
+def _python_spelling(canonical: str) -> str:
+    """The Python member spelling a framework member's canonical name comes from.
+
+    The authoring boundary converts a member's Python spelling to its canonical
+    name with :func:`snake_to_camel`, and the shared convention table declares
+    the framework's own members canonically, so the spelling an author reads and
+    queries through is that conversion inverted — the same lowercase-and-split
+    fold :func:`default_column_name` applies.
+    """
+    return default_column_name(canonical)
+
+
+STANDARD_TEMPORAL_NAMES: Final[tuple[str, ...]] = tuple(
+    _python_spelling(endpoint.name)
+    for _, endpoints in sorted(TEMPORAL_MEMBERS.items(), key=lambda item: item[0].value)
+    for endpoint in endpoints
 )
 """The framework temporal member names as Python spells them, in canonical axis order."""
 
-# Each axis's framework member names over the stable physical columns. The names
-# are the Python spellings; each one's canonical name is the ordinary
-# `snake_to_camel` conversion, so `tx_start` resolves to `txStart`.
-_TEMPORAL_MEMBERS: Final[dict[TemporalDimension, tuple[tuple[str, str], tuple[str, str]]]] = {
-    TemporalDimension.VALID_TIME: (("valid_start", "from_z"), ("valid_end", "thru_z")),
-    TemporalDimension.TRANSACTION_TIME: (("tx_start", "in_z"), ("tx_end", "out_z")),
-}
-
 _RESERVED_TEMPORAL_NAMES: Final[frozenset[str]] = frozenset(
-    snake_to_camel(py_name) for py_name in STANDARD_TEMPORAL_NAMES
+    endpoint.name for endpoints in TEMPORAL_MEMBERS.values() for endpoint in endpoints
 )
 
 
@@ -1379,13 +1387,15 @@ def _inject_temporal_members(
 ) -> None:
     """Append the framework temporal members after every authored one.
 
-    Canonical axis order — Valid Time first — so the shape owner's declaration
-    reads exactly as a hand-authored body would.
+    The shared derivation supplies the endpoints, so a class declaration and a
+    descriptor declaring the same Temporality Profile reach the seam carrying the
+    same members in the same canonical axis order — Valid Time first.
     """
-    for dimension in sorted(axes, key=lambda axis: axis.value):
-        for py_name, column in _TEMPORAL_MEMBERS[dimension]:
+    for axis in _derived_axes(axes):
+        for endpoint in (axis.start, axis.end):
+            py_name = _python_spelling(endpoint.name)
             annotations[py_name] = Attr[_dt.datetime]
-            ns[py_name] = AttrSpec(column=column)
+            ns[py_name] = AttrSpec(column=endpoint.column)
 
 
 def _axis_metadata(
@@ -1393,16 +1403,22 @@ def _axis_metadata(
 ) -> tuple[AsOfAxisMetadata, ...]:
     return tuple(
         AsOfAxisMetadata(
-            dimension=dimension,
-            start_attribute=AttributeIdentity(
-                identity, snake_to_camel(_TEMPORAL_MEMBERS[dimension][0][0])
-            ),
-            end_attribute=AttributeIdentity(
-                identity, snake_to_camel(_TEMPORAL_MEMBERS[dimension][1][0])
-            ),
+            dimension=axis.dimension,
+            start_attribute=AttributeIdentity(identity, axis.start.name),
+            end_attribute=AttributeIdentity(identity, axis.end.name),
         )
-        for dimension in sorted(axes, key=lambda axis: axis.value)
+        for axis in _derived_axes(axes)
     )
+
+
+def _derived_axes(axes: tuple[TemporalDimension, ...]) -> tuple[DerivedAxis, ...]:
+    """The As-Of Axes the temporal base's dimensions derive.
+
+    A framework temporal base selects dimensions where a descriptor spells a
+    profile, so the dimensions are routed back through the profile they name to
+    reach the one derivation both frontends share.
+    """
+    return derive_temporal_structure(temporality_profile(axes))
 
 
 def _reject_incompatible_generation(

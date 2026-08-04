@@ -24,22 +24,13 @@ entities:
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
+    temporality: transaction-time
     attributes:
       - name: id
         type: int64
         primaryKey: true
       - name: price
         type: decimal(18,2)
-      - name: txStart
-        type: timestamp
-        column: in_z
-      - name: txEnd
-        type: timestamp
-        column: out_z
-    asOfAxes:
-      - dimension: transaction-time
-        startAttribute: txStart
-        endAttribute: txEnd
   - name: SpotQuote
     namespace: parallax.compatibility
     table: spot_quote

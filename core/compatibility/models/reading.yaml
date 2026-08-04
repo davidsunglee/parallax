@@ -6,7 +6,7 @@
 # small Transaction-Time-Only family: the whole family maps to ONE shared `reading`
 # table discriminated by the root's `tag` column (`kind`), and every row is an
 # audit-only MILESTONE over [in_z, out_z). The single Transaction-Time dimension lives on the
-# ROOT, inherited by the concrete subtype (which declares no asOfAxes of its
+# ROOT, inherited by the concrete subtype (which declares no temporality of its
 # own; the inheritance-aware harness flattens the axis in).
 #
 #   Reading (root, ABSTRACT)     — strategy + tag column + the Transaction-Time dimension; owns
@@ -32,22 +32,13 @@ entities:
       strategy: table-per-hierarchy
       tag:
         column: kind
+    temporality: transaction-time
     attributes:
       - name: id
         type: int64
         primaryKey: true
       - name: celsius
         type: decimal(18,2)
-      - name: txStart
-        type: timestamp
-        column: in_z
-      - name: txEnd
-        type: timestamp
-        column: out_z
-    asOfAxes:
-      - dimension: transaction-time
-        startAttribute: txStart
-        endAttribute: txEnd
   - name: MeterReading
     namespace: parallax.compatibility
     inheritance:

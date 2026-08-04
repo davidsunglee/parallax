@@ -94,6 +94,7 @@
     "ConcreteSubtype",
     "DUPLICATE_ENTITY_IDENTITY",
     "DefiningRelationshipDeclaration",
+    "DerivedAxis",
     "Document",
     "EntityDeclaration",
     "EntityIdentity",
@@ -191,6 +192,7 @@
     "compile_metadata",
     "default_column_name",
     "derive_primary_key_index",
+    "derive_temporal_structure",
     "entity_by_name",
     "inheritance_parent",
     "is_candidate_metamodel",
@@ -199,6 +201,7 @@
     "resolve",
     "resolve_entity_reference",
     "sort_issues",
+    "temporality_profile",
     "value_object_metadata",
     "vo_document_violation"
   ],

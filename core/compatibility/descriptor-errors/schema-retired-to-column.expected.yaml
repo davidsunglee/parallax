@@ -1,11 +1,12 @@
-# The retired `toColumn` bound a temporal axis's upper bound directly to a
-# physical column. A canonical axis references its exclusive end through
-# `endAttribute`; physical placement stays an ordinary attribute `column`
-# override and is never repeated on the axis. The axis object's closed key set
-# rejects the retired key as one `additionalProperties` violation at the axis,
-# even beside a fully canonical dimension/start/end triple.
+# The retired `toColumn` bound a temporal axis's exclusive end directly to a
+# physical column, on an axis a descriptor no longer authors at all: an axis and
+# both its endpoints are derived from `temporality`, and their columns are
+# framework-fixed. The retired key therefore travels inside the retired
+# `asOfAxes` container, and the entity's closed key set rejects that container as
+# one `additionalProperties` violation at the entity — so re-admitting the
+# container without also refusing `toColumn` fails here by name.
 phase: schema
 code: descriptor-schema-invalid
 violations:
-  - path: [entity, asOfAxes, 0]
+  - path: [entity]
     rule: additionalProperties

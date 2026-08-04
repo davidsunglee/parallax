@@ -405,10 +405,10 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-032-rejected-missing-root": inheritance.MISSING_ROOT,
     "m-inheritance-121-rejected-missing-concrete-subtype": inheritance.MISSING_CONCRETE_SUBTYPE,
     "m-inheritance-098-rejected-temporal-axes-on-abstract-subtype": (
-        inheritance.TEMPORAL_AXES_NOT_ROOT_OWNED
+        inheritance.TEMPORALITY_NOT_ROOT_OWNED
     ),
     "m-inheritance-099-rejected-temporal-axes-redeclared-on-concrete": (
-        inheritance.TEMPORAL_AXES_NOT_ROOT_OWNED
+        inheritance.TEMPORALITY_NOT_ROOT_OWNED
     ),
     "m-inheritance-102-rejected-optlock-declaring-descendant": (
         inheritance.OPTIMISTIC_LOCKING_NOT_ROOT_OWNED
@@ -497,7 +497,7 @@ def test_the_owned_issue_code_set_is_closed() -> None:
         "inheritance-primary-key-multiple",
         "inheritance-strategy-redeclared",
         "inheritance-tag-on-concrete-subtype-strategy",
-        "inheritance-temporal-axes-not-root-owned",
+        "inheritance-temporality-not-root-owned",
         "inheritance-tpcs-abstract-table-forbidden",
         "inheritance-tpcs-concrete-table-required",
         "inheritance-tph-descendant-table-forbidden",

@@ -19,8 +19,10 @@ Two contract facts are asserted, both Docker-free:
    phase judges only schema-valid documents and realizes the m-descriptor
    named rejections: a ``type-spelling-invalid`` violation for a decimal
    spelling whose parameters break the m-core bounds or carry non-canonical
-   digits, and an ``index-temporal-attribute`` violation for an authored Index
-   component naming an as-of axis endpoint.
+   digits, a ``temporal-attribute-declared`` violation for an authored Attribute
+   bearing an as-of axis endpoint's canonical name, and an
+   ``index-temporal-attribute`` violation for an authored Index component naming
+   one.
 2. **Export determinism** — every corpus model under ``models/`` canonicalizes
    to a byte-identical fixed point in both JSON and YAML (serialize ->
    deserialize -> serialize), the m-descriptor byte-deterministic export law
@@ -48,6 +50,7 @@ from referencing.exceptions import Unresolvable
 from . import serde
 from .paths import schemas_dir
 from .schemas import load_json
+from .temporality import TEMPORALITY_PROFILES, temporal_axes
 
 __all__ = [
     "Violation",
@@ -134,19 +137,44 @@ def _decimal_spelling_invalid(spelling: str) -> bool:
     return precision < 1 or scale > precision
 
 
+def _endpoint_names(entity: Any) -> frozenset[str]:
+    """The canonical attribute names *entity*'s Temporality Profile derives."""
+    profile = entity.get("temporality")
+    if profile not in TEMPORALITY_PROFILES:
+        return frozenset()
+    return frozenset(
+        endpoint.name for axis in temporal_axes(entity) for endpoint in (axis.start, axis.end)
+    )
+
+
+def _temporal_attribute_violations(entity: Any, prefix: tuple[str | int, ...]) -> set[Violation]:
+    """Every authored Attribute of *entity* bearing an as-of axis endpoint's name.
+
+    A Temporality Profile derives both endpoints of every axis it names, over
+    framework-fixed columns, so authoring one declares a member the profile
+    already supplies. Each offending attribute is one violation at its own
+    document path."""
+    attributes = entity.get("attributes")
+    if not isinstance(attributes, list):
+        return set()
+    endpoints = _endpoint_names(entity)
+    return {
+        Violation((*prefix, "attributes", position, "name"), "temporal-attribute-declared")
+        for position, attribute in enumerate(attributes)
+        if isinstance(attribute, dict) and attribute.get("name") in endpoints
+    }
+
+
 def _index_temporal_violations(entity: Any, prefix: tuple[str | int, ...]) -> set[Violation]:
     """Every authored Index component of *entity* naming an as-of axis endpoint.
 
     The physical key over the axis endpoints is derived, so an authored Index
     naming one either restates it in an author-chosen position or contradicts
     it. Each offending component is one violation at its own document path."""
-    axes = entity.get("asOfAxes")
     indices = entity.get("indices")
-    if not isinstance(axes, list) or not isinstance(indices, list):
+    if not isinstance(indices, list):
         return set()
-    endpoints = {
-        axis[key] for axis in axes for key in ("startAttribute", "endAttribute") if key in axis
-    }
+    endpoints = _endpoint_names(entity)
     return {
         Violation((*prefix, "indices", position, "attributes", offset), "index-temporal-attribute")
         for position, index in enumerate(indices)
@@ -179,9 +207,11 @@ def canonical_value_violations(document: Any) -> list[Violation]:
     exactly the rules m-descriptor names for phase 3: every ``type`` member
     holding a decimal spelling whose parameters break the m-core bounds or
     carry non-canonical digits is one ``type-spelling-invalid`` violation at
-    that member's document path, and every authored Index component naming an
-    as-of axis endpoint is one ``index-temporal-attribute`` violation at its
-    own. An empty result means the document is value-valid."""
+    that member's document path, every authored Attribute bearing an as-of axis
+    endpoint's canonical name is one ``temporal-attribute-declared`` violation at
+    its own, and every authored Index component naming one is one
+    ``index-temporal-attribute`` violation at its own. An empty result means the
+    document is value-valid."""
     identities: set[Violation] = set()
 
     def walk(node: Any, path: tuple[str | int, ...]) -> None:
@@ -197,6 +227,7 @@ def canonical_value_violations(document: Any) -> list[Violation]:
 
     walk(document, ())
     for prefix, entity in _entities(document):
+        identities |= _temporal_attribute_violations(entity, prefix)
         identities |= _index_temporal_violations(entity, prefix)
     return sorted(identities, key=violation_sort_key)
 

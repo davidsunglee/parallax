@@ -80,7 +80,6 @@ from .storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
 from .storage_layout import (
-    TEMPORAL_DIMENSION_RANK,
     ColumnContributor,
     ColumnSlot,
     ColumnTier,
@@ -94,6 +93,7 @@ from .storage_layout import (
     position_view,
     validate_storage_layout,
 )
+from .temporality import TEMPORAL_DIMENSION_RANK, derive_temporal_structure
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import validate_subtype_write, validate_write
 
@@ -2922,12 +2922,13 @@ def _assert_rejected(case: Case) -> None:
             # the value-object write validation without disturbing the existing cases.
             validate_subtype_write(entity, case.model.entity_defs, case.write or {})
         elif "model" in case.when:
-            inline_entities = case.when["model"].get("entities")
+            inline_model = derive_temporal_structure(case.when["model"])
+            inline_entities = inline_model.get("entities")
             if not isinstance(inline_entities, list):
-                inline_entity = case.when["model"].get("entity")
+                inline_entity = inline_model.get("entity")
                 inline_entities = [inline_entity] if isinstance(inline_entity, dict) else []
             validate_index_identities(inline_entities)
-            validate_family(case.when["model"])
+            validate_family(inline_model)
             validate_storage_layout(inline_entities)
         else:  # pragma: no cover - guarded by _assert_schema
             raise CaseFailure(

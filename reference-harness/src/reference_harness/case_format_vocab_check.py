@@ -8,7 +8,7 @@ consistency check)::
 the normative prose in ``core/spec/m-case-format.md``'s "Rejected cases"
 section, and the schema `enum` in ``compatibility-case.schema.json``. A
 residual-round finding found the schema `enum` missing an entry
-(`inheritance-temporal-axes-not-root-owned`) while the prose was already
+(`inheritance-temporality-not-root-owned`) while the prose was already
 correct — a safety-critical gap, since a rejected case pinning that rule would
 fail SCHEMA validation regardless of whether every implementation classified
 it correctly. This is a mechanical guard against that recurring: it parses

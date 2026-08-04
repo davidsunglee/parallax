@@ -108,16 +108,16 @@ attribute/column chain from the ancestry** (root → … → self). A concrete s
 whose members are entirely inherited declares no `attributes` of its own (the
 conditional requirement in `m-descriptor`).
 
-**Temporal axes are different: they are family-level metadata, not an ordinary
-inherited member.** Temporality is a property of the **whole inheritance
+**The Temporality Profile is different: it is family-level metadata, not an
+ordinary inherited member.** Temporality is a property of the **whole inheritance
 family**, not of any one entity in it. Only the family **root** may declare
-`asOfAxes`; every abstract and concrete descendant **inherits the root's
-complete axis set unchanged**. A descendant **MUST NOT** redeclare, add, remove,
-override, or shadow a temporal axis — not even to repeat the root's own
+`temporality`; every abstract and concrete descendant **inherits the profile and
+the axes it derives unchanged**. A descendant **MUST NOT** redeclare, widen,
+narrow, override, or shadow the profile — not even to repeat the root's own
 declaration verbatim. A family is therefore either **entirely non-temporal**
-(the root declares no axes, and no descendant may declare any) or **entirely
-temporal** (the root declares one or two axes, and every descendant is temporal
-along exactly those axes). Mixed temporality within one family — some concrete
+(the root declares no profile, and no descendant may declare one) or **entirely
+temporal** (the root's profile derives one or two axes, and every descendant is
+temporal along exactly those axes). Mixed temporality within one family — some concrete
 subtypes temporal, others not, or descendants disagreeing on which axes apply —
 is **not supported**: it would leave the family's root-owned as-of coordinate
 system, root-result identity, and relationship-propagation target ill-defined
@@ -151,8 +151,8 @@ the one shared table every concrete subtype's rows occupy, and table-per-concret
 subtype Storage Layout includes the root's version Attribute slot in every
 concrete subtype's own table — the same composition that places the primary key
 and every ordinary inherited Attribute. Combining an explicit
-`optimisticLocking` Attribute with
-`asOfAxes` on one Entity remains invalid (`m-descriptor`); a temporal family's
+`optimisticLocking` Attribute with a temporal
+`temporality` profile on one Entity remains invalid (`m-descriptor`); a temporal family's
 root therefore derives its optimistic key from the Transaction-Time start
 Attribute (`m-opt-lock`) rather than declaring a version Attribute, so a temporal family
 is never also an explicitly-versioned one. Unlike the temporal-axis narrowing
@@ -482,13 +482,12 @@ owns the complete code-set declaration; this module owns each code's meaning.
   (`inheritance-duplicate-tag-value`).
 - **Tag placement** — a table-per-concrete-subtype family declares no `tag` /
   `tagValue` anywhere (`inheritance-tag-on-concrete-subtype-strategy`).
-- **Temporal axes are root-owned** — an `abstract-subtype` or `concrete-subtype`
-  declares no `asOfAxes` of its own, regardless of whether the root itself
-  is temporal (`inheritance-temporal-axes-not-root-owned`). This holds for BOTH
-  malformed shapes: a non-temporal root with a descendant that declares axes, and
-  a temporal root whose descendant redeclares, adds, removes, overrides, or
-  shadows an axis. Only the root may ever carry `asOfAxes` (*Inherited
-  members*, above).
+- **Temporality is root-owned** — an `abstract-subtype` or `concrete-subtype`
+  declares no `temporality` of its own, regardless of whether the root itself
+  is temporal (`inheritance-temporality-not-root-owned`). This holds for BOTH
+  malformed shapes: a non-temporal root with a descendant that declares a
+  profile, and a temporal root whose descendant repeats, widens, or narrows one.
+  Only the root may ever carry `temporality` (*Inherited members*, above).
 - **Optimistic locking is root-owned** — an `abstract-subtype` or
   `concrete-subtype` declares no `optimisticLocking` attribute of its own,
   regardless of whether the root itself declares one

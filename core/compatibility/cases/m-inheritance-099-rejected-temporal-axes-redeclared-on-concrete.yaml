@@ -1,19 +1,17 @@
 # Negative (m-inheritance, binding decision — COR-3 Phase 7 review remediation):
-# a TEMPORAL table-per-concrete-subtype root whose CONCRETE subtype adds a
-# second temporal axis of its own.
+# a table-per-concrete-subtype family whose CONCRETE subtype declares the
+# family's Temporality Profile.
 #
-# Temporality is a family-wide property: the root ALONE declares the family's
-# as-of axes, and every descendant inherits EXACTLY that set — a descendant
-# MUST NOT redeclare, add, remove, override, or shadow an axis, even when the
-# root itself is already temporal (a root-result's identity would otherwise
-# mix `(family, PK)` and `(family, PK, coordinates)` depending on which
-# branch a row resolved through). `Rate` (root) declares `transaction-time`
-# only; `DepositRate` (concrete) additionally declares its own
-# `valid-time` — a model-aware validator MUST reject the family before any
-# SQL. Different physical strategy than the sibling witness
-# (`m-inheritance-098`, table-per-hierarchy): this one is
-# table-per-concrete-subtype, so both strategies exercise the same
-# invariant.
+# Temporality is a family-wide property: the root ALONE declares the profile,
+# and every descendant inherits EXACTLY the axes it derives — a descendant MUST
+# NOT declare, add, remove, override, or shadow one (a root-result's identity
+# would otherwise mix `(family, PK)` and `(family, PK, coordinates)` depending on
+# which branch a row resolved through). `Rate` (root) declares no profile;
+# `DepositRate` (concrete) declares `transaction-time` — a model-aware validator MUST
+# reject the family before any SQL. Different physical strategy and different
+# position than the sibling witness (`m-inheritance-098`, an abstract subtype
+# under table-per-hierarchy), so both strategies and both descendant roles
+# exercise the same invariant.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
 shape: rejected
@@ -27,24 +25,13 @@ when:
         attributes:
           - { name: id, type: int64, column: id, primaryKey: true }
           - { name: amount, type: "decimal(18,2)", column: amount }
-          - { name: txStart, type: timestamp, column: in_z }
-          - { name: txEnd, type: timestamp, column: out_z }
-        asOfAxes:
-          - dimension: transaction-time
-            startAttribute: txStart
-            endAttribute: txEnd
       - name: DepositRate
         table: deposit_rate
         inheritance:
           role: concrete-subtype
           parent: Rate
+        temporality: transaction-time
         attributes:
           - { name: grade, type: string, column: grade, nullable: true }
-          - { name: validStart, type: timestamp, column: from_z }
-          - { name: validEnd, type: timestamp, column: thru_z }
-        asOfAxes:
-          - dimension: valid-time
-            startAttribute: validStart
-            endAttribute: validEnd
 then:
-  rejectedRule: inheritance-temporal-axes-not-root-owned
+  rejectedRule: inheritance-temporality-not-root-owned

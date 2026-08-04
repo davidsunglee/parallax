@@ -36,31 +36,13 @@ entities:
     inheritance:
       role: root
       strategy: table-per-concrete-subtype
+    temporality: bitemporal
     attributes:
       - name: id
         type: int64
         primaryKey: true
       - name: amount
         type: decimal(18,2)
-      - name: validStart
-        type: timestamp
-        column: from_z
-      - name: validEnd
-        type: timestamp
-        column: thru_z
-      - name: txStart
-        type: timestamp
-        column: in_z
-      - name: txEnd
-        type: timestamp
-        column: out_z
-    asOfAxes:
-      - dimension: valid-time
-        startAttribute: validStart
-        endAttribute: validEnd
-      - dimension: transaction-time
-        startAttribute: txStart
-        endAttribute: txEnd
   - name: DepositRate
     namespace: parallax.compatibility
     table: deposit_rate

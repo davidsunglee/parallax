@@ -104,7 +104,7 @@ actually render on one node are formation errors under
 ## Inherited temporality
 
 A value object has **no independent temporality**. It declares no As-Of Axes —
-the schema does not admit `asOfAxes` on a value object — and it owns no timeline.
+the schema does not admit `temporality` on a value object — and it owns no timeline.
 Its backing column is part of the owning Entity's Storage Layout, so it
 rides the owner's (possibly milestoned) row and inherits whatever temporal
 classification the entity declares (`m-temporal-read`). On a temporal owner the

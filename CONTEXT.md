@@ -901,24 +901,31 @@ or Transaction Time. The dimension itself identifies an entity's As-Of Axis;
 an axis has no independently authored name.
 _Avoid_: axis name, axis kind, business/processing dimension, validTime, transactionTime
 
+**Temporality Profile**:
+The single temporal fact an entity family's root declares — `nontemporal`,
+`transaction-time`, or `bitemporal`. Every As-Of Axis, both endpoint attributes
+of each axis, and their framework-fixed columns are derived from it, so a
+descriptor spells nothing else temporal.
+_Avoid_: temporal classification property, authored axis, axis block
+
 **Valid Time**:
 The Temporal Dimension describing when a fact is true in the modeled world.
-Its canonical interval attributes are `validStart` and `validEnd`, mapped by
-default to `from_z` and `thru_z`.
+Its derived interval attributes are `validStart` and `validEnd`, over the
+framework-fixed columns `from_z` and `thru_z`.
 _Avoid_: business time, business date, effective date
 
 **Transaction Time**:
 The Temporal Dimension describing when a fact is present in the database. Its
-canonical interval attributes are `txStart` and `txEnd`, mapped by default
-to `in_z` and `out_z`.
+derived interval attributes are `txStart` and `txEnd`, over the framework-fixed
+columns `in_z` and `out_z`.
 _Avoid_: processing time, processing date, system date
 
 **As-Of Axis**:
 A Temporal Dimension along which a milestoned entity is read and written. Its
 metadata identifies inclusive start and exclusive end attributes; the
-dimension itself is the axis identity. A Transaction-Time-Only entity declares
-Transaction Time; a Bitemporal entity declares both Valid Time and Transaction
-Time.
+dimension itself is the axis identity. A `transaction-time` profile derives
+Transaction Time; a `bitemporal` profile derives both Valid Time and
+Transaction Time.
 _Avoid_: temporal column, date dimension
 
 **Milestone**:

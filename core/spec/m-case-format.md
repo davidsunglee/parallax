@@ -1201,7 +1201,7 @@ counting the derived primary-key Index a frontend hands over
 `inheritance-strategy-redeclared`, `inheritance-missing-tag-value`,
 `inheritance-duplicate-tag-value`,
 `inheritance-tag-on-concrete-subtype-strategy`,
-`inheritance-temporal-axes-not-root-owned`,
+`inheritance-temporality-not-root-owned`,
 `inheritance-optimistic-locking-not-root-owned`,
 `inheritance-persistence-not-root-owned`,
 `inheritance-layout-not-root-owned`,

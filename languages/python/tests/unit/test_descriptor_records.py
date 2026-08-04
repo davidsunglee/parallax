@@ -8,7 +8,6 @@ import pytest
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.descriptor import _records
-from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
     Attribute,
@@ -16,6 +15,7 @@ from parallax.descriptor._records import (
     Inheritance,
     Metamodel,
     PkGenerator,
+    Temporality,
     ValueObject,
     concrete_descendant_names,
     declaring_entity,
@@ -26,49 +26,27 @@ _MODELS = corpus_models.load_models(
     case_format.find_repo_root() / "core" / "compatibility" / "models"
 )
 
-_PROC = AsOfAxisMetadata(
-    dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
-)
-_BIZ = AsOfAxisMetadata(
-    dimension="valid-time", start_attribute="validStart", end_attribute="validEnd"
-)
-
 
 @pytest.mark.parametrize(
-    ("axes", "expected"),
+    ("temporality", "expected"),
     [
-        ((), "non-temporal"),
-        ((_PROC,), "transaction-time-only"),
-        ((_PROC, _BIZ), "bitemporal"),
+        (None, "non-temporal"),
+        ("nontemporal", "non-temporal"),
+        ("transaction-time", "transaction-time-only"),
+        ("bitemporal", "bitemporal"),
     ],
 )
-def test_temporal_is_derived_from_the_as_of_axes(
-    axes: tuple[AsOfAxisMetadata, ...], expected: str
+def test_temporal_is_derived_from_the_temporality_profile(
+    temporality: Temporality | None, expected: str
 ) -> None:
     entity = Entity(
         name="E",
         table="e",
-        attributes=(
-            Attribute(name="id", type="int64", column="id", primary_key=True),
-            Attribute(name="validStart", type="timestamp", column="b_in"),
-            Attribute(name="validEnd", type="timestamp", column="b_out"),
-            Attribute(name="txStart", type="timestamp", column="in_z"),
-            Attribute(name="txEnd", type="timestamp", column="out_z"),
-        ),
-        as_of_axes=axes,
+        temporality=temporality,
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
     )
     assert entity.temporal == expected
-    assert entity.is_temporal is bool(axes)
-
-
-def test_valid_time_only_has_no_runtime_classification() -> None:
-    entity = Entity(
-        name="E",
-        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
-        as_of_axes=(_BIZ,),
-    )
-    with pytest.raises(DescriptorError, match="Valid-Time-Only is deferred"):
-        _ = entity.temporal
+    assert entity.is_temporal is (expected != "non-temporal")
 
 
 def test_corpus_temporal_classifications_match() -> None:
@@ -142,6 +120,7 @@ def _synthetic_temporal_family() -> Metamodel:
         name="Root",
         table="root_tbl",
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        temporality="transaction-time",
         attributes=(
             Attribute(name="id", type="int64", column="id", primary_key=True),
             Attribute(name="txStart", type="timestamp", column="in_z"),
@@ -247,6 +226,7 @@ def test_declaring_entity_is_the_entity_itself_outside_a_family() -> None:
     plain = Entity(
         name="Balance",
         table="balance",
+        temporality="transaction-time",
         attributes=(
             Attribute(name="id", type="int64", column="bal_id", primary_key=True),
             Attribute(name="txStart", type="timestamp", column="in_z"),

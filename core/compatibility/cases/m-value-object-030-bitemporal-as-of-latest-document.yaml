@@ -1,7 +1,7 @@
 # valueObject on a FULL BITEMPORAL owner: the fully-Latest document (both dimensions Latest)
 # (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
 #
-# `address` declares NO asOfAxes of its own — it inherits BOTH of the Branch's
+# `address` declares NO temporality of its own — it inherits BOTH of the Branch's
 # dimensions. Pinning valid-time = Latest AND transaction-time = Latest injects each axis's
 # current-row equality (thru_z = infinity AND out_z = infinity, two infinity binds), so
 # the read returns the rectangle current on both axes. Over branch id 1's history that

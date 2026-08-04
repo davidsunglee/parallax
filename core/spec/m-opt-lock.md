@@ -254,7 +254,8 @@ conflict in optimistic mode, a distinct non-retriable stale/consistency error in
 locking mode. The write shapes and the current-row-predicate-is-not-a-gate
 rationale are `m-txtime-write` / `m-bitemp-write`; the conflict/retry contract is
 this module (the `m-opt-lock --> m-temporal-read` composition edge). Combining an
-explicit `optimisticLocking` attribute with `asOfAxes` is invalid
+explicit `optimisticLocking` attribute with a temporal `temporality`
+profile is invalid
 (`m-descriptor`). Every supported temporal formation contains Transaction Time;
 Valid-Time-Only is unsupported, so no temporal formation lacks this derived key.
 

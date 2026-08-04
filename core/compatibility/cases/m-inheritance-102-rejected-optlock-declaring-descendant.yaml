@@ -9,7 +9,7 @@
 # together or not at all). `Animal` (root) declares NO `optimisticLocking`
 # attribute; `Pet` (abstract-subtype) declares its own `revision` version column
 # — a model-aware validator MUST reject the family before any SQL, exactly as
-# the sibling `inheritance-temporal-axes-not-root-owned` invariant does.
+# the sibling `inheritance-temporality-not-root-owned` invariant does.
 model: models/payment.yaml
 tags: [m-inheritance, m-descriptor, m-opt-lock, rejected, negative, table-per-hierarchy, slice-snapshot-1, slice-managed-1]
 shape: rejected

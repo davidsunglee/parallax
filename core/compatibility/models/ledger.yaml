@@ -11,6 +11,7 @@ entity:
   name: Ledger
   namespace: parallax.compatibility
   table: ledger
+  temporality: transaction-time
   attributes:
     - name: id
       type: int64
@@ -22,16 +23,6 @@ entity:
     - name: value
       type: decimal(18,2)
       column: val
-    - name: txStart
-      type: timestamp
-      column: in_z
-    - name: txEnd
-      type: timestamp
-      column: out_z
-  asOfAxes:
-    - dimension: transaction-time
-      startAttribute: txStart
-      endAttribute: txEnd
   indices:
     - name: ledger_acct
       attributes: [acctNum]

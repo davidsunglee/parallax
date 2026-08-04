@@ -69,7 +69,7 @@ __all__ = [
     "RULE_SET",
     "STRATEGY_REDECLARED",
     "TAG_ON_CONCRETE_SUBTYPE_STRATEGY",
-    "TEMPORAL_AXES_NOT_ROOT_OWNED",
+    "TEMPORALITY_NOT_ROOT_OWNED",
     "TPCS_ABSTRACT_TABLE_FORBIDDEN",
     "TPCS_CONCRETE_TABLE_REQUIRED",
     "TPH_DESCENDANT_TABLE_FORBIDDEN",
@@ -139,10 +139,10 @@ PRIMARY_KEY_MULTIPLE: Final[IssueCode] = "inheritance-primary-key-multiple"
 """A position's applicable ancestry chain declares more than one primary-key
 Attribute. Composite keys are not part of the contract."""
 
-TEMPORAL_AXES_NOT_ROOT_OWNED: Final[IssueCode] = "inheritance-temporal-axes-not-root-owned"
-"""A descendant declares an As-Of Axis. Temporality is a whole-family coordinate
-system its root owns, so a descendant may not redeclare, add, remove, override,
-or shadow one — not even by repeating the root's declaration."""
+TEMPORALITY_NOT_ROOT_OWNED: Final[IssueCode] = "inheritance-temporality-not-root-owned"
+"""A descendant declares a Temporality Profile. Temporality is a whole-family
+coordinate system its root owns, so a descendant may not redeclare, add, remove,
+override, or shadow it — not even by repeating the root's declaration."""
 
 OPTIMISTIC_LOCKING_NOT_ROOT_OWNED: Final[IssueCode] = (
     "inheritance-optimistic-locking-not-root-owned"
@@ -189,7 +189,7 @@ ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
         TPCS_CONCRETE_TABLE_REQUIRED,
         PRIMARY_KEY_MISSING,
         PRIMARY_KEY_MULTIPLE,
-        TEMPORAL_AXES_NOT_ROOT_OWNED,
+        TEMPORALITY_NOT_ROOT_OWNED,
         OPTIMISTIC_LOCKING_NOT_ROOT_OWNED,
         PERSISTENCE_NOT_ROOT_OWNED,
         LAYOUT_NOT_ROOT_OWNED,
@@ -412,10 +412,10 @@ def _root_owned_issues(
     related = (EntityLocation(root),)
     issues: list[MetamodelIssue] = [
         MetamodelIssue(
-            TEMPORAL_AXES_NOT_ROOT_OWNED,
+            TEMPORALITY_NOT_ROOT_OWNED,
             AsOfAxisLocation(declaration.identity, axis.dimension),
             related,
-            message="only a family root declares an As-Of Axis",
+            message="only a family root declares a Temporality Profile",
         )
         for axis in declaration.as_of_axes
     ]

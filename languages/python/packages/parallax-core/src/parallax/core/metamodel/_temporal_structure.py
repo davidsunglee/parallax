@@ -1,23 +1,20 @@
-"""The frontend-neutral temporal convention table and derived primary-key Index.
+"""The frontend-neutral temporal convention table and derived temporal structure.
 
 Both frontends reach the `m-metamodel` seam carrying the same structure, so the
 conventions that decide it live here once rather than once per frontend: the
-canonical name and physical column of each As-Of Axis endpoint, and the unique
-primary-key Index every Entity that declares a primary key carries.
+canonical name and physical column of each As-Of Axis endpoint, the As-Of Axes a
+Temporality Profile derives, and the unique primary-key Index every Entity that
+declares a primary key carries.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final
 
-from parallax.core.metamodel._identities import (
-    AttributeIdentity,
-    EntityIdentity,
-    IndexIdentity,
-)
+from parallax.core.metamodel._identities import EntityIdentity, IndexIdentity
 from parallax.core.metamodel._naming import default_column_name
 from parallax.core.metamodel._values import (
     AsOfAxisMetadata,
@@ -31,11 +28,19 @@ from parallax.core.metamodel._values import (
 
 __all__ = [
     "CONVENTIONAL_TEMPORAL_NAMES",
+    "NONTEMPORAL",
+    "TEMPORALITY_PROFILES",
     "TEMPORAL_MEMBERS",
+    "DerivedAxis",
     "TemporalEndpoint",
     "derive_primary_key_index",
+    "derive_temporal_structure",
     "primary_key_index_name",
+    "temporality_profile",
 ]
+
+NONTEMPORAL: Final[str] = "nontemporal"
+"""The Temporality Profile an Entity that declares none falls back to."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +49,15 @@ class TemporalEndpoint:
 
     name: str
     column: str
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedAxis:
+    """One As-Of Axis a Temporality Profile derives, endpoints included."""
+
+    dimension: TemporalDimension
+    start: TemporalEndpoint
+    end: TemporalEndpoint
 
 
 TEMPORAL_MEMBERS: Final[Mapping[TemporalDimension, tuple[TemporalEndpoint, TemporalEndpoint]]] = (
@@ -71,6 +85,54 @@ CONVENTIONAL_TEMPORAL_NAMES: Final[Mapping[TemporalDimension, tuple[str, str]]] 
 )
 """The Attribute names each Temporal Dimension reserves once an Entity declares
 that dimension. Only the axis's own start and end Attributes may bear them."""
+
+TEMPORALITY_PROFILES: Final[Mapping[str, tuple[TemporalDimension, ...]]] = MappingProxyType(
+    {
+        NONTEMPORAL: (),
+        "transaction-time": (TemporalDimension.TRANSACTION_TIME,),
+        "bitemporal": (TemporalDimension.VALID_TIME, TemporalDimension.TRANSACTION_TIME),
+    }
+)
+"""Each Temporality Profile's Temporal Dimensions in canonical axis order.
+
+Valid-Time-Only has no profile: `m-validtime-only` is deferred, so the shape is
+unspellable rather than rejected, and activating it later adds one member here.
+"""
+
+
+def derive_temporal_structure(temporality: str | None) -> tuple[DerivedAxis, ...]:
+    """The As-Of Axes a Temporality Profile derives, in canonical axis order.
+
+    ``None`` is an Entity that declares no profile and derives nothing, exactly
+    as ``nontemporal`` does; the two differ only to whoever asks what an Entity
+    declared, which is a family question rather than a derivation one.
+
+    Every endpoint is a Timestamp Attribute over the framework-fixed Column of
+    :data:`TEMPORAL_MEMBERS`, placed after every domain Attribute in Valid-Time
+    then Transaction-Time order, which is the ``from_z, thru_z, in_z, out_z``
+    projection order a Bitemporal Entity carries.
+    """
+    profile = NONTEMPORAL if temporality is None else temporality
+    dimensions = TEMPORALITY_PROFILES.get(profile)
+    if dimensions is None:
+        raise ValueError(f"{profile!r} is not a temporality profile")
+    return tuple(DerivedAxis(dimension, *TEMPORAL_MEMBERS[dimension]) for dimension in dimensions)
+
+
+def temporality_profile(dimensions: Iterable[TemporalDimension]) -> str:
+    """The Temporality Profile whose derivation yields exactly ``dimensions``.
+
+    The inverse of :func:`derive_temporal_structure`, for a consumer holding
+    resolved axes that needs the profile an author would have written. A
+    dimension set no profile derives — a lone Valid Time above all — has no
+    spelling and is refused rather than approximated.
+    """
+    declared = frozenset(dimensions)
+    for profile, derived in TEMPORALITY_PROFILES.items():
+        if frozenset(derived) == declared:
+            return profile
+    spelled = ", ".join(sorted(dimension.name for dimension in declared))
+    raise ValueError(f"no temporality profile derives {{{spelled}}}")
 
 
 def primary_key_index_name(entity: EntityIdentity, container: StorageContainer | None) -> str:
@@ -109,7 +171,9 @@ def derive_primary_key_index(
     Components are the local primary-key Attributes in declaration order followed
     by each declared axis's **end** Attribute in canonical dimension order. The
     end Attributes are what a Latest predicate and a milestone close both pin, so
-    keying the physical row identity on them makes both a key hit.
+    keying the physical row identity on them makes both a key hit. They are
+    distinct by construction: each dimension derives its own endpoints, and no
+    other Attribute may bear one of their names.
 
     The derivation is local and reference-free: it reads one declaration and
     resolves nothing across the model.
@@ -121,12 +185,9 @@ def derive_primary_key_index(
     ]
     if not components:
         return None
-    seen: set[AttributeIdentity] = set(components)
-    for axis in sorted(as_of_axes, key=lambda axis: axis.dimension.value):
-        if axis.end_attribute in seen:
-            continue
-        seen.add(axis.end_attribute)
-        components.append(axis.end_attribute)
+    components.extend(
+        axis.end_attribute for axis in sorted(as_of_axes, key=lambda axis: axis.dimension.value)
+    )
     return IndexMetadata(
         identity=IndexIdentity(entity, primary_key_index_name(entity, container)),
         attributes=tuple(components),

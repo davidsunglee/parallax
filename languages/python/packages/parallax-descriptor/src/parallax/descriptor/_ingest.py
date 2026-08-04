@@ -28,7 +28,7 @@ import jsonschema
 import yaml
 from jsonschema.protocols import Validator
 
-from parallax.core.metamodel import UnresolvedMetamodel
+from parallax.core.metamodel import UnresolvedMetamodel, derive_temporal_structure
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.descriptor._errors import (
     DescriptorFormat,
@@ -89,16 +89,20 @@ def ingest_document(document: object) -> Metamodel:
     Schema validation runs first and reports every violation the canonical
     schema finds over the whole document; only a schema-valid document reaches
     the value phase, which reports every schema-valid but unconstructible
-    ``type`` spelling and every authored Index component naming an As-Of Axis
-    endpoint. Reference resolution, relationship pairing, and every
-    other semantic question belong to Model Formation, reached later by
-    passing this function's result to
+    ``type`` spelling, every authored Attribute bearing an As-Of Axis endpoint's
+    canonical name, and every authored Index component naming one. Reference
+    resolution, relationship pairing, and every other semantic question belong to
+    Model Formation, reached later by passing this function's result to
     :func:`~parallax.descriptor._adapter.unresolved_metamodel` and the
     foundational resolver.
     """
     _validate_schema(document)
     mapping = cast("Mapping[str, object]", document)
-    violations = (*_type_spelling_violations(mapping), *_index_temporal_violations(mapping))
+    violations = (
+        *_type_spelling_violations(mapping),
+        *_temporal_attribute_violations(mapping),
+        *_index_temporal_violations(mapping),
+    )
     if violations:
         raise DescriptorValueError(canonical_value_violations(violations))
     return parse_document(mapping)
@@ -180,6 +184,59 @@ def _type_spelling_violations(
     )
 
 
+def _endpoint_names(entity: Mapping[str, object]) -> frozenset[str]:
+    """The canonical Attribute names ``entity``'s Temporality Profile derives.
+
+    The schema phase has already fixed ``temporality`` to a profile spelling, so
+    the derivation cannot refuse it.
+    """
+    temporality = cast("str | None", entity.get("temporality"))
+    return frozenset(
+        endpoint.name
+        for axis in derive_temporal_structure(temporality)
+        for endpoint in (axis.start, axis.end)
+    )
+
+
+def _temporal_attribute_violations(
+    document: Mapping[str, object],
+) -> tuple[DescriptorValueViolation, ...]:
+    """Every authored Attribute bearing an As-Of Axis endpoint's canonical name.
+
+    A Temporality Profile derives both endpoints of every axis it names, over
+    framework-fixed Columns, so authoring one declares a member the profile
+    already supplies — and the ``column`` an author would hang on it has no
+    reachable declaration of its own. Each offending Attribute is one violation
+    at its own document path.
+    """
+    return tuple(
+        violation
+        for prefix, entity in _entities(document)
+        for violation in _entity_temporal_attribute_violations(entity, prefix)
+    )
+
+
+def _entity_temporal_attribute_violations(
+    entity: Mapping[str, object], prefix: tuple[str | int, ...]
+) -> list[DescriptorValueViolation]:
+    """``entity``'s offending Attribute declarations, in document order."""
+    reserved = _endpoint_names(entity)
+    profile = entity.get("temporality")
+    attributes = cast("list[Mapping[str, Any]]", entity.get("attributes", ()))
+    return [
+        DescriptorValueViolation(
+            path=(*prefix, "attributes", position, "name"),
+            rule="temporal-attribute-declared",
+            message=(
+                f"attribute {attribute['name']!r} is an as-of axis endpoint the "
+                f"{profile!r} profile derives"
+            ),
+        )
+        for position, attribute in enumerate(attributes)
+        if attribute["name"] in reserved
+    ]
+
+
 def _index_temporal_violations(
     document: Mapping[str, object],
 ) -> tuple[DescriptorValueViolation, ...]:
@@ -201,12 +258,10 @@ def _entity_index_temporal_violations(
 ) -> list[DescriptorValueViolation]:
     """``entity``'s offending Index components, in document order.
 
-    The schema phase has already fixed every shape read here: an ``asOfAxes``
-    entry names both endpoints and an ``indices`` entry names a nonempty
-    component list, so only their presence is tested.
+    The schema phase has already fixed every shape read here: an ``indices``
+    entry names a nonempty component list, so only its presence is tested.
     """
-    axes = cast("list[Mapping[str, str]]", entity.get("asOfAxes", ()))
-    endpoints = {axis[key] for axis in axes for key in ("startAttribute", "endAttribute")}
+    endpoints = _endpoint_names(entity)
     indices = cast("list[Mapping[str, Any]]", entity.get("indices", ()))
     return [
         DescriptorValueViolation(

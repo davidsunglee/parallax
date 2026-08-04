@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
   "title": "Parallax Model Descriptor (m-descriptor)",
-  "description": "Canonical serialized m-descriptor input to m-metamodel. An omitted entity-member column derives from the canonical member name through m-descriptor's normative defaultColumn operation; an explicit column always overrides it. This revision covers persistence, pkGeneration, the defining/reverse relationship union, indices, asOfAxes, closed-tree inheritance, and recursively typed value objects with One/Many multiplicity.",
+  "description": "Canonical serialized m-descriptor input to m-metamodel. An omitted entity-member column derives from the canonical member name through m-descriptor's normative defaultColumn operation; an explicit column always overrides it. This revision covers persistence, pkGeneration, the defining/reverse relationship union, indices, the temporality profile, closed-tree inheritance, and recursively typed value objects with One/Many multiplicity.",
   "type": "object",
   "additionalProperties": false,
   "oneOf": [
@@ -69,46 +69,16 @@
             }
           }
         },
+        "temporality": {
+          "$comment": "Root-owned Temporality Profile. Placed at the same entity position for every family participant without structurally forbidding it on a descendant: the family rule is not expressible per entity and is deferred to whole-model formation (inheritance-temporality-not-root-owned). A lone valid-time axis belongs to the separately catalogued m-validtime-only formation and has no spelling here.",
+          "description": "The Entity family's temporal profile. Axis attributes, axis structure, and the primary-key index are derived from it.",
+          "enum": ["nontemporal", "transaction-time", "bitemporal"],
+          "default": "nontemporal"
+        },
         "attributes": {
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/attribute" }
-        },
-        "asOfAxes": {
-          "description": "The supported temporal shapes are one transaction-time axis or valid-time followed by transaction-time. A lone valid-time axis belongs to the separately catalogued m-validtime-only formation and is not accepted by this active descriptor contract.",
-          "type": "array",
-          "minItems": 1,
-          "maxItems": 2,
-          "items": { "$ref": "#/$defs/asOfAxis" },
-          "oneOf": [
-            {
-              "minItems": 1,
-              "maxItems": 1,
-              "prefixItems": [
-                {
-                  "properties": {
-                    "dimension": { "const": "transaction-time" }
-                  }
-                }
-              ]
-            },
-            {
-              "minItems": 2,
-              "maxItems": 2,
-              "prefixItems": [
-                {
-                  "properties": {
-                    "dimension": { "const": "valid-time" }
-                  }
-                },
-                {
-                  "properties": {
-                    "dimension": { "const": "transaction-time" }
-                  }
-                }
-              ]
-            }
-          ]
         },
         "relationships": {
           "type": "array",
@@ -127,16 +97,11 @@
       },
       "allOf": [
         {
-          "$comment": "Optimistic-lock composition: a Transaction-Time Entity derives its optimistic key from its transaction-time start Attribute and must not declare an explicit optimisticLocking version Attribute.",
+          "$comment": "Optimistic-lock composition: a Transaction-Time Entity derives its optimistic key from its transaction-time start Attribute and must not declare an explicit optimisticLocking version Attribute. Every profile other than nontemporal derives a transaction-time axis.",
           "if": {
-            "required": ["asOfAxes"],
+            "required": ["temporality"],
             "properties": {
-              "asOfAxes": {
-                "contains": {
-                  "required": ["dimension"],
-                  "properties": { "dimension": { "const": "transaction-time" } }
-                }
-              }
+              "temporality": { "enum": ["transaction-time", "bitemporal"] }
             }
           },
           "then": {
@@ -385,17 +350,6 @@
         }
       }
     },
-    "asOfAxis": {
-      "description": "One valid-time or transaction-time half-open interval over two local Timestamp Attributes.",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["dimension", "startAttribute", "endAttribute"],
-      "properties": {
-        "dimension": { "enum": ["valid-time", "transaction-time"] },
-        "startAttribute": { "$ref": "#/$defs/identifier" },
-        "endAttribute": { "$ref": "#/$defs/identifier" }
-      }
-    },
     "valueObject": {
       "description": "A top-level embedded composite stored in one structured-document column. An omitted column derives through m-descriptor's defaultColumn(name); an explicit column always overrides it.",
       "type": "object",
@@ -497,7 +451,7 @@
       }
     },
     "inheritance": {
-      "description": "Closed-tree inheritance. The root alone declares strategy, persistence, and asOfAxes. Under table-per-hierarchy the root owns the one shared table and tag column; descendants own no table. Under table-per-concrete-subtype abstract nodes are tableless and every concrete subtype owns a table.",
+      "description": "Closed-tree inheritance. The root alone declares strategy, persistence, and temporality. Under table-per-hierarchy the root owns the one shared table and tag column; descendants own no table. Under table-per-concrete-subtype abstract nodes are tableless and every concrete subtype owns a table.",
       "type": "object",
       "additionalProperties": false,
       "required": ["role"],

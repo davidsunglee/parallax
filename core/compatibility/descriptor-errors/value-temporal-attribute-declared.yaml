@@ -1,0 +1,19 @@
+# Phase-3 value fixture: a Temporality Profile derives both endpoints of every
+# axis it names, over framework-fixed columns, so an author may not declare one.
+# The document is otherwise entirely valid, and each offending attribute is
+# reported at its own path in canonical (path, rule) order — including the one
+# carrying a `column` override, which is the same rejection rather than a second
+# one, because the override has no declaration of its own to sit on.
+entity:
+  name: Milestone
+  table: milestone
+  temporality: bitemporal
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: validStart
+      type: timestamp
+    - name: txEnd
+      type: timestamp
+      column: closed_at

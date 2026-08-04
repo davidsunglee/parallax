@@ -32,6 +32,7 @@ entity:
   name: Position
   namespace: parallax.compatibility
   table: position
+  temporality: bitemporal
   attributes:
     - name: id
       type: int64
@@ -43,25 +44,6 @@ entity:
     - name: value
       type: decimal(18,2)
       column: val
-    - name: validStart
-      type: timestamp
-      column: from_z
-    - name: validEnd
-      type: timestamp
-      column: thru_z
-    - name: txStart
-      type: timestamp
-      column: in_z
-    - name: txEnd
-      type: timestamp
-      column: out_z
-  asOfAxes:
-    - dimension: valid-time
-      startAttribute: validStart
-      endAttribute: validEnd
-    - dimension: transaction-time
-      startAttribute: txStart
-      endAttribute: txEnd
   indices:
     - name: position_acct
       attributes: [acctNum]

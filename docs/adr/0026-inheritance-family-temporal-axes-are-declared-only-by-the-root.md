@@ -19,7 +19,7 @@ per-entity one. Only the family root may declare `asOfAttributes`; every
 abstract and concrete descendant inherits the root's complete axis set
 unchanged, and a descendant that redeclares, adds, removes, overrides, or
 shadows an axis — or declares one under a non-temporal root — is rejected
-pre-SQL (`inheritance-temporal-axes-not-root-owned`). A family is therefore
+pre-SQL (`inheritance-temporality-not-root-owned`). A family is therefore
 either entirely non-temporal or entirely temporal; mixed temporality across
 branches is not supported. This is a narrowing, not an addition: every
 descriptor the corpus already accepts (root-declared axes only) remains legal

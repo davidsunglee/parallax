@@ -35,6 +35,7 @@ from reference_harness.inheritance import (
     assert_no_abstract_fixture_rows,
 )
 from reference_harness.paths import schemas_dir
+from reference_harness.temporality import derive_temporal_structure
 from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -142,18 +143,8 @@ def test_valid_time_only_descriptor_is_outside_the_active_contract() -> None:
         "entity": {
             "name": "Reservation",
             "table": "reservation",
-            "attributes": [
-                {"name": "id", "type": "int64", "primaryKey": True},
-                {"name": "validStart", "type": "timestamp"},
-                {"name": "validEnd", "type": "timestamp"},
-            ],
-            "asOfAxes": [
-                {
-                    "dimension": "valid-time",
-                    "startAttribute": "validStart",
-                    "endAttribute": "validEnd",
-                }
-            ],
+            "temporality": "valid-time",
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
         }
     }
 
@@ -344,35 +335,27 @@ def test_multiword_value_object_uses_the_derived_document_column() -> None:
     assert f"{value_object['column']} jsonb" in create
 
 
-def test_temporal_axis_lookup_uses_derived_and_explicit_override_columns() -> None:
+def test_temporal_axis_columns_are_framework_fixed_beside_domain_overrides() -> None:
     descriptor = {
         "entity": {
             "name": "Timeline",
             "table": "timeline",
+            "temporality": "transaction-time",
             "attributes": [
                 {"name": "id", "type": "int64", "primaryKey": True},
-                {"name": "effectiveFrom", "type": "timestamp"},
-                {"name": "effectiveTo", "type": "timestamp"},
                 {"name": "legacyName", "type": "string", "column": "legacyName"},
                 {"name": "taxID", "type": "string", "column": "tax_id"},
-            ],
-            "asOfAxes": [
-                {
-                    "dimension": "transaction-time",
-                    "startAttribute": "effectiveFrom",
-                    "endAttribute": "effectiveTo",
-                }
             ],
         }
     }
     assert _is_valid(descriptor)
-    entity = Model(Path("timeline.yaml"), descriptor).root_entity
+    entity = Model(Path("timeline.yaml"), derive_temporal_structure(descriptor)).root_entity
 
     assert entity.temporal_runtime_axes == [
         {
             "dimension": "transaction-time",
-            "start_column": "effective_from",
-            "end_column": "effective_to",
+            "start_column": "in_z",
+            "end_column": "out_z",
             "infinity": "infinity",
         }
     ]
@@ -537,19 +520,20 @@ def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
 
     A Transaction-Time temporal entity DERIVES its optimistic key from the
     Transaction-Time start column (`in_z` is the version analogue), so it carries no
-    version column; combining `asOfAxes` with an explicit `optimisticLocking`
-    attribute on one entity is invalid. Proven with an inline descriptor (a
-    deep-copied real Balance model with the combination injected) rather than a
-    fixture file, mirroring the other metamodel-negative tests.
+    version column; combining a transaction-time `temporality` profile with an
+    explicit `optimisticLocking` attribute on one entity is invalid. Proven with
+    an inline descriptor (a deep-copied real Balance model with the combination
+    injected) rather than a fixture file, mirroring the other metamodel-negative
+    tests.
     """
     model = load_model(COMPATIBILITY_ROOT, "models/balance.yaml")
     descriptor = copy.deepcopy(model.descriptor)
-    # Balance is a single-`entity` descriptor with `asOfAxes` (transaction-time).
+    # Balance is a single-`entity` descriptor with `temporality: transaction-time`.
     # Inject `optimisticLocking` on its `value` attribute -> the forbidden combo.
     value_attr = next(a for a in descriptor["entity"]["attributes"] if a["name"] == "value")
     value_attr["optimisticLocking"] = True
     assert not _is_valid(descriptor), (
-        "an entity combining optimisticLocking with asOfAxes must be rejected"
+        "an entity combining optimisticLocking with a temporal profile must be rejected"
     )
 
 
@@ -572,7 +556,7 @@ def test_schema_rejects_two_optimistic_locking_attributes_on_one_entity() -> Non
     # each declaring `optimisticLocking: true`, so the ONLY violated rule is
     # "at most one" — not the int32/int64 type restriction (m-opt-lock/DQ8b,
     # already satisfied) or the temporal-composition rule (Wallet declares no
-    # `asOfAxes`, covered separately above).
+    # `temporality`, covered separately above).
     descriptor["entity"]["attributes"].append(
         {"name": "version", "type": "int64", "column": "version", "optimisticLocking": True}
     )
@@ -695,24 +679,18 @@ def test_temporal_key_is_derived_and_emits_no_second_constraint() -> None:
     # ONLY constraint the table carries.
     model = Model(
         Path("milestone.yaml"),
-        {
-            "entity": {
-                "name": "Milestone",
-                "table": "milestone",
-                "attributes": [
-                    {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                    {"name": "txStart", "type": "timestamp", "column": "in_z"},
-                    {"name": "txEnd", "type": "timestamp", "column": "out_z"},
-                ],
-                "asOfAxes": [
-                    {
-                        "dimension": "transaction-time",
-                        "startAttribute": "txStart",
-                        "endAttribute": "txEnd",
-                    },
-                ],
+        derive_temporal_structure(
+            {
+                "entity": {
+                    "name": "Milestone",
+                    "table": "milestone",
+                    "temporality": "transaction-time",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                    ],
+                }
             }
-        },
+        ),
     )
     (ddl,) = ddl_for(model, "postgres")
     assert "primary key (id, out_z)" in ddl
