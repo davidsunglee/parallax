@@ -30,20 +30,12 @@ STORAGE_LAYOUT_TABLE_MAPPING_COLLISION = "storage-layout-table-mapping-collision
 STORAGE_LAYOUT_COLUMN_COLLISION = "storage-layout-column-collision"
 STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE = "storage-layout-document-member-column-override"
 STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER = "storage-layout-index-over-document-member"
-# The capability gate: an implementation MUST NOT accept a Relational Document
-# Layout whose behavior it cannot execute end to end, so a build that does not
-# yet execute some layout shape declares that shape in CAPABILITY_SCOPE and
-# refuses it at formation. Emptying the scope retires the rule and this code
-# with it — a permanently vacuous check is not a supported state.
-STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED = "storage-layout-document-capability-unsupported"
-
 MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     {
         STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
         STORAGE_LAYOUT_COLUMN_COLLISION,
         STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE,
         STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER,
-        STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED,
     }
 )
 
@@ -670,41 +662,6 @@ def _direct_roles(
     )
 
 
-def _refused_shapes(root_definition: dict[str, Any]) -> tuple[str, ...]:
-    """The declared capability-scope entries this layout owner matches.
-
-    Each entry names one layout shape this build cannot execute end to end, and
-    is deleted whole once the build executes that shape's reads and writes
-    alike. Deleting the last one retires the rule.
-    """
-    return ()
-
-
-def _validate_capability(index: _ModelIndex, groups: Sequence[_Group]) -> None:
-    """Refuse every root-owned Document layout this build cannot execute.
-
-    Root ownership comes from the group projection: a group's root is the
-    standalone Entity itself or its family root, so a descendant's own layout
-    declaration is never seen here — that shape is Inheritance's
-    ``inheritance-layout-not-root-owned``. This runs only after the mapping and
-    Column claims validate, so a model with a genuine physical defect reports
-    that defect instead.
-    """
-    for owner in sorted({group.root for group in groups}, key=_identity_sort_key):
-        root_definition = index.family.defs[owner]
-        column = _layout_column(root_definition)
-        if column is None:
-            continue
-        refused = _refused_shapes(root_definition)
-        if not refused:
-            continue
-        raise RejectionError(
-            STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED,
-            f"Relational Document Layout over Structured Column {column!r} owned by "
-            f"{owner!r} is not executable by this build: {', '.join(refused)}",
-        )
-
-
 def _validate_groups(groups: Sequence[_Group], roles_of_group: Mapping[str, _DirectRoles]) -> None:
     first_owners: dict[str, _Group] = {}
     multiply_owned: set[str] = set()
@@ -819,7 +776,6 @@ def validate_storage_layout(entity_defs: Sequence[dict[str, Any]]) -> None:
     _validate_groups(groups, roles_of_group)
     _validate_document_members(groups, roles_of_group)
     _validate_document_indices(index, groups, roles_of_group)
-    _validate_capability(index, groups)
 
 
 def _temporal_designations(

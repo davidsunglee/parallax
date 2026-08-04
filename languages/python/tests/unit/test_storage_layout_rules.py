@@ -68,7 +68,6 @@ _SHARED_TABLE: Final = Table("ledger")
 
 _REPO = case_format.find_repo_root()
 _CASES = _REPO / "core" / "compatibility" / "cases"
-_CAPABILITY: Final = storage_layout.DOCUMENT_CAPABILITY_UNSUPPORTED
 
 
 def _shape(name: str = "text") -> ValueObjectShapeDeclaration:
@@ -152,7 +151,6 @@ def test_the_owned_issue_code_set_is_closed() -> None:
                 "storage-layout-column-collision",
                 "storage-layout-document-member-column-override",
                 "storage-layout-index-over-document-member",
-                "storage-layout-document-capability-unsupported",
             }
         )
         == storage_layout.ISSUE_CODES
@@ -542,8 +540,7 @@ def test_a_container_less_concrete_subtype_projects_no_table_group() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The capability gate: the shapes the declared scope list refuses, and the    #
-# defects that report themselves instead of it.                               #
+# Accepted document-layout shapes.                                             #
 # --------------------------------------------------------------------------- #
 
 
@@ -554,16 +551,6 @@ def _standalone_document(*, column: str = "payload", **members: Any) -> Declarat
         container=Table("note"),
         layout=Document(Column(column)),
         **members,
-    )
-
-
-def _refused_shapes(*declarations: Declaration) -> tuple[str, ...]:
-    gate = [issue for issue in _rule_issues(*declarations) if issue.code == _CAPABILITY]
-    if not gate:
-        return ()
-    (issue,) = gate
-    return tuple(
-        entry.shape for entry in storage_layout.CAPABILITY_SCOPE if entry.shape in issue.message
     )
 
 
@@ -579,11 +566,7 @@ def _temporal_document(*, dimension: TemporalDimension) -> tuple[Declaration, ..
     )
 
 
-def test_a_document_tpcs_root_matches_no_remaining_capability_shape() -> None:
-    # The scope list is a set of independent predicates over one accepted
-    # root-owned declaration, and the gate names every entry the owner matches.
-    # A temporal axis is not among them, so this accepted temporal family matches
-    # no remaining refusal shape.
+def test_a_temporal_document_tpcs_root_is_accepted() -> None:
     tx_start = instant(_ROOT, "txStart")
     tx_end = instant(_ROOT, "txEnd")
     root = Declaration(
@@ -597,29 +580,23 @@ def test_a_document_tpcs_root_matches_no_remaining_capability_shape() -> None:
         ),
         inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
-    assert _refused_shapes(root, _tpcs_concrete(_LEAF)) == ()
+    assert _rule_issues(root, _tpcs_concrete(_LEAF)) == ()
 
 
-def test_a_standalone_layout_owner_matches_no_declared_shape() -> None:
-    # The scope list names no standalone entry, so a well-formed standalone
-    # declaration raises nothing here — which is what lets
-    # models/document-layout.yaml sit in the corpus and form at all.
+def test_a_standalone_layout_owner_is_accepted() -> None:
     assert _rule_issues(_standalone_document()) == ()
 
 
 @pytest.mark.parametrize(
     "dimension", [TemporalDimension.TRANSACTION_TIME, TemporalDimension.VALID_TIME]
 )
-def test_a_temporal_layout_owner_matches_no_declared_shape(
+def test_a_temporal_layout_owner_is_accepted(
     dimension: TemporalDimension,
 ) -> None:
-    # A temporal axis names no scope entry, on either dimension, so a
-    # document-mapped Entity that chains milestones forms rather than being
-    # refused — the acceptance every temporal document-layout witness rests on.
     assert _rule_issues(*_temporal_document(dimension=dimension)) == ()
 
 
-def test_a_tpcs_layout_owner_raises_no_capability_issue() -> None:
+def test_a_tpcs_layout_owner_is_accepted() -> None:
     root = Declaration(
         identity=_SIBLING,
         layout=Document(Column("body")),
@@ -631,16 +608,6 @@ def test_a_tpcs_layout_owner_raises_no_capability_issue() -> None:
         _tpcs_concrete(_LEAF, parent=_SIBLING, table="note"),
     )
     assert issues == ()
-
-
-def test_an_owner_matching_no_declared_shape_is_accepted_rather_than_refused(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The gate refuses exactly the shapes the scope list declares, so an owner
-    # matching none of them raises nothing. Emptying the scope is what states
-    # the rule rather than the list.
-    monkeypatch.setattr("parallax.core.storage_layout._rules.CAPABILITY_SCOPE", ())
-    assert _rule_issues(_standalone_document()) == ()
 
 
 def test_a_tpcs_root_is_accepted_for_its_whole_family() -> None:

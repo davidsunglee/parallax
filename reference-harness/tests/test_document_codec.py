@@ -326,6 +326,17 @@ def test_every_admitted_leaf_is_exactly_what_the_encoder_produces() -> None:
         assert encode_leaf(spelling, decode_leaf(spelling, document)) == document
 
 
+@pytest.mark.parametrize(
+    ("spelling", "value"),
+    (("boolean", 1), ("int32", 2**40), ("int64", 2**80), ("string", 7)),
+)
+def test_identity_encoded_leaf_must_belong_to_its_declared_type(
+    spelling: str, value: object
+) -> None:
+    with pytest.raises(DocumentEncodingError, match=f"names no {spelling} value"):
+        encode_leaf(spelling, value)
+
+
 def test_a_stored_leaf_outside_its_declared_type_is_refused_rather_than_read() -> None:
     # The domain `decode_leaf` inverts is the encoding table's own codomain, so a
     # stored value outside it contradicts the shape that declares the member and is

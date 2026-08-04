@@ -711,50 +711,12 @@ Issue location is the Index declaration, `IndexLocation`, because the Index is
 what must change; its related sequence contains the offending Attribute's
 `AttributeLocation`.
 
-### The capability gate
-
-An implementation MUST NOT accept a Relational Document Layout whose behavior it
-cannot execute end to end. A build that does not yet execute some layout shape
-declares that shape and refuses it:
-
-```text
-storage-layout-document-capability-unsupported
-```
-
-The rule carries one declared **capability scope list**: the closed, enumerated
-set of layout shapes this build refuses. Each entry is a predicate over the
-accepted declaration — for example *the layout owner is a table-per-hierarchy
-root*, or *the layout owner declares a temporal axis*. The Rule Set emits the
-Issue for a root-owned `Document` declaration matching at least one entry, once
-per matching layout owner, located at `EntityLocation(layoutOwner)` with an
-empty related sequence.
-
-Two properties are load-bearing:
-
-- **The gate fires only on a root-owned declaration that raises no other layout
-  Issue.** Root ownership comes from the Inheritance projection this Rule Set
-  already consumes. A descendant's own layout declaration is
-  `inheritance-layout-not-root-owned` and never the gate; a model whose layout
-  is otherwise defective reports that defect and never the gate. A model
-  therefore always reports the reason it is actually wrong.
-- **A model is accepted or refused whole, never per operation.** The gate is a
-  formation rejection, not a runtime capability check, so a build whose scope
-  list admits a shape must execute every operation of that shape — reads,
-  predicates, ordering, and writes alike.
-
-An empty scope list refuses nothing, and a build whose scope list is empty MUST
-NOT declare this rule at all: removing the last entry removes the rule, its
-Issue Code, and its manifest entry together. The rule exists to keep "not yet
-supported" distinguishable from "supported and wrong", so it is deleted rather
-than retained as a permanently vacuous check.
-
 ### Rule Set boundary
 
 This Rule Set receives only the Candidate Metamodel and owns exactly
 `storage-layout-table-mapping-collision`, `storage-layout-column-collision`,
-`storage-layout-document-member-column-override`,
-`storage-layout-index-over-document-member`, and, while its capability scope
-list is non-empty, `storage-layout-document-capability-unsupported`. The Column
+`storage-layout-document-member-column-override`, and
+`storage-layout-index-over-document-member`. The Column
 collision code remains exclusive to distinct physical Column claims. The Rule
 Set consumes no `InheritanceFacet` or `RelationshipFacet`, assumes no other Rule
 Set has run, and makes no topology decision. The post-validation Model Compiler
