@@ -63,8 +63,5 @@ entity:
       startAttribute: txStart
       endAttribute: txEnd
   indices:
-    - name: position_pk
-      attributes: [id, validStart, txStart]
-      unique: true
     - name: position_acct
       attributes: [acctNum]

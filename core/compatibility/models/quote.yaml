@@ -40,10 +40,6 @@ entities:
       - dimension: transaction-time
         startAttribute: txStart
         endAttribute: txEnd
-    indices:
-      - name: quote_pk
-        attributes: [id, txStart]
-        unique: true
   - name: SpotQuote
     namespace: parallax.compatibility
     table: spot_quote

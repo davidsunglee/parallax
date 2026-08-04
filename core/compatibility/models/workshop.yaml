@@ -127,7 +127,3 @@ entities:
         join:
           source: id
           target: { entity: parallax.compatibility.Material, attribute: workshopId }
-    indices:
-      - name: workshop_pk
-        attributes: [id]
-        unique: true

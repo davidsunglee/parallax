@@ -33,8 +33,5 @@ entity:
       startAttribute: txStart
       endAttribute: txEnd
   indices:
-    - name: ledger_pk
-      attributes: [id, txStart]
-      unique: true
     - name: ledger_acct
       attributes: [acctNum]

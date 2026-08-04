@@ -20,7 +20,3 @@ entity:
       primaryKey: true
     - name: occurredAt
       type: timestamp
-  indices:
-    - name: event_pk
-      attributes: [id]
-      unique: true

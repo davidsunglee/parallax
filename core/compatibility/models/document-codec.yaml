@@ -108,7 +108,3 @@ entity:
             - name: issued
               type: date
               nullable: true
-  indices:
-    - name: sample_pk
-      attributes: [id]
-      unique: true

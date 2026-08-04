@@ -23,6 +23,7 @@ from .storage_layout import (
     RelationalDocument,
     TableLayout,
     ValueObjectContributor,
+    derived_primary_key_index,
 )
 
 # m-core neutral type -> Postgres column type.
@@ -259,11 +260,13 @@ class _Declarations:
     """
 
     types: Mapping[ColumnContributor, tuple[str, int | None]]
+    primary_key_indices: tuple[tuple[str, dict[str, Any]], ...]
     unique_indices: tuple[tuple[str, dict[str, Any]], ...]
 
 
 def _declarations(model: Model) -> _Declarations:
     types: dict[ColumnContributor, tuple[str, int | None]] = {}
+    primary_key_indices: list[tuple[str, dict[str, Any]]] = []
     unique_indices: list[tuple[str, dict[str, Any]]] = []
     for entity in model.entities:
         owner = entity.canonical_name
@@ -275,12 +278,19 @@ def _declarations(model: Model) -> _Declarations:
             )
         for value_object in definition.get("valueObjects", []) or []:
             types[ValueObjectContributor(owner, value_object["name"])] = (_DOCUMENT_TYPE, None)
+        derived = derived_primary_key_index(definition)
+        if derived is not None:
+            primary_key_indices.append((owner, derived))
         unique_indices.extend(
             (owner, index)
             for index in definition.get("indices", []) or []
             if index.get("unique", False)
         )
-    return _Declarations(types=types, unique_indices=tuple(unique_indices))
+    return _Declarations(
+        types=types,
+        primary_key_indices=tuple(primary_key_indices),
+        unique_indices=tuple(unique_indices),
+    )
 
 
 def contributor_types(model: Model) -> Mapping[ColumnContributor, tuple[str, int | None]]:
@@ -330,29 +340,30 @@ def _index_columns(layout: TableLayout, owner: str, index: Mapping[str, Any]) ->
 
 
 def _create_table(layout: TableLayout, declarations: _Declarations, dialect: str) -> str:
-    """One physical table's ``create table``, rendered from its canonical layout.
+    """One physical table's ``create table``, rendered from index metadata.
 
-    The layout already owns the complete slot sequence, effective physical
-    nullability, and the model-key-plus-temporal-start physical primary key
-    (m-storage-layout); this only renders those selected values per dialect.
+    Every constraint comes from an Index: the derived primary-key Index becomes
+    `primary key (...)` and each authored unique Index becomes `unique (...)`.
+    The two sets are disjoint — the primary-key Index is never authored — so
+    nothing is redundant and no constraint is suppressed. The layout owns the
+    complete slot sequence and effective physical nullability (m-storage-layout);
+    this only renders selected values per dialect.
     """
     columns = [_slot_ddl(slot, declarations, dialect) for slot in layout.columns]
-    pk_columns = [slot.column for slot in layout.physical_primary_key]
 
-    # A UNIQUE constraint is emitted for each declared unique index whose columns
-    # are NOT exactly the physical primary key (already enforced by `primary key
-    # (...)`), so a model can witness a unique-INDEX violation distinct from a PK
-    # collision (m-db-error error classification).
     for owner, index in declarations.unique_indices:
         index_columns = _index_columns(layout, owner, index)
-        if index_columns is None or set(index_columns) == set(pk_columns):
+        if index_columns is None:
             continue
         quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
         columns.append(f"unique ({quoted})")
 
-    if pk_columns:
-        quoted_pk = ", ".join(quote_identifier(column, dialect) for column in pk_columns)
-        columns.append(f"primary key ({quoted_pk})")
+    for owner, index in declarations.primary_key_indices:
+        index_columns = _index_columns(layout, owner, index)
+        if index_columns is None:
+            continue
+        quoted = ", ".join(quote_identifier(column, dialect) for column in index_columns)
+        columns.append(f"primary key ({quoted})")
 
     column_clause = ",\n  ".join(columns)
     return f"create table {quote_identifier(layout.table, dialect)} (\n  {column_clause}\n)"

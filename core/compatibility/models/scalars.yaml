@@ -19,7 +19,3 @@ entity:
       type: time
     - name: externalId
       type: uuid
-  indices:
-    - name: scalar_thing_pk
-      attributes: [id]
-      unique: true

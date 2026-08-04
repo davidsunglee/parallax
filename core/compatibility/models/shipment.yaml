@@ -31,7 +31,3 @@ entity:
           type: string
         - name: city
           type: string
-  indices:
-    - name: shipment_pk
-      attributes: [id]
-      unique: true

@@ -469,16 +469,26 @@ authored nullability or an all-columns-nullable policy for
 
 ## Physical primary key
 
-The Physical Primary Key is the ordered selection of:
+The Physical Primary Key is the slot selection of the derived primary-key Index
+of the Entity that declares the family's primary key, in that Index's own
+component order:
 
 1. every model primary-key Attribute slot, in model-key order; then
-2. each temporal dimension's start Attribute slot, in accepted axis order.
+2. each temporal dimension's **end** Attribute slot, in accepted axis order.
 
-It may therefore span the Identity and Temporal tiers. A temporal-start
-Attribute remains at its one canonical position in `columns`; selecting it into
+The Index is the sole provenance: this module selects slots for components
+`m-descriptor` already derived rather than composing a key of its own, so no
+consumer can observe a physical key no Index Metadata declares. Keying on the
+end Attributes is what makes a Latest predicate and a milestone close key hits,
+since both pin the exclusive upper bounds.
+
+It may therefore span the Identity and Temporal tiers. A temporal-end Attribute
+remains at its one canonical position in `columns`; selecting it into
 `physicalPrimaryKey` does not create another slot. Inheritance owns the
 root-wide temporal applicability of a family, so a shared table and every
-concrete table use the same root axis designations.
+concrete table use the same root axis designations — and, under
+`table-per-concrete-subtype`, the same root-declared Index, whose components
+each concrete table resolves through its own contributor lookup.
 
 Secondary Index Metadata remains an ordered declaration of Attribute
 Identities. A DDL consumer resolves each index component through the applicable
@@ -753,9 +763,13 @@ their spellings equals a physical Column.
   Assignments to document-resident members compose against the one Structured
   Column slot their placements name, in canonical logical placement order.
 - DDL iterates `TableLayout.columns`, applies `effectiveNullable`, and selects
-  `physicalPrimaryKey`; dialects only render the already-selected values. The
-  Structured Column appears in DDL purely as a consequence of the layout owning
-  one more `Document`-tier slot.
+  `physicalPrimaryKey`; dialects only render the already-selected values. Every
+  constraint it emits comes from an Index: the derived primary-key Index is
+  rendered as the key constraint and each other unique Index as a unique
+  constraint, and the two sets are disjoint, so no consumer suppresses one
+  constraint because another happens to span the same Columns. The Structured
+  Column appears in DDL purely as a consequence of the layout owning one more
+  `Document`-tier slot.
 - Fixture loading resolves logical members and derived discriminator values
   through an Entity view while preserving the surface's omitted-cell policy. It
   places a document-resident member through its Member Placement rather than

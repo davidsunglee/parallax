@@ -78,7 +78,8 @@ _Avoid_: Index ID, index column, global index name
 **Index Metadata**:
 The self-identifying local physical-index view: one Index Identity, a nonempty
 declaration-ordered sequence of Attribute Identities, and its uniqueness flag.
-Indexes are never inherited and contain no duplicated column names.
+An Entity carries its derived primary-key index first, then every index it
+authors. Indexes are never inherited and contain no duplicated column names.
 _Avoid_: index record, column list, effective index
 
 **Relationship Identity**:
@@ -416,13 +417,14 @@ Column Tier, declaring contributor, effective nullability, and the Entities to
 which it applies. Many document-resident members may refer to one Structured
 Column Slot through distinct Member Placements, while two model facts that
 intentionally designate one Attribute Identity, such as temporal `revised_at`
-and `tx_start`, produce one slot rather than aliases competing for storage.
+and `txStart`, produce one slot rather than aliases competing for storage.
 _Avoid_: selected field, result key, duplicate alias column
 
 **Physical Primary Key**:
-The ordered Column Slots by which a physical Table identifies one stored row.
-It combines model primary-key Attributes with every temporal dimension's start
-Attribute, so its designated slots may span identity and temporal Column Tiers.
+The ordered Column Slots by which a physical Table identifies one stored row,
+selected from the derived primary-key Index. It combines model primary-key
+Attributes with every temporal dimension's end Attribute, so its designated
+slots may span identity and temporal Column Tiers.
 _Avoid_: identity tier, domain key, declared primary key alone
 
 **Column Tier**:

@@ -39,7 +39,3 @@ entity:
           attributes:
             - name: country
               type: string
-  indices:
-    - name: subscriber_pk
-      attributes: [id]
-      unique: true

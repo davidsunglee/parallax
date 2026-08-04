@@ -22,8 +22,6 @@ entities:
     attributes:
       - { name: name, type: string, primaryKey: true, maxLength: 64 }
       - { name: nextVal, type: int64 }
-    indices:
-      - { name: audit_seq_pk, attributes: [name], unique: true }
   - name: AuditEntry
     namespace: parallax.compatibility
     table: audit_entry
@@ -45,7 +43,3 @@ entities:
       - dimension: transaction-time
         startAttribute: txStart
         endAttribute: txEnd
-    indices:
-      - name: audit_entry_pk
-        attributes: [id, txStart]
-        unique: true

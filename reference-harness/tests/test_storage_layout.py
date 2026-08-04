@@ -232,18 +232,18 @@ def _tpcs_definitions() -> list[dict[str, Any]]:
 
 
 def _ranked_temporal_definitions(
-    mapping: str, *, duplicate_start: bool
+    mapping: str, *, duplicate_end: bool
 ) -> tuple[list[dict[str, Any]], str, str]:
     root = f"example.{mapping.title()}Temporal"
     local_root = root.rpartition(".")[2]
     concrete = f"example.{mapping.title()}TemporalRow"
-    shared_start = "validStart" if duplicate_start else "txStart"
+    shared_end = "validEnd" if duplicate_end else "txEnd"
     attributes = [
         _attribute("id", primary_key=True),
         _attribute("validStart", column="from_z"),
         _attribute("validEnd", column="thru_z"),
-        *([] if duplicate_start else [_attribute("txStart", column="in_z")]),
-        _attribute("txEnd", column="out_z"),
+        _attribute("txStart", column="in_z"),
+        *([] if duplicate_end else [_attribute("txEnd", column="out_z")]),
     ]
     root_definition: dict[str, Any] = {
         "name": local_root,
@@ -252,8 +252,8 @@ def _ranked_temporal_definitions(
         "asOfAxes": [
             {
                 "dimension": "transaction-time",
-                "startAttribute": shared_start,
-                "endAttribute": "txEnd",
+                "startAttribute": "txStart",
+                "endAttribute": shared_end,
             },
             {
                 "dimension": "valid-time",
@@ -417,9 +417,9 @@ def test_standalone_layout_has_table_wide_tiers_provenance_and_physical_key() ->
     ]
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeContributor("example.Record", "id"),
-        AttributeContributor("example.Record", "txStart"),
+        AttributeContributor("example.Record", "txEnd"),
     ]
-    assert [layout.columns.index(slot) for slot in layout.physical_primary_key] == [0, 3]
+    assert [layout.columns.index(slot) for slot in layout.physical_primary_key] == [0, 4]
     payload = layout.contribution(ValueObjectContributor("example.Record", "payload"))
     assert payload is not None
     assert payload.declaring_owner == "example.Record"
@@ -427,27 +427,27 @@ def test_standalone_layout_has_table_wide_tiers_provenance_and_physical_key() ->
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_temporal_starts_follow_dimension_rank_not_authored_axis_order(
+def test_physical_key_temporal_ends_follow_dimension_rank_not_authored_axis_order(
     mapping: str,
 ) -> None:
-    definitions, table, root = _ranked_temporal_definitions(mapping, duplicate_start=False)
+    definitions, table, root = _ranked_temporal_definitions(mapping, duplicate_end=False)
     layout = compile_storage_layout(definitions).table(table)
     assert layout is not None
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeContributor(root, "id"),
-        AttributeContributor(root, "validStart"),
-        AttributeContributor(root, "txStart"),
+        AttributeContributor(root, "validEnd"),
+        AttributeContributor(root, "txEnd"),
     ]
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_deduplicates_a_start_designated_by_two_dimensions(mapping: str) -> None:
-    definitions, table, root = _ranked_temporal_definitions(mapping, duplicate_start=True)
+def test_physical_key_deduplicates_an_end_designated_by_two_dimensions(mapping: str) -> None:
+    definitions, table, root = _ranked_temporal_definitions(mapping, duplicate_end=True)
     layout = compile_storage_layout(definitions).table(table)
     assert layout is not None
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeContributor(root, "id"),
-        AttributeContributor(root, "validStart"),
+        AttributeContributor(root, "validEnd"),
     ]
 
 

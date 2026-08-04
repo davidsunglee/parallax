@@ -38,10 +38,12 @@ from parallax.core.metamodel import (
     AttributeMetadata,
     Column,
     EntityIdentity,
+    IndexIdentity,
     IndexMetadata,
     Metamodel,
     ValueObjectIdentity,
     ValueObjectMetadata,
+    derive_primary_key_index,
 )
 from parallax.core.storage_layout import (
     ColumnSlot,
@@ -125,13 +127,36 @@ def _column_ddl(model: Metamodel, slot: ColumnSlot, dialect: Dialect) -> str:
 
 
 def _table_ddl(model: Metamodel, layout: TableLayout, dialect: Dialect) -> str:
-    """One layout's ``create table``, in complete canonical slot order."""
+    """One layout's ``create table``, in complete canonical slot order.
+
+    Every constraint comes from an Index: the derived primary-key Index becomes
+    ``primary key (…)`` and each authored unique Index becomes ``unique (…)``.
+    The two sets are disjoint, so no constraint is redundant with another.
+    """
     columns = [_column_ddl(model, slot, dialect) for slot in layout.columns]
     key_columns = [dialect.quote(slot.column.name) for slot in layout.physical_primary_key]
     if key_columns:
         columns.append(f"primary key ({', '.join(key_columns)})")
-    columns.extend(_unique_constraints(model, layout, key_columns, dialect))
+    columns.extend(_unique_constraints(model, layout, dialect))
     return f"create table {dialect.quote(layout.table.name)} ({', '.join(columns)})"
+
+
+def _primary_key_indices(model: Metamodel) -> frozenset[IndexIdentity]:
+    """The Identity of every Entity's derived primary-key Index.
+
+    ``primary key (…)`` already emits it, so it is the one unique Index a table
+    constraint list leaves out.
+    """
+    derived = (
+        derive_primary_key_index(
+            entity=entity.identity,
+            container=entity.declared_container,
+            attributes=entity.declared_attributes,
+            as_of_axes=entity.declared_as_of_axes,
+        )
+        for entity in model.entities
+    )
+    return frozenset(index.identity for index in derived if index is not None)
 
 
 def _index_columns(layout: TableLayout, index: IndexMetadata) -> list[Column] | None:
@@ -152,32 +177,29 @@ def _index_columns(layout: TableLayout, index: IndexMetadata) -> list[Column] | 
     return [cast("ColumnSlot", slot).column for slot in slots]
 
 
-def _unique_constraints(
-    model: Metamodel, layout: TableLayout, key_columns: list[str], dialect: Dialect
-) -> list[str]:
-    """``unique (…)`` constraints for every declared unique Index this table holds.
+def _unique_constraints(model: Metamodel, layout: TableLayout, dialect: Dialect) -> list[str]:
+    """``unique (…)`` constraints for every authored unique Index this table holds.
 
     A unique Index may be declared on any Entity whose members reach the table —
     a standalone Entity, an ancestor of a table-per-concrete-subtype concrete, or
     any table-per-hierarchy family participant — so the layout's contributor
-    lookup, not an ancestry walk, decides membership. The Index matching the
-    physical primary key is skipped because ``primary key (…)`` already enforces
-    it; what remains are the true secondaries (a unique business column, a
-    one-to-one FK column) the `m-db-error` uniqueViolation triggers need. The
-    same resolved column set declared more than once emits one constraint.
+    lookup, not an ancestry walk, decides membership. The derived primary-key
+    Index is left out because ``primary key (…)`` already emits it; what remains
+    are the true secondaries (a unique business column, a one-to-one FK column)
+    the `m-db-error` uniqueViolation triggers need. The same resolved column set
+    declared more than once emits one constraint.
     """
+    derived = _primary_key_indices(model)
     constraints: list[str] = []
     seen: set[frozenset[str]] = set()
     for entity in model.entities:
         for index in entity.indices:
-            if not index.unique:
+            if not index.unique or index.identity in derived:
                 continue
             resolved = _index_columns(layout, index)
             if resolved is None:
                 continue
             quoted = [dialect.quote(column.name) for column in resolved]
-            if set(quoted) == set(key_columns):
-                continue
             key = frozenset(quoted)
             if key in seen:
                 continue

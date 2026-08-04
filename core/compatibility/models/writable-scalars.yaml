@@ -44,7 +44,3 @@ entity:
       type: string
       maxLength: 8
       nullable: true
-  indices:
-    - name: writable_scalars_pk
-      attributes: [id]
-      unique: true

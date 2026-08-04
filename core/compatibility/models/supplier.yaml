@@ -76,8 +76,5 @@ entity:
               type: string
               nullable: true
   indices:
-    - name: supplier_pk
-      attributes: [id, txStart]
-      unique: true
     - name: supplier_name
       attributes: [name]

@@ -88,10 +88,7 @@ class Balance(
     TxTemporal,
     table="balance",
     namespace=_NS,
-    indices=(
-        index("balance_pk", "id", "tx_start", unique=True),
-        index("balance_acct", "acct_num"),
-    ),
+    indices=(index("balance_acct", "acct_num"),),
 ):
     id: Attr[int] = attr(primary_key=True, column="bal_id")
     acct_num: Attr[str] = attr(max_length=32)
@@ -154,7 +151,6 @@ class Folder(
     Entity,
     table="folder",
     namespace=_NS,
-    indices=(index("folder_pk", "id", unique=True),),
 ):
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=32)
@@ -216,7 +212,6 @@ class Rate(
     Bitemporal,
     namespace=_NS,
     inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE),
-    indices=(index("rate_pk", "id", "valid_start", "tx_start", unique=True),),
 ):
     id: Attr[int] = attr(primary_key=True)
     amount: Attr[Decimal] = attr(precision=18, scale=2)
@@ -240,7 +235,6 @@ class Person(
     Entity,
     table="person",
     namespace=_NS,
-    indices=(index("person_pk", "id", unique=True),),
 ):
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=64)
@@ -253,10 +247,7 @@ class Passport(
     Entity,
     table="passport",
     namespace=_NS,
-    indices=(
-        index("passport_pk", "id", unique=True),
-        index("passport_person", "person_id", unique=True),
-    ),
+    indices=(index("passport_person", "person_id", unique=True),),
 ):
     id: Attr[int] = attr(primary_key=True)
     person_id: Attr[int]

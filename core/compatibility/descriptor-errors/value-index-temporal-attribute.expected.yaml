@@ -1,0 +1,7 @@
+phase: value
+code: descriptor-value-invalid
+violations:
+  - path: [entity, indices, 0, attributes, 1]
+    rule: index-temporal-attribute
+  - path: [entity, indices, 0, attributes, 2]
+    rule: index-temporal-attribute

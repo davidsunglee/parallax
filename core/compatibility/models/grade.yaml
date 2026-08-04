@@ -24,7 +24,3 @@ entity:
     - name: label
       type: string
       maxLength: 32
-  indices:
-    - name: grade_pk
-      attributes: [id]
-      unique: true

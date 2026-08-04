@@ -22,8 +22,6 @@ entities:
           source: id
           target: { entity: parallax.compatibility.InvoiceLine, attribute: invoiceId }
         dependent: true
-    indices:
-      - { name: invoice_pk, attributes: [id, txStart], unique: true }
   - name: InvoiceLine
     namespace: parallax.compatibility
     table: invoice_line
@@ -36,5 +34,4 @@ entities:
     asOfAxes:
       - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     indices:
-      - { name: invoice_line_pk, attributes: [id, txStart], unique: true }
       - { name: invoice_line_invoice, attributes: [invoiceId] }

@@ -102,9 +102,6 @@ entities:
         orderBy:
           - { attribute: resolvedOn, direction: desc, nulls: first }
     indices:
-      - name: orders_pk
-        attributes: [id]
-        unique: true
       - name: orders_sku
         attributes: [sku]
   - name: OrderItem
@@ -136,9 +133,6 @@ entities:
         orderBy:
           - { attribute: code }
     indices:
-      - name: order_item_pk
-        attributes: [id]
-        unique: true
       - name: order_item_order_id
         attributes: [orderId]
   - name: OrderStatus
@@ -162,9 +156,6 @@ entities:
       - name: orderItem
         reverseOf: parallax.compatibility.OrderItem.statuses
     indices:
-      - name: order_status_pk
-        attributes: [id]
-        unique: true
       - name: order_status_order_id
         attributes: [orderId]
   - name: OrderTag
@@ -185,9 +176,6 @@ entities:
       - name: order
         reverseOf: parallax.compatibility.Order.tags
     indices:
-      - name: order_tag_pk
-        attributes: [id]
-        unique: true
       - name: order_tag_order_id
         attributes: [orderId]
   - name: OrderNote
@@ -206,8 +194,5 @@ entities:
         type: date
         nullable: true
     indices:
-      - name: order_note_pk
-        attributes: [id]
-        unique: true
       - name: order_note_order_id
         attributes: [orderId]

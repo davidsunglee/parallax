@@ -48,6 +48,7 @@ from parallax.core.metamodel._states import (
     UnresolvedEntityDeclaration,
     UnresolvedMetamodel,
 )
+from parallax.core.metamodel._temporal_structure import CONVENTIONAL_TEMPORAL_NAMES
 from parallax.core.metamodel._values import (
     AbstractRoot,
     AbstractSubtype,
@@ -201,13 +202,6 @@ RESOLVER_ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
 )
 """The resolver's complete owned Issue Code set, as the Formation Manifest
 declares it. No other module may emit a ``metamodel-*`` code."""
-
-# The Attribute names each Temporal Dimension reserves once an Entity declares
-# that dimension. Only the axis's own start and end Attributes may bear them.
-_CONVENTIONAL_TEMPORAL_NAMES: Final[Mapping[TemporalDimension, tuple[str, str]]] = {
-    TemporalDimension.VALID_TIME: ("validStart", "validEnd"),
-    TemporalDimension.TRANSACTION_TIME: ("txStart", "txEnd"),
-}
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,7 +457,7 @@ def _temporal_reservation_issues(
     reserved: dict[str, TemporalDimension] = {}
     framework: set[AttributeIdentity] = set()
     for axis in declaration.as_of_axes:
-        for name in _CONVENTIONAL_TEMPORAL_NAMES[axis.dimension]:
+        for name in CONVENTIONAL_TEMPORAL_NAMES[axis.dimension]:
             reserved[name] = axis.dimension
         framework.add(axis.start_attribute)
         framework.add(axis.end_attribute)

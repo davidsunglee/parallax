@@ -34,6 +34,7 @@ from reference_harness.case_runner import (
     _write_column_order,
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
+from reference_harness.storage_layout import derived_primary_key_index
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -640,27 +641,26 @@ def test_increment_marker_matches_exact_schema_shape() -> None:
     assert _increment_marker(None) is None
 
 
-def test_temporal_ddl_primary_key_spans_the_as_of_from_column() -> None:
+def test_temporal_ddl_primary_key_spans_the_as_of_to_column() -> None:
     model = _balance_model()
     (create,) = ddl_for(model, "postgres")
     # The business key alone (bal_id) is not unique across milestones; the
-    # physical primary key MUST include the as-of start_column (in_z).
-    assert "primary key (bal_id, in_z)" in create
+    # physical primary key MUST include the as-of end_column (out_z), which is
+    # also the column every close-update and Latest predicate pins.
+    assert "primary key (bal_id, out_z)" in create
     # The interval columns are present and typed as instants.
     assert "in_z timestamptz not null" in create
     assert "out_z timestamptz not null" in create
 
 
-def test_temporal_unique_index_matches_physical_primary_key() -> None:
+def test_temporal_derived_index_is_the_physical_primary_key() -> None:
     entity = _balance_model().root_entity
-    unique_index = next(
-        index for index in entity.definition["indices"] if index["name"] == "balance_pk"
-    )
-    assert unique_index == {
+    assert derived_primary_key_index(entity.definition) == {
         "name": "balance_pk",
-        "attributes": ["id", "txStart"],
+        "attributes": ["id", "txEnd"],
         "unique": True,
     }
+    assert not any(index["name"] == "balance_pk" for index in entity.definition.get("indices", []))
 
 
 def test_balance_entity_is_unitemporal_transaction_time() -> None:

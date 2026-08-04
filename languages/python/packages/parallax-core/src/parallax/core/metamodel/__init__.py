@@ -110,6 +110,7 @@ from parallax.core.metamodel._states import (
     ValueObjectMetadata,
     entity_by_name,
 )
+from parallax.core.metamodel._temporal_structure import derive_primary_key_index
 from parallax.core.metamodel._values import (
     APPLICATION_ASSIGNED,
     COLUMNS,
@@ -288,6 +289,7 @@ __all__ = [
     "canonical_location_key",
     "compile_metadata",
     "default_column_name",
+    "derive_primary_key_index",
     "entity_by_name",
     "inheritance_parent",
     "is_candidate_metamodel",

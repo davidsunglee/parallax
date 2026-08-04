@@ -119,7 +119,6 @@ class Attendee(
     Entity,
     table="attendee",
     namespace=_NS,
-    indices=(index("attendee_pk", "id", unique=True),),
 ):
     """Mirror of ``models/pk-max.yaml`` (the ``max`` primary-key generation)."""
 
@@ -134,7 +133,6 @@ class PkSequence(
     Entity,
     table="pk_sequence",
     namespace=_NS,
-    indices=(index("pk_sequence_pk", "name", unique=True),),
 ):
     """The sequence registry of ``models/pk-sequence.yaml``: one row per named
     sequence holding the next value to hand out. Its own key is a string, which
@@ -148,7 +146,6 @@ class Badge(
     Entity,
     table="badge",
     namespace=_NS,
-    indices=(index("badge_pk", "id", unique=True),),
 ):
     """``Sequence`` allocation on every parameter's semantic default."""
 
@@ -160,7 +157,6 @@ class Ticket(
     Entity,
     table="ticket",
     namespace=_NS,
-    indices=(index("ticket_pk", "id", unique=True),),
 ):
     """``Sequence`` allocation with an offset start and a stride above one."""
 
@@ -174,7 +170,6 @@ class Pass(
     Entity,
     table="pass",
     namespace=_NS,
-    indices=(index("pass_pk", "id", unique=True),),
 ):
     """``Sequence`` allocation that reserves a batch per registry round trip."""
 
@@ -186,7 +181,6 @@ class Voucher(
     Entity,
     table="voucher",
     namespace=_NS,
-    indices=(index("voucher_pk", "id", unique=True),),
 ):
     """``Sequence`` allocation with every parameter set at once."""
 
@@ -203,7 +197,6 @@ class WritableScalar(
     Entity,
     table="writable_scalars",
     namespace=_NS,
-    indices=(index("writable_scalars_pk", "id", unique=True),),
 ):
     """Mirror of ``models/writable-scalars.yaml``: the neutral scalars no other
     mirrored model reaches — ``Float32`` under the two-variant ``float`` family,
@@ -259,7 +252,6 @@ class Sample(
     Entity,
     table="sample",
     namespace=_NS,
-    indices=(index("sample_pk", "id", unique=True),),
 ):
     """Mirror of ``models/document-codec.yaml``: the only corpus model whose Value
     Object reaches every row of the portable leaf encoding table, so it is also the
@@ -278,10 +270,7 @@ class Taxpayer(
     Entity,
     table="taxpayer",
     namespace=_NS,
-    indices=(
-        index("taxpayer_pk", "id", unique=True),
-        index("taxpayer_tax_id", "tax_id", unique=True),
-    ),
+    indices=(index("taxpayer_tax_id", "tax_id", unique=True),),
 ):
     """Mirror of ``models/taxpayer.yaml``: the canonical name ``taxID`` is not
     reachable from any Python member name by the snake -> camel conversion, so
@@ -315,7 +304,6 @@ class Traveler(
     table="traveler",
     namespace=_NS,
     layout=Document(),
-    indices=(index("traveler_pk", "id", unique=True),),
 ):
     """Mirror of ``models/document-layout.yaml``'s document-mapped Entity.
 
@@ -345,7 +333,7 @@ class Trip(
     table="trip",
     namespace=_NS,
     layout=Document(),
-    indices=(index("trip_pk", "id", unique=True), index("trip_traveler_id", "traveler_id")),
+    indices=(index("trip_traveler_id", "traveler_id"),),
 ):
     """Mirror of ``models/document-layout.yaml``'s join side: `traveler_id` is a
     Relationship Join endpoint, so the layout keeps it in a Column of its own while
@@ -367,7 +355,6 @@ class Ledger(
     table="ledger",
     namespace=_NS,
     layout=Document(),
-    indices=(index("ledger_pk", "id", unique=True),),
 ):
     """Mirror of ``models/document-layout.yaml``'s versioned Entity: `version`
     carries the explicit optimistic lock, which the layout keeps direct, while the
@@ -385,7 +372,6 @@ class Beacon(
     table="beacon",
     namespace=_NS,
     layout=Document(),
-    indices=(index("beacon_pk", "id", unique=True),),
 ):
     """Mirror of ``models/document-layout.yaml``'s member-free document Entity: it
     declares the layout and only its primary key, which the layout keeps direct."""
@@ -406,7 +392,6 @@ class Voyage(
     table="voyage",
     namespace=_NS,
     layout=Document(),
-    indices=(index("voyage_pk", "id", "tx_start", unique=True),),
 ):
     """Mirror of ``models/document-layout.yaml``'s Transaction-Time-Only Entity: the
     framework-supplied axis bounds are designated Attributes, which the layout keeps
@@ -429,7 +414,6 @@ class Charter(
     table="charter",
     namespace=_NS,
     layout=Document(),
-    indices=(index("charter_pk", "id", "valid_start", "tx_start", unique=True),),
 ):
     """Mirror of ``models/document-layout.yaml``'s Bitemporal Entity: all four axis
     bounds stay direct and each rectangle a split chains carries a whole
@@ -445,7 +429,6 @@ class Mooring(
     table="mooring",
     namespace=_NS,
     layout=Document(),
-    indices=(index("mooring_pk", "id", "valid_start", "tx_start", unique=True),),
 ):
     """Mirror of ``models/document-layout.yaml``'s member-free Bitemporal Entity: it
     declares the layout, and its primary key and four axis bounds are all the layout
@@ -461,7 +444,6 @@ class DocumentPayment(
     namespace=_NS,
     layout=Document(),
     inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
-    indices=(index("payment_document_pk", "id", unique=True),),
 ):
     id: Attr[int] = attr(primary_key=True)
 

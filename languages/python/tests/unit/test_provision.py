@@ -58,16 +58,17 @@ def test_schema_statements_map_value_objects_to_jsonb() -> None:
     assert "primary key (id)" in ddl
 
 
-def test_schema_statements_temporal_pk_is_business_key_plus_from_columns() -> None:
-    # A temporal entity's physical PK is the business key plus each axis's start column
-    # (m-descriptor): audit-only Balance keys on (bal_id, in_z) so successive
-    # milestones sharing one business key coexist.
+def test_schema_statements_temporal_pk_is_business_key_plus_to_columns() -> None:
+    # A temporal entity's physical PK is the business key plus each axis's end column
+    # (m-storage-layout): audit-only Balance keys on (bal_id, out_z) so successive
+    # milestones sharing one business key coexist, and every close-update pins the
+    # key columns.
     (audit,) = provision.schema_statements(_MODELS["balance"])
-    assert "primary key (bal_id, in_z)" in audit
-    # Bitemporal Position keys on the business key plus BOTH start columns, Valid Time
-    # before Transaction Time (from_z then in_z), matching its declared composite index.
+    assert "primary key (bal_id, out_z)" in audit
+    # Bitemporal Position keys on the business key plus BOTH end columns, Valid Time
+    # before Transaction Time (thru_z then out_z), which is the derived index's order.
     (bitemporal,) = provision.schema_statements(_MODELS["position"])
-    assert "primary key (pos_id, from_z, in_z)" in bitemporal
+    assert "primary key (pos_id, thru_z, out_z)" in bitemporal
 
 
 def test_schema_statements_create_the_shared_table_once() -> None:
@@ -121,30 +122,30 @@ def test_schema_statements_tpcs_temporal_pk_includes_the_root_declared_axes() ->
     # Rate (models/rate.yaml): a table-per-concrete-subtype family whose
     # bitemporal axes are declared on the abstract ROOT and inherited by every
     # concrete subtype (m-inheritance "Inherited members") — DepositRate/LoanRate
-    # declare NO `asOfAttributes` locally. The physical PK must still be the
-    # business key plus EACH axis's start column (`m-descriptor`), never just the
-    # business key alone, or a second milestone for the same id could not be
+    # declare NO axes locally. The root derives the whole key, and each concrete
+    # table carries it: the business key plus EACH axis's end column, never just
+    # the business key alone, or a second milestone for the same id could not be
     # stored.
     tables = provision.schema_statements(_MODELS["rate"])
     (deposit,) = [t for t in tables if t.startswith("create table deposit_rate ")]
-    assert "primary key (id, from_z, in_z)" in deposit
+    assert "primary key (id, thru_z, out_z)" in deposit
     (loan,) = [t for t in tables if t.startswith("create table loan_rate ")]
-    assert "primary key (id, from_z, in_z)" in loan
+    assert "primary key (id, thru_z, out_z)" in loan
     # Quote (models/quote.yaml): the audit-only (single-axis) TPCS counterpart.
     (spot,) = provision.schema_statements(_MODELS["quote"])
-    assert "primary key (id, in_z)" in spot
+    assert "primary key (id, out_z)" in spot
 
 
 def test_schema_statements_tph_temporal_pk_includes_the_root_declared_axes() -> None:
     # Instrument (models/instrument.yaml): a table-per-hierarchy family whose
     # bitemporal axes are declared on the abstract ROOT and inherited by every
-    # concrete subtype — Bond/Stock declare NO `asOfAttributes` locally. The
-    # shared table's physical PK must still be the business key plus EACH
-    # axis's start column, never just the business key alone.
+    # concrete subtype — Bond/Stock declare NO axes locally. The shared table's
+    # physical PK must still be the business key plus EACH axis's end column,
+    # never just the business key alone.
     (ddl,) = [
         stmt for stmt in provision.schema_statements(_MODELS["instrument"]) if "instrument" in stmt
     ]
-    assert "primary key (id, from_z, in_z)" in ddl
+    assert "primary key (id, thru_z, out_z)" in ddl
 
 
 def test_fixture_statements_tph_binds_the_tag_from_tagvalue_never_the_fixture_row() -> None:
@@ -257,8 +258,8 @@ def test_fixture_statements_skip_a_non_list_entity_block() -> None:
 
 def test_schema_statements_enforce_unique_secondary_indices() -> None:
     # The m-db-error uniqueViolation-via-secondary-index triggers (m-db-error-002/-008)
-    # need the declared unique index on Tag.name enforced; the PK-matching indices
-    # (widget_pk / tag_pk) emit no redundant constraint beside `primary key (...)`.
+    # need the declared unique index on Tag.name enforced; the derived primary-key
+    # indices emit no `unique (...)` constraint beside `primary key (...)`.
     ddl = provision.schema_statements(_MODELS["error-cases"])
     (tag,) = [stmt for stmt in ddl if stmt.startswith("create table tag ")]
     assert "unique (name)" in tag
@@ -266,10 +267,9 @@ def test_schema_statements_enforce_unique_secondary_indices() -> None:
     assert "unique" not in widget
 
 
-def test_schema_statements_skip_the_milestone_index_the_temporal_pk_enforces() -> None:
-    # A temporal model's declared composite unique index names the as-of attribute
-    # (`txStart` -> in_z); the physical PK already enforces exactly that
-    # column set, so no duplicate `unique (...)` constraint is emitted.
+def test_schema_statements_emit_the_milestone_key_only_as_the_primary_key() -> None:
+    # A temporal model authors no primary-key index; the derived one becomes
+    # `primary key (...)` and is never also emitted as a `unique (...)`.
     (audit,) = provision.schema_statements(_MODELS["balance"])
     assert "unique" not in audit
 
@@ -286,7 +286,7 @@ def test_an_index_naming_an_undeclared_attribute_never_reaches_provisioning() ->
         entities=tuple(
             dataclasses.replace(
                 entity,
-                indices=(dataclasses.replace(entity.indices[1], attributes=("noSuchAttr",)),),
+                indices=(dataclasses.replace(entity.indices[0], attributes=("noSuchAttr",)),),
             )
             if entity.name == "Tag"
             else entity
@@ -443,7 +443,7 @@ def test_schema_statements_tpcs_surfaces_a_root_declared_unique_index() -> None:
     assert "unique (code)" in ddl
 
 
-def _tpcs_family_with_a_temporal_root_and_matching_index() -> AcceptedMetamodel:
+def _tpcs_family_with_a_temporal_root() -> AcceptedMetamodel:
     root = Entity(
         name="Root",
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
@@ -457,7 +457,6 @@ def _tpcs_family_with_a_temporal_root_and_matching_index() -> AcceptedMetamodel:
                 dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
             ),
         ),
-        indices=(Index(name="root_pk", attributes=("id", "txStart"), unique=True),),
     )
     leaf = Entity(
         name="Leaf",
@@ -468,12 +467,12 @@ def _tpcs_family_with_a_temporal_root_and_matching_index() -> AcceptedMetamodel:
     return models.accepted_model(Metamodel(entities=(root, leaf)))
 
 
-def test_schema_statements_tpcs_skips_a_root_index_matching_the_temporal_pk() -> None:
-    # The root's OWN declared composite unique index names exactly the physical
-    # primary key (business key + start column) the temporal-PK fix already
-    # derives; it must not ALSO appear as a redundant `unique (...)` constraint.
-    (ddl,) = provision.schema_statements(_tpcs_family_with_a_temporal_root_and_matching_index())
-    assert "primary key (id, in_z)" in ddl
+def test_schema_statements_tpcs_key_comes_from_the_tableless_root_derived_index() -> None:
+    # The tableless root declares both the key and the axes, so it is the Entity
+    # that derives the Index; the concrete table it maps carries those components
+    # as its `primary key (...)` and no `unique (...)` beside it.
+    (ddl,) = provision.schema_statements(_tpcs_family_with_a_temporal_root())
+    assert "primary key (id, out_z)" in ddl
     assert "unique" not in ddl
 
 

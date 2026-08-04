@@ -14,8 +14,6 @@ entities:
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: label, type: string, maxLength: 64 }
-    indices:
-      - { name: widget_pk, attributes: [id], unique: true }
   - name: Tag
     namespace: parallax.compatibility
     table: tag
@@ -23,7 +21,6 @@ entities:
       - { name: id, type: int64, primaryKey: true }
       - { name: name, type: string, maxLength: 64 }
     indices:
-      - { name: tag_pk, attributes: [id], unique: true }
       - { name: tag_name_uq, attributes: [name], unique: true }
   - name: Gauge
     namespace: parallax.compatibility
@@ -31,5 +28,3 @@ entities:
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: v, type: int32 }
-    indices:
-      - { name: gauge_pk, attributes: [id], unique: true }

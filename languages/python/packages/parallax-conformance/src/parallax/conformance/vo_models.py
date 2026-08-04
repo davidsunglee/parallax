@@ -106,10 +106,7 @@ class Supplier(
     TxTemporal,
     table="supplier",
     namespace=_NS,
-    indices=(
-        index("supplier_pk", "id", "tx_start", unique=True),
-        index("supplier_name", "name"),
-    ),
+    indices=(index("supplier_name", "name"),),
 ):
     """Mirror of ``models/supplier.yaml`` (Transaction-Time-Only)."""
 
@@ -125,10 +122,7 @@ class Branch(
     Bitemporal,
     table="branch",
     namespace=_NS,
-    indices=(
-        index("branch_pk", "id", "valid_start", "tx_start", unique=True),
-        index("branch_name", "name"),
-    ),
+    indices=(index("branch_name", "name"),),
 ):
     """Mirror of ``models/branch.yaml`` (bitemporal: the SAME address composite
     ``Supplier`` uses, over both axes)."""
@@ -172,7 +166,6 @@ class Contact(
     Entity,
     table="contact",
     namespace=_NS,
-    indices=(index("contact_pk", "id", unique=True),),
 ):
     """Mirror of ``models/contact.yaml``: the top-level ``address`` value object
     stays nullable, but every INNER member is required, deliberately — a document
@@ -199,7 +192,6 @@ class Shipment(
     Entity,
     table="shipment",
     namespace=_NS,
-    indices=(index("shipment_pk", "id", unique=True),),
 ):
     """Mirror of ``models/shipment.yaml``: ``destination`` is declared
     non-nullable, so omitting it is refused at construction."""
@@ -247,7 +239,6 @@ class Customer(
     Entity,
     table="customer",
     namespace=_NS,
-    indices=(index("customer_pk", "id", unique=True),),
 ):
     """Mirror of ``models/customer.yaml``'s ``Customer``: the recursive
     ``address`` value object, plus TWO VO-bearing to-many children reached by a
@@ -274,10 +265,7 @@ class Location(
     Entity,
     table="location",
     namespace=_NS,
-    indices=(
-        index("location_pk", "id", unique=True),
-        index("location_customer_id", "customer_id"),
-    ),
+    indices=(index("location_customer_id", "customer_id"),),
 ):
     """Mirror of ``models/customer.yaml``'s ``Location``: Customer's OWN
     recursive ``address`` composite, reused VERBATIM (never redeclared) — the
@@ -294,10 +282,7 @@ class Depot(
     Entity,
     table="depot",
     namespace=_NS,
-    indices=(
-        index("depot_pk", "id", unique=True),
-        index("depot_customer_id", "customer_id"),
-    ),
+    indices=(index("depot_customer_id", "customer_id"),),
 ):
     """Mirror of ``models/customer.yaml``'s ``Depot``: a DIFFERENT, FLAT
     ``address`` composite (``{line, postcode}``) in the SAME column name

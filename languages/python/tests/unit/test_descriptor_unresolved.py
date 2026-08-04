@@ -477,9 +477,8 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
           type: string
           column: legacyName
       indices:
-        - name: account_pk
-          attributes: [id]
-          unique: true
+        - name: account_label
+          attributes: [label]
     """
     declaration = _only(text)
     assert declaration.identity == EntityIdentity("parallax.fixture", "Account")
@@ -504,10 +503,13 @@ def test_attributes_carry_structured_types_storage_and_generation() -> None:
     assert opened.nullable
     assert legacy.storage == Column("legacyName")
 
-    (index,) = declaration.indices
-    assert index.identity == IndexIdentity(declaration.identity, "account_pk")
-    assert index.attributes == (AttributeIdentity(declaration.identity, "id"),)
-    assert index.unique
+    derived, authored = declaration.indices
+    assert derived.identity == IndexIdentity(declaration.identity, "account_pk")
+    assert derived.attributes == (AttributeIdentity(declaration.identity, "id"),)
+    assert derived.unique
+    assert authored.identity == IndexIdentity(declaration.identity, "account_label")
+    assert authored.attributes == (AttributeIdentity(declaration.identity, "label"),)
+    assert not authored.unique
 
 
 @pytest.mark.parametrize(

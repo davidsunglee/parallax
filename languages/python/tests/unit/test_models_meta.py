@@ -92,7 +92,7 @@ def test_local_member_sequences_preserve_declaration_order() -> None:
     ]
     assert [member.identity.name for member in depot.declared_relationships] == ["zone"]
     assert [member.identity.path for member in depot.declared_value_objects] == [("address",)]
-    assert [member.identity.name for member in depot.indices] == ["depot_code"]
+    assert [member.identity.name for member in depot.indices] == ["depot_pk", "depot_code"]
 
 
 def test_lookup_is_local_and_never_exposes_an_inherited_or_foreign_member() -> None:

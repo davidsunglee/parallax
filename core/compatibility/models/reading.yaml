@@ -48,10 +48,6 @@ entities:
       - dimension: transaction-time
         startAttribute: txStart
         endAttribute: txEnd
-    indices:
-      - name: reading_pk
-        attributes: [id, txStart]
-        unique: true
   - name: MeterReading
     namespace: parallax.compatibility
     inheritance:

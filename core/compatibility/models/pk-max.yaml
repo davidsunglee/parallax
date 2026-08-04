@@ -16,7 +16,3 @@ entity:
     - name: name
       type: string
       maxLength: 64
-  indices:
-    - name: attendee_pk
-      attributes: [id]
-      unique: true

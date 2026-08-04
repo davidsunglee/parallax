@@ -16,7 +16,7 @@ engine reads the live ``Attr[T]`` / ``Rel[T]`` objects directly.
 """
 
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
-from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, attr, index, rel
+from parallax.core import ONE_TO_MANY, Attr, DomainModel, Entity, Rel, attr, rel
 
 _NS = "parallax.compatibility"
 
@@ -27,7 +27,6 @@ class Person(
     Entity,
     table="person",
     namespace=_NS,
-    indices=(index("person_pk", "id", unique=True),),
 ):
     """``models/animal.yaml``'s polymorphic owner — NOT ``read_models.Person``
     (``models/person.yaml``'s unrelated one-to-one Passport owner)."""

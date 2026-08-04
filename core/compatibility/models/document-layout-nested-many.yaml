@@ -22,7 +22,3 @@ entity:
               multiplicity: many
               attributes:
                 - { name: port, type: string }
-  indices:
-    - name: nested_route_pk
-      attributes: [id]
-      unique: true

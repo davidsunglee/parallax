@@ -119,10 +119,6 @@ entities:
         dependent: true
         orderBy:
           - { attribute: id }
-    indices:
-      - name: customer_pk
-        attributes: [id]
-        unique: true
   # Location: a VO-bearing CHILD of Customer (the many side of the to-many
   # `Customer.locations`). It carries its own scalars — `id`, the `customer_id`
   # foreign key, and `label` — plus its OWN `address` value object, the same
@@ -183,9 +179,6 @@ entities:
       - name: customer
         reverseOf: parallax.compatibility.Customer.locations
     indices:
-      - name: location_pk
-        attributes: [id]
-        unique: true
       - name: location_customer_id
         attributes: [customerId]
   - name: Depot
@@ -214,8 +207,5 @@ entities:
       - name: customer
         reverseOf: parallax.compatibility.Customer.depots
     indices:
-      - name: depot_pk
-        attributes: [id]
-        unique: true
       - name: depot_customer_id
         attributes: [customerId]

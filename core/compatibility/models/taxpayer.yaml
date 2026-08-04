@@ -30,9 +30,6 @@ entity:
       type: string
       maxLength: 64
   indices:
-    - name: taxpayer_pk
-      attributes: [id]
-      unique: true
     - name: taxpayer_tax_id
       attributes: [taxID]
       unique: true
