@@ -1,4 +1,4 @@
-# Traveler / Trip / Ledger / Voyage / Charter / Beacon: the shared model for every
+# Traveler / Trip / Ledger / Voyage / Charter / Beacon / Payment: the shared model for every
 # Relational Document Layout witness.
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. What makes it
@@ -227,9 +227,8 @@ entities:
         unique: true
   # Charter: the Bitemporal member. Four bound Attributes stay direct and the
   # rectangle split chains head / middle / tail milestones, each carrying a whole
-  # document. `terms` is the occurrence the split's middle rectangle assigns, which
-  # is where patching's one deliberate loss shows: an assigned subtree is replaced,
-  # so a key no member declares INSIDE it does not survive while one outside does.
+  # document. Assigning `terms` recursively patches only its named declared members,
+  # so undeclared and omitted keys inside it survive along with keys outside it.
   - name: Charter
     namespace: parallax.compatibility
     table: charter
@@ -330,3 +329,47 @@ entities:
       - name: mooring_pk
         attributes: [id, valid_start, tx_start]
         unique: true
+  # Payment: a table-per-hierarchy family whose root owns one Structured Column.
+  # The sibling declarations intentionally reuse the `detail` Document Path with
+  # incompatible declared types. CardPayment additionally declares
+  # `authorizationCode`; a CashPayment document omits that non-applicable key.
+  - name: Payment
+    namespace: parallax.compatibility
+    table: payment_document
+    layout:
+      document:
+        column: payload
+    inheritance:
+      role: root
+      strategy: table-per-hierarchy
+      tag: { column: kind }
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+    indices:
+      - name: payment_document_pk
+        attributes: [id]
+        unique: true
+  - name: CardPayment
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: Payment
+      tagValue: card
+    attributes:
+      - name: detail
+        type: string
+        maxLength: 64
+      - name: authorizationCode
+        type: string
+        maxLength: 32
+  - name: CashPayment
+    namespace: parallax.compatibility
+    inheritance:
+      role: concrete-subtype
+      parent: Payment
+      tagValue: cash
+    attributes:
+      - name: detail
+        type: decimal(18,2)

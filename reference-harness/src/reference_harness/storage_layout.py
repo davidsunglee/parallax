@@ -680,8 +680,6 @@ def _refused_shapes(root_definition: dict[str, Any]) -> tuple[str, ...]:
     block = inheritance_of(root_definition)
     strategy = block.get("strategy") if block is not None else None
     refused: list[str] = []
-    if strategy == STRATEGY_TPH:
-        refused.append("a table-per-hierarchy family")
     if strategy == STRATEGY_TPCS:
         refused.append("a table-per-concrete-subtype family")
     return tuple(refused)

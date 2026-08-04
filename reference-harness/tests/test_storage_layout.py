@@ -879,12 +879,21 @@ def _document_standalone(**overrides: Any) -> dict[str, Any]:
     return definition
 
 
-def test_a_document_hierarchy_root_is_refused_for_its_mapping_shape_alone() -> None:
+def _document_tpcs() -> list[dict[str, Any]]:
+    definitions = _tpcs_definitions()
+    definitions[0]["layout"] = {"document": {"column": "doc"}}
+    for definition in definitions[1:]:
+        for attribute in definition["attributes"]:
+            attribute.pop("column", None)
+    return definitions
+
+
+def test_a_document_tpcs_root_is_refused_for_its_mapping_shape_alone() -> None:
     # The refused-shape list is a set of independent predicates over one accepted
     # root-owned declaration, and the gate names every entry the owner matches. A
     # temporal axis is not among them, so a temporal family is refused for the
     # mapping shape it declares and for nothing else.
-    definitions = _document_hierarchy()
+    definitions = _document_tpcs()
     definitions[0]["attributes"].extend(
         [{"name": "txStart", "type": "timestamp"}, {"name": "txEnd", "type": "timestamp"}]
     )
@@ -898,7 +907,7 @@ def test_a_document_hierarchy_root_is_refused_for_its_mapping_shape_alone() -> N
     with pytest.raises(RejectionError) as caught:
         validate_storage_layout(definitions)
     assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
-    assert "a table-per-hierarchy family" in caught.value.detail
+    assert "a table-per-concrete-subtype family" in caught.value.detail
     assert "Transaction-Time" not in caught.value.detail
     assert "'doc'" in caught.value.detail
 
@@ -937,12 +946,16 @@ def _document_hierarchy() -> list[dict[str, Any]]:
     return definitions
 
 
-def test_the_capability_gate_refuses_one_hierarchy_family_at_its_root() -> None:
+def test_the_capability_gate_refuses_one_tpcs_family_at_its_root() -> None:
     with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(_document_hierarchy())
+        validate_storage_layout(_document_tpcs())
     assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
-    assert "a table-per-hierarchy family" in caught.value.detail
-    assert "'example.Record'" in caught.value.detail
+    assert "a table-per-concrete-subtype family" in caught.value.detail
+    assert "'example.Document'" in caught.value.detail
+
+
+def test_a_document_tph_family_matches_no_refused_shape() -> None:
+    validate_storage_layout(_document_hierarchy())
 
 
 def test_a_layout_declared_off_the_root_raises_nothing_in_storage_layout() -> None:

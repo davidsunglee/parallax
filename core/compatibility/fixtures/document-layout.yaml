@@ -103,3 +103,13 @@ Mooring:
     valid_end: infinity
     tx_start: "2026-01-01T00:00:00+00:00"
     tx_end: infinity
+# The sibling Payment rows use one physical path for two distinct declared types.
+# `authorizationCode` applies only to CardPayment and is absent from the cash
+# document rather than stored as JSON null.
+CardPayment:
+  - id: 1
+    detail: visa-4242
+    authorizationCode: AUTH-7
+CashPayment:
+  - id: 2
+    detail: 12.50

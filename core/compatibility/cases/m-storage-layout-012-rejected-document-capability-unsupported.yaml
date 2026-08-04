@@ -2,7 +2,7 @@
 # Layout is refused because its SHAPE is one the implementation's declared
 # capability scope names, not because anything about the declaration is wrong.
 #
-# `Order` is a table-per-hierarchy root declaring `layout.document` with a
+# `Order` is a table-per-concrete-subtype root declaring `layout.document` with a
 # resolved Structured Column name, and nothing about it is malformed — the
 # layout is root-owned, no member overrides a column, no Index reaches into the
 # document, and `payload` collides with neither a direct column nor the variant
@@ -12,10 +12,10 @@
 # per-operation failure.
 #
 # The refusal turns on exactly one fact: the family. One shared Structured
-# Column holds every variant's applicable members, so a path a sibling variant
-# does not declare is absent rather than null and a predicate over it must not
-# evaluate against the wrong variant's row — the partitioning the scope list
-# declares refused. A standalone Entity carrying the same members raises nothing
+# Column is inherited as one policy by every concrete Table, and polymorphic reads
+# must union branches that each decode their own applicable document shape. A
+# standalone Entity and a table-per-hierarchy family carrying the same members
+# raise nothing
 # (models/document-layout.yaml and m-storage-layout-017…023 read and write one),
 # so this case pins the family as the discriminator rather than the layout
 # declaration. An implementation whose scope list drops that entry accepts this
@@ -27,11 +27,9 @@ when:
   model:
     entities:
       - name: Order
-        table: orders
         inheritance:
           role: root
-          strategy: table-per-hierarchy
-          tag: { column: kind }
+          strategy: table-per-concrete-subtype
         layout:
           document:
             column: payload
@@ -40,9 +38,9 @@ when:
           - { name: displayName, type: string }
           - { name: total, type: "decimal(12,2)" }
       - name: RushOrder
+        table: rush_order
         inheritance:
           role: concrete-subtype
           parent: Order
-          tagValue: rush
 then:
   rejectedRule: storage-layout-document-capability-unsupported

@@ -1145,6 +1145,8 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
 
+    _assert_tph_document_partition_shape(case, dialect)
+
     # Temporal composition (m-sql / m-temporal-read): a table-per-concrete-subtype
     # abstract read over a TEMPORAL family applies the injected as-of predicate PER
     # `union all` branch; recompute the per-branch as-of binds from the read's pin and
@@ -1154,11 +1156,8 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
     golden_rows = _query_rows(db, golden, case.statement_binds(0, dialect))
     # Relational Document Layout (m-storage-layout / m-sql): the golden projects the
     # shared Structured Column once and the row-form result is the scalars it
-    # carries, under the names a Column of each would have had. A `referenceSql`
-    # oracle is deliberately NOT put through this: it is an independent formulation
-    # and extracts each path itself, so both arms reach `then.rows` by different
-    # routes.
-    golden_rows = _materialize_target_document_layout(
+    # carries, under the names a Column of each would have had.
+    golden_rows = _materialize_target_tph_document_layout(
         case, golden_rows, include_value_objects=False
     )
     expected = case.expected_rows
@@ -1178,7 +1177,10 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
 
     reference_sql = case.reference_sql_for(dialect)
     if reference_sql is not None:
-        reference_rows = _materialize_family_variant(case, db.query(reference_sql))
+        reference_rows = _materialize_target_tph_document_layout(
+            case, db.query(reference_sql), include_value_objects=False
+        )
+        reference_rows = _materialize_family_variant(case, reference_rows)
         if not _rows_equal(reference_rows, expected, tolerance):
             raise CaseFailure(
                 f"{case.path.name}: referenceSql rows != then.rows.\n"
@@ -1277,6 +1279,59 @@ def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
             f"its as-of predicate over its own alias (Valid-Time-first), repeated in "
             f"alphabetical branch order {ordered} (m-sql / m-temporal-read)."
         )
+
+
+def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
+    """Grade a TPH document `union all` as one tag-filtered branch per variant."""
+    target_name = case.when.get("targetEntity")
+    if not isinstance(target_name, str):
+        return
+    family = Family(case.model.entity_defs)
+    if target_name not in family.defs or family.strategy_of(target_name) != STRATEGY_TPH:
+        return
+    target = case.model.entity(target_name)
+    if not target.is_abstract or not _document_layout_members(case, target)[0]:
+        return
+    statements = case.golden_statements(dialect)
+    if not statements or " union all " not in statements[0]:
+        return
+
+    tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
+    _assert_union_all_only(case, tree)
+    branches = _union_branch_selects(tree)
+    effective = family.canonical_concrete_order(_read_effective_set(case, family, target_name))
+    if len(branches) != len(effective):
+        raise CaseFailure(
+            f"{case.path.name}: variant-partitioned table-per-hierarchy document read "
+            f"has {len(branches)} branches, expected one for each selected concrete "
+            f"variant {effective} (m-sql)."
+        )
+    tag_column = family.tag_column_of(target_name)
+    table = target.table
+    for position, (branch, concrete) in enumerate(zip(branches, effective, strict=True)):
+        tables = [source.name for source in branch.find_all(exp.Table)]
+        if not tables or tables[0] != table:
+            raise CaseFailure(
+                f"{case.path.name}: TPH document branch {position} ({concrete}) reads "
+                f"{tables[0] if tables else None!r}, expected shared Table {table!r}."
+            )
+        where = branch.args.get("where")
+        guarded = False
+        if where is not None:
+            guarded = any(
+                isinstance(predicate, exp.EQ)
+                and any(
+                    isinstance(column, exp.Column) and column.name == tag_column
+                    for column in predicate.find_all(exp.Column)
+                )
+                for predicate in where.find_all(exp.EQ)
+            )
+        if not guarded:
+            raise CaseFailure(
+                f"{case.path.name}: TPH document branch {position} ({concrete}) has no "
+                f"equality guard on discriminator {tag_column!r}; its casts could evaluate "
+                "against a sibling variant (m-sql)."
+            )
 
 
 def _golden_projection_columns(case: Case) -> set[str]:
@@ -1383,6 +1438,56 @@ def _materialize_target_document_layout(
     )
 
 
+def _materialize_target_tph_document_layout(
+    case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
+) -> list[dict[str, Any]]:
+    """Decode an abstract TPH document only after its raw tag resolves the variant."""
+    target_name = case.when.get("targetEntity")
+    if not isinstance(target_name, str):
+        return rows
+    family = Family(case.model.entity_defs)
+    if target_name not in family.defs:
+        return _materialize_target_document_layout(
+            case, rows, include_value_objects=include_value_objects
+        )
+    target = case.model.entity(target_name)
+    if not target.is_abstract or family.strategy_of(target_name) != STRATEGY_TPH:
+        return _materialize_target_document_layout(
+            case, rows, include_value_objects=include_value_objects
+        )
+    column, _members = _document_layout_members(case, target)
+    if not column:
+        return _materialize_target_document_layout(
+            case, rows, include_value_objects=include_value_objects
+        )
+
+    tagged = _materialize_family_variant(case, rows)
+    effective = _read_effective_set(case, family, target_name)
+    scalar_superset = {
+        member.column
+        for concrete in effective
+        for member in _document_layout_members(case, case.model.entity(concrete))[1]
+        if member.type_spelling is not None
+    }
+    materialized: list[dict[str, Any]] = []
+    for row in tagged:
+        variant = row.get("familyVariant")
+        if not isinstance(variant, str):
+            materialized.append(row)
+            continue
+        (decoded,) = _materialize_document_layout(
+            case,
+            case.model.entity(variant),
+            [row],
+            include_value_objects=include_value_objects,
+        )
+        if not include_value_objects:
+            for column_name in scalar_superset:
+                decoded.setdefault(column_name, None)
+        materialized.append(decoded)
+    return materialized
+
+
 def _materialize_document_layout(
     case: Case,
     entity: Entity,
@@ -1475,6 +1580,8 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
     tag_column = family.tag_column_of(target_name)
     if tag_column is None:
         return rows
+    if rows and all("familyVariant" in row and tag_column not in row for row in rows):
+        return rows
     effective = _read_effective_set(case, family, target_name)
     expected_columns = set(position_projection(case.model.storage_layout, family, effective))
     variant_map = tag_value_to_subtype(entity_defs)
@@ -1544,6 +1651,10 @@ def _narrow_to_variant_columns(case: Case, rows: list[dict[str, Any]]) -> list[d
             narrowed.append(row)
             continue
         own_columns = set(position_projection(case.model.storage_layout, family, [variant]))
+        own_columns.update(
+            member.column
+            for member in _document_layout_members(case, case.model.entity(variant))[1]
+        )
         narrowed.append(
             _MaterializedRow(
                 {
@@ -2018,12 +2129,12 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
     # out into its own members (a no-op under `Columns` layout). The join columns the
     # levels are keyed on are direct under either layout, so the fan-out changes what
     # a node CARRIES and never how the levels are matched up.
-    root_rows = _materialize_family_variant(
+    root_rows = _materialize_target_tph_document_layout(
         case,
-        _materialize_target_document_layout(
-            case, _query_rows(db, statements[0], root_binds), include_value_objects=True
-        ),
+        _query_rows(db, statements[0], root_binds),
+        include_value_objects=True,
     )
+    root_rows = _materialize_family_variant(case, root_rows)
 
     # rows_by_hop[hop key] -> the result-rows that hop fetched.
     rows_by_hop: dict[_HopKey, list[dict[str, Any]]] = {}
@@ -2093,21 +2204,32 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
                 f"this temporal child (matched by axis), appended after the IN list."
             )
 
-        child_rows = _materialize_document_layout(
-            case,
-            step.child_entity,
-            _query_rows(
-                db,
-                statements[statement_index],
-                list(parent_keys) + list(step.tag_binds) + expected_suffix,
-            ),
-            include_value_objects=True,
+        child_rows = _query_rows(
+            db,
+            statements[statement_index],
+            list(parent_keys) + list(step.tag_binds) + expected_suffix,
         )
         # A polymorphic (multi-concrete, table-per-hierarchy) hop projects the raw tag
         # column; materialize each row's `familyVariant` from the tag map (never a
         # projected SQL column), exactly as an abstract-target flat read does (Q6).
         if step.polymorphic and step.tag_column is not None:
             child_rows = [_materialize_hop_variant(case, step, row) for row in child_rows]
+            child_rows = [
+                _materialize_document_layout(
+                    case,
+                    case.model.entity(row["familyVariant"]),
+                    [row],
+                    include_value_objects=True,
+                )[0]
+                for row in child_rows
+            ]
+        else:
+            child_rows = _materialize_document_layout(
+                case,
+                step.child_entity,
+                child_rows,
+                include_value_objects=True,
+            )
         rows_by_hop[step.hop_key] = child_rows
 
         child_col = _column_of(step.child_entity, step.child_attr)
@@ -2647,7 +2769,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     # Relational Document Layout read fans those out of its one Structured Column
     # too — after which each occurrence sits under the very column name a `Columns`
     # layout would have given it and the node assembly below is layout-blind.
-    projected = _materialize_target_document_layout(
+    projected = _materialize_target_tph_document_layout(
         case,
         _query_rows(db, golden, case.statement_binds(0, dialect)),
         include_value_objects=True,

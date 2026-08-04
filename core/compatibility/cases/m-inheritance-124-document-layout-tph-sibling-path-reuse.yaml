@@ -1,0 +1,41 @@
+# Disjoint TPH siblings may reuse one Document Path with incompatible declared
+# types, and their predicates execute in tag-partitioned union branches.
+#
+# CardPayment.detail compares as text while CashPayment.detail casts to decimal.
+# One unpartitioned SELECT could evaluate the decimal cast against `visa-4242`,
+# raising on PostgreSQL and silently coercing to 0.00 on MariaDB. Each union branch
+# carries one concrete tag guard, so its extraction and cast see only the variant
+# that declares that interpretation of `detail`; both matching rows are returned.
+model: models/document-layout.yaml
+tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Payment
+  operation:
+    or:
+      operands:
+        - narrow:
+            entity: Payment
+            to: [CardPayment]
+            operand:
+              eq: { attr: CardPayment.detail, value: visa-4242 }
+        - narrow:
+            entity: Payment
+            to: [CashPayment]
+            operand:
+              greaterThan: { attr: CashPayment.detail, value: 10.00 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.payload from payment_document t0 where (jsonb_extract_path_text(t0.payload, ?) = ? or 1 = 0) and t0.kind = ? union all select t0.id, t0.kind, t0.payload from payment_document t0 where (1 = 0 or cast(jsonb_extract_path_text(t0.payload, ?) as decimal(18, 2)) > ?) and t0.kind = ?
+        mariadb: select t0.id, t0.kind, t0.payload from payment_document t0 where (json_value(t0.payload, ?) = ? or 1 = 0) and t0.kind = ? union all select t0.id, t0.kind, t0.payload from payment_document t0 where (1 = 0 or cast(json_value(t0.payload, ?) as decimal(18, 2)) > ?) and t0.kind = ?
+      binds:
+        postgres: [detail, visa-4242, card, detail, '10.0', cash]
+        mariadb: ['$.detail', visa-4242, card, '$.detail', '10.0', cash]
+  referenceSql:
+    postgres: select id, kind, payload from payment_document where kind = 'card' and payload ->> 'detail' = 'visa-4242' union all select id, kind, payload from payment_document where kind = 'cash' and (payload ->> 'detail')::decimal(18,2) > 10.00
+    mariadb: select id, kind, payload from payment_document where kind = 'card' and json_value(payload, '$.detail') = 'visa-4242' union all select id, kind, payload from payment_document where kind = 'cash' and cast(json_value(payload, '$.detail') as decimal(18,2)) > 10.00
+  rows:
+    - { id: 1, detail: visa-4242, authorization_code: AUTH-7, familyVariant: CardPayment }
+    - { id: 2, detail: 12.50, authorization_code: null, familyVariant: CashPayment }
+  roundTrips: 1

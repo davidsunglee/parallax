@@ -1,0 +1,37 @@
+# A TPH document write stores only the concrete variant's applicable members and
+# derives the shared-table tag without duplicating document state in columns.
+#
+# CardPayment and CashPayment both write `detail` to the shared path, with the
+# codec spelling each value by its declared type. `authorizationCode` applies only
+# to CardPayment. The cash document omits that key entirely rather than storing
+# JSON null, while both inserts bind one complete non-null Structured Column.
+model: models/document-layout.yaml
+tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-hierarchy, document-layout, write-sequence, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: CardPayment
+      statements: 1
+      rows:
+        - { id: 10, detail: mc-1010, authorizationCode: AUTH-10 }
+    - mutation: insert
+      entity: CashPayment
+      statements: 1
+      rows:
+        - { id: 11, detail: 25.00 }
+then:
+  statements:
+    - sql:
+        postgres: insert into payment_document(id, kind, payload) values (?, ?, ?)
+        mariadb: insert into payment_document(id, kind, payload) values (?, ?, ?)
+      binds: [10, card, { detail: mc-1010, authorizationCode: AUTH-10 }]
+    - sql:
+        postgres: insert into payment_document(id, kind, payload) values (?, ?, ?)
+        mariadb: insert into payment_document(id, kind, payload) values (?, ?, ?)
+      binds: [11, cash, { detail: '25.00' }]
+  tableState:
+    payment_document:
+      - { id: 10, kind: card, payload: { detail: mc-1010, authorizationCode: AUTH-10 } }
+      - { id: 11, kind: cash, payload: { detail: '25.00' } }
+  roundTrips: 2

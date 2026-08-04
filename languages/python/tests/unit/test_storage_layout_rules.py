@@ -101,6 +101,19 @@ def _concrete(
     )
 
 
+def _tpcs_concrete(
+    entity: EntityIdentity,
+    *,
+    parent: EntityIdentity = _ROOT,
+    table: str = "entry",
+) -> Declaration:
+    return Declaration(
+        identity=entity,
+        container=Table(table),
+        inheritance=ConcreteSubtype(ExactEntityReference(parent), None),
+    )
+
+
 def _rule_issues(*declarations: Declaration) -> tuple[MetamodelIssue, ...]:
     candidate = accepted(source(*declarations))
     return sort_issues(storage_layout.RULE_SET.validate(candidate))
@@ -566,7 +579,7 @@ def _temporal_document(*, dimension: TemporalDimension) -> tuple[Declaration, ..
     )
 
 
-def test_a_document_hierarchy_root_is_refused_for_its_mapping_shape_alone() -> None:
+def test_a_document_tpcs_root_is_refused_for_its_mapping_shape_alone() -> None:
     # The scope list is a set of independent predicates over one accepted
     # root-owned declaration, and the gate names every entry the owner matches.
     # A temporal axis is not among them, so a temporal family is refused for the
@@ -575,7 +588,6 @@ def test_a_document_hierarchy_root_is_refused_for_its_mapping_shape_alone() -> N
     tx_end = instant(_ROOT, "txEnd")
     root = Declaration(
         identity=_ROOT,
-        container=Table("record"),
         layout=Document(Column("doc")),
         attributes=(key(_ROOT), tx_start, tx_end),
         as_of_axes=(
@@ -583,9 +595,9 @@ def test_a_document_hierarchy_root_is_refused_for_its_mapping_shape_alone() -> N
                 TemporalDimension.TRANSACTION_TIME, tx_start.identity, tx_end.identity
             ),
         ),
-        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
-    assert _refused_shapes(root, _concrete(_LEAF)) == ("a table-per-hierarchy family",)
+    assert _refused_shapes(root, _tpcs_concrete(_LEAF)) == ("a table-per-concrete-subtype family",)
 
 
 def test_a_standalone_layout_owner_matches_no_declared_shape() -> None:
@@ -610,12 +622,14 @@ def test_a_temporal_layout_owner_matches_no_declared_shape(
 def test_the_gate_locates_the_refusal_at_the_layout_owner_with_no_related_location() -> None:
     root = Declaration(
         identity=_SIBLING,
-        container=Table("note"),
         layout=Document(Column("body")),
         attributes=(key(_SIBLING),),
-        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
-    (issue,) = _rule_issues(root, _concrete(_LEAF, parent=_SIBLING))
+    (issue,) = _rule_issues(
+        root,
+        _tpcs_concrete(_LEAF, parent=_SIBLING, table="note"),
+    )
     assert issue.code == _CAPABILITY
     assert issue.location == EntityLocation(_SIBLING)
     assert issue.related == ()
@@ -626,30 +640,30 @@ def test_an_owner_matching_no_declared_shape_is_accepted_rather_than_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The gate refuses exactly the shapes the scope list declares, so an owner
-    # matching none of them raises nothing. An empty scope is the only way to
-    # reach that state through a mapping shape: standalone, table-per-hierarchy,
-    # and table-per-concrete-subtype partition every layout owner, so while the
-    # scope keeps any mapping-shape entry some owner matches it. Emptying the
-    # scope is what states the rule rather than the list.
+    # matching none of them raises nothing. Emptying the scope is what states
+    # the rule rather than the list.
     monkeypatch.setattr("parallax.core.storage_layout._rules.CAPABILITY_SCOPE", ())
     assert _rule_issues(_standalone_document()) == ()
 
 
-def test_a_hierarchy_root_owns_one_refusal_for_its_whole_family() -> None:
-    # One TPH family is one mapping owner, so the gate fires once at the root
-    # even though every participant's rows carry the shared Structured Column.
+def test_a_tpcs_root_owns_one_refusal_for_its_whole_family() -> None:
+    # One TPCS family owns one layout policy, so the gate fires once at the root
+    # even though every concrete Table receives its own Structured Column.
     root = Declaration(
         identity=_ROOT,
-        container=_SHARED_TABLE,
         layout=Document(Column("payload")),
         attributes=(key(_ROOT),),
-        inheritance=AbstractRoot(TablePerHierarchy("kind")),
+        inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
-    issues = _rule_issues(root, _concrete(_LEAF), _concrete(_MID, tag_value="journal"))
+    issues = _rule_issues(
+        root,
+        _tpcs_concrete(_LEAF, table="entry"),
+        _tpcs_concrete(_MID, table="journal"),
+    )
     assert [(issue.code, issue.location) for issue in issues] == [
         (_CAPABILITY, EntityLocation(_ROOT))
     ]
-    assert "a table-per-hierarchy family" in issues[0].message
+    assert "a table-per-concrete-subtype family" in issues[0].message
 
 
 def test_a_layout_declared_off_the_root_raises_nothing_here() -> None:

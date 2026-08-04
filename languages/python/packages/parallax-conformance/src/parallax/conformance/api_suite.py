@@ -1019,6 +1019,14 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
         "exercised by the compile and database-backed run lanes; no separate idiomatic API "
         "story is needed"
     ),
+    "m-inheritance-123": (
+        "heterogeneous TPH document decoding is exercised by the compile and database-backed "
+        "run lanes; no separate idiomatic API story is needed"
+    ),
+    "m-inheritance-124": (
+        "tag-partitioned sibling document-path predicates are exercised by the compile and "
+        "database-backed run lanes; no separate idiomatic API story is needed"
+    ),
     "m-inheritance-092": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-093": _TEMPORAL_INHERITANCE_ROW_SIBLING_REASON,
     "m-inheritance-101": _CONCRETE_TARGET_TEMPORAL_ROOT_AXIS_SIBLING_REASON,
@@ -1041,6 +1049,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-084": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-085": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-104": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-125": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     # -- m-inheritance: temporal write family -------------------------------- #
     "m-inheritance-090": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-091": _INHERITANCE_WRITE_PHASE8_REASON,

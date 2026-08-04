@@ -58,14 +58,17 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 # module-private spelling it had while this file owned it, so a use site below
 # never confuses the two.
 from parallax.core.sql_gen._inheritance import RowTransform as _RowTransform
+from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
 from parallax.core.sql_gen._inheritance import document_projection as _document_projection
+from parallax.core.sql_gen._inheritance import entity_view as _entity_view
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import position_documents as _position_documents
 from parallax.core.sql_gen._inheritance import render_projection as _render_projection
 from parallax.core.sql_gen._inheritance import select_projection as _select_projection
+from parallax.core.sql_gen._inheritance import tag_column as _tag_column
 from parallax.core.sql_gen._inheritance import tag_guard as _tph_tag_guard
 from parallax.core.sql_gen._inheritance import (
     transform_structured_column as _transform_structured_column,
@@ -643,7 +646,12 @@ def _compile_tph_read(
     statement's context and sequences the four bind phases.
     """
     ctx = _Ctx(model, facet, storage, dialect)
-    scope = _EntityScope(ctx, entity, _table_layout(storage, facet, entity.identity))
+    scope = _EntityScope(
+        ctx,
+        entity,
+        _table_layout(storage, facet, entity.identity),
+        position=plan.position,
+    )
     proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
 
@@ -663,8 +671,95 @@ def _compile_tph_read(
         parts.append("where " + " and ".join(where_terms))
 
     _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
+    if ctx.requires_variant_partition:
+        return (
+            _compile_tph_partitioned(
+                plan,
+                entity,
+                distinct,
+                order_keys,
+                limit,
+                model,
+                facet,
+                storage,
+                dialect,
+                lock,
+            ),
+            plan.transform,
+        )
     statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
     return statement, plan.transform
+
+
+def _compile_tph_partitioned(
+    plan: _TphPlan,
+    entity: EntityMetadata,
+    distinct: bool,
+    order_keys: tuple[OrderKey, ...],
+    limit: int | None,
+    model: Metamodel,
+    facet: InheritanceFacet,
+    storage: _StorageLayoutFacet,
+    dialect: Dialect,
+    lock: LockMode | None,
+) -> Statement:
+    """Assemble one tag-disjoint branch per selected TPH document variant."""
+    if lock is not None:
+        raise SqlGenError(
+            "a locking read over a variant-partitioned table-per-hierarchy document "
+            "predicate has no portable single-statement lowering"
+        )
+
+    branch_sqls: list[str] = []
+    binds: list[object] = []
+    layout = _table_layout(storage, facet, entity.identity)
+    for concrete in plan.position:
+        branch_ctx = _Ctx(model, facet, storage, dialect)
+        branch_scope = _EntityScope(
+            branch_ctx,
+            entity,
+            layout,
+            position=plan.position,
+            variant=concrete,
+        )
+        projection, projection_binds = plan.projection(dialect, branch_scope.alias)
+        branch_ctx.binds.extend(projection_binds)
+        parts = [f"select {projection}", f"from {plan.table} {branch_scope.alias}"]
+        inner = _lower_predicate(plan.inner, branch_scope)
+        tag = _TagPredicate(
+            _tag_column(layout, _entity_view(facet, entity.identity).root),
+            (concrete,),
+        )
+        tag_sql, tag_binds = _tph_tag_guard(branch_scope, facet, tag)
+        terms = [f"({inner})"] if inner else []
+        terms.append(tag_sql)
+        parts.append("where " + " and ".join(terms))
+        branch_ctx.binds.extend(tag_binds)
+        branch_sqls.append(" ".join(parts))
+        binds.extend(branch_ctx.binds)
+
+    union = " union all ".join(branch_sqls)
+    if not distinct and not order_keys and limit is None:
+        return _normalize(Statement(union, tuple(binds)))
+
+    outer_ctx = _Ctx(model, facet, storage, dialect)
+    outer_scope = _EntityScope(
+        outer_ctx,
+        entity,
+        layout,
+        alias="u",
+        position=plan.position,
+    )
+    projection = ", ".join(
+        dialect.qualified(outer_scope.alias, column.column) for column in plan.columns
+    )
+    parts = [
+        f"select {'distinct ' if distinct else ''}{projection}",
+        f"from ({union}) {outer_scope.alias}",
+    ]
+    _append_result_shape(parts, outer_scope, distinct, order_keys, limit, None)
+    binds.extend(outer_ctx.binds)
+    return _normalize(Statement(" ".join(parts), tuple(binds)))
 
 
 def _compile_tpcs_read(

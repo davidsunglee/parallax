@@ -270,7 +270,56 @@ class _DocumentTransform:
         return materialized, None, None
 
 
-RowTransform = _IdentityTransform | _TagTransform | _LiteralTransform | _DocumentTransform
+@dataclass(frozen=True, slots=True)
+class _VariantDocument:
+    identity: EntityIdentity
+    spelling: str
+    tag: str
+    shape: DocumentShape
+    members: tuple[tuple[str, tuple[str, ...]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TphDocumentTransform:
+    """Resolve a TPH row's tag before decoding its heterogeneous document."""
+
+    column: str
+    tag_column: str
+    root: EntityIdentity
+    variants: tuple[_VariantDocument, ...]
+    padding: tuple[str, ...]
+
+    def materialize(
+        self, row: Mapping[str, object]
+    ) -> tuple[dict[str, object], EntityIdentity, str]:
+        materialized = dict(row)
+        raw_tag = materialized.pop(self.tag_column)
+        document = materialized.pop(self.column)
+        variant = next(
+            (candidate for candidate in self.variants if candidate.tag == raw_tag),
+            None,
+        )
+        if variant is None:
+            tags = {candidate.tag for candidate in self.variants}
+            raise SqlGenError(
+                f"{self.root.canonical}: the tag column {self.tag_column!r} holds {raw_tag!r}, "
+                f"which names no concrete subtype this model composes {sorted(tags)}"
+            )
+        for key in self.padding:
+            materialized[key] = None
+        for key, path in variant.members:
+            presence = decode_path(variant.shape, document, path)
+            materialized[key] = presence.value if isinstance(presence, Present) else None
+        return materialized, variant.identity, variant.spelling
+
+
+RowTransform = (
+    _IdentityTransform
+    | _TagTransform
+    | _LiteralTransform
+    | _DocumentTransform
+    | _TphDocumentTransform
+)
 
 # The identity form is stateless, so one shared instance serves every read that
 # carries no `familyVariant`; equality is structural, so a copied/unpickled
@@ -287,7 +336,11 @@ def transform_structured_column(transform: RowTransform) -> str | None:
     honest answer for every read that projected no Structured Column, `Columns`
     layout included.
     """
-    return transform.column if isinstance(transform, _DocumentTransform) else None
+    return (
+        transform.column
+        if isinstance(transform, (_DocumentTransform, _TphDocumentTransform))
+        else None
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -566,6 +619,67 @@ def document_projection(
     )
 
 
+def _tph_document_projection(
+    layout: TableLayout,
+    facet: InheritanceFacet,
+    root: EntityIdentity,
+    concretes: Sequence[EntityIdentity],
+    *,
+    instance_form: bool,
+    abstract_target: bool,
+    tag_col: str,
+) -> tuple[ProjectedColumn | None, RowTransform | None]:
+    slot = _structured_column_slot(layout)
+    if slot is None:
+        return None, None
+
+    variants: list[_VariantDocument] = []
+    projects_document = False
+    for concrete in concretes:
+        view = entity_view(facet, concrete)
+        projected, transform = document_projection(
+            layout,
+            view.applicable_attributes,
+            view.applicable_value_objects if instance_form else (),
+            observation=instance_form,
+        )
+        if isinstance(transform, _DocumentTransform):
+            projects_document = True
+            shape = transform.shape
+            members = transform.members
+        else:
+            shape = entity_shape((), ())
+            members = ()
+        variants.append(
+            _VariantDocument(
+                identity=concrete,
+                spelling=family_variant_name(facet, concrete),
+                tag=tag_value(facet, concrete),
+                shape=shape,
+                members=members,
+            )
+        )
+    if not projects_document:
+        return None, None
+    projected = ProjectedColumn(slot.column.name, None)
+    if abstract_target:
+        return projected, _TphDocumentTransform(
+            slot.column.name,
+            tag_col,
+            root,
+            tuple(variants),
+            (
+                ()
+                if instance_form
+                else tuple(
+                    dict.fromkeys(key for variant in variants for key, _path in variant.members)
+                )
+            ),
+        )
+    only = variants[0]
+    return projected, _DocumentTransform(projected.column, only.shape, only.members)
+
+
 def select_projection(
     slots: Sequence[ColumnSlot],
     attributes: Sequence[AttributeMetadata],
@@ -834,15 +948,29 @@ def _plan_tph_read(
         if abstract_target
         else IDENTITY_TRANSFORM
     )
+    columns = select_projection(
+        position_slots(layout, position.concrete_subtypes),
+        position.superset_attributes,
+        position.superset_value_objects if instance_form else (),
+        project_discriminator=abstract_target,
+    )
+    document, document_transform = _tph_document_projection(
+        layout,
+        facet,
+        view.root,
+        position.concrete_subtypes,
+        instance_form=instance_form,
+        abstract_target=abstract_target,
+        tag_col=tag_col,
+    )
+    if document is not None:
+        columns = (*columns, document)
+    if document_transform is not None:
+        transform = document_transform
     return TphPlan(
         table=layout.table.name,
         position=tuple(position.concrete_subtypes),
-        columns=select_projection(
-            position_slots(layout, position.concrete_subtypes),
-            position.superset_attributes,
-            position.superset_value_objects if instance_form else (),
-            project_discriminator=abstract_target,
-        ),
+        columns=columns,
         inner=inner,
         tag=TagPredicate(tag_col, tuple(position.concrete_subtypes)) if guarded else None,
         transform=transform,
