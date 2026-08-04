@@ -20,7 +20,6 @@ from parallax.core.metamodel import (
     Column,
     Document,
     EntityDeclaration,
-    EntityIdentity,
     EntityLocation,
     IndexLocation,
     IssueCode,
@@ -230,19 +229,18 @@ def _index_issues(
     walked once and each offending component is reported against the Index that
     must change.
     """
-    resident: dict[AttributeIdentity, EntityIdentity] = {}
+    resident: set[AttributeIdentity] = set()
     for document in document_groups:
         for contributor in document.group.declaration_contributors:
             if not isinstance(contributor, AttributeTableContributor):
                 continue
             if _document_resident_member(contributor, document.roles) is not None:
-                resident.setdefault(contributor.attribute.identity, document.group.root)
+                resident.add(contributor.attribute.identity)
     issues: list[MetamodelIssue] = []
     for declaration in candidate.entities:
         for index in declaration.indices:
             for component in index.attributes:
-                owner = resident.get(component)
-                if owner is None:
+                if component not in resident:
                     continue
                 issues.append(
                     MetamodelIssue(
