@@ -1,4 +1,4 @@
-# The physical key is the model key then each temporal start, even though every domain
+# The physical key is the model key then each temporal END, even though every domain
 # slot precedes the temporal slots in the complete Column sequence (m-storage-layout x
 # m-txtime-write).
 #
@@ -7,15 +7,22 @@
 # (Document). Every milestone row is written in exactly that order, so the two
 # Transaction-Time bounds appear AFTER the subtype-owned `celsius` even though the root
 # declares them before it. The physical primary key does not follow that sequence: it
-# selects the model key slot `id` and then the Transaction-Time start slot `in_z`,
-# spanning the Identity and Temporal tiers and skipping every Domain slot between them.
+# selects the model key slot `id` and then the Transaction-Time END slot `out_z`,
+# spanning the Identity and Temporal tiers and skipping every Domain slot between them —
+# and skipping the `in_z` start slot that sits between them in the Temporal tier.
 #
 # The write sequence makes that key observable. The chaining update closes the current
 # milestone (`out_z = the transaction instant`, tag-guarded on the shared table) and
 # opens a new one carrying the same `id`. Two rows therefore coexist under one model
-# key, which only the `(id, in_z)` physical key admits; a key of the model key alone
-# would reject the chained INSERT, and a key following Column order would have to take
-# `sensor` instead of `in_z`.
+# key, which only the `(id, out_z)` physical key admits: the closed row holds a finite
+# `out_z` and the chained row holds infinity. A key of the model key alone would reject
+# the chained INSERT, and a key following Column order would have to take `sensor`
+# instead of `out_z`.
+#
+# Keying on the end is what makes the close a key hit rather than a scan: the update's
+# `out_z = infinity` gate is itself a key column, so the statement addresses the one
+# current milestone through the key and then rewrites that same column. A start-keyed
+# table would have to find the current row through a non-key predicate.
 #
 # The `probe` document rides both milestones whole as the final slot, and the family
 # designates no Audit Metadata, so the Audit tier contributes no slot between the

@@ -478,10 +478,11 @@ def test_schema_statements_tpcs_key_comes_from_the_tableless_root_derived_index(
 
 def _entity_with_two_indices_over_one_column() -> AcceptedMetamodel:
     # One entity declaring two DISTINCT unique indices over the SAME resolved
-    # column — the chain walk must emit that constraint exactly once, never
-    # twice. A cross-member duplicate cannot form (an index names only local
-    # attributes, the resolver's `metamodel-index-attribute-not-local`), so a
-    # single entity is where a duplicate resolved-column set can legally arise.
+    # column. Each authored Index is its own constraint, so both are emitted: a
+    # unique Index is not suppressed for spanning the columns another spans. A
+    # cross-member duplicate cannot form (an index names only local attributes,
+    # the resolver's `metamodel-index-attribute-not-local`), so a single entity
+    # is where a duplicate resolved-column set can legally arise.
     widget = Entity(
         name="Widget",
         table="widget",
@@ -497,9 +498,9 @@ def _entity_with_two_indices_over_one_column() -> AcceptedMetamodel:
     return models.accepted_model(Metamodel(entities=(widget,)))
 
 
-def test_schema_statements_deduplicates_a_redundant_unique_index() -> None:
+def test_schema_statements_renders_every_unique_index_over_one_column() -> None:
     (ddl,) = provision.schema_statements(_entity_with_two_indices_over_one_column())
-    assert ddl.count("unique (code)") == 1
+    assert ddl.count("unique (code)") == 2
 
 
 # --------------------------------------------------------------------------- #

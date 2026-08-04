@@ -795,7 +795,7 @@ TEMPORAL_DIMENSION_RANK: Mapping[str, int] = MappingProxyType(
 """The canonical order of the As-Of Axis dimensions: Valid Time before Transaction Time.
 
 Every ordered per-axis sequence follows it — the physical primary key's temporal
-start slots, and a milestone close's one exclusive upper bound per axis.
+end slots, and a milestone close's one exclusive upper bound per axis.
 """
 
 

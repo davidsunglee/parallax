@@ -347,7 +347,7 @@ _DECIMAL_PRECISION_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset({"m-core-0
 # sibling's required column stays null), the two table-per-concrete-subtype
 # tables whose distinct members reuse one column spelling, the top-level
 # document slot that follows every scalar tier, and the milestone chain proving
-# the physical key selects the model key then the Transaction-Time start while
+# the physical key selects the model key then the Transaction-Time end while
 # every domain slot still precedes the temporal slots. Each carries fully
 # authored goldens, so compile grades the emitted column list and binds and run
 # additionally grades the committed physical rows.

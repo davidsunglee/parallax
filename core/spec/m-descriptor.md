@@ -410,7 +410,8 @@ The conventional Attribute and physical-column mappings are normative:
 
 Physical column overrides remain ordinary Attribute `column` overrides. The
 axis never repeats them. A temporal Entity's physical primary key is its model
-primary key plus each dimension's start Attribute. Temporal Attributes appear
+primary key plus each dimension's end Attribute, the components the derived
+primary-key index above already fixes. Temporal Attributes appear
 after domain Attributes, with Valid Time before Transaction Time, preserving
 `from_z, thru_z, in_z, out_z` projection order for Bitemporal Entities.
 

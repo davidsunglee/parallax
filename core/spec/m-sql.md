@@ -253,7 +253,7 @@ does not reconstruct order from the payload mapping.
 Accepted Storage Layout ownership guarantees that this view belongs to exactly
 one standalone mapping, one complete TPH family, or one TPCS concrete mapping.
 Its physical primary key therefore contains only that owner's model-key and
-temporal-start slots: DML never targets a layout whose key combines independent
+temporal-end slots: DML never targets a layout whose key combines independent
 Entity mappings that can supply only disjoint subsets.
 
 The layout supplies physical lookup, not operation semantics. Model primary-key
@@ -639,7 +639,7 @@ empty table and asserts the resulting `then.tableState` — the inactivated
 original (`out_z` finite) plus the `head` / `middle` / `tail` rectangles current
 on Transaction Time (`out_z = infinity`) — so the rectangle split is proven against real
 data, not merely asserted. The same multi-row physical primary key (domain key
-plus each dimension's start column, `m-descriptor`) makes the chained rectangles
+plus each dimension's end column, `m-descriptor`) makes the chained rectangles
 admissible. The full rectangle-split semantics are `m-bitemp-write`.
 
 **Plain (unbounded) writes.** Alongside the bounded `*Until` templates, the plain
