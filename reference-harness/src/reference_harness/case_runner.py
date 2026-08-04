@@ -2759,6 +2759,10 @@ def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> Non
     document_layout = entity.runtime_facts.get("layout", {}).get("document")
     if not document_layout:
         return
+    if entity.is_temporal or any(
+        attribute.get("optimisticLocking") for attribute in entity.attributes
+    ):
+        return
     for assignment in write.get("assignments", []):
         name = str(assignment.get("attr", "")).rsplit(".", 1)[-1]
         occurrence = next((item for item in entity.value_objects if item.get("name") == name), None)
