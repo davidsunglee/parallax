@@ -32,12 +32,12 @@ when:
           parent: Animal
         attributes:
           - { name: licenseId, type: string, column: license_id, nullable: true }
-          - { name: tx_start, type: timestamp, column: in_z }
-          - { name: tx_end, type: timestamp, column: out_z }
+          - { name: txStart, type: timestamp, column: in_z }
+          - { name: txEnd, type: timestamp, column: out_z }
         asOfAxes:
           - dimension: transaction-time
-            startAttribute: tx_start
-            endAttribute: tx_end
+            startAttribute: txStart
+            endAttribute: txEnd
       - name: Dog
         inheritance:
           role: concrete-subtype

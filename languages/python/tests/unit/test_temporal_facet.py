@@ -112,12 +112,12 @@ def _valid_time_only() -> Sequence[Declaration]:
         Declaration(
             identity=entity,
             container=Table("correction"),
-            attributes=(key(entity), instant(entity, "valid_start"), instant(entity, "valid_end")),
+            attributes=(key(entity), instant(entity, "validStart"), instant(entity, "validEnd")),
             as_of_axes=(
                 AsOfAxisMetadata(
                     dimension=_VALID_TIME,
-                    start_attribute=AttributeIdentity(entity, "valid_start"),
-                    end_attribute=AttributeIdentity(entity, "valid_end"),
+                    start_attribute=AttributeIdentity(entity, "validStart"),
+                    end_attribute=AttributeIdentity(entity, "validEnd"),
                 ),
             ),
         ),
@@ -242,8 +242,8 @@ def test_a_descendant_axis_keeps_the_declaring_roots_attribute_identities() -> N
     facet = temporal_read.view(_formed("instrument"))
     axis = facet.axis(_corpus_entity("Bond"), _TX_TIME)
     assert axis is not None
-    assert axis.start_attribute == AttributeIdentity(_corpus_entity("Instrument"), "tx_start")
-    assert axis.end_attribute == AttributeIdentity(_corpus_entity("Instrument"), "tx_end")
+    assert axis.start_attribute == AttributeIdentity(_corpus_entity("Instrument"), "txStart")
+    assert axis.end_attribute == AttributeIdentity(_corpus_entity("Instrument"), "txEnd")
 
 
 def test_a_family_formed_by_hand_shares_one_shape() -> None:
@@ -254,12 +254,12 @@ def test_a_family_formed_by_hand_shares_one_shape() -> None:
             Declaration(
                 identity=root,
                 container=Table("ledger"),
-                attributes=(key(root), instant(root, "tx_start"), instant(root, "tx_end")),
+                attributes=(key(root), instant(root, "txStart"), instant(root, "txEnd")),
                 as_of_axes=(
                     AsOfAxisMetadata(
                         dimension=_TX_TIME,
-                        start_attribute=AttributeIdentity(root, "tx_start"),
-                        end_attribute=AttributeIdentity(root, "tx_end"),
+                        start_attribute=AttributeIdentity(root, "txStart"),
+                        end_attribute=AttributeIdentity(root, "txEnd"),
                     ),
                 ),
                 inheritance=AbstractRoot(TablePerHierarchy("kind")),
@@ -339,7 +339,7 @@ def test_an_alternate_implementation_compiles_the_same_answers() -> None:
     assert facet.shape(fake.ACCOUNT) == NON_TEMPORAL
     audit = facet.shape(fake.AUDIT)
     assert isinstance(audit, TransactionTimeOnly)
-    assert audit.transaction_time.start_attribute == AttributeIdentity(fake.AUDIT, "tx_start")
+    assert audit.transaction_time.start_attribute == AttributeIdentity(fake.AUDIT, "txStart")
     assert facet.axis(fake.AUDIT, _VALID_TIME) is None
 
 

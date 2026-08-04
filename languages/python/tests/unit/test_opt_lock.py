@@ -26,7 +26,7 @@ from parallax.core.unit_work import (
 
 def _temporal() -> TemporalObservation:
     return TemporalObservation(
-        predecessor=PredecessorRow(members={"id": 1, "tx_start": "2024-01-01T00:00:00+00:00"})
+        predecessor=PredecessorRow(members={"id": 1, "txStart": "2024-01-01T00:00:00+00:00"})
     )
 
 

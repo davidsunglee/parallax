@@ -584,7 +584,7 @@ chaining contract is proven against real data, not merely asserted. The full
 milestone-write semantics are `m-txtime-write`.
 
 **Optimistic-mode close (`m-opt-lock` × `m-txtime-write`).** In optimistic mode the
-close `update` gains an `and in_z = ?` gate on the observed `tx_start` — the
+close `update` gains an `and in_z = ?` gate on the observed `txStart` — the
 version analogue for a temporal entity (`m-opt-lock`, `m-opt-lock -->
 m-temporal-read`):
 
@@ -671,7 +671,7 @@ applies to it verbatim.
 
 **Optimistic-mode inactivation (`m-opt-lock` × `m-bitemp-write`).** The address above
 is what the inactivate `update` renders in **both** modes; optimistic mode only
-**appends** the observed-`tx_start` gate, and that gate binds last:
+**appends** the observed-`txStart` gate, and that gate binds last:
 
 | Mutation | Golden DML | Binds |
 |---|---|---|
@@ -1103,7 +1103,7 @@ sets the tag column from the subtype's `tagValue` in its Entity Layout position,
 exactly as a non-temporal concrete-subtype insert does (above). There is no temporal
 exception to the resolved-Q9 bind order: the tag guard rides with the identity
 predicates; any gate the temporal write already carries (the optimistic
-`tx_start` / physical `in_z` gate, `m-txtime-write` / `m-bitemp-write`) still binds
+`txStart` / physical `in_z` gate, `m-txtime-write` / `m-bitemp-write`) still binds
 **last**.
 
 | Statement | Canonical Postgres DML | Binds |

@@ -45,25 +45,25 @@ entity:
     - name: name
       type: string
       maxLength: 64
-    - name: valid_start
+    - name: validStart
       type: timestamp
       column: from_z
-    - name: valid_end
+    - name: validEnd
       type: timestamp
       column: thru_z
-    - name: tx_start
+    - name: txStart
       type: timestamp
       column: in_z
-    - name: tx_end
+    - name: txEnd
       type: timestamp
       column: out_z
   asOfAxes:
     - dimension: valid-time
-      startAttribute: valid_start
-      endAttribute: valid_end
+      startAttribute: validStart
+      endAttribute: validEnd
     - dimension: transaction-time
-      startAttribute: tx_start
-      endAttribute: tx_end
+      startAttribute: txStart
+      endAttribute: txEnd
   valueObjects:
     - name: address
       nullable: true
@@ -92,7 +92,7 @@ entity:
               nullable: true
   indices:
     - name: branch_pk
-      attributes: [id, valid_start, tx_start]
+      attributes: [id, validStart, txStart]
       unique: true
     - name: branch_name
       attributes: [name]

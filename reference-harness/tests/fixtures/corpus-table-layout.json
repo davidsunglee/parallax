@@ -307,7 +307,7 @@
             "parallax.compatibility.Balance"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Balance.tx_start",
+          "contributor": "attribute:parallax.compatibility.Balance.txStart",
           "declaringOwner": "parallax.compatibility.Balance",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -317,7 +317,7 @@
             "parallax.compatibility.Balance"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Balance.tx_end",
+          "contributor": "attribute:parallax.compatibility.Balance.txEnd",
           "declaringOwner": "parallax.compatibility.Balance",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -357,7 +357,7 @@
             "parallax.compatibility.Branch"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Branch.valid_start",
+          "contributor": "attribute:parallax.compatibility.Branch.validStart",
           "declaringOwner": "parallax.compatibility.Branch",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -367,7 +367,7 @@
             "parallax.compatibility.Branch"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Branch.valid_end",
+          "contributor": "attribute:parallax.compatibility.Branch.validEnd",
           "declaringOwner": "parallax.compatibility.Branch",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -377,7 +377,7 @@
             "parallax.compatibility.Branch"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Branch.tx_start",
+          "contributor": "attribute:parallax.compatibility.Branch.txStart",
           "declaringOwner": "parallax.compatibility.Branch",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -387,7 +387,7 @@
             "parallax.compatibility.Branch"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Branch.tx_end",
+          "contributor": "attribute:parallax.compatibility.Branch.txEnd",
           "declaringOwner": "parallax.compatibility.Branch",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -695,7 +695,7 @@
             "parallax.compatibility.Charter"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Charter.valid_start",
+          "contributor": "attribute:parallax.compatibility.Charter.validStart",
           "declaringOwner": "parallax.compatibility.Charter",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -705,7 +705,7 @@
             "parallax.compatibility.Charter"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Charter.valid_end",
+          "contributor": "attribute:parallax.compatibility.Charter.validEnd",
           "declaringOwner": "parallax.compatibility.Charter",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -715,7 +715,7 @@
             "parallax.compatibility.Charter"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Charter.tx_start",
+          "contributor": "attribute:parallax.compatibility.Charter.txStart",
           "declaringOwner": "parallax.compatibility.Charter",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -725,7 +725,7 @@
             "parallax.compatibility.Charter"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Charter.tx_end",
+          "contributor": "attribute:parallax.compatibility.Charter.txEnd",
           "declaringOwner": "parallax.compatibility.Charter",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -801,7 +801,7 @@
             "parallax.compatibility.Mooring"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Mooring.valid_start",
+          "contributor": "attribute:parallax.compatibility.Mooring.validStart",
           "declaringOwner": "parallax.compatibility.Mooring",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -811,7 +811,7 @@
             "parallax.compatibility.Mooring"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Mooring.valid_end",
+          "contributor": "attribute:parallax.compatibility.Mooring.validEnd",
           "declaringOwner": "parallax.compatibility.Mooring",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -821,7 +821,7 @@
             "parallax.compatibility.Mooring"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Mooring.tx_start",
+          "contributor": "attribute:parallax.compatibility.Mooring.txStart",
           "declaringOwner": "parallax.compatibility.Mooring",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -831,7 +831,7 @@
             "parallax.compatibility.Mooring"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Mooring.tx_end",
+          "contributor": "attribute:parallax.compatibility.Mooring.txEnd",
           "declaringOwner": "parallax.compatibility.Mooring",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1028,7 +1028,7 @@
             "parallax.compatibility.Voyage"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Voyage.tx_start",
+          "contributor": "attribute:parallax.compatibility.Voyage.txStart",
           "declaringOwner": "parallax.compatibility.Voyage",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1038,7 +1038,7 @@
             "parallax.compatibility.Voyage"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Voyage.tx_end",
+          "contributor": "attribute:parallax.compatibility.Voyage.txEnd",
           "declaringOwner": "parallax.compatibility.Voyage",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1463,7 +1463,7 @@
             "parallax.compatibility.Stock"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Instrument.valid_start",
+          "contributor": "attribute:parallax.compatibility.Instrument.validStart",
           "declaringOwner": "parallax.compatibility.Instrument",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1474,7 +1474,7 @@
             "parallax.compatibility.Stock"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Instrument.valid_end",
+          "contributor": "attribute:parallax.compatibility.Instrument.validEnd",
           "declaringOwner": "parallax.compatibility.Instrument",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1485,7 +1485,7 @@
             "parallax.compatibility.Stock"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Instrument.tx_start",
+          "contributor": "attribute:parallax.compatibility.Instrument.txStart",
           "declaringOwner": "parallax.compatibility.Instrument",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1496,7 +1496,7 @@
             "parallax.compatibility.Stock"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Instrument.tx_end",
+          "contributor": "attribute:parallax.compatibility.Instrument.txEnd",
           "declaringOwner": "parallax.compatibility.Instrument",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1537,7 +1537,7 @@
             "parallax.compatibility.Invoice"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Invoice.tx_start",
+          "contributor": "attribute:parallax.compatibility.Invoice.txStart",
           "declaringOwner": "parallax.compatibility.Invoice",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1547,7 +1547,7 @@
             "parallax.compatibility.Invoice"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Invoice.tx_end",
+          "contributor": "attribute:parallax.compatibility.Invoice.txEnd",
           "declaringOwner": "parallax.compatibility.Invoice",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1595,7 +1595,7 @@
             "parallax.compatibility.InvoiceLine"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.InvoiceLine.tx_start",
+          "contributor": "attribute:parallax.compatibility.InvoiceLine.txStart",
           "declaringOwner": "parallax.compatibility.InvoiceLine",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1605,7 +1605,7 @@
             "parallax.compatibility.InvoiceLine"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.InvoiceLine.tx_end",
+          "contributor": "attribute:parallax.compatibility.InvoiceLine.txEnd",
           "declaringOwner": "parallax.compatibility.InvoiceLine",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1655,7 +1655,7 @@
             "parallax.compatibility.Lease"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Lease.tx_start",
+          "contributor": "attribute:parallax.compatibility.Lease.txStart",
           "declaringOwner": "parallax.compatibility.Lease",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1665,7 +1665,7 @@
             "parallax.compatibility.Lease"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Lease.tx_end",
+          "contributor": "attribute:parallax.compatibility.Lease.txEnd",
           "declaringOwner": "parallax.compatibility.Lease",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1779,7 +1779,7 @@
             "parallax.compatibility.Ledger"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Ledger.tx_start",
+          "contributor": "attribute:parallax.compatibility.Ledger.txStart",
           "declaringOwner": "parallax.compatibility.Ledger",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -1789,7 +1789,7 @@
             "parallax.compatibility.Ledger"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Ledger.tx_end",
+          "contributor": "attribute:parallax.compatibility.Ledger.txEnd",
           "declaringOwner": "parallax.compatibility.Ledger",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2483,7 +2483,7 @@
             "parallax.compatibility.AuditEntry"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.AuditEntry.tx_start",
+          "contributor": "attribute:parallax.compatibility.AuditEntry.txStart",
           "declaringOwner": "parallax.compatibility.AuditEntry",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2493,7 +2493,7 @@
             "parallax.compatibility.AuditEntry"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.AuditEntry.tx_end",
+          "contributor": "attribute:parallax.compatibility.AuditEntry.txEnd",
           "declaringOwner": "parallax.compatibility.AuditEntry",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2736,7 +2736,7 @@
             "parallax.compatibility.Claim"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Claim.valid_start",
+          "contributor": "attribute:parallax.compatibility.Claim.validStart",
           "declaringOwner": "parallax.compatibility.Claim",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2746,7 +2746,7 @@
             "parallax.compatibility.Claim"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Claim.valid_end",
+          "contributor": "attribute:parallax.compatibility.Claim.validEnd",
           "declaringOwner": "parallax.compatibility.Claim",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2756,7 +2756,7 @@
             "parallax.compatibility.Claim"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Claim.tx_start",
+          "contributor": "attribute:parallax.compatibility.Claim.txStart",
           "declaringOwner": "parallax.compatibility.Claim",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2766,7 +2766,7 @@
             "parallax.compatibility.Claim"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Claim.tx_end",
+          "contributor": "attribute:parallax.compatibility.Claim.txEnd",
           "declaringOwner": "parallax.compatibility.Claim",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2815,7 +2815,7 @@
             "parallax.compatibility.Coverage"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Coverage.valid_start",
+          "contributor": "attribute:parallax.compatibility.Coverage.validStart",
           "declaringOwner": "parallax.compatibility.Coverage",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2825,7 +2825,7 @@
             "parallax.compatibility.Coverage"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Coverage.valid_end",
+          "contributor": "attribute:parallax.compatibility.Coverage.validEnd",
           "declaringOwner": "parallax.compatibility.Coverage",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2835,7 +2835,7 @@
             "parallax.compatibility.Coverage"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Coverage.tx_start",
+          "contributor": "attribute:parallax.compatibility.Coverage.txStart",
           "declaringOwner": "parallax.compatibility.Coverage",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2845,7 +2845,7 @@
             "parallax.compatibility.Coverage"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Coverage.tx_end",
+          "contributor": "attribute:parallax.compatibility.Coverage.txEnd",
           "declaringOwner": "parallax.compatibility.Coverage",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2884,7 +2884,7 @@
             "parallax.compatibility.Policy"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Policy.valid_start",
+          "contributor": "attribute:parallax.compatibility.Policy.validStart",
           "declaringOwner": "parallax.compatibility.Policy",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2894,7 +2894,7 @@
             "parallax.compatibility.Policy"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Policy.valid_end",
+          "contributor": "attribute:parallax.compatibility.Policy.validEnd",
           "declaringOwner": "parallax.compatibility.Policy",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2904,7 +2904,7 @@
             "parallax.compatibility.Policy"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Policy.tx_start",
+          "contributor": "attribute:parallax.compatibility.Policy.txStart",
           "declaringOwner": "parallax.compatibility.Policy",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2914,7 +2914,7 @@
             "parallax.compatibility.Policy"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Policy.tx_end",
+          "contributor": "attribute:parallax.compatibility.Policy.txEnd",
           "declaringOwner": "parallax.compatibility.Policy",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2965,7 +2965,7 @@
             "parallax.compatibility.Position"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Position.valid_start",
+          "contributor": "attribute:parallax.compatibility.Position.validStart",
           "declaringOwner": "parallax.compatibility.Position",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2975,7 +2975,7 @@
             "parallax.compatibility.Position"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Position.valid_end",
+          "contributor": "attribute:parallax.compatibility.Position.validEnd",
           "declaringOwner": "parallax.compatibility.Position",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2985,7 +2985,7 @@
             "parallax.compatibility.Position"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Position.tx_start",
+          "contributor": "attribute:parallax.compatibility.Position.txStart",
           "declaringOwner": "parallax.compatibility.Position",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -2995,7 +2995,7 @@
             "parallax.compatibility.Position"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Position.tx_end",
+          "contributor": "attribute:parallax.compatibility.Position.txEnd",
           "declaringOwner": "parallax.compatibility.Position",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3046,7 +3046,7 @@
             "parallax.compatibility.SpotQuote"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Quote.tx_start",
+          "contributor": "attribute:parallax.compatibility.Quote.txStart",
           "declaringOwner": "parallax.compatibility.Quote",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3056,7 +3056,7 @@
             "parallax.compatibility.SpotQuote"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Quote.tx_end",
+          "contributor": "attribute:parallax.compatibility.Quote.txEnd",
           "declaringOwner": "parallax.compatibility.Quote",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3106,7 +3106,7 @@
             "parallax.compatibility.DepositRate"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Rate.valid_start",
+          "contributor": "attribute:parallax.compatibility.Rate.validStart",
           "declaringOwner": "parallax.compatibility.Rate",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3116,7 +3116,7 @@
             "parallax.compatibility.DepositRate"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Rate.valid_end",
+          "contributor": "attribute:parallax.compatibility.Rate.validEnd",
           "declaringOwner": "parallax.compatibility.Rate",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3126,7 +3126,7 @@
             "parallax.compatibility.DepositRate"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Rate.tx_start",
+          "contributor": "attribute:parallax.compatibility.Rate.txStart",
           "declaringOwner": "parallax.compatibility.Rate",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3136,7 +3136,7 @@
             "parallax.compatibility.DepositRate"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Rate.tx_end",
+          "contributor": "attribute:parallax.compatibility.Rate.txEnd",
           "declaringOwner": "parallax.compatibility.Rate",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3185,7 +3185,7 @@
             "parallax.compatibility.LoanRate"
           ],
           "column": "from_z",
-          "contributor": "attribute:parallax.compatibility.Rate.valid_start",
+          "contributor": "attribute:parallax.compatibility.Rate.validStart",
           "declaringOwner": "parallax.compatibility.Rate",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3195,7 +3195,7 @@
             "parallax.compatibility.LoanRate"
           ],
           "column": "thru_z",
-          "contributor": "attribute:parallax.compatibility.Rate.valid_end",
+          "contributor": "attribute:parallax.compatibility.Rate.validEnd",
           "declaringOwner": "parallax.compatibility.Rate",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3205,7 +3205,7 @@
             "parallax.compatibility.LoanRate"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Rate.tx_start",
+          "contributor": "attribute:parallax.compatibility.Rate.txStart",
           "declaringOwner": "parallax.compatibility.Rate",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3215,7 +3215,7 @@
             "parallax.compatibility.LoanRate"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Rate.tx_end",
+          "contributor": "attribute:parallax.compatibility.Rate.txEnd",
           "declaringOwner": "parallax.compatibility.Rate",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3266,7 +3266,7 @@
             "parallax.compatibility.MeterReading"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Reading.tx_start",
+          "contributor": "attribute:parallax.compatibility.Reading.txStart",
           "declaringOwner": "parallax.compatibility.Reading",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3276,7 +3276,7 @@
             "parallax.compatibility.MeterReading"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Reading.tx_end",
+          "contributor": "attribute:parallax.compatibility.Reading.txEnd",
           "declaringOwner": "parallax.compatibility.Reading",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3671,7 +3671,7 @@
             "parallax.compatibility.LayoutMeterReading"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.LayoutReading.tx_start",
+          "contributor": "attribute:parallax.compatibility.LayoutReading.txStart",
           "declaringOwner": "parallax.compatibility.LayoutReading",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3681,7 +3681,7 @@
             "parallax.compatibility.LayoutMeterReading"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.LayoutReading.tx_end",
+          "contributor": "attribute:parallax.compatibility.LayoutReading.txEnd",
           "declaringOwner": "parallax.compatibility.LayoutReading",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3807,7 +3807,7 @@
             "parallax.compatibility.Supplier"
           ],
           "column": "in_z",
-          "contributor": "attribute:parallax.compatibility.Supplier.tx_start",
+          "contributor": "attribute:parallax.compatibility.Supplier.txStart",
           "declaringOwner": "parallax.compatibility.Supplier",
           "effectiveNullable": false,
           "tier": "temporal"
@@ -3817,7 +3817,7 @@
             "parallax.compatibility.Supplier"
           ],
           "column": "out_z",
-          "contributor": "attribute:parallax.compatibility.Supplier.tx_end",
+          "contributor": "attribute:parallax.compatibility.Supplier.txEnd",
           "declaringOwner": "parallax.compatibility.Supplier",
           "effectiveNullable": false,
           "tier": "temporal"

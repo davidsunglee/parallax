@@ -4,7 +4,7 @@
 # Keyed by class name; each row is a map of attribute-name -> value. Instant
 # columns are authored as ISO-8601 UTC strings; the open upper bound is the
 # literal `infinity`. The data loader resolves attribute names to columns via the
-# descriptor, so `tx_start`/`tx_end` load into in_z/out_z.
+# descriptor, so `txStart`/`txEnd` load into in_z/out_z.
 #
 # The history is shaped so as-of reads discriminate:
 #   id 1 (acct A): value 100.00 known [2024-01-01, 2024-06-01) — SUPERSEDED,
@@ -21,20 +21,20 @@ Balance:
   - id: 1
     acctNum: A
     value: 100.00
-    tx_start: "2024-01-01T00:00:00+00:00"
-    tx_end: "2024-06-01T00:00:00+00:00"
+    txStart: "2024-01-01T00:00:00+00:00"
+    txEnd: "2024-06-01T00:00:00+00:00"
   - id: 1
     acctNum: A
     value: 150.00
-    tx_start: "2024-06-01T00:00:00+00:00"
-    tx_end: infinity
+    txStart: "2024-06-01T00:00:00+00:00"
+    txEnd: infinity
   - id: 2
     acctNum: B
     value: 200.00
-    tx_start: "2024-02-01T00:00:00+00:00"
-    tx_end: infinity
+    txStart: "2024-02-01T00:00:00+00:00"
+    txEnd: infinity
   - id: 3
     acctNum: C
     value: 50.00
-    tx_start: "2024-03-01T00:00:00+00:00"
-    tx_end: "2024-08-01T00:00:00+00:00"
+    txStart: "2024-03-01T00:00:00+00:00"
+    txEnd: "2024-08-01T00:00:00+00:00"

@@ -399,9 +399,9 @@ def test_planned_steps_compares_unequal_to_a_non_planned_steps_value() -> None:
 # --------------------------------------------------------------------------- #
 # The temporal slice: the milestone slot a close addresses, and its effect.    #
 # --------------------------------------------------------------------------- #
-_TX_START = AttributeIdentity(_ACCOUNT, "tx_start")
-_TX_END = AttributeIdentity(_ACCOUNT, "tx_end")
-_VALID_END = AttributeIdentity(_ACCOUNT, "valid_end")
+_TX_START = AttributeIdentity(_ACCOUNT, "txStart")
+_TX_END = AttributeIdentity(_ACCOUNT, "txEnd")
+_VALID_END = AttributeIdentity(_ACCOUNT, "validEnd")
 
 _CURRENT_SLOT = MilestoneTarget(
     key_attributes=(_ID,),

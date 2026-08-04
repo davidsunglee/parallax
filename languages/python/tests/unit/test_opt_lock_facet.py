@@ -99,8 +99,8 @@ def _version(entity: EntityIdentity, name: str = "version") -> AttributeMetadata
 def _axis(entity: EntityIdentity) -> AsOfAxisMetadata:
     return AsOfAxisMetadata(
         dimension=_TX_TIME,
-        start_attribute=AttributeIdentity(entity, "tx_start"),
-        end_attribute=AttributeIdentity(entity, "tx_end"),
+        start_attribute=AttributeIdentity(entity, "txStart"),
+        end_attribute=AttributeIdentity(entity, "txEnd"),
     )
 
 
@@ -174,14 +174,14 @@ def test_a_version_attribute_becomes_the_explicit_key() -> None:
 def test_a_transaction_time_entity_derives_its_key_from_the_milestone_start() -> None:
     balance = _corpus_entity("Balance")
     assert _facet("balance").key(balance) == TransactionTimeDerived(
-        AttributeIdentity(balance, "tx_start")
+        AttributeIdentity(balance, "txStart")
     )
 
 
 def test_a_bitemporal_entity_derives_its_key_from_transaction_time_alone() -> None:
     position = _corpus_entity("Position")
     assert _facet("position").key(position) == TransactionTimeDerived(
-        AttributeIdentity(position, "tx_start")
+        AttributeIdentity(position, "txStart")
     )
 
 
@@ -208,7 +208,7 @@ def test_every_position_in_a_versioned_family_carries_the_roots_attribute() -> N
 def test_every_position_in_a_temporal_family_carries_the_roots_axis_start() -> None:
     facet = _facet("instrument")
     root = _corpus_entity("Instrument")
-    expected = TransactionTimeDerived(AttributeIdentity(root, "tx_start"))
+    expected = TransactionTimeDerived(AttributeIdentity(root, "txStart"))
     for name in ("Instrument", "Bond", "Stock"):
         assert facet.key(_corpus_entity(name)) == expected, name
 
@@ -308,8 +308,8 @@ def _temporal_versioned() -> UnresolvedEntityDeclaration:
         attributes=(
             key(_LEDGER),
             _version(_LEDGER),
-            instant(_LEDGER, "tx_start"),
-            instant(_LEDGER, "tx_end"),
+            instant(_LEDGER, "txStart"),
+            instant(_LEDGER, "txEnd"),
         ),
         as_of_axes=(_axis(_LEDGER),),
     )
@@ -330,8 +330,8 @@ def test_a_temporal_entity_without_a_version_attribute_is_accepted() -> None:
                 container=Table("ledger"),
                 attributes=(
                     key(_LEDGER),
-                    instant(_LEDGER, "tx_start"),
-                    instant(_LEDGER, "tx_end"),
+                    instant(_LEDGER, "txStart"),
+                    instant(_LEDGER, "txEnd"),
                 ),
                 as_of_axes=(_axis(_LEDGER),),
             )
@@ -355,8 +355,8 @@ def test_every_defect_of_one_entity_is_reported_in_canonical_order() -> None:
                 key(_LEDGER),
                 _version(_LEDGER),
                 _version(_LEDGER, "revision"),
-                instant(_LEDGER, "tx_start"),
-                instant(_LEDGER, "tx_end"),
+                instant(_LEDGER, "txStart"),
+                instant(_LEDGER, "txEnd"),
             ),
             as_of_axes=(_axis(_LEDGER),),
         )
@@ -431,9 +431,7 @@ def test_an_alternate_implementation_compiles_the_same_answers() -> None:
         metadata, inheritance_facet, temporal_read.compile_facet(metadata, inheritance_facet)
     )
     assert facet.key(fake.ACCOUNT) == UNVERSIONED
-    assert facet.key(fake.AUDIT) == TransactionTimeDerived(
-        AttributeIdentity(fake.AUDIT, "tx_start")
-    )
+    assert facet.key(fake.AUDIT) == TransactionTimeDerived(AttributeIdentity(fake.AUDIT, "txStart"))
     assert facet.key(EntityIdentity("elsewhere", "Account")) is None
 
 

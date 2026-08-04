@@ -39,16 +39,16 @@ entity:
     - name: name
       type: string
       maxLength: 64
-    - name: tx_start
+    - name: txStart
       type: timestamp
       column: in_z
-    - name: tx_end
+    - name: txEnd
       type: timestamp
       column: out_z
   asOfAxes:
     - dimension: transaction-time
-      startAttribute: tx_start
-      endAttribute: tx_end
+      startAttribute: txStart
+      endAttribute: txEnd
   valueObjects:
     - name: address
       nullable: true
@@ -77,7 +77,7 @@ entity:
               nullable: true
   indices:
     - name: supplier_pk
-      attributes: [id, tx_start]
+      attributes: [id, txStart]
       unique: true
     - name: supplier_name
       attributes: [name]

@@ -559,22 +559,22 @@ def test_a_temporal_entity_keys_its_axis_by_dimension() -> None:
         - name: id
           type: int64
           primaryKey: true
-        - name: tx_start
+        - name: txStart
           type: timestamp
           column: in_z
-        - name: tx_end
+        - name: txEnd
           type: timestamp
           column: out_z
       asOfAxes:
         - dimension: transaction-time
-          startAttribute: tx_start
-          endAttribute: tx_end
+          startAttribute: txStart
+          endAttribute: txEnd
     """
     declaration = _only(text)
     (axis,) = declaration.as_of_axes
     assert axis.dimension.name == "TRANSACTION_TIME"
-    assert axis.start_attribute == AttributeIdentity(declaration.identity, "tx_start")
-    assert axis.end_attribute == AttributeIdentity(declaration.identity, "tx_end")
+    assert axis.start_attribute == AttributeIdentity(declaration.identity, "txStart")
+    assert axis.end_attribute == AttributeIdentity(declaration.identity, "txEnd")
     assert declaration.attributes[1].type == TIMESTAMP
 
 

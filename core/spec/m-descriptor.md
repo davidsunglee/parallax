@@ -253,7 +253,7 @@ vs. persisted vs. detached) are `m-detach`.
 
 **Composition with `asOfAxes` (temporal entities).** A Transaction-Time Entity
 **derives** its optimistic key from the Transaction-Time start Attribute (by
-convention `tx_start`, physically `in_z`) and therefore declares **no** version
+convention `txStart`, physically `in_z`) and therefore declares **no** version
 Attribute. Combining an explicit `optimisticLocking` Attribute with a
 Transaction-Time axis is invalid. Transaction-Time-Only and Bitemporal are the
 supported temporal shapes, so every writable temporal Entity has that derived
@@ -377,8 +377,8 @@ The conventional Attribute and physical-column mappings are normative:
 
 | Dimension | Start Attribute / column | End Attribute / column |
 |---|---|---|
-| `valid-time` | `valid_start` / `from_z` | `valid_end` / `thru_z` |
-| `transaction-time` | `tx_start` / `in_z` | `tx_end` / `out_z` |
+| `valid-time` | `validStart` / `from_z` | `validEnd` / `thru_z` |
+| `transaction-time` | `txStart` / `in_z` | `txEnd` / `out_z` |
 
 Physical column overrides remain ordinary Attribute `column` overrides. The
 axis never repeats them. A temporal Entity's physical primary key is its model

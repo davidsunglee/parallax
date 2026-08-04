@@ -48,7 +48,7 @@ rendering (`instance_row`, physical-column-keyed) happens at the GRADING seam
 (`test_story_run.py`), the same convention the read/graph stories already use.
 Rendering at the grading seam keeps canonical attribute names separate from
 physical column names such as `Balance.acctNum`/`acct_num` and
-`Position.valid_start`.
+`Position.validStart`.
 
 **Temporal stories** construct axis-governed attributes without placeholder
 milestone values and drive successive

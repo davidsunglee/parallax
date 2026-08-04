@@ -25,8 +25,8 @@ writes, and physical storage:
 | Core shape variant | declared by `Bitemporal` | declared by `TransactionTimeOnly` and `Bitemporal` |
 | Descriptor `dimension` | `valid-time` | `transaction-time` |
 | Operation `dimension` | `valid-time` | `transaction-time` |
-| Conventional start Attribute | `valid_start` | `tx_start` |
-| Conventional end Attribute | `valid_end` | `tx_end` |
+| Conventional start Attribute | `validStart` | `txStart` |
+| Conventional end Attribute | `validEnd` | `txEnd` |
 | Physical start column | `from_z` | `in_z` |
 | Physical end column | `thru_z` | `out_z` |
 | Python query keyword | `valid_time` | `tx_time` |
@@ -36,7 +36,7 @@ writes, and physical storage:
 | Relationship propagation coordinate | source Valid-Time coordinate | source Transaction-Time coordinate |
 | Neutral / Python write lower-bound argument | `validFrom` / `valid_from` | transaction clock supplied by the handle |
 | Bitemporal bounded-write upper bound | `until` (a Valid-Time bound) | not caller-authored |
-| Optimistic temporal observation | not an optimistic key | observed `tx_start` / physical `in_z` |
+| Optimistic temporal observation | not an optimistic key | observed `txStart` / physical `in_z` |
 | Finite-pin mutation error | writable retroactive correction | `transaction-time-pin-read-only` |
 
 The retired business/processing vocabulary is not an alias. Physical column

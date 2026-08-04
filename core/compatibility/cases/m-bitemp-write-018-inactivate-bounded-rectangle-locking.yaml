@@ -27,7 +27,7 @@ compileEligibility:
 when:
   uow:
     concurrency: locking
-  write: { id: 1, valid_end: "2024-06-01T00:00:00+00:00" }
+  write: { id: 1, validEnd: "2024-06-01T00:00:00+00:00" }
   at: "2024-10-01T00:00:00+00:00"
 then:
   statements:

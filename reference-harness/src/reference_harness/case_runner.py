@@ -4755,7 +4755,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
     milestone pk (→ the address's key), the close instant ``at`` (→ the new
     ``out_z``), and — in optimistic mode — ``observedTxStart`` (the ``and in_z = ?``
     gate); a BITEMPORAL close additionally NAMES the rectangle it addresses through the
-    Valid-Time end attribute (``valid_end`` → the ``thru_z = ?`` bound whose VALUE the
+    Valid-Time end attribute (``validEnd`` → the ``thru_z = ?`` bound whose VALUE the
     metamodel cannot know), which a conflict case authors explicitly rather than
     reconstructing from a history it does not have. The single form reads root
     ``write`` / ``at`` / ``observedTxStart``; the retry form reads them per attempt.

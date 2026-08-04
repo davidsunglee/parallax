@@ -502,8 +502,8 @@ AsOfAxisMetadata
 The dimension identifies the axis. There is no separate axis name, identity,
 kind, or query-default member. Both attributes belong to the containing Entity,
 have Timestamp Neutral Type, are distinct, and form `[start, end)`. Valid Time
-conventionally maps `valid_start`/`valid_end` to `from_z`/`thru_z`; Transaction
-Time maps `tx_start`/`tx_end` to `in_z`/`out_z`.
+conventionally maps `validStart`/`validEnd` to `from_z`/`thru_z`; Transaction
+Time maps `txStart`/`txEnd` to `in_z`/`out_z`.
 
 ## Issues and locations
 

@@ -21,7 +21,7 @@ compileEligibility:
 when:
   uow:
     concurrency: optimistic
-  write: { id: 1, valid_end: infinity }
+  write: { id: 1, validEnd: infinity }
   at: "2024-10-01T00:00:00+00:00"
   observedTxStart: "2024-04-01T00:00:00+00:00"
 then:

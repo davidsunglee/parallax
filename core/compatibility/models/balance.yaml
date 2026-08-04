@@ -34,19 +34,19 @@ entity:
     - name: value
       type: decimal(18,2)
       column: val
-    - name: tx_start
+    - name: txStart
       type: timestamp
       column: in_z
-    - name: tx_end
+    - name: txEnd
       type: timestamp
       column: out_z
   asOfAxes:
     - dimension: transaction-time
-      startAttribute: tx_start
-      endAttribute: tx_end
+      startAttribute: txStart
+      endAttribute: txEnd
   indices:
     - name: balance_pk
-      attributes: [id, tx_start]
+      attributes: [id, txStart]
       unique: true
     - name: balance_acct
       attributes: [acctNum]

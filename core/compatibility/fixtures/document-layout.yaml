@@ -99,10 +99,10 @@ Beacon:
 # here, which is the point; the case that needs a key inside it writes one out of band.
 Mooring:
   - id: 1
-    valid_start: "2026-01-01T00:00:00+00:00"
-    valid_end: infinity
-    tx_start: "2026-01-01T00:00:00+00:00"
-    tx_end: infinity
+    validStart: "2026-01-01T00:00:00+00:00"
+    validEnd: infinity
+    txStart: "2026-01-01T00:00:00+00:00"
+    txEnd: infinity
 # The sibling Payment rows use one physical path for two distinct declared types.
 # `authorizationCode` applies only to CardPayment and is absent from the cash
 # document rather than stored as JSON null.

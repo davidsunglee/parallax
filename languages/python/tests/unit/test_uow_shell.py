@@ -210,7 +210,7 @@ def test_read_without_pending_writes_does_not_flush() -> None:
 def test_clock_supplies_the_flush_transaction_time_instant() -> None:
     # `WritePlan` retains no Transaction Instant of its own (`m-unit-work`):
     # the captured value survives only where a settled step already carries
-    # it, so the audit-only insert's own `tx_start` cell is the observable.
+    # it, so the audit-only insert's own `txStart` cell is the observable.
     recorder = _Recorder()
 
     def body(tx: UnitOfWork) -> None:
@@ -220,7 +220,7 @@ def test_clock_supplies_the_flush_transaction_time_instant() -> None:
     (step,) = recorder.plans[0].steps
     assert isinstance(step, PlannedInsert)
     (entry,) = step.entries
-    assert _member_value(entry.row.attributes, "tx_start") == "2024-06-01T00:00:00+00:00"
+    assert _member_value(entry.row.attributes, "txStart") == "2024-06-01T00:00:00+00:00"
 
 
 def test_system_clock_reads_an_aware_utc_instant() -> None:
@@ -272,14 +272,14 @@ def test_transaction_time_instant_is_captured_once_per_transaction() -> None:
     # The forced flush and the commit flush carry the SAME holder, so consuming
     # either yields one Transaction-Time instant for the whole transaction
     # (Reladomo's per-transaction timestamp) — observable only through the
-    # settled step's own stamped `tx_start`, since a Write Plan retains no
+    # settled step's own stamped `txStart`, since a Write Plan retains no
     # Transaction Instant of its own.
     tx_starts: list[object] = []
     for plan in recorder.plans:
         (step,) = plan.steps
         assert isinstance(step, PlannedInsert)
         (entry,) = step.entries
-        tx_starts.append(_member_value(entry.row.attributes, "tx_start"))
+        tx_starts.append(_member_value(entry.row.attributes, "txStart"))
     assert tx_starts == ["2024-06-01T00:00:00+00:00"] * 2
     assert clock.calls == 1
 

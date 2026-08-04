@@ -5,8 +5,8 @@
 # Each concrete subtype owns its OWN table (deposit_rate / loan_rate), keyed by CONCRETE
 # subtype (the abstract root Rate is rowless). There is no shared table and no tag.
 # Interval columns are authored as ISO-8601 UTC strings; the open upper bound is the
-# literal `infinity`. The loader resolves attribute names to columns (valid_start/
-# valid_end -> from_z/thru_z, tx_start/tx_end -> in_z/out_z).
+# literal `infinity`. The loader resolves attribute names to columns
+# (validStart/validEnd -> from_z/thru_z, txStart/txEnd -> in_z/out_z).
 #
 # DepositRate carries TWO Transaction-Time milestones sharing the SAME business key (id: 1)
 # and the SAME Valid-Time interval ([2024-01-01, infinity) — no in-the-world change)
@@ -28,22 +28,22 @@ DepositRate:
   - id: 1
     amount: 2.25
     grade: B
-    valid_start: "2024-01-01T00:00:00+00:00"
-    valid_end: infinity
-    tx_start: "2024-01-01T00:00:00+00:00"
-    tx_end: "2024-02-01T00:00:00+00:00"
+    validStart: "2024-01-01T00:00:00+00:00"
+    validEnd: infinity
+    txStart: "2024-01-01T00:00:00+00:00"
+    txEnd: "2024-02-01T00:00:00+00:00"
   - id: 1
     amount: 2.50
     grade: A
-    valid_start: "2024-01-01T00:00:00+00:00"
-    valid_end: infinity
-    tx_start: "2024-02-01T00:00:00+00:00"
-    tx_end: infinity
+    validStart: "2024-01-01T00:00:00+00:00"
+    validEnd: infinity
+    txStart: "2024-02-01T00:00:00+00:00"
+    txEnd: infinity
 LoanRate:
   - id: 2
     amount: 6.75
     spread: 1.25
-    valid_start: "2024-01-01T00:00:00+00:00"
-    valid_end: infinity
-    tx_start: "2024-01-01T00:00:00+00:00"
-    tx_end: infinity
+    validStart: "2024-01-01T00:00:00+00:00"
+    validEnd: infinity
+    txStart: "2024-01-01T00:00:00+00:00"
+    txEnd: infinity

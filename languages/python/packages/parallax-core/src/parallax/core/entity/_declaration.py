@@ -183,13 +183,19 @@ STANDARD_TEMPORAL_NAMES: Final[tuple[str, ...]] = (
     "tx_start",
     "tx_end",
 )
-"""The reserved framework temporal member names, in canonical axis order."""
+"""The framework temporal member names as Python spells them, in canonical axis order."""
 
-# Each axis's conventional member names over the stable physical columns.
+# Each axis's framework member names over the stable physical columns. The names
+# are the Python spellings; each one's canonical name is the ordinary
+# `snake_to_camel` conversion, so `tx_start` resolves to `txStart`.
 _TEMPORAL_MEMBERS: Final[dict[TemporalDimension, tuple[tuple[str, str], tuple[str, str]]]] = {
     TemporalDimension.VALID_TIME: (("valid_start", "from_z"), ("valid_end", "thru_z")),
     TemporalDimension.TRANSACTION_TIME: (("tx_start", "in_z"), ("tx_end", "out_z")),
 }
+
+_RESERVED_TEMPORAL_NAMES: Final[frozenset[str]] = frozenset(
+    snake_to_camel(py_name) for py_name in STANDARD_TEMPORAL_NAMES
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -890,7 +896,7 @@ def _build_entity(
 
     for py_name, annotation in list(annotations.items()):
         where = f"{cls_name}.{py_name}"
-        _reject_reserved(where, py_name, axes, injected=py_name in STANDARD_TEMPORAL_NAMES)
+        _reject_reserved(where, py_name)
         classified = _classify(annotation, globalns, ns)
         if classified is None:
             raise EntityDefinitionError(
@@ -1293,18 +1299,11 @@ def _member_spec(value: object, where: str, *, expect: str) -> AttrSpec | RelSpe
     )
 
 
-def _reject_reserved(
-    where: str, py_name: str, axes: tuple[TemporalDimension, ...], *, injected: bool
-) -> None:
+def _reject_reserved(where: str, py_name: str) -> None:
     if py_name in RESERVED_MEMBER_NAMES or py_name.startswith("model_"):
         raise EntityDefinitionError(
             code="entity-reserved-member-name",
             message=f"{where}: reuses a reserved query-root or introspection name",
-        )
-    if axes and py_name in STANDARD_TEMPORAL_NAMES and not injected:
-        raise EntityDefinitionError(  # pragma: no cover - caught by the earlier body scan
-            code="entity-reserved-member-name",
-            message=f"{where}: the framework supplies the standard temporal members",
         )
 
 
@@ -1327,7 +1326,18 @@ def _reject_shadowed_class_names(cls_name: str, ns: dict[str, object]) -> None:
 def _reject_temporal_redeclaration(
     cls_name: str, annotations: dict[str, object], ns: dict[str, object]
 ) -> None:
-    declared = sorted(set(STANDARD_TEMPORAL_NAMES) & (set(annotations) | set(ns)))
+    """Reject a class-body name below a temporal base that takes a framework temporal name.
+
+    The reservation is on the *canonical* name the body would resolve to, so one
+    rule covers the Python spelling the framework injects, a literal canonical
+    spelling, and an explicit ``name=`` that renames onto one. It runs before the
+    injection so a redeclaration can never be silently overwritten.
+    """
+    declared = sorted(
+        py_name
+        for py_name in set(annotations) | set(ns)
+        if _body_canonical_name(py_name, ns.get(py_name)) in _RESERVED_TEMPORAL_NAMES
+    )
     if declared:
         raise EntityDefinitionError(
             code="entity-reserved-member-name",
@@ -1336,6 +1346,12 @@ def _reject_temporal_redeclaration(
                 "temporal members family-wide"
             ),
         )
+
+
+def _body_canonical_name(py_name: str, value: object) -> str:
+    if isinstance(value, (AttrSpec, DefiningRelSpec, ReverseRelSpec)) and value.name is not None:
+        return value.name
+    return snake_to_camel(py_name)
 
 
 def _inject_temporal_members(
@@ -1349,7 +1365,7 @@ def _inject_temporal_members(
     for dimension in sorted(axes, key=lambda axis: axis.value):
         for py_name, column in _TEMPORAL_MEMBERS[dimension]:
             annotations[py_name] = Attr[_dt.datetime]
-            ns[py_name] = AttrSpec(name=py_name, column=column)
+            ns[py_name] = AttrSpec(column=column)
 
 
 def _axis_metadata(
@@ -1358,8 +1374,12 @@ def _axis_metadata(
     return tuple(
         AsOfAxisMetadata(
             dimension=dimension,
-            start_attribute=AttributeIdentity(identity, _TEMPORAL_MEMBERS[dimension][0][0]),
-            end_attribute=AttributeIdentity(identity, _TEMPORAL_MEMBERS[dimension][1][0]),
+            start_attribute=AttributeIdentity(
+                identity, snake_to_camel(_TEMPORAL_MEMBERS[dimension][0][0])
+            ),
+            end_attribute=AttributeIdentity(
+                identity, snake_to_camel(_TEMPORAL_MEMBERS[dimension][1][0])
+            ),
         )
         for dimension in sorted(axes, key=lambda axis: axis.value)
     )

@@ -144,14 +144,14 @@ def test_valid_time_only_descriptor_is_outside_the_active_contract() -> None:
             "table": "reservation",
             "attributes": [
                 {"name": "id", "type": "int64", "primaryKey": True},
-                {"name": "valid_start", "type": "timestamp"},
-                {"name": "valid_end", "type": "timestamp"},
+                {"name": "validStart", "type": "timestamp"},
+                {"name": "validEnd", "type": "timestamp"},
             ],
             "asOfAxes": [
                 {
                     "dimension": "valid-time",
-                    "startAttribute": "valid_start",
-                    "endAttribute": "valid_end",
+                    "startAttribute": "validStart",
+                    "endAttribute": "validEnd",
                 }
             ],
         }
@@ -701,18 +701,18 @@ def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
                 "table": "milestone",
                 "attributes": [
                     {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                    {"name": "tx_start", "type": "timestamp", "column": "in_z"},
-                    {"name": "tx_end", "type": "timestamp", "column": "out_z"},
+                    {"name": "txStart", "type": "timestamp", "column": "in_z"},
+                    {"name": "txEnd", "type": "timestamp", "column": "out_z"},
                 ],
                 "asOfAxes": [
                     {
                         "dimension": "transaction-time",
-                        "startAttribute": "tx_start",
-                        "endAttribute": "tx_end",
+                        "startAttribute": "txStart",
+                        "endAttribute": "txEnd",
                     },
                 ],
                 "indices": [
-                    {"name": "milestone_pk", "attributes": ["id", "tx_start"], "unique": True},
+                    {"name": "milestone_pk", "attributes": ["id", "txStart"], "unique": True},
                 ],
             }
         },

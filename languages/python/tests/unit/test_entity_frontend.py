@@ -578,7 +578,7 @@ def test_instance_access_returns_the_member_value_and_relationships_stay_closed_
 
 def test_a_temporal_shape_owner_receives_the_framework_members_and_axes() -> None:
     names = [member.identity.name for member in Reading.attributes]
-    assert names == ["id", "celsius", "tx_start", "tx_end"]
+    assert names == ["id", "celsius", "txStart", "txEnd"]
     assert [member.storage.name for member in Reading.attributes[2:]] == ["in_z", "out_z"]
     assert len(Episode.as_of_axes) == 2
     assert Reading(id=1, celsius=1.5).tx_start is None
@@ -673,7 +673,7 @@ def test_a_write_row_carries_only_the_members_the_caller_set() -> None:
 
 def test_setting_a_framework_stamped_axis_member_is_rejected_before_any_row_is_built() -> None:
     fresh = Reading(id=1, celsius=1.0, tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
-    with pytest.raises(FrameworkOwnedAxisError, match="tx_start"):
+    with pytest.raises(FrameworkOwnedAxisError, match="txStart"):
         full_row(fresh)
 
 

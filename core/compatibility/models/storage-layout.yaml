@@ -150,16 +150,16 @@ entities:
       - name: sensor
         type: string
         maxLength: 16
-      - name: tx_start
+      - name: txStart
         type: timestamp
         column: in_z
-      - name: tx_end
+      - name: txEnd
         type: timestamp
         column: out_z
     asOfAxes:
       - dimension: transaction-time
-        startAttribute: tx_start
-        endAttribute: tx_end
+        startAttribute: txStart
+        endAttribute: txEnd
     valueObjects:
       - name: probe
         attributes:

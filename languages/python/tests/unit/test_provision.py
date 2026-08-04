@@ -268,7 +268,7 @@ def test_schema_statements_enforce_unique_secondary_indices() -> None:
 
 def test_schema_statements_skip_the_milestone_index_the_temporal_pk_enforces() -> None:
     # A temporal model's declared composite unique index names the as-of attribute
-    # (`tx_start` -> in_z); the physical PK already enforces exactly that
+    # (`txStart` -> in_z); the physical PK already enforces exactly that
     # column set, so no duplicate `unique (...)` constraint is emitted.
     (audit,) = provision.schema_statements(_MODELS["balance"])
     assert "unique" not in audit
@@ -449,15 +449,15 @@ def _tpcs_family_with_a_temporal_root_and_matching_index() -> AcceptedMetamodel:
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
         attributes=(
             Attribute(name="id", type="int64", column="id", primary_key=True),
-            Attribute(name="tx_start", type="timestamp", column="in_z"),
-            Attribute(name="tx_end", type="timestamp", column="out_z"),
+            Attribute(name="txStart", type="timestamp", column="in_z"),
+            Attribute(name="txEnd", type="timestamp", column="out_z"),
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
             ),
         ),
-        indices=(Index(name="root_pk", attributes=("id", "tx_start"), unique=True),),
+        indices=(Index(name="root_pk", attributes=("id", "txStart"), unique=True),),
     )
     leaf = Entity(
         name="Leaf",

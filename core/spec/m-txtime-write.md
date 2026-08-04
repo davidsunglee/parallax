@@ -68,7 +68,7 @@ to that planner:
 
 - the **Close Cause** — `Superseded` for an `update`, `Terminated` for a
   `terminate`;
-- the **gate basis** — the observed `tx_start` an optimistic close binds, which
+- the **gate basis** — the observed `txStart` an optimistic close binds, which
   the planner renders as a Temporal Gate or discards for the explicit `Ungated`
   decision according to the transaction's concurrency mode (`m-opt-lock`); and
 - the **successors** — the chained current rows, each with its Insert Origin: a
@@ -116,7 +116,7 @@ orphaned current row). The current-row predicate (`pk and out_z = infinity`) alo
 is **not** a sufficient gate against a concurrent writer: a fully-committed
 concurrent chain leaves a *new* current row that a stale close would silently
 re-close — a lost update — so under optimistic mode the close carries an additional
-`and <in_z> = ?` gate on the `tx_start` the unit of work **observed**:
+`and <in_z> = ?` gate on the `txStart` the unit of work **observed**:
 
 ```text
 update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?

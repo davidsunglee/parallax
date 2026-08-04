@@ -599,18 +599,18 @@ def test_a_temporal_shape_reserves_its_conventional_member_names() -> None:
             key(entity),
             instant(entity, "from_ts"),
             instant(entity, "to_ts"),
-            attribute(entity, "tx_start", type=base.STRING),
+            attribute(entity, "txStart", type=base.STRING),
         ),
         relationships=(
             UnresolvedReverseRelationshipDeclaration(
-                identity=RelationshipIdentity(entity, "tx_end"),
+                identity=RelationshipIdentity(entity, "txEnd"),
                 reverse_of=RelationshipReference(RelativeEntityReference("Order"), "items"),
             ),
         ),
         value_objects=(
             ValueObjectOccurrenceDeclaration(
-                "tx_end",
-                Column("tx_end"),
+                "txEnd",
+                Column("txEnd"),
                 _shape(ValueObjectAttributeDeclaration("city", base.STRING)),
             ),
         ),
@@ -631,12 +631,12 @@ def test_conventional_axis_attributes_are_not_reserved_against_their_own_axis() 
     entity = identity("Balance")
     declaration = Declaration(
         identity=entity,
-        attributes=(key(entity), instant(entity, "tx_start"), instant(entity, "tx_end")),
+        attributes=(key(entity), instant(entity, "txStart"), instant(entity, "txEnd")),
         as_of_axes=(
             AsOfAxisMetadata(
                 TemporalDimension.TRANSACTION_TIME,
-                AttributeIdentity(entity, "tx_start"),
-                AttributeIdentity(entity, "tx_end"),
+                AttributeIdentity(entity, "txStart"),
+                AttributeIdentity(entity, "txEnd"),
             ),
         ),
     )
@@ -700,20 +700,20 @@ def test_as_of_axes_are_distinct_typed_and_locally_owned() -> None:
         identity=entity,
         attributes=(
             key(entity),
-            instant(entity, "valid_start"),
-            attribute(entity, "valid_end", type=base.INT64),
-            instant(entity, "tx_start"),
+            instant(entity, "validStart"),
+            attribute(entity, "validEnd", type=base.INT64),
+            instant(entity, "txStart"),
         ),
         as_of_axes=(
             AsOfAxisMetadata(
                 TemporalDimension.VALID_TIME,
-                AttributeIdentity(entity, "valid_start"),
-                AttributeIdentity(entity, "valid_end"),
+                AttributeIdentity(entity, "validStart"),
+                AttributeIdentity(entity, "validEnd"),
             ),
             AsOfAxisMetadata(
                 TemporalDimension.TRANSACTION_TIME,
-                AttributeIdentity(entity, "tx_start"),
-                AttributeIdentity(entity, "tx_start"),
+                AttributeIdentity(entity, "txStart"),
+                AttributeIdentity(entity, "txStart"),
             ),
             AsOfAxisMetadata(
                 TemporalDimension.TRANSACTION_TIME,

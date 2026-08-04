@@ -6,8 +6,8 @@
 # abstract root Instrument is rowless). Each row's `kind` tag is DERIVED from the
 # subtype's tagValue (m-inheritance), never authored here. Interval columns are
 # authored as ISO-8601 UTC strings; the open upper bound is the literal `infinity`.
-# The loader resolves attribute names to columns (valid_start/valid_end ->
-# from_z/thru_z, tx_start/tx_end -> in_z/out_z).
+# The loader resolves attribute names to columns (validStart/validEnd ->
+# from_z/thru_z, txStart/txEnd -> in_z/out_z).
 #
 # Each instrument is a single fully-Latest rectangle (valid [2024-01-01, infinity),
 # transaction [2024-01-01, infinity)), so a read pinned Valid-Time-past 2024-06-01 /
@@ -17,15 +17,15 @@ Bond:
   - id: 1
     price: 100.00
     coupon: 5.00
-    valid_start: "2024-01-01T00:00:00+00:00"
-    valid_end: infinity
-    tx_start: "2024-01-01T00:00:00+00:00"
-    tx_end: infinity
+    validStart: "2024-01-01T00:00:00+00:00"
+    validEnd: infinity
+    txStart: "2024-01-01T00:00:00+00:00"
+    txEnd: infinity
 Stock:
   - id: 2
     price: 200.00
     ticker: ACME
-    valid_start: "2024-01-01T00:00:00+00:00"
-    valid_end: infinity
-    tx_start: "2024-01-01T00:00:00+00:00"
-    tx_end: infinity
+    validStart: "2024-01-01T00:00:00+00:00"
+    validEnd: infinity
+    txStart: "2024-01-01T00:00:00+00:00"
+    txEnd: infinity

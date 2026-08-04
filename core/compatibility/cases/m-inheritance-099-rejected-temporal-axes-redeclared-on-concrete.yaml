@@ -27,12 +27,12 @@ when:
         attributes:
           - { name: id, type: int64, column: id, primaryKey: true }
           - { name: amount, type: "decimal(18,2)", column: amount }
-          - { name: tx_start, type: timestamp, column: in_z }
-          - { name: tx_end, type: timestamp, column: out_z }
+          - { name: txStart, type: timestamp, column: in_z }
+          - { name: txEnd, type: timestamp, column: out_z }
         asOfAxes:
           - dimension: transaction-time
-            startAttribute: tx_start
-            endAttribute: tx_end
+            startAttribute: txStart
+            endAttribute: txEnd
       - name: DepositRate
         table: deposit_rate
         inheritance:
@@ -40,11 +40,11 @@ when:
           parent: Rate
         attributes:
           - { name: grade, type: string, column: grade, nullable: true }
-          - { name: valid_start, type: timestamp, column: from_z }
-          - { name: valid_end, type: timestamp, column: thru_z }
+          - { name: validStart, type: timestamp, column: from_z }
+          - { name: validEnd, type: timestamp, column: thru_z }
         asOfAxes:
           - dimension: valid-time
-            startAttribute: valid_start
-            endAttribute: valid_end
+            startAttribute: validStart
+            endAttribute: validEnd
 then:
   rejectedRule: inheritance-temporal-axes-not-root-owned

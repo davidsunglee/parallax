@@ -334,7 +334,7 @@ construction it may reference any behavioral module it harnesses.
   codec's single shape-aware operation. The codec remains independent of lifecycle
   and graph construction.
 - **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
-  optimistic-lock version analogue is derived from `tx_start` / physical `in_z`, so
+  optimistic-lock version analogue is derived from `txStart` / physical `in_z`, so
   an optimistic close references the milestoning read model.
 - **Aggregation is deferred through two modules.** `m-agg` (algebra) and
   `m-sql-agg` (lowering) are both deferred; core SQL generation (`m-sql`) never

@@ -395,14 +395,14 @@ def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
                 "attributes": [
                     {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
                     {"name": "amount", "type": "decimal(18,2)", "column": "amount"},
-                    {"name": "tx_start", "type": "timestamp", "column": "in_z"},
-                    {"name": "tx_end", "type": "timestamp", "column": "out_z"},
+                    {"name": "txStart", "type": "timestamp", "column": "in_z"},
+                    {"name": "txEnd", "type": "timestamp", "column": "out_z"},
                 ],
                 "asOfAxes": [
                     {
                         "dimension": "transaction-time",
-                        "startAttribute": "tx_start",
-                        "endAttribute": "tx_end",
+                        "startAttribute": "txStart",
+                        "endAttribute": "txEnd",
                     }
                 ],
             },
@@ -412,14 +412,14 @@ def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
                 "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
                 "attributes": [
                     {"name": "grade", "type": "string", "column": "grade", "nullable": True},
-                    {"name": "valid_start", "type": "timestamp", "column": "from_z"},
-                    {"name": "valid_end", "type": "timestamp", "column": "thru_z"},
+                    {"name": "validStart", "type": "timestamp", "column": "from_z"},
+                    {"name": "validEnd", "type": "timestamp", "column": "thru_z"},
                 ],
                 "asOfAxes": [
                     {
                         "dimension": "valid-time",
-                        "startAttribute": "valid_start",
-                        "endAttribute": "valid_end",
+                        "startAttribute": "validStart",
+                        "endAttribute": "validEnd",
                     }
                 ],
             },
@@ -440,14 +440,14 @@ def test_resolve_effective_definition_inherits_temporal_axes_from_the_root_only(
             "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
             "attributes": [
                 {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                {"name": "tx_start", "type": "timestamp", "column": "in_z"},
-                {"name": "tx_end", "type": "timestamp", "column": "out_z"},
+                {"name": "txStart", "type": "timestamp", "column": "in_z"},
+                {"name": "txEnd", "type": "timestamp", "column": "out_z"},
             ],
             "asOfAxes": [
                 {
                     "dimension": "transaction-time",
-                    "startAttribute": "tx_start",
-                    "endAttribute": "tx_end",
+                    "startAttribute": "txStart",
+                    "endAttribute": "txEnd",
                 }
             ],
         },

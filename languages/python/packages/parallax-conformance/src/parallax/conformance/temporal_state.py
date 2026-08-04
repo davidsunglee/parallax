@@ -93,7 +93,7 @@ class TemporalShadow:
         Raises :class:`AmbiguousObservationError` when more than one current
         candidate is tracked for this pk — naming one rectangle explicitly is a
         conflict-shape-only mechanism, carried by the case's own
-        ``write.valid_end`` / ``observedTxStart`` fields, never this tracker (see
+        ``write.validEnd`` / ``observedTxStart`` fields, never this tracker (see
         the module docstring).
         """
         entity_name = entity.identity.name
