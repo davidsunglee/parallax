@@ -123,7 +123,7 @@ is **not supported**: it would leave the family's root-owned as-of coordinate
 system, root-result identity, and relationship-propagation target ill-defined
 (see *Family invariants* below and the family-wide rejection rule there). Every
 physical Table in a temporal family uses the root's axes when Storage Layout
-selects its temporal-start physical primary-key slots (`m-storage-layout`);
+selects its temporal-end physical primary-key slots (`m-storage-layout`);
 reads through the
 root, an intermediate abstract position, or a concrete subtype all resolve and
 inject the same root-owned axes (`m-temporal-read`, `m-navigate`).

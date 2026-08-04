@@ -15,7 +15,8 @@
 # The LayoutMeterReading rows are two Transaction-Time milestones sharing one
 # business key: the superseded milestone closed at 2024-02-01 and the current one
 # open at infinity. A defaulted-Latest read therefore observes exactly one row and
-# the physical key spans the model key plus the Transaction-Time start.
+# the physical key spans the model key plus the Transaction-Time end, which the two
+# rows separate as 2024-02-01 and infinity.
 LayoutProfile:
   - id: 1
     label: Primary

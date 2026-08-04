@@ -55,7 +55,7 @@ trail. Key invariants the suite pins down:
 
 This mirrors `GenericBiTemporalDirector.updateUntil` / `splitTailEnd`
 (research §6, the bitemporal rectangle split). The same multi-row physical primary
-key (domain key plus each axis's start column, `m-descriptor`) makes the chained
+key (domain key plus each axis's end column, `m-descriptor`) makes the chained
 rectangles admissible.
 
 ## Plain (unbounded) bitemporal writes

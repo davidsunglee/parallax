@@ -186,12 +186,12 @@ def _unique_constraints(model: Metamodel, layout: TableLayout, dialect: Dialect)
     lookup, not an ancestry walk, decides membership. The derived primary-key
     Index is left out because ``primary key (…)`` already emits it; what remains
     are the true secondaries (a unique business column, a one-to-one FK column)
-    the `m-db-error` uniqueViolation triggers need. The same resolved column set
-    declared more than once emits one constraint.
+    the `m-db-error` uniqueViolation triggers need. Each of those emits its own
+    constraint: no Index is suppressed for spanning the Columns another already
+    spans.
     """
     derived = _primary_key_indices(model)
     constraints: list[str] = []
-    seen: set[frozenset[str]] = set()
     for entity in model.entities:
         for index in entity.indices:
             if not index.unique or index.identity in derived:
@@ -200,10 +200,6 @@ def _unique_constraints(model: Metamodel, layout: TableLayout, dialect: Dialect)
             if resolved is None:
                 continue
             quoted = [dialect.quote(column.name) for column in resolved]
-            key = frozenset(quoted)
-            if key in seen:
-                continue
-            seen.add(key)
             constraints.append(f"unique ({', '.join(quoted)})")
     return constraints
 
