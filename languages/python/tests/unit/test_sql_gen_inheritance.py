@@ -259,15 +259,17 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
 
     assert " union all " in compiled.statement.sql
     assert compiled.statement.binds == (
-        "detail",
-        "visa-4242",
         "card",
         "detail",
-        Decimal("10.0"),
+        "visa-4242",
         "cash",
+        "detail",
+        Decimal("10.0"),
     )
     card_branch, cash_branch = compiled.statement.sql.split(" union all ")
+    assert "from (select * from payment_document t0 where t0.kind = ?) p1" in card_branch
     assert "cast(" not in card_branch
+    assert "from (select * from payment_document t0 where t0.kind = ?) p2" in cash_branch
     assert "cast(jsonb_extract_path_text" in cash_branch
 
 
@@ -283,9 +285,11 @@ def test_tph_top_level_narrow_partitions_before_variant_specific_document_cast()
         target(DOCUMENT_LAYOUT, "Payment"),
     )
 
-    assert "from payment_document t0 where (cast(jsonb_extract_path_text" in compiled.statement.sql
-    assert compiled.statement.sql.endswith("and t0.kind = ?")
-    assert compiled.statement.binds == ("detail", Decimal("10.0"), "cash")
+    assert "from (select * from payment_document t0 where t0.kind = ?) p1" in compiled.statement.sql
+    assert compiled.statement.sql.endswith(
+        "where cast(jsonb_extract_path_text(p1.payload, ?) as decimal(18, 2)) > ?"
+    )
+    assert compiled.statement.binds == ("cash", "detail", Decimal("10.0"))
 
 
 def _heterogeneous_payment_predicate() -> oa.Operation:
@@ -322,20 +326,30 @@ def test_tph_document_partition_wraps_result_shaping_around_the_union() -> None:
 
 def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None:
     compiled = compile_read(
-        _heterogeneous_payment_predicate(),
+        oa.Limit(operand=_heterogeneous_payment_predicate(), count=1),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
         lock="locking",
     )
 
-    assert compiled.statement.sql.count("select ") == 3
+    assert compiled.statement.sql.count("select ") == 5
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.kind, t0.payload from payment_document t0 join ("
     )
-    assert "select t1.id from payment_document t1 where" in compiled.statement.sql
-    assert compiled.statement.sql.endswith("for share of t0")
-    assert compiled.statement.binds[-1] == "cash"
+    assert "select p1.id from (select * from payment_document t1 where t1.kind = ?) p1" in (
+        compiled.statement.sql
+    )
+    assert compiled.statement.sql.endswith("limit ? for share of t0")
+    assert compiled.statement.binds == (
+        "card",
+        "detail",
+        "visa-4242",
+        "cash",
+        "detail",
+        Decimal("10.0"),
+        1,
+    )
 
 
 def test_tph_document_materialization_decodes_only_the_tagged_variant_shape() -> None:

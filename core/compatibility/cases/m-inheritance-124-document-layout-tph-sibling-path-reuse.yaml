@@ -27,11 +27,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.payload from payment_document t0 where (jsonb_extract_path_text(t0.payload, ?) = ? or 1 = 0) and t0.kind = ? union all select t0.id, t0.kind, t0.payload from payment_document t0 where (1 = 0 or cast(jsonb_extract_path_text(t0.payload, ?) as decimal(18, 2)) > ?) and t0.kind = ?
-        mariadb: select t0.id, t0.kind, t0.payload from payment_document t0 where (json_value(t0.payload, ?) = ? or 1 = 0) and t0.kind = ? union all select t0.id, t0.kind, t0.payload from payment_document t0 where (1 = 0 or cast(json_value(t0.payload, ?) as decimal(18, 2)) > ?) and t0.kind = ?
+        postgres: select p1.id, p1.kind, p1.payload from (select * from payment_document t0 where t0.kind = ?) p1 where jsonb_extract_path_text(p1.payload, ?) = ? or 1 = 0 union all select p2.id, p2.kind, p2.payload from (select * from payment_document t0 where t0.kind = ?) p2 where 1 = 0 or cast(jsonb_extract_path_text(p2.payload, ?) as decimal(18, 2)) > ?
+        mariadb: select p1.id, p1.kind, p1.payload from (select * from payment_document t0 where t0.kind = ?) p1 where json_value(p1.payload, ?) = ? or 1 = 0 union all select p2.id, p2.kind, p2.payload from (select * from payment_document t0 where t0.kind = ?) p2 where 1 = 0 or cast(json_value(p2.payload, ?) as decimal(18, 2)) > ?
       binds:
-        postgres: [detail, visa-4242, card, detail, '10.0', cash]
-        mariadb: ['$.detail', visa-4242, card, '$.detail', '10.0', cash]
+        postgres: [card, detail, visa-4242, cash, detail, '10.0']
+        mariadb: [card, '$.detail', visa-4242, cash, '$.detail', '10.0']
   referenceSql:
     postgres: select id, kind, payload from payment_document where kind = 'card' and payload ->> 'detail' = 'visa-4242' union all select id, kind, payload from payment_document where kind = 'cash' and (payload ->> 'detail')::decimal(18,2) > 10.00
     mariadb: select id, kind, payload from payment_document where kind = 'card' and json_value(payload, '$.detail') = 'visa-4242' union all select id, kind, payload from payment_document where kind = 'cash' and cast(json_value(payload, '$.detail') as decimal(18,2)) > 10.00

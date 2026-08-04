@@ -1329,10 +1329,8 @@ def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
                 f"{case.path.name}: TPH document branch {position} ({concrete}) reads "
                 f"{tables[0] if tables else None!r}, expected shared Table {table!r}."
             )
-        where = branch.args.get("where")
-        guarded = False
-        if where is not None:
-            guarded = any(
+        guarded = any(
+            any(
                 isinstance(predicate, exp.EQ)
                 and any(
                     isinstance(column, exp.Column) and column.name == tag_column
@@ -1340,6 +1338,8 @@ def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
                 )
                 for predicate in where.find_all(exp.EQ)
             )
+            for where in branch.find_all(exp.Where)
+        )
         if not guarded:
             raise CaseFailure(
                 f"{case.path.name}: TPH document branch {position} ({concrete}) has no "
