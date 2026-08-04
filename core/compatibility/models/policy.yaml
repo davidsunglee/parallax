@@ -13,16 +13,10 @@ entities:
   - name: Policy
     namespace: parallax.compatibility
     table: policy
+    temporality: bitemporal
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: name, type: string, maxLength: 64 }
-      - { name: validStart, type: timestamp, column: from_z }
-      - { name: validEnd, type: timestamp, column: thru_z }
-      - { name: txStart, type: timestamp, column: in_z }
-      - { name: txEnd, type: timestamp, column: out_z }
-    asOfAxes:
-      - { dimension: valid-time, startAttribute: validStart, endAttribute: validEnd }
-      - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     relationships:
       - name: coverages
         cardinality: one-to-many
@@ -33,17 +27,11 @@ entities:
   - name: Coverage
     namespace: parallax.compatibility
     table: coverage
+    temporality: bitemporal
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: policyId, type: int64 }
       - { name: amount, type: "decimal(18,2)" }
-      - { name: validStart, type: timestamp, column: from_z }
-      - { name: validEnd, type: timestamp, column: thru_z }
-      - { name: txStart, type: timestamp, column: in_z }
-      - { name: txEnd, type: timestamp, column: out_z }
-    asOfAxes:
-      - { dimension: valid-time, startAttribute: validStart, endAttribute: validEnd }
-      - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     relationships:
       - name: claims
         cardinality: one-to-many
@@ -58,16 +46,10 @@ entities:
   - name: Claim
     namespace: parallax.compatibility
     table: claim
+    temporality: bitemporal
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: coverageId, type: int64 }
       - { name: reserve, type: "decimal(18,2)" }
-      - { name: validStart, type: timestamp, column: from_z }
-      - { name: validEnd, type: timestamp, column: thru_z }
-      - { name: txStart, type: timestamp, column: in_z }
-      - { name: txEnd, type: timestamp, column: out_z }
-    asOfAxes:
-      - { dimension: valid-time, startAttribute: validStart, endAttribute: validEnd }
-      - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     indices:
       - { name: claim_coverage, attributes: [coverageId] }

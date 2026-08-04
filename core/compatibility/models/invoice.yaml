@@ -8,13 +8,10 @@ entities:
   - name: Invoice
     namespace: parallax.compatibility
     table: invoice
+    temporality: transaction-time
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: name, type: string, maxLength: 64 }
-      - { name: txStart, type: timestamp, column: in_z }
-      - { name: txEnd, type: timestamp, column: out_z }
-    asOfAxes:
-      - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     relationships:
       - name: lines
         cardinality: one-to-many
@@ -25,13 +22,10 @@ entities:
   - name: InvoiceLine
     namespace: parallax.compatibility
     table: invoice_line
+    temporality: transaction-time
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: invoiceId, type: int64 }
       - { name: amount, type: "decimal(18,2)" }
-      - { name: txStart, type: timestamp, column: in_z }
-      - { name: txEnd, type: timestamp, column: out_z }
-    asOfAxes:
-      - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     indices:
       - { name: invoice_line_invoice, attributes: [invoiceId] }

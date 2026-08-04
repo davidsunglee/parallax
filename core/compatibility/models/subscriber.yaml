@@ -11,7 +11,7 @@
 # exactly once — the domain SET column (address) lists ahead of the derived
 # `version = observed + 1`, gated on the observed version (m-opt-lock ADR 0014).
 #
-# optimisticLocking MUST NOT coexist with asOfAxes on one entity (metamodel
+# optimisticLocking MUST NOT coexist with a temporal profile on one entity (metamodel
 # invariant), so Subscriber is non-temporal. Row data lives in
 # fixtures/subscriber.yaml (the conflict case loads the version-1 row it updates).
 entity:

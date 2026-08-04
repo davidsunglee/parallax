@@ -17,7 +17,6 @@ from parallax.conformance import case_format
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._records import (
     UNSET,
-    AsOfAxisMetadata,
     Attribute,
     DefiningRelationship,
     Entity,
@@ -391,6 +390,19 @@ def test_non_string_persistence_is_rejected() -> None:
         deserialize(document)
 
 
+def test_non_string_temporality_is_rejected() -> None:
+    document = {
+        "entity": {
+            "name": "Bad",
+            "table": "bad",
+            "temporality": True,
+            "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+        }
+    }
+    with pytest.raises(DescriptorError, match="`temporality` must be a string"):
+        deserialize(document)
+
+
 @pytest.mark.parametrize(
     "relationship",
     [
@@ -518,25 +530,11 @@ def test_cross_namespace_relationship_identity_round_trips_exactly() -> None:
     assert target_relationships[0]["reverseOf"] == "alpha.Source.targets"
 
 
-def test_bad_axis_reference_and_direction_are_rejected() -> None:
+def test_bad_temporality_and_direction_are_rejected() -> None:
     base = {"name": "id", "type": "int64", "primaryKey": True}
-    with pytest.raises(DescriptorError, match="dimension"):
-        deserialize(
-            {
-                "entity": {
-                    "name": "A",
-                    "attributes": [base],
-                    "asOfAxes": [
-                        {
-                            "dimension": "wallClock",
-                            "startAttribute": "id",
-                            "endAttribute": "id",
-                        }
-                    ],
-                }
-            }
-        )
-    with pytest.raises(DescriptorError, match="applicable attribute"):
+    with pytest.raises(DescriptorError, match="temporality"):
+        deserialize({"entity": {"name": "A", "attributes": [base], "temporality": "wallClock"}})
+    with pytest.raises(DescriptorError, match="unknown properties"):
         deserialize(
             {
                 "entity": {
@@ -545,8 +543,8 @@ def test_bad_axis_reference_and_direction_are_rejected() -> None:
                     "asOfAxes": [
                         {
                             "dimension": "transaction-time",
-                            "startAttribute": "missing",
-                            "endAttribute": "id",
+                            "startAttribute": "txStart",
+                            "endAttribute": "txEnd",
                         }
                     ],
                 }
@@ -758,25 +756,6 @@ def test_serialize_rejects_unresolved_transition_records() -> None:
                                     source="",
                                     target=RelationshipTarget(entity="B", attribute="id"),
                                 ),
-                            ),
-                        ),
-                    ),
-                )
-            )
-        )
-    with pytest.raises(DescriptorError, match="has no Attribute references"):
-        serialize(
-            Metamodel(
-                entities=(
-                    Entity(
-                        name="A",
-                        table="a",
-                        attributes=(attribute,),
-                        as_of_axes=(
-                            AsOfAxisMetadata(
-                                dimension="transaction-time",
-                                start_attribute="txStart",
-                                end_attribute="txEnd",
                             ),
                         ),
                     ),

@@ -269,6 +269,7 @@ _ZOO_MODEL = {
                 "strategy": "table-per-hierarchy",
                 "tag": {"column": "kind"},
             },
+            "temporality": "bitemporal",
             "attributes": [
                 {
                     "name": "id",
@@ -278,22 +279,6 @@ _ZOO_MODEL = {
                     "pkGeneration": "application-assigned",
                 },
                 {"name": "zooId", "type": "int64", "column": "zoo_id", "nullable": True},
-                {"name": "validStart", "type": "timestamp", "column": "from_z"},
-                {"name": "validEnd", "type": "timestamp", "column": "thru_z"},
-                {"name": "txStart", "type": "timestamp", "column": "in_z"},
-                {"name": "txEnd", "type": "timestamp", "column": "out_z"},
-            ],
-            "asOfAxes": [
-                {
-                    "dimension": "valid-time",
-                    "startAttribute": "validStart",
-                    "endAttribute": "validEnd",
-                },
-                {
-                    "dimension": "transaction-time",
-                    "startAttribute": "txStart",
-                    "endAttribute": "txEnd",
-                },
             ],
         },
         {

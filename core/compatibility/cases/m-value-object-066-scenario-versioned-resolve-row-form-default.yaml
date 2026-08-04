@@ -9,7 +9,7 @@
 # Predecessor Row (m-unit-work) and the resolve projects every declared document even
 # for a close that copies no payload. Here the target is VERSIONED: Subscriber owns an
 # `optimisticLocking` version AND a recursive `address` value object, and the
-# metamodel forbids a version and asOfAxes on one entity — so versioned and temporal
+# metamodel forbids a version and a temporal profile on one entity — so versioned and temporal
 # are the two DISJOINT classes of materializing predicate write (ADR 0014), and this
 # case is the other one. A versioned resolve records only a Version Observation, so
 # the one current value it must observe is the version; a `delete` assigns nothing, so

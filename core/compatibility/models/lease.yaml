@@ -19,14 +19,11 @@ entities:
   - name: Lease
     namespace: parallax.compatibility
     table: lease
+    temporality: transaction-time
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: tenantId, type: int64 }
       - { name: term, type: string, maxLength: 16 }
-      - { name: txStart, type: timestamp, column: in_z }
-      - { name: txEnd, type: timestamp, column: out_z }
-    asOfAxes:
-      - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     relationships:
       - name: notes
         cardinality: one-to-many

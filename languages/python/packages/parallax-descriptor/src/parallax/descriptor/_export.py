@@ -24,7 +24,6 @@ from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     ApplicationAssigned,
-    AsOfAxisMetadata,
     AttributeMetadata,
     Cardinality,
     ConcreteSubtype,
@@ -48,11 +47,12 @@ from parallax.core.metamodel import (
     SortDirection,
     TablePerConcreteSubtype,
     TablePerHierarchy,
-    TemporalDimension,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     default_column_name,
     derive_primary_key_index,
+    derive_temporal_structure,
+    temporality_profile,
 )
 from parallax.descriptor._type_spelling import format_type_spelling
 
@@ -117,11 +117,6 @@ _MULTIPLICITIES: Final[dict[Multiplicity, str]] = {
     Multiplicity.MANY: "many",
 }
 
-_DIMENSIONS: Final[dict[TemporalDimension, str]] = {
-    TemporalDimension.VALID_TIME: "valid-time",
-    TemporalDimension.TRANSACTION_TIME: "transaction-time",
-}
-
 
 def _entity(entity: EntityMetadata) -> dict[str, object]:
     identity = entity.identity
@@ -137,20 +132,51 @@ def _entity(entity: EntityMetadata) -> dict[str, object]:
     layout = entity.declared_layout
     if isinstance(layout, Document) and not _is_family_descendant(entity):
         out["layout"] = {"document": {"column": layout.column.name}}
-    if entity.declared_attributes:
-        out["attributes"] = [_attribute(a) for a in entity.declared_attributes]
-    if entity.declared_as_of_axes:
-        out["asOfAxes"] = [_as_of(a) for a in entity.declared_as_of_axes]
+    temporality = _temporality(entity)
+    if temporality is not None and not _is_family_descendant(entity):
+        out["temporality"] = temporality
+    attributes = _authored_attributes(entity)
+    if attributes:
+        out["attributes"] = [_attribute(a) for a in attributes]
     if entity.declared_relationships:
         out["relationships"] = [_relationship(r) for r in entity.declared_relationships]
-    authored = _authored_indices(entity)
-    if authored:
-        out["indices"] = [_index(i) for i in authored]
+    indices = _authored_indices(entity)
+    if indices:
+        out["indices"] = [_index(i) for i in indices]
     if entity.declared_value_objects:
         out["valueObjects"] = [_value_object(v) for v in entity.declared_value_objects]
     if entity.inheritance is not None:
         out["inheritance"] = _inheritance(entity.inheritance, identity)
     return out
+
+
+def _temporality(entity: EntityMetadata) -> str | None:
+    """The Temporality Profile ``entity``'s axes came from, or ``None`` for none.
+
+    Non-Temporal is what omission means, so it is never spelled; every other
+    profile is exactly the one whose derivation yields the Entity's own axes.
+    """
+    profile = temporality_profile(axis.dimension for axis in entity.declared_as_of_axes)
+    return None if profile == "nontemporal" else profile
+
+
+def _authored_attributes(entity: EntityMetadata) -> tuple[AttributeMetadata, ...]:
+    """The Entity's Attributes minus the endpoints its profile derives.
+
+    Canonical form spells what an author writes. Both endpoints of every axis are
+    derived from the profile, so exporting them would put members in the document
+    that re-importing would derive a second time.
+    """
+    derived = {
+        endpoint.name
+        for axis in derive_temporal_structure(_temporality(entity))
+        for endpoint in (axis.start, axis.end)
+    }
+    return tuple(
+        attribute
+        for attribute in entity.declared_attributes
+        if attribute.identity.name not in derived
+    )
 
 
 def _authored_indices(entity: EntityMetadata) -> tuple[IndexMetadata, ...]:
@@ -174,10 +200,10 @@ def _authored_indices(entity: EntityMetadata) -> tuple[IndexMetadata, ...]:
 def _is_family_descendant(entity: EntityMetadata) -> bool:
     """Whether ``entity`` occupies a non-root family position.
 
-    Persistence and Storage Layout are family-wide and root-owned, so a
-    descendant never spells either in canonical form even when its record
-    declares one — absence there means inherit, and only the root ever writes the
-    family fact.
+    Persistence, Storage Layout, and the Temporality Profile are family-wide and
+    root-owned, so a descendant never spells any of them in canonical form even
+    when its own metadata carries one — absence there means inherit, and only the
+    root ever writes the family fact.
     """
     return isinstance(entity.inheritance, (AbstractSubtype, ConcreteSubtype))
 
@@ -267,14 +293,6 @@ def _index(index: IndexMetadata) -> dict[str, object]:
     if index.unique:
         out["unique"] = True
     return out
-
-
-def _as_of(axis: AsOfAxisMetadata) -> dict[str, object]:
-    return {
-        "dimension": _DIMENSIONS[axis.dimension],
-        "startAttribute": axis.start_attribute.name,
-        "endAttribute": axis.end_attribute.name,
-    }
 
 
 def _inheritance(inheritance: InheritanceMetadata, child: EntityIdentity) -> dict[str, object]:

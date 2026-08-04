@@ -25,9 +25,10 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Literal, cast
 
-from parallax.core.metamodel import default_column_name
+from parallax.core.metamodel import default_column_name, derive_temporal_structure
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._records import (
+    TEMPORAL_DIMENSIONS,
     AsOfAxisMetadata,
     Attribute,
     DefiningRelationship,
@@ -49,6 +50,7 @@ from parallax.descriptor._records import (
     RelationshipJoin,
     RelationshipTarget,
     ReverseRelationship,
+    Temporality,
     ValueObject,
     ValueObjectAttribute,
 )
@@ -59,7 +61,7 @@ _PERSISTENCE_MODES: frozenset[str] = frozenset({"read-write", "read-only"})
 _PK_STRATEGIES: frozenset[str] = frozenset({"application-assigned", "max", "sequence"})
 _REL_CARDINALITIES: frozenset[str] = frozenset({"one-to-one", "many-to-one", "one-to-many"})
 _VO_CARDINALITIES: frozenset[str] = frozenset({"one", "many"})
-_AXES: frozenset[str] = frozenset({"valid-time", "transaction-time"})
+_TEMPORALITIES: frozenset[str] = frozenset({"nontemporal", "transaction-time", "bitemporal"})
 _ROLES: frozenset[str] = frozenset({"root", "abstract-subtype", "concrete-subtype"})
 _STRATEGIES: frozenset[str] = frozenset({"table-per-hierarchy", "table-per-concrete-subtype"})
 
@@ -281,16 +283,28 @@ def _index_from(value: object, where: str) -> Index:
     return Index(name=name, attributes=attrs, unique=_bool(m, "unique", default=False, where=where))
 
 
-def _as_of_from(value: object, where: str) -> AsOfAxisMetadata:
-    m = _mapping(value, where)
-    _closed(m, frozenset({"dimension", "startAttribute", "endAttribute"}), where)
-    dimension = _enum(_str(m, "dimension", where), _AXES, "dimension", where)
-    start_attribute = _str(m, "startAttribute", where)
-    end_attribute = _str(m, "endAttribute", where)
-    return AsOfAxisMetadata(
-        dimension=cast("Literal['valid-time', 'transaction-time']", dimension),
-        start_attribute=start_attribute,
-        end_attribute=end_attribute,
+def _temporal_structure(
+    temporality: Temporality | None,
+) -> tuple[tuple[Attribute, ...], tuple[AsOfAxisMetadata, ...]]:
+    """The endpoint Attributes and As-Of Axes a Temporality Profile derives.
+
+    Every endpoint is a non-nullable Timestamp over the framework-fixed physical
+    column the shared derivation supplies — not over ``defaultColumn``, which
+    would fold ``txStart`` to ``tx_start`` rather than ``in_z``.
+    """
+    axes = derive_temporal_structure(temporality)
+    attributes = tuple(
+        Attribute(name=endpoint.name, type="timestamp", column=endpoint.column)
+        for axis in axes
+        for endpoint in (axis.start, axis.end)
+    )
+    return attributes, tuple(
+        AsOfAxisMetadata(
+            dimension=TEMPORAL_DIMENSIONS[axis.dimension],
+            start_attribute=axis.start.name,
+            end_attribute=axis.end.name,
+        )
+        for axis in axes
     )
 
 
@@ -413,8 +427,8 @@ def _entity_from(value: object) -> Entity:
                 "table",
                 "persistence",
                 "layout",
+                "temporality",
                 "attributes",
-                "asOfAxes",
                 "relationships",
                 "indices",
                 "valueObjects",
@@ -426,16 +440,13 @@ def _entity_from(value: object) -> Entity:
     name = _str(m, "name", "entity")
     where = f"entity {name}"
 
-    attributes = tuple(
+    temporality = _temporality_from(m, where)
+    authored = tuple(
         _attribute_from(item, f"{where}.attributes")
         for item in _list(m.get("attributes", []), where)
     )
-    as_of_raw = m.get("asOfAxes")
-    as_of = (
-        tuple(_as_of_from(item, f"{where}.asOfAxes") for item in _list(as_of_raw, where))
-        if as_of_raw is not None
-        else ()
-    )
+    endpoints, as_of = _temporal_structure(temporality)
+    attributes = (*authored, *endpoints)
     rel_raw = m.get("relationships")
     relationships = (
         tuple(_relationship_from(item, f"{where}.relationships") for item in _list(rel_raw, where))
@@ -463,6 +474,7 @@ def _entity_from(value: object) -> Entity:
         table=_opt_str(m, "table", where),
         persistence=_persistence_from(m, where),
         layout=_layout_from(m, where),
+        temporality=temporality,
         attributes=attributes,
         as_of_axes=as_of,
         relationships=relationships,
@@ -486,6 +498,22 @@ def _persistence_from(m: Mapping[str, object], where: str) -> Persistence | None
     if not isinstance(value, str):
         raise DescriptorError(f"{where}: `persistence` must be a string")
     return cast("Persistence", _enum(value, _PERSISTENCE_MODES, "persistence", where))
+
+
+def _temporality_from(m: Mapping[str, object], where: str) -> Temporality | None:
+    """The Temporality Profile the document declares, or ``None`` when it omits it.
+
+    Omission is preserved rather than resolved to Non-Temporal for the same
+    reason as `persistence`: the profile is family-wide and root-owned, so
+    absence is the default on a root and the inherit signal on a descendant, and
+    only the document distinguishes either from a declaration.
+    """
+    if "temporality" not in m:
+        return None
+    value = m["temporality"]
+    if not isinstance(value, str):
+        raise DescriptorError(f"{where}: `temporality` must be a string")
+    return cast("Temporality", _enum(value, _TEMPORALITIES, "temporality", where))
 
 
 def _layout_from(m: Mapping[str, object], where: str) -> Layout | None:
@@ -541,11 +569,6 @@ def _resolved_relationship_entities(entities: tuple[Entity, ...]) -> tuple[Entit
         raise DescriptorError(
             f"entity {canonical_name(entity)} has no applicable attribute {attribute_name!r}"
         )
-
-    for entity in entities:
-        for axis in entity.as_of_axes:
-            attribute(entity, axis.start_attribute)
-            attribute(entity, axis.end_attribute)
 
     resolved_entities: list[Entity] = []
     for entity in entities:
@@ -708,14 +731,6 @@ def _index_to_json(index: Index) -> dict[str, object]:
     return out
 
 
-def _as_of_to_json(axis: AsOfAxisMetadata) -> dict[str, object]:
-    return {
-        "dimension": axis.dimension,
-        "startAttribute": axis.start_attribute,
-        "endAttribute": axis.end_attribute,
-    }
-
-
 def _inheritance_to_json(inh: Inheritance) -> dict[str, object]:
     out: dict[str, object] = {}
     if inh.strategy is not None:
@@ -768,27 +783,27 @@ def _value_object_to_json(vo: ValueObject) -> dict[str, object]:
 def _is_family_descendant(entity: Entity) -> bool:
     """Whether ``entity`` occupies a non-root position in an inheritance family.
 
-    Canonical form omits ``persistence`` and ``layout`` on such an entity
-    unconditionally: both are family-wide and root-owned, so a descendant has
-    none of its own to spell and absence there means inherit. A record that
-    nonetheless declares one keeps it — that is the evidence family validation is
-    stated over — but it is never part of the canonical spelling.
+    Canonical form omits ``persistence``, ``layout``, and ``temporality`` on such
+    an entity unconditionally: each is family-wide and root-owned, so a
+    descendant has none of its own to spell and absence there means inherit. A
+    record that nonetheless declares one keeps it — that is the evidence family
+    validation is stated over — but it is never part of the canonical spelling.
     """
     return entity.inheritance is not None and entity.inheritance.role != "root"
 
 
+def _authored_attributes(entity: Entity) -> tuple[Attribute, ...]:
+    """The entity's attributes minus the endpoints its profile derives.
+
+    Canonical form spells what an author writes, and re-importing the profile
+    derives the endpoints again, so emitting them would state the same members
+    twice.
+    """
+    derived = {attribute.name for attribute in _temporal_structure(entity.temporality)[0]}
+    return tuple(attribute for attribute in entity.attributes if attribute.name not in derived)
+
+
 def _entity_to_json(entity: Entity) -> dict[str, object]:
-    attribute_names = {attribute.name for attribute in entity.attributes}
-    for axis in entity.as_of_axes:
-        missing = {
-            name
-            for name in (axis.start_attribute, axis.end_attribute)
-            if name not in attribute_names
-        }
-        if missing:
-            raise DescriptorError(
-                f"entity {entity.name!r} has no Attribute references for {sorted(missing)!r}"
-            )
     out: dict[str, object] = {"name": entity.name}
     if entity.namespace is not None:
         out["namespace"] = entity.namespace
@@ -798,10 +813,15 @@ def _entity_to_json(entity: Entity) -> dict[str, object]:
         out["persistence"] = "read-only"
     if entity.layout is not None and not _is_family_descendant(entity):
         out["layout"] = {"document": {"column": entity.layout.column}}
-    if entity.attributes:
-        out["attributes"] = [_attribute_to_json(a) for a in entity.attributes]
-    if entity.as_of_axes:
-        out["asOfAxes"] = [_as_of_to_json(a) for a in entity.as_of_axes]
+    if (
+        entity.temporality is not None
+        and entity.temporality != "nontemporal"
+        and not _is_family_descendant(entity)
+    ):
+        out["temporality"] = entity.temporality
+    authored = _authored_attributes(entity)
+    if authored:
+        out["attributes"] = [_attribute_to_json(a) for a in authored]
     if entity.relationships:
         out["relationships"] = [
             _relationship_to_json(r, entity.namespace) for r in entity.relationships

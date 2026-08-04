@@ -551,33 +551,27 @@ def test_a_sequence_generation_without_a_name_is_rejected() -> None:
         unresolved_metamodel(records.Metamodel((entity,)))
 
 
-def test_a_temporal_entity_keys_its_axis_by_dimension() -> None:
+def test_a_temporal_profile_derives_its_axis_endpoints_and_columns() -> None:
     text = """
     entity:
       name: Balance
       namespace: parallax.fixture
       table: balance
+      temporality: transaction-time
       attributes:
         - name: id
           type: int64
           primaryKey: true
-        - name: txStart
-          type: timestamp
-          column: in_z
-        - name: txEnd
-          type: timestamp
-          column: out_z
-      asOfAxes:
-        - dimension: transaction-time
-          startAttribute: txStart
-          endAttribute: txEnd
     """
     declaration = _only(text)
     (axis,) = declaration.as_of_axes
     assert axis.dimension.name == "TRANSACTION_TIME"
     assert axis.start_attribute == AttributeIdentity(declaration.identity, "txStart")
     assert axis.end_attribute == AttributeIdentity(declaration.identity, "txEnd")
-    assert declaration.attributes[1].type == TIMESTAMP
+    endpoints = declaration.attributes[1:]
+    assert [attribute.type for attribute in endpoints] == [TIMESTAMP, TIMESTAMP]
+    assert [attribute.storage.name for attribute in endpoints] == ["in_z", "out_z"]
+    assert not any(attribute.nullable for attribute in endpoints)
 
 
 def test_relationship_facts_become_structured_declarations() -> None:

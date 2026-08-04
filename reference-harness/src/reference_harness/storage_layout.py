@@ -24,6 +24,7 @@ from .inheritance import (
     role_of,
 )
 from .naming import default_column_name
+from .temporality import temporal_axes
 from .value_object_resolve import RejectionError
 
 STORAGE_LAYOUT_TABLE_MAPPING_COLLISION = "storage-layout-table-mapping-collision"
@@ -645,10 +646,9 @@ def _joined_attributes(index: _ModelIndex) -> frozenset[tuple[str, str]]:
 
 def _temporal_bounds(root_definition: Mapping[str, Any], root: str) -> frozenset[tuple[str, str]]:
     return frozenset(
-        (root, attribute)
-        for axis in root_definition.get("asOfAxes", []) or []
-        if isinstance(axis, dict)
-        for attribute in (axis["startAttribute"], axis["endAttribute"])
+        (root, endpoint.name)
+        for axis in temporal_axes(root_definition)
+        for endpoint in (axis.start, axis.end)
     )
 
 
@@ -782,21 +782,10 @@ def _temporal_designations(
     root: Mapping[str, Any], root_identity: str
 ) -> frozenset[AttributeContributor]:
     return frozenset(
-        AttributeContributor(root_identity, attribute)
-        for axis in root.get("asOfAxes", []) or []
-        if isinstance(axis, dict)
-        for attribute in (axis["startAttribute"], axis["endAttribute"])
+        AttributeContributor(root_identity, endpoint.name)
+        for axis in temporal_axes(root)
+        for endpoint in (axis.start, axis.end)
     )
-
-
-TEMPORAL_DIMENSION_RANK: Mapping[str, int] = MappingProxyType(
-    {"valid-time": 0, "transaction-time": 1}
-)
-"""The canonical order of the As-Of Axis dimensions: Valid Time before Transaction Time.
-
-Every ordered per-axis sequence follows it — the physical primary key's temporal
-end slots, and a milestone close's one exclusive upper bound per axis.
-"""
 
 
 def derived_primary_key_index(definition: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -812,9 +801,11 @@ def derived_primary_key_index(definition: Mapping[str, Any]) -> dict[str, Any] |
 
     Components are the local primary-key Attributes in declaration order followed
     by each declared axis's END Attribute in canonical dimension rank — the
-    columns a Latest predicate and a milestone close both pin. The name is the
-    table's when the Entity owns one, and the Entity's own name folded to the
-    same lowercase shape otherwise.
+    columns a Latest predicate and a milestone close both pin. They are distinct
+    by construction: each dimension derives its own endpoints, and no other
+    attribute may bear one of their names. The name is the table's when the
+    Entity owns one, and the Entity's own name folded to the same lowercase shape
+    otherwise.
     """
     attributes = [
         attribute["name"]
@@ -823,14 +814,7 @@ def derived_primary_key_index(definition: Mapping[str, Any]) -> dict[str, Any] |
     ]
     if not attributes:
         return None
-    seen = set(attributes)
-    axes = (axis for axis in definition.get("asOfAxes", []) or [] if isinstance(axis, dict))
-    for axis in sorted(axes, key=lambda axis: TEMPORAL_DIMENSION_RANK[axis["dimension"]]):
-        end = axis["endAttribute"]
-        if end in seen:
-            continue
-        seen.add(end)
-        attributes.append(end)
+    attributes.extend(axis.end.name for axis in temporal_axes(definition))
     table = definition.get("table")
     name = definition["name"]
     stem = (

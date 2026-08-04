@@ -557,7 +557,7 @@ in [`m-model-formation`](m-model-formation.md). No other module may emit a
 | `metamodel-unresolved-attribute-reference` | An Attribute Reference does not resolve to a declared local Attribute. |
 | `metamodel-unresolved-relationship-reference` | A Relationship Reference does not resolve to a declared local Relationship. |
 | `metamodel-local-member-collision` | Attribute, Relationship, or top-level Value Object names collide in one Entity, or scalar/nested names collide in one Value Object. |
-| `metamodel-temporal-member-reserved` | A non-framework member uses a conventional temporal Attribute name reserved by the Entity's temporal shape. |
+| `metamodel-temporal-member-reserved` | A non-framework member uses a derived temporal Attribute name reserved by the Entity's temporal shape. |
 | `metamodel-primary-key-missing` | A standalone Entity has no local primary-key Attribute. |
 | `metamodel-primary-key-multiple` | A standalone Entity has more than one local primary-key Attribute. |
 | `metamodel-index-identity-duplicate` | Two Indices of one Entity bear the same name. |

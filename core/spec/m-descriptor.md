@@ -59,7 +59,7 @@ storage `personId -> personId`, declares that column explicitly.
 
 The base elements for a single non-temporal entity are `entity`, `attribute`,
 and `pkGeneration`. A descriptor may declare **multiple entities** so relationships
-can name sibling entities, plus **`asOfAxes`** (temporal dimensions), and
+can name sibling entities, plus **`temporality`** (the temporal profile), and
 the two metamodel extensions **`inheritance`** (a closed class tree —
 table-per-hierarchy with a `tag`/`tagValue` discriminator, or
 table-per-concrete-subtype; **never** table-per-leaf or table-per-class) and
@@ -133,7 +133,8 @@ implementation **MUST** accept both.
 | `table` | physical table name (**conditionally** required — see below) |
 | `persistence` | `read-write` (default for standalone/root) \| `read-only`; descendants omit and inherit |
 | `layout` | the root-owned Storage Layout: omitted for conventional Columns storage, or `{document: {column: <name>}}` for Relational Document Layout; descendants omit and inherit |
-| children | `attributes` (**conditionally** required, non-empty); `relationships`, `indices`, `asOfAxes`, `valueObjects`, `inheritance` (optional) |
+| `temporality` | the root-owned Temporality Profile: `nontemporal` (default) \| `transaction-time` \| `bitemporal`; descendants omit and inherit |
+| children | `attributes` (**conditionally** required, non-empty); `relationships`, `indices`, `valueObjects`, `inheritance` (optional) |
 
 `layout` selects how the Entity's members are placed physically
 (`m-storage-layout`). Its sole spelling is the closed one-member object
@@ -188,19 +189,19 @@ rows.
 Every entity **MUST** have exactly one **primary key** — for a concrete subtype it
 may be inherited from an abstract ancestor rather than declared locally.
 
-Temporal classification is derived from `asOfAxes` and is not repeated as an
-Entity property. The supported shapes are no axes, Transaction-Time-Only, and
-Bitemporal. An authored `temporal` classification is invalid.
+Temporal classification is derived from `temporality` and is not repeated as a
+second Entity property. The supported shapes are Non-Temporal,
+Transaction-Time-Only, and Bitemporal. An authored `temporal` classification is
+invalid.
 
-**For an inheritance participant, "the `asOfAxes` children an entity
-declares" means the family's — not necessarily this entity's own local —
-children.** Temporal axes are family-wide metadata declared only on the root
-(`m-inheritance` "Inherited members"); an abstract-subtype or concrete-subtype
-declares none of its own, so its **derived temporal classification** is the
-root's, inherited unchanged, never re-derived from an empty local
-`asOfAxes`. A model-aware reader that does not flatten inheritance (a
-per-entity introspection view) MAY still surface a non-root participant's own,
-locally-empty `asOfAxes` for structural inspection; every OTHER
+**For an inheritance participant, "the `temporality` an entity declares" means
+the family's — not necessarily this entity's own local — profile.** Temporality
+is family-wide metadata declared only on the root (`m-inheritance` "Inherited
+members"); an abstract-subtype or concrete-subtype declares none of its own, so
+its **derived temporal classification** is the root's, inherited unchanged, never
+re-derived from an absent local `temporality`. A model-aware reader that does not
+flatten inheritance (a per-entity introspection view) MAY still surface a
+non-root participant's own, absent profile for structural inspection; every OTHER
 consumer — reads, writes, provisioning, identity, propagation — MUST use the
 entity's **effective inherited classification** within its family.
 
@@ -251,7 +252,7 @@ is purely metamodel here; its conflict-detection semantics are `m-opt-lock`, and
 the object-lifecycle states that decide *when* an attribute is written (in-memory
 vs. persisted vs. detached) are `m-detach`.
 
-**Composition with `asOfAxes` (temporal entities).** A Transaction-Time Entity
+**Composition with `temporality` (temporal entities).** A Transaction-Time Entity
 **derives** its optimistic key from the Transaction-Time start Attribute (by
 convention `txStart`, physically `in_z`) and therefore declares **no** version
 Attribute. Combining an explicit `optimisticLocking` Attribute with a
@@ -392,38 +393,53 @@ root-owned, admits an authored index named after its own table.
 
 Canonical export writes only authored facts, so it omits the derived index.
 
-## `asOfAxes` — temporal dimensions
+## `temporality` — the temporal profile
 
-`asOfAxes` declares zero, one, or two temporal dimensions. Each entry references
-two ordinary Timestamp Attributes forming one fixed half-open interval
-`[start, end)`. The dimension identifies the axis; there is no authored axis
-name, kind, default, inclusivity flag, infinity field, or repeated physical
-column.
+`temporality` is the only temporal fact a descriptor spells. It names the
+Entity family's profile from a closed vocabulary, and every As-Of Axis, both
+endpoint Attributes of each axis, and their physical columns are derived from
+it:
 
-| Property | Values / meaning |
+| Profile | Derived As-Of Axes |
 |---|---|
-| `dimension` | `valid-time` \| `transaction-time` (REQUIRED) |
-| `startAttribute` | local Timestamp Attribute name for the inclusive lower bound (REQUIRED) |
-| `endAttribute` | distinct local Timestamp Attribute name for the exclusive upper bound (REQUIRED) |
+| `nontemporal` (default) | none |
+| `transaction-time` | `transaction-time` |
+| `bitemporal` | `valid-time`, then `transaction-time` |
 
-Transaction-Time-Only declares one `transaction-time` entry. Bitemporal
-declares `valid-time` followed by `transaction-time`. Valid-Time-Only is not a
-supported model shape. Query defaulting belongs to `m-temporal-read`, not model
-metadata.
+An As-Of Axis is one fixed half-open interval `[start, end)` over two Timestamp
+Attributes. There is no authored axis, axis name, endpoint reference, kind,
+default, inclusivity flag, infinity field, or physical column. Valid-Time-Only
+is not a supported model shape and has no spelling here; the retired `asOfAxes`
+container, which spelled axes and their endpoint references, is invalid. Query
+defaulting belongs to `m-temporal-read`, not model metadata.
 
-The conventional Attribute and physical-column mappings are normative:
+The Attribute and physical-column mappings each profile derives are normative:
 
 | Dimension | Start Attribute / column | End Attribute / column |
 |---|---|---|
 | `valid-time` | `validStart` / `from_z` | `validEnd` / `thru_z` |
 | `transaction-time` | `txStart` / `in_z` | `txEnd` / `out_z` |
 
-Physical column overrides remain ordinary Attribute `column` overrides. The
-axis never repeats them. A temporal Entity's physical primary key is its model
-primary key plus each dimension's end Attribute, the components the derived
-primary-key index above already fixes. Temporal Attributes appear
-after domain Attributes, with Valid Time before Transaction Time, preserving
-`from_z, thru_z, in_z, out_z` projection order for Bitemporal Entities.
+Each derived endpoint is `type: timestamp`, non-nullable, and mapped to the
+column above. Those four columns are **framework-fixed**: they are the only
+names in the model vocabulary a `column` override cannot reach, because the
+Attribute an override would sit on is derived rather than authored, and
+`defaultColumn("txStart")` is `tx_start` rather than `in_z`. An authored
+Attribute bearing a derived endpoint's canonical name is rejected in phase 3 as
+`temporal-attribute-declared`.
+
+A temporal Entity's physical primary key is its model primary key plus each
+dimension's end Attribute, the components the derived primary-key index above
+already fixes. The derived Attributes appear after every authored Attribute,
+with Valid Time before Transaction Time, preserving `from_z, thru_z, in_z,
+out_z` projection order for Bitemporal Entities.
+
+Like `persistence` and `layout`, `temporality` is family-wide and root-owned: a
+descendant MUST omit it even when repeating the root's value, which whole-model
+formation reports as `inheritance-temporality-not-root-owned`. The schema places
+the property at the same entity position for every family participant rather
+than structurally forbidding it on a descendant, because the family rule is not
+expressible per entity.
 
 ## Metamodel serde (protocol seam)
 
@@ -468,6 +484,9 @@ import, so its explicit spelling carries no information:
 | `column` | equal to `defaultColumn(name)` (an Attribute or a top-level Value Object occurrence) |
 | `persistence` | on a standalone Entity or family root whose normalized mode is Read Write (a descendant never spells `persistence` at all) |
 | `layout` | the normalized Storage Layout is Columns (a descendant never spells `layout` at all) |
+| `temporality` | the normalized profile is `nontemporal` (a descendant never spells `temporality` at all) |
+| an Attribute a `temporality` profile derives | always — both endpoints of every derived axis are re-derived on import |
+| the derived primary-key `index` | always — it is derived from the declared key and the profile's axes |
 | `pkGeneration` | on a `primaryKey: true` Attribute whose normalized generation is Application Assigned |
 | Sequence `batchSize` / `initialValue` / `incrementSize` | equal to the semantic defaults (`1` / `1` / `1`) |
 | `primaryKey`, `nullable`, `readOnly`, `optimisticLocking`, `dependent`, `unique` | equal to the schema-declared default `false` |
@@ -577,7 +596,29 @@ where the adapter — not the schema, and not the fixed resolver — normalizes
 it to the `m-metamodel` Unresolved Metamodel seam: it expands every omitted
 `column` to `defaultColumn(name)` and populates omitted Sequence
 defaults, so candidate and accepted Metadata never expose an absent Storage
-Location or a partially configured Sequence. The same phase owns the
+Location or a partially configured Sequence.
+
+The same phase derives the Entity's temporal structure and its primary-key
+index, in this order:
+
+1. Read `temporality`, defaulting an absent one to `nontemporal`. `nontemporal`
+   derives no axis and stops here.
+2. Synthesize each derived axis's start and end Attribute as `type: timestamp`,
+   non-nullable, over the framework-fixed column of the mapping table above —
+   **not** through `defaultColumn`, which would yield `tx_start` rather than
+   `in_z`.
+3. Place them after every authored Attribute, Valid Time before Transaction
+   Time.
+4. Emit the resolved As-Of Axis structure, each axis referencing the endpoints
+   step 2 synthesized.
+5. Derive the `<table>_pk` index over the declared primary key plus each axis's
+   end Attribute.
+
+Past this seam the profile is fully discharged: an Unresolved Entity Declaration
+carries the complete Attribute list and the resolved axes, exactly as if both had
+been authored, and no consumer of `m-metamodel` reads a profile.
+
+The same phase owns the
 representation-bound semantic rejections this specification names under
 "Type spellings": schema-valid text whose denoted core value is
 unconstructible raises one `DescriptorValueError` carrying every violation.
@@ -590,7 +631,15 @@ JSON-Schema keywords:
 | Rule | Meaning |
 |---|---|
 | `type-spelling-invalid` | a `type` spelling whose parameters break the `m-core` bounds or carry non-canonical digits — e.g. `decimal(0,9)`, `decimal(2,5)`, `decimal(09,2)` |
-| `index-temporal-attribute` | an authored `index` component naming an `asOfAxes` start or end Attribute of its own Entity |
+| `temporal-attribute-declared` | an authored `attribute` bearing the canonical name of an endpoint its Entity's `temporality` derives |
+| `index-temporal-attribute` | an authored `index` component naming an As-Of Axis endpoint its Entity's `temporality` derives |
+
+`temporal-attribute-declared` fires once per offending Attribute, at that
+Attribute's own `name` path. The profile derives both endpoints of every axis it
+names, over framework-fixed columns, so authoring one declares a member the
+profile already supplies — and a `column` override on it is the same rejection
+rather than a second one, because the override has no declaration of its own to
+sit on.
 
 `index-temporal-attribute` fires once per offending component, at that
 component's own document path. The physical key over the axis endpoints is

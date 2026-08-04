@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import yaml
 
 from .naming import default_column_name
+from .temporality import derive_temporal_structure, temporal_axes
 
 if TYPE_CHECKING:
     from .storage_layout import StorageLayout
@@ -64,13 +65,6 @@ def _resolve_definition(
         raise KeyError(
             f"{_entity_identity(owner)} references unknown entity {reference!r}"
         ) from exc
-
-
-def _attribute_column(definition: dict[str, Any], attribute_name: str) -> str:
-    for attribute in definition.get("attributes", []):
-        if attribute.get("name") == attribute_name:
-            return str(attribute.get("column", default_column_name(attribute_name)))
-    return default_column_name(attribute_name)
 
 
 def _compile_attribute(attribute: dict[str, Any]) -> dict[str, Any]:
@@ -380,18 +374,16 @@ class Entity:
 
     @property
     def temporal_runtime_axes(self) -> list[dict[str, Any]]:
-        """Physical runtime projection derived from canonical As-Of Axis declarations."""
-        axes: list[dict[str, Any]] = []
-        for axis in self.runtime_facts.get("asOfAxes", []):
-            axes.append(
-                {
-                    "dimension": axis["dimension"],
-                    "start_column": _attribute_column(self.runtime_facts, axis["startAttribute"]),
-                    "end_column": _attribute_column(self.runtime_facts, axis["endAttribute"]),
-                    "infinity": "infinity",
-                }
-            )
-        return axes
+        """Physical runtime projection of the As-Of Axes the profile derives."""
+        return [
+            {
+                "dimension": axis.dimension,
+                "start_column": axis.start.column,
+                "end_column": axis.end.column,
+                "infinity": "infinity",
+            }
+            for axis in temporal_axes(self.runtime_facts)
+        ]
 
     @property
     def is_temporal(self) -> bool:
@@ -1064,7 +1056,7 @@ def load_model(compatibility_root: Path, model_rel: str) -> Model:
         return cached
 
     model_path = (root / model_rel).resolve()
-    descriptor = _freeze(_load_yaml(model_path))
+    descriptor = _freeze(derive_temporal_structure(_load_yaml(model_path)))
 
     fixtures_path = root / "fixtures" / f"{model_path.stem}.yaml"
     fixtures: dict[str, list[dict[str, Any]]] = FrozenDict()

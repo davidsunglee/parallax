@@ -25,6 +25,7 @@ entities:
   - name: AuditEntry
     namespace: parallax.compatibility
     table: audit_entry
+    temporality: transaction-time
     attributes:
       - name: id
         type: int64
@@ -33,13 +34,3 @@ entities:
       - name: note
         type: string
         maxLength: 64
-      - name: txStart
-        type: timestamp
-        column: in_z
-      - name: txEnd
-        type: timestamp
-        column: out_z
-    asOfAxes:
-      - dimension: transaction-time
-        startAttribute: txStart
-        endAttribute: txEnd

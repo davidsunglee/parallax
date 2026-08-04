@@ -111,7 +111,12 @@ from parallax.core.metamodel._states import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.metamodel._temporal_structure import derive_primary_key_index
+from parallax.core.metamodel._temporal_structure import (
+    DerivedAxis,
+    derive_primary_key_index,
+    derive_temporal_structure,
+    temporality_profile,
+)
 from parallax.core.metamodel._values import (
     APPLICATION_ASSIGNED,
     COLUMNS,
@@ -215,6 +220,7 @@ __all__ = [
     "CompiledMetadata",
     "ConcreteSubtype",
     "DefiningRelationshipDeclaration",
+    "DerivedAxis",
     "Document",
     "EntityDeclaration",
     "EntityIdentity",
@@ -292,6 +298,7 @@ __all__ = [
     "compile_metadata",
     "default_column_name",
     "derive_primary_key_index",
+    "derive_temporal_structure",
     "entity_by_name",
     "inheritance_parent",
     "is_candidate_metamodel",
@@ -300,6 +307,7 @@ __all__ = [
     "resolve",
     "resolve_entity_reference",
     "sort_issues",
+    "temporality_profile",
     "value_object_metadata",
     "vo_document_violation",
 ]

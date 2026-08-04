@@ -66,10 +66,10 @@ from parallax.core.metamodel import (
     Sequence,
     SortDirection,
     Table,
-    TemporalDimension,
     UnresolvedDefiningRelationshipDeclaration,
     UnresolvedRelationshipOrder,
     UnresolvedReverseRelationshipDeclaration,
+    derive_temporal_structure,
 )
 from parallax.core.metamodel import Document as AcceptedDocument
 from parallax.core.op_algebra import Comparison, PathSegment, serialize
@@ -609,20 +609,21 @@ def test_the_type_checking_mirror_matches_the_engine_injection_table() -> None:
                 assert isinstance(decl.target, ast.Name)
                 entries.append((decl.target.id, ast.unparse(decl.annotation)))
             mirrors[node.name] = entries
-    injection = engine._TEMPORAL_MEMBERS  # pyright: ignore[reportPrivateUsage] - reads an engine internal
-    valid_time = TemporalDimension.VALID_TIME
-    transaction_time = TemporalDimension.TRANSACTION_TIME
-    expected = {
-        "TxTemporal": [
-            (py_name, "Attr[_dt.datetime]") for py_name, _ in injection[transaction_time]
-        ],
-        "Bitemporal": [
-            (py_name, "Attr[_dt.datetime]")
-            for dimension in (valid_time, transaction_time)
-            for py_name, _ in injection[dimension]
-        ],
+    injected = {
+        profile: [
+            (
+                engine._python_spelling(endpoint.name),  # pyright: ignore[reportPrivateUsage] - reads an engine internal
+                "Attr[_dt.datetime]",
+            )
+            for axis in derive_temporal_structure(profile)
+            for endpoint in (axis.start, axis.end)
+        ]
+        for profile in ("transaction-time", "bitemporal")
     }
-    assert mirrors == expected
+    assert mirrors == {
+        "TxTemporal": injected["transaction-time"],
+        "Bitemporal": injected["bitemporal"],
+    }
 
 
 def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:

@@ -17,13 +17,16 @@ never will.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Final, Literal
 
+from parallax.core.metamodel import TemporalDimension as CanonicalTemporalDimension
 from parallax.core.metamodel import default_column_name
-from parallax.descriptor._errors import DescriptorError
 
 __all__ = [
+    "TEMPORAL_DIMENSIONS",
     "UNSET",
     "AsOfAxisMetadata",
     "Attribute",
@@ -49,6 +52,7 @@ __all__ = [
     "ReverseRelationship",
     "Temporal",
     "TemporalDimension",
+    "Temporality",
     "Unset",
     "ValueObject",
     "ValueObjectAttribute",
@@ -65,6 +69,12 @@ its family. Read Write is the semantic default a standalone entity or family
 root falls back to when it declares none, so the two spellings are a declaration
 and never a computed effective mode."""
 
+Temporality = Literal["nontemporal", "transaction-time", "bitemporal"]
+"""The Temporality Profile an entity declares: the temporal shape its family
+carries. Every As-Of Axis, its two endpoint attributes, and their framework-fixed
+columns are derived from it, so it is the only temporal fact a descriptor
+spells."""
+
 Temporal = Literal[
     "non-temporal",
     "transaction-time-only",
@@ -75,6 +85,16 @@ RelationshipCardinality = Literal["one-to-one", "many-to-one", "one-to-many"]
 Multiplicity = Literal["one", "many"]
 TemporalDimension = Literal["valid-time", "transaction-time"]
 InheritanceRole = Literal["root", "abstract-subtype", "concrete-subtype"]
+
+TEMPORAL_DIMENSIONS: Final[Mapping[CanonicalTemporalDimension, TemporalDimension]] = (
+    MappingProxyType(
+        {
+            CanonicalTemporalDimension.VALID_TIME: "valid-time",
+            CanonicalTemporalDimension.TRANSACTION_TIME: "transaction-time",
+        }
+    )
+)
+"""How a descriptor spells each canonical Temporal Dimension."""
 
 
 class Unset:
@@ -295,9 +315,15 @@ class Entity:
     descendant that declares any mode at all is invalid. Normalizing an omitted
     property to the default would erase the only evidence of that.
 
-    ``layout`` reads the same way and for the same reason: it is family-wide and
-    root-owned, and ``None`` is both the Columns default on a root and the
-    inherit signal on a descendant.
+    ``layout`` and ``temporality`` read the same way and for the same reason:
+    each is family-wide and root-owned, and ``None`` is both the root's default
+    — Columns storage, Non-Temporal — and the inherit signal on a descendant.
+
+    ``attributes`` and ``as_of_axes`` are the *derived* temporal structure once
+    ``temporality`` names a profile: the two endpoint attributes per axis follow
+    every authored attribute, and the axes reference them. Nothing else in the
+    record distinguishes a derived member from an authored one, because past
+    this point nothing needs to.
     """
 
     name: str
@@ -305,6 +331,7 @@ class Entity:
     table: str | None = None
     persistence: Persistence | None = None
     layout: Layout | None = None
+    temporality: Temporality | None = None
     attributes: tuple[Attribute, ...] = ()
     as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     relationships: tuple[RelationshipDeclaration, ...] = ()
@@ -320,41 +347,36 @@ class Entity:
     @property
     def temporal(self) -> Temporal:
         """This entity's OWN LOCAL temporal classification, derived from its own
-        ``as_of_axes`` only.
+        ``temporality`` only.
 
         For an inheritance participant this is a **structural, non-flattening**
         view, not necessarily the family's effective one: an abstract-subtype or
-        concrete-subtype legitimately declares no axes of its own even when its
-        family is temporal (only the root may declare ``asOfAxes`` —
+        concrete-subtype legitimately declares no profile of its own even when
+        its family is temporal (only the root may declare ``temporality`` —
         `m-inheritance` "Inherited members"). Every consumer that needs the
         entity's EFFECTIVE classification within its family (introspection,
         validation, write classification, …) **MUST** use
-        :func:`effective_temporal` instead (`m-descriptor` "the `asOfAxes`
-        children an entity declares" — ADR 0026); this property alone is not
-        family-aware because a bare :class:`Entity` carries no sibling context to
-        resolve one.
+        :func:`effective_temporal` instead (`m-descriptor` "the `temporality` an
+        entity declares" — ADR 0026); this property alone is not family-aware
+        because a bare :class:`Entity` carries no sibling context to resolve one.
         """
-        axes = {axis.dimension for axis in self.as_of_axes}
-        if not axes:
-            return "non-temporal"
-        if axes == {"valid-time", "transaction-time"}:
-            return "bitemporal"
-        if axes == {"transaction-time"}:
-            return "transaction-time-only"
-        raise DescriptorError(
-            f"entity {self.canonical_name!r}: Valid-Time-Only is deferred; "
-            "a valid-time dimension requires transaction-time"
-        )
+        match self.temporality:
+            case None | "nontemporal":
+                return "non-temporal"
+            case "transaction-time":
+                return "transaction-time-only"
+            case "bitemporal":
+                return "bitemporal"
 
     @property
     def is_temporal(self) -> bool:
-        """Whether the entity's OWN LOCAL ``as_of_axes`` is non-empty.
+        """Whether the entity's OWN LOCAL ``temporality`` names any dimension.
 
         Same local/structural caveat as :attr:`temporal`: use
-        :func:`effective_as_of_axes` (or ``bool(...)`` of it) for an
-        inheritance participant's family-effective temporality.
+        :func:`effective_temporal` for an inheritance participant's
+        family-effective temporality.
         """
-        return bool(self.as_of_axes)
+        return self.temporal != "non-temporal"
 
     @property
     def canonical_name(self) -> str:

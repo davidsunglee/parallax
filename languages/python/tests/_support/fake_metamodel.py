@@ -299,20 +299,11 @@ entities:
     namespace: parallax.fake
     table: audit
     persistence: read-only
+    temporality: transaction-time
     attributes:
       - name: id
         type: int64
         primaryKey: true
-      - name: txStart
-        type: timestamp
-        column: in_z
-      - name: txEnd
-        type: timestamp
-        column: out_z
-    asOfAxes:
-      - dimension: transaction-time
-        startAttribute: txStart
-        endAttribute: txEnd
 """
 """The parity model as descriptor text, matching :func:`parity_model` exactly."""
 

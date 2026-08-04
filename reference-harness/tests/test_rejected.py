@@ -35,7 +35,7 @@ from reference_harness.inheritance import (
     INHERITANCE_MISSING_CONCRETE_SUBTYPE,
     INHERITANCE_MISSING_ROOT,
     INHERITANCE_MISSING_TAG_VALUE,
-    INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED,
+    INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED,
     INHERITANCE_UNKNOWN_PARENT,
     MODEL_REJECTED_RULES,
     SUBTYPE_WRITE_METADATA_FIELD,
@@ -59,6 +59,7 @@ from reference_harness.storage_layout import (
     STORAGE_LAYOUT_COLUMN_COLLISION,
     STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
 )
+from reference_harness.temporality import derive_temporal_structure
 from reference_harness.value_object_resolve import (
     BETWEEN_BOUNDS_INVERTED,
     FIND_ROOT_VALUE_OBJECT,
@@ -350,10 +351,10 @@ def test_concrete_without_abstract_root_is_not_reclassified_as_missing_root() ->
     assert exc.value.rule == INHERITANCE_CONCRETE_WITHOUT_ABSTRACT_ROOT
 
 
-def test_descendant_temporal_axes_under_a_non_temporal_root_is_rejected() -> None:
+def test_descendant_temporality_under_a_non_temporal_root_is_rejected() -> None:
     # Temporality is a family-wide property (the binding root-ownership
     # decision): a NON-temporal TPH root with an abstract-subtype that
-    # declares its own axes MUST be rejected, regardless of the root's own
+    # declares its own profile MUST be rejected, regardless of the root's own
     # temporal state.
     descriptor = {
         "entities": [
@@ -361,17 +362,7 @@ def test_descendant_temporal_axes_under_a_non_temporal_root_is_rejected() -> Non
             {
                 "name": "Pet",
                 "inheritance": {"role": "abstract-subtype", "parent": "Animal"},
-                "attributes": [
-                    {"name": "txStart", "type": "timestamp", "column": "in_z"},
-                    {"name": "txEnd", "type": "timestamp", "column": "out_z"},
-                ],
-                "asOfAxes": [
-                    {
-                        "dimension": "transaction-time",
-                        "startAttribute": "txStart",
-                        "endAttribute": "txEnd",
-                    }
-                ],
+                "temporality": "transaction-time",
             },
             {
                 "name": "Dog",
@@ -389,86 +380,73 @@ def test_descendant_temporal_axes_under_a_non_temporal_root_is_rejected() -> Non
     }
     with pytest.raises(RejectionError) as exc:
         validate_family(descriptor)
-    assert exc.value.rule == INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED
+    assert exc.value.rule == INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED
 
 
-def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
-    # A TEMPORAL TPCS root whose concrete subtype adds its own second axis
-    # MUST also be rejected: a descendant may not redeclare, add, remove,
-    # override, or shadow an axis even when the root itself is temporal.
+def test_descendant_temporality_under_a_temporal_root_is_rejected() -> None:
+    # A TEMPORAL TPCS root whose concrete subtype widens the profile MUST also
+    # be rejected: a descendant may not redeclare, add, remove, override, or
+    # shadow the family profile even when the root itself is temporal.
     descriptor = {
         "entities": [
             {
                 "name": "Rate",
                 "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                "temporality": "transaction-time",
                 "attributes": [
                     {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
                     {"name": "amount", "type": "decimal(18,2)", "column": "amount"},
-                    {"name": "txStart", "type": "timestamp", "column": "in_z"},
-                    {"name": "txEnd", "type": "timestamp", "column": "out_z"},
-                ],
-                "asOfAxes": [
-                    {
-                        "dimension": "transaction-time",
-                        "startAttribute": "txStart",
-                        "endAttribute": "txEnd",
-                    }
                 ],
             },
             {
                 "name": "DepositRate",
                 "table": "deposit_rate",
                 "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
+                "temporality": "bitemporal",
                 "attributes": [
                     {"name": "grade", "type": "string", "column": "grade", "nullable": True},
-                    {"name": "validStart", "type": "timestamp", "column": "from_z"},
-                    {"name": "validEnd", "type": "timestamp", "column": "thru_z"},
-                ],
-                "asOfAxes": [
-                    {
-                        "dimension": "valid-time",
-                        "startAttribute": "validStart",
-                        "endAttribute": "validEnd",
-                    }
                 ],
             },
         ]
     }
     with pytest.raises(RejectionError) as exc:
         validate_family(descriptor)
-    assert exc.value.rule == INHERITANCE_TEMPORAL_AXES_NOT_ROOT_OWNED
+    assert exc.value.rule == INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED
 
 
-def test_resolve_effective_definition_inherits_temporal_axes_from_the_root_only() -> None:
-    # `DepositRate` declares no `asOfAxes` of its own; the flattened
-    # definition surfaces the ROOT's axes (never a nearer, non-root ancestor —
-    # a valid descriptor never HAS one, per the invariant above).
-    entity_defs = [
+def test_resolve_effective_definition_inherits_temporality_from_the_root_only() -> None:
+    # `DepositRate` declares no `temporality` of its own; the flattened
+    # definition surfaces the ROOT's profile (never a nearer, non-root ancestor —
+    # a valid descriptor never HAS one, per the invariant above), and with it the
+    # root's derived endpoint attributes.
+    entity_defs = derive_temporal_structure(
         {
-            "name": "Rate",
-            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
-            "attributes": [
-                {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
-                {"name": "txStart", "type": "timestamp", "column": "in_z"},
-                {"name": "txEnd", "type": "timestamp", "column": "out_z"},
-            ],
-            "asOfAxes": [
+            "entities": [
                 {
-                    "dimension": "transaction-time",
-                    "startAttribute": "txStart",
-                    "endAttribute": "txEnd",
-                }
-            ],
-        },
-        {
-            "name": "DepositRate",
-            "table": "deposit_rate",
-            "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
-            "attributes": [{"name": "grade", "type": "string", "column": "grade"}],
-        },
-    ]
+                    "name": "Rate",
+                    "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                    "temporality": "transaction-time",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "column": "id", "primaryKey": True},
+                    ],
+                },
+                {
+                    "name": "DepositRate",
+                    "table": "deposit_rate",
+                    "inheritance": {"role": "concrete-subtype", "parent": "Rate"},
+                    "attributes": [{"name": "grade", "type": "string", "column": "grade"}],
+                },
+            ]
+        }
+    )["entities"]
     resolved = resolve_effective_definition(entity_defs, "DepositRate")
-    assert resolved["asOfAxes"] == entity_defs[0]["asOfAxes"]
+    assert resolved["temporality"] == "transaction-time"
+    assert [attribute["column"] for attribute in resolved["attributes"]] == [
+        "id",
+        "in_z",
+        "out_z",
+        "grade",
+    ]
 
 
 def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None:

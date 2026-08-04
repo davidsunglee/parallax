@@ -5,7 +5,7 @@
 # temporal analogue of models/customer.yaml: the SAME recursive `address` value
 # object (street/city, a nested `geo` one, a to-many `phones`) rides a
 # `Transaction-Time-Only` (audit-only) owner instead of a non-temporal one. A
-# value object declares NO asOfAxes of its own (the schema forbids them) — it
+# value object declares NO temporality of its own (the schema forbids it) — it
 # inherits the owner's single `transaction-time` dimension and its backing `address`
 # column rides the milestoned row exactly like the scalar `name` column.
 #
@@ -31,6 +31,7 @@ entity:
   name: Supplier
   namespace: parallax.compatibility
   table: supplier
+  temporality: transaction-time
   attributes:
     - name: id
       type: int64
@@ -39,16 +40,6 @@ entity:
     - name: name
       type: string
       maxLength: 64
-    - name: txStart
-      type: timestamp
-      column: in_z
-    - name: txEnd
-      type: timestamp
-      column: out_z
-  asOfAxes:
-    - dimension: transaction-time
-      startAttribute: txStart
-      endAttribute: txEnd
   valueObjects:
     - name: address
       nullable: true

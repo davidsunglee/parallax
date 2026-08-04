@@ -36,6 +36,7 @@ from reference_harness.storage_layout import (
     compile_storage_layout,
     validate_storage_layout,
 )
+from reference_harness.temporality import derive_temporal_structure
 from reference_harness.value_object_resolve import RejectionError
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -114,6 +115,11 @@ def _retained_size(value: object) -> int:
     return measure(value)
 
 
+def _derived(definition: dict[str, Any]) -> dict[str, Any]:
+    """``definition`` carrying the endpoint attributes its profile derives."""
+    return derive_temporal_structure({"entity": definition})["entity"]
+
+
 def _attribute(
     name: str,
     *,
@@ -132,26 +138,20 @@ def _attribute(
 
 
 def _standalone_definition() -> dict[str, Any]:
-    return {
-        "name": "Record",
-        "namespace": "example",
-        "table": "record",
-        "attributes": [
-            _attribute("id", primary_key=True),
-            _attribute("txStart", column="in_z"),
-            _attribute("label"),
-            _attribute("revisedBy"),
-            _attribute("txEnd", column="out_z"),
-        ],
-        "valueObjects": [{"name": "payload", "column": "payload_doc"}],
-        "asOfAxes": [
-            {
-                "dimension": "transaction-time",
-                "startAttribute": "txStart",
-                "endAttribute": "txEnd",
-            }
-        ],
-    }
+    return _derived(
+        {
+            "name": "Record",
+            "namespace": "example",
+            "table": "record",
+            "temporality": "transaction-time",
+            "attributes": [
+                _attribute("id", primary_key=True),
+                _attribute("label"),
+                _attribute("revisedBy"),
+            ],
+            "valueObjects": [{"name": "payload", "column": "payload_doc"}],
+        }
+    )
 
 
 def _tph_definitions() -> list[dict[str, Any]]:
@@ -231,37 +231,18 @@ def _tpcs_definitions() -> list[dict[str, Any]]:
     ]
 
 
-def _ranked_temporal_definitions(
-    mapping: str, *, duplicate_end: bool
-) -> tuple[list[dict[str, Any]], str, str]:
+def _ranked_temporal_definitions(mapping: str) -> tuple[list[dict[str, Any]], str, str]:
     root = f"example.{mapping.title()}Temporal"
     local_root = root.rpartition(".")[2]
     concrete = f"example.{mapping.title()}TemporalRow"
-    shared_end = "validEnd" if duplicate_end else "txEnd"
-    attributes = [
-        _attribute("id", primary_key=True),
-        _attribute("validStart", column="from_z"),
-        _attribute("validEnd", column="thru_z"),
-        _attribute("txStart", column="in_z"),
-        *([] if duplicate_end else [_attribute("txEnd", column="out_z")]),
-    ]
-    root_definition: dict[str, Any] = {
-        "name": local_root,
-        "namespace": "example",
-        "attributes": attributes,
-        "asOfAxes": [
-            {
-                "dimension": "transaction-time",
-                "startAttribute": "txStart",
-                "endAttribute": shared_end,
-            },
-            {
-                "dimension": "valid-time",
-                "startAttribute": "validStart",
-                "endAttribute": "validEnd",
-            },
-        ],
-    }
+    root_definition: dict[str, Any] = _derived(
+        {
+            "name": local_root,
+            "namespace": "example",
+            "temporality": "bitemporal",
+            "attributes": [_attribute("id", primary_key=True)],
+        }
+    )
     if mapping == "standalone":
         table = "standalone_temporal"
         root_definition["table"] = table
@@ -427,27 +408,14 @@ def test_standalone_layout_has_table_wide_tiers_provenance_and_physical_key() ->
 
 
 @pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_temporal_ends_follow_dimension_rank_not_authored_axis_order(
-    mapping: str,
-) -> None:
-    definitions, table, root = _ranked_temporal_definitions(mapping, duplicate_end=False)
+def test_physical_key_temporal_ends_follow_dimension_rank(mapping: str) -> None:
+    definitions, table, root = _ranked_temporal_definitions(mapping)
     layout = compile_storage_layout(definitions).table(table)
     assert layout is not None
     assert [slot.contributor for slot in layout.physical_primary_key] == [
         AttributeContributor(root, "id"),
         AttributeContributor(root, "validEnd"),
         AttributeContributor(root, "txEnd"),
-    ]
-
-
-@pytest.mark.parametrize("mapping", ["standalone", "tph", "tpcs"])
-def test_physical_key_deduplicates_an_end_designated_by_two_dimensions(mapping: str) -> None:
-    definitions, table, root = _ranked_temporal_definitions(mapping, duplicate_end=True)
-    layout = compile_storage_layout(definitions).table(table)
-    assert layout is not None
-    assert [slot.contributor for slot in layout.physical_primary_key] == [
-        AttributeContributor(root, "id"),
-        AttributeContributor(root, "validEnd"),
     ]
 
 
@@ -889,17 +857,8 @@ def _document_tpcs() -> list[dict[str, Any]]:
 
 def test_a_temporal_document_tpcs_root_is_accepted() -> None:
     definitions = _document_tpcs()
-    definitions[0]["attributes"].extend(
-        [{"name": "txStart", "type": "timestamp"}, {"name": "txEnd", "type": "timestamp"}]
-    )
-    definitions[0]["asOfAxes"] = [
-        {
-            "dimension": "transaction-time",
-            "startAttribute": "txStart",
-            "endAttribute": "txEnd",
-        }
-    ]
-    validate_storage_layout(definitions)
+    definitions[0]["temporality"] = "transaction-time"
+    validate_storage_layout([_derived(definitions[0]), *definitions[1:]])
 
 
 def test_a_standalone_document_layout_owner_is_accepted() -> None:
@@ -908,18 +867,13 @@ def test_a_standalone_document_layout_owner_is_accepted() -> None:
     validate_storage_layout([_document_standalone()])
 
 
-@pytest.mark.parametrize("dimension", ["transaction-time", "valid-time"])
-def test_a_temporal_document_layout_owner_is_accepted(dimension: str) -> None:
+@pytest.mark.parametrize("temporality", ["transaction-time", "bitemporal"])
+def test_a_temporal_document_layout_owner_is_accepted(temporality: str) -> None:
     # Transaction-Time and Valid-Time axes remain direct-role Columns, so either
-    # temporal dimension composes with a root-owned Document layout without issue.
+    # temporal profile composes with a root-owned Document layout without issue.
     definition = _document_standalone()
-    definition["attributes"].extend(
-        [{"name": "start", "type": "timestamp"}, {"name": "end", "type": "timestamp"}]
-    )
-    definition["asOfAxes"] = [
-        {"dimension": dimension, "startAttribute": "start", "endAttribute": "end"}
-    ]
-    validate_storage_layout([definition])
+    definition["temporality"] = temporality
+    validate_storage_layout([_derived(definition)])
 
 
 def _document_hierarchy() -> list[dict[str, Any]]:
@@ -1396,7 +1350,6 @@ def test_case_runner_consumes_storage_layout_for_validation_reads_and_observatio
         "PositionLayoutView",
         "RelationalDocument",
         "STORAGE_LAYOUT_MODEL_REJECTED_RULES",
-        "TEMPORAL_DIMENSION_RANK",
         "TableLayout",
         "position_projection",
         "position_view",

@@ -1,11 +1,12 @@
 # Phase-3 value fixture: the physical key over the as-of axis endpoints is
 # derived, so an authored index may not name an axis endpoint. The document is
-# otherwise entirely valid — the axes, the attributes, and the second index are
-# admissible — and both offending components of the one offending index are
+# otherwise entirely valid — the profile, the attributes, and the second index
+# are admissible — and both offending components of the one offending index are
 # reported, each at its own path, in canonical (path, rule) order.
 entity:
   name: Milestone
   table: milestone
+  temporality: transaction-time
   attributes:
     - name: id
       type: int64
@@ -13,18 +14,8 @@ entity:
     - name: label
       type: string
       maxLength: 64
-    - name: txStart
-      type: timestamp
-      column: in_z
-    - name: txEnd
-      type: timestamp
-      column: out_z
-  asOfAxes:
-    - dimension: transaction-time
-      startAttribute: txStart
-      endAttribute: txEnd
   indices:
-    - name: milestone_pk
+    - name: milestone_key
       attributes: [id, txStart, txEnd]
       unique: true
     - name: milestone_label

@@ -23,12 +23,12 @@ writes, and physical storage:
 | Meaning | When a fact is true in the modeled world | When a fact is present in the database |
 | Core dimension | `ValidTime` | `TransactionTime` |
 | Core shape variant | declared by `Bitemporal` | declared by `TransactionTimeOnly` and `Bitemporal` |
-| Descriptor `dimension` | `valid-time` | `transaction-time` |
+| Descriptor `temporality` deriving it | `bitemporal` | `transaction-time` and `bitemporal` |
 | Operation `dimension` | `valid-time` | `transaction-time` |
-| Conventional start Attribute | `validStart` | `txStart` |
-| Conventional end Attribute | `validEnd` | `txEnd` |
-| Physical start column | `from_z` | `in_z` |
-| Physical end column | `thru_z` | `out_z` |
+| Derived start Attribute | `validStart` | `txStart` |
+| Derived end Attribute | `validEnd` | `txEnd` |
+| Framework-fixed start column | `from_z` | `in_z` |
+| Framework-fixed end column | `thru_z` | `out_z` |
 | Python query keyword | `valid_time` | `tx_time` |
 | Python Pin/Edge accessor | `valid_time` | `tx_time` |
 | Python framework base | supplied by `Bitemporal` | supplied by `TxTemporal` and `Bitemporal` |
@@ -40,7 +40,9 @@ writes, and physical storage:
 | Finite-pin mutation error | writable retroactive correction | `transaction-time-pin-read-only` |
 
 The retired business/processing vocabulary is not an alias. Physical column
-names remain stable but never identify a dimension. A public `AsOfAxis`
+names remain stable but never identify a dimension. Neither the Attribute names
+nor the columns are authored: a descriptor spells the `temporality` profile and
+`m-descriptor` derives both. A public `AsOfAxis`
 authoring abstraction does not exist; the core metadata value is
 `AsOfAxisMetadata(dimension, start_attribute, end_attribute)`.
 

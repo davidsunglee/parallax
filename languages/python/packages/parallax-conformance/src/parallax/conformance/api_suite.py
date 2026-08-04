@@ -744,7 +744,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # unspellable at all (Python's own class system additionally forbids a literal
 # inheritance cycle), while the ones that stay spellable — a table on an
 # abstract node, a descendant extending a temporal base of its own
-# (098/099, `inheritance-temporal-axes-not-root-owned`), a descendant declaring
+# (098/099, `inheritance-temporality-not-root-owned`), a descendant declaring
 # its own `optimisticLocking` attribute (102/103,
 # `inheritance-optimistic-locking-not-root-owned`, ADR 0027) — are rejected
 # either at class creation as an `EntityDefinitionError` or at model construction

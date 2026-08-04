@@ -13,7 +13,7 @@ from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
 from parallax.conformance._descriptor_family import family_attributes, family_of, validate
 from parallax.core.inheritance import InheritanceError
-from parallax.descriptor._records import AsOfAxisMetadata, Attribute, Entity, Inheritance, Metamodel
+from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
 from parallax.descriptor._serde import deserialize
 
 _REPO = case_format.find_repo_root()
@@ -195,8 +195,8 @@ def _minimal_attrs() -> tuple[Attribute, ...]:
     return (Attribute(name="id", type="int64", column="id", primary_key=True),)
 
 
-def test_reject_descendant_temporal_axes_under_a_non_temporal_root() -> None:
-    # A non-temporal TPH root with an abstract-subtype that declares its own axes.
+def test_reject_descendant_temporality_under_a_non_temporal_root() -> None:
+    # A non-temporal TPH root with an abstract-subtype declaring its own profile.
     root = Entity(
         name="Animal",
         table="animal",
@@ -206,58 +206,45 @@ def test_reject_descendant_temporal_axes_under_a_non_temporal_root() -> None:
     pet = Entity(
         name="Pet",
         inheritance=Inheritance(role="abstract-subtype", parent="Animal"),
-        as_of_axes=(
-            AsOfAxisMetadata(
-                dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
-            ),
-        ),
+        temporality="transaction-time",
     )
     dog = Entity(
         name="Dog",
-        table="animal",
         inheritance=Inheritance(role="concrete-subtype", parent="Pet", tag_value="dog"),
         attributes=(Attribute(name="barkVolume", type="int32", column="bark_volume"),),
     )
     meta = Metamodel(entities=(root, pet, dog))
     with pytest.raises(InheritanceError) as caught:
         validate(meta)
-    assert caught.value.rule == "inheritance-temporal-axes-not-root-owned"
+    assert caught.value.rule == "inheritance-temporality-not-root-owned"
     assert caught.value.entity == "Pet"
 
 
-def test_reject_descendant_temporal_axes_under_a_temporal_root() -> None:
-    # A temporal TPCS root whose concrete subtype adds its own second axis.
+def test_reject_descendant_temporality_under_a_temporal_root() -> None:
+    # A temporal TPCS root whose concrete subtype widens the family profile.
     root = Entity(
         name="Rate",
         inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
         attributes=_minimal_attrs(),
-        as_of_axes=(
-            AsOfAxisMetadata(
-                dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
-            ),
-        ),
+        temporality="transaction-time",
     )
     deposit = Entity(
         name="DepositRate",
         table="deposit_rate",
         inheritance=Inheritance(role="concrete-subtype", parent="Rate"),
         attributes=(Attribute(name="grade", type="string", column="grade"),),
-        as_of_axes=(
-            AsOfAxisMetadata(
-                dimension="valid-time", start_attribute="validStart", end_attribute="validEnd"
-            ),
-        ),
+        temporality="bitemporal",
     )
     meta = Metamodel(entities=(root, deposit))
     with pytest.raises(InheritanceError) as caught:
         validate(meta)
-    assert caught.value.rule == "inheritance-temporal-axes-not-root-owned"
+    assert caught.value.rule == "inheritance-temporality-not-root-owned"
     assert caught.value.entity == "DepositRate"
 
 
-def test_temporal_root_and_root_owned_axes_still_validate_cleanly() -> None:
-    # A well-formed family (axes declared ONLY on the root) passes validation —
-    # the new invariant must not reject the corpus's own root-declared families.
+def test_temporal_root_and_root_owned_profile_still_validate_cleanly() -> None:
+    # A well-formed family (the profile declared ONLY on the root) passes
+    # validation — the invariant must not reject the corpus's own families.
     validate(_MODELS["rate"])
     validate(_MODELS["instrument"])
 

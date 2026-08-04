@@ -11,3 +11,8 @@ dimension.
   instant at which the change takes effect and have no Transaction-Time
   residual. A Valid-Time-Only Entity cannot participate in temporal optimistic
   mode because it has no Transaction-Time `txStart` version analogue.
+- **Activation.** The shape is unspellable rather than rejected: `temporality`
+  (`m-descriptor`) is a closed enum whose members are exactly the composed
+  profiles. Activating this formation is therefore purely additive — one further
+  `temporality` value deriving a single `valid-time` axis — and changes no
+  existing spelling.

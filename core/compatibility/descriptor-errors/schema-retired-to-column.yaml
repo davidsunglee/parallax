@@ -1,14 +1,11 @@
 entity:
   name: Trade
   table: trade
+  temporality: transaction-time
   attributes:
     - name: id
       type: int64
       primaryKey: true
-    - name: txStart
-      type: timestamp
-    - name: txEnd
-      type: timestamp
   asOfAxes:
     - dimension: transaction-time
       startAttribute: txStart

@@ -176,6 +176,7 @@ entities:
     layout:
       document:
         column: payload
+    temporality: transaction-time
     attributes:
       - name: id
         type: int64
@@ -187,12 +188,6 @@ entities:
       - name: crew
         type: int32
         nullable: true
-      - name: txStart
-        type: timestamp
-        column: in_z
-      - name: txEnd
-        type: timestamp
-        column: out_z
     valueObjects:
       - name: manifest
         nullable: true
@@ -206,10 +201,6 @@ entities:
           - name: port
             type: string
             nullable: true
-    asOfAxes:
-      - dimension: transaction-time
-        startAttribute: txStart
-        endAttribute: txEnd
   # Charter: the Bitemporal member. Four bound Attributes stay direct and the
   # rectangle split chains head / middle / tail milestones, each carrying a whole
   # document. Assigning `terms` recursively patches only its named declared members,
@@ -220,6 +211,7 @@ entities:
     layout:
       document:
         column: payload
+    temporality: bitemporal
     attributes:
       - name: id
         type: int64
@@ -228,18 +220,6 @@ entities:
         type: string
         maxLength: 64
         nullable: true
-      - name: validStart
-        type: timestamp
-        column: from_z
-      - name: validEnd
-        type: timestamp
-        column: thru_z
-      - name: txStart
-        type: timestamp
-        column: in_z
-      - name: txEnd
-        type: timestamp
-        column: out_z
     valueObjects:
       - name: terms
         nullable: true
@@ -247,13 +227,6 @@ entities:
           - name: clause
             type: string
             nullable: true
-    asOfAxes:
-      - dimension: valid-time
-        startAttribute: validStart
-        endAttribute: validEnd
-      - dimension: transaction-time
-        startAttribute: txStart
-        endAttribute: txEnd
   # Beacon: a document-layout Entity whose only member is its primary key, which the
   # layout keeps direct. Its Structured Column carries the empty object and nothing
   # ever extracts from it.
@@ -279,29 +252,11 @@ entities:
     layout:
       document:
         column: payload
+    temporality: bitemporal
     attributes:
       - name: id
         type: int64
         primaryKey: true
-      - name: validStart
-        type: timestamp
-        column: from_z
-      - name: validEnd
-        type: timestamp
-        column: thru_z
-      - name: txStart
-        type: timestamp
-        column: in_z
-      - name: txEnd
-        type: timestamp
-        column: out_z
-    asOfAxes:
-      - dimension: valid-time
-        startAttribute: validStart
-        endAttribute: validEnd
-      - dimension: transaction-time
-        startAttribute: txStart
-        endAttribute: txEnd
   # Payment: a table-per-hierarchy family whose root owns one Structured Column.
   # The sibling declarations intentionally reuse the `detail` Document Path with
   # incompatible declared types. CardPayment additionally declares

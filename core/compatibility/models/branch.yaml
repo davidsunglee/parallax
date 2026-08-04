@@ -13,7 +13,7 @@
 # Transaction-Time interval — a "rectangle" in (valid x transaction) space. A row is CURRENT on an
 # axis when its `to` on that axis equals infinity; the fully-Latest row is current
 # on BOTH (thru_z = out_z = infinity). The `address` value object declares NO
-# asOfAxes of its own (the schema forbids them) — it inherits BOTH of the
+# temporality of its own (the schema forbids it) — it inherits BOTH of the
 # owner's dimensions and its backing column rides the milestoned rectangle exactly
 # like the scalar `name` column.
 #
@@ -37,6 +37,7 @@ entity:
   name: Branch
   namespace: parallax.compatibility
   table: branch
+  temporality: bitemporal
   attributes:
     - name: id
       type: int64
@@ -45,25 +46,6 @@ entity:
     - name: name
       type: string
       maxLength: 64
-    - name: validStart
-      type: timestamp
-      column: from_z
-    - name: validEnd
-      type: timestamp
-      column: thru_z
-    - name: txStart
-      type: timestamp
-      column: in_z
-    - name: txEnd
-      type: timestamp
-      column: out_z
-  asOfAxes:
-    - dimension: valid-time
-      startAttribute: validStart
-      endAttribute: validEnd
-    - dimension: transaction-time
-      startAttribute: txStart
-      endAttribute: txEnd
   valueObjects:
     - name: address
       nullable: true
