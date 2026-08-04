@@ -729,7 +729,7 @@ def _compile_tph_partitioned(
         )
         tag_sql, tag_binds = _tph_tag_guard(base_scope, facet, tag)
         tagged_alias = f"p{branch_index + 1}"
-        tagged = f"select * from {plan.table} {base_scope.alias} where {tag_sql}"
+        tagged = f"select * from {plan.table} {base_scope.alias} where {tag_sql} offset 0"
         branch_scope = _EntityScope(
             branch_ctx,
             entity,
