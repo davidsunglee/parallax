@@ -1,0 +1,39 @@
+# A transaction holding the outer locking SELECT for a cast-safe, tag-partitioned
+# TPH document read prevents a concurrent writer from updating a matched base row.
+#
+# Round A executes the exact Option B query shape and holds its transaction open;
+# round B updates the matching cash row and must time out on both providers. This
+# distinguishes locking the payment_document base alias from merely locking or
+# materializing the derived union, while the companion read case pins one statement,
+# one round trip, result correctness, and each dialect's canonical lock suffix.
+model: models/document-layout.yaml
+tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-db-error, m-document-codec, m-op-algebra, table-per-hierarchy, document-layout, narrow, predicate, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
+shape: error
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "two-session proof that the outer lock targets the TPH base row"
+given:
+  fixtures: true
+when:
+  concurrency:
+    rounds:
+      - A:
+          statements:
+            - sql:
+                postgres: select t0.id, t0.kind, t0.payload from payment_document t0 join (select t1.id from payment_document t1 where t1.kind = ? and cast(jsonb_extract_path_text(t1.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id for share of t0
+                mariadb: select t0.id, t0.kind, t0.payload from payment_document t0 join (select t1.id from payment_document t1 where t1.kind = ? and cast(json_value(t1.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id lock in share mode
+              binds:
+                postgres: [cash, detail, '10.0']
+                mariadb: [cash, '$.detail', '10.0']
+      - B:
+          statements:
+            - sql:
+                postgres: update payment_document set kind = kind where id = ?
+                mariadb: update payment_document set kind = kind where id = ?
+              binds: [2]
+then:
+  errorClass: lockWaitTimeout
+  nativeCode:
+    postgres: "55P03"
+    mariadb: 1205

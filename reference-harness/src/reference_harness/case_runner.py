@@ -1298,7 +1298,8 @@ def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
 
     tree = sqlglot.parse_one(statements[0], read=sqlglot_dialect(dialect))
     _assert_union_all_only(case, tree)
-    branches = _union_branch_selects(tree)
+    partition = next(tree.find_all(exp.SetOperation), tree)
+    branches = _union_branch_selects(partition)
     effective = family.canonical_concrete_order(_read_effective_set(case, family, target_name))
     if len(branches) != len(effective):
         raise CaseFailure(
@@ -1308,6 +1309,19 @@ def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
         )
     tag_column = family.tag_column_of(target_name)
     table = target.table
+    if case.path.stem.startswith("m-read-lock-"):
+        outer_tables = [source.name for source in tree.find_all(exp.Table)]
+        base_occurrences = [name for name in outer_tables if name == table]
+        if (
+            not outer_tables
+            or outer_tables[0] != table
+            or len(base_occurrences) != len(branches) + 1
+        ):
+            raise CaseFailure(
+                f"{case.path.name}: locking TPH partition must join one outer base Table "
+                f"{table!r} to its {len(branches)} derived variant branches, got "
+                f"{outer_tables!r} (m-sql / m-read-lock)."
+            )
     for position, (branch, concrete) in enumerate(zip(branches, effective, strict=True)):
         tables = [source.name for source in branch.find_all(exp.Table)]
         if not tables or tables[0] != table:

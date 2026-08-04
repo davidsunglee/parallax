@@ -144,7 +144,7 @@ _SNAPSHOT_READ_MILESTONE_SET_READS: Final[frozenset[str]] = frozenset(
 _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
     {"m-inheritance-106", "m-inheritance-107", "m-inheritance-108", "m-inheritance-109"}
 )
-# The read-lock matrix's four in-slice read cases (`m-read-lock`):
+# The read-lock matrix's compile-eligible in-slice read cases (`m-read-lock`):
 # `m-read-lock-001` is the harness-lane single-
 # connection golden — the module's OWN witness for "the default (locking)
 # in-transaction object find" (`m-read-lock.md`), so its `when.uow`-free read
@@ -159,9 +159,17 @@ _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
 # the API Conformance Suite proving only the ADDITIONAL runtime-observable
 # half no wire comparison can see). `m-read-lock-004` (deep-fetch, tagged
 # `m-op-list`) and `m-read-lock-009` (MariaDB) stay OUT of slice
-# (`slices.md`), never reaching `_REACHABLE` at all.
+# (`slices.md`), never reaching `_REACHABLE` at all. `-010` proves that a
+# heterogeneous TPH document predicate remains one locking outer read over the
+# cast-safe derived identity relation.
 _READ_LOCK_READS: Final[frozenset[str]] = frozenset(
-    {"m-read-lock-001", "m-read-lock-002", "m-read-lock-003", "m-read-lock-005"}
+    {
+        "m-read-lock-001",
+        "m-read-lock-002",
+        "m-read-lock-003",
+        "m-read-lock-005",
+        "m-read-lock-010",
+    }
 )
 # The descriptor default-column witness is a compile-eligible instance-form read:
 # descriptor ingestion resolves every omitted scalar/document column before SQL

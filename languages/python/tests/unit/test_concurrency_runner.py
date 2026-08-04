@@ -48,7 +48,10 @@ def test_parse_rounds_reads_node_presence_and_dialect_keyed_sql() -> None:
                                 "statements": [
                                     {
                                         "sql": {"postgres": "select 1 for share of t0"},
-                                        "binds": [2],
+                                        "binds": {
+                                            "postgres": ["detail", 2],
+                                            "mariadb": ["$.detail", 2],
+                                        },
                                     }
                                 ]
                             }
@@ -67,7 +70,7 @@ def test_parse_rounds_reads_node_presence_and_dialect_keyed_sql() -> None:
     assert len(rounds) == 2
     assert set(rounds[0]) == {"A"}
     assert set(rounds[1]) == {"B"}
-    assert rounds[0]["A"].statements == (("select 1 for share of t0", (2,)),)
+    assert rounds[0]["A"].statements == (("select 1 for share of t0", ("detail", 2)),)
     assert rounds[0]["A"].kind is None
     assert rounds[0]["A"].expect_rows is None
     # A statement with no authored `binds` defaults to the empty tuple.
