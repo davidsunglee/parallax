@@ -1,0 +1,28 @@
+# A second open milestone for one key on a bitemporal table -> uniqueViolation
+# against the derived `policy_pk`. Both inserts carry Policy 1 with `thru_z` and
+# `out_z` at infinity but DIFFERENT `from_z` / `in_z`, so they are distinct
+# under a start-keyed physical key and collide only under the end-keyed one the
+# derived primary-key index now carries: this is the `(id, validEnd, txEnd)`
+# uniqueness invariant, witnessed by the database rather than asserted in
+# metadata. Two temporal rows may share a key only when they differ at their
+# upper bounds, which is exactly what milestone chaining produces — closing the
+# prior row before inserting its successor. The neutral category and the native
+# codes are the same ones a non-temporal duplicate key raises
+# (`m-db-error-001`), so the classification carries no temporal special case.
+model: models/policy.yaml
+tags: [m-db-error, uniqueViolation, temporal, bitemporal, slice-snapshot-1, slice-managed-1]
+shape: error
+then:
+  statements:
+    - sql:
+        postgres: insert into policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
+      binds: [1, Motor, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
+    - sql:
+        postgres: insert into policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
+        mariadb: insert into policy(id, name, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?)
+      binds: [1, Motor, "2024-06-01T00:00:00+00:00", infinity, "2024-06-01T00:00:00+00:00", infinity]
+  errorClass: uniqueViolation
+  nativeCode:
+    postgres: "23505"
+    mariadb: 1062

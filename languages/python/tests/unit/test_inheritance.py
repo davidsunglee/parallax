@@ -404,10 +404,10 @@ _RULE_SET_REJECTIONS: Final[Mapping[str, IssueCode]] = {
     "m-inheritance-031-rejected-tph-missing-tag-value": inheritance.MISSING_TAG_VALUE,
     "m-inheritance-032-rejected-missing-root": inheritance.MISSING_ROOT,
     "m-inheritance-121-rejected-missing-concrete-subtype": inheritance.MISSING_CONCRETE_SUBTYPE,
-    "m-inheritance-098-rejected-temporal-axes-on-abstract-subtype": (
+    "m-inheritance-098-rejected-temporality-declared-on-abstract-subtype": (
         inheritance.TEMPORALITY_NOT_ROOT_OWNED
     ),
-    "m-inheritance-099-rejected-temporal-axes-redeclared-on-concrete": (
+    "m-inheritance-099-rejected-temporality-declared-on-concrete-subtype": (
         inheritance.TEMPORALITY_NOT_ROOT_OWNED
     ),
     "m-inheritance-102-rejected-optlock-declaring-descendant": (
@@ -629,7 +629,7 @@ def test_a_descendant_axis_is_located_at_the_axis_it_declares() -> None:
     (model,) = [
         inline
         for name, inline, _ in _REJECTIONS
-        if name == "m-inheritance-098-rejected-temporal-axes-on-abstract-subtype"
+        if name == "m-inheritance-098-rejected-temporality-declared-on-abstract-subtype"
     ]
     (issue,) = _formation_error(model).issues
     assert issue.location == AxisLocation(

@@ -104,6 +104,7 @@ def test_main_reports_success_on_the_real_corpus() -> None:
 
 _RETIRED_SPELLING_STEMS = (
     "schema-retired-as-of-attributes",
+    "schema-retired-as-of-axes",
     "schema-retired-foreign-key",
     "schema-retired-from-column",
     "schema-retired-many-to-many",

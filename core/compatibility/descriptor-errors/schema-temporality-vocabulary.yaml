@@ -1,0 +1,8 @@
+entity:
+  name: Order
+  table: orders
+  temporality: valid-time
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
