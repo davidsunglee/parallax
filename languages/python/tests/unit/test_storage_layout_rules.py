@@ -582,8 +582,8 @@ def _temporal_document(*, dimension: TemporalDimension) -> tuple[Declaration, ..
 def test_a_document_tpcs_root_matches_no_remaining_capability_shape() -> None:
     # The scope list is a set of independent predicates over one accepted
     # root-owned declaration, and the gate names every entry the owner matches.
-    # A temporal axis is not among them, so a temporal family is refused for the
-    # mapping shape it declares and for nothing else.
+    # A temporal axis is not among them, so this accepted temporal family matches
+    # no remaining refusal shape.
     tx_start = instant(_ROOT, "txStart")
     tx_end = instant(_ROOT, "txEnd")
     root = Declaration(
@@ -644,8 +644,8 @@ def test_an_owner_matching_no_declared_shape_is_accepted_rather_than_refused(
 
 
 def test_a_tpcs_root_is_accepted_for_its_whole_family() -> None:
-    # One TPCS family owns one layout policy, so the gate fires once at the root
-    # even though every concrete Table receives its own Structured Column.
+    # One TPCS family owns one layout policy at the root, while every concrete
+    # Table receives its own Structured Column; this shape is now accepted whole.
     root = Declaration(
         identity=_ROOT,
         layout=Document(Column("payload")),
@@ -833,8 +833,7 @@ def test_an_inherited_join_endpoint_is_direct_at_the_declaration_that_bears_it()
     # A descendant addresses an inherited Attribute at its own position, while
     # the declaration the Rule Set classifies carries the ancestor's Identity.
     # Role 2 is about the declared Attribute, so `ownerId` keeps its Column and
-    # its override in every concrete Table of the family, and the layout is
-    # refused by the capability gate alone.
+    # its override in every concrete Table of the accepted family.
     note_owner = attribute(_ROOT, "ownerId", column="owner_key")
     root = Declaration(
         identity=_ROOT,

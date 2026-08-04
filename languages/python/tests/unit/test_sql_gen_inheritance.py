@@ -11,7 +11,9 @@ table-per-concrete-subtype `union all` restarts.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
+from typing import Any, cast
 
 import pytest
 from _sql_gen_support import formed, model, target
@@ -59,6 +61,7 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
         target(DOCUMENT_LAYOUT, "Publication"),
         result_form="instance",
     )
+    assert compiled.structured_column == "payload"
     assert compiled.transform_row(
         {
             "id": 10,
@@ -98,6 +101,24 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
         )["minutes"]
         is None
     )
+
+    transform = cast("Any", row_compiled)._transform
+    book_only = replace(transform, documents=(transform.documents[0],))
+    without_sibling_document_members = replace(row_compiled, _transform=book_only)
+    assert without_sibling_document_members.transform_row(
+        {
+            "id": 20,
+            "payload": {"title": "Frames"},
+            "family_variant": "Film",
+        }
+    ) == {
+        "id": 20,
+        "title": None,
+        "detail": None,
+        "pages": None,
+        "minutes": None,
+        "familyVariant": "Film",
+    }
 
 
 def test_tpcs_document_single_branch_projects_and_decodes_its_document() -> None:
@@ -248,6 +269,23 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
     card_branch, cash_branch = compiled.statement.sql.split(" union all ")
     assert "cast(" not in card_branch
     assert "cast(jsonb_extract_path_text" in cash_branch
+
+
+def test_tph_top_level_narrow_partitions_before_variant_specific_document_cast() -> None:
+    compiled = compile_read(
+        oa.Narrow(
+            entity="Payment",
+            to=("CashPayment",),
+            operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
+        ),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Payment"),
+    )
+
+    assert "from payment_document t0 where (cast(jsonb_extract_path_text" in compiled.statement.sql
+    assert compiled.statement.sql.endswith("and t0.kind = ?")
+    assert compiled.statement.binds == ("detail", Decimal("10.0"), "cash")
 
 
 def _heterogeneous_payment_predicate() -> oa.Operation:

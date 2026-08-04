@@ -271,10 +271,19 @@ class _DocumentTransform:
 
 
 @dataclass(frozen=True, slots=True)
-class _VariantDocument:
+class _TphVariantDocument:
     identity: EntityIdentity
     spelling: str
-    tag: str
+    discriminator_value: str
+    shape: DocumentShape
+    members: tuple[tuple[str, tuple[str, ...]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _TpcsVariantDocument:
+    identity: EntityIdentity
+    spelling: str
+    document_column: str
     shape: DocumentShape
     members: tuple[tuple[str, tuple[str, ...]], ...]
 
@@ -286,7 +295,7 @@ class _TphDocumentTransform:
     column: str
     tag_column: str
     root: EntityIdentity
-    variants: tuple[_VariantDocument, ...]
+    variants: tuple[_TphVariantDocument, ...]
     padding: tuple[str, ...]
 
     def materialize(
@@ -296,11 +305,11 @@ class _TphDocumentTransform:
         raw_tag = materialized.pop(self.tag_column)
         document = materialized.pop(self.column)
         variant = next(
-            (candidate for candidate in self.variants if candidate.tag == raw_tag),
+            (candidate for candidate in self.variants if candidate.discriminator_value == raw_tag),
             None,
         )
         if variant is None:
-            tags = {candidate.tag for candidate in self.variants}
+            tags = {candidate.discriminator_value for candidate in self.variants}
             raise SqlGenError(
                 f"{self.root.canonical}: the tag column {self.tag_column!r} holds {raw_tag!r}, "
                 f"which names no concrete subtype this model composes {sorted(tags)}"
@@ -318,17 +327,22 @@ class _TpcsDocumentTransform:
     """Decode a TPCS union row with the concrete branch's document shape."""
 
     base: _LiteralTransform
-    documents: tuple[_VariantDocument, ...]
+    documents: tuple[_TpcsVariantDocument, ...]
     padding: tuple[str, ...]
 
     def materialize(
         self, row: Mapping[str, object]
     ) -> tuple[dict[str, object], EntityIdentity, str]:
         materialized, identity, spelling = self.base.materialize(row)
-        variant = next(document for document in self.documents if document.identity == identity)
-        document = materialized.pop(variant.tag)
+        variant = next(
+            (document for document in self.documents if document.identity == identity), None
+        )
         for key in self.padding:
             materialized[key] = None
+        if variant is None:
+            materialized.pop(self.documents[0].document_column, None)
+            return materialized, identity, spelling
+        document = materialized.pop(variant.document_column)
         for key, path in variant.members:
             presence = decode_path(variant.shape, document, path)
             materialized[key] = presence.value if isinstance(presence, Present) else None
@@ -362,6 +376,8 @@ def transform_structured_column(transform: RowTransform) -> str | None:
     return (
         transform.column
         if isinstance(transform, (_DocumentTransform, _TphDocumentTransform))
+        else transform.documents[0].document_column
+        if isinstance(transform, _TpcsDocumentTransform) and transform.documents
         else None
     )
 
@@ -656,7 +672,7 @@ def _tph_document_projection(
     if slot is None:
         return None, None
 
-    variants: list[_VariantDocument] = []
+    variants: list[_TphVariantDocument] = []
     projects_document = False
     for concrete in concretes:
         view = entity_view(facet, concrete)
@@ -674,10 +690,10 @@ def _tph_document_projection(
             shape = entity_shape((), ())
             members = ()
         variants.append(
-            _VariantDocument(
+            _TphVariantDocument(
                 identity=concrete,
                 spelling=family_variant_name(facet, concrete),
-                tag=tag_value(facet, concrete),
+                discriminator_value=tag_value(facet, concrete),
                 shape=shape,
                 members=members,
             )
@@ -1079,11 +1095,21 @@ def _plan_tpcs_read(
     # blanket one, and never a guessed lowering with no witness to check it
     # against.
     layout_position = position_layout(storage, concretes)
+    document_resident = any(
+        isinstance(
+            _table_layout(storage, facet, concrete).placement(attribute.identity), DocumentPath
+        )
+        for concrete in concretes
+        for attribute in entity_view(facet, concrete).applicable_attributes
+    )
     scalars = tuple(
         index
         for index, column in enumerate(layout_position.columns)
         if column.tier is not ColumnTier.DOCUMENT
-        or isinstance(column.contributor, RelationalDocument)
+        or (
+            isinstance(column.contributor, RelationalDocument)
+            and (instance_form or document_resident)
+        )
     )
     by_identity: dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata] = {
         attribute.identity: attribute for attribute in position.superset_attributes
@@ -1135,7 +1161,7 @@ def _plan_tpcs_read(
         ),
         instance_form,
     )
-    documents: list[_VariantDocument] = []
+    documents: list[_TpcsVariantDocument] = []
     for concrete in concretes:
         layout = _table_layout(storage, facet, concrete)
         view = entity_view(facet, concrete)
@@ -1147,7 +1173,7 @@ def _plan_tpcs_read(
         )
         if projected is not None and isinstance(document_transform, _DocumentTransform):
             documents.append(
-                _VariantDocument(
+                _TpcsVariantDocument(
                     concrete,
                     family_variant_name(facet, concrete),
                     projected.column,

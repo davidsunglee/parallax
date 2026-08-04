@@ -1,4 +1,6 @@
 # A narrow nested under a boolean combinator lowers independently in each TPCS branch.
+# Each narrow's predicate evaluates only in the selected concrete branches and lowers
+# to false in every other branch, unlike an ordinary predicate shared by all branches.
 model: models/document-layout.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-concrete-subtype, document-layout, union-all, narrow, predicate, slice-snapshot-1, slice-managed-1]
 shape: read

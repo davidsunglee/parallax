@@ -93,6 +93,9 @@ Document Layout's shared Structured Column contributes a ``RelationalDocument``
 carrying its layout owner.
 """
 
+type PositionColumnContributor = AttributeIdentity | ValueObjectIdentity | RelationalDocument
+"""The contributor forms legal in a discriminator-free Position Layout."""
+
 
 @dataclass(frozen=True, slots=True)
 class ColumnSlot:
@@ -187,7 +190,7 @@ class EntityLayoutView(Protocol):
 class PositionColumn:
     """One logical declaration-provenance column of a polymorphic position."""
 
-    contributor: ColumnContributor
+    contributor: PositionColumnContributor
     tier: ColumnTier
     declaring_owner: EntityIdentity
 

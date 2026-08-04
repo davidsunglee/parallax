@@ -353,8 +353,13 @@ class EntityScope:
     def _record_document_applicability(self, owner: EntityIdentity) -> None:
         if self.position is None:
             return
-        view = _entity_view(self.facet, owner)
-        if not set(self.position) <= set(view.concrete_subtypes):
+        owner_view = _entity_view(self.facet, owner)
+        if self.variant is not None:
+            exposed = (self.variant,)
+        else:
+            root = _entity_view(self.facet, self.entity.identity).root
+            exposed = _entity_view(self.facet, root).concrete_subtypes
+        if not set(exposed) <= set(owner_view.concrete_subtypes):
             self.ctx.requires_variant_partition = True
 
     def next_alias(self) -> str:
