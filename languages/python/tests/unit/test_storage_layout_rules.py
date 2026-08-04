@@ -629,8 +629,8 @@ def test_a_tpcs_root_is_accepted_for_its_whole_family() -> None:
 
 def test_a_layout_declared_off_the_root_raises_nothing_here() -> None:
     # Root ownership comes from the Inheritance projection, so a descendant's
-    # own declaration is invisible to this Rule Set: the model reports
-    # `inheritance-layout-not-root-owned` and never the gate.
+    # own declaration is invisible to this Rule Set: Inheritance reports
+    # `inheritance-layout-not-root-owned` as the root-ownership defect.
     root = Declaration(
         identity=_ROOT,
         container=_SHARED_TABLE,
@@ -646,9 +646,8 @@ def test_a_layout_declared_off_the_root_raises_nothing_here() -> None:
 
 
 def test_a_layout_owner_with_a_column_collision_reports_the_collision_alone() -> None:
-    # The gate exists to keep "not yet supported" distinguishable from
-    # "supported and wrong", so a mapping that raised a physical defect reports
-    # that defect rather than a refusal to execute the layout it does not have.
+    # A Structured Column colliding with a direct-role Column is a physical
+    # layout defect, so Storage Layout reports the collision at the later claim.
     issues = _rule_issues(_standalone_document(column="id"))
     assert [issue.code for issue in issues] == [storage_layout.COLUMN_COLLISION]
 
@@ -695,9 +694,8 @@ def test_the_structured_column_is_the_later_claimant_against_a_direct_column() -
 
 
 def test_a_direct_role_attribute_keeps_its_column_override_under_a_document_layout() -> None:
-    # Role 1 stays a direct Column, so an override on it names a Column the
-    # member really occupies and is not a contradiction. The layout is refused by
-    # the capability gate alone.
+    # Role 1 stays a direct Column, so an override on it names the Column the
+    # member occupies and is accepted rather than treated as contradictory placement.
     owner = Declaration(
         identity=_SIBLING,
         container=Table("note"),

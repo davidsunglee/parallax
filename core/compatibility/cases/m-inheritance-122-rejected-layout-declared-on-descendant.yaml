@@ -6,10 +6,8 @@
 # `layout`, so a family is entirely conventional or entirely document-mapped.
 # `Record` (root) declares none; `CardRecord` (concrete-subtype) declares
 # `layout.document` — a model-aware validator MUST reject the family before any
-# SQL. The rejection is Inheritance's, not Storage Layout's: the declaration is
-# not root-owned, so the capability gate that refuses an unexecutable
-# root-owned layout stays silent here and the model reports the reason it is
-# actually wrong.
+# SQL. The rejection is Inheritance's, not Storage Layout's: the descendant
+# declaration is not root-owned, while a root-owned Document layout is valid.
 model: models/payment.yaml
 tags: [m-inheritance, m-storage-layout, m-model-formation, m-descriptor, rejected, negative, table-per-hierarchy, document-layout, slice-snapshot-1, slice-managed-1]
 shape: rejected

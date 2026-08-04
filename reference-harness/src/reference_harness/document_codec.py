@@ -131,19 +131,11 @@ def encode_leaf(type_spelling: str, value: Any) -> Any:
         return str(_as_uuid(value))
     if type_spelling in ("float32", "float64"):
         return _shortest_number(type_spelling, value)
-    if type_spelling == "boolean":
-        if not isinstance(value, bool):
-            raise DocumentEncodingError(f"{value!r} names no boolean value")
-        return value
-    if type_spelling in _INTEGER_BOUNDS:
-        bound = _INTEGER_BOUNDS[type_spelling]
-        if not _is_integer(value) or not -bound <= value < bound:
+    if type_spelling == "boolean" or type_spelling in _INTEGER_BOUNDS or type_spelling == "string":
+        member = _value_space_member(type_spelling, value)
+        if member is _NOT_ENCODED:
             raise DocumentEncodingError(f"{value!r} names no {type_spelling} value")
-        return value
-    if type_spelling == "string":
-        if not isinstance(value, str):
-            raise DocumentEncodingError(f"{value!r} names no string value")
-        return value
+        return member
     raise DocumentEncodingError(f"{type_spelling!r} names no neutral type this table covers")
 
 

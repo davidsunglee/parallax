@@ -902,18 +902,16 @@ def test_a_temporal_document_tpcs_root_is_accepted() -> None:
     validate_storage_layout(definitions)
 
 
-def test_a_standalone_document_layout_owner_matches_no_refused_shape() -> None:
-    # The refused-shape list names no standalone entry, so the gate is silent for a
-    # well-formed standalone declaration — which is what lets
-    # models/document-layout.yaml sit in the corpus at all.
+def test_a_standalone_document_layout_owner_is_accepted() -> None:
+    # A well-formed standalone declaration is a supported root-owned Document layout
+    # and therefore produces no Storage Layout issue.
     validate_storage_layout([_document_standalone()])
 
 
 @pytest.mark.parametrize("dimension", ["transactionTime", "validTime"])
-def test_a_temporal_document_layout_owner_matches_no_refused_shape(dimension: str) -> None:
-    # A temporal axis names no refused shape, on either dimension, so a
-    # document-mapped Entity that chains milestones validates rather than being
-    # refused — the acceptance every temporal document-layout witness rests on.
+def test_a_temporal_document_layout_owner_is_accepted(dimension: str) -> None:
+    # Transaction-Time and Valid-Time axes remain direct-role Columns, so either
+    # temporal dimension composes with a root-owned Document layout without issue.
     definition = _document_standalone()
     definition["attributes"].extend(
         [{"name": "start", "type": "timestamp"}, {"name": "end", "type": "timestamp"}]
@@ -946,23 +944,22 @@ def test_a_document_tpcs_family_has_one_structured_column_per_branch() -> None:
         assert [slot.column for slot in branch.columns][-1] == "doc"
 
 
-def test_a_document_tph_family_matches_no_refused_shape() -> None:
+def test_a_document_tph_family_is_accepted() -> None:
     validate_storage_layout(_document_hierarchy())
 
 
 def test_a_layout_declared_off_the_root_raises_nothing_in_storage_layout() -> None:
     # Root ownership comes from the group projection, so a descendant's own
-    # declaration is invisible here: the model reports
-    # `inheritance-layout-not-root-owned` and never the capability gate.
+    # declaration is invisible here: Inheritance reports
+    # `inheritance-layout-not-root-owned` as the root-ownership defect.
     definitions = _tph_definitions()
     definitions[1]["layout"] = {"document": {"column": "payload"}}
     validate_storage_layout(definitions)
 
 
-def test_a_column_collision_reports_itself_rather_than_the_capability_gate() -> None:
-    # The gate exists to keep "not yet supported" distinguishable from
-    # "supported and wrong", so a mapping that raised a physical defect reports
-    # that defect rather than a refusal to execute the layout it does not have.
+def test_a_document_column_collision_reports_the_physical_defect() -> None:
+    # A Structured Column colliding with a direct-role Column is a physical layout
+    # defect, so Storage Layout reports the collision at the later claim.
     definition = _document_standalone(layout={"document": {"column": "id"}})
     with pytest.raises(RejectionError) as caught:
         validate_storage_layout([definition])
