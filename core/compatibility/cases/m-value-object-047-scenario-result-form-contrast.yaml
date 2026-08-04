@@ -37,7 +37,7 @@
 #      (m-txtime-write-006, m-opt-lock "the gate binds last"). A Transaction-Time-only close
 #      copies no payload, so no document reaches this write's SET clause; a reassigned
 #      document would ride the write instruction, not the read.
-#   3  find (Nordic Foods, asOf transactionTime = 2024-08-01) : verify — INSTANCE-FORM
+#   3  find (Nordic Foods, asOf transaction-time = 2024-08-01) : verify — INSTANCE-FORM
 #      managed find, the SAME form as step 0 (projects the `address` Document slot).
 #      asOf-pins the Transaction-Time dimension strictly INSIDE the now-closed window
 #      [2024-06-01, 2024-10-01), so the containment predicate (`in_z <= ? and
@@ -134,7 +134,7 @@ when:
         asOf:
           operand:
             eq: { attr: Supplier.name, value: Nordic Foods }
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: "2024-08-01T00:00:00+00:00"
       roundTrips: 1
       note: >-

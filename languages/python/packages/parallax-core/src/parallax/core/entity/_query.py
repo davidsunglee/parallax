@@ -369,7 +369,7 @@ class FindQuery[E, S]:
                     f"constant; a string dimension spelling is rejected (got {dimension!r})"
                 ),
             )
-        name: _DimensionName = "valid_time" if dimension.dimension == "validTime" else "tx_time"
+        name: _DimensionName = "valid_time" if dimension.dimension == "valid-time" else "tx_time"
         return self._with_temporal((_HistoryClause(self._dimension(name)),))
 
     def _root_guard(self, source: str | None) -> PathRootNarrow | None:
@@ -410,13 +410,13 @@ class FindQuery[E, S]:
     def _dimension(self, name: _DimensionName) -> WireDimension:
         """The canonical wire dimension for the developer-surface coordinate
         spelling ``name`` (the snake→camel boundary: ``tx_time`` maps to
-        ``transactionTime``), validated against the target's declared axes."""
+        ``transaction-time``), validated against the target's declared axes."""
         declared = (
             TemporalDimension.VALID_TIME
             if name == "valid_time"
             else TemporalDimension.TRANSACTION_TIME
         )
-        dimension: WireDimension = "validTime" if name == "valid_time" else "transactionTime"
+        dimension: WireDimension = "valid-time" if name == "valid_time" else "transaction-time"
         for axis in self._as_of_axes:
             if axis.dimension is declared:
                 return dimension

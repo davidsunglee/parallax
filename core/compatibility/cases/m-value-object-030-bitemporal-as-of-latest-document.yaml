@@ -2,12 +2,12 @@
 # (m-value-object "Inherited temporality", m-temporal-read), on Postgres AND MariaDB.
 #
 # `address` declares NO asOfAxes of its own — it inherits BOTH of the Branch's
-# dimensions. Pinning validTime = Latest AND transactionTime = Latest injects each axis's
+# dimensions. Pinning valid-time = Latest AND transaction-time = Latest injects each axis's
 # current-row equality (thru_z = infinity AND out_z = infinity, two infinity binds), so
 # the read returns the rectangle current on both axes. Over branch id 1's history that
 # is R3 — the corrected address D3 (Tampere, two phones), true in the world now and
 # known now. R1 is superseded on the Transaction-Time dimension; R2 (the head) is current on
-# Transaction Time but its Valid-Time thru_z is finite, so validTime=Latest excludes it. Only R3's
+# Transaction Time but its Valid-Time thru_z is finite, so valid-time=Latest excludes it. Only R3's
 # document materializes, decoded from the one structured-document column with the owner.
 #
 # The golden SQL is IDENTICAL on both dialects (a bare column projection + the two
@@ -26,9 +26,9 @@ when:
         asOf:
           operand:
             all: {}
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: latest
-      dimension: validTime
+      dimension: valid-time
       coordinate: latest
 then:
   statements:

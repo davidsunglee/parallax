@@ -308,13 +308,13 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
         {
             "history": {
                 "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
-                "dimension": "transactionTime",
+                "dimension": "transaction-time",
             }
         }
     )
     result = handle.find_history(op, INVOICE, POSTGRES, "InvoiceLine", port)
     assert result.execution.round_trips == 1
-    assert [g.pin["transactionTime"] for g in result.graphs] == [
+    assert [g.pin["transaction-time"] for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 4, 1, tzinfo=_UTC),
     ]
@@ -353,7 +353,7 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
         {
             "history": {
                 "operand": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
-                "dimension": "transactionTime",
+                "dimension": "transaction-time",
             }
         }
     )
@@ -395,12 +395,12 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         {
             "history": {
                 "operand": {"eq": {"attr": "DepositRate.id", "value": 1}},
-                "dimension": "transactionTime",
+                "dimension": "transaction-time",
             }
         }
     )
     result = handle.find_history(op, RATE, POSTGRES, "DepositRate", port)
-    assert [g.pin["transactionTime"] for g in result.graphs] == [
+    assert [g.pin["transaction-time"] for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
     ]
@@ -409,7 +409,7 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         Decimal("2.50"),
     ]
     # The Valid-Time dimension rides along too (bitemporal): both milestones share it.
-    assert all(g.pin["validTime"] == dt.datetime(2024, 1, 1, tzinfo=_UTC) for g in result.graphs)
+    assert all(g.pin["valid-time"] == dt.datetime(2024, 1, 1, tzinfo=_UTC) for g in result.graphs)
 
 
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
@@ -418,7 +418,7 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
     op = deserialize(
         {
             "deepFetch": {
-                "operand": {"history": {"operand": {"all": {}}, "dimension": "transactionTime"}},
+                "operand": {"history": {"operand": {"all": {}}, "dimension": "transaction-time"}},
                 "paths": [{"segments": [{"rel": "Policy.coverages"}]}],
             }
         }

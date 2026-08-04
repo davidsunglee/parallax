@@ -752,10 +752,10 @@
             "required": ["pin", "graph"],
             "properties": {
               "pin": {
-                "description": "The milestone edge coordinate keyed by `validTime` and/or `transactionTime`; each value is that milestone's own finite start instant.",
+                "description": "The milestone edge coordinate keyed by `valid-time` and/or `transaction-time`; each value is that milestone's own finite start instant.",
                 "type": "object",
                 "minProperties": 1,
-                "propertyNames": { "enum": ["validTime", "transactionTime"] },
+                "propertyNames": { "enum": ["valid-time", "transaction-time"] },
                 "additionalProperties": { "type": "string", "minLength": 1 }
               },
               "graph": {

@@ -30,7 +30,7 @@ when:
             eq:
               attr: Position.id
               value: 1
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: "2024-02-01T00:00:00+00:00"
       roundTrips: 1
       note: pin id 1 at the finite Transaction-Time instant 2024-02-01 (Valid Time defaulted Latest) — a READ-ONLY Transaction-Time-past view (the superseded belief, 90.00)

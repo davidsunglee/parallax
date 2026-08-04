@@ -105,14 +105,14 @@ def test_walk_recurses_through_every_wrapping_node_kind() -> None:
         oa.OrderBy(operand=hop, keys=(oa.OrderKey(attr="Order.id"),)),
         oa.Limit(operand=hop, count=5),
         oa.Distinct(operand=hop),
-        oa.AsOf(operand=hop, dimension="transactionTime", coordinate="latest"),
+        oa.AsOf(operand=hop, dimension="transaction-time", coordinate="latest"),
         oa.AsOfRange(
             operand=hop,
-            dimension="transactionTime",
+            dimension="transaction-time",
             start="2024-01-01T00:00:00+00:00",
             end="2024-02-01T00:00:00+00:00",
         ),
-        oa.History(operand=hop, dimension="transactionTime"),
+        oa.History(operand=hop, dimension="transaction-time"),
         oa.DeepFetch(operand=hop, paths=()),
     ]
     for op in wrapped_ops:
@@ -285,12 +285,12 @@ _ZOO_MODEL = {
             ],
             "asOfAxes": [
                 {
-                    "dimension": "validTime",
+                    "dimension": "valid-time",
                     "startAttribute": "valid_start",
                     "endAttribute": "valid_end",
                 },
                 {
-                    "dimension": "transactionTime",
+                    "dimension": "transaction-time",
                     "startAttribute": "tx_start",
                     "endAttribute": "tx_end",
                 },

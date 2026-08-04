@@ -33,9 +33,9 @@ when:
                   operand:
                     asOf:
                       operand: { all: {} }
-                      dimension: transactionTime
+                      dimension: transaction-time
                       coordinate: latest
-                  dimension: validTime
+                  dimension: valid-time
                   coordinate: "2024-03-01T00:00:00+00:00"
               keys:
                 - { attr: Policy.id, direction: asc }

@@ -544,7 +544,7 @@ def test_bad_axis_reference_and_direction_are_rejected() -> None:
                     "attributes": [base],
                     "asOfAxes": [
                         {
-                            "dimension": "transactionTime",
+                            "dimension": "transaction-time",
                             "startAttribute": "missing",
                             "endAttribute": "id",
                         }
@@ -774,7 +774,7 @@ def test_serialize_rejects_unresolved_transition_records() -> None:
                         attributes=(attribute,),
                         as_of_axes=(
                             AsOfAxisMetadata(
-                                dimension="transactionTime",
+                                dimension="transaction-time",
                                 start_attribute="tx_start",
                                 end_attribute="tx_end",
                             ),

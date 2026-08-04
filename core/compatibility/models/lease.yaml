@@ -28,7 +28,7 @@ entities:
       - { name: tx_start, type: timestamp, column: in_z }
       - { name: tx_end, type: timestamp, column: out_z }
     asOfAxes:
-      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
+      - { dimension: transaction-time, startAttribute: tx_start, endAttribute: tx_end }
     relationships:
       - name: notes
         cardinality: one-to-many

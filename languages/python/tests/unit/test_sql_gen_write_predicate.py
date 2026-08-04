@@ -318,7 +318,7 @@ def test_a_result_shaping_directive_reaching_a_write_predicate_is_refused(
     "op, message",
     [
         (
-            oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest"),
+            oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
             "temporal wrapper reached",
         ),
         (

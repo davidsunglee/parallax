@@ -146,7 +146,7 @@ def _standalone_definition() -> dict[str, Any]:
         "valueObjects": [{"name": "payload", "column": "payload_doc"}],
         "asOfAxes": [
             {
-                "dimension": "transactionTime",
+                "dimension": "transaction-time",
                 "startAttribute": "txStart",
                 "endAttribute": "txEnd",
             }
@@ -251,12 +251,12 @@ def _ranked_temporal_definitions(
         "attributes": attributes,
         "asOfAxes": [
             {
-                "dimension": "transactionTime",
+                "dimension": "transaction-time",
                 "startAttribute": shared_start,
                 "endAttribute": "txEnd",
             },
             {
-                "dimension": "validTime",
+                "dimension": "valid-time",
                 "startAttribute": "validStart",
                 "endAttribute": "validEnd",
             },
@@ -894,7 +894,7 @@ def test_a_temporal_document_tpcs_root_is_accepted() -> None:
     )
     definitions[0]["asOfAxes"] = [
         {
-            "dimension": "transactionTime",
+            "dimension": "transaction-time",
             "startAttribute": "txStart",
             "endAttribute": "txEnd",
         }
@@ -908,7 +908,7 @@ def test_a_standalone_document_layout_owner_is_accepted() -> None:
     validate_storage_layout([_document_standalone()])
 
 
-@pytest.mark.parametrize("dimension", ["transactionTime", "validTime"])
+@pytest.mark.parametrize("dimension", ["transaction-time", "valid-time"])
 def test_a_temporal_document_layout_owner_is_accepted(dimension: str) -> None:
     # Transaction-Time and Valid-Time axes remain direct-role Columns, so either
     # temporal dimension composes with a root-owned Document layout without issue.

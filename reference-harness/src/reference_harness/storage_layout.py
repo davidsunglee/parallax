@@ -790,7 +790,7 @@ def _temporal_designations(
 
 
 TEMPORAL_DIMENSION_RANK: Mapping[str, int] = MappingProxyType(
-    {"validTime": 0, "transactionTime": 1}
+    {"valid-time": 0, "transaction-time": 1}
 )
 """The canonical order of the As-Of Axis dimensions: Valid Time before Transaction Time.
 

@@ -117,11 +117,11 @@ def test_run_accepts_ordered_milestone_set_graph_observations() -> None:
         "roundTrips": 1,
         "graphs": [
             {
-                "pin": {"transactionTime": "2024-01-01T00:00:00+00:00"},
+                "pin": {"transaction-time": "2024-01-01T00:00:00+00:00"},
                 "graph": {"InvoiceLine": [{"id": 1000, "amount": 50.0}]},
             },
             {
-                "pin": {"transactionTime": "2024-04-01T00:00:00+00:00"},
+                "pin": {"transaction-time": "2024-04-01T00:00:00+00:00"},
                 "graph": {"InvoiceLine": [{"id": 1000, "amount": 75.0}]},
             },
         ],
@@ -134,7 +134,7 @@ def test_run_rejects_milestone_set_graph_entry_without_graph() -> None:
     observations = {
         "roundTrips": 1,
         "graphs": [
-            {"pin": {"transactionTime": "2024-01-01T00:00:00+00:00"}},
+            {"pin": {"transaction-time": "2024-01-01T00:00:00+00:00"}},
         ],
     }
 

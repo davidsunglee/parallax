@@ -279,7 +279,7 @@ def _temporal_write_carries_payload(entity: Entity, mutation: Any) -> bool:
         return False
     if mutation in ("update", "updateUntil"):
         return True
-    return any(axis.get("dimension") == "validTime" for axis in entity.temporal_runtime_axes)
+    return any(axis.get("dimension") == "valid-time" for axis in entity.temporal_runtime_axes)
 
 
 def _temporal_payload_columns(entity: Entity, temporal_columns: set[str]) -> set[str]:
@@ -436,8 +436,8 @@ def _assert_value_object_document(ref: str, value_object: dict[str, Any], docume
 
 def _assert_temporal_shape(entity: Entity, mutation: Any, instruction: dict[str, Any]) -> None:
     axes = {axis.get("dimension") for axis in entity.temporal_runtime_axes}
-    has_transaction_time = "transactionTime" in axes
-    has_valid_time = "validTime" in axes
+    has_transaction_time = "transaction-time" in axes
+    has_valid_time = "valid-time" in axes
     temporal_values = {name: instruction.get(name) for name in ("at", "validFrom", "until")}
     if not axes:
         if any(value is not None for value in temporal_values.values()):

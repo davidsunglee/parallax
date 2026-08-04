@@ -21,8 +21,8 @@ entities:
       - { name: tx_start, type: timestamp, column: in_z }
       - { name: tx_end, type: timestamp, column: out_z }
     asOfAxes:
-      - { dimension: validTime, startAttribute: valid_start, endAttribute: valid_end }
-      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
+      - { dimension: valid-time, startAttribute: valid_start, endAttribute: valid_end }
+      - { dimension: transaction-time, startAttribute: tx_start, endAttribute: tx_end }
     relationships:
       - name: coverages
         cardinality: one-to-many
@@ -44,8 +44,8 @@ entities:
       - { name: tx_start, type: timestamp, column: in_z }
       - { name: tx_end, type: timestamp, column: out_z }
     asOfAxes:
-      - { dimension: validTime, startAttribute: valid_start, endAttribute: valid_end }
-      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
+      - { dimension: valid-time, startAttribute: valid_start, endAttribute: valid_end }
+      - { dimension: transaction-time, startAttribute: tx_start, endAttribute: tx_end }
     relationships:
       - name: claims
         cardinality: one-to-many
@@ -70,8 +70,8 @@ entities:
       - { name: tx_start, type: timestamp, column: in_z }
       - { name: tx_end, type: timestamp, column: out_z }
     asOfAxes:
-      - { dimension: validTime, startAttribute: valid_start, endAttribute: valid_end }
-      - { dimension: transactionTime, startAttribute: tx_start, endAttribute: tx_end }
+      - { dimension: valid-time, startAttribute: valid_start, endAttribute: valid_end }
+      - { dimension: transaction-time, startAttribute: tx_start, endAttribute: tx_end }
     indices:
       - { name: claim_pk, attributes: [id, valid_start, tx_start], unique: true }
       - { name: claim_coverage, attributes: [coverageId] }

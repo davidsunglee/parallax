@@ -13,7 +13,7 @@ when:
         eq:
           attr: Balance.acctNum
           value: A
-      dimension: transactionTime
+      dimension: transaction-time
       coordinate: latest
 then:
   statements:

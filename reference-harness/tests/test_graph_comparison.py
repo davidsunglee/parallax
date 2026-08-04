@@ -364,8 +364,8 @@ def test_policy_model_is_temporal_and_relational():
     coverage = model.entity("Coverage")
     assert coverage.is_temporal
     assert {a["dimension"] for a in coverage.temporal_runtime_axes} == {
-        "validTime",
-        "transactionTime",
+        "valid-time",
+        "transaction-time",
     }
     assert coverage.relationship_metadata_by_name("policy")["cardinality"] == "many-to-one"
     assert (
@@ -389,7 +389,7 @@ def test_expected_suffix_both_latest():
 
 def test_expected_suffix_valid_past_transaction_latest():
     coverage = _policy_model().entity("Coverage")
-    pins = {"validTime": "2024-03-01T00:00:00+00:00"}  # Transaction Time defaults to latest
+    pins = {"valid-time": "2024-03-01T00:00:00+00:00"}  # Transaction Time defaults to latest
     assert _expected_asof_suffix(coverage, pins) == [
         "2024-03-01T00:00:00+00:00",
         "2024-03-01T00:00:00+00:00",
@@ -399,7 +399,7 @@ def test_expected_suffix_valid_past_transaction_latest():
 
 def test_expected_suffix_valid_latest_transaction_past():
     coverage = _policy_model().entity("Coverage")
-    pins = {"transactionTime": "2024-02-01T00:00:00+00:00"}  # Valid Time defaults to latest
+    pins = {"transaction-time": "2024-02-01T00:00:00+00:00"}  # Valid Time defaults to latest
     assert _expected_asof_suffix(coverage, pins) == [
         "infinity",
         "2024-02-01T00:00:00+00:00",
@@ -410,8 +410,8 @@ def test_expected_suffix_valid_latest_transaction_past():
 def test_expected_suffix_both_past_is_valid_time_first():
     coverage = _policy_model().entity("Coverage")
     pins = {
-        "validTime": "2024-03-01T00:00:00+00:00",
-        "transactionTime": "2024-02-01T00:00:00+00:00",
+        "valid-time": "2024-03-01T00:00:00+00:00",
+        "transaction-time": "2024-02-01T00:00:00+00:00",
     }
     assert _expected_asof_suffix(coverage, pins) == [
         "2024-03-01T00:00:00+00:00",
@@ -428,7 +428,7 @@ def test_expected_suffix_transaction_only_latest():
 
 def test_expected_suffix_non_temporal_child_is_empty():
     note = load_model(COMPATIBILITY_ROOT, "models/lease.yaml").entity("LeaseNote")
-    assert _expected_asof_suffix(note, {"transactionTime": "2024-02-01T00:00:00+00:00"}) == []
+    assert _expected_asof_suffix(note, {"transaction-time": "2024-02-01T00:00:00+00:00"}) == []
 
 
 def test_root_pins_reads_nested_asof_by_axis():
@@ -437,8 +437,8 @@ def test_root_pins_reads_nested_asof_by_axis():
         COMPATIBILITY_ROOT / "cases" / "m-navigate-015-deepfetch-temporal-both-past.yaml",
     )
     assert _root_asof_pins(case) == {
-        "validTime": "2024-03-01T00:00:00+00:00",
-        "transactionTime": "2024-02-01T00:00:00+00:00",
+        "valid-time": "2024-03-01T00:00:00+00:00",
+        "transaction-time": "2024-02-01T00:00:00+00:00",
     }
 
 
@@ -452,8 +452,8 @@ def test_root_pins_peels_result_directives_before_asof():
         COMPATIBILITY_ROOT / "cases" / "m-navigate-024-deepfetch-temporal-ordered-root.yaml",
     )
     assert _root_asof_pins(case) == {
-        "validTime": "2024-03-01T00:00:00+00:00",
-        "transactionTime": "latest",
+        "valid-time": "2024-03-01T00:00:00+00:00",
+        "transaction-time": "latest",
     }
 
 
@@ -615,7 +615,7 @@ def test_existing_non_temporal_deep_fetch_still_passes():
 _EARLY_PIN = "2024-01-01T00:00:00+00:00"
 _LATE_PIN = "2024-04-01T00:00:00+00:00"
 _EARLY_GRAPH = {
-    "pin": {"transactionTime": _EARLY_PIN},
+    "pin": {"transaction-time": _EARLY_PIN},
     "graph": {
         "InvoiceLine": [
             {"id": 1000, "invoice_id": 100, "amount": 50.00, "in_z": _EARLY_PIN, "out_z": _LATE_PIN}
@@ -623,7 +623,7 @@ _EARLY_GRAPH = {
     },
 }
 _LATE_GRAPH = {
-    "pin": {"transactionTime": _LATE_PIN},
+    "pin": {"transaction-time": _LATE_PIN},
     "graph": {
         "InvoiceLine": [
             {"id": 1000, "invoice_id": 100, "amount": 75.00, "in_z": _LATE_PIN, "out_z": "infinity"}
@@ -670,7 +670,7 @@ def _invoice_graphs_case(graphs: list[dict[str, Any]]) -> Case:
             "operation": {
                 "history": {
                     "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
-                    "dimension": "transactionTime",
+                    "dimension": "transaction-time",
                 }
             },
         },

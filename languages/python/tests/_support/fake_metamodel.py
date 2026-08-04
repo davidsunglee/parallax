@@ -314,7 +314,7 @@ entities:
         type: timestamp
         column: out_z
     asOfAxes:
-      - dimension: transactionTime
+      - dimension: transaction-time
         startAttribute: tx_start
         endAttribute: tx_end
 """

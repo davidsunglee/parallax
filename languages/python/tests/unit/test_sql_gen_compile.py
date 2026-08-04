@@ -81,7 +81,7 @@ def test_unbound_attribute_is_refused() -> None:
     "op, message",
     [
         (
-            oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest"),
+            oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
             "temporal wrapper reached",
         ),
         (

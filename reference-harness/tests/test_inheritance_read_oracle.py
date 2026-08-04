@@ -615,12 +615,12 @@ def _carrying_wrappers() -> list[tuple[str, dict[str, Any]]]:
             {
                 "asOf": {
                     "operand": _NARROW_TO_DOG,
-                    "dimension": "validTime",
+                    "dimension": "valid-time",
                     "coordinate": "latest",
                 }
             },
         ),
-        ("history", {"history": {"operand": _NARROW_TO_DOG, "dimension": "validTime"}}),
+        ("history", {"history": {"operand": _NARROW_TO_DOG, "dimension": "valid-time"}}),
         (
             "orderBy",
             {"orderBy": {"operand": _NARROW_TO_DOG, "keys": [{"attr": "Animal.name"}]}},

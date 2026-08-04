@@ -75,7 +75,7 @@
           "items": { "$ref": "#/$defs/attribute" }
         },
         "asOfAxes": {
-          "description": "The supported temporal shapes are one transactionTime axis or validTime followed by transactionTime. A lone validTime axis belongs to the separately catalogued m-validtime-only formation and is not accepted by this active descriptor contract.",
+          "description": "The supported temporal shapes are one transaction-time axis or valid-time followed by transaction-time. A lone valid-time axis belongs to the separately catalogued m-validtime-only formation and is not accepted by this active descriptor contract.",
           "type": "array",
           "minItems": 1,
           "maxItems": 2,
@@ -87,7 +87,7 @@
               "prefixItems": [
                 {
                   "properties": {
-                    "dimension": { "const": "transactionTime" }
+                    "dimension": { "const": "transaction-time" }
                   }
                 }
               ]
@@ -98,12 +98,12 @@
               "prefixItems": [
                 {
                   "properties": {
-                    "dimension": { "const": "validTime" }
+                    "dimension": { "const": "valid-time" }
                   }
                 },
                 {
                   "properties": {
-                    "dimension": { "const": "transactionTime" }
+                    "dimension": { "const": "transaction-time" }
                   }
                 }
               ]
@@ -127,14 +127,14 @@
       },
       "allOf": [
         {
-          "$comment": "Optimistic-lock composition: a Transaction-Time Entity derives its optimistic key from its transactionTime start Attribute and must not declare an explicit optimisticLocking version Attribute.",
+          "$comment": "Optimistic-lock composition: a Transaction-Time Entity derives its optimistic key from its transaction-time start Attribute and must not declare an explicit optimisticLocking version Attribute.",
           "if": {
             "required": ["asOfAxes"],
             "properties": {
               "asOfAxes": {
                 "contains": {
                   "required": ["dimension"],
-                  "properties": { "dimension": { "const": "transactionTime" } }
+                  "properties": { "dimension": { "const": "transaction-time" } }
                 }
               }
             }
@@ -391,7 +391,7 @@
       "additionalProperties": false,
       "required": ["dimension", "startAttribute", "endAttribute"],
       "properties": {
-        "dimension": { "enum": ["validTime", "transactionTime"] },
+        "dimension": { "enum": ["valid-time", "transaction-time"] },
         "startAttribute": { "$ref": "#/$defs/identifier" },
         "endAttribute": { "$ref": "#/$defs/identifier" }
       }

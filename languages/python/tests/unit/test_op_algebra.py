@@ -530,7 +530,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             ),
             (
                 {"asOf": {"operand": {"all": {}}, "dimension": "bad", "coordinate": "latest"}},
-                "must be 'validTime' or 'transactionTime'",
+                "must be 'valid-time' or 'transaction-time'",
             ),
             # Temporal coordinates are non-empty. ``now`` is not a wire value:
             # a finite current-clock coordinate is serialized as its instant.
@@ -538,7 +538,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                 {
                     "asOf": {
                         "operand": {"all": {}},
-                        "dimension": "transactionTime",
+                        "dimension": "transaction-time",
                         "coordinate": "",
                     }
                 },
@@ -548,7 +548,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                 {
                     "asOfRange": {
                         "operand": {"all": {}},
-                        "dimension": "transactionTime",
+                        "dimension": "transaction-time",
                         "start": "",
                         "end": "2020-01-01T00:00:00Z",
                     }
@@ -559,7 +559,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                 {
                     "asOfRange": {
                         "operand": {"all": {}},
-                        "dimension": "transactionTime",
+                        "dimension": "transaction-time",
                         "start": "2020-01-01T00:00:00Z",
                         "end": "",
                     }
@@ -570,7 +570,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                 {
                     "asOf": {
                         "operand": {"all": {}},
-                        "dimension": "transactionTime",
+                        "dimension": "transaction-time",
                         "coordinate": "now",
                     }
                 },
@@ -685,21 +685,21 @@ def test_deserialize_rejects_non_scalar_value() -> None:
         {
             "asOf": {
                 "operand": {"all": {}},
-                "dimension": "transactionTime",
+                "dimension": "transaction-time",
                 "coordinate": "latest",
             }
         },
         {
             "asOf": {
                 "operand": {"all": {}},
-                "dimension": "transactionTime",
+                "dimension": "transaction-time",
                 "coordinate": "2020-01-01T00:00:00Z",
             }
         },
         {
             "asOfRange": {
                 "operand": {"all": {}},
-                "dimension": "validTime",
+                "dimension": "valid-time",
                 "start": "2020-01-01T00:00:00Z",
                 "end": "2021-01-01T00:00:00Z",
             }

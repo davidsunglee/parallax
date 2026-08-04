@@ -31,8 +31,8 @@ when:
                 eq:
                   attr: Position.id
                   value: 1
-              dimension: transactionTime
-          dimension: validTime
+              dimension: transaction-time
+          dimension: valid-time
       roundTrips: 1
       note: history returns all three milestones, each carrying its own edge pins (from/thru/in/out)
       statements:
@@ -52,9 +52,9 @@ when:
                 eq:
                   attr: Position.id
                   value: 1
-              dimension: transactionTime
+              dimension: transaction-time
               coordinate: "2024-01-01T00:00:00+00:00"
-          dimension: validTime
+          dimension: valid-time
           coordinate: "2024-01-01T00:00:00+00:00"
       roundTrips: 1
       note: re-read at R1's edge pin (Valid-Time + Transaction-Time from-instant 2024-01-01) -> exactly R1 (90)
@@ -73,9 +73,9 @@ when:
                 eq:
                   attr: Position.id
                   value: 1
-              dimension: transactionTime
+              dimension: transaction-time
               coordinate: "2024-04-01T00:00:00+00:00"
-          dimension: validTime
+          dimension: valid-time
           coordinate: "2024-06-01T00:00:00+00:00"
       roundTrips: 1
       differentObjectFrom: 1

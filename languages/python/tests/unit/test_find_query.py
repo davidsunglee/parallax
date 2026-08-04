@@ -334,7 +334,7 @@ class _WindowSubclass(tuple[dt.datetime, ...]):
 
 def test_as_of_latest_serializes_the_current_pin_wrapper() -> None:
     assert lowered_document(Balance.where(Balance.all).as_of(tx_time=LATEST)) == {
-        "asOf": {"operand": {"all": {}}, "dimension": "transactionTime", "coordinate": "latest"}
+        "asOf": {"operand": {"all": {}}, "dimension": "transaction-time", "coordinate": "latest"}
     }
 
 
@@ -343,7 +343,7 @@ def test_as_of_past_instant_normalizes_to_utc_iso() -> None:
     assert lowered_document(Balance.where(Balance.all).as_of(tx_time=d)) == {
         "asOf": {
             "operand": {"all": {}},
-            "dimension": "transactionTime",
+            "dimension": "transaction-time",
             "coordinate": "2024-04-01T00:00:00+00:00",
         }
     }
@@ -356,11 +356,11 @@ def test_bitemporal_as_of_nests_valid_time_outside_tx_time() -> None:
             "operand": {
                 "asOf": {
                     "operand": {"all": {}},
-                    "dimension": "transactionTime",
+                    "dimension": "transaction-time",
                     "coordinate": "latest",
                 }
             },
-            "dimension": "validTime",
+            "dimension": "valid-time",
             "coordinate": "latest",
         }
     }
@@ -372,7 +372,7 @@ def test_as_of_range_scans_the_window() -> None:
     assert lowered_document(Balance.where(Balance.all).as_of_range(tx_time=(frm, to))) == {
         "asOfRange": {
             "operand": {"all": {}},
-            "dimension": "transactionTime",
+            "dimension": "transaction-time",
             "start": "2024-06-15T00:00:00+00:00",
             "end": "2024-07-01T00:00:00+00:00",
         }
@@ -385,7 +385,7 @@ def test_as_of_range_on_valid_time() -> None:
     assert lowered_document(Position.where(Position.all).as_of_range(valid_time=(frm, to))) == {
         "asOfRange": {
             "operand": {"all": {}},
-            "dimension": "validTime",
+            "dimension": "valid-time",
             "start": "2024-01-01T00:00:00+00:00",
             "end": "2024-06-01T00:00:00+00:00",
         }
@@ -446,13 +446,13 @@ def test_as_of_range_refuses_a_window_that_is_not_an_exact_instant_pair(window: 
 
 def test_history_wraps_the_predicate() -> None:
     assert lowered_document(Balance.where(Balance.all).history(TX_TIME)) == {
-        "history": {"operand": {"all": {}}, "dimension": "transactionTime"}
+        "history": {"operand": {"all": {}}, "dimension": "transaction-time"}
     }
 
 
 def test_history_on_valid_time() -> None:
     assert lowered_document(Position.where(Position.all).history(VALID_TIME)) == {
-        "history": {"operand": {"all": {}}, "dimension": "validTime"}
+        "history": {"operand": {"all": {}}, "dimension": "valid-time"}
     }
 
 
@@ -469,14 +469,14 @@ def test_dimension_constants_are_frozen() -> None:
     # lowering stays pinned afterwards.
     for constant in (TX_TIME, VALID_TIME):
         with pytest.raises(AttributeError, match="frozen"):
-            constant._dimension = "validTime"  # pyright: ignore[reportPrivateUsage] - frozen dimension constant: reassignment must raise
+            constant._dimension = "valid-time"  # pyright: ignore[reportPrivateUsage] - frozen dimension constant: reassignment must raise
         with pytest.raises(AttributeError, match="frozen"):
             del constant._dimension  # pyright: ignore[reportPrivateUsage] - frozen dimension constant: deletion must raise
     assert lowered_document(Balance.where(Balance.all).history(TX_TIME)) == {
-        "history": {"operand": {"all": {}}, "dimension": "transactionTime"}
+        "history": {"operand": {"all": {}}, "dimension": "transaction-time"}
     }
     assert lowered_document(Position.where(Position.all).history(VALID_TIME)) == {
-        "history": {"operand": {"all": {}}, "dimension": "validTime"}
+        "history": {"operand": {"all": {}}, "dimension": "valid-time"}
     }
 
 

@@ -7,9 +7,9 @@
 # MUST NOT redeclare, add, remove, override, or shadow an axis, even when the
 # root itself is already temporal (a root-result's identity would otherwise
 # mix `(family, PK)` and `(family, PK, coordinates)` depending on which
-# branch a row resolved through). `Rate` (root) declares `transactionTime`
+# branch a row resolved through). `Rate` (root) declares `transaction-time`
 # only; `DepositRate` (concrete) additionally declares its own
-# `validTime` — a model-aware validator MUST reject the family before any
+# `valid-time` — a model-aware validator MUST reject the family before any
 # SQL. Different physical strategy than the sibling witness
 # (`m-inheritance-098`, table-per-hierarchy): this one is
 # table-per-concrete-subtype, so both strategies exercise the same
@@ -30,7 +30,7 @@ when:
           - { name: tx_start, type: timestamp, column: in_z }
           - { name: tx_end, type: timestamp, column: out_z }
         asOfAxes:
-          - dimension: transactionTime
+          - dimension: transaction-time
             startAttribute: tx_start
             endAttribute: tx_end
       - name: DepositRate
@@ -43,7 +43,7 @@ when:
           - { name: valid_start, type: timestamp, column: from_z }
           - { name: valid_end, type: timestamp, column: thru_z }
         asOfAxes:
-          - dimension: validTime
+          - dimension: valid-time
             startAttribute: valid_start
             endAttribute: valid_end
 then:

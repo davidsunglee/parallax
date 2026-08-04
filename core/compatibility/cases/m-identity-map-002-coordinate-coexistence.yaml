@@ -39,7 +39,7 @@ when:
             eq:
               attr: Balance.id
               value: 1
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: "2024-04-01T00:00:00+00:00"
       roundTrips: 1
       note: finite past pin — a DISTINCT pinned view of the same primary key (the superseded milestone)

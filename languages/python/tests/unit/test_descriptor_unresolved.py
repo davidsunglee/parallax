@@ -566,7 +566,7 @@ def test_a_temporal_entity_keys_its_axis_by_dimension() -> None:
           type: timestamp
           column: out_z
       asOfAxes:
-        - dimension: transactionTime
+        - dimension: transaction-time
           startAttribute: tx_start
           endAttribute: tx_end
     """

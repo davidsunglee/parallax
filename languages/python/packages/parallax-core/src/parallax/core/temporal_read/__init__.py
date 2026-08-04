@@ -113,8 +113,8 @@ __all__ = [
 # fragment reads first; that rank is the Dimension's own member value, so
 # ordering axes needs no table of its own.
 _DIMENSIONS: Final[Mapping[str, AcceptedDimension]] = {
-    "validTime": AcceptedDimension.VALID_TIME,
-    "transactionTime": AcceptedDimension.TRANSACTION_TIME,
+    "valid-time": AcceptedDimension.VALID_TIME,
+    "transaction-time": AcceptedDimension.TRANSACTION_TIME,
 }
 
 
@@ -183,19 +183,19 @@ class TemporalDimensionConstant:
         return self._dimension
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid only
-        return "VALID_TIME" if self._dimension == "validTime" else "TX_TIME"
+        return "VALID_TIME" if self._dimension == "valid-time" else "TX_TIME"
 
 
-VALID_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("validTime")
+VALID_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("valid-time")
 """The Valid Time dimension constant: the sole developer-surface spelling of the
-``validTime`` dimension wherever a statement takes a dimension argument
+``valid-time`` dimension wherever a statement takes a dimension argument
 (``.history(VALID_TIME)``). A frozen module-level singleton — the statement
 surface accepts exactly this instance, by identity, never an equal copy or a
 string."""
 
-TX_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("transactionTime")
+TX_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("transaction-time")
 """The Transaction Time dimension constant: the sole developer-surface spelling
-of the ``transactionTime`` dimension wherever a statement takes a dimension
+of the ``transaction-time`` dimension wherever a statement takes a dimension
 argument (``.history(TX_TIME)``). A frozen module-level singleton — the
 statement surface accepts exactly this instance, by identity, never an equal
 copy or a string."""
@@ -593,7 +593,7 @@ def scans_an_axis(op: Operation) -> bool:
     A read pins or unpins each dimension with its own wrapper, so a bitemporal
     read nests one wrapper per dimension and the WHOLE nest decides: one scanned
     dimension answers a milestone set however the other dimension is pinned, and
-    ``asOf(validTime, history(transactionTime, …))`` therefore scans.
+    ``asOf(valid-time, history(transaction-time, …))`` therefore scans.
 
     Directives are peeled first, so a scan stays a scan under any result-shaping
     wrapper. An outer ``deepFetch`` is deliberately NOT peeled: this scope takes

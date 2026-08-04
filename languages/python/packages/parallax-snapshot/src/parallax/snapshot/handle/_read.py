@@ -486,8 +486,8 @@ def _distinct_keys(rows: Sequence[Row], column: str) -> list[op_algebra.Scalar]:
 # graph's `then.graphs` pin entry (`m-case-format`). The dimension itself is
 # structured everywhere above this seam.
 _DIMENSION_NAMES: Final[Mapping[TemporalDimension, str]] = {
-    TemporalDimension.VALID_TIME: "validTime",
-    TemporalDimension.TRANSACTION_TIME: "transactionTime",
+    TemporalDimension.VALID_TIME: "valid-time",
+    TemporalDimension.TRANSACTION_TIME: "transaction-time",
 }
 
 
@@ -573,8 +573,8 @@ def _pin_from_milestone(entity: EntityMetadata, milestone_pin: Mapping[str, obje
         if name in milestone_pin:
             coords[name] = milestone_pin[name]
     return Pin(
-        tx_time=cast("Any", coords.get("transactionTime")),
-        valid_time=cast("Any", coords.get("validTime")),
+        tx_time=cast("Any", coords.get("transaction-time")),
+        valid_time=cast("Any", coords.get("valid-time")),
     )
 
 

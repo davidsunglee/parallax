@@ -42,9 +42,9 @@ when:
                 eq:
                   attr: Position.id
                   value: 2
-              dimension: transactionTime
+              dimension: transaction-time
               coordinate: latest
-          dimension: validTime
+          dimension: valid-time
           coordinate: "2024-03-01T00:00:00+00:00"
       roundTrips: 1
       note: pin id 2 at the finite Valid-Time instant 2024-03-01 (Transaction Time latest) — a WRITABLE Valid-Time-past view (100)
@@ -86,9 +86,9 @@ when:
                 eq:
                   attr: Position.id
                   value: 2
-              dimension: transactionTime
+              dimension: transaction-time
               coordinate: latest
-          dimension: validTime
+          dimension: valid-time
           coordinate: "2024-04-01T00:00:00+00:00"
       roundTrips: 1
       note: re-read inside the corrected window (Valid Time 2024-04-01, Transaction Time latest) -> the MIDDLE's new value 200

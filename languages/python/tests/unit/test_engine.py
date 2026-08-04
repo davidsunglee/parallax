@@ -3359,7 +3359,7 @@ def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> 
                 "operation": {
                     "asOf": {
                         "operand": {"all": {}},
-                        "dimension": "validTime",
+                        "dimension": "valid-time",
                         "coordinate": "latest",
                     }
                 },
@@ -3399,7 +3399,7 @@ def test_run_graphs_case_renders_ordered_milestone_pin_graphs() -> None:
     )
     assert round_trips == 1
     assert len(emissions) == 1
-    assert [_entry(g, "pin")["transactionTime"] for g in graphs] == [
+    assert [_entry(g, "pin")["transaction-time"] for g in graphs] == [
         "2024-01-01T00:00:00+00:00",
         "2024-04-01T00:00:00+00:00",
     ]
@@ -3415,7 +3415,7 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
             "model": "models/invoice.yaml",
             "when": {
                 "targetEntity": "InvoiceLine",
-                "operation": {"history": {"operand": {"all": {}}, "dimension": "validTime"}},
+                "operation": {"history": {"operand": {"all": {}}, "dimension": "valid-time"}},
             },
             "then": {"graphs": []},
         }
@@ -3585,7 +3585,7 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
                 "find": {
                     "asOf": {
                         "operand": {"eq": {"attr": "Position.id", "value": 1}},
-                        "dimension": "transactionTime",
+                        "dimension": "transaction-time",
                         "coordinate": "2024-02-01T00:00:00+00:00",
                     }
                 },

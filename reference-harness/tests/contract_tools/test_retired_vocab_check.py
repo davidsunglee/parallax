@@ -1,9 +1,10 @@
 """Docker-free tests for the retired-vocabulary deny-list gate.
 
 Guards the closure property `retired_vocab_check` exists to prove: after the
-Valid Time / Transaction Time adoption, no retired business/processing
-temporal phrase reappears on any active surface, while the labeled
-historical / prior-art / rejection-fixture text keeps its original spellings.
+Valid Time / Transaction Time adoption, neither a retired business/processing
+temporal phrase nor a retired camelCase dimension spelling reappears on any
+active surface, while the labeled historical / prior-art / rejection-fixture
+text keeps its original spellings.
 """
 
 from __future__ import annotations
@@ -48,6 +49,27 @@ def test_retired_identifier_spellings_are_detected() -> None:
     ]
     for line in flagged:
         assert check_text("f.py", line), line
+
+
+def test_retired_dimension_spellings_are_detected() -> None:
+    flagged = [
+        '"dimension": { "enum": ["validTime", "transactionTime"] }',
+        "pin: { transactionTime: '2024-01-01T00:00:00+00:00' }",
+        "- dimension: validTime",
+    ]
+    for line in flagged:
+        assert check_text("f.yaml", line), line
+
+
+def test_core_dimension_variant_names_stay_legal() -> None:
+    legal = [
+        "TemporalDimension = ValidTime | TransactionTime",
+        "the valid-time axis precedes the transaction-time axis",
+        "TemporalDimension.VALID_TIME",
+        "validTimestamp = clock()",
+    ]
+    for line in legal:
+        assert check_text("f.py", line) == [], line
 
 
 def test_camel_compounds_cover_every_noun_family() -> None:

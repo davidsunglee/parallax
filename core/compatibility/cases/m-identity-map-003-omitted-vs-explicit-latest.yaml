@@ -7,7 +7,7 @@
 # sentinel — one canonical coordinate, not a wall-clock instant (m-identity-map).
 # Step 0 finds Balance id 1 with the coordinate OMITTED (the default-injected
 # current-row predicate, `out_z = ?` bind infinity -> the current 150.00). Step 1
-# finds the same primary key with an EXPLICIT `asOf(transactionTime, latest)`; it
+# finds the same primary key with an EXPLICIT `asOf(transaction-time, latest)`; it
 # lowers to the identical `out_z = ?` predicate, so it is the SAME lowered
 # coordinate and therefore the SAME managed view (`sameObjectAs`) — still costing a
 # round trip (no query-cache claim). The object-reference identity is asserted
@@ -39,7 +39,7 @@ when:
             eq:
               attr: Balance.id
               value: 1
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: latest
       roundTrips: 1
       sameObjectAs: 0

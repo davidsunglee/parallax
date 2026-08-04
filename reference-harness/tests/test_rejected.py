@@ -358,7 +358,7 @@ def test_descendant_temporal_axes_under_a_non_temporal_root_is_rejected() -> Non
                 ],
                 "asOfAxes": [
                     {
-                        "dimension": "transactionTime",
+                        "dimension": "transaction-time",
                         "startAttribute": "txStart",
                         "endAttribute": "txEnd",
                     }
@@ -400,7 +400,7 @@ def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
                 ],
                 "asOfAxes": [
                     {
-                        "dimension": "transactionTime",
+                        "dimension": "transaction-time",
                         "startAttribute": "tx_start",
                         "endAttribute": "tx_end",
                     }
@@ -417,7 +417,7 @@ def test_descendant_temporal_axes_under_a_temporal_root_is_rejected() -> None:
                 ],
                 "asOfAxes": [
                     {
-                        "dimension": "validTime",
+                        "dimension": "valid-time",
                         "startAttribute": "valid_start",
                         "endAttribute": "valid_end",
                     }
@@ -445,7 +445,7 @@ def test_resolve_effective_definition_inherits_temporal_axes_from_the_root_only(
             ],
             "asOfAxes": [
                 {
-                    "dimension": "transactionTime",
+                    "dimension": "transaction-time",
                     "startAttribute": "tx_start",
                     "endAttribute": "tx_end",
                 }

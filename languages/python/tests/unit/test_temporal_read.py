@@ -65,7 +65,7 @@ def test_default_latest_injection_equals_explicit_latest() -> None:
     # an explicit `asOf(..., latest)` lowers to the IDENTICAL injected predicate.
     defaulted = _where(oa.All(), BALANCE)
     explicit = _where(
-        oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest"), BALANCE
+        oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"), BALANCE
     )
     assert defaulted == ("t0.out_z = ?", ("infinity",))
     assert explicit == defaulted
@@ -73,7 +73,7 @@ def test_default_latest_injection_equals_explicit_latest() -> None:
 
 def test_past_instant_is_half_open_containment() -> None:
     where, binds = _where(
-        oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate=_D), BALANCE
+        oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate=_D), BALANCE
     )
     assert where == "t0.in_z <= ? and t0.out_z > ?"
     assert binds == (_D, _D)
@@ -84,7 +84,7 @@ def test_temporal_upper_bound_is_exclusive() -> None:
     where, _ = _where(
         oa.AsOf(
             operand=oa.All(),
-            dimension="transactionTime",
+            dimension="transaction-time",
             coordinate="2024-06-01T00:00:00+00:00",
         ),
         LEDGER,
@@ -96,7 +96,7 @@ def test_as_of_range_overlap_predicate_binds_window_end_first() -> None:
     where, binds = _where(
         oa.AsOfRange(
             operand=oa.All(),
-            dimension="transactionTime",
+            dimension="transaction-time",
             start="2024-06-15T00:00:00+00:00",
             end="2024-07-01T00:00:00+00:00",
         ),
@@ -110,7 +110,7 @@ def test_history_injects_no_term() -> None:
     where, binds = _where(
         oa.History(
             operand=oa.Comparison(op="eq", attr="Balance.id", value=1),
-            dimension="transactionTime",
+            dimension="transaction-time",
         ),
         BALANCE,
     )
@@ -122,7 +122,7 @@ def test_as_of_composes_after_a_user_predicate() -> None:
     where, binds = _where(
         oa.AsOf(
             operand=oa.Comparison(op="eq", attr="Balance.acctNum", value="A"),
-            dimension="transactionTime",
+            dimension="transaction-time",
             coordinate="latest",
         ),
         BALANCE,
@@ -137,9 +137,9 @@ def test_as_of_composes_after_a_user_predicate() -> None:
 def _bitemporal(valid_time: str | None, tx_time: str | None) -> oa.Operation:
     op: oa.Operation = oa.All()
     if tx_time is not None:
-        op = oa.AsOf(operand=op, dimension="transactionTime", coordinate=tx_time)
+        op = oa.AsOf(operand=op, dimension="transaction-time", coordinate=tx_time)
     if valid_time is not None:
-        op = oa.AsOf(operand=op, dimension="validTime", coordinate=valid_time)
+        op = oa.AsOf(operand=op, dimension="valid-time", coordinate=valid_time)
     return op
 
 
@@ -171,9 +171,9 @@ def test_bitemporal_history_scans_both_axes() -> None:
     op = oa.History(
         operand=oa.History(
             operand=oa.Comparison(op="eq", attr="Position.id", value=1),
-            dimension="transactionTime",
+            dimension="transaction-time",
         ),
-        dimension="validTime",
+        dimension="valid-time",
     )
     where, binds = _where(op, POSITION)
     assert where == "t0.pos_id = ?"
@@ -208,8 +208,8 @@ def test_directives_survive_injection() -> None:
 
 def test_double_pin_is_rejected() -> None:
     op = oa.AsOf(
-        operand=oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest"),
-        dimension="transactionTime",
+        operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
+        dimension="transaction-time",
         coordinate=_D,
     )
     with pytest.raises(TemporalReadError, match="pinned or scanned twice"):
@@ -217,13 +217,13 @@ def test_double_pin_is_rejected() -> None:
 
 
 def test_undeclared_axis_is_rejected() -> None:
-    op = oa.AsOf(operand=oa.All(), dimension="validTime", coordinate="latest")
+    op = oa.AsOf(operand=oa.All(), dimension="valid-time", coordinate="latest")
     with pytest.raises(TemporalReadError, match="undeclared dimension"):
         inject_as_of(op, BALANCE)
 
 
 def test_temporal_clause_on_non_temporal_entity_is_rejected() -> None:
-    op = oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest")
+    op = oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest")
     with pytest.raises(TemporalReadError, match="non-temporal entity"):
         inject_as_of(op, ORDERS)
 
@@ -292,8 +292,8 @@ def test_pin_reports_only_pinned_axes() -> None:
 
 def test_statement_pin_reads_both_bitemporal_axes() -> None:
     op = oa.AsOf(
-        operand=oa.AsOf(operand=oa.All(), dimension="validTime", coordinate=_B),
-        dimension="transactionTime",
+        operand=oa.AsOf(operand=oa.All(), dimension="valid-time", coordinate=_B),
+        dimension="transaction-time",
         coordinate="latest",
     )
     pin = statement_pin(op, POSITION)
@@ -305,10 +305,10 @@ def test_statement_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> N
     # A scan is not a pin (spec §3): `AsOfRange` / `History` never set a
     # coordinate, even though `statement_pin` still walks through them (called
     # unconditionally ahead of the milestone-set/pinned-read branch decision).
-    ranged = oa.AsOfRange(operand=oa.All(), dimension="transactionTime", start=_P, end="infinity")
+    ranged = oa.AsOfRange(operand=oa.All(), dimension="transaction-time", start=_P, end="infinity")
     assert statement_pin(ranged, POSITION) == Pin()
 
-    scanned = oa.History(operand=oa.All(), dimension="transactionTime")
+    scanned = oa.History(operand=oa.All(), dimension="transaction-time")
     assert statement_pin(scanned, POSITION) == Pin()
 
 
@@ -318,22 +318,22 @@ def test_scans_an_axis_sees_a_scan_under_a_pinned_outer_dimension() -> None:
     # scan still answers a milestone set: the whole nest decides, not the
     # outermost wrapper's kind.
     pinned_over_history = oa.AsOf(
-        operand=oa.History(operand=oa.All(), dimension="transactionTime"),
-        dimension="validTime",
+        operand=oa.History(operand=oa.All(), dimension="transaction-time"),
+        dimension="valid-time",
         coordinate=_B,
     )
     assert scans_an_axis(pinned_over_history)
 
     pinned_over_range = oa.AsOf(
-        operand=oa.AsOfRange(operand=oa.All(), dimension="transactionTime", start=_P, end=_D),
-        dimension="validTime",
+        operand=oa.AsOfRange(operand=oa.All(), dimension="transaction-time", start=_P, end=_D),
+        dimension="valid-time",
         coordinate="latest",
     )
     assert scans_an_axis(pinned_over_range)
 
     both_pinned = oa.AsOf(
-        operand=oa.AsOf(operand=oa.All(), dimension="transactionTime", coordinate="latest"),
-        dimension="validTime",
+        operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
+        dimension="valid-time",
         coordinate=_B,
     )
     assert not scans_an_axis(both_pinned)
@@ -346,8 +346,8 @@ def test_scans_an_axis_peels_result_shaping_directives_off_a_nested_scan() -> No
     op = oa.Limit(
         operand=oa.OrderBy(
             operand=oa.AsOf(
-                operand=oa.History(operand=oa.All(), dimension="transactionTime"),
-                dimension="validTime",
+                operand=oa.History(operand=oa.All(), dimension="transaction-time"),
+                dimension="valid-time",
                 coordinate=_B,
             ),
             keys=(oa.OrderKey(attr="Position.qty"),),

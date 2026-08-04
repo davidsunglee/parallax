@@ -705,12 +705,19 @@ _NON_BARE_PREDICATES: list[tuple[str, dict[str, Any]]] = [
     ("orderBy", {"orderBy": {"operand": _BARE_INNER, "keys": [{"attr": "Account.balance"}]}}),
     ("limit", {"limit": {"operand": _BARE_INNER, "count": 5}}),
     ("distinct", {"distinct": {"operand": _BARE_INNER}}),
-    ("asOf", {"asOf": {"operand": _BARE_INNER, "dimension": "validTime", "coordinate": _B1}}),
+    ("asOf", {"asOf": {"operand": _BARE_INNER, "dimension": "valid-time", "coordinate": _B1}}),
     (
         "asOfRange",
-        {"asOfRange": {"operand": _BARE_INNER, "dimension": "validTime", "start": _B1, "end": _B2}},
+        {
+            "asOfRange": {
+                "operand": _BARE_INNER,
+                "dimension": "valid-time",
+                "start": _B1,
+                "end": _B2,
+            }
+        },
     ),
-    ("history", {"history": {"operand": _BARE_INNER, "dimension": "validTime"}}),
+    ("history", {"history": {"operand": _BARE_INNER, "dimension": "valid-time"}}),
 ]
 
 

@@ -250,7 +250,7 @@ def test_pkgen_temporal_composition_targets_the_temporal_entity() -> None:
     entity, gen, pk_attr = target
     assert entity.name == "AuditEntry"
     # The target is transaction-time-only temporal: it carries a Transaction-Time as-of axis.
-    assert any(axis["dimension"] == "transactionTime" for axis in entity.temporal_runtime_axes)
+    assert any(axis["dimension"] == "transaction-time" for axis in entity.temporal_runtime_axes)
     assert gen["name"] == "entry_seq"
     assert pk_attr["column"] == "id"
 
