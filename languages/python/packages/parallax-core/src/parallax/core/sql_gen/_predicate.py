@@ -628,9 +628,11 @@ def _lower_branch_narrow(narrow: Narrow, scope: EntityScope) -> str:
     """
     plan = _plan_branch_narrow(scope.meta, scope.facet, scope.storage, scope.entity, narrow)
     if scope.variant is not None:
-        if scope.variant not in plan.tag.position:
+        if scope.variant not in plan.position:
             return "1 = 0"
-        return lower_predicate(plan.operand, scope)
+        return lower_predicate(plan.operand, scope) or "1 = 1"
+    if plan.tag is None:  # pragma: no cover - TPCS union branches always carry a variant
+        raise SqlGenError("a TPCS branch narrow requires a concrete branch scope")
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
     branch_sql = lower_predicate(plan.operand, scope)

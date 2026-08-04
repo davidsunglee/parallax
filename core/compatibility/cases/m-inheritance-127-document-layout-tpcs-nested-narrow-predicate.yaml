@@ -1,0 +1,30 @@
+# A narrow nested under a boolean combinator lowers independently in each TPCS branch.
+model: models/document-layout.yaml
+tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-concrete-subtype, document-layout, union-all, narrow, predicate, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Publication
+  operation:
+    or:
+      operands:
+        - narrow:
+            entity: Publication
+            to: [Book]
+            operand:
+              greaterThan: { attr: Book.pages, value: 300 }
+        - narrow:
+            entity: Publication
+            to: [Film]
+            operand:
+              greaterThan: { attr: Film.minutes, value: 100 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload, 'Book' family_variant from publication_book t0 where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? or 1 = 0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0 where 1 = 0 or cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ?
+        mariadb: select t0.id, t0.payload, 'Book' family_variant from publication_book t0 where cast(json_value(t0.payload, ?) as signed) > ? or 1 = 0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0 where 1 = 0 or cast(json_value(t0.payload, ?) as signed) > ?
+      binds:
+        postgres: [pages, 300, minutes, 100]
+        mariadb: ['$.pages', 300, '$.minutes', 100]
+  rows:
+    - { id: 10, title: Systems, detail: ISBN-10, pages: 320, minutes: null, familyVariant: Book }
+  roundTrips: 1

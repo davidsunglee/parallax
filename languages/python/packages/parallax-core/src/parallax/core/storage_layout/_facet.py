@@ -187,7 +187,7 @@ class EntityLayoutView(Protocol):
 class PositionColumn:
     """One logical declaration-provenance column of a polymorphic position."""
 
-    contributor: AttributeIdentity | ValueObjectIdentity
+    contributor: ColumnContributor
     tier: ColumnTier
     declaring_owner: EntityIdentity
 

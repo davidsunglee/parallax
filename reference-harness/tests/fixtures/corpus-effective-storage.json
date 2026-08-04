@@ -263,6 +263,17 @@
       "documentPath": {},
       "valueObject": {}
     },
+    "parallax.compatibility.Book": {
+      "attribute": {
+        "detail": "detail",
+        "pages": "pages"
+      },
+      "documentPath": {
+        "detail": "payload:detail",
+        "pages": "payload:pages"
+      },
+      "valueObject": {}
+    },
     "parallax.compatibility.CardPayment": {
       "attribute": {
         "authorizationCode": "authorization_code",
@@ -301,6 +312,17 @@
         "terms": "terms"
       }
     },
+    "parallax.compatibility.Film": {
+      "attribute": {
+        "detail": "detail",
+        "minutes": "minutes"
+      },
+      "documentPath": {
+        "detail": "payload:detail",
+        "minutes": "payload:minutes"
+      },
+      "valueObject": {}
+    },
     "parallax.compatibility.Ledger": {
       "attribute": {
         "balance": "balance",
@@ -332,6 +354,14 @@
     "parallax.compatibility.Payment": {
       "attribute": {
         "id": "id"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Publication": {
+      "attribute": {
+        "id": "id",
+        "title": "title"
       },
       "documentPath": {},
       "valueObject": {}

@@ -373,3 +373,43 @@ entities:
     attributes:
       - name: detail
         type: decimal(18,2)
+  # Publication: a table-per-concrete-subtype family. Each concrete table owns a
+  # Structured Column governed by the root's one layout declaration.
+  - name: Publication
+    namespace: parallax.compatibility
+    layout:
+      document:
+        column: payload
+    inheritance:
+      role: root
+      strategy: table-per-concrete-subtype
+    attributes:
+      - name: id
+        type: int64
+        primaryKey: true
+      - name: title
+        type: string
+        maxLength: 64
+  - name: Book
+    namespace: parallax.compatibility
+    table: publication_book
+    inheritance:
+      role: concrete-subtype
+      parent: Publication
+    attributes:
+      - name: detail
+        type: string
+        maxLength: 32
+      - name: pages
+        type: int32
+  - name: Film
+    namespace: parallax.compatibility
+    table: publication_film
+    inheritance:
+      role: concrete-subtype
+      parent: Publication
+    attributes:
+      - name: detail
+        type: int32
+      - name: minutes
+        type: int32

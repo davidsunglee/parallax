@@ -20,7 +20,6 @@ from reference_harness.data_loader import load_model as load_fixture_rows
 from reference_harness.ddl_builder import ddl_for
 from reference_harness.storage_layout import (
     STORAGE_LAYOUT_COLUMN_COLLISION,
-    STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED,
     STORAGE_LAYOUT_DOCUMENT_MEMBER_COLUMN_OVERRIDE,
     STORAGE_LAYOUT_INDEX_OVER_DOCUMENT_MEMBER,
     STORAGE_LAYOUT_TABLE_MAPPING_COLLISION,
@@ -888,11 +887,7 @@ def _document_tpcs() -> list[dict[str, Any]]:
     return definitions
 
 
-def test_a_document_tpcs_root_is_refused_for_its_mapping_shape_alone() -> None:
-    # The refused-shape list is a set of independent predicates over one accepted
-    # root-owned declaration, and the gate names every entry the owner matches. A
-    # temporal axis is not among them, so a temporal family is refused for the
-    # mapping shape it declares and for nothing else.
+def test_a_temporal_document_tpcs_root_is_accepted() -> None:
     definitions = _document_tpcs()
     definitions[0]["attributes"].extend(
         [{"name": "txStart", "type": "timestamp"}, {"name": "txEnd", "type": "timestamp"}]
@@ -904,12 +899,7 @@ def test_a_document_tpcs_root_is_refused_for_its_mapping_shape_alone() -> None:
             "endAttribute": "txEnd",
         }
     ]
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(definitions)
-    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
-    assert "a table-per-concrete-subtype family" in caught.value.detail
-    assert "Transaction-Time" not in caught.value.detail
-    assert "'doc'" in caught.value.detail
+    validate_storage_layout(definitions)
 
 
 def test_a_standalone_document_layout_owner_matches_no_refused_shape() -> None:
@@ -946,12 +936,14 @@ def _document_hierarchy() -> list[dict[str, Any]]:
     return definitions
 
 
-def test_the_capability_gate_refuses_one_tpcs_family_at_its_root() -> None:
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(_document_tpcs())
-    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
-    assert "a table-per-concrete-subtype family" in caught.value.detail
-    assert "'example.Document'" in caught.value.detail
+def test_a_document_tpcs_family_has_one_structured_column_per_branch() -> None:
+    definitions = _document_tpcs()
+    validate_storage_layout(definitions)
+    layout = compile_storage_layout(definitions)
+    for table in ("invoice", "memo"):
+        branch = layout.table(table)
+        assert branch is not None
+        assert [slot.column for slot in branch.columns][-1] == "doc"
 
 
 def test_a_document_tph_family_matches_no_refused_shape() -> None:
@@ -1117,9 +1109,7 @@ def test_an_inherited_join_endpoint_is_direct_at_the_declaration_that_bears_it()
     # declared Attribute, so `ownerId` keeps its Column and its Override, and the
     # concrete Table carries the Column the join needs.
     definitions = _document_family_joined_through_an_inherited_endpoint()
-    with pytest.raises(RejectionError) as caught:
-        validate_storage_layout(definitions)
-    assert caught.value.rule == STORAGE_LAYOUT_DOCUMENT_CAPABILITY_UNSUPPORTED
+    validate_storage_layout(definitions)
     layout = compile_storage_layout(definitions).table("entry")
     assert layout is not None
     assert [slot.column for slot in layout.columns] == ["id", "owner_key", "doc"]

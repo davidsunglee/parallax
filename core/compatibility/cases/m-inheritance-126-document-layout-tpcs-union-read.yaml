@@ -1,0 +1,18 @@
+# A broad TPCS instance read projects and decodes each concrete table's own document.
+model: models/document-layout.yaml
+tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-concrete-subtype, document-layout, union-all, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Publication
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0
+        mariadb: select t0.id, t0.payload, 'Book' family_variant from publication_book t0 union all select t0.id, t0.payload, 'Film' family_variant from publication_film t0
+  graph:
+    Publication:
+      - { id: 10, title: Systems, detail: ISBN-10, pages: 320, familyVariant: Book }
+      - { id: 20, title: Frames, detail: 850, minutes: 95, familyVariant: Film }
+  roundTrips: 1

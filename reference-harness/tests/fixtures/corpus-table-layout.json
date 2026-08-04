@@ -893,6 +893,60 @@
         0
       ]
     },
+    "publication_book": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Book"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Publication.id",
+          "declaringOwner": "parallax.compatibility.Publication",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Book"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Publication",
+          "declaringOwner": "parallax.compatibility.Publication",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
+    "publication_film": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Film"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Publication.id",
+          "declaringOwner": "parallax.compatibility.Publication",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.Film"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Publication",
+          "declaringOwner": "parallax.compatibility.Publication",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
     "traveler": {
       "columns": [
         {

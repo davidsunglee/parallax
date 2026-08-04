@@ -78,6 +78,7 @@ from parallax.core import (
     index,
     rel,
 )
+from parallax.core.metamodel import TablePerConcreteSubtype
 
 _NS = "parallax.compatibility"
 
@@ -484,6 +485,39 @@ class DocumentCashPayment(
     detail: Attr[Decimal] = attr(precision=18, scale=2)
 
 
+class DocumentPublication(
+    Entity,
+    name="Publication",
+    namespace=_NS,
+    layout=Document(),
+    inheritance=AbstractRoot(TablePerConcreteSubtype()),
+):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str] = attr(max_length=64)
+
+
+class DocumentBook(
+    DocumentPublication,
+    name="Book",
+    table="publication_book",
+    namespace=_NS,
+    inheritance=ConcreteSubtype(),
+):
+    detail: Attr[str] = attr(max_length=32)
+    pages: Attr[int] = attr(type=Int32)
+
+
+class DocumentFilm(
+    DocumentPublication,
+    name="Film",
+    table="publication_film",
+    namespace=_NS,
+    inheritance=ConcreteSubtype(),
+):
+    detail: Attr[int] = attr(type=Int32)
+    minutes: Attr[int] = attr(type=Int32)
+
+
 DOCUMENT_LAYOUT_MODEL = DomainModel(
     Traveler,
     Trip,
@@ -495,6 +529,9 @@ DOCUMENT_LAYOUT_MODEL = DomainModel(
     DocumentPayment,
     DocumentCardPayment,
     DocumentCashPayment,
+    DocumentPublication,
+    DocumentBook,
+    DocumentFilm,
 )
 
 MIRRORED: list[tuple[str, DomainModel]] = [

@@ -113,3 +113,7 @@ CardPayment:
 CashPayment:
   - id: 2
     detail: 12.50
+Book:
+  - { id: 10, title: Systems, detail: ISBN-10, pages: 320 }
+Film:
+  - { id: 20, title: Frames, detail: 850, minutes: 95 }
