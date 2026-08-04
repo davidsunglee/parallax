@@ -4,8 +4,9 @@
 # CardPayment.detail compares as text while CashPayment.detail casts to decimal.
 # One unpartitioned SELECT could evaluate the decimal cast against `visa-4242`,
 # raising on PostgreSQL and silently coercing to 0.00 on MariaDB. Each union branch
-# carries one concrete tag guard, so its extraction and cast see only the variant
-# that declares that interpretation of `detail`; both matching rows are returned.
+# fences its concrete tag filter before the outer extraction and cast: PostgreSQL
+# uses `offset 0`, while MariaDB uses its maximum-limit form. A flattenable derived
+# table would not provide this guarantee. Both matching rows are returned.
 model: models/document-layout.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
 shape: read

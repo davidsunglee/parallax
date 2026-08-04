@@ -2,7 +2,7 @@
 
 The pure, driver-free dialect strategy — the single home of every
 dialect-specific decision (`m-dialect`): identifier quoting, NULL ordering,
-row-limit rendering, shared-read-lock application, the neutral-type → column-type
+row-limit rendering, optimizer fences, shared-read-lock application, the neutral-type → column-type
 mapping, the structured-document extraction / typed-cast forms, the bytes
 projection shape, the canonical `?` → driver placeholder translation, the
 infinity representation, and the SQLSTATE → neutral-category table (`m-db-error`).
@@ -151,6 +151,10 @@ class Dialect:
     def limit_clause(self) -> str:
         """The row-limit clause (the count rides as a `?` bind)."""
         return "limit ?"
+
+    def optimizer_fence(self) -> tuple[str, list[object]]:
+        """Prevent a discriminator-filtered derived table from being flattened."""
+        return "offset 0", []
 
     def null_order(
         self,

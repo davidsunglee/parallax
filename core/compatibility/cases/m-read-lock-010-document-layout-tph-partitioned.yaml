@@ -3,10 +3,11 @@
 # to the shared base Table, and locks the base rows with one outer SELECT.
 #
 # CardPayment.detail is text while CashPayment.detail is decimal, so an
-# unpartitioned cast is unsafe. The derived relation preserves tag-disjoint
-# evaluation; the outer Postgres `for share of t0` and MariaDB `lock in share
-# mode` lock the returned payment_document rows in one round trip rather than
-# locking a derived result or issuing one statement per concrete subtype.
+# unpartitioned cast is unsafe. Each derived branch fences its inner tag filter
+# before the outer variant-specific cast: PostgreSQL uses `offset 0`, while
+# MariaDB binds its maximum-limit form. A flattenable derived relation would not
+# preserve this ordering. The outer Postgres `for share of t0` and MariaDB `lock
+# in share mode` lock the returned payment_document rows in one round trip.
 model: models/document-layout.yaml
 tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
 shape: read
