@@ -6,14 +6,12 @@ consistency check)::
 
 ``then.rejectedRule`` is documented in TWO places that must never drift apart:
 the normative prose in ``core/spec/m-case-format.md``'s "Rejected cases"
-section, and the schema `enum` in ``compatibility-case.schema.json``. A
-residual-round finding found the schema `enum` missing an entry
-(`inheritance-temporality-not-root-owned`) while the prose was already
-correct — a safety-critical gap, since a rejected case pinning that rule would
-fail SCHEMA validation regardless of whether every implementation classified
-it correctly. This is a mechanical guard against that recurring: it parses
-both sides and asserts set equality, independent of either author remembering
-to update the other.
+section, and the schema `enum` in ``compatibility-case.schema.json``. A schema
+`enum` missing an entry the prose already documents is a safety-critical gap,
+since a rejected case pinning that rule would fail SCHEMA validation
+regardless of whether every implementation classified it correctly. This is a
+mechanical guard: it parses both sides and asserts set equality, independent
+of either author remembering to update the other.
 
 Parsing the prose: the "Rejected cases" section names each rule in one of two
 shapes. **Operation** / **Write** / **Subtype-write** rules are each a

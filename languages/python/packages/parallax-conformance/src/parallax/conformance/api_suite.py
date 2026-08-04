@@ -735,7 +735,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 )
 
 # `when.model` descriptor-shape rejects (m-inheritance-020..032, plus the
-# root-ownership witnesses 098/099, plus the optimistic-
+# root-ownership witnesses 098/099/129, plus the optimistic-
 # locking root-ownership witnesses 102/103): a DIFFERENT validation surface
 # than the operation-level rejected lane.
 # `_descriptor_family.validate` classifies these exact rules for a raw
@@ -1108,6 +1108,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-117": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-121": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     "m-inheritance-122": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
+    "m-inheritance-129": _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON,
     # -- m-metamodel: foundational model-declaration reject ------------------ #
     "m-metamodel-001": _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON,
     # -- m-navigate: `navigate`-tagged corpus spelling redundancy ------------ #

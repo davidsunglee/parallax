@@ -3,10 +3,10 @@
 Guards the normative property `case_format_vocab_check` exists to prove: the
 `rejectedRule` vocabulary `core/spec/m-case-format.md` documents in prose is
 EXACTLY the `enum` `core/schemas/compatibility-case.schema.json` declares —
-neither side may drift from the other (the residual-round finding: the schema
-`enum` was once missing `inheritance-temporality-not-root-owned` while the
-prose was already correct, a safety-critical gap since a case pinning that
-rule would fail schema validation regardless of implementation correctness).
+neither side may drift from the other. The drift is silent and
+safety-critical: a schema `enum` missing a rule the prose documents makes a
+case pinning that rule fail schema validation regardless of whether every
+implementation classifies it correctly.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def test_real_prose_vocabulary_is_the_full_forty_six_rule_set() -> None:
     prose = prose_rejected_rules(_real_markdown())
     assert len(prose) == 46
     assert "metamodel-index-identity-duplicate" in prose  # the foundational resolver rule
-    assert "inheritance-temporality-not-root-owned" in prose  # the residual-round rule
+    assert "inheritance-temporality-not-root-owned" in prose  # a root-owned family rule
     assert "inheritance-optimistic-locking-not-root-owned" in prose  # the D-25 rule
     assert "nested-path-first-segment-not-value-object" in prose  # an Operation-rule bullet
     assert "between-bounds-inverted" in prose  # the bound-ordering Operation rule
