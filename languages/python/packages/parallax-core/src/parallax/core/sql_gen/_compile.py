@@ -729,7 +729,8 @@ def _compile_tph_partitioned(
         )
         tag_sql, tag_binds = _tph_tag_guard(base_scope, facet, tag)
         tagged_alias = f"p{branch_index + 1}"
-        tagged = f"select * from {plan.table} {base_scope.alias} where {tag_sql} offset 0"
+        fence_sql, fence_binds = dialect.optimizer_fence()
+        tagged = f"select * from {plan.table} {base_scope.alias} where {tag_sql} {fence_sql}"
         branch_scope = _EntityScope(
             branch_ctx,
             entity,
@@ -746,6 +747,7 @@ def _compile_tph_partitioned(
             projection, projection_binds = plan.projection(dialect, branch_scope.alias)
             branch_ctx.binds.extend(projection_binds)
         branch_ctx.binds.extend(tag_binds)
+        branch_ctx.binds.extend(fence_binds)
         inner = _lower_predicate(plan.inner, branch_scope)
         parts = [f"select {projection}", f"from ({tagged}) {tagged_alias}"]
         if inner:

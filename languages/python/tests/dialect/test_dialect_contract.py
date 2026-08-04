@@ -2,7 +2,7 @@
 
 Table-driven over the concrete dialects (one row today: postgres), covering the
 `m-dialect` decision catalog: identifier quoting, NULL ordering per direction,
-row-limit rendering, shared-read-lock application, neutral-scalar column-type
+row-limit rendering, optimizer fencing, shared-read-lock application, neutral-scalar column-type
 mapping (parametric decimals, bounded strings), the bytes projection shape and
 its projection-introduced bind, the structured-document extraction / typed-cast
 forms, canonical `?` -> `%s` placeholder translation, the infinity sentinel, and
@@ -65,6 +65,7 @@ def test_null_ordering_per_direction_and_placement(dialect: Dialect) -> None:
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
 def test_row_limit_and_read_lock(dialect: Dialect) -> None:
     assert dialect.limit_clause() == "limit ?"
+    assert dialect.optimizer_fence() == ("offset 0", [])
     assert dialect.read_lock_suffix("t0") == "for share of t0"
 
 
