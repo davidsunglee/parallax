@@ -64,6 +64,10 @@ from .inheritance import (
 )
 from .op_validate import validate_operation
 from .operation_references import OPERAND_ROW_WRAPPER_TAGS
+from .predicate_write_validate import (
+    requires_predicate_write_materialization,
+    validate_predicate_write,
+)
 from .providers import DatabaseProvider
 from .sql_normalize import is_union_all, normalize, sqlglot_dialect
 from .storage_layout import (
@@ -2756,12 +2760,11 @@ def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> Non
     entity = case.model.entity(str(target_name))
     if entity is None:
         return
+    validate_predicate_write(entity, write)
     document_layout = entity.runtime_facts.get("layout", {}).get("document")
     if not document_layout:
         return
-    if entity.is_temporal or any(
-        attribute.get("optimisticLocking") for attribute in entity.attributes
-    ):
+    if requires_predicate_write_materialization(entity):
         return
     for assignment in write.get("assignments", []):
         name = str(assignment.get("attr", "")).rsplit(".", 1)[-1]

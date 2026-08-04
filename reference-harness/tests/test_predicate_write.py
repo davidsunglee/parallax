@@ -569,6 +569,22 @@ def test_model_validator_accepts_atomic_top_level_value_object_assignment() -> N
     validate_predicate_write(entity, instruction)
 
 
+def test_model_validator_accepts_omitted_nested_many_assignment() -> None:
+    entity = _customer_entity()
+    instruction = {
+        "mutation": "update",
+        "target": {"entity": "Customer", "predicate": {"all": {}}},
+        "assignments": [
+            {
+                "attr": "Customer.address",
+                "value": {"street": "Main", "city": "Oslo"},
+            }
+        ],
+    }
+
+    validate_predicate_write(entity, instruction)
+
+
 def test_model_validator_accepts_array_for_many_value_object_assignment() -> None:
     entity = _customer_entity()
     definition = deepcopy(entity.definition)
