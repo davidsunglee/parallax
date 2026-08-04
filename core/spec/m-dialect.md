@@ -42,15 +42,17 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | `SELECT` shape (column list, alias scheme) | `select t0.col, … from tbl t0 where …` | identical |
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
+| **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
 | **read-lock application** (`m-read-lock`) | object find: `for share of t0`; projection/aggregation: omitted | object find: **`lock in share mode`** (no `for share`; MDEV-17514); projection/aggregation: omitted |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
 | typed bind normalization | managed values render to canonical `m-core` wire values | timestamp binds remain typed `Instant`/`infinity` so the adapter can render `datetime(6)`/max-sentinel; other values render to canonical `m-core` wire values |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
 | error-code classification (`m-db-error`) | SQLSTATE: `23505` unique, `40P01`/`40001` deadlock, `55P03` lock timeout | errno: `1062` duplicate, `1213` deadlock, `1205` lock timeout |
 
-The two decision points MariaDB **diverges** on — the read-lock (application) and
-the infinity representation — are exactly the ones the second dialect was chosen
-to exercise; they are detailed below. The divergent **type mappings** are
+The read-lock application and infinity representation are the original two
+decision points the second dialect was chosen to exercise; they are detailed
+below. The catalog also records the dialects' other settled divergences, including
+the optimizer fence that protects tag-disjoint document casts. The divergent **type mappings** are
 round-tripped against real MariaDB by the scalar witness (compatibility case
 `m-core-004`), and the UTC-instant normalization + microsecond precision of
 `datetime(6)` by the timestamp write cases (`m-core-002`/`m-core-003`). Error-code
