@@ -176,8 +176,7 @@ def test_storage_layout_has_exact_direct_dependencies_and_manifest_ownership() -
         "| required | `storage-layout-table-mapping-collision`, "
         "`storage-layout-column-collision`, "
         "`storage-layout-document-member-column-override`, "
-        "`storage-layout-index-over-document-member`, "
-        "`storage-layout-document-capability-unsupported` |" in storage_row
+        "`storage-layout-index-over-document-member` |" in storage_row
     )
     assert "storage-layout-table-mapping-collision" in storage_row
     assert "storage-layout-table-boundary-collision" not in storage_row

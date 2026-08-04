@@ -291,6 +291,13 @@ shortest-round-trip float formatter produces, the even-digit tie-break included;
 a fixed-width `17`-significant-digit rendering is not admissible, even though it
 also round-trips.
 
+Canonical float rendering is a writer obligation. A read seam MUST reject a
+noncanonical stored number when its carrier preserves enough information to
+distinguish that number from the canonical one. When parsing has already
+collapsed both numbers to the same carrier value, as a binary64 carrier does for
+`float64`, the seam cannot recover that distinction and MUST still materialize
+the declared value; it does not weaken the writer obligation.
+
 **Encoding and decoding are inverse.** For every value of a declared type,
 decoding its encoding yields an equal value, and the encoding is the unique
 document value this table admits. So a value's document form does not depend on

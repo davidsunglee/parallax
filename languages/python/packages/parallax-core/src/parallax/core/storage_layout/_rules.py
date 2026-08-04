@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -14,7 +14,6 @@ from parallax.core.inheritance import (
     project_table_groups,
 )
 from parallax.core.metamodel import (
-    AbstractRoot,
     AttributeIdentity,
     AttributeLocation,
     CandidateMetamodel,
@@ -24,7 +23,6 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityLocation,
     IndexLocation,
-    InheritanceStrategy,
     IssueCode,
     MetamodelIssue,
     ModelLocation,
@@ -35,17 +33,13 @@ from parallax.core.relationship import project_join_endpoints
 from parallax.core.storage_layout._roles import DirectRoles, declares_column_override
 
 __all__ = [
-    "CAPABILITY_SCOPE",
     "COLUMN_COLLISION",
-    "DOCUMENT_CAPABILITY_UNSUPPORTED",
     "DOCUMENT_MEMBER_COLUMN_OVERRIDE",
     "INDEX_OVER_DOCUMENT_MEMBER",
     "ISSUE_CODES",
     "RULE_SET",
     "STORAGE_LAYOUT_MODULE",
     "TABLE_MAPPING_COLLISION",
-    "CapabilityScopeEntry",
-    "DocumentLayoutOwner",
     "StorageLayoutRuleSet",
     "validate_storage_layout",
 ]
@@ -68,55 +62,12 @@ INDEX_OVER_DOCUMENT_MEMBER: Final[IssueCode] = "storage-layout-index-over-docume
 index; this contract adds no document-path, expression, or provider-native index
 form."""
 
-DOCUMENT_CAPABILITY_UNSUPPORTED: Final[IssueCode] = "storage-layout-document-capability-unsupported"
-"""A root-owned Relational Document Layout selects a shape this build cannot
-execute end to end. The code exists only while :data:`CAPABILITY_SCOPE` is
-non-empty; emptying the scope retires the rule and this code with it."""
-
-
-@dataclass(frozen=True, slots=True)
-class DocumentLayoutOwner:
-    """One accepted root-owned ``Document`` declaration and the mapping it governs.
-
-    ``declaration`` is the accepted Entity Declaration that selected the layout.
-    ``strategy`` is the family's root-owned inheritance strategy, or absent for a
-    standalone Entity.
-    """
-
-    declaration: EntityDeclaration
-    layout: Document
-    strategy: InheritanceStrategy | None
-
-
-@dataclass(frozen=True, slots=True)
-class CapabilityScopeEntry:
-    """One layout shape this build declares it cannot execute end to end.
-
-    ``shape`` names the shape in the diagnostic and ``matches`` decides it over
-    an accepted root-owned declaration. An entry is deleted whole once the build
-    executes that shape's reads and writes alike.
-    """
-
-    shape: str
-    matches: Callable[[DocumentLayoutOwner], bool]
-
-
-CAPABILITY_SCOPE: Final[tuple[CapabilityScopeEntry, ...]] = ()
-"""The closed set of layout shapes this build refuses.
-
-Each entry is a predicate over one accepted root-owned ``Document``
-declaration. The list shrinks as the runtime widens, and the last deletion takes
-:data:`DOCUMENT_CAPABILITY_UNSUPPORTED` and this rule with it: an empty scope
-refuses nothing and is not a supported state.
-"""
-
 ISSUE_CODES: Final[frozenset[IssueCode]] = frozenset(
     {
         TABLE_MAPPING_COLLISION,
         COLUMN_COLLISION,
         DOCUMENT_MEMBER_COLUMN_OVERRIDE,
         INDEX_OVER_DOCUMENT_MEMBER,
-        DOCUMENT_CAPABILITY_UNSUPPORTED,
     }
 )
 """The complete Issue Code set owned by Storage Layout."""
@@ -137,10 +88,6 @@ def _temporal_designations(declaration: EntityDeclaration) -> frozenset[Attribut
         for axis in declaration.as_of_axes
         for attribute in (axis.start_attribute, axis.end_attribute)
     )
-
-
-def _strategy(owner: EntityDeclaration) -> InheritanceStrategy | None:
-    return owner.inheritance.strategy if isinstance(owner.inheritance, AbstractRoot) else None
 
 
 def _document_groups(
@@ -317,51 +264,8 @@ def _index_issues(
     return issues
 
 
-def _layout_owners(
-    candidate: CandidateMetamodel, document_groups: Sequence[_DocumentGroup]
-) -> tuple[DocumentLayoutOwner, ...]:
-    """The accepted root-owned ``Document`` declarations, one per layout owner.
-
-    A table-per-concrete-subtype family projects one group per concrete Table
-    under one root, so the groups are folded back onto their owner and the gate
-    fires once per layout declaration rather than once per governed Table.
-    """
-    layouts: dict[EntityIdentity, Document] = {}
-    for document in document_groups:
-        layouts[document.group.root] = document.layout
-    owners: list[DocumentLayoutOwner] = []
-    for identity in sorted(layouts, key=lambda entity: entity.sort_key):
-        declaration = candidate.entity(identity)
-        if declaration is None:  # pragma: no cover - the group projected this root
-            continue
-        owners.append(
-            DocumentLayoutOwner(
-                declaration=declaration,
-                layout=layouts[identity],
-                strategy=_strategy(declaration),
-            )
-        )
-    return tuple(owners)
-
-
-def _capability_issue(owner: DocumentLayoutOwner) -> MetamodelIssue | None:
-    """The gate diagnostic for ``owner``, or absence when this build executes it."""
-    refused = [entry.shape for entry in CAPABILITY_SCOPE if entry.matches(owner)]
-    if not refused:
-        return None
-    return MetamodelIssue(  # pragma: no cover - reachable only while the scope is non-empty
-        DOCUMENT_CAPABILITY_UNSUPPORTED,
-        EntityLocation(owner.declaration.identity),
-        message=(
-            f"Relational Document Layout over Structured Column "
-            f"{owner.layout.column.name!r} is not executable by this build: "
-            f"{', '.join(refused)}"
-        ),
-    )
-
-
 def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIssue, ...]:
-    """Report independent-owner, physical-Column, layout, and capability defects.
+    """Report independent-owner, physical-Column, and layout defects.
 
     Mapping owners are visited in canonical Entity Identity order. Every later
     owner of one Table relates to the first owner, and a multiply owned Table is
@@ -369,16 +273,12 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
     invalid physical boundary. The complete mapping pass finishes before any
     uniquely owned Table enters Column validation.
 
-    The capability gate runs last and skips a layout owner whose own mapping
-    raised anything above, so a model with a genuine layout defect reports that
-    defect rather than a refusal to execute the layout it does not yet have.
     """
     groups = project_table_groups(candidate)
     document_groups = _document_groups(candidate, groups, project_join_endpoints(candidate))
     documents_by_table = {document.group.table: document for document in document_groups}
     first_owners: dict[Table, InheritanceTableGroup] = {}
     multiply_owned: set[Table] = set()
-    defective: set[EntityIdentity] = set()
     issues: list[MetamodelIssue] = []
     for group in groups:
         first = first_owners.get(group.table)
@@ -386,7 +286,6 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
             first_owners[group.table] = group
             continue
         multiply_owned.add(group.table)
-        defective.update((group.root, first.root))
         issues.append(
             MetamodelIssue(
                 TABLE_MAPPING_COLLISION,
@@ -402,21 +301,12 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
         if group.table in multiply_owned:
             continue
         column_issues = _column_issues(group, documents_by_table.get(group.table))
-        if column_issues:
-            defective.add(group.root)
         issues.extend(column_issues)
-    for owner, issue in (
+    for _, issue in (
         *_override_issues(document_groups),
         *_index_issues(candidate, document_groups),
     ):
-        defective.add(owner)
         issues.append(issue)
-    for owner in _layout_owners(candidate, document_groups):
-        if owner.declaration.identity in defective:
-            continue
-        capability = _capability_issue(owner)
-        if capability is not None:  # pragma: no cover - reachable only with a non-empty scope
-            issues.append(capability)
     return tuple(issues)
 
 

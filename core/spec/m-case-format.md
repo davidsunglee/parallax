@@ -1212,10 +1212,8 @@ Column claim one physical Column,
 or top-level Value Object carries a Column Override its root-owned Relational
 Document Layout contradicts,
 `storage-layout-index-over-document-member`: an Index component names a
-document-resident Attribute, which has no Column to index, and
-`storage-layout-document-capability-unsupported`: a well-formed root-owned
-Relational Document Layout selects a capability shape this build declares it
-cannot execute end to end (see `m-storage-layout` for each invariant).
+document-resident Attribute, which has no Column to index (see
+`m-storage-layout` for each invariant).
 A `when.model` case carries an **inline** model descriptor — an
 instance of `metamodel.schema.json` with an accepted-model formation defect — kept inside the
 case rather than in the shared `models/` registry, so an invalid model cannot

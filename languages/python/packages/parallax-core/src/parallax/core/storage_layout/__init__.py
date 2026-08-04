@@ -36,24 +36,18 @@ from parallax.core.storage_layout._facet import (
     view,
 )
 from parallax.core.storage_layout._rules import (
-    CAPABILITY_SCOPE,
     COLUMN_COLLISION,
-    DOCUMENT_CAPABILITY_UNSUPPORTED,
     DOCUMENT_MEMBER_COLUMN_OVERRIDE,
     INDEX_OVER_DOCUMENT_MEMBER,
     ISSUE_CODES,
     RULE_SET,
     STORAGE_LAYOUT_MODULE,
     TABLE_MAPPING_COLLISION,
-    CapabilityScopeEntry,
-    DocumentLayoutOwner,
     StorageLayoutRuleSet,
 )
 
 __all__ = [
-    "CAPABILITY_SCOPE",
     "COLUMN_COLLISION",
-    "DOCUMENT_CAPABILITY_UNSUPPORTED",
     "DOCUMENT_MEMBER_COLUMN_OVERRIDE",
     "FACET_KEY",
     "INDEX_OVER_DOCUMENT_MEMBER",
@@ -62,13 +56,11 @@ __all__ = [
     "RULE_SET",
     "STORAGE_LAYOUT_MODULE",
     "TABLE_MAPPING_COLLISION",
-    "CapabilityScopeEntry",
     "ColumnContributor",
     "ColumnSlot",
     "ColumnTier",
     "DirectColumn",
     "DiscriminatorAssignment",
-    "DocumentLayoutOwner",
     "DocumentPath",
     "EntityLayoutView",
     "InheritanceDiscriminator",

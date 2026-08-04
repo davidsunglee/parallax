@@ -38,12 +38,12 @@ def test_real_prose_and_schema_vocabularies_match() -> None:
     assert check(_real_markdown(), _real_schema()) == []
 
 
-def test_real_prose_vocabulary_is_the_full_forty_six_rule_set() -> None:
+def test_real_prose_vocabulary_is_the_full_forty_five_rule_set() -> None:
     # A sanity floor: the parser found every bulleted group PLUS the
     # comma-separated Model-rules paragraph, not an accidentally-truncated
     # subset (a parsing-anchor regression would silently shrink this).
     prose = prose_rejected_rules(_real_markdown())
-    assert len(prose) == 46
+    assert len(prose) == 45
     assert "inheritance-temporal-axes-not-root-owned" in prose  # the residual-round rule
     assert "inheritance-optimistic-locking-not-root-owned" in prose  # the D-25 rule
     assert "nested-path-first-segment-not-value-object" in prose  # an Operation-rule bullet
@@ -62,12 +62,11 @@ def test_real_prose_vocabulary_is_the_full_forty_six_rule_set() -> None:
     assert "inheritance-layout-not-root-owned" in prose  # the root-owned Storage Layout rule
     assert "storage-layout-document-member-column-override" in prose
     assert "storage-layout-index-over-document-member" in prose
-    assert "storage-layout-document-capability-unsupported" in prose
 
 
-def test_real_schema_enum_is_the_full_forty_six_rule_set() -> None:
+def test_real_schema_enum_is_the_full_forty_five_rule_set() -> None:
     rules = schema_rejected_rules(_real_schema())
-    assert len(rules) == 46
+    assert len(rules) == 45
     assert "between-bounds-inverted" in rules
     assert "nested-string-predicate-non-string-member" in rules
     assert "storage-layout-table-mapping-collision" in rules
@@ -78,7 +77,6 @@ def test_real_schema_enum_is_the_full_forty_six_rule_set() -> None:
     assert "inheritance-layout-not-root-owned" in rules
     assert "storage-layout-document-member-column-override" in rules
     assert "storage-layout-index-over-document-member" in rules
-    assert "storage-layout-document-capability-unsupported" in rules
     assert "storage-layout-table-boundary-collision" not in rules
     assert "inheritance-physical-column-collision" not in rules
 

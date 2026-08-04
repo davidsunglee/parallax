@@ -863,7 +863,6 @@
             "storage-layout-column-collision",
             "storage-layout-document-member-column-override",
             "storage-layout-index-over-document-member",
-            "storage-layout-document-capability-unsupported",
             "inheritance-materialization-key-collision",
             "narrow-outside-position",
             "narrow-empty-effective-set",

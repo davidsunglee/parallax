@@ -445,6 +445,7 @@ def test_internal_audit_designations_cover_all_six_tiers_without_new_declaration
     revised_slot = layout.contribution(revised_by)
     assert revised_slot is not None
     assert revised_slot.tier is storage_layout.ColumnTier.AUDIT
+    assert layout.placement(revised_by) == storage_layout.DirectColumn(revised_slot)
 
 
 def test_temporal_revision_alias_is_one_temporal_slot_not_an_audit_duplicate() -> None:

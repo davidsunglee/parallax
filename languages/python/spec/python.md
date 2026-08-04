@@ -1640,8 +1640,7 @@ pure, total validation-time join-endpoint projection; it owns exactly
 `storage-layout-table-mapping-collision`,
 `storage-layout-column-collision`,
 `storage-layout-document-member-column-override`,
-`storage-layout-index-over-document-member`, and — while its capability scope
-list is non-empty — `storage-layout-document-capability-unsupported`; it never
+and `storage-layout-index-over-document-member`; it never
 consumes a facet, and never relies on Rule Set order. Owner collisions are
 reported before physical Column claims; the Column collision code remains
 exclusive to distinct physical Column contributors, which under Relational
@@ -1732,6 +1731,14 @@ or descriptor authoring form and performs no audit stamping.
   | `timestamp` | tz-aware `datetime` | naive rejected; normalized UTC; microseconds | `timestamptz`; aware UTC on read |
   | `uuid` | `uuid.UUID` | `UUID` or canonical string | driver uuid |
   | `json` (value object only — `m-core` admits no direct `json` member) | nested frozen value-object class | the VO class instance; never a raw dict | structured column per dialect |
+
+  Python represents both neutral float widths with its binary64 `float`
+  carrier. A `float32` input is a member when narrowing it to IEEE-754 binary32
+  is finite and yields the value represented by that input; integral inputs must
+  narrow exactly, while fractional inputs may round to the nearest binary32
+  value because Python cannot carry that value at binary32 width. Overflow and
+  non-finite values are rejected. Reads widen the narrowed binary32 value back
+  into the Python `float` carrier.
 
 - **Metamodel serde ownership.** Source owner and enforcement scope
   `parallax.descriptor`, shipped in the separately installable
@@ -3086,19 +3093,6 @@ SQL lowering, write lowering, materialization, provisioning, and fixture
 loading — locates a logical member through `TableLayout.placement(...)` or a
 `PositionBranch.placements` entry (§2, *Storage Layout formation and immutable
 facet*). No consumer re-derives residency, and no Rule Set calls placement.
-
-**Capability shapes and the gate.** While `StorageLayoutRuleSet`'s capability
-scope list is non-empty, a well-formed root-owned `Document` declaration
-matching an entry is refused at formation with
-`storage-layout-document-capability-unsupported`, so this implementation never
-accepts a layout whose reads *and* writes it cannot execute end to end. The
-sole shape the list governs is table-per-concrete-subtype. Table-per-hierarchy
-families and owners outside inheritance therefore match no entry and are
-accepted, whatever else they declare: relationships and navigation, the
-explicit non-temporal optimistic lock, and the Transaction-Time and Bitemporal
-flavors are all supported end to end.
-The rule, its Issue Code, and its manifest entry are removed together once the
-list is empty; a permanently empty list is not a supported state.
 
 **Database support.** PostgreSQL is the claimed dialect, so the production
 adapter binds and reads the `jsonb` Structured Column. MariaDB remains deferred

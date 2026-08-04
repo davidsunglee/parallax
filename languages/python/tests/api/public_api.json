@@ -230,17 +230,13 @@
     "shape_of_declaration"
   ],
   "parallax.core.storage_layout": [
-    "CAPABILITY_SCOPE",
     "COLUMN_COLLISION",
-    "CapabilityScopeEntry",
     "ColumnContributor",
     "ColumnSlot",
     "ColumnTier",
-    "DOCUMENT_CAPABILITY_UNSUPPORTED",
     "DOCUMENT_MEMBER_COLUMN_OVERRIDE",
     "DirectColumn",
     "DiscriminatorAssignment",
-    "DocumentLayoutOwner",
     "DocumentPath",
     "EntityLayoutView",
     "FACET_KEY",
