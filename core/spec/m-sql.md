@@ -58,7 +58,9 @@ makes the comparison deterministic and language-neutral. The rules:
    of values. The placeholder ordering follows left-to-right appearance in the
    normalized statement.
 5. **Deterministic clause order.** Clauses appear in the fixed order
-   `select … from … [where …] [group by …] [having …] [order by …] [limit …]`.
+   `select … from … [where …] [group by …] [having …] [order by …] [limit …]
+   [offset …]`. The optimizer-fence form is the only read that emits `offset`:
+   its dialect-owned fenced branch ends in the literal clause `offset 0`.
 
 The normative implementation of these rules is
 `reference-harness/src/reference_harness/sql_normalize.py` (sqlglot-based). A
@@ -78,9 +80,10 @@ string. The remaining structural rules are enforced by **rejection**, since
 re-rendering alone would pass a lowercase-but-non-canonical statement through
 unchanged: a **read** (`select`) whose table aliases are not `t0, t1, …` in source
 order, or whose columns are not alias-qualified (rule 1), and **any** statement
-carrying an inline literal where a `?` bind belongs (rule 4), is not canonical. Two literals are *not* parameters
-and remain canonical: the `1 = 0` `none`-identity and the `select 1` `EXISTS`
-probe. DML keeps its own canonical shape — an **unaliased** target table with
+carrying an inline literal where a `?` bind belongs (rule 4), is not canonical.
+Three literals are *not* parameters and remain canonical: the `1 = 0`
+`none`-identity, the `select 1` `EXISTS` probe, and the optimizer-fence
+`offset 0`. DML keeps its own canonical shape — an **unaliased** target table with
 **bare** columns (`update balance set out_z = ? where bal_id = ?`) — so rule 1
 applies to reads only.
 
