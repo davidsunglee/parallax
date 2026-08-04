@@ -643,9 +643,8 @@ def test_placement_is_absent_for_a_member_the_table_does_not_carry() -> None:
 def _document_family() -> tuple[CompiledMetadata, EntityIdentity, EntityIdentity, EntityIdentity]:
     """A TPH family whose root selects Relational Document Layout.
 
-    Built through the Metadata Compiler rather than whole-model formation,
-    because the capability gate refuses every Document layout this build cannot
-    execute end to end.
+    Built through the Metadata Compiler to exercise the compiled Storage Layout
+    facet for a table-per-hierarchy family.
     """
     root = identity("Record")
     alpha = identity("AlphaRecord")

@@ -1,4 +1,4 @@
-"""Storage Layout's Candidate Metamodel collision and capability Rule Set."""
+"""Storage Layout's Candidate Metamodel physical-layout Rule Set."""
 
 from __future__ import annotations
 
@@ -187,7 +187,7 @@ def _column_issues(
 
 def _override_issues(
     document_groups: Sequence[_DocumentGroup],
-) -> list[tuple[EntityIdentity, MetamodelIssue]]:
+) -> list[MetamodelIssue]:
     """The document-resident members whose Column Override contradicts the layout.
 
     A table-per-concrete-subtype family projects one group per concrete Table
@@ -195,7 +195,7 @@ def _override_issues(
     the defect is reported once.
     """
     reported: set[ModelLocation] = set()
-    issues: list[tuple[EntityIdentity, MetamodelIssue]] = []
+    issues: list[MetamodelIssue] = []
     for document in document_groups:
         owner = document.group.root
         for contributor in document.group.declaration_contributors:
@@ -208,16 +208,13 @@ def _override_issues(
                 continue
             reported.add(contributor.location)
             issues.append(
-                (
-                    owner,
-                    MetamodelIssue(
-                        DOCUMENT_MEMBER_COLUMN_OVERRIDE,
-                        contributor.location,
-                        (EntityLocation(owner),),
-                        message=(
-                            f"document-resident member {name!r} declares Column "
-                            f"{contributor.column.name!r}, which it does not occupy"
-                        ),
+                MetamodelIssue(
+                    DOCUMENT_MEMBER_COLUMN_OVERRIDE,
+                    contributor.location,
+                    (EntityLocation(owner),),
+                    message=(
+                        f"document-resident member {name!r} declares Column "
+                        f"{contributor.column.name!r}, which it does not occupy"
                     ),
                 )
             )
@@ -226,7 +223,7 @@ def _override_issues(
 
 def _index_issues(
     candidate: CandidateMetamodel, document_groups: Sequence[_DocumentGroup]
-) -> list[tuple[EntityIdentity, MetamodelIssue]]:
+) -> list[MetamodelIssue]:
     """The Index components reaching into a shared Structured Column.
 
     Index Metadata is local and never inherited, so the model's declarations are
@@ -240,7 +237,7 @@ def _index_issues(
                 continue
             if _document_resident_member(contributor, document.roles) is not None:
                 resident.setdefault(contributor.attribute.identity, document.group.root)
-    issues: list[tuple[EntityIdentity, MetamodelIssue]] = []
+    issues: list[MetamodelIssue] = []
     for declaration in candidate.entities:
         for index in declaration.indices:
             for component in index.attributes:
@@ -248,16 +245,13 @@ def _index_issues(
                 if owner is None:
                     continue
                 issues.append(
-                    (
-                        owner,
-                        MetamodelIssue(
-                            INDEX_OVER_DOCUMENT_MEMBER,
-                            IndexLocation(index.identity),
-                            (AttributeLocation(component),),
-                            message=(
-                                f"Index {index.identity.name!r} names document-resident "
-                                f"Attribute {component.name!r}, which has no Column"
-                            ),
+                    MetamodelIssue(
+                        INDEX_OVER_DOCUMENT_MEMBER,
+                        IndexLocation(index.identity),
+                        (AttributeLocation(component),),
+                        message=(
+                            f"Index {index.identity.name!r} names document-resident "
+                            f"Attribute {component.name!r}, which has no Column"
                         ),
                     )
                 )
@@ -302,11 +296,8 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
             continue
         column_issues = _column_issues(group, documents_by_table.get(group.table))
         issues.extend(column_issues)
-    for _, issue in (
-        *_override_issues(document_groups),
-        *_index_issues(candidate, document_groups),
-    ):
-        issues.append(issue)
+    issues.extend(_override_issues(document_groups))
+    issues.extend(_index_issues(candidate, document_groups))
     return tuple(issues)
 
 

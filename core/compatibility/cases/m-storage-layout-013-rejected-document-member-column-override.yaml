@@ -9,8 +9,7 @@
 # placements for one member. The Issue is located at the member's own
 # declaration and relates the layout declaration it contradicts. Writing a
 # member's conventional spelling is normalized to absence before the rule sees
-# it, so restating the default is never a rejection; the capability gate stays
-# silent because the model already reports the reason it is wrong.
+# it, so restating the default is accepted while contradictory placement is rejected.
 model: models/member-column-defaults.yaml
 tags: [m-storage-layout, m-model-formation, m-descriptor, rejected, negative, document-layout, physical-column, slice-snapshot-1, slice-managed-1]
 shape: rejected

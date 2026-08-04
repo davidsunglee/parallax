@@ -373,9 +373,10 @@ into one dialect-specific Structured Column expression.
 
 PostgreSQL lowers the composition through `jsonb_set`; MariaDB uses `JSON_SET`.
 Multiple assignments are applied in canonical logical placement order, never
-caller mapping order. A whole Value Object assignment replaces its top-level
-subtree. No read-modify-write of the complete row is required for an ordinary
-partial update.
+caller mapping order. A `one` Value Object assignment recursively patches only
+the declared members named by its authored document; a `many` assignment
+replaces its array whole. No read-modify-write of the complete row is required
+for an ordinary partial update.
 
 An observed keyed, versioned, or temporal update treats a missing nullable path
 and JSON null as the same logical `None` for no-op equality. An unversioned,
@@ -384,11 +385,11 @@ does not observe equality first, so an explicit `set(member=None)` writes JSON
 null even when the path was absent and reports the database's affected-row
 count.
 
-A whole Value Object assignment retains structural document equality for
-observed no-op detection. Missing and explicit-null members inside that
-assigned subtree are distinct, including a missing nullable top-level
-occurrence versus an explicit null occurrence; the scalar missing/null collapse
-does not recursively rewrite Value Object structure.
+A `one` Value Object assignment compares the declared-member reduction of its
+authored and stored occurrences for observed no-op detection. Omitted nullable
+members are not assignments and unknown members do not participate; explicit
+null remains distinct from omission. A `many` assignment compares and replaces
+its encoded array whole.
 
 ### Temporal successors and unknown keys
 
@@ -448,8 +449,9 @@ Predecessor Row view therefore exposes the raw document without allocating
 another per-row carrier.
 
 Ordinary path updates preserve unknown keys in place. Fresh inserts have no
-predecessor to preserve. Explicit whole Value Object assignment intentionally
-replaces that subtree, including unknown descendant keys inside it.
+predecessor to preserve. A `one` Value Object assignment also preserves unknown
+and omitted descendant keys; only a `many` assignment replaces its array and
+therefore its elements whole.
 
 ## Missing, null, and invalid stored data
 
@@ -462,7 +464,7 @@ Presence has these canonical meanings:
 - empty Many Value Object: key present with `[]`.
 
 Unknown keys are valid forward-version data. Reads ignore them and mutations
-preserve them unless an explicitly assigned subtree contains them.
+preserve them, except inside an array replaced by a `many` assignment.
 
 Missing required paths, malformed nested structures, and values that do not
 decode into their declared Neutral Type are invalid stored data. Relational
@@ -480,7 +482,7 @@ shape and presence-aware values and supports:
 - decoding known paths by declared Neutral Type;
 - applying one or more path patches in memory;
 - retaining unknown keys while patching a predecessor; and
-- replacing an explicitly assigned subtree.
+- replacing an explicitly assigned `many` array.
 
 The portable JSON encodings are:
 
@@ -603,7 +605,7 @@ The compatibility corpus needs focused witnesses for:
   table, plus absence and explicit null — rather than a representative sample,
   because the six types with no defined spelling before this design got there by
   never being exercised;
-- insert, read, scalar path update, whole Value Object replacement, and
+- insert, read, scalar path update, recursive `one` patching, `many` replacement, and
   physical table state;
 - predicates, ordering, missing/null behavior, and nested Value Objects;
 - relationship joins and navigation;
