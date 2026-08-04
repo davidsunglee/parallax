@@ -1599,6 +1599,14 @@ so each branch's extraction and cast see only rows of its concrete variant. The
 branches retain canonical concrete order and branch-local bind order; the read
 remains one statement and one round trip.
 
+Each tag-filtered branch is an optimizer barrier, not a flattenable derived
+table. PostgreSQL appends `offset 0` to the inner tag-filtered SELECT; MariaDB
+appends `limit ?` and binds its unsigned maximum row count,
+`18446744073709551615`, immediately after the tag bind. These dialect forms
+prevent the outer cast predicate from being pulled into the base-table scan, so
+the tag filter completes before any variant-specific extraction or cast is
+evaluated.
+
 A locking partitioned read wraps that union as a derived identity relation,
 joins it back to the shared TPH base Table on every primary-key column, projects
 from the base alias, and applies the dialect's read-lock suffix to the outer

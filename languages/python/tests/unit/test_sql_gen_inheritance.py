@@ -267,9 +267,9 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
         Decimal("10.0"),
     )
     card_branch, cash_branch = compiled.statement.sql.split(" union all ")
-    assert "from (select * from payment_document t0 where t0.kind = ?) p1" in card_branch
+    assert "from (select * from payment_document t0 where t0.kind = ? offset 0) p1" in card_branch
     assert "cast(" not in card_branch
-    assert "from (select * from payment_document t0 where t0.kind = ?) p2" in cash_branch
+    assert "from (select * from payment_document t0 where t0.kind = ? offset 0) p2" in cash_branch
     assert "cast(jsonb_extract_path_text" in cash_branch
 
 
@@ -285,7 +285,10 @@ def test_tph_top_level_narrow_partitions_before_variant_specific_document_cast()
         target(DOCUMENT_LAYOUT, "Payment"),
     )
 
-    assert "from (select * from payment_document t0 where t0.kind = ?) p1" in compiled.statement.sql
+    assert (
+        "from (select * from payment_document t0 where t0.kind = ? offset 0) p1"
+        in compiled.statement.sql
+    )
     assert compiled.statement.sql.endswith(
         "where cast(jsonb_extract_path_text(p1.payload, ?) as decimal(18, 2)) > ?"
     )
@@ -337,8 +340,9 @@ def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.kind, t0.payload from payment_document t0 join ("
     )
-    assert "select p1.id from (select * from payment_document t1 where t1.kind = ?) p1" in (
-        compiled.statement.sql
+    assert (
+        "select p1.id from (select * from payment_document t1 where t1.kind = ? offset 0) p1"
+        in (compiled.statement.sql)
     )
     assert compiled.statement.sql.endswith("limit ? for share of t0")
     assert compiled.statement.binds == (
