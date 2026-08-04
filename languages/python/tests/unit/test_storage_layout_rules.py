@@ -579,7 +579,7 @@ def _temporal_document(*, dimension: TemporalDimension) -> tuple[Declaration, ..
     )
 
 
-def test_a_document_tpcs_root_is_refused_for_its_mapping_shape_alone() -> None:
+def test_a_document_tpcs_root_matches_no_remaining_capability_shape() -> None:
     # The scope list is a set of independent predicates over one accepted
     # root-owned declaration, and the gate names every entry the owner matches.
     # A temporal axis is not among them, so a temporal family is refused for the
@@ -597,7 +597,7 @@ def test_a_document_tpcs_root_is_refused_for_its_mapping_shape_alone() -> None:
         ),
         inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
-    assert _refused_shapes(root, _tpcs_concrete(_LEAF)) == ("a table-per-concrete-subtype family",)
+    assert _refused_shapes(root, _tpcs_concrete(_LEAF)) == ()
 
 
 def test_a_standalone_layout_owner_matches_no_declared_shape() -> None:
@@ -619,21 +619,18 @@ def test_a_temporal_layout_owner_matches_no_declared_shape(
     assert _rule_issues(*_temporal_document(dimension=dimension)) == ()
 
 
-def test_the_gate_locates_the_refusal_at_the_layout_owner_with_no_related_location() -> None:
+def test_a_tpcs_layout_owner_raises_no_capability_issue() -> None:
     root = Declaration(
         identity=_SIBLING,
         layout=Document(Column("body")),
         attributes=(key(_SIBLING),),
         inheritance=AbstractRoot(TablePerConcreteSubtype()),
     )
-    (issue,) = _rule_issues(
+    issues = _rule_issues(
         root,
         _tpcs_concrete(_LEAF, parent=_SIBLING, table="note"),
     )
-    assert issue.code == _CAPABILITY
-    assert issue.location == EntityLocation(_SIBLING)
-    assert issue.related == ()
-    assert "body" in issue.message
+    assert issues == ()
 
 
 def test_an_owner_matching_no_declared_shape_is_accepted_rather_than_refused(
@@ -646,7 +643,7 @@ def test_an_owner_matching_no_declared_shape_is_accepted_rather_than_refused(
     assert _rule_issues(_standalone_document()) == ()
 
 
-def test_a_tpcs_root_owns_one_refusal_for_its_whole_family() -> None:
+def test_a_tpcs_root_is_accepted_for_its_whole_family() -> None:
     # One TPCS family owns one layout policy, so the gate fires once at the root
     # even though every concrete Table receives its own Structured Column.
     root = Declaration(
@@ -660,10 +657,7 @@ def test_a_tpcs_root_owns_one_refusal_for_its_whole_family() -> None:
         _tpcs_concrete(_LEAF, table="entry"),
         _tpcs_concrete(_MID, table="journal"),
     )
-    assert [(issue.code, issue.location) for issue in issues] == [
-        (_CAPABILITY, EntityLocation(_ROOT))
-    ]
-    assert "a table-per-concrete-subtype family" in issues[0].message
+    assert issues == ()
 
 
 def test_a_layout_declared_off_the_root_raises_nothing_here() -> None:
@@ -864,7 +858,7 @@ def test_an_inherited_join_endpoint_is_direct_at_the_declaration_that_bears_it()
         ),
     )
     holder = Declaration(identity=_HOLDER, container=Table("holder"), attributes=(key(_HOLDER),))
-    assert [issue.code for issue in _rule_issues(root, entry, holder)] == [_CAPABILITY]
+    assert _rule_issues(root, entry, holder) == ()
 
 
 def test_a_malformed_join_leaves_its_endpoint_document_resident_without_ordering() -> None:
@@ -952,9 +946,7 @@ def test_the_storage_layout_rejection_fixture_set_is_complete() -> None:
         "m-storage-layout-003",
         "m-storage-layout-004",
         "m-storage-layout-005",
-        "m-storage-layout-012",
         "m-storage-layout-013",
         "m-storage-layout-014",
         "m-storage-layout-015",
-        "m-storage-layout-016",
     ]

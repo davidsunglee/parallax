@@ -28,19 +28,93 @@ INSTRUMENT = model("instrument")
 RATE = model("rate")
 
 
-def test_narrow_nested_under_a_table_per_concrete_subtype_family_is_refused() -> None:
-    # A narrow reached mid-predicate (nested inside and/or/not/group) is a grouped
-    # branch predicate table-per-hierarchy lowers (below); no goldened corpus case
-    # nests a narrow under table-per-concrete-subtype, so it refuses loudly rather
-    # than guess a shape.
+def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_branches() -> None:
+    # A TPCS union evaluates a nested narrow against each concrete branch: the
+    # selected branches receive true and every other branch receives false.
     op = oa.Or(
         operands=(
             oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All()),
             oa.Narrow(entity="Document", to=("Memo",), operand=oa.All()),
         )
     )
-    with pytest.raises(SqlGenError, match="table-per-concrete-subtype"):
-        compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+    compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
+    assert compiled.statement.sql.endswith(
+        "from invoice t0 where 1 = 1 or 1 = 0 union all "
+        "select t0.id, t0.title, t0.folder_id, cast(null as varchar(3)) currency, "
+        "cast(null as decimal(18, 2)) amount_due, t0.body, "
+        "cast(null as decimal(18, 2)) paid_amount, 'Memo' family_variant "
+        "from memo t0 where 1 = 0 or 1 = 1 union all "
+        "select t0.id, t0.title, t0.folder_id, t0.currency, "
+        "cast(null as decimal(18, 2)) amount_due, cast(null as varchar(64)) body, "
+        "t0.paid_amount, 'Receipt' family_variant from receipt t0 where 1 = 0 or 1 = 0"
+    )
+    assert compiled.statement.binds == ()
+
+
+def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
+    compiled = compile_read(
+        oa.All(),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Publication"),
+        result_form="instance",
+    )
+    assert compiled.transform_row(
+        {
+            "id": 10,
+            "payload": {"title": "Systems", "detail": "ISBN-10", "pages": 320},
+            "family_variant": "Book",
+        }
+    ) == {
+        "id": 10,
+        "title": "Systems",
+        "detail": "ISBN-10",
+        "pages": 320,
+        "familyVariant": "Book",
+    }
+    assert compiled.transform_row(
+        {
+            "id": 20,
+            "payload": {"title": "Frames", "detail": 850, "minutes": 95},
+            "family_variant": "Film",
+        }
+    ) == {
+        "id": 20,
+        "title": "Frames",
+        "detail": 850,
+        "minutes": 95,
+        "familyVariant": "Film",
+    }
+    row_compiled = compile_read(
+        oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Publication")
+    )
+    assert (
+        row_compiled.transform_row(
+            {
+                "id": 10,
+                "payload": {"title": "Systems", "detail": "ISBN-10", "pages": 320},
+                "family_variant": "Book",
+            }
+        )["minutes"]
+        is None
+    )
+
+
+def test_tpcs_document_single_branch_projects_and_decodes_its_document() -> None:
+    compiled = compile_read(
+        oa.Narrow(entity="Publication", to=("Book",), operand=oa.All()),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Publication"),
+        result_form="instance",
+    )
+    assert compiled.statement.sql == "select t0.id, t0.payload from publication_book t0"
+    assert compiled.transform_row(
+        {
+            "id": 10,
+            "payload": {"title": "Systems", "detail": "ISBN-10", "pages": 320},
+        }
+    ) == {"id": 10, "title": "Systems", "detail": "ISBN-10", "pages": 320}
 
 
 def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:

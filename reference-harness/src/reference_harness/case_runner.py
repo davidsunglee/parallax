@@ -1704,7 +1704,7 @@ def _tpcs_result_aliases(columns: list[str]) -> list[str]:
 
 def _placeholder_types(
     model: Model, columns: tuple[PositionColumn, ...]
-) -> list[tuple[str, int | None]]:
+) -> list[tuple[str, int | None] | None]:
     """Each position column's declared neutral type and length bound, in column order.
 
     The only declaration residue an abstract-read `union all` shape needs: the layout
@@ -1713,7 +1713,7 @@ def _placeholder_types(
     type the branch that owns it was provisioned with.
     """
     types = contributor_types(model)
-    return [types[column.contributor] for column in columns]
+    return [types.get(column.contributor) for column in columns]
 
 
 def _canonical_concrete_order(family: Family, target_name: str, effective: list[str]) -> list[str]:
@@ -1780,7 +1780,7 @@ def _assert_branch_projection_shape(
     name: str,
     superset: list[str],
     slots: tuple[ColumnSlot | None, ...],
-    placeholder_types: list[tuple[str, int | None]],
+    placeholder_types: list[tuple[str, int | None] | None],
     dialect: str,
 ) -> None:
     """Assert one `union all` branch's per-column projection SHAPE (m-sql).
@@ -1807,6 +1807,11 @@ def _assert_branch_projection_shape(
                 )
             continue
         # Slotless in this branch: exactly `cast(null as <declared type>)` for this dialect.
+        if placeholder_type is None:
+            raise CaseFailure(
+                f"{case.path.name}: framework-owned column {column!r} is absent from "
+                f"the concrete branch {name!r}"
+            )
         expected = exp.DataType.build(
             placeholder_cast_type(*placeholder_type, dialect),
             dialect=engine,
@@ -1957,6 +1962,7 @@ def _materialize_tpcs_family_variant(
     result_aliases = _tpcs_result_aliases(superset)
     column_counts = {column: superset.count(column) for column in set(superset)}
     slots_by_variant = {name: branch.slots for branch, name in position_branches}
+    layouts_by_variant = {name: branch.layout for branch, name in position_branches}
 
     materialized: list[dict[str, Any]] = []
     for row in rows:
@@ -1986,7 +1992,48 @@ def _materialize_tpcs_family_variant(
             elif column_counts[column] > 1 and slot is None:
                 new_row.pop(result_alias, None)
         new_row["familyVariant"] = variant
+        new_row = _materialize_tpcs_document_row(case, layouts_by_variant[variant], new_row)
         materialized.append(new_row)
+    return materialized
+
+
+def _materialize_tpcs_document_row(
+    case: Case, layout: TableLayout, row: dict[str, Any]
+) -> dict[str, Any]:
+    """Decode one concrete TPCS branch through that branch's placements."""
+    slot = next(
+        (slot for slot in layout.columns if isinstance(slot.contributor, RelationalDocument)), None
+    )
+    if slot is None or slot.column not in row:
+        return row
+    document = decode_stored(row[slot.column])
+    materialized = {key: value for key, value in row.items() if key != slot.column}
+    entities = {entity.name: entity for entity in case.model.entities}
+    for candidate in case.model.storage_layout.tables:
+        if candidate.contribution(slot.contributor) is None:
+            continue
+        for address, placement in candidate.placements.items():
+            if len(address.path) != 1 or not isinstance(placement, DocumentPath):
+                continue
+            declaration = entities[address.owner.rsplit(".", 1)[-1]]
+            name = address.path[0]
+            attribute = next(
+                (item for item in declaration.attributes if item["name"] == name), None
+            )
+            if attribute is not None:
+                materialized.setdefault(attribute["column"], None)
+    for address, placement in layout.placements.items():
+        if len(address.path) != 1 or not isinstance(placement, DocumentPath):
+            continue
+        entity = entities[address.owner.rsplit(".", 1)[-1]]
+        name = address.path[0]
+        attribute = next((item for item in entity.attributes if item["name"] == name), None)
+        occurrence = next((item for item in entity.value_objects if item["name"] == name), None)
+        stored = _document_value(document, placement.path)
+        if attribute is not None:
+            materialized[attribute["column"]] = decode_leaf(attribute["type"], stored)
+        elif occurrence is not None:
+            materialized[occurrence["column"]] = stored
     return materialized
 
 

@@ -29,7 +29,6 @@ from parallax.core.metamodel import (
     MetamodelIssue,
     ModelLocation,
     Table,
-    TablePerConcreteSubtype,
 )
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.relationship import project_join_endpoints
@@ -89,10 +88,6 @@ class DocumentLayoutOwner:
     strategy: InheritanceStrategy | None
 
 
-def _is_table_per_concrete_subtype(owner: DocumentLayoutOwner) -> bool:
-    return isinstance(owner.strategy, TablePerConcreteSubtype)
-
-
 @dataclass(frozen=True, slots=True)
 class CapabilityScopeEntry:
     """One layout shape this build declares it cannot execute end to end.
@@ -106,9 +101,7 @@ class CapabilityScopeEntry:
     matches: Callable[[DocumentLayoutOwner], bool]
 
 
-CAPABILITY_SCOPE: Final[tuple[CapabilityScopeEntry, ...]] = (
-    CapabilityScopeEntry("a table-per-concrete-subtype family", _is_table_per_concrete_subtype),
-)
+CAPABILITY_SCOPE: Final[tuple[CapabilityScopeEntry, ...]] = ()
 """The closed set of layout shapes this build refuses.
 
 Each entry is a predicate over one accepted root-owned ``Document``
@@ -356,7 +349,7 @@ def _capability_issue(owner: DocumentLayoutOwner) -> MetamodelIssue | None:
     refused = [entry.shape for entry in CAPABILITY_SCOPE if entry.matches(owner)]
     if not refused:
         return None
-    return MetamodelIssue(
+    return MetamodelIssue(  # pragma: no cover - reachable only while the scope is non-empty
         DOCUMENT_CAPABILITY_UNSUPPORTED,
         EntityLocation(owner.declaration.identity),
         message=(
@@ -422,7 +415,7 @@ def validate_storage_layout(candidate: CandidateMetamodel) -> tuple[MetamodelIss
         if owner.declaration.identity in defective:
             continue
         capability = _capability_issue(owner)
-        if capability is not None:
+        if capability is not None:  # pragma: no cover - reachable only with a non-empty scope
             issues.append(capability)
     return tuple(issues)
 

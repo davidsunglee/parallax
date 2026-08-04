@@ -1,0 +1,24 @@
+# A concrete TPCS write targets that subtype's own table and Structured Column.
+model: models/document-layout.yaml
+tags: [m-inheritance, m-storage-layout, m-document-codec, m-sql, table-per-concrete-subtype, document-layout, write-sequence, insert, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Book
+      statements: 1
+      rows:
+        - { id: 11, title: Compilers, detail: ISBN-11, pages: 480 }
+then:
+  statements:
+    - sql:
+        postgres: insert into publication_book(id, payload) values (?, ?)
+        mariadb: insert into publication_book(id, payload) values (?, ?)
+      binds:
+        - 11
+        - { title: Compilers, detail: ISBN-11, pages: 480 }
+  tableState:
+    publication_book:
+      - id: 11
+        payload: { title: Compilers, detail: ISBN-11, pages: 480 }
+  roundTrips: 1

@@ -225,7 +225,7 @@ class EntityLayoutView:
 class PositionColumn:
     """One logical declaration contributor of a polymorphic position."""
 
-    contributor: AttributeContributor | ValueObjectContributor
+    contributor: ColumnContributor
     tier: ColumnTier
     declaring_owner: str
 
@@ -677,12 +677,7 @@ def _refused_shapes(root_definition: dict[str, Any]) -> tuple[str, ...]:
     is deleted whole once the build executes that shape's reads and writes
     alike. Deleting the last one retires the rule.
     """
-    block = inheritance_of(root_definition)
-    strategy = block.get("strategy") if block is not None else None
-    refused: list[str] = []
-    if strategy == STRATEGY_TPCS:
-        refused.append("a table-per-concrete-subtype family")
-    return tuple(refused)
+    return ()
 
 
 def _validate_capability(index: _ModelIndex, groups: Sequence[_Group]) -> None:
@@ -1267,6 +1262,18 @@ def _compile_family_facts(
                         applicable,
                     )
                 )
+        document_column = _layout_column(family.defs[root])
+        if document_column is not None:
+            drafts.append(
+                _PositionFacts(
+                    PositionColumn(
+                        contributor=RelationalDocument(root),
+                        tier=ColumnTier.DOCUMENT,
+                        declaring_owner=root,
+                    ),
+                    _interned(set(concretes), applicability_intern),
+                )
+            )
         ordered = tuple(
             column for tier in ColumnTier for column in drafts if column.column.tier is tier
         )

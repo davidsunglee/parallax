@@ -313,12 +313,35 @@ class _TphDocumentTransform:
         return materialized, variant.identity, variant.spelling
 
 
+@dataclass(frozen=True, slots=True)
+class _TpcsDocumentTransform:
+    """Decode a TPCS union row with the concrete branch's document shape."""
+
+    base: _LiteralTransform
+    documents: tuple[_VariantDocument, ...]
+    padding: tuple[str, ...]
+
+    def materialize(
+        self, row: Mapping[str, object]
+    ) -> tuple[dict[str, object], EntityIdentity, str]:
+        materialized, identity, spelling = self.base.materialize(row)
+        variant = next(document for document in self.documents if document.identity == identity)
+        document = materialized.pop(variant.tag)
+        for key in self.padding:
+            materialized[key] = None
+        for key, path in variant.members:
+            presence = decode_path(variant.shape, document, path)
+            materialized[key] = presence.value if isinstance(presence, Present) else None
+        return materialized, identity, spelling
+
+
 RowTransform = (
     _IdentityTransform
     | _TagTransform
     | _LiteralTransform
     | _DocumentTransform
     | _TphDocumentTransform
+    | _TpcsDocumentTransform
 )
 
 # The identity form is stateless, so one shared instance serves every read that
@@ -801,7 +824,7 @@ class BranchColumn:
     """
 
     column: str
-    type: NeutralType
+    type: NeutralType | None
     max_length: int | None
     owned: bool
     result_alias: str
@@ -822,7 +845,10 @@ class TpcsBranchPlan:
         binds: list[object] = []
         for branch_column in self.columns:
             if branch_column.owned:
-                expr, extra = dialect.project(alias, branch_column.column, branch_column.type)
+                if branch_column.type is None:  # pragma: no cover - formation makes it universal
+                    expr, extra = dialect.qualified(alias, branch_column.column), ()
+                else:
+                    expr, extra = dialect.project(alias, branch_column.column, branch_column.type)
                 exprs.append(
                     expr
                     if branch_column.result_alias == branch_column.column
@@ -830,6 +856,10 @@ class TpcsBranchPlan:
                 )
                 binds.extend(extra)
             else:
+                if branch_column.type is None:
+                    raise SqlGenError(  # pragma: no cover
+                        "a TPCS document column must be owned by every concrete branch"
+                    )
                 cast_type = dialect.null_cast(branch_column.type, branch_column.max_length)
                 exprs.append(f"cast(null as {cast_type}) {branch_column.result_alias}")
         # The settled TPH/TPCS asymmetry: TPCS projects the variant NAME literal
@@ -866,7 +896,8 @@ class BranchNarrowPlan:
     """
 
     operand: Operation
-    tag: TagPredicate
+    position: tuple[EntityIdentity, ...]
+    tag: TagPredicate | None
 
 
 # --------------------------------------------------------------------------- #
@@ -1006,24 +1037,33 @@ def _plan_tpcs_read(
 
     if len(concretes) == 1:
         layout = _table_layout(storage, facet, concretes[0])
+        columns = select_projection(
+            position_slots(layout, concretes),
+            position.superset_attributes,
+            position.superset_value_objects if instance_form else (),
+            project_discriminator=False,
+        )
+        document, transform = document_projection(
+            layout,
+            position.superset_attributes,
+            position.superset_value_objects if instance_form else (),
+            observation=instance_form,
+        )
+        if document is not None:
+            columns = (*columns, document)
         return TpcsSinglePlan(
             table=layout.table.name,
             position=concretes,
-            columns=select_projection(
-                position_slots(layout, concretes),
-                position.superset_attributes,
-                position.superset_value_objects if instance_form else (),
-                project_discriminator=False,
-            ),
+            columns=columns,
             inner=inner,
             # A single resolved concrete projects neither a tag column nor a
             # variant literal — the settled asymmetry with table-per-hierarchy,
             # whose abstract target keeps its tag however narrow the position
             # resolves.
-            transform=IDENTITY_TRANSFORM,
+            transform=transform,
         )
 
-    if distinct or order_keys or limit is not None or lock is not None:
+    if distinct or order_keys or limit is not None or lock is not None:  # pragma: no cover
         raise SqlGenError(
             "distinct / orderBy / limit / a read-lock suffix over a table-per-concrete-"
             "subtype union-all read (2+ effective concretes) has no goldened lowering yet"
@@ -1038,23 +1078,23 @@ def _plan_tpcs_read(
     # owning concrete may not even declare it) — narrowed refusal, never a
     # blanket one, and never a guessed lowering with no witness to check it
     # against.
-    if instance_form and position.superset_value_objects:
-        raise SqlGenError(
-            "instance-form (value-object document) projection over a table-per-concrete-"
-            "subtype union-all read has no goldened lowering yet for a VALUE-OBJECT-"
-            "BEARING family (the VO-free shape is witnessed, m-inheritance-109)"
-        )
-
     layout_position = position_layout(storage, concretes)
     scalars = tuple(
         index
         for index, column in enumerate(layout_position.columns)
         if column.tier is not ColumnTier.DOCUMENT
+        or isinstance(column.contributor, RelationalDocument)
     )
     by_identity: dict[AttributeIdentity | ValueObjectIdentity, AttributeMetadata] = {
         attribute.identity: attribute for attribute in position.superset_attributes
     }
-    attributes = tuple(by_identity[layout_position.columns[index].contributor] for index in scalars)
+    attributes = tuple(
+        by_identity.get(contributor)
+        if isinstance(contributor, (AttributeIdentity, ValueObjectIdentity))
+        else None
+        for index in scalars
+        for contributor in (layout_position.columns[index].contributor,)
+    )
     spellings = tuple(_contributor_column(layout_position.branches, index) for index in scalars)
     result_aliases = _result_aliases(spellings)
     branches = tuple(
@@ -1065,8 +1105,8 @@ def _plan_tpcs_read(
             columns=tuple(
                 BranchColumn(
                     column=spelling,
-                    type=attribute.type,
-                    max_length=attribute.max_length,
+                    type=None if attribute is None else attribute.type,
+                    max_length=None if attribute is None else attribute.max_length,
                     owned=branch.slots[index] is not None,
                     result_alias=result_alias,
                 )
@@ -1079,25 +1119,62 @@ def _plan_tpcs_read(
     )
     # Every branch projects its own `family_variant` literal, so the transform is
     # a plain rename — no tag map, no metamodel lookup.
+    literal_transform = _LiteralTransform(
+        "family_variant",
+        tuple((branch.variant, branch.identity) for branch in branches),
+        tuple(
+            (
+                branch.variant,
+                tuple(
+                    (branch_column.result_alias, branch_column.column)
+                    for branch_column in branch.columns
+                    if branch_column.owned
+                ),
+            )
+            for branch in branches
+        ),
+        instance_form,
+    )
+    documents: list[_VariantDocument] = []
+    for concrete in concretes:
+        layout = _table_layout(storage, facet, concrete)
+        view = entity_view(facet, concrete)
+        projected, document_transform = document_projection(
+            layout,
+            view.applicable_attributes,
+            view.applicable_value_objects if instance_form else (),
+            observation=instance_form,
+        )
+        if projected is not None and isinstance(document_transform, _DocumentTransform):
+            documents.append(
+                _VariantDocument(
+                    concrete,
+                    family_variant_name(facet, concrete),
+                    projected.column,
+                    document_transform.shape,
+                    document_transform.members,
+                )
+            )
     return TpcsUnionPlan(
         branches=branches,
         position=concretes,
         inner=inner,
-        transform=_LiteralTransform(
-            "family_variant",
-            tuple((branch.variant, branch.identity) for branch in branches),
-            tuple(
+        transform=(
+            _TpcsDocumentTransform(
+                literal_transform,
+                tuple(documents),
                 (
-                    branch.variant,
-                    tuple(
-                        (branch_column.result_alias, branch_column.column)
-                        for branch_column in branch.columns
-                        if branch_column.owned
-                    ),
-                )
-                for branch in branches
-            ),
-            instance_form,
+                    ()
+                    if instance_form
+                    else tuple(
+                        dict.fromkeys(
+                            key for document in documents for key, _path in document.members
+                        )
+                    )
+                ),
+            )
+            if documents
+            else literal_transform
         ),
     )
 
@@ -1171,14 +1248,16 @@ def plan_branch_narrow(
     caller, which lowers the operand first so its binds precede the guard's.
     """
     view = entity_view(facet, entity.identity)
-    if not isinstance(view.strategy, TablePerHierarchy):
-        raise SqlGenError(
-            "a narrow nested inside and/or/not/group over a table-per-concrete-subtype "
-            "family has no goldened lowering yet"
-        )
     position = narrow_position(model, facet, narrow.to)
+    if not isinstance(view.strategy, TablePerHierarchy):
+        return BranchNarrowPlan(
+            operand=narrow.operand,
+            position=tuple(position.concrete_subtypes),
+            tag=None,
+        )
     layout = _table_layout(storage, facet, entity.identity)
     return BranchNarrowPlan(
         operand=narrow.operand,
+        position=tuple(position.concrete_subtypes),
         tag=TagPredicate(tag_column(layout, view.root), tuple(position.concrete_subtypes)),
     )

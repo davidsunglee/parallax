@@ -784,7 +784,11 @@ def _compile_tpcs_read(
     for branch in plan.branches:
         branch_ctx = _Ctx(model, facet, storage, dialect)
         branch_scope = _EntityScope(
-            branch_ctx, entity, _table_layout(storage, facet, branch.identity)
+            branch_ctx,
+            entity,
+            _table_layout(storage, facet, branch.identity),
+            position=plan.position,
+            variant=branch.identity,
         )
         proj_sql, proj_binds = branch.projection(dialect, branch_scope.alias)
         branch_ctx.binds.extend(proj_binds)

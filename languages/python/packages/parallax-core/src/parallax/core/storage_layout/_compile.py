@@ -606,6 +606,17 @@ def _family_facts(
                     applicable,
                 )
             )
+        if document is not None:
+            drafts.append(
+                PositionColumnFacts(
+                    PositionColumn(
+                        contributor=RelationalDocument(root),
+                        tier=ColumnTier.DOCUMENT,
+                        declaring_owner=root,
+                    ),
+                    _interned(set(root_view.concrete_subtypes), applicability_intern),
+                )
+            )
         ordered = tuple(
             facts for tier in ColumnTier for facts in drafts if facts.column.tier is tier
         )
