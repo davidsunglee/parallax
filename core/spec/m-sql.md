@@ -277,10 +277,13 @@ composed assignments left to right, so this order is observable, and it is what
 makes a golden statement stable to author. Assignments are neither merged nor
 deduplicated: one assigned member is one path in the expression.
 
-An assignment to a whole top-level Value Object occurrence is one such path
-whose value is the complete encoded subtree; it replaces that subtree and
-nothing else. No ordinary update binds the whole Structured Column, and no
-ordinary update reads the row first to rewrite it.
+A top-level Value Object assignment is one assignment tree in this order. A
+`one` tree recursively carries only the declared members present in the authored
+document and patches those members through `m-dialect`'s guarded occurrence
+mutation; omitted and undeclared members remain untouched. A `many` tree carries
+the complete encoded ordered array and replaces that array whole. No ordinary
+update binds the whole Structured Column, and an accepted readless update does
+not read the row first to rewrite it.
 
 An `INSERT` binds the Structured Column exactly once, as one complete encoded
 document, in its layout position — the same shape a conventional Value Object
