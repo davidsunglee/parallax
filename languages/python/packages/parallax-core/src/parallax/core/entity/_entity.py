@@ -346,6 +346,12 @@ def effective_change_set(copy: object) -> dict[str, object]:
 
 
 def _assignment_matches_original(assigned: object, original: object) -> bool:
+    """Compare authored ``one`` members as a mask and ``many`` values as wholes.
+
+    Mapping omission represents un-authored nested ``one`` state. Lists have no
+    element identity, so their complete serialized elements must match rather
+    than inheriting the mapping subset rule.
+    """
     assigned_value = serialize_member(assigned)
     original_value = serialize_member(original)
     if isinstance(assigned_value, Mapping):
@@ -358,16 +364,7 @@ def _assignment_matches_original(assigned: object, original: object) -> bool:
             for name, value in assigned_items.items()
         )
     if isinstance(assigned_value, list):
-        if not isinstance(original_value, list):
-            return False
-        assigned_items = cast("list[object]", assigned_value)
-        original_items = cast("list[object]", original_value)
-        if len(assigned_items) != len(original_items):
-            return False
-        return all(
-            _assignment_matches_original(value, prior)
-            for value, prior in zip(assigned_items, original_items, strict=True)
-        )
+        return isinstance(original_value, list) and assigned_value == original_value
     return assigned_value == original_value
 
 

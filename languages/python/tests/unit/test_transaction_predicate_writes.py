@@ -56,7 +56,6 @@ from parallax.core import (
 from parallax.core.base import InstantError
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.document_codec import occurrence_shape
 from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
@@ -65,13 +64,10 @@ from parallax.core.unit_work import (
     instructions,
 )
 from parallax.core.unit_work.write_planner import (
-    _assigned_many_path as planner_many_path,  # pyright: ignore[reportPrivateUsage]
+    assigned_many_path,
 )
 from parallax.snapshot import QueryTargetError
 from parallax.snapshot.handle import Database, Transaction
-from parallax.snapshot.handle._predicate_writes import (
-    _assigned_many_path as snapshot_many_path,  # pyright: ignore[reportPrivateUsage]
-)
 
 
 # A local Transaction-Time-Only, value-object-bearing entity with the
@@ -263,14 +259,9 @@ def test_nested_document_many_detection_follows_only_authored_occurrences() -> N
         "segment": {"stops": [{"port": "Oslo"}]},
     }
 
-    assert snapshot_many_path(occurrence_shape(occurrence), authored_without_many) is None
-    assert snapshot_many_path(occurrence_shape(occurrence), authored_with_many) == (
-        "segment",
-        "stops",
-    )
-    assert planner_many_path(occurrence, authored_without_many) is None
-    assert planner_many_path(occurrence, authored_with_many) == ("segment", "stops")
-    assert planner_many_path(occurrence, None) is None
+    assert assigned_many_path(occurrence, authored_without_many) is None
+    assert assigned_many_path(occurrence, authored_with_many) == ("segment", "stops")
+    assert assigned_many_path(occurrence, None) is None
 
 
 def test_readless_document_scalar_assignment_still_reaches_planning() -> None:

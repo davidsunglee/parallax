@@ -621,6 +621,35 @@
       ]
     }
   },
+  "models/document-layout-nested-many.yaml": {
+    "nested_route": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.NestedRoute"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.NestedRoute.id",
+          "declaringOwner": "parallax.compatibility.NestedRoute",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.NestedRoute"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.NestedRoute",
+          "declaringOwner": "parallax.compatibility.NestedRoute",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/document-layout.yaml": {
     "beacon": {
       "columns": [

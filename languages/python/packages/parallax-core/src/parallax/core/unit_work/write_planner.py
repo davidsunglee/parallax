@@ -1279,7 +1279,7 @@ def reject_readless_document_many(entity: EntityMetadata, instruction: Predicate
         occurrence = occurrences.get(member)
         if occurrence is None:
             continue
-        nested_many = _assigned_many_path(occurrence, assignment.value)
+        nested_many = assigned_many_path(occurrence, assignment.value)
         if occurrence.multiplicity is Multiplicity.MANY or nested_many is not None:
             path = member if nested_many is None else ".".join((member, *nested_many))
             raise WriteRejectedError(
@@ -1289,9 +1289,8 @@ def reject_readless_document_many(entity: EntityMetadata, instruction: Predicate
             )
 
 
-def _assigned_many_path(
-    occurrence: ValueObjectMetadata, authored: object
-) -> tuple[str, ...] | None:
+def assigned_many_path(occurrence: ValueObjectMetadata, authored: object) -> tuple[str, ...] | None:
+    """Return the first authored nested ``many`` path in declaration order."""
     if not isinstance(authored, Mapping):
         return None
     authored_members = cast("Mapping[object, object]", authored)
@@ -1301,7 +1300,7 @@ def _assigned_many_path(
             continue
         if nested.multiplicity is Multiplicity.MANY:
             return (name,)
-        path = _assigned_many_path(cast("ValueObjectMetadata", nested), authored_members[name])
+        path = assigned_many_path(cast("ValueObjectMetadata", nested), authored_members[name])
         if path is not None:
             return (name, *path)
     return None

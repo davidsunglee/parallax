@@ -379,13 +379,11 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
 
 
 def _assert_value_object_assignment(ref: str, value_object: dict[str, Any], value: Any) -> None:
-    """Validate an atomic top-level value-object assignment literal.
+    """Validate a top-level value-object assignment literal.
 
-    A value object names one structured-document column, so predicate writes may
-    replace that whole document but may not address its nested members.  Its
-    declared multiplicity determines whether the neutral literal is an object or
-    an array; recursive required-member and scalar-type checks keep the literal
-    assignable to the declared value object.
+    A ``one`` patches only its named declared members, while a ``many`` replaces
+    its ordered array whole. Recursive scalar-type and required-member checks
+    keep every named value assignable to the declaration.
     """
     if value is None:
         if not value_object.get("nullable", False):
@@ -406,7 +404,7 @@ def _assert_value_object_assignment(ref: str, value_object: dict[str, Any], valu
 
 
 def _assert_value_object_document(ref: str, value_object: dict[str, Any], document: Any) -> None:
-    """Validate one complete document against a declared value-object member."""
+    """Validate the declared members named by one authored object."""
     if not isinstance(document, dict):
         raise PredicateWriteValidationError(
             f"value object assignment {ref!r} must use an object for multiplicity one"

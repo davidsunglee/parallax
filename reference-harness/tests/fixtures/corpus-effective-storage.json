@@ -238,6 +238,23 @@
       }
     }
   },
+  "models/document-layout-nested-many.yaml": {
+    "parallax.compatibility.NestedRoute": {
+      "attribute": {
+        "id": "id"
+      },
+      "documentPath": {
+        "route": "payload:route",
+        "route.name": "payload:route.name",
+        "route.segment": "payload:route.segment",
+        "route.segment.stops": "payload:route.segment.stops",
+        "route.segment.stops.port": "payload:route.segment.stops.port"
+      },
+      "valueObject": {
+        "route": "route"
+      }
+    }
+  },
   "models/document-layout.yaml": {
     "parallax.compatibility.Beacon": {
       "attribute": {

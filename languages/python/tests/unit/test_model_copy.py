@@ -97,7 +97,7 @@ def test_assignment_scoped_comparison_covers_nested_and_many_boundaries() -> Non
     assert _assignment_matches_original({}, {"future": 1})
     assert not _assignment_matches_original({"city": "Oslo"}, None)
     assert not _assignment_matches_original({"city": "Oslo"}, {"city": "Bergen"})
-    assert _assignment_matches_original([{"city": "Oslo"}], [{"city": "Oslo", "future": 1}])
+    assert not _assignment_matches_original([{"city": "Oslo"}], [{"city": "Oslo", "future": 1}])
     assert not _assignment_matches_original([{"city": "Oslo"}], [])
     assert not _assignment_matches_original([{"city": "Oslo"}], {"city": "Oslo"})
     assert not _assignment_matches_original("Oslo", "Bergen")

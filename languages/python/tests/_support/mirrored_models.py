@@ -485,6 +485,11 @@ UNMIRRORED: Mapping[str, str] = MappingProxyType(
             "table-per-concrete-subtype shape plus the root-owned optimistic-lock version "
             "`account` already proves"
         ),
+        "document-layout-nested-many": (
+            "no mirror authored; its nested one/one/many declaration is exercised by the "
+            "focused predicate-write runtime model and gives the independent compatibility "
+            "oracle the same recursive refusal witness"
+        ),
         "error-cases": (
             "behavioral-only model: it exists to provoke the m-db-error classes, and its only "
             "declaration beyond `account`'s is a non-primary-key unique index, which the "
