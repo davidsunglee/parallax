@@ -190,8 +190,8 @@ def test_predecessor_columns_retain_the_raw_document_against_later_mutation() ->
 def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> None:
     predecessors = _predecessor_columns(
         [
-            {"id": 1, "acctNum": "A", "value": 100.00, "tx_start": "t0", "tx_end": "infinity"},
-            {"id": 2, "acctNum": "B", "value": 200.00, "tx_start": "t1", "tx_end": "infinity"},
+            {"id": 1, "acctNum": "A", "value": 100.00, "txStart": "t0", "txEnd": "infinity"},
+            {"id": 2, "acctNum": "B", "value": 200.00, "txStart": "t1", "txEnd": "infinity"},
         ]
     )
     assert predecessors.length == 2
@@ -199,8 +199,8 @@ def test_predecessor_columns_materializes_one_complete_row_view_per_index() -> N
         "id": 1,
         "acctNum": "A",
         "value": 100.00,
-        "tx_start": "t0",
-        "tx_end": "infinity",
+        "txStart": "t0",
+        "txEnd": "infinity",
     }
     assert predecessors.row(0).document is None
     assert predecessors.row(1).member("id") == 2
@@ -355,7 +355,7 @@ def test_a_materialized_write_group_refuses_zero_rows() -> None:
 
 def test_a_materialized_write_group_carries_one_group_wide_temporal_basis() -> None:
     predecessors = _predecessor_columns(
-        [{"id": 1, "acctNum": "A", "value": 1.00, "tx_start": "t0", "tx_end": "infinity"}]
+        [{"id": 1, "acctNum": "A", "value": 1.00, "txStart": "t0", "txEnd": "infinity"}]
     )
     keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
     keys.append(1)
@@ -462,8 +462,8 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
                 "id": row_id,
                 "acctNum": "A",
                 "value": 1.00 * row_id,
-                "tx_start": "2024-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             },
         )
         for row_id in (1, 2)
@@ -547,8 +547,8 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
                 "id": row_id,
                 "acctNum": "A",
                 "value": 1.00 * row_id,
-                "tx_start": "2024-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             },
         )
         for row_id in (1, 2)
@@ -582,8 +582,8 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
                 "id": row_id,
                 "acctNum": "A",
                 "value": 1.00 * row_id,
-                "tx_start": "2024-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             },
         )
         for row_id in (1, 2, 3)
@@ -633,8 +633,8 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
                 "id": row_id,
                 "acctNum": "A",
                 "value": 1.00 * row_id,
-                "tx_start": "2024-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             },
         )
         for row_id in (1, 2, 3)
@@ -676,8 +676,8 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
                 "id": 1,
                 "acctNum": "A",
                 "value": 1.00,
-                "tx_start": "2024-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             },
         )
     ]
@@ -713,8 +713,8 @@ def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected()
                 "id": 1,
                 "acctNum": "A",
                 "value": 1.00,
-                "tx_start": "2024-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             },
         )
     ]
@@ -774,10 +774,10 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
         {
             "id": 1,
             "name": "Central Branch",
-            "valid_start": "2024-01-01T00:00:00+00:00",
-            "valid_end": "infinity",
-            "tx_start": "2024-01-01T00:00:00+00:00",
-            "tx_end": "infinity",
+            "validStart": "2024-01-01T00:00:00+00:00",
+            "validEnd": "infinity",
+            "txStart": "2024-01-01T00:00:00+00:00",
+            "txEnd": "infinity",
             "address": prior_address,
         }
     ]

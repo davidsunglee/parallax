@@ -307,16 +307,16 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-      - name: tx_start
+      - name: txStart
         type: timestamp
         column: in_z
-      - name: tx_end
+      - name: txEnd
         type: timestamp
         column: out_z
     asOfAxes:
       - dimension: transaction-time
-        startAttribute: tx_start
-        endAttribute: tx_end
+        startAttribute: txStart
+        endAttribute: txEnd
 """
 """The parity model as descriptor text, matching :func:`parity_model` exactly."""
 
@@ -451,14 +451,14 @@ def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamo
                 declared_persistence=PersistenceMode.READ_ONLY,
                 declared_attributes=(
                     _attribute(AUDIT, "id", INT64, key=True),
-                    _attribute(AUDIT, "tx_start", TIMESTAMP, column="in_z"),
-                    _attribute(AUDIT, "tx_end", TIMESTAMP, column="out_z"),
+                    _attribute(AUDIT, "txStart", TIMESTAMP, column="in_z"),
+                    _attribute(AUDIT, "txEnd", TIMESTAMP, column="out_z"),
                 ),
                 declared_as_of_axes=(
                     AsOfAxisMetadata(
                         dimension=TemporalDimension.TRANSACTION_TIME,
-                        start_attribute=AttributeIdentity(AUDIT, "tx_start"),
-                        end_attribute=AttributeIdentity(AUDIT, "tx_end"),
+                        start_attribute=AttributeIdentity(AUDIT, "txStart"),
+                        end_attribute=AttributeIdentity(AUDIT, "txEnd"),
                     ),
                 ),
             ),

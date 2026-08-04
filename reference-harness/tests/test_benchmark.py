@@ -59,8 +59,8 @@ def test_document_milestones_opens_one_current_row_per_id() -> None:
     rows = _generate_document_milestones(50)
     assert {v["id"] for v in rows["Voyage"]} == set(range(1, 51))
     assert {c["id"] for c in rows["Charter"]} == set(range(1, 51))
-    assert all(v["tx_end"] == "infinity" for v in rows["Voyage"])
-    assert all(c["tx_end"] == "infinity" and c["valid_end"] == "infinity" for c in rows["Charter"])
+    assert all(v["txEnd"] == "infinity" for v in rows["Voyage"])
+    assert all(c["txEnd"] == "infinity" and c["validEnd"] == "infinity" for c in rows["Charter"])
     # Both are document-mapped, so each row carries an occurrence the Structured
     # Column composes rather than a column of its own.
     assert rows["Voyage"][0]["manifest"] == {"cargo": "timber"}

@@ -60,7 +60,7 @@ the family root, and a standalone Entity is its own root.
   descendant view, preserved rather than copied.
 - `TransactionTimeDerived` applies to every Entity whose Temporal Facet shape
   declares Transaction Time and carries that axis's start Attribute Identity —
-  the observed `tx_start` (physical `in_z`) version analogue below. The two
+  the observed `txStart` (physical `in_z`) version analogue below. The two
   keyed variants are mutually exclusive because a temporal Entity with an
   explicit version Attribute is rejected
   (`opt-lock-temporal-explicit-attribute`), and no supported temporal shape
@@ -216,7 +216,7 @@ matches zero rows is the `updatedRows != 1` conflict signal and **MUST** abort t
 whole unit of work; a later row is never silently continued after that conflict.
 
 This materialization rule also applies to Transaction-Time Entities. Their
-observed `tx_start` (`in_z`) is the per-row optimistic version analogue; the
+observed `txStart` (`in_z`) is the per-row optimistic version analogue; the
 temporal modules own close/chain and rectangle-split SQL, while this module owns
 the conflict and abort rule. Reladomo is the prior art: transaction mode either
 reads under a lock or gates on the observed optimistic version and treats
@@ -239,7 +239,7 @@ observed-version or Transaction-Time materialization rule.
 ### Temporal entities derive the version from Transaction Time
 
 A Transaction-Time Entity (`m-temporal-read`) carries **no** version column, so
-its optimistic key is **derived**: the observed `tx_start` (`in_z`)
+its optimistic key is **derived**: the observed `txStart` (`in_z`)
 value **is** the version analogue (Reladomo's `IN_Z` rule). In optimistic mode the
 milestone close/inactivate `UPDATE` the write already issues gains an
 `and <in_z> = ?` gate bound to the `in_z` the unit of work observed for the current

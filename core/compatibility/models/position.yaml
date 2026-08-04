@@ -17,8 +17,8 @@
 # bitemporal write is the RECTANGLE SPLIT (research §6): an `updateUntil` over a
 # bounded Valid-Time window inactivates the original (closes its Transaction-Time dimension at
 # the transaction instant) and chains up to THREE new rows at fresh Transaction
-# Time — head [from_z, valid_start), middle [valid_start, valid_end) carrying
-# the new value, tail [valid_end, infinity) — so the value changes ONLY inside
+# Time — head [from_z, validStart), middle [validStart, validEnd) carrying
+# the new value, tail [validEnd, infinity) — so the value changes ONLY inside
 # the window while the audit trail is preserved on the Transaction-Time dimension.
 #
 # The non-temporal attributes (id, acctNum, value) are the domain payload. The
@@ -43,28 +43,28 @@ entity:
     - name: value
       type: decimal(18,2)
       column: val
-    - name: valid_start
+    - name: validStart
       type: timestamp
       column: from_z
-    - name: valid_end
+    - name: validEnd
       type: timestamp
       column: thru_z
-    - name: tx_start
+    - name: txStart
       type: timestamp
       column: in_z
-    - name: tx_end
+    - name: txEnd
       type: timestamp
       column: out_z
   asOfAxes:
     - dimension: valid-time
-      startAttribute: valid_start
-      endAttribute: valid_end
+      startAttribute: validStart
+      endAttribute: validEnd
     - dimension: transaction-time
-      startAttribute: tx_start
-      endAttribute: tx_end
+      startAttribute: txStart
+      endAttribute: txEnd
   indices:
     - name: position_pk
-      attributes: [id, valid_start, tx_start]
+      attributes: [id, validStart, txStart]
       unique: true
     - name: position_acct
       attributes: [acctNum]

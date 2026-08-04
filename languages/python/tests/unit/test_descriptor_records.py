@@ -27,10 +27,10 @@ _MODELS = corpus_models.load_models(
 )
 
 _PROC = AsOfAxisMetadata(
-    dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
+    dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
 )
 _BIZ = AsOfAxisMetadata(
-    dimension="valid-time", start_attribute="valid_start", end_attribute="valid_end"
+    dimension="valid-time", start_attribute="validStart", end_attribute="validEnd"
 )
 
 
@@ -50,10 +50,10 @@ def test_temporal_is_derived_from_the_as_of_axes(
         table="e",
         attributes=(
             Attribute(name="id", type="int64", column="id", primary_key=True),
-            Attribute(name="valid_start", type="timestamp", column="b_in"),
-            Attribute(name="valid_end", type="timestamp", column="b_out"),
-            Attribute(name="tx_start", type="timestamp", column="in_z"),
-            Attribute(name="tx_end", type="timestamp", column="out_z"),
+            Attribute(name="validStart", type="timestamp", column="b_in"),
+            Attribute(name="validEnd", type="timestamp", column="b_out"),
+            Attribute(name="txStart", type="timestamp", column="in_z"),
+            Attribute(name="txEnd", type="timestamp", column="out_z"),
         ),
         as_of_axes=axes,
     )
@@ -144,12 +144,12 @@ def _synthetic_temporal_family() -> Metamodel:
         inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
         attributes=(
             Attribute(name="id", type="int64", column="id", primary_key=True),
-            Attribute(name="tx_start", type="timestamp", column="in_z"),
-            Attribute(name="tx_end", type="timestamp", column="out_z"),
+            Attribute(name="txStart", type="timestamp", column="in_z"),
+            Attribute(name="txEnd", type="timestamp", column="out_z"),
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
             ),
         ),
     )
@@ -249,12 +249,12 @@ def test_declaring_entity_is_the_entity_itself_outside_a_family() -> None:
         table="balance",
         attributes=(
             Attribute(name="id", type="int64", column="bal_id", primary_key=True),
-            Attribute(name="tx_start", type="timestamp", column="in_z"),
-            Attribute(name="tx_end", type="timestamp", column="out_z"),
+            Attribute(name="txStart", type="timestamp", column="in_z"),
+            Attribute(name="txEnd", type="timestamp", column="out_z"),
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
             ),
         ),
     )

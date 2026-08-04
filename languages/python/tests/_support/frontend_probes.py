@@ -222,6 +222,30 @@ def define_reserved_temporal_name() -> type:
     return Bad
 
 
+def define_reserved_canonical_temporal_name() -> type:
+    """A member taking a framework temporal member's canonical name."""
+
+    from parallax.core import TxTemporal
+
+    class Bad(TxTemporal, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        txStart: Attr[int]
+
+    return Bad
+
+
+def define_reserved_temporal_name_by_rename() -> type:
+    """A member whose explicit `name=` renames it onto a framework temporal name."""
+
+    from parallax.core import TxTemporal
+
+    class Bad(TxTemporal, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        opened: Attr[int] = attr(name="txStart")
+
+    return Bad
+
+
 def define_canonical_name_collision() -> type:
     """Two members converting to one canonical name."""
 

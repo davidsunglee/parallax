@@ -80,8 +80,8 @@ def _model() -> Declaration:
         attributes=(
             key(_ORDER),
             attribute(_ORDER, "sku", type=base.STRING),
-            instant(_ORDER, "tx_start"),
-            instant(_ORDER, "tx_end"),
+            instant(_ORDER, "txStart"),
+            instant(_ORDER, "txEnd"),
         ),
         relationships=(
             UnresolvedDefiningRelationshipDeclaration(
@@ -102,8 +102,8 @@ def _model() -> Declaration:
         as_of_axes=(
             AsOfAxisMetadata(
                 TemporalDimension.TRANSACTION_TIME,
-                AttributeIdentity(_ORDER, "tx_start"),
-                AttributeIdentity(_ORDER, "tx_end"),
+                AttributeIdentity(_ORDER, "txStart"),
+                AttributeIdentity(_ORDER, "txEnd"),
             ),
         ),
         indices=(
@@ -147,8 +147,8 @@ def test_entity_metadata_exposes_only_declared_local_facts() -> None:
     assert [member.identity.name for member in order.declared_attributes] == [
         "id",
         "sku",
-        "tx_start",
-        "tx_end",
+        "txStart",
+        "txEnd",
     ]
     assert [member.identity.name for member in order.declared_relationships] == ["items"]
     assert [axis.dimension for axis in order.declared_as_of_axes] == [

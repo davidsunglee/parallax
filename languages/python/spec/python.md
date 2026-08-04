@@ -66,6 +66,11 @@ one framework Entity base:
 - `Bitemporal`, which additionally supplies read-only
   `valid_start`/`valid_end` Attributes mapped to `from_z`/`thru_z`.
 
+The supplied members carry no explicit `name=`, so each one's canonical name is
+the ordinary snake_case→camelCase conversion every other member goes through:
+`tx_start` resolves to `txStart`, `valid_end` to `validEnd`, and so on. The
+Python spelling an author reads and queries through is unaffected.
+
 Read-only here means framework-stamped write semantics: a fresh instance that
 sets one of the supplied Attributes is rejected at construction/write time with
 the framework-owned-axis error, because the temporal write path derives every
@@ -87,6 +92,7 @@ Attributes, Timestamp types, flags, interval semantics, or columns.
 | `Pin` accessor | `valid_time` | `tx_time` |
 | `Edge` accessor | `valid_time` | `tx_time` |
 | Conventional Attributes | `valid_start`, `valid_end` | `tx_start`, `tx_end` |
+| Canonical Attribute names | `validStart`, `validEnd` | `txStart`, `txEnd` |
 | Physical columns | `from_z`, `thru_z` | `in_z`, `out_z` |
 | Bitemporal mutation input | `valid_from`; bounded verbs also use `until` | finite clock instant supplied by the Database handle |
 | Optimistic temporal observation | not used as a gate | observed `tx_start` (`in_z`) |
@@ -1001,14 +1007,15 @@ is never an implicit role. Both fail at class creation
 Temporality is selected by the base class — `Entity`, `TxTemporal`, or
 `Bitemporal` — never by a keyword. `TxTemporal` supplies the reserved
 read-only `tx_start`/`tx_end`
-attributes (physical `in_z`/`out_z`); `Bitemporal` additionally supplies
-`valid_start`/`valid_end` (`from_z`/`thru_z`). A descendant inherits its
+attributes (canonical `txStart`/`txEnd`, physical `in_z`/`out_z`); `Bitemporal`
+additionally supplies `valid_start`/`valid_end` (canonical
+`validStart`/`validEnd`, physical `from_z`/`thru_z`). A descendant inherits its
 root's temporal base and cannot change shape. Redeclaring a reserved temporal
 name is the shared `metamodel-temporal-member-reserved` rule; the Python
 frontend enforces it earlier and more broadly, rejecting the redeclaration at
-class creation as `entity-reserved-member-name` (below) for all four names
-anywhere below a temporal base. An unknown header keyword or ill-typed value
-also fails at class creation (`EntityDefinitionError`, below).
+class creation as `entity-reserved-member-name` (below) for all four canonical
+names anywhere below a temporal base. An unknown header keyword or ill-typed
+value also fails at class creation (`EntityDefinitionError`, below).
 
 The `inheritance=` value mirrors the core `Inheritance` algebra with the
 parent supplied by Python subclassing:
@@ -1139,9 +1146,11 @@ and a collision fails at class creation (`entity-reserved-member-name`):
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
   `as_of`, `as_of_range`, `history`, `meta`, `descriptor`;
 - the `model_*` namespace Pydantic reserves;
-- the framework temporal members `valid_start`, `valid_end`, `tx_start`, and
-  `tx_end`, on a class whose family extends `TxTemporal` or `Bitemporal` and is
-  therefore supplied them;
+- the framework temporal members, on a class whose family extends `TxTemporal`
+  or `Bitemporal` and is therefore supplied them. The reservation is on the
+  canonical names `validStart`, `validEnd`, `txStart`, and `txEnd`, so one rule
+  covers the Python spellings `valid_start`/`valid_end`/`tx_start`/`tx_end`, a
+  literal canonical spelling, and an explicit `name=` that renames onto one;
 - the ten declaration members `identity`, `container`, `persistence`, `layout`,
   `attributes`, `relationships`, `value_objects`, `as_of_axes`, `inheritance`,
   and `indices`. An Entity Class *is* its own `UnresolvedEntityDeclaration`: the

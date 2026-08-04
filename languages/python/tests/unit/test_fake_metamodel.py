@@ -164,7 +164,7 @@ def test_read_only_persistence_and_the_temporal_axis_survive_both_paths(
         assert audit.declared_persistence is PersistenceMode.READ_ONLY
         axis = audit.as_of_axis(TemporalDimension.TRANSACTION_TIME)
         assert axis is not None
-        assert axis.start_attribute.name == "tx_start"
+        assert axis.start_attribute.name == "txStart"
         assert audit.as_of_axis(TemporalDimension.VALID_TIME) is None
     ledger = _entity(alternate, fake.LEDGER)
     assert ledger.declared_persistence is None

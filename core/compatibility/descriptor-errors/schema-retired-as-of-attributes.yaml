@@ -5,11 +5,11 @@ entity:
     - name: id
       type: int64
       primaryKey: true
-    - name: tx_start
+    - name: txStart
       type: timestamp
-    - name: tx_end
+    - name: txEnd
       type: timestamp
   asOfAttributes:
     - dimension: transaction-time
-      startAttribute: tx_start
-      endAttribute: tx_end
+      startAttribute: txStart
+      endAttribute: txEnd

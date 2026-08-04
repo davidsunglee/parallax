@@ -223,7 +223,7 @@ def test_supplying_a_transaction_time_value_at_construction_raises_on_full_row()
         value=Decimal("100.00"),
         tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
     )
-    with pytest.raises(FrameworkOwnedAxisError, match="tx_start"):
+    with pytest.raises(FrameworkOwnedAxisError, match="txStart"):
         full_row(balance)
 
 
@@ -231,7 +231,7 @@ def test_supplying_a_valid_time_value_at_construction_raises_on_full_row() -> No
     branch = mm.Branch(
         id=1, name="Central", address=None, valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     )
-    with pytest.raises(FrameworkOwnedAxisError, match="valid_start"):
+    with pytest.raises(FrameworkOwnedAxisError, match="validStart"):
         full_row(branch)
 
 
@@ -243,7 +243,7 @@ def test_the_declaration_carries_no_default_for_an_axis_attribute() -> None:
     # The Pydantic-level `None` default is a construction affordance ONLY — the
     # declared Attribute Metadata is exactly what the corpus model declares (the
     # no-drift guard is the proof; this pin is the unit-level half of it).
-    tx_start = next(a for a in mm.Balance.attributes if a.identity.name == "tx_start")
+    tx_start = next(a for a in mm.Balance.attributes if a.identity.name == "txStart")
     assert tx_start.storage == Column("in_z")
     assert tx_start.nullable is False
 
@@ -279,8 +279,8 @@ def test_model_copy_still_validates_an_explicitly_touched_axis_field() -> None:
         tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         tx_end=INFINITY,
     )
-    with pytest.raises(ModelCopyError, match="tx_end"):
-        balance.model_copy(update={"tx_end": "not-a-datetime"})
+    with pytest.raises(ModelCopyError, match="txEnd"):
+        balance.model_copy(update={"txEnd": "not-a-datetime"})
 
 
 # --------------------------------------------------------------------------- #

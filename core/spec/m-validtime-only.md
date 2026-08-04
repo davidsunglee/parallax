@@ -10,4 +10,4 @@ dimension.
   `from_z`/`thru_z` (`m-temporal-read`). Writes are driven by the Valid-Time
   instant at which the change takes effect and have no Transaction-Time
   residual. A Valid-Time-Only Entity cannot participate in temporal optimistic
-  mode because it has no Transaction-Time `tx_start` version analogue.
+  mode because it has no Transaction-Time `txStart` version analogue.

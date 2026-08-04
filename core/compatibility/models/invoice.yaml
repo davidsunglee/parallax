@@ -11,10 +11,10 @@ entities:
     attributes:
       - { name: id, type: int64, primaryKey: true }
       - { name: name, type: string, maxLength: 64 }
-      - { name: tx_start, type: timestamp, column: in_z }
-      - { name: tx_end, type: timestamp, column: out_z }
+      - { name: txStart, type: timestamp, column: in_z }
+      - { name: txEnd, type: timestamp, column: out_z }
     asOfAxes:
-      - { dimension: transaction-time, startAttribute: tx_start, endAttribute: tx_end }
+      - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     relationships:
       - name: lines
         cardinality: one-to-many
@@ -23,7 +23,7 @@ entities:
           target: { entity: parallax.compatibility.InvoiceLine, attribute: invoiceId }
         dependent: true
     indices:
-      - { name: invoice_pk, attributes: [id, tx_start], unique: true }
+      - { name: invoice_pk, attributes: [id, txStart], unique: true }
   - name: InvoiceLine
     namespace: parallax.compatibility
     table: invoice_line
@@ -31,10 +31,10 @@ entities:
       - { name: id, type: int64, primaryKey: true }
       - { name: invoiceId, type: int64 }
       - { name: amount, type: "decimal(18,2)" }
-      - { name: tx_start, type: timestamp, column: in_z }
-      - { name: tx_end, type: timestamp, column: out_z }
+      - { name: txStart, type: timestamp, column: in_z }
+      - { name: txEnd, type: timestamp, column: out_z }
     asOfAxes:
-      - { dimension: transaction-time, startAttribute: tx_start, endAttribute: tx_end }
+      - { dimension: transaction-time, startAttribute: txStart, endAttribute: txEnd }
     indices:
-      - { name: invoice_line_pk, attributes: [id, tx_start], unique: true }
+      - { name: invoice_line_pk, attributes: [id, txStart], unique: true }
       - { name: invoice_line_invoice, attributes: [invoiceId] }

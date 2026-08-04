@@ -205,7 +205,7 @@ def test_a_temporal_shape_owner_receives_the_framework_members_in_canonical_orde
         id: Attr[int] = attr(primary_key=True)
 
     names = [member.identity.name for member in Reading.attributes]
-    assert names == ["id", "valid_start", "valid_end", "tx_start", "tx_end"]
+    assert names == ["id", "validStart", "validEnd", "txStart", "txEnd"]
     columns = [member.storage.name for member in Reading.attributes]
     assert columns == ["id", "from_z", "thru_z", "in_z", "out_z"]
     assert [axis.dimension for axis in Reading.as_of_axes] == [

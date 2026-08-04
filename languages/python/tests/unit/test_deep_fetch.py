@@ -502,8 +502,8 @@ def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
     # milestone since neither axis is pinned: `thru_z = infinity`, `out_z = infinity`.
     assert plan.root_operation == And(
         operands=(
-            Comparison(op="eq", attr="Rate.valid_end", value="infinity"),
-            Comparison(op="eq", attr="Rate.tx_end", value="infinity"),
+            Comparison(op="eq", attr="Rate.validEnd", value="infinity"),
+            Comparison(op="eq", attr="Rate.txEnd", value="infinity"),
         )
     )
 
@@ -514,11 +514,9 @@ def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
     assert plan.root_operation == And(
         operands=(
             # Valid Time defaults to latest (never pinned by this operation)
-            Comparison(op="eq", attr="Rate.valid_end", value="infinity"),
+            Comparison(op="eq", attr="Rate.validEnd", value="infinity"),
             # Transaction Time is pinned to the past instant (containment)
-            Comparison(
-                op="lessThanEquals", attr="Rate.tx_start", value="2024-01-15T00:00:00+00:00"
-            ),
-            Comparison(op="greaterThan", attr="Rate.tx_end", value="2024-01-15T00:00:00+00:00"),
+            Comparison(op="lessThanEquals", attr="Rate.txStart", value="2024-01-15T00:00:00+00:00"),
+            Comparison(op="greaterThan", attr="Rate.txEnd", value="2024-01-15T00:00:00+00:00"),
         )
     )

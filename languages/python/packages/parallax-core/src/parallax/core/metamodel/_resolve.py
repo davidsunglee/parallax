@@ -205,8 +205,8 @@ declares it. No other module may emit a ``metamodel-*`` code."""
 # The Attribute names each Temporal Dimension reserves once an Entity declares
 # that dimension. Only the axis's own start and end Attributes may bear them.
 _CONVENTIONAL_TEMPORAL_NAMES: Final[Mapping[TemporalDimension, tuple[str, str]]] = {
-    TemporalDimension.VALID_TIME: ("valid_start", "valid_end"),
-    TemporalDimension.TRANSACTION_TIME: ("tx_start", "tx_end"),
+    TemporalDimension.VALID_TIME: ("validStart", "validEnd"),
+    TemporalDimension.TRANSACTION_TIME: ("txStart", "txEnd"),
 }
 
 

@@ -30,19 +30,19 @@ entities:
         primaryKey: true
       - name: price
         type: decimal(18,2)
-      - name: tx_start
+      - name: txStart
         type: timestamp
         column: in_z
-      - name: tx_end
+      - name: txEnd
         type: timestamp
         column: out_z
     asOfAxes:
       - dimension: transaction-time
-        startAttribute: tx_start
-        endAttribute: tx_end
+        startAttribute: txStart
+        endAttribute: txEnd
     indices:
       - name: quote_pk
-        attributes: [id, tx_start]
+        attributes: [id, txStart]
         unique: true
   - name: SpotQuote
     namespace: parallax.compatibility

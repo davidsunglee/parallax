@@ -259,7 +259,7 @@
           }
         },
         {
-          "$comment": "Explicit optimistic-lock version (m-opt-lock / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A temporal Entity locks via its Transaction-Time start (`tx_start`, physically `in_z`) instead and declares no explicit version Attribute (the Entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
+          "$comment": "Explicit optimistic-lock version (m-opt-lock / DQ8b): an attribute-level `optimisticLocking: true` version is derived — initialized to `1` on insert and advanced to `observed + 1` on every update, gated in optimistic mode with `and <col> = ?` — so it MUST be an integral type (`int32`/`int64`). A temporal Entity locks via its Transaction-Time start (`txStart`, physically `in_z`) instead and declares no explicit version Attribute (the Entity-level composition rule above forbids the combination), so this restriction never lands on a timestamp column.",
           "if": {
             "required": ["optimisticLocking"],
             "properties": { "optimisticLocking": { "const": true } }

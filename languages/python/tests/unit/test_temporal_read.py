@@ -202,7 +202,7 @@ def test_directives_survive_injection() -> None:
     assert isinstance(injected.operand, oa.OrderBy)
     # The as-of predicate is injected UNDER the peeled directives.
     assert injected.operand.operand == oa.Comparison(
-        op="eq", attr="Balance.tx_end", value="infinity"
+        op="eq", attr="Balance.txEnd", value="infinity"
     )
 
 
@@ -279,7 +279,7 @@ def test_milestone_edge_rejects_a_non_instant_from_column() -> None:
 def test_directive_distinct_survives_injection() -> None:
     injected = inject_as_of(oa.Distinct(operand=oa.All()), BALANCE)
     assert isinstance(injected, oa.Distinct)
-    assert injected.operand == oa.Comparison(op="eq", attr="Balance.tx_end", value="infinity")
+    assert injected.operand == oa.Comparison(op="eq", attr="Balance.txEnd", value="infinity")
 
 
 def test_pin_reports_only_pinned_axes() -> None:

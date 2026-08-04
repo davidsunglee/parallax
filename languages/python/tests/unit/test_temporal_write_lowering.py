@@ -106,18 +106,18 @@ def _observed(
 ) -> TemporalObservation:
     """The predecessor milestone a find would have recorded whole.
 
-    Every corpus model spells its axis bounds `tx_start`/`tx_end` and, when it
-    declares Valid Time, `valid_start`/`valid_end`, so one builder serves them
+    Every corpus model spells its axis bounds `txStart`/`txEnd` and, when it
+    declares Valid Time, `validStart`/`validEnd`, so one builder serves them
     all: the bounds join ``payload`` inside the one Predecessor Row, which is
     where a close reads its address and its gate from.
     """
     members: dict[str, object] = dict(payload or {})
-    members["tx_start"] = tx_start
-    members["tx_end"] = tx_end
+    members["txStart"] = tx_start
+    members["txEnd"] = tx_end
     if valid_start is not None:
-        members["valid_start"] = valid_start
+        members["validStart"] = valid_start
     if valid_end is not None:
-        members["valid_end"] = valid_end
+        members["validEnd"] = valid_end
     return TemporalObservation(predecessor=PredecessorRow(members=members))
 
 
@@ -310,8 +310,8 @@ def test_audit_only_update_merges_the_sparse_row_at_the_finalization_seam() -> N
         "id": 1,
         "acctNum": "A",
         "value": 150.00,
-        "tx_start": "2024-06-01T00:00:00+00:00",
-        "tx_end": "infinity",
+        "txStart": "2024-06-01T00:00:00+00:00",
+        "txEnd": "infinity",
     }
     assert isinstance(opened, PlannedInsert)
     assert opened.entries[0].origin == ChangedFrom(predecessor=observation.predecessor)
@@ -689,12 +689,12 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
         ("2024-02-15T00:00:00+00:00", 1, "2024-07-01T00:00:00+00:00", "infinity", *gate_binds),
     )
     addressed_valid_end = close[1][2]
-    assert addressed_valid_end == observed.predecessor.member("valid_end")
-    assert addressed_valid_end != observed.predecessor.member("valid_start")
+    assert addressed_valid_end == observed.predecessor.member("validEnd")
+    assert addressed_valid_end != observed.predecessor.member("validStart")
     # The successors reconstruct exactly the addressed rectangle's window,
-    # `[valid_start, valid_end)`, split at the correction's `validFrom`.
+    # `[validStart, validEnd)`, split at the correction's `validFrom`.
     assert head[1][3:5] == (
-        observed.predecessor.member("valid_start"),
+        observed.predecessor.member("validStart"),
         "2024-04-01T00:00:00+00:00",
     )
     assert tail[1][3:5] == ("2024-04-01T00:00:00+00:00", addressed_valid_end)
@@ -857,8 +857,8 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         "id": 1,
         "price": 50.00,
         "symbol": "ACME",
-        "tx_start": "2024-01-01T00:00:00+00:00",
-        "tx_end": "infinity",
+        "txStart": "2024-01-01T00:00:00+00:00",
+        "txEnd": "infinity",
     }
 
     update = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": 60.00},))
@@ -1282,7 +1282,7 @@ def test_bitemporal_close_target_is_mode_independent() -> None:
     assert locking.concurrency == UNGATED
     gate = optimistic.concurrency
     assert isinstance(gate, TemporalGate)
-    assert gate.start_attribute.name == "tx_start"
+    assert gate.start_attribute.name == "txStart"
     assert gate.observed_start == "2024-01-01T00:00:00+00:00"
 
 

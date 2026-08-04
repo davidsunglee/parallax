@@ -225,7 +225,7 @@ def test_audit_insert_then_update_coalesces_in_place() -> None:
     (row,) = _insert_rows(step)
     assert row["acctNum"] == "D"
     assert row["value"] == 150.00
-    assert row["tx_start"] == _B1
+    assert row["txStart"] == _B1
 
 
 def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
@@ -239,7 +239,7 @@ def test_bitemporal_insert_then_update_keeps_the_valid_time_bound() -> None:
     (row,) = _insert_rows(step)
     assert row["acctNum"] == "D"
     assert row["value"] == 150.00
-    assert row["valid_start"] == _B1
+    assert row["validStart"] == _B1
 
 
 def test_insert_then_delete_cancels_to_no_dml() -> None:
@@ -872,7 +872,7 @@ def test_planning_captures_the_transaction_instant_only_for_surviving_temporal_w
     plan = _plan([temporal], _BALANCE, tx_instant=TransactionInstant(temporal_clock))
     (step,) = plan.steps
     assert isinstance(step, PlannedInsert)
-    assert _insert_rows(step)[0]["tx_start"] == "2024-06-01T00:00:00+00:00"
+    assert _insert_rows(step)[0]["txStart"] == "2024-06-01T00:00:00+00:00"
     assert temporal_clock.calls == 1
 
 
@@ -922,10 +922,10 @@ def _bitemporal_observation() -> WriteObservation:
                 "id": 5,
                 "acctNum": "P5",
                 "value": 1.0,
-                "valid_start": "2024-01-01T00:00:00+00:00",
-                "valid_end": "infinity",
-                "tx_start": "2024-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "validStart": "2024-01-01T00:00:00+00:00",
+                "validEnd": "infinity",
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             }
         ),
         transaction_time_basis=LATEST_PINNED,

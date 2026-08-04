@@ -775,8 +775,8 @@ def test_serialize_rejects_unresolved_transition_records() -> None:
                         as_of_axes=(
                             AsOfAxisMetadata(
                                 dimension="transaction-time",
-                                start_attribute="tx_start",
-                                end_attribute="tx_end",
+                                start_attribute="txStart",
+                                end_attribute="txEnd",
                             ),
                         ),
                     ),

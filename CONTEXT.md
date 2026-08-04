@@ -901,13 +901,13 @@ _Avoid_: axis name, axis kind, business/processing dimension, validTime, transac
 
 **Valid Time**:
 The Temporal Dimension describing when a fact is true in the modeled world.
-Its canonical interval attributes are `valid_start` and `valid_end`, mapped by
+Its canonical interval attributes are `validStart` and `validEnd`, mapped by
 default to `from_z` and `thru_z`.
 _Avoid_: business time, business date, effective date
 
 **Transaction Time**:
 The Temporal Dimension describing when a fact is present in the database. Its
-canonical interval attributes are `tx_start` and `tx_end`, mapped by default
+canonical interval attributes are `txStart` and `txEnd`, mapped by default
 to `in_z` and `out_z`.
 _Avoid_: processing time, processing date, system date
 

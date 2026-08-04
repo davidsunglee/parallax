@@ -147,8 +147,8 @@ def _observed_balance(tx_start: str) -> TemporalObservation:
                 "id": 1,
                 "acctNum": "A",
                 "value": Decimal("100.00"),
-                "tx_start": tx_start,
-                "tx_end": "infinity",
+                "txStart": tx_start,
+                "txEnd": "infinity",
             }
         )
     )

@@ -88,8 +88,8 @@
       "attribute": {
         "acctNum": "acct_num",
         "id": "bal_id",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
+        "txEnd": "out_z",
+        "txStart": "in_z",
         "value": "val"
       },
       "documentPath": {},
@@ -101,10 +101,10 @@
       "attribute": {
         "id": "br_id",
         "name": "name",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z"
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
       },
       "documentPath": {
         "address.city": "address:city",
@@ -298,10 +298,10 @@
       "attribute": {
         "id": "id",
         "route": "route",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z"
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
       },
       "documentPath": {
         "route": "payload:route",
@@ -343,10 +343,10 @@
     "parallax.compatibility.Mooring": {
       "attribute": {
         "id": "id",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z"
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -409,8 +409,8 @@
         "crew": "crew",
         "id": "id",
         "title": "title",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {
         "crew": "payload:crew",
@@ -532,10 +532,10 @@
       "attribute": {
         "id": "id",
         "price": "price",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z"
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -553,8 +553,8 @@
       "attribute": {
         "id": "id",
         "name": "name",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -564,8 +564,8 @@
         "amount": "amount",
         "id": "id",
         "invoiceId": "invoice_id",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -577,8 +577,8 @@
         "id": "id",
         "tenantId": "tenant_id",
         "term": "term",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -606,8 +606,8 @@
       "attribute": {
         "acctNum": "acct_num",
         "id": "led_id",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
+        "txEnd": "out_z",
+        "txStart": "in_z",
         "value": "val"
       },
       "documentPath": {},
@@ -800,8 +800,8 @@
       "attribute": {
         "id": "id",
         "note": "note",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -873,10 +873,10 @@
         "coverageId": "coverage_id",
         "id": "id",
         "reserve": "reserve",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z"
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -886,10 +886,10 @@
         "amount": "amount",
         "id": "id",
         "policyId": "policy_id",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z"
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -898,10 +898,10 @@
       "attribute": {
         "id": "id",
         "name": "name",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z"
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -912,10 +912,10 @@
       "attribute": {
         "acctNum": "acct_num",
         "id": "pos_id",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z",
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z",
         "value": "val"
       },
       "documentPath": {},
@@ -927,8 +927,8 @@
       "attribute": {
         "id": "id",
         "price": "price",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -960,10 +960,10 @@
       "attribute": {
         "amount": "amount",
         "id": "id",
-        "tx_end": "out_z",
-        "tx_start": "in_z",
-        "valid_end": "thru_z",
-        "valid_start": "from_z"
+        "txEnd": "out_z",
+        "txStart": "in_z",
+        "validEnd": "thru_z",
+        "validStart": "from_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -979,8 +979,8 @@
       "attribute": {
         "celsius": "celsius",
         "id": "id",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {},
       "valueObject": {}
@@ -1096,8 +1096,8 @@
       "attribute": {
         "id": "id",
         "sensor": "sensor",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {
         "probe.model": "probe:model"
@@ -1144,8 +1144,8 @@
       "attribute": {
         "id": "sup_id",
         "name": "name",
-        "tx_end": "out_z",
-        "tx_start": "in_z"
+        "txEnd": "out_z",
+        "txStart": "in_z"
       },
       "documentPath": {
         "address.city": "address:city",

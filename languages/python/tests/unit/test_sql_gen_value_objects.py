@@ -310,8 +310,8 @@ def test_document_slots_stay_atomic_and_follow_every_scalar_tier() -> None:
         table="site",
         attributes=(
             Attribute(name="id", type="int64", column="id", primary_key=True),
-            Attribute(name="tx_start", type="timestamp", column="in_z"),
-            Attribute(name="tx_end", type="timestamp", column="out_z"),
+            Attribute(name="txStart", type="timestamp", column="in_z"),
+            Attribute(name="txEnd", type="timestamp", column="out_z"),
             Attribute(name="label", type="string", column="label"),
         ),
         value_objects=(
@@ -323,7 +323,7 @@ def test_document_slots_stay_atomic_and_follow_every_scalar_tier() -> None:
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
             ),
         ),
     )

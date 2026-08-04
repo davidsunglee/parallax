@@ -44,7 +44,7 @@ trail. Key invariants the suite pins down:
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
   inactivation is an error in any mode (the affected-row conflict contract,
   `m-txtime-write`). In optimistic mode the inactivation additionally gates on the
-  observed `tx_start`, appended **after** the address:
+  observed `txStart`, appended **after** the address:
   `… and thru_z = ? and out_z = ? and in_z = ?`. The observed `in_z` is the
   version analogue (`m-opt-lock`, `m-opt-lock --> m-temporal-read`); the chained
   `head` / `middle` / `tail` rows are ungated `INSERT`s at the fresh `in_z`. On a
@@ -91,7 +91,7 @@ and differ only in the tail — `update` chains a new `tail` carrying the new va
   one current rectangle exactly as the `*Until` inactivation does
   (`pk and thru_z = ? and out_z = ?`), so only that rectangle is inactivated; the
   chained rows are inserted **after** it. In optimistic mode the inactivation gains
-  the observed-`tx_start` gate after the address, again exactly as the `*Until`
+  the observed-`txStart` gate after the address, again exactly as the `*Until`
   inactivation does; the chained `head` / new `tail` are ungated `INSERT`s at the
   fresh `in_z`.
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
@@ -120,7 +120,7 @@ to two axes. The description carries the same three parts:
 
 - the **Close Cause** — `Superseded` for `update` / `updateUntil`, `Terminated`
   for `terminate` / `terminateUntil`;
-- the **gate basis** — the observed `tx_start` an optimistic inactivation binds;
+- the **gate basis** — the observed `txStart` an optimistic inactivation binds;
   and
 - the **successors** — the chained rectangles with their Insert Origins.
 

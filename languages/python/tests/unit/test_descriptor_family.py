@@ -208,7 +208,7 @@ def test_reject_descendant_temporal_axes_under_a_non_temporal_root() -> None:
         inheritance=Inheritance(role="abstract-subtype", parent="Animal"),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
             ),
         ),
     )
@@ -233,7 +233,7 @@ def test_reject_descendant_temporal_axes_under_a_temporal_root() -> None:
         attributes=_minimal_attrs(),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="txStart", end_attribute="txEnd"
             ),
         ),
     )
@@ -244,7 +244,7 @@ def test_reject_descendant_temporal_axes_under_a_temporal_root() -> None:
         attributes=(Attribute(name="grade", type="string", column="grade"),),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="valid-time", start_attribute="valid_start", end_attribute="valid_end"
+                dimension="valid-time", start_attribute="validStart", end_attribute="validEnd"
             ),
         ),
     )

@@ -658,7 +658,7 @@ def test_temporal_unique_index_matches_physical_primary_key() -> None:
     )
     assert unique_index == {
         "name": "balance_pk",
-        "attributes": ["id", "tx_start"],
+        "attributes": ["id", "txStart"],
         "unique": True,
     }
 

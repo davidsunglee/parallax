@@ -47,14 +47,14 @@ LayoutMeterReading:
   - id: 1
     sensor: north
     celsius: 20.00
-    tx_start: "2024-01-01T00:00:00+00:00"
-    tx_end: "2024-02-01T00:00:00+00:00"
+    txStart: "2024-01-01T00:00:00+00:00"
+    txEnd: "2024-02-01T00:00:00+00:00"
     probe:
       model: TH-1
   - id: 1
     sensor: north
     celsius: 21.50
-    tx_start: "2024-02-01T00:00:00+00:00"
-    tx_end: infinity
+    txStart: "2024-02-01T00:00:00+00:00"
+    txEnd: infinity
     probe:
       model: TH-2

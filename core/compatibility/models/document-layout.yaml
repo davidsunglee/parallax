@@ -198,10 +198,10 @@ entities:
       - name: crew
         type: int32
         nullable: true
-      - name: tx_start
+      - name: txStart
         type: timestamp
         column: in_z
-      - name: tx_end
+      - name: txEnd
         type: timestamp
         column: out_z
     valueObjects:
@@ -219,11 +219,11 @@ entities:
             nullable: true
     asOfAxes:
       - dimension: transaction-time
-        startAttribute: tx_start
-        endAttribute: tx_end
+        startAttribute: txStart
+        endAttribute: txEnd
     indices:
       - name: voyage_pk
-        attributes: [id, tx_start]
+        attributes: [id, txStart]
         unique: true
   # Charter: the Bitemporal member. Four bound Attributes stay direct and the
   # rectangle split chains head / middle / tail milestones, each carrying a whole
@@ -243,16 +243,16 @@ entities:
         type: string
         maxLength: 64
         nullable: true
-      - name: valid_start
+      - name: validStart
         type: timestamp
         column: from_z
-      - name: valid_end
+      - name: validEnd
         type: timestamp
         column: thru_z
-      - name: tx_start
+      - name: txStart
         type: timestamp
         column: in_z
-      - name: tx_end
+      - name: txEnd
         type: timestamp
         column: out_z
     valueObjects:
@@ -264,14 +264,14 @@ entities:
             nullable: true
     asOfAxes:
       - dimension: valid-time
-        startAttribute: valid_start
-        endAttribute: valid_end
+        startAttribute: validStart
+        endAttribute: validEnd
       - dimension: transaction-time
-        startAttribute: tx_start
-        endAttribute: tx_end
+        startAttribute: txStart
+        endAttribute: txEnd
     indices:
       - name: charter_pk
-        attributes: [id, valid_start, tx_start]
+        attributes: [id, validStart, txStart]
         unique: true
   # Beacon: a document-layout Entity whose only member is its primary key, which the
   # layout keeps direct. Its Structured Column carries the empty object and nothing
@@ -306,28 +306,28 @@ entities:
       - name: id
         type: int64
         primaryKey: true
-      - name: valid_start
+      - name: validStart
         type: timestamp
         column: from_z
-      - name: valid_end
+      - name: validEnd
         type: timestamp
         column: thru_z
-      - name: tx_start
+      - name: txStart
         type: timestamp
         column: in_z
-      - name: tx_end
+      - name: txEnd
         type: timestamp
         column: out_z
     asOfAxes:
       - dimension: valid-time
-        startAttribute: valid_start
-        endAttribute: valid_end
+        startAttribute: validStart
+        endAttribute: validEnd
       - dimension: transaction-time
-        startAttribute: tx_start
-        endAttribute: tx_end
+        startAttribute: txStart
+        endAttribute: txEnd
     indices:
       - name: mooring_pk
-        attributes: [id, valid_start, tx_start]
+        attributes: [id, validStart, txStart]
         unique: true
   # Payment: a table-per-hierarchy family whose root owns one Structured Column.
   # The sibling declarations intentionally reuse the `detail` Document Path with

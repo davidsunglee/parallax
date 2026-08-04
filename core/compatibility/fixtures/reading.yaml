@@ -12,5 +12,5 @@
 MeterReading:
   - id: 1
     celsius: 20.00
-    tx_start: "2024-01-01T00:00:00+00:00"
-    tx_end: infinity
+    txStart: "2024-01-01T00:00:00+00:00"
+    txEnd: infinity

@@ -94,10 +94,10 @@ def test_a_temporal_base_on_a_family_root_supplies_the_axes_on_the_root_alone() 
     assert [attribute.identity.name for attribute in im.Rate.attributes] == [
         "id",
         "amount",
-        "valid_start",
-        "valid_end",
-        "tx_start",
-        "tx_end",
+        "validStart",
+        "validEnd",
+        "txStart",
+        "txEnd",
     ]
     assert im.Rate.attributes[-1].storage == Column("out_z")
     assert im.DepositRate.as_of_axes == ()

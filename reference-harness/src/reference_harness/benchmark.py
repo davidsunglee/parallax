@@ -126,8 +126,8 @@ def _generate_document_milestones(rows: int) -> dict[str, list[dict[str, Any]]]:
                 "title": f"voyage-{index}",
                 "crew": 4,
                 "manifest": {"cargo": "timber"},
-                "tx_start": "2026-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "txStart": "2026-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             }
             for index in range(1, rows + 1)
         ],
@@ -136,10 +136,10 @@ def _generate_document_milestones(rows: int) -> dict[str, list[dict[str, Any]]]:
                 "id": index,
                 "route": f"route-{index}",
                 "terms": {"clause": "standard"},
-                "valid_start": "2026-01-01T00:00:00+00:00",
-                "valid_end": "infinity",
-                "tx_start": "2026-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "validStart": "2026-01-01T00:00:00+00:00",
+                "validEnd": "infinity",
+                "txStart": "2026-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             }
             for index in range(1, rows + 1)
         ],

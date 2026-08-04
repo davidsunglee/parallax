@@ -176,8 +176,8 @@ def test_a_temporal_close_and_chain_is_audit_neutral() -> None:
                 "id": 1,
                 "acctNum": "A",
                 "value": 100.00,
-                "tx_start": "2024-01-01T00:00:00+00:00",
-                "tx_end": "infinity",
+                "txStart": "2024-01-01T00:00:00+00:00",
+                "txEnd": "infinity",
             }
         ),
         transaction_time_basis=LATEST_PINNED,

@@ -6,7 +6,7 @@
 # Keyed by class name; each row is a map of attribute-name -> value. Instant columns
 # are authored as ISO-8601 UTC strings; the open upper bound is the literal
 # `infinity`. The loader resolves attribute names to columns via the descriptor
-# (valid_start/valid_end -> from_z/thru_z, tx_start/tx_end -> in_z/out_z)
+# (validStart/validEnd -> from_z/thru_z, txStart/txEnd -> in_z/out_z)
 # and stores `address` as one document.
 #
 # The history of branch id 1 (Central Branch) records ONE in-the-world address that was
@@ -29,10 +29,10 @@
 Branch:
   - id: 1
     name: Central Branch
-    valid_start: "2024-01-01T00:00:00+00:00"
-    valid_end: infinity
-    tx_start: "2024-01-01T00:00:00+00:00"
-    tx_end: "2024-04-01T00:00:00+00:00"
+    validStart: "2024-01-01T00:00:00+00:00"
+    validEnd: infinity
+    txStart: "2024-01-01T00:00:00+00:00"
+    txEnd: "2024-04-01T00:00:00+00:00"
     address:
       street: 10 Old Road
       city: Helsinki
@@ -42,10 +42,10 @@ Branch:
         - { type: main, number: '555-1000' }
   - id: 1
     name: Central Branch
-    valid_start: "2024-01-01T00:00:00+00:00"
-    valid_end: "2024-06-01T00:00:00+00:00"
-    tx_start: "2024-04-01T00:00:00+00:00"
-    tx_end: infinity
+    validStart: "2024-01-01T00:00:00+00:00"
+    validEnd: "2024-06-01T00:00:00+00:00"
+    txStart: "2024-04-01T00:00:00+00:00"
+    txEnd: infinity
     address:
       street: 20 Mid Road
       city: Espoo
@@ -55,10 +55,10 @@ Branch:
         - { type: main, number: '555-2000' }
   - id: 1
     name: Central Branch
-    valid_start: "2024-06-01T00:00:00+00:00"
-    valid_end: infinity
-    tx_start: "2024-04-01T00:00:00+00:00"
-    tx_end: infinity
+    validStart: "2024-06-01T00:00:00+00:00"
+    validEnd: infinity
+    txStart: "2024-04-01T00:00:00+00:00"
+    txEnd: infinity
     address:
       street: 30 New Road
       city: Tampere

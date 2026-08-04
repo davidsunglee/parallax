@@ -3724,9 +3724,9 @@ def _run_conflict_close(
     for a conflict case's own close-only probe, never a REAL chaining mutation,
     and executes it on the transaction's own connection; a standalone close has
     nothing to coalesce or FK-order with, so it bypasses the buffer/flush
-    pipeline entirely. The write row's own ``valid_end`` completes a bitemporal
+    pipeline entirely. The write row's own ``validEnd`` completes a bitemporal
     close's ADDRESS and ``observed_tx_start`` supplies its gate candidate; both
-    are the case's EXPLICIT authored fields (`when.write.valid_end` /
+    are the case's EXPLICIT authored fields (`when.write.validEnd` /
     `when.observedTxStart`) — never a shadow-tracker lookup, a conflict case
     tests a KNOWN stale-or-fresh value.
 
@@ -3735,7 +3735,7 @@ def _run_conflict_close(
     ``affectedRows`` observation can never absorb a misclassified failure.
     """
     row = dict(write_row)
-    observed_valid_end = cast("str | None", row.pop("valid_end", None))
+    observed_valid_end = cast("str | None", row.pop("validEnd", None))
     model = case_model(meta)
     # The standalone close is settled outside any unit of work, so it is handed
     # its own Transaction Instant over the SAME clock the transaction below runs

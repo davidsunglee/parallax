@@ -3,8 +3,8 @@
 Tenant:
   - { id: 1, name: Acme }
 Lease:
-  - { id: 10, tenantId: 1, term: "12mo", tx_start: "2024-01-01T00:00:00+00:00", tx_end: "2024-04-01T00:00:00+00:00" }
-  - { id: 10, tenantId: 1, term: "24mo", tx_start: "2024-04-01T00:00:00+00:00", tx_end: infinity }
+  - { id: 10, tenantId: 1, term: "12mo", txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
+  - { id: 10, tenantId: 1, term: "24mo", txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
 LeaseNote:
   - { id: 100, leaseId: 10, text: signed }
   - { id: 101, leaseId: 10, text: renewed }
