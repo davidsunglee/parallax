@@ -23,7 +23,7 @@ when:
       operand:
         asOf:
           operand: { all: {} }
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: "2024-02-01T00:00:00+00:00"
       paths:
         - { segments: [{ rel: Invoice.lines }] }

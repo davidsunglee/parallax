@@ -509,7 +509,7 @@ def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
 
 
 def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
-    op = AsOf(operand=All(), dimension="transactionTime", coordinate="2024-01-15T00:00:00+00:00")
+    op = AsOf(operand=All(), dimension="transaction-time", coordinate="2024-01-15T00:00:00+00:00")
     plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), op, RATE)
     assert plan.root_operation == And(
         operands=(

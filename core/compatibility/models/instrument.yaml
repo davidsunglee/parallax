@@ -55,10 +55,10 @@ entities:
         type: timestamp
         column: out_z
     asOfAxes:
-      - dimension: validTime
+      - dimension: valid-time
         startAttribute: valid_start
         endAttribute: valid_end
-      - dimension: transactionTime
+      - dimension: transaction-time
         startAttribute: tx_start
         endAttribute: tx_end
     indices:

@@ -20,8 +20,8 @@ when:
             eq:
               attr: Position.id
               value: 1
-          dimension: transactionTime
-      dimension: validTime
+          dimension: transaction-time
+      dimension: valid-time
 then:
   statements:
     - sql:

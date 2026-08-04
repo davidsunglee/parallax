@@ -237,11 +237,11 @@ def _temporal(body: Mapping[str, object], key: str, tag: str, *, finite: bool = 
     return value
 
 
-def _dimension(body: Mapping[str, object], tag: str) -> Literal["validTime", "transactionTime"]:
+def _dimension(body: Mapping[str, object], tag: str) -> Literal["valid-time", "transaction-time"]:
     value = _str(body, "dimension", tag)
-    if value not in ("validTime", "transactionTime"):
+    if value not in ("valid-time", "transaction-time"):
         raise OperationError(
-            f"{tag}: `dimension` must be 'validTime' or 'transactionTime', got {value!r}"
+            f"{tag}: `dimension` must be 'valid-time' or 'transaction-time', got {value!r}"
         )
     return value
 

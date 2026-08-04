@@ -59,7 +59,7 @@ _PERSISTENCE_MODES: frozenset[str] = frozenset({"read-write", "read-only"})
 _PK_STRATEGIES: frozenset[str] = frozenset({"application-assigned", "max", "sequence"})
 _REL_CARDINALITIES: frozenset[str] = frozenset({"one-to-one", "many-to-one", "one-to-many"})
 _VO_CARDINALITIES: frozenset[str] = frozenset({"one", "many"})
-_AXES: frozenset[str] = frozenset({"validTime", "transactionTime"})
+_AXES: frozenset[str] = frozenset({"valid-time", "transaction-time"})
 _ROLES: frozenset[str] = frozenset({"root", "abstract-subtype", "concrete-subtype"})
 _STRATEGIES: frozenset[str] = frozenset({"table-per-hierarchy", "table-per-concrete-subtype"})
 
@@ -288,7 +288,7 @@ def _as_of_from(value: object, where: str) -> AsOfAxisMetadata:
     start_attribute = _str(m, "startAttribute", where)
     end_attribute = _str(m, "endAttribute", where)
     return AsOfAxisMetadata(
-        dimension=cast("Literal['validTime', 'transactionTime']", dimension),
+        dimension=cast("Literal['valid-time', 'transaction-time']", dimension),
         start_attribute=start_attribute,
         end_attribute=end_attribute,
     )

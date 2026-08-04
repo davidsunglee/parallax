@@ -17,7 +17,7 @@ when:
       operand:
         asOf:
           operand: { all: {} }
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: latest
       paths:
         - { segments: [{ rel: Lease.notes }] }

@@ -21,7 +21,7 @@ when:
             eq:
               attr: Invoice.id
               value: 100
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: latest
       roundTrips: 1
       note: source A -> invoice 100 pinned at Transaction-Time-latest (out_z = infinity)
@@ -38,7 +38,7 @@ when:
             eq:
               attr: Invoice.id
               value: 100
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: "2024-02-01T00:00:00+00:00"
       roundTrips: 1
       note: source B -> the SAME primary key pinned at instant 2024-02-01 (a distinct pinned view)

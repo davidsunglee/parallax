@@ -149,7 +149,7 @@ def test_valid_time_only_descriptor_is_outside_the_active_contract() -> None:
             ],
             "asOfAxes": [
                 {
-                    "dimension": "validTime",
+                    "dimension": "valid-time",
                     "startAttribute": "valid_start",
                     "endAttribute": "valid_end",
                 }
@@ -358,7 +358,7 @@ def test_temporal_axis_lookup_uses_derived_and_explicit_override_columns() -> No
             ],
             "asOfAxes": [
                 {
-                    "dimension": "transactionTime",
+                    "dimension": "transaction-time",
                     "startAttribute": "effectiveFrom",
                     "endAttribute": "effectiveTo",
                 }
@@ -370,7 +370,7 @@ def test_temporal_axis_lookup_uses_derived_and_explicit_override_columns() -> No
 
     assert entity.temporal_runtime_axes == [
         {
-            "dimension": "transactionTime",
+            "dimension": "transaction-time",
             "start_column": "effective_from",
             "end_column": "effective_to",
             "infinity": "infinity",
@@ -544,7 +544,7 @@ def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
     """
     model = load_model(COMPATIBILITY_ROOT, "models/balance.yaml")
     descriptor = copy.deepcopy(model.descriptor)
-    # Balance is a single-`entity` descriptor with `asOfAxes` (transactionTime).
+    # Balance is a single-`entity` descriptor with `asOfAxes` (transaction-time).
     # Inject `optimisticLocking` on its `value` attribute -> the forbidden combo.
     value_attr = next(a for a in descriptor["entity"]["attributes"] if a["name"] == "value")
     value_attr["optimisticLocking"] = True
@@ -706,7 +706,7 @@ def test_temporal_full_key_unique_index_is_not_re_emitted() -> None:
                 ],
                 "asOfAxes": [
                     {
-                        "dimension": "transactionTime",
+                        "dimension": "transaction-time",
                         "startAttribute": "tx_start",
                         "endAttribute": "tx_end",
                     },

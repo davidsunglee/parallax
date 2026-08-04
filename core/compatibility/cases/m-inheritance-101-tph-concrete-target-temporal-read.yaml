@@ -6,12 +6,12 @@
 # Targeting the CONCRETE subtype Bond injects the tag-equality predicate
 # (`t0.kind = ?`, bind ['bond']) AFTER the as-of predicate (m-sql: the temporal
 # composition runs upstream of the tag-predicate lowering) — Stock's row is excluded
-# regardless of the as-of pin. The operation pins `dimension: validTime` —
+# regardless of the as-of pin. The operation pins `dimension: valid-time` —
 # Bond's OWN class-name prefix over an axis it never locally declares (Instrument,
 # the root, does) — proving the inherited spelling resolves for a table-per-hierarchy
 # concrete position exactly as it does for table-per-concrete-subtype
-# (m-inheritance-100). Pinning validTime to 2024-06-01 (a past instant) with
-# transactionTime defaulted to Latest selects Bond's Latest rectangle; there is NO
+# (m-inheritance-100). Pinning valid-time to 2024-06-01 (a past instant) with
+# transaction-time defaulted to Latest selects Bond's Latest rectangle; there is NO
 # familyVariant (the caller queried a known variant).
 #
 # Non-trivial (temporal + tag) case => referenceSql is the independent oracle (inline
@@ -27,7 +27,7 @@ when:
     asOf:
       operand:
         all: {}
-      dimension: validTime
+      dimension: valid-time
       coordinate: "2024-06-01T00:00:00+00:00"
 then:
   statements:

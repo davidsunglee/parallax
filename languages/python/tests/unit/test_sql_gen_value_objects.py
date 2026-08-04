@@ -323,7 +323,7 @@ def test_document_slots_stay_atomic_and_follow_every_scalar_tier() -> None:
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -517,7 +517,7 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
         pytest.param(oa.NotExists(rel="Customer.orders"), id="notExists"),
         pytest.param(oa.DeepFetch(operand=oa.All()), id="deepFetch"),
         pytest.param(
-            oa.AsOf(operand=oa.All(), dimension="validTime", coordinate="2024-01-01"), id="asOf"
+            oa.AsOf(operand=oa.All(), dimension="valid-time", coordinate="2024-01-01"), id="asOf"
         ),
         pytest.param(oa.Limit(operand=oa.All(), count=1), id="limit"),
         pytest.param(oa.Distinct(operand=oa.All()), id="distinct"),

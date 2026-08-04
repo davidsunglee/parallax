@@ -6,8 +6,8 @@
 # SAME recursive `address` value object rides a `bitemporal` owner with TWO as-of
 # dimensions.
 #
-#   validTime       (from_z / thru_z) — WHEN A FACT IS TRUE IN THE WORLD.
-#   transactionTime (in_z   / out_z ) — WHEN THE SYSTEM KNEW that fact (audit axis).
+#   valid-time       (from_z / thru_z) — WHEN A FACT IS TRUE IN THE WORLD.
+#   transaction-time (in_z   / out_z ) — WHEN THE SYSTEM KNEW that fact (audit axis).
 #
 # A row is the milestone at the intersection of a Valid-Time interval and a
 # Transaction-Time interval — a "rectangle" in (valid x transaction) space. A row is CURRENT on an
@@ -58,10 +58,10 @@ entity:
       type: timestamp
       column: out_z
   asOfAxes:
-    - dimension: validTime
+    - dimension: valid-time
       startAttribute: valid_start
       endAttribute: valid_end
-    - dimension: transactionTime
+    - dimension: transaction-time
       startAttribute: tx_start
       endAttribute: tx_end
   valueObjects:

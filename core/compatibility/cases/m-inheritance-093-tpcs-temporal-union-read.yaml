@@ -5,7 +5,7 @@
 # {DepositRate, LoanRate} (ALPHABETICAL branch order). With no shared table and no tag,
 # the read lowers to `union all` over those concrete tables, and the injected as-of
 # predicate is applied PER BRANCH: each branch carries its own `from_z <= ? and thru_z > ?
-# and out_z = ?` fragment (validTime pinned past 2024-06-01, transactionTime defaulted
+# and out_z = ?` fragment (valid-time pinned past 2024-06-01, transaction-time defaulted
 # NOW), in Valid-Time-first bind order. Because every concrete branch inherits the same
 # axes from the root, each branch's as-of fragment is identical, so the union's binds are
 # the per-branch suffix [2024-06-01, 2024-06-01, infinity] repeated in alphabetical branch
@@ -35,7 +35,7 @@ when:
     asOf:
       operand:
         all: {}
-      dimension: validTime
+      dimension: valid-time
       coordinate: "2024-06-01T00:00:00+00:00"
 then:
   statements:

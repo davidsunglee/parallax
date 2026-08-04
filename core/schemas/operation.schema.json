@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/operation.schema.json",
   "title": "Parallax Operation Algebra (m-op-algebra)",
-  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. The temporal algebra addresses axes by the closed dimensions `validTime` and `transactionTime`: `asOf` carries `dimension` plus `coordinate`, `asOfRange` carries `dimension` plus finite `start`/`end`, and `history` carries `dimension`. Omitted dimensions default to Latest; an explicit Latest coordinate is serialized as `latest`, while Now is a finite clock instant serialized as an ordinary timestamp. Physical interval predicates are injected by m-temporal-read and never authored in the operation. The remaining nodes cover the full predicate, relationship, aggregation, nested-value-object, result-directive, and inheritance-narrowing algebra.",
+  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. The temporal algebra addresses axes by the closed dimensions `valid-time` and `transaction-time`: `asOf` carries `dimension` plus `coordinate`, `asOfRange` carries `dimension` plus finite `start`/`end`, and `history` carries `dimension`. Omitted dimensions default to Latest; an explicit Latest coordinate is serialized as `latest`, while Now is a finite clock instant serialized as an ordinary timestamp. Physical interval predicates are injected by m-temporal-read and never authored in the operation. The remaining nodes cover the full predicate, relationship, aggregation, nested-value-object, result-directive, and inheritance-narrowing algebra.",
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
@@ -695,7 +695,7 @@
 
     "temporalDimension": {
       "description": "The closed temporal dimension vocabulary.",
-      "enum": ["validTime", "transactionTime"]
+      "enum": ["valid-time", "transaction-time"]
     },
     "temporalCoordinate": {
       "description": "A temporal point: the literal `latest` or a finite ISO-8601 UTC instant. A finite instant obtained from the current clock is Now; `now` is not a wire alias.",

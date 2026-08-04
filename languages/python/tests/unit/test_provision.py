@@ -454,7 +454,7 @@ def _tpcs_family_with_a_temporal_root_and_matching_index() -> AcceptedMetamodel:
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
         indices=(Index(name="root_pk", attributes=("id", "tx_start"), unique=True),),
@@ -683,7 +683,7 @@ def test_an_axis_naming_an_unknown_attribute_never_reaches_provisioning() -> Non
         attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transactionTime",
+                dimension="transaction-time",
                 start_attribute="missing_tx_start",
                 end_attribute="missing_tx_end",
             ),

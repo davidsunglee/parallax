@@ -23,8 +23,8 @@
 #       — the corrected address from Valid Time 2024-06-01 onward, CURRENT.
 #
 # Both-axis reads discriminate, each returning a DISTINCT document:
-#   validTime=Latest  & transactionTime=Latest        -> R3 (D3): true now AND known now.
-#   validTime=2024-03-01 & transactionTime=2024-02-01 -> R1 (D1): what the system BELIEVED on
+#   valid-time=Latest  & transaction-time=Latest        -> R3 (D3): true now AND known now.
+#   valid-time=2024-03-01 & transaction-time=2024-02-01 -> R1 (D1): what the system BELIEVED on
 #       2024-02-01 about Valid Time 2024-03-01 — the audit (Transaction-Time) axis.
 Branch:
   - id: 1

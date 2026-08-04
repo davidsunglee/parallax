@@ -13,7 +13,7 @@
 #   4. tail: re-insert old value 200 for [2024-09-01, infinity) — the restored future.
 # All three inserts carry in_z = at (2024-10-01).
 #
-# The trailing find reads as-of validTime 2024-08-01 (INSIDE the window) and expects
+# The trailing find reads as-of valid-time 2024-08-01 (INSIDE the window) and expects
 # value = 300 on the [2024-07-01, 2024-09-01) segment, proving the new value is visible
 # only within the window. Total roundTrips 6 = read (1) + four writes (4) +
 # verify read (1).
@@ -75,7 +75,7 @@ when:
         asOf:
           operand:
             eq: { attr: Position.value, value: 300.00 }
-          dimension: validTime
+          dimension: valid-time
           coordinate: "2024-08-01T00:00:00+00:00"
       roundTrips: 1
       statements:

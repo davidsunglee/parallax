@@ -668,8 +668,8 @@ def test_balance_entity_is_unitemporal_transaction_time() -> None:
     entity = model.root_entity
     assert entity.is_temporal
     (dimension,) = entity.temporal_runtime_axes
-    assert dimension["dimension"] == "transactionTime"
-    assert [axis["dimension"] for axis in entity.temporal_runtime_axes] == ["transactionTime"]
+    assert dimension["dimension"] == "transaction-time"
+    assert [axis["dimension"] for axis in entity.temporal_runtime_axes] == ["transaction-time"]
 
 
 def test_a_set_clause_splits_on_the_commas_that_separate_its_assignments() -> None:

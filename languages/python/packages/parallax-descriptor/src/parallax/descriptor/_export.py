@@ -117,8 +117,8 @@ _MULTIPLICITIES: Final[dict[Multiplicity, str]] = {
 }
 
 _DIMENSIONS: Final[dict[TemporalDimension, str]] = {
-    TemporalDimension.VALID_TIME: "validTime",
-    TemporalDimension.TRANSACTION_TIME: "transactionTime",
+    TemporalDimension.VALID_TIME: "valid-time",
+    TemporalDimension.TRANSACTION_TIME: "transaction-time",
 }
 
 

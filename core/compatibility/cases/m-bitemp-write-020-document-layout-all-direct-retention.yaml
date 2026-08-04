@@ -97,7 +97,7 @@ when:
         asOf:
           operand:
             eq: { attr: Mooring.id, value: 1 }
-          dimension: validTime
+          dimension: valid-time
           coordinate: "2026-05-01T00:00:00+00:00"
       roundTrips: 1
       note: no rectangle covers the excised window, and this read projects the Structured Column too

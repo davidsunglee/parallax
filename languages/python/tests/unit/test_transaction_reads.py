@@ -459,7 +459,7 @@ def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> Non
     # bitemporal entity's OWN as-of-attribute loop must skip an axis absent
     # from a given milestone's pin, not KeyError.
     position = MODELS["position"].meta(EntityIdentity("parallax.compatibility", "Position"))
-    pin = _pin_from_milestone(position, {"transactionTime": _MILESTONE_INSTANT})
+    pin = _pin_from_milestone(position, {"transaction-time": _MILESTONE_INSTANT})
     assert pin.tx_time == _MILESTONE_INSTANT
     assert pin.valid_time is None
 

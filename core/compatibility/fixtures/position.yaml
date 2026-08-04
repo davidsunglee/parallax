@@ -19,9 +19,9 @@
 #       — the corrected value from Valid Time 2024-06-01 onward, CURRENT.
 #
 # Both-axis reads discriminate, each returning a DISTINCT value:
-#   validTime=Latest  & transactionTime=Latest  -> R3 (200): true now AND known now.
-#   validTime=2024-03-01 & transactionTime=Latest -> R2 (100): the head, still current.
-#   validTime=2024-03-01 & transactionTime=2024-02-01 -> R1 (90): what the system BELIEVED
+#   valid-time=Latest  & transaction-time=Latest  -> R3 (200): true now AND known now.
+#   valid-time=2024-03-01 & transaction-time=Latest -> R2 (100): the head, still current.
+#   valid-time=2024-03-01 & transaction-time=2024-02-01 -> R1 (90): what the system BELIEVED
 #       on 2024-02-01 about Valid Time 2024-03-01 — the audit (Transaction-Time) axis.
 Position:
   - id: 1

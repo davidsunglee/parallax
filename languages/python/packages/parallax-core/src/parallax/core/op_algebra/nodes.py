@@ -67,7 +67,7 @@ __all__ = [
 
 # A scalar literal usable as a bind (json/yaml primitive).
 Scalar = str | int | float | bool | None
-TemporalDimension = Literal["validTime", "transactionTime"]
+TemporalDimension = Literal["valid-time", "transaction-time"]
 
 ComparisonOp = Literal[
     "eq", "notEq", "greaterThan", "greaterThanEquals", "lessThan", "lessThanEquals"

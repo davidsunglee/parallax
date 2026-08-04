@@ -897,7 +897,7 @@ dates are the same dimensions under retired names.
 One of the two orthogonal temporal meanings recognized by Parallax: Valid Time
 or Transaction Time. The dimension itself identifies an entity's As-Of Axis;
 an axis has no independently authored name.
-_Avoid_: axis name, axis kind, business/processing dimension
+_Avoid_: axis name, axis kind, business/processing dimension, validTime, transactionTime
 
 **Valid Time**:
 The Temporal Dimension describing when a fact is true in the modeled world.

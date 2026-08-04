@@ -21,9 +21,9 @@ when:
               rel: Policy.coverages
               op:
                 greaterThanEquals: { attr: Coverage.amount, value: 600.00 }
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: latest
-      dimension: validTime
+      dimension: valid-time
       coordinate: latest
 then:
   statements:

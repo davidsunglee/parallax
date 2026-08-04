@@ -27,10 +27,10 @@ _MODELS = corpus_models.load_models(
 )
 
 _PROC = AsOfAxisMetadata(
-    dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
+    dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
 )
 _BIZ = AsOfAxisMetadata(
-    dimension="validTime", start_attribute="valid_start", end_attribute="valid_end"
+    dimension="valid-time", start_attribute="valid_start", end_attribute="valid_end"
 )
 
 
@@ -149,7 +149,7 @@ def _synthetic_temporal_family() -> Metamodel:
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )
@@ -254,7 +254,7 @@ def test_declaring_entity_is_the_entity_itself_outside_a_family() -> None:
         ),
         as_of_axes=(
             AsOfAxisMetadata(
-                dimension="transactionTime", start_attribute="tx_start", end_attribute="tx_end"
+                dimension="transaction-time", start_attribute="tx_start", end_attribute="tx_end"
             ),
         ),
     )

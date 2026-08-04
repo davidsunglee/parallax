@@ -6,7 +6,7 @@
 # object (street/city, a nested `geo` one, a to-many `phones`) rides a
 # `Transaction-Time-Only` (audit-only) owner instead of a non-temporal one. A
 # value object declares NO asOfAxes of its own (the schema forbids them) — it
-# inherits the owner's single `transactionTime` dimension and its backing `address`
+# inherits the owner's single `transaction-time` dimension and its backing `address`
 # column rides the milestoned row exactly like the scalar `name` column.
 #
 # A row's [in_z, out_z) interval records WHEN THE SYSTEM KNEW this supplier's
@@ -46,7 +46,7 @@ entity:
       type: timestamp
       column: out_z
   asOfAxes:
-    - dimension: transactionTime
+    - dimension: transaction-time
       startAttribute: tx_start
       endAttribute: tx_end
   valueObjects:

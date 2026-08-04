@@ -364,12 +364,12 @@ column.
 
 | Property | Values / meaning |
 |---|---|
-| `dimension` | `validTime` \| `transactionTime` (REQUIRED) |
+| `dimension` | `valid-time` \| `transaction-time` (REQUIRED) |
 | `startAttribute` | local Timestamp Attribute name for the inclusive lower bound (REQUIRED) |
 | `endAttribute` | distinct local Timestamp Attribute name for the exclusive upper bound (REQUIRED) |
 
-Transaction-Time-Only declares one `transactionTime` entry. Bitemporal
-declares `validTime` followed by `transactionTime`. Valid-Time-Only is not a
+Transaction-Time-Only declares one `transaction-time` entry. Bitemporal
+declares `valid-time` followed by `transaction-time`. Valid-Time-Only is not a
 supported model shape. Query defaulting belongs to `m-temporal-read`, not model
 metadata.
 
@@ -377,8 +377,8 @@ The conventional Attribute and physical-column mappings are normative:
 
 | Dimension | Start Attribute / column | End Attribute / column |
 |---|---|---|
-| `validTime` | `valid_start` / `from_z` | `valid_end` / `thru_z` |
-| `transactionTime` | `tx_start` / `in_z` | `tx_end` / `out_z` |
+| `valid-time` | `valid_start` / `from_z` | `valid_end` / `thru_z` |
+| `transaction-time` | `tx_start` / `in_z` | `tx_end` / `out_z` |
 
 Physical column overrides remain ordinary Attribute `column` overrides. The
 axis never repeats them. A temporal Entity's physical primary key is its model

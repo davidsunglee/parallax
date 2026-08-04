@@ -20,9 +20,9 @@ when:
           operand:
             asOf:
               operand: { all: {} }
-              dimension: transactionTime
+              dimension: transaction-time
               coordinate: latest
-          dimension: validTime
+          dimension: valid-time
           coordinate: latest
       paths:
         - { segments: [{ rel: Coverage.policy }] }

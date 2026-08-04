@@ -661,7 +661,7 @@ def _deepfetch_root_entity(case: Case) -> Entity:
 # Canonical as-of dimension order: Valid Time precedes Transaction Time in both the
 # golden SQL clause order and the bind order (m-bitemp-write bitemporal table;
 # case m-temporal-read-015).
-_CANONICAL_AXIS_ORDER: tuple[str, ...] = ("validTime", "transactionTime")
+_CANONICAL_AXIS_ORDER: tuple[str, ...] = ("valid-time", "transaction-time")
 
 
 def _peel_directive_wrappers(node: Any) -> Any:
@@ -2389,7 +2389,7 @@ def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
             )
 
     # An as-of attribute's from-column is the edge coordinate a pin keys on (per axis,
-    # keyed by the ATTRIBUTE name the pin uses — `transactionTime` / `validTime`).
+    # keyed by the ATTRIBUTE name the pin uses — `transaction-time` / `valid-time`).
     from_column_by_attr = {
         axis["dimension"]: axis["start_column"] for axis in root_entity.temporal_runtime_axes
     }
@@ -3034,7 +3034,7 @@ def _is_bitemporal(entity: Entity) -> bool:
     full-bitemporal rectangle profile, where a plain `update` / `terminate` is a
     milestone rectangle split (close + chain), not the audit-only close-and-open."""
     axes = {dim.get("dimension") for dim in entity.temporal_runtime_axes}
-    return {"validTime", "transactionTime"} <= axes
+    return {"valid-time", "transaction-time"} <= axes
 
 
 def _as_of_axes(entity: Entity) -> list[dict[str, Any]]:
@@ -3407,7 +3407,7 @@ def _close_address_binds(case: Case, entity: Entity, pk: Any, valid_end: Any) ->
     tag = _tag(entity)
     binds: list[Any] = [pk] if tag is None else [pk, tag[1]]
     for axis in _as_of_axes(entity):
-        if axis["dimension"] != "validTime":
+        if axis["dimension"] != "valid-time":
             binds.append(axis.get("infinity", "infinity"))
             continue
         if valid_end is None:
@@ -4186,14 +4186,14 @@ def _assert_temporal_input(
     :func:`_assert_until_input`, and only its opening ``insert`` lands here.
     """
     transaction_time = next(
-        (a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime"), None
+        (a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time"), None
     )
     if transaction_time is None:
         raise CaseFailure(
             f"{case.path.name}: active temporal writes require a Transaction-Time dimension."
         )
     valid_time = next(
-        (a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime"), None
+        (a for a in entity.temporal_runtime_axes if a["dimension"] == "valid-time"), None
     )
     axis, at, instant_key = transaction_time, step.get("at"), "at"
     in_z, infinity = axis["start_column"], axis.get("infinity", "infinity")
@@ -4326,9 +4326,9 @@ def _assert_until_input(
     The domain values are carried, not derived, so they are graded observably by
     ``then.tableState`` in the run rather than restated in ①.
     """
-    valid_time = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime")
+    valid_time = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "valid-time")
     transaction_time = next(
-        a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime"
+        a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time"
     )
     from_z, thru_z = valid_time["start_column"], valid_time["end_column"]
     in_z, out_z = transaction_time["start_column"], transaction_time["end_column"]
@@ -4499,7 +4499,7 @@ def _current_rectangles(
     once a key holds several — the same refusal a step-shaped input forces on any
     tracker, because such a step names no rectangle of its own.
     """
-    valid_time = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime")
+    valid_time = next(a for a in entity.temporal_runtime_axes if a["dimension"] == "valid-time")
     infinity = valid_time.get("infinity", "infinity")
     rectangles: tuple[_Rectangle, ...] = ()
     for prior in case.write_sequence:
@@ -4571,7 +4571,7 @@ def _conflict_temporal_entity(case: Case) -> Entity | None:
     for entity in case.model.entities:
         if entity.is_abstract:
             continue
-        if any(a["dimension"] == "transactionTime" for a in entity.temporal_runtime_axes):
+        if any(a["dimension"] == "transaction-time" for a in entity.temporal_runtime_axes):
             return entity
     return None
 
@@ -4836,7 +4836,7 @@ def _assert_temporal_conflict_close(
             f"into the close binds, never read from the golden."
         )
     valid_time = next(
-        (a for a in entity.temporal_runtime_axes if a["dimension"] == "validTime"), None
+        (a for a in entity.temporal_runtime_axes if a["dimension"] == "valid-time"), None
     )
     _, pk, set_cols, _ = _classify_write_row(case, entity, write, opening=False)
     addressed: set[str] = set() if valid_time is None else {valid_time["end_column"]}
@@ -4851,7 +4851,7 @@ def _assert_temporal_conflict_close(
     expected = [at, *_close_address_binds(case, entity, pk, valid_end)]
     gate_rendered = _has_temporal_gate(
         statements[0],
-        next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transactionTime")[
+        next(a for a in entity.temporal_runtime_axes if a["dimension"] == "transaction-time")[
             "start_column"
         ],
     )

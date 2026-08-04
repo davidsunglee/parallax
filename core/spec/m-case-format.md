@@ -487,7 +487,7 @@ read case satisfies its `then` requirement with any one of `rows` / `graph` /
 `graphs`.
 
 Each entry's **`pin`** is the milestone's OWN edge coordinate — its from-instant
-per declared dimension, keyed by `validTime` or `transactionTime` — and its
+per declared dimension, keyed by `valid-time` or `transaction-time` — and its
 **`graph`** is the plain-value graph materialized at that
 pin, the same root-class-keyed shape as `then.graph`. The pins are **edge pins,
 not a shared root pin**: `history` returns each milestone edge-pinned to its own

@@ -20,7 +20,7 @@
 # read (m-inheritance-093) carries the per-branch as-of binds (Valid-Time-axis-first,
 # repeated in alphabetical branch order); a concrete-target read (m-inheritance-100)
 # refers to the inherited axis through the concrete position (`DepositRate.
-# transactionTime`) — proving the axes are usable there too, not just at the abstract
+# transaction-time`) — proving the axes are usable there too, not just at the abstract
 # root; the bitemporal terminate / terminateUntil writes (m-inheritance-095 / -097)
 # route to the concrete subtype's OWN table — the standalone m-bitemp-write shapes, no
 # tag guard.
@@ -55,10 +55,10 @@ entities:
         type: timestamp
         column: out_z
     asOfAxes:
-      - dimension: validTime
+      - dimension: valid-time
         startAttribute: valid_start
         endAttribute: valid_end
-      - dimension: transactionTime
+      - dimension: transaction-time
         startAttribute: tx_start
         endAttribute: tx_end
     indices:

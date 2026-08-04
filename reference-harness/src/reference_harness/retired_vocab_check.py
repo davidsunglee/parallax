@@ -1,19 +1,21 @@
-"""Deny-list gate: no retired business/processing temporal vocabulary in
-active sources::
+"""Deny-list gate: no retired temporal vocabulary in active sources::
 
     uv run python -m reference_harness.retired_vocab_check <repo-root>
 
 The root glossary's `_Avoid_` registry retires the Reladomo-derived temporal
 spellings — business time/date, processing time/date, effective date, system
 date, and the business/processing dimension family — in favor of Valid Time /
-Transaction Time. Prose, comments, docstrings, identifiers, and test names all
-adopted the accepted vocabulary; this gate keeps a retired phrase from
+Transaction Time, and retires the camelCase dimension spellings `validTime` /
+`transactionTime` in favor of the kebab-case enumerated values `valid-time` /
+`transaction-time`. Prose, comments, docstrings, identifiers, and test names
+all adopted the accepted vocabulary; this gate keeps a retired spelling from
 reappearing on any active surface.
 
-The deny-list matches whole retired PHRASES (a business/processing word joined
-to a temporal noun, plus `effective date` / `system date`), never the bare
-words "business" or "processing": non-temporal uses such as "business key",
-"business/developer name", or "operation processing" are legitimate and stay.
+The business/processing deny-list matches whole retired PHRASES (a
+business/processing word joined to a temporal noun, plus `effective date` /
+`system date`), never the bare words "business" or "processing": non-temporal
+uses such as "business key", "business/developer name", or "operation
+processing" are legitimate and stay.
 
 Allow-list (explicitly labeled historical / prior-art / rejection text):
 
@@ -105,6 +107,13 @@ _CAMEL_WORDS = "|".join(word.capitalize() for word in _TEMPORAL_NOUN_WORDS + _JO
 _LEFT = r"(?<![A-Za-z0-9])"
 _RIGHT = r"(?![A-Za-z0-9])"
 
+# The retired camelCase spellings of the temporal dimension vocabulary, whose
+# accepted forms are the kebab-case enumerated values `valid-time` and
+# `transaction-time`. Matched case-sensitively on the lowercase-initial form:
+# the core algebra's `ValidTime` / `TransactionTime` variant names are a
+# different surface and stay legal.
+_RETIRED_DIMENSION_SPELLINGS = ("validTime", "transactionTime")
+
 # The camel compound's right boundary: a following lowercase letter or digit
 # extends the token into a DIFFERENT identifier (`businessTimeout`,
 # `businessTime2` — consistent with `_RIGHT`, which treats digits as word
@@ -121,6 +130,7 @@ _RETIRED_PATTERNS = (
     re.compile(rf"{_LEFT}(?:business|processing)[\s/_-]+as[\s_-]of{_RIGHT}", re.IGNORECASE),
     re.compile(rf"{_LEFT}effective[\s/_-]+dat(?:e|es|ed|ing){_RIGHT}", re.IGNORECASE),
     re.compile(rf"{_LEFT}system[\s/_-]+date{_RIGHT}", re.IGNORECASE),
+    re.compile(rf"{_LEFT}(?:{'|'.join(_RETIRED_DIMENSION_SPELLINGS)}){_RIGHT}"),
 )
 
 # Only text-bearing source kinds participate; everything else (images, locks,

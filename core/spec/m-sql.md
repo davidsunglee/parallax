@@ -525,7 +525,7 @@ literal `infinity`, carried as a `?` bind exactly like every other literal
 and is appended **after** it (binds read user-first, then the as-of bind):
 
 ```yaml
-# asOf(eq(Balance.acctNum,'A'), transactionTime, latest) lowers to the entry:
+# asOf(eq(Balance.acctNum,'A'), transaction-time, latest) lowers to the entry:
 - sql:
     postgres: select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
   binds: ['A', infinity]

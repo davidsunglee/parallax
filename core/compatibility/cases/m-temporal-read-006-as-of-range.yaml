@@ -1,4 +1,4 @@
-# asOfRange(transactionTime, 2024-06-15, 2024-07-01): scan every milestone whose
+# asOfRange(transaction-time, 2024-06-15, 2024-07-01): scan every milestone whose
 # [in_z, out_z) interval OVERLAPS the half-open window [from, to) — the edge-point
 # read, distinct from both a single-instant `asOf` pin (one milestone per key) and
 # `history` (no predicate at all). The overlap predicate for half-open intervals is
@@ -25,7 +25,7 @@ when:
     asOfRange:
       operand:
         all: {}
-      dimension: transactionTime
+      dimension: transaction-time
       start: "2024-06-15T00:00:00+00:00"
       end: "2024-07-01T00:00:00+00:00"
 then:

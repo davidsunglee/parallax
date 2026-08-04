@@ -2461,7 +2461,7 @@ The replacement is one closed mapping, not independent renaming work:
 | Surface | Valid Time | Transaction Time |
 |---|---|---|
 | Meaning | fact true in the modeled world | fact present in the database |
-| Core / descriptor dimension | `ValidTime` / `validTime` | `TransactionTime` / `transactionTime` |
+| Core / descriptor dimension | `ValidTime` / `valid-time` | `TransactionTime` / `transaction-time` |
 | Python query keyword and Pin/Edge accessor | `valid_time` | `tx_time` |
 | Metadata interval roles | `start_attribute`, `end_attribute` | `start_attribute`, `end_attribute` |
 | Conventional Attributes | `valid_start`, `valid_end` | `tx_start`, `tx_end` |

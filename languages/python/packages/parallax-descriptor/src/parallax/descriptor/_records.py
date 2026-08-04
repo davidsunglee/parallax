@@ -73,7 +73,7 @@ Temporal = Literal[
 PkStrategy = Literal["none", "max", "sequence"]
 RelationshipCardinality = Literal["one-to-one", "many-to-one", "one-to-many"]
 Multiplicity = Literal["one", "many"]
-TemporalDimension = Literal["validTime", "transactionTime"]
+TemporalDimension = Literal["valid-time", "transaction-time"]
 InheritanceRole = Literal["root", "abstract-subtype", "concrete-subtype"]
 
 
@@ -337,13 +337,13 @@ class Entity:
         axes = {axis.dimension for axis in self.as_of_axes}
         if not axes:
             return "non-temporal"
-        if axes == {"validTime", "transactionTime"}:
+        if axes == {"valid-time", "transaction-time"}:
             return "bitemporal"
-        if axes == {"transactionTime"}:
+        if axes == {"transaction-time"}:
             return "transaction-time-only"
         raise DescriptorError(
             f"entity {self.canonical_name!r}: Valid-Time-Only is deferred; "
-            "a validTime dimension requires transactionTime"
+            "a valid-time dimension requires transaction-time"
         )
 
     @property

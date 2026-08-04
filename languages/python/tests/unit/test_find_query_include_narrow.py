@@ -450,7 +450,7 @@ _COVERAGES = (NavigationPath(segments=(PathSegment(rel="Policy.coverages"),)),)
 )
 def test_history_with_includes_builds_in_either_order(query: FindQuery[Any, Any]) -> None:
     assert lowered_operation(query) == DeepFetch(
-        operand=History(operand=All(), dimension="transactionTime"), paths=_COVERAGES
+        operand=History(operand=All(), dimension="transaction-time"), paths=_COVERAGES
     )
 
 
@@ -467,7 +467,7 @@ def test_as_of_range_with_includes_builds_in_either_order(query: FindQuery[Any, 
     assert lowered_operation(query) == DeepFetch(
         operand=AsOfRange(
             operand=All(),
-            dimension="validTime",
+            dimension="valid-time",
             start=start.isoformat(),
             end=end.isoformat(),
         ),

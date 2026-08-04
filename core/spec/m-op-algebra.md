@@ -473,7 +473,7 @@ serde must round-trip the temporal query tree exactly.
 | `asOfRange` | `{ "asOfRange": { "operand", "dimension", "start", "end" } }` | return milestones whose interval overlaps the half-open range `[start, end)` |
 | `history` | `{ "history": { "operand", "dimension" } }` | return the full milestone set on that dimension; no as-of predicate is injected for that axis |
 
-`dimension` is `validTime` or `transactionTime`, resolved against the target
+`dimension` is `valid-time` or `transaction-time`, resolved against the target
 Entity's effective As-Of Axes. `coordinate` is either the literal `latest` or an
 ISO-8601 UTC instant. Latest lowers to the dimension's physical end column equal
 to the `m-core` / `m-dialect` `infinity` sentinel. A finite current-clock instant

@@ -96,8 +96,8 @@ _MULTIPLICITIES: Final[Mapping[_records.Multiplicity, Multiplicity]] = {
 }
 
 _DIMENSIONS: Final[Mapping[_records.TemporalDimension, TemporalDimension]] = {
-    "validTime": TemporalDimension.VALID_TIME,
-    "transactionTime": TemporalDimension.TRANSACTION_TIME,
+    "valid-time": TemporalDimension.VALID_TIME,
+    "transaction-time": TemporalDimension.TRANSACTION_TIME,
 }
 
 

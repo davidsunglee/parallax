@@ -27,7 +27,7 @@ when:
             eq:
               attr: Balance.id
               value: 2
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: "2024-04-01T00:00:00+00:00"
       roundTrips: 1
       note: finite pin at 2024-04-01 — inside the single open milestone [2024-02-01, infinity)
@@ -44,7 +44,7 @@ when:
             eq:
               attr: Balance.id
               value: 2
-          dimension: transactionTime
+          dimension: transaction-time
           coordinate: "2024-05-01T00:00:00+00:00"
       roundTrips: 1
       differentObjectFrom: 0

@@ -35,7 +35,7 @@ when:
           - { name: tx_start, type: timestamp, column: in_z }
           - { name: tx_end, type: timestamp, column: out_z }
         asOfAxes:
-          - dimension: transactionTime
+          - dimension: transaction-time
             startAttribute: tx_start
             endAttribute: tx_end
       - name: Dog

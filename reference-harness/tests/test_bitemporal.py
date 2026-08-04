@@ -66,7 +66,7 @@ def test_position_is_bitemporal_with_both_axes() -> None:
     entity = _position_model().root_entity
     assert entity.is_temporal
     axes = {dim["dimension"] for dim in entity.temporal_runtime_axes}
-    assert axes == {"validTime", "transactionTime"}
+    assert axes == {"valid-time", "transaction-time"}
 
 
 def test_bitemporal_ddl_primary_key_spans_both_as_of_from_columns() -> None:
@@ -117,8 +117,8 @@ def test_bitemporal_history_case_suppresses_both_axes() -> None:
     )
     valid_history = history_case.operation["history"]
     tx_history = valid_history["operand"]["history"]
-    assert valid_history["dimension"] == "validTime"
-    assert tx_history["dimension"] == "transactionTime"
+    assert valid_history["dimension"] == "valid-time"
+    assert tx_history["dimension"] == "transaction-time"
 
 
 def test_until_trio_write_step_counts_are_consistent() -> None:
@@ -439,7 +439,7 @@ def _bitemporal_conflict_close_cases():
         for case in discover_cases(COMPATIBILITY_ROOT)
         if case.is_conflict
         and any(
-            dim.get("dimension") == "validTime"
+            dim.get("dimension") == "valid-time"
             for entity in case.model.entities
             for dim in entity.temporal_runtime_axes
         )
@@ -568,8 +568,8 @@ def test_temporal_axes_are_inherited_by_concrete_subtypes() -> None:
     bond = model.entity("Bond")
     assert bond.is_temporal
     assert {dim["dimension"] for dim in bond.temporal_runtime_axes} == {
-        "validTime",
-        "transactionTime",
+        "valid-time",
+        "transaction-time",
     }
     (create,) = ddl_for(model, "postgres")  # one shared `instrument` table
     assert "primary key (id, from_z, in_z)" in create
@@ -741,7 +741,7 @@ def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
     # binds — Valid-Time-first [b, b, infinity], repeated in alphabetical branch order. The
     # oracle recomputes them from the read's pin, independent of the authored golden.
     case = _inheritance_case("m-inheritance-093")
-    assert _read_asof_pins(case) == {"validTime": "2024-06-01T00:00:00+00:00"}
+    assert _read_asof_pins(case) == {"valid-time": "2024-06-01T00:00:00+00:00"}
     _assert_temporal_union_binds(case, "postgres")  # must not raise
     _assert_temporal_union_binds(case, "mariadb")  # the shared binds hold per dialect
 

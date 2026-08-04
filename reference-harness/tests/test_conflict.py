@@ -68,7 +68,7 @@ def _temporal_conflict_close_cases():
         entities = case.model.entities
         has_version = any(a.get("optimisticLocking") for e in entities for a in e.attributes)
         axes = {dim.get("dimension") for e in entities for dim in e.temporal_runtime_axes}
-        if not has_version and "transactionTime" in axes and "validTime" not in axes:
+        if not has_version and "transaction-time" in axes and "valid-time" not in axes:
             cases.append(case)
     return cases
 

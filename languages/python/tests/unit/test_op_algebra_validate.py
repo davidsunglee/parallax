@@ -109,7 +109,7 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
                         NoneOp(),
                     )
                 ),
-                dimension="validTime",
+                dimension="valid-time",
                 coordinate="latest",
             ),
             keys=(OrderKey(attr="Sorted.rank"),),
@@ -1005,19 +1005,21 @@ def test_negation_and_grouping_and_result_shaping_wrappers_propagate() -> None:
     exc = _rejects(Distinct(operand=bad), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    _validate("Customer", AsOf(operand=good, dimension="validTime", coordinate="latest"), _CUSTOMER)
+    _validate(
+        "Customer", AsOf(operand=good, dimension="valid-time", coordinate="latest"), _CUSTOMER
+    )
     exc = _rejects(
-        AsOf(operand=bad, dimension="validTime", coordinate="latest"), _CUSTOMER, "Customer"
+        AsOf(operand=bad, dimension="valid-time", coordinate="latest"), _CUSTOMER, "Customer"
     )
     assert exc.rule == "find-root-value-object"
 
-    _validate("Customer", History(operand=good, dimension="validTime"), _CUSTOMER)
-    exc = _rejects(History(operand=bad, dimension="validTime"), _CUSTOMER, "Customer")
+    _validate("Customer", History(operand=good, dimension="valid-time"), _CUSTOMER)
+    exc = _rejects(History(operand=bad, dimension="valid-time"), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    range_op = AsOfRange(operand=good, dimension="validTime", start="2024-01-01", end="2024-02-01")
+    range_op = AsOfRange(operand=good, dimension="valid-time", start="2024-01-01", end="2024-02-01")
     _validate("Customer", range_op, _CUSTOMER)
-    bad_range = AsOfRange(operand=bad, dimension="validTime", start="2024-01-01", end="2024-02-01")
+    bad_range = AsOfRange(operand=bad, dimension="valid-time", start="2024-01-01", end="2024-02-01")
     exc = _rejects(bad_range, _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
@@ -1075,14 +1077,14 @@ _OWNER_PATH = NavigationPath(segments=(PathSegment(rel="Animal.owner"),))
         Limit(operand=_NARROW_TO_DOG, count=5),
         Distinct(operand=_NARROW_TO_DOG),
         DeepFetch(operand=_NARROW_TO_DOG, paths=(_OWNER_PATH,)),
-        AsOf(operand=_NARROW_TO_DOG, dimension="validTime", coordinate="latest"),
+        AsOf(operand=_NARROW_TO_DOG, dimension="valid-time", coordinate="latest"),
         AsOfRange(
             operand=_NARROW_TO_DOG,
-            dimension="validTime",
+            dimension="valid-time",
             start="2024-01-01T00:00:00Z",
             end="2024-02-01T00:00:00Z",
         ),
-        History(operand=_NARROW_TO_DOG, dimension="validTime"),
+        History(operand=_NARROW_TO_DOG, dimension="valid-time"),
         OrderBy(operand=_NARROW_TO_DOG, keys=(OrderKey(attr="Animal.name"),)),
         Limit(operand=DeepFetch(operand=_NARROW_TO_DOG, paths=(_OWNER_PATH,)), count=5),
     ],
