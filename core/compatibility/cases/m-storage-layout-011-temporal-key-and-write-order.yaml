@@ -14,10 +14,10 @@
 # The write sequence makes that key observable. The chaining update closes the current
 # milestone (`out_z = the transaction instant`, tag-guarded on the shared table) and
 # opens a new one carrying the same `id`. Two rows therefore coexist under one model
-# key, which only the `(id, out_z)` physical key admits: the closed row holds a finite
-# `out_z` and the chained row holds infinity. A key of the model key alone would reject
-# the chained INSERT, and a key following Column order would have to take `sensor`
-# instead of `out_z`.
+# key: the closed row holds a finite `out_z` and the chained row holds infinity, so
+# `(id, out_z)` separates them. Neither rejected alternative does. A key of the model
+# key alone would reject the chained INSERT outright, and a key following Column order
+# would take `sensor` rather than `out_z`, which both rows hold as `north`.
 #
 # Keying on the end is what makes the close a key hit rather than a scan: the update's
 # `out_z = infinity` gate is itself a key column, so the statement addresses the one

@@ -567,9 +567,9 @@ def _index_issues(
                     message=f"two Indices of this Entity bear the name {identity.name!r}",
                 )
             )
-        declared: list[MetamodelIssue] = []
+        declared_issues: list[MetamodelIssue] = []
         if not declared_index.attributes:
-            declared.append(
+            declared_issues.append(
                 MetamodelIssue(
                     INDEX_EMPTY, location, message="an Index declares at least one Attribute"
                 )
@@ -579,7 +579,7 @@ def _index_issues(
             related = (AttributeLocation(component),)
             occurrences[component] += 1
             if occurrences[component] == 2:
-                declared.append(
+                declared_issues.append(
                     MetamodelIssue(
                         INDEX_ATTRIBUTE_DUPLICATE,
                         location,
@@ -590,7 +590,7 @@ def _index_issues(
             if occurrences[component] > 1:
                 continue
             if component.entity != declaration.identity:
-                declared.append(
+                declared_issues.append(
                     MetamodelIssue(
                         INDEX_ATTRIBUTE_NOT_LOCAL,
                         location,
@@ -600,7 +600,7 @@ def _index_issues(
                 )
             elif component.name not in local:
                 inherited = _applicable_attribute((declaration,), component.name, index)
-                declared.append(
+                declared_issues.append(
                     MetamodelIssue(
                         INDEX_ATTRIBUTE_NOT_LOCAL if inherited else INDEX_ATTRIBUTE_MISSING,
                         location,
@@ -613,8 +613,8 @@ def _index_issues(
                     )
                 )
         position = reached.setdefault(identity, set())
-        issues.extend(issue for issue in declared if issue not in position)
-        position.update(declared)
+        issues.extend(issue for issue in declared_issues if issue not in position)
+        position.update(declared_issues)
     return issues
 
 
