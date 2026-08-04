@@ -1,0 +1,46 @@
+# Negative (m-inheritance): a TEMPORAL table-per-hierarchy root whose concrete
+# subtype declares a Temporality Profile of its own.
+#
+# Temporality is a family-wide property: the root ALONE declares the profile,
+# and every descendant inherits EXACTLY the axes it derives — a descendant MUST
+# NOT declare, add, remove, override, or shadow one, EVEN WHEN THE ROOT IS
+# ITSELF TEMPORAL (a root-result's identity would otherwise mix `(family, PK)`
+# and `(family, PK, coordinates)` depending on which branch a row resolved
+# through). `Ledger` (root) declares `transaction-time`; `CardLedger`
+# (concrete-subtype) narrows the family to `nontemporal` — a model-aware
+# validator MUST reject the family before any SQL. This is the temporal-root
+# half of the invariant; the sibling witnesses (`m-inheritance-098`, `-099`)
+# carry the non-temporal-root half.
+#
+# The descendant narrows rather than repeats or widens because `nontemporal` is
+# the one profile that derives no endpoint Attribute: a descendant declaring
+# `transaction-time` or `bitemporal` under a temporal root would ALSO shadow the
+# root's derived endpoints and collide on their fixed columns, and a rejected
+# case must isolate exactly one rule. Declaring `nontemporal` explicitly is
+# therefore also the witness that an authored `nontemporal` stays distinguishable
+# from an omitted profile: only the first is a family-invariant violation.
+model: models/payment.yaml
+tags: [m-inheritance, m-descriptor, rejected, negative, temporal, table-per-hierarchy, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  model:
+    entities:
+      - name: Ledger
+        table: ledger
+        inheritance:
+          role: root
+          strategy: table-per-hierarchy
+          tag: { column: kind }
+        temporality: transaction-time
+        attributes:
+          - { name: id, type: int64, primaryKey: true }
+      - name: CardLedger
+        inheritance:
+          role: concrete-subtype
+          parent: Ledger
+          tagValue: card
+        temporality: nontemporal
+        attributes:
+          - { name: cardNote, type: string }
+then:
+  rejectedRule: inheritance-temporality-not-root-owned

@@ -444,6 +444,16 @@ strategy lives on the root variant alone and the tag column lives on the
 table-per-hierarchy strategy alone, so neither spelling survives adaptation and
 neither reaches formation as a model to reject."""
 
+_FRONTEND_OWNED: Final[tuple[str, ...]] = (
+    "m-inheritance-129-rejected-temporality-declared-under-a-temporal-root",
+)
+"""The fixtures whose defect is invisible past the `m-metamodel` seam. The seam
+carries derived As-Of Axes rather than the authored Temporality Profile, so a
+descendant declaring `nontemporal` — the one profile deriving no axis — reaches
+formation carrying nothing to reject. The raw-descriptor family validator
+(`parallax.conformance._descriptor_family`) owns that refusal, which is why it
+runs before formation for a `when.model` rejected case."""
+
 
 def _formation_error(model: dict[str, Any]) -> MetamodelValidationError:
     with pytest.raises(MetamodelValidationError) as caught:
@@ -508,7 +518,12 @@ def test_the_owned_issue_code_set_is_closed() -> None:
 
 
 def test_every_corpus_rejection_fixture_is_classified() -> None:
-    classified = {*_RULE_SET_REJECTIONS, *_RESOLVER_REJECTIONS, *_UNREPRESENTABLE}
+    classified = {
+        *_RULE_SET_REJECTIONS,
+        *_RESOLVER_REJECTIONS,
+        *_UNREPRESENTABLE,
+        *_FRONTEND_OWNED,
+    }
     assert classified == {stem for stem, _, _ in _REJECTIONS}
 
 
@@ -535,6 +550,15 @@ def test_an_unrepresentable_fixture_carries_no_declaration_to_reject(stem: str) 
                 assert not hasattr(entity.inheritance, "strategy")
             case None:
                 pass
+
+
+@pytest.mark.parametrize("stem", _FRONTEND_OWNED)
+def test_a_frontend_owned_fixture_reaches_formation_carrying_nothing_to_reject(stem: str) -> None:
+    (model,) = [inline for name, inline, _ in _REJECTIONS if name == stem]
+    formed = form_metamodel(unresolved_metamodel(parse_document(model)))
+    for entity in formed.entities:
+        if isinstance(entity.inheritance, AbstractSubtype | ConcreteSubtype):
+            assert entity.declared_as_of_axes == ()
 
 
 @pytest.mark.parametrize("path", _MODEL_FILES, ids=lambda path: cast("Path", path).stem)

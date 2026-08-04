@@ -15,6 +15,19 @@ on fifteen model files happening to spell it the same way. Deriving the structur
 from the profile makes the convention the only representable shape and removes
 the second source of truth the axis block was.
 
+Reladomo derives in the opposite direction. A `<MithraObject>` authors each axis
+as an `<AsOfAttribute>` child carrying its own `name`, `fromColumnName`,
+`toColumnName`, `infinityDate`, `infinityIsNull`, `toIsInclusive`, and
+`isProcessingDate`, and the object's temporality is inferred from those
+children — `hasAsOfAttributes()` is what decides whether `dated` is prepended to
+the generator's template category
+(`docs/research/reladomo/02-object-metamodel.md:14-21`). Authored axes, derived
+profile. Parallax deliberately inverts it, because it keeps none of the per-axis
+knobs that make an axis worth authoring: no free axis name, no per-model
+infinity, no inclusivity flag, no physical column. With all of those fixed, the
+only fact the axis block still carried was which axes exist — which is exactly
+what `temporality` spells.
+
 `temporality` is the same kind of property as `persistence` and `layout`:
 family-wide, root-owned, a closed kebab-case vocabulary, defaulting on omission,
 and preserved as absent rather than normalized at the record layer, because

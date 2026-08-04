@@ -105,12 +105,11 @@ def test_pk_generator_generates_flags_max_and_sequence() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Binding decision: temporality is a                                          #
-# family-wide property; only the root may declare `asOfAxes`, and every       #
-# descendant — abstract-subtype or concrete-subtype — inherits exactly that   #
-# set. `declaring_entity` always resolves to the family root; a non-root      #
-# participant that declares its own axes is rejected pre-SQL                  #
-# (`parallax.conformance._descriptor_family.validate`).                       #
+# Temporality is a family-wide property: only the root may declare it, and    #
+# every descendant — abstract-subtype or concrete-subtype — inherits exactly  #
+# the axes the root's profile derives. `declaring_entity` always resolves to  #
+# the family root; a non-root participant that declares its own profile is    #
+# rejected pre-SQL (`parallax.conformance._descriptor_family.validate`).      #
 # --------------------------------------------------------------------------- #
 def _synthetic_temporal_family() -> Metamodel:
     """A THREE-level TPH family — Root (temporal) -> Mid (abstract-subtype) ->

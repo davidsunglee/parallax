@@ -31,6 +31,18 @@ milestone oracles, and every golden SQL fragment name those columns, and each
 would have to resolve them through metadata to admit a model that renamed them,
 for a capability no model asked for.
 
+Reladomo leaves these spellings authored: every `<AsOfAttribute>` carries
+`fromColumnName` and `toColumnName`, so each dated object names its own
+milestone columns (`docs/research/reladomo/02-object-metamodel.md:21`). Its own
+tooling nevertheless assumes the convention. The reverse-engineering generator
+recognizes milestone columns by the fixed name pairs `FROM_Z`/`THRU_Z` and
+`IN_Z`/`OUT_Z` and emits an `<AsOfAttribute>` for those alone
+(`docs/research/reladomo/24-pure-temp-objects-and-extraction.md:15`), so a table
+that spelled them otherwise reverse-engineers back as two ordinary Timestamp
+attributes and loses its temporality. Parallax diverges by fixing what Reladomo
+authors — the same convention, with the assumption its tooling already makes
+turned into a shape rather than left implicit.
+
 Audit columns are unaffected. They are a separate designation with its own
 owner; this record fixes the temporal four only.
 

@@ -95,8 +95,8 @@ TEMPORALITY_PROFILES: Final[Mapping[str, tuple[TemporalDimension, ...]]] = Mappi
 )
 """Each Temporality Profile's Temporal Dimensions in canonical axis order.
 
-Valid-Time-Only has no profile: `m-validtime-only` is deferred, so the shape is
-unspellable rather than rejected, and activating it later adds one member here.
+The members are exactly the composed profiles, so a dimension set no member
+names — a lone Valid Time above all — is unspellable rather than rejected.
 """
 
 
