@@ -60,8 +60,10 @@ from parallax.conformance.vo_models import (
 from parallax.core import (
     MAX,
     ONE_TO_MANY,
+    AbstractRoot,
     Attr,
     Bitemporal,
+    ConcreteSubtype,
     Document,
     DomainModel,
     Entity,
@@ -69,6 +71,7 @@ from parallax.core import (
     Int32,
     Rel,
     Sequence,
+    TablePerHierarchy,
     TxTemporal,
     ValueObject,
     attr,
@@ -450,7 +453,49 @@ class Mooring(
     id: Attr[int] = attr(primary_key=True)
 
 
-DOCUMENT_LAYOUT_MODEL = DomainModel(Traveler, Trip, Ledger, Beacon, Voyage, Charter, Mooring)
+class DocumentPayment(
+    Entity,
+    name="Payment",
+    table="payment_document",
+    namespace=_NS,
+    layout=Document(),
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+    indices=(index("payment_document_pk", "id", unique=True),),
+):
+    id: Attr[int] = attr(primary_key=True)
+
+
+class DocumentCardPayment(
+    DocumentPayment,
+    name="CardPayment",
+    namespace=_NS,
+    inheritance=ConcreteSubtype(tag_value="card"),
+):
+    detail: Attr[str] = attr(max_length=64)
+    authorization_code: Attr[str] = attr(max_length=32)
+
+
+class DocumentCashPayment(
+    DocumentPayment,
+    name="CashPayment",
+    namespace=_NS,
+    inheritance=ConcreteSubtype(tag_value="cash"),
+):
+    detail: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+DOCUMENT_LAYOUT_MODEL = DomainModel(
+    Traveler,
+    Trip,
+    Ledger,
+    Beacon,
+    Voyage,
+    Charter,
+    Mooring,
+    DocumentPayment,
+    DocumentCardPayment,
+    DocumentCashPayment,
+)
 
 MIRRORED: list[tuple[str, DomainModel]] = [
     ("account", ACCOUNT_MODEL),

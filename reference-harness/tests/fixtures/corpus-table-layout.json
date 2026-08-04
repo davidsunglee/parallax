@@ -853,6 +853,46 @@
         3
       ]
     },
+    "payment_document": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CardPayment",
+            "parallax.compatibility.CashPayment"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.Payment.id",
+          "declaringOwner": "parallax.compatibility.Payment",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CardPayment",
+            "parallax.compatibility.CashPayment"
+          ],
+          "column": "kind",
+          "contributor": "discriminator:parallax.compatibility.Payment",
+          "declaringOwner": "parallax.compatibility.Payment",
+          "effectiveNullable": false,
+          "tier": "discriminator"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.CardPayment",
+            "parallax.compatibility.CashPayment"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.Payment",
+          "declaringOwner": "parallax.compatibility.Payment",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    },
     "traveler": {
       "columns": [
         {

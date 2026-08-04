@@ -263,6 +263,26 @@
       "documentPath": {},
       "valueObject": {}
     },
+    "parallax.compatibility.CardPayment": {
+      "attribute": {
+        "authorizationCode": "authorization_code",
+        "detail": "detail"
+      },
+      "documentPath": {
+        "authorizationCode": "payload:authorizationCode",
+        "detail": "payload:detail"
+      },
+      "valueObject": {}
+    },
+    "parallax.compatibility.CashPayment": {
+      "attribute": {
+        "detail": "detail"
+      },
+      "documentPath": {
+        "detail": "payload:detail"
+      },
+      "valueObject": {}
+    },
     "parallax.compatibility.Charter": {
       "attribute": {
         "id": "id",
@@ -305,6 +325,13 @@
         "tx_start": "in_z",
         "valid_end": "thru_z",
         "valid_start": "from_z"
+      },
+      "documentPath": {},
+      "valueObject": {}
+    },
+    "parallax.compatibility.Payment": {
+      "attribute": {
+        "id": "id"
       },
       "documentPath": {},
       "valueObject": {}

@@ -201,7 +201,8 @@ _DOCUMENT_CODEC_READS: Final[frozenset[str]] = frozenset(
 # endpoints hold a direct-column role, and the interior predicate through the
 # extraction because that member is document-resident.
 _DOCUMENT_LAYOUT_READS: Final[frozenset[str]] = frozenset(
-    {f"m-storage-layout-{n:03d}" for n in range(17, 22)} | {"m-navigate-025"}
+    {f"m-storage-layout-{n:03d}" for n in range(17, 22)}
+    | {"m-inheritance-123", "m-inheritance-124", "m-navigate-025"}
 )
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
@@ -373,6 +374,7 @@ _DOCUMENT_LAYOUT_WRITE_SEQUENCES: Final[frozenset[str]] = frozenset(
         "m-document-codec-001",
         "m-document-codec-002",
         "m-opt-lock-018",
+        "m-inheritance-125",
     }
 )
 _WRITE_SEQUENCES: Final[frozenset[str]] = (

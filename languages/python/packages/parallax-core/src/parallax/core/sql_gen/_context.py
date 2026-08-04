@@ -150,7 +150,15 @@ class Ctx:
     lowering step re-derives a family answer or a physical table shape.
     """
 
-    __slots__ = ("_next_alias_index", "binds", "dialect", "facet", "meta", "storage")
+    __slots__ = (
+        "_next_alias_index",
+        "binds",
+        "dialect",
+        "facet",
+        "meta",
+        "requires_variant_partition",
+        "storage",
+    )
 
     def __init__(
         self,
@@ -164,6 +172,7 @@ class Ctx:
         self.storage = storage
         self.dialect = dialect
         self.binds: list[object] = []
+        self.requires_variant_partition = False
         # The next alias INDEX after this statement's own `t0`, which is never
         # allocated here — it is the base scope's default alias (m-sql rule 1).
         self._next_alias_index = 1

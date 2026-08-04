@@ -63,12 +63,14 @@ from parallax.core.document_codec import comparison_text, is_text_compared
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.metamodel import (
     AttributeMetadata,
+    EntityIdentity,
     EntityMetadata,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
+    entity_by_name,
 )
 from parallax.core.op_algebra import (
     All,
@@ -215,6 +217,8 @@ class EntityScope:
     layout: TableLayout
     alias: str = "t0"
     unaliased: bool = False
+    position: tuple[EntityIdentity, ...] | None = None
+    variant: EntityIdentity | None = None
 
     @property
     def meta(self) -> Metamodel:
@@ -292,6 +296,7 @@ class EntityScope:
         if not isinstance(placement, DocumentPath):
             column = self.own_column(self.slot_column(attribute.identity))
             return MemberSubject(column, column, attribute.type, document_resident=False)
+        self._record_document_applicability(attribute.identity.entity)
         document = self.own_column(placement.slot.column.name)
         extraction, path_binds = self.dialect.nested_extract(document, placement.path)
         self.ctx.binds.extend(path_binds)
@@ -314,6 +319,7 @@ class EntityScope:
         """
         placement = self.layout.placement(vo.identity)
         if isinstance(placement, DocumentPath):
+            self._record_document_applicability(vo.identity.entity)
             return self.own_column(placement.slot.column.name), placement.path
         return self.own_column(self.slot_column(vo.identity)), ()
 
@@ -331,28 +337,25 @@ class EntityScope:
         return slot.column.name
 
     def entity_attribute(self, attr_ref: str) -> AttributeMetadata:
-        _, _, name = attr_ref.rpartition(".")
-        for attribute in self._searchable_attributes():
-            if attribute.identity.name == name:
+        owner_ref, _, name = attr_ref.rpartition(".")
+        owner = entity_by_name(self.meta, owner_ref)
+        if owner is not None:
+            attribute = _entity_view(self.facet, owner.identity).applicable_attribute(name)
+            root = _entity_view(self.facet, self.entity.identity).root
+            searchable = {
+                candidate.identity
+                for candidate in _entity_view(self.facet, root).superset_attributes
+            }
+            if attribute is not None and attribute.identity in searchable:
                 return attribute
         raise SqlGenError(f"{attr_ref!r} names no attribute on {self.entity.identity.name}")
 
-    def _searchable_attributes(self) -> Sequence[AttributeMetadata]:
-        """The attributes an `attr_ref`'s class-name-qualified name may resolve to.
-
-        The active entity's **whole family**, which is its family root's
-        projection superset: the read's own predicate may reference a
-        root-inherited attribute through a concrete target's own class name, and
-        a `narrow` branch predicate references that branch's own attribute by its
-        own class name — narrow-position validity for the reference is enforced
-        upstream (`m-op-algebra`'s model-aware validator), so this need only
-        widen the search, never re-validate scope.
-
-        A standalone Entity is its own family root and its own superset, so the
-        widening is the identity there rather than a second code path.
-        """
-        root = _entity_view(self.facet, self.entity.identity).root
-        return _entity_view(self.facet, root).superset_attributes
+    def _record_document_applicability(self, owner: EntityIdentity) -> None:
+        if self.position is None:
+            return
+        view = _entity_view(self.facet, owner)
+        if not set(self.position) <= set(view.concrete_subtypes):
+            self.ctx.requires_variant_partition = True
 
     def next_alias(self) -> str:
         return self.ctx.next_alias()
@@ -624,6 +627,10 @@ def _lower_branch_narrow(narrow: Narrow, scope: EntityScope) -> str:
     this function receives is nested, so it always groups when it has two terms.
     """
     plan = _plan_branch_narrow(scope.meta, scope.facet, scope.storage, scope.entity, narrow)
+    if scope.variant is not None:
+        if scope.variant not in plan.tag.position:
+            return "1 = 0"
+        return lower_predicate(plan.operand, scope)
     # Branch predicate first, THEN the guard's binds — the same explicit ordering
     # the top-level read states, for the same reason.
     branch_sql = lower_predicate(plan.operand, scope)
@@ -691,7 +698,7 @@ def _lower_nested(op: _FlatNested, scope: EntityScope) -> str:
     stays within `one`-multiplicity members, or — when it crosses a `multiplicity:
     many` member — the any-element array-traversal form (m-sql "To-many — exists /
     notExists and any-element predicates"; `m-value-object-017/-018/-021`)."""
-    vo, segments = _flat_vo_path(op.path, scope.entity)
+    vo, segments = _flat_vo_path(op.path, scope)
     crossing = _split_at_many(vo, segments)
     if crossing is not None:
         return _lower_any_element(op, vo, crossing, scope)
@@ -719,7 +726,7 @@ def _lower_element_nested(op: _FlatNested, scope: ElementScope) -> str:
     return _lower_comparator(op, extraction, leaf.type, scope)
 
 
-def _flat_vo_path(path: str, entity: EntityMetadata) -> tuple[ValueObjectMetadata, tuple[str, ...]]:
+def _flat_vo_path(path: str, scope: EntityScope) -> tuple[ValueObjectMetadata, tuple[str, ...]]:
     """Parse a flat `Class.valueObject(.valueObject)*.attribute` reference
     (m-op-algebra) into its top-level value object and the path segments after
     it (which may cross zero or more nested value objects before reaching a
@@ -727,8 +734,16 @@ def _flat_vo_path(path: str, entity: EntityMetadata) -> tuple[ValueObjectMetadat
     parts = path.split(".")
     if len(parts) < 3:
         raise SqlGenError(f"nested path {path!r} needs Class.valueObject.attribute")
-    _entity_name, vo_name, *segments = parts
-    return _value_object(entity, vo_name), tuple(segments)
+    entity_name, vo_name, *segments = parts
+    owner = entity_by_name(scope.meta, entity_name)
+    occurrence = (
+        None
+        if owner is None
+        else _entity_view(scope.facet, owner.identity).applicable_value_object(vo_name)
+    )
+    if occurrence is None:
+        raise SqlGenError(f"{vo_name!r} is not a declared value object in nested path {path!r}")
+    return occurrence, tuple(segments)
 
 
 def _lower_comparator(

@@ -30,7 +30,6 @@ from parallax.core.metamodel import (
     ModelLocation,
     Table,
     TablePerConcreteSubtype,
-    TablePerHierarchy,
 )
 from parallax.core.model_formation import ModuleIdentity
 from parallax.core.relationship import project_join_endpoints
@@ -90,10 +89,6 @@ class DocumentLayoutOwner:
     strategy: InheritanceStrategy | None
 
 
-def _is_table_per_hierarchy(owner: DocumentLayoutOwner) -> bool:
-    return isinstance(owner.strategy, TablePerHierarchy)
-
-
 def _is_table_per_concrete_subtype(owner: DocumentLayoutOwner) -> bool:
     return isinstance(owner.strategy, TablePerConcreteSubtype)
 
@@ -112,7 +107,6 @@ class CapabilityScopeEntry:
 
 
 CAPABILITY_SCOPE: Final[tuple[CapabilityScopeEntry, ...]] = (
-    CapabilityScopeEntry("a table-per-hierarchy family", _is_table_per_hierarchy),
     CapabilityScopeEntry("a table-per-concrete-subtype family", _is_table_per_concrete_subtype),
 )
 """The closed set of layout shapes this build refuses.

@@ -1,0 +1,26 @@
+# A broad table-per-hierarchy instance read resolves the raw tag before decoding
+# the shared heterogeneous document (m-inheritance, m-storage-layout, m-sql).
+#
+# Both variants store `detail` at the same Document Path, but CardPayment declares
+# it as string while CashPayment declares decimal(18,2). The statement projects
+# the tag and Structured Column once. Materialization selects the tagged variant's
+# shape before decoding, returns the decimal in its managed value space, and gives
+# each node only its applicable members. The cash node therefore has no
+# `authorization_code` member inherited from its sibling.
+model: models/document-layout.yaml
+tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-hierarchy, document-layout, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Payment
+  operation:
+    all: {}
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.kind, t0.payload from payment_document t0
+        mariadb: select t0.id, t0.kind, t0.payload from payment_document t0
+  graph:
+    Payment:
+      - { id: 1, detail: visa-4242, authorization_code: AUTH-7, familyVariant: CardPayment }
+      - { id: 2, detail: 12.50, familyVariant: CashPayment }
+  roundTrips: 1

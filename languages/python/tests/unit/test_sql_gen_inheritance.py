@@ -11,6 +11,8 @@ table-per-concrete-subtype `union all` restarts.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from _sql_gen_support import formed, model, target
 
@@ -21,6 +23,7 @@ from parallax.core.sql_gen import SqlGenError, compile_read
 PAYMENT = model("payment")
 ANIMAL = model("animal")
 DOCUMENT = model("document")
+DOCUMENT_LAYOUT = model("document-layout")
 INSTRUMENT = model("instrument")
 RATE = model("rate")
 
@@ -135,6 +138,169 @@ def test_tph_grouped_branch_predicates_join_by_or() -> None:
         "where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)"
     )
     assert compiled.statement.binds == (5, "dog", True, "cat")
+
+
+def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
+    op = oa.Or(
+        operands=(
+            oa.Narrow(
+                entity="Payment",
+                to=("CardPayment",),
+                operand=oa.Comparison(op="eq", attr="CardPayment.detail", value="visa-4242"),
+            ),
+            oa.Narrow(
+                entity="Payment",
+                to=("CashPayment",),
+                operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
+            ),
+        )
+    )
+    compiled = compile_read(
+        op,
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Payment"),
+    )
+
+    assert " union all " in compiled.statement.sql
+    assert compiled.statement.binds == (
+        "detail",
+        "visa-4242",
+        "card",
+        "detail",
+        Decimal("10.0"),
+        "cash",
+    )
+    card_branch, cash_branch = compiled.statement.sql.split(" union all ")
+    assert "cast(" not in card_branch
+    assert "cast(jsonb_extract_path_text" in cash_branch
+
+
+def _heterogeneous_payment_predicate() -> oa.Operation:
+    return oa.Or(
+        operands=(
+            oa.Narrow(
+                entity="Payment",
+                to=("CardPayment",),
+                operand=oa.Comparison(op="eq", attr="CardPayment.detail", value="visa-4242"),
+            ),
+            oa.Narrow(
+                entity="Payment",
+                to=("CashPayment",),
+                operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
+            ),
+        )
+    )
+
+
+def test_tph_document_partition_wraps_result_shaping_around_the_union() -> None:
+    op = oa.Limit(
+        operand=oa.OrderBy(
+            operand=oa.Distinct(operand=_heterogeneous_payment_predicate()),
+            keys=(oa.OrderKey(attr="Payment.id", direction="asc"),),
+        ),
+        count=1,
+    )
+    compiled = compile_read(op, DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Payment"))
+
+    assert compiled.statement.sql.startswith("select distinct u.id, u.kind, u.payload from (")
+    assert compiled.statement.sql.endswith("order by u.id asc limit ?")
+    assert compiled.statement.binds[-1] == 1
+
+
+def test_tph_document_partition_refuses_a_portable_locking_guess() -> None:
+    with pytest.raises(SqlGenError, match=r"variant-partitioned.*no portable"):
+        compile_read(
+            _heterogeneous_payment_predicate(),
+            DOCUMENT_LAYOUT,
+            POSTGRES,
+            target(DOCUMENT_LAYOUT, "Payment"),
+            lock="locking",
+        )
+
+
+def test_tph_document_materialization_decodes_only_the_tagged_variant_shape() -> None:
+    compiled = compile_read(
+        oa.All(),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Payment"),
+        result_form="instance",
+    )
+
+    assert compiled.transform_row(
+        {
+            "id": 1,
+            "kind": "card",
+            "payload": {"detail": "visa-4242", "authorizationCode": "AUTH-7"},
+        }
+    ) == {
+        "id": 1,
+        "detail": "visa-4242",
+        "authorization_code": "AUTH-7",
+        "familyVariant": "CardPayment",
+    }
+    assert compiled.transform_row({"id": 2, "kind": "cash", "payload": {"detail": "12.50"}}) == {
+        "id": 2,
+        "detail": Decimal("12.50"),
+        "familyVariant": "CashPayment",
+    }
+    with pytest.raises(SqlGenError, match="names no concrete subtype"):
+        compiled.transform_row({"id": 3, "kind": "wire", "payload": {"detail": "x"}})
+
+
+def test_tph_document_row_projection_pads_members_outside_the_tagged_variant() -> None:
+    compiled = compile_read(oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Payment"))
+
+    assert compiled.transform_row({"id": 2, "kind": "cash", "payload": {"detail": "12.50"}}) == {
+        "id": 2,
+        "detail": Decimal("12.50"),
+        "authorization_code": None,
+        "familyVariant": "CashPayment",
+    }
+
+
+def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
+    compiled = compile_read(
+        oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "CardPayment")
+    )
+
+    assert compiled.transform_row(
+        {
+            "id": 1,
+            "payload": {"detail": "visa-4242", "authorizationCode": "AUTH-7"},
+        }
+    ) == {"id": 1, "detail": "visa-4242", "authorization_code": "AUTH-7"}
+
+
+def test_tph_document_family_with_no_resident_members_projects_no_document() -> None:
+    from parallax.descriptor._records import (
+        Attribute,
+        DocumentLayout,
+        Entity,
+        Inheritance,
+        Metamodel,
+    )
+
+    root = Entity(
+        name="EmptyRoot",
+        table="empty_root",
+        layout=DocumentLayout(column="payload"),
+        inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    concrete = Entity(
+        name="EmptyLeaf",
+        inheritance=Inheritance(role="concrete-subtype", parent="EmptyRoot", tag_value="leaf"),
+    )
+    meta = formed(Metamodel(entities=(root, concrete)))
+
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "EmptyRoot"))
+    assert compiled.statement.sql == "select t0.id, t0.kind from empty_root t0"
+    assert compiled.transform_row({"id": 1, "kind": "leaf"}) == {
+        "id": 1,
+        "familyVariant": "EmptyLeaf",
+    }
 
 
 def test_user_binds_precede_framework_tag_binds() -> None:
