@@ -649,6 +649,12 @@ _READ_LOCK_HARNESS_GOLDEN_REASON: Final[str] = (
     "above) — this witness needs no `db.transact` participation-mode configuration, "
     "only the module's own declared default"
 )
+_READ_LOCK_PARTITIONED_GOLDEN_REASON: Final[str] = (
+    "the wire-level locking golden proves one outer base-row lock over the cast-safe "
+    "tag-partitioned TPH document relation and is graded by the compile/run sweeps; "
+    "the API suite's existing locking-mode object-find story already proves the "
+    "developer participation-mode surface, while this case isolates SQL shape"
+)
 # `m-read-lock-003`'s operation is a `distinct` PROJECTION, and the Find Query
 # surface authors no such query: `python.md` §2 states the clause set exactly and
 # excludes `distinct`, because a Find Query always returns complete root
@@ -979,6 +985,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-008": _READ_LOCK_TWO_SESSION_REASON,
+    "m-read-lock-010": _READ_LOCK_PARTITIONED_GOLDEN_REASON,
+    "m-read-lock-011": _READ_LOCK_TWO_SESSION_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #
     "m-batch-write-004": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
     # -- m-pk-gen: temporal composition -------------------------------------- #

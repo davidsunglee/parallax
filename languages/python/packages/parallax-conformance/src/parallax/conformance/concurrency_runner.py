@@ -161,7 +161,13 @@ def _statement_entries(raw: object, dialect_name: str) -> tuple[tuple[str, tuple
     for entry in entries:
         sql = entry["sql"]
         text = cast("Mapping[str, str]", sql)[dialect_name] if isinstance(sql, Mapping) else sql
-        binds = tuple(cast("list[Bind]", entry.get("binds", [])))
+        raw_binds = entry.get("binds", [])
+        selected_binds = (
+            cast("Mapping[str, list[Bind]]", raw_binds)[dialect_name]
+            if isinstance(raw_binds, Mapping)
+            else cast("list[Bind]", raw_binds)
+        )
+        binds = tuple(selected_binds)
         out.append((cast("str", text), binds))
     return tuple(out)
 

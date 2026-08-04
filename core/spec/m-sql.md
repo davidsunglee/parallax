@@ -1590,16 +1590,25 @@ a path must therefore never evaluate against a row of the wrong variant.
 
 **When a path is applicable to every concrete variant the statement selects,
 nothing changes**: one statement, one extraction, the tag predicate composed as
-today. This is the only shape the existing corpus contains, so no existing
-statement count, bind order, or golden SQL moves.
+today. Existing uniform-path statement counts, bind order, and golden SQL do not
+move.
 
 **When a path is not applicable to every concrete variant the statement selects,
-the read is partitioned by variant**: either one statement per applicable
-variant, or one `union all` of tag-filtered branches, so each branch's extraction
-and cast see only rows of a variant that declares the path. The choice between
-the two shapes is a lowering decision; what is normative is that no cast is ever
-evaluated in a statement that also selects rows of a variant the path does not
-apply to.
+the read is partitioned by variant** as one `union all` of tag-filtered branches,
+so each branch's extraction and cast see only rows of its concrete variant. The
+branches retain canonical concrete order and branch-local bind order; the read
+remains one statement and one round trip.
+
+A locking partitioned read wraps that union as a derived identity relation,
+joins it back to the shared TPH base Table on every primary-key column, projects
+from the base alias, and applies the dialect's read-lock suffix to the outer
+SELECT. PostgreSQL qualifies `for share` with that base alias; MariaDB's
+`lock in share mode` is unqualified. The derived relation projects only the
+identity needed for the join, so casts remain isolated in tag-disjoint branches
+while the returned base rows—not a materialized derived result—are locked in one
+atomic acquisition. `distinct`, ordering, limit, projection order, result form,
+and document decoding retain the same outer-read rules as an unpartitioned TPH
+read.
 
 Partitioning is required rather than merely preferred, because the alternative
 was measured not to hold. Wrapping the cast in a tag-aware `case` is not

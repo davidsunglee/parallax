@@ -3105,6 +3105,14 @@ adapter binds and reads the `jsonb` Structured Column. MariaDB remains deferred
 here and is proven by the language-neutral reference and conformance paths, as
 for every other MariaDB behavior (§1).
 
+**Partitioned locking reads.** When heterogeneous TPH variants interpret a
+Document Path with incompatible types, SQL lowering emits the core contract's
+tag-disjoint derived identity relation, joins it back to the shared base Table
+on the complete primary key, and applies PostgreSQL `for share` to that base
+alias in one outer SELECT. This preserves one statement and one round trip while
+ensuring no variant-specific cast observes a sibling row and the returned base
+rows receive the transaction's shared lock.
+
 ## 10. Mandatory quality toolchain
 
 | Quality concern | Tool and version policy | Configuration path(s) | Local command | Blocking CI command/job | Threshold, exclusions, and enforcement policy |
