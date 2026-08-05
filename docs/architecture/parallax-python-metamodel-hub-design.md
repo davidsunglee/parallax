@@ -1,10 +1,10 @@
 # Python Metamodel Hub and Entity frontend design
 
-**Status:** Accepted design; COR-64 landed and amended it (below); COR-50 graph closure pending
+**Status:** Accepted design; COR-64 and COR-50 landed and amended it (below)
 
 **Accepted:** 2026-07-20
 
-**Amended:** 2026-08-01 by COR-64
+**Amended:** 2026-08-01 by COR-64; 2026-08-05 by COR-50
 
 > **COR-64 renamed the Metamodel Hub to the Domain Model and replaced exact-hub
 > query identity with Python's type system.** The "Settled design" sections
@@ -1861,6 +1861,43 @@ refer to that contract and do not redefine it.
 - Entity actively overrides Pydantic's broad `model_copy(...)`; every call,
   with or without `update=`, raises `EditError(edit-use-edit)` and creates no
   value. `edit(...)` is the sole authored copy-with-changes path.
+
+### Amendment (2026-08, COR-50): the Snapshot graph spellings that landed
+
+COR-50 built the Snapshot collaboration this document specifies. The design is
+unchanged; what follows are the names that moved between specification and
+implementation, tabulated one for one in the style of
+[Python ADR 0007](../../languages/python/docs/adr/0007-entity-classes-compose-into-explicit-sealed-metamodel-hubs.md)'s
+own closing amendment, so a stale spelling anywhere above — including the
+`Internal ownership` and `Supported Python interfaces` tables and ADR 0007's
+own pre-implementation prose — is traceable to what answers it rather than
+silently rewritten.
+
+| Retired spelling | What answers now |
+|---|---|
+| `SnapshotGraphMaterializer` | `parallax.snapshot.handle._materializer` — a private driver turning merge state into writer calls, never an exported type. `SnapshotGraphInput` and `SnapshotNodeInput` landed as specified |
+| `EntityGraphResolution` | `ResolutionView` — the same fresh, single-use, one-per-factory-invocation contract under a shorter name |
+| `EntityRuntime`, the frozen value pairing model, graph construction, and row codec | `EntityGraphConstruction` alone. The Entity Row Codec is unbuilt, so there is no pair to make atomic yet; [COR-63](https://linear.app/flimflam/issue/COR-63/implement-entity-edits-and-the-audit-neutral-entity-row-codec) owns the codec and re-decides the pairing there |
+| `entity_runtime_of(model) -> EntityRuntime` answering absence for a descriptor-backed model | `entity_runtime_of(model) -> EntityGraphConstruction`, total and never absent. A descriptor-backed model is refused earlier and by name — `SnapshotConnectionError(snapshot-class-backed-model-required)` at connect and at `find` — and constructing over one raises `GraphConstructionError(entity-graph-invalid-entity)` |
+| `SnapshotInspectionError(snapshot-model-mismatch)` | `SnapshotInspectionError(snapshot-view-owner-mismatch)`. The check is that the path's starting owner applies to the node's concrete Entity; there is no exact-model comparison left to fail, because COR-64 removed model identity from every composed value |
+| `is_loaded(node, path)` and `narrowed(node, path)` on `parallax.core` | `parallax.snapshot.is_view_loaded(node, path)` and `parallax.snapshot.view(node, path)`. One pair of names covers broad and narrowed views alike, since a narrowed view is a view key rather than a second kind of question |
+| `snapshot._errors` as one leaf | Split by scope grant: `parallax.snapshot.handle._errors` keeps the connection, query-target, deferred-feature, transaction-ownership, and materialization refusals in a zero-grant scope, while `SnapshotInspectionError` and `SnapshotDecodingError` live with the code that raises them because each carries a structured Identity that scope cannot import |
+| `snapshot._graph` | The `parallax.snapshot.materialize` package — `_input` (the Graph Input carriers), `_convert` (per-row conversion), `_merge` (projection merging) — with `handle._materializer` driving construction over it |
+| `snapshot._state` | `parallax.snapshot._inspection`, which owns `SnapshotNodeState` and all four inspection operations |
+| `LoweredFindQuery` and `lower_find_query` as `parallax.core.entity` exports | neither is exported. Both are private to `parallax.core.entity._query` and reached only by `parallax.snapshot.handle._preflight`, the one seam that lowers. A COR-64 residue this sweep found rather than a COR-50 move, recorded here so the `Supported Python interfaces` list above is not read as the surface |
+
+Two names above are **pending rather than retired**, and this amendment settles
+neither: `EntityRowCodec` and the `edit(...)` / `EditError(edit-use-edit)` copy
+verb are unbuilt, and their conflict with the shipped `model_copy` /
+`ModelCopyError` spelling belongs to COR-63.
+
+One module is an **addition** rather than a replacement, so the topology tree
+below does not list it: `parallax.core.entity._graph_input` holds the scalar and
+Value Object carriers Snapshot Graph Input and Entity Graph Construction share,
+in a child scope granted to `parallax.snapshot.materialize`. That grant is what
+keeps the Graph Input producer structurally unable to reach
+`EntityGraphConstruction` while both layers still speak one exact recursive
+immutable algebra rather than two definitions of it.
 
 ## Target source topology
 

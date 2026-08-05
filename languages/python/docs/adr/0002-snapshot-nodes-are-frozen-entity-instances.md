@@ -2,8 +2,9 @@
 
 Snapshot graph nodes are instances of the user's own entity classes with
 `frozen=True`, not wrappers or generated node types. Accessing a relationship
-outside the include set raises `UnloadedRelationshipError` (with `is_loaded`
-as the non-raising probe); loaded-empty is the empty tuple `()` and
+outside the include set raises `UnloadedRelationshipError` (with
+`parallax.snapshot.is_view_loaded(node, path)` as the non-raising probe);
+loaded-empty is the empty tuple `()` and
 loaded-null is `None`. Pydantic's `frozen=True` is only faux-immutable — it
 rejects attribute assignment but cannot deep-freeze field values — so every
 collection-valued node field is an immutable type: included to-many

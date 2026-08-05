@@ -1834,6 +1834,29 @@ or descriptor authoring form and performs no audit stamping.
   materialization), and projections targeting the same key merge into one
   node. Value objects have no identity (fresh values per owner). Identity
   never escapes one graph: nodes from different `find` calls never coalesce.
+- **Duplicate projections are value-identical.** Two projections of one logical
+  node carry the same values by construction: they resolve the same stored row
+  at the same pin, and each covers the full Attribute and Value Object set the
+  concrete it resolved to declares — an abstract-position read projects that
+  position's superset and keeps exactly the members of the resolved concrete, so
+  no projection is a partial one. Merging therefore takes the **first**
+  projection's entry for every scalar, Value Object occurrence, and resolved
+  concrete Entity and compares nothing; it neither detects nor refuses a
+  disagreement, because a read cannot produce one. Relationship Views are the
+  only slot two projections legitimately differ on — a path loaded on one and
+  not the other — and those are **unioned** rather than won.
+- **Declared-type enforcement on a read is the writer's.** Materialization builds
+  every Entity and Value Object through Pydantic's validation-free construction
+  path, so a declared member's type is enforced by Entity Graph Construction's
+  own Neutral Value validation — which raises
+  `GraphConstructionError(entity-graph-invalid-value)` — and never by Pydantic.
+  The consequence is stated rather than incidental: an author's
+  `@field_validator` or `@model_validator` does **not** run on a materialized
+  read, while it continues to run on direct construction and on an edited copy
+  (§2's build-time rules), because those are the surfaces where a caller
+  supplies the value. A declared type is therefore still enforced everywhere; a
+  declared *invariant* an author added on top of it is enforced on authored
+  values only.
 - **Value Object presence.** Within a present Value Object record, an omitted
   scalar or nested-occurrence identity and a present identity mapped to `None`
   are distinct stored-document states. Declared nullability says which of them
@@ -2061,8 +2084,28 @@ or descriptor authoring form and performs no audit stamping.
   factory returned; these two are the whole of what a lifecycle reads back.
   Misuse raises `GraphConstructionError(RuntimeError)` carrying `code`,
   `message`, the applicable zero-based allocation `index`, the structured
-  `identity` at fault, and an optional conversion `cause`; its complete code set
-  is the nine `entity-graph-*` codes.
+  `identity` at fault, and an optional conversion `cause`. Its complete code set
+  is these nine:
+
+  ```text
+  entity-graph-invalid-entity          entity-graph-node-already-populated
+  entity-graph-invalid-member          entity-graph-node-unpopulated
+  entity-graph-invalid-value           entity-graph-invalid-root
+  entity-graph-allocation-closed       entity-graph-foreign-handle
+  entity-graph-scope-closed
+  ```
+
+- **Construction is whole-graph per call.** One `construct(...)` allocates,
+  populates, and publishes every node the call reaches, and there is no partial,
+  incremental, or resumable form. That follows from two contracts already stated
+  above rather than from an unfinished optimization: cycle closure requires every
+  participant to exist as a shell before any of them is populated, and atomic
+  publication requires every state factory to succeed before any root becomes
+  reachable. Neither is satisfiable across two calls. What one call covers is
+  **the roots it is given plus what is reachable from them** — never "the query
+  result". A caller holding a result in several parts may construct each part in
+  its own call; the parts share no graph-local identity, exactly as two `find`
+  calls do not.
 - **Graph-construction phase barrier.** Entity Graph Construction has three
   non-overlapping phases: allocate every shell; close allocation permanently
   with the first `populate()` and populate every node; then, only after the
@@ -2188,6 +2231,29 @@ or descriptor authoring form and performs no audit stamping.
   and `pets[Cat]`) coexist on one node as independent simultaneous views. An
   unrequested narrowed view raises `UnloadedRelationshipError` naming the
   derived view key; `is_view_loaded` accepts the same narrowed-path argument.
+- **Snapshot inspection failures.** `SnapshotInspectionError(RuntimeError)`
+  names the inspection operation and, where one is known, the node's own
+  concrete Entity Identity. Its complete code set is these four:
+
+  ```text
+  snapshot-node-required        snapshot-pin-unavailable
+  snapshot-view-owner-mismatch  snapshot-edge-unavailable
+  ```
+
+  `snapshot-node-required` refuses a value that carries no `SnapshotNodeState`
+  — a plain Entity instance, or a node of another lifecycle — and is checked
+  **before** any path, relationship, or temporal validation, so an inapplicable
+  path on a non-Snapshot node reports the lifecycle rather than the path.
+- **Materialization failure translation.** A modeled read that fails inside
+  graph construction, lifecycle build, or a per-node state factory raises
+  exported `SnapshotMaterializationError(RuntimeError)` with the sole stable
+  code `snapshot-materialization-failed`, exactly once, preserving the original
+  failure as its chained cause and publishing neither a partial Entity graph nor
+  a Snapshot. Every other failure a read can take keeps its own owner's
+  classification and is never rewrapped here: query definition and target
+  resolution, deferred features, transaction ownership, adapter and database
+  errors, SQL generation, and the `SnapshotDecodingError` conversion raises
+  before any graph construction has begun.
 - **Eager include execution.** One query per non-empty relationship level
   (semi-join against the parent level's keys); an empty level short-circuits
   its subtree; declared descriptor `orderBy` governs child ordering; narrowed

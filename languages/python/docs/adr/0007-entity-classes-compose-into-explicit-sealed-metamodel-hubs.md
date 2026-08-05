@@ -672,3 +672,13 @@ result — are mutually exclusive because `type[…]` is covariant. Each form sp
 it on what the narrowing produces, and `narrow-outside-position` refuses an
 unrelated class at preflight. A hop narrow keeps its static half, because its
 bound rides on the receiver.
+
+## Amendment (2026-08, COR-50): the Snapshot graph section's spellings
+
+The Snapshot collaboration this record describes was built by COR-50, and the
+prose above states it in the names it was designed under —
+`is_loaded` / `narrowed`, `EntityGraphResolution`, `EntityRuntime`,
+`snapshot-model-mismatch`. Every one of them is retired, and the shipped name
+for each is tabulated one for one in the closing amendment of
+[the Python Metamodel Hub and Entity frontend design](../../../../docs/architecture/parallax-python-metamodel-hub-design.md).
+The decision itself is unaffected: what moved is spelling, not ownership.

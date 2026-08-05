@@ -801,9 +801,27 @@ def test_one_construction_is_reused_for_one_domain_model() -> None:
 # --------------------------------------------------------------------------- #
 
 
+# The nine codes Python spec §3 declares under "Entity Graph Construction
+# surface". Restated here rather than imported so a code added, renamed, or
+# dropped on either side fails instead of agreeing with itself.
+_SPEC_CODES = frozenset(
+    {
+        "entity-graph-invalid-entity",
+        "entity-graph-invalid-member",
+        "entity-graph-invalid-value",
+        "entity-graph-allocation-closed",
+        "entity-graph-scope-closed",
+        "entity-graph-node-already-populated",
+        "entity-graph-node-unpopulated",
+        "entity-graph-invalid-root",
+        "entity-graph-foreign-handle",
+    }
+)
+
+
 def test_the_code_set_is_closed_against_an_unlisted_code() -> None:
+    assert GRAPH_CONSTRUCTION_CODES == _SPEC_CODES
     assert len(GRAPH_CONSTRUCTION_CODES) == 9
-    assert all(code.startswith("entity-graph-") for code in GRAPH_CONSTRUCTION_CODES)
     with pytest.raises(ValueError, match="not a graph construction code"):
         GraphConstructionError(code="entity-graph-nosuch", message="invented")
 

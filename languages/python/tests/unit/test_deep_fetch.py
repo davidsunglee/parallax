@@ -13,6 +13,7 @@ here is over the returned `FetchPlan` / `FetchLevel` shape alone.
 from __future__ import annotations
 
 import pytest
+from _sql_gen_support import formed
 from _sql_gen_support import model as accepted_model
 from _sql_gen_support import target as entity_of
 
@@ -37,6 +38,7 @@ from parallax.core.op_algebra import (
     PathRootNarrow,
     PathSegment,
 )
+from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
 ANIMAL = accepted_model("animal")
@@ -424,9 +426,9 @@ def test_a_back_reference_level_carries_the_owner_side_member_and_no_child_side_
 
 def test_a_correlation_member_is_addressed_at_the_position_the_join_names_it_at() -> None:
     # `Person.pets` joins to `{ entity: Pet, attribute: ownerId }`, and `ownerId` is
-    # declared on the family ROOT `Animal`. The column resolves through that root's
-    # projection superset, while the Identity keeps the position the join wrote —
-    # the two answer different questions and must not be collapsed into one.
+    # declared on the family ROOT `Animal`. The Identity keeps the position the join
+    # wrote while the column comes from the declaration that position inherits, so
+    # an inherited member is reached without the join naming its declarer.
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets")),))
     pets = plan.levels[0]
     assert pets.related is not None
@@ -434,6 +436,98 @@ def test_a_correlation_member_is_addressed_at_the_position_the_join_names_it_at(
     assert pets.related.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "Pet"), "ownerId"
     )
+
+
+# A table-per-concrete-subtype family whose two DISJOINT concrete branches reuse one
+# member name over different Columns, which m-inheritance expressly permits
+# ("Members do not shadow across ancestry ... Disjoint sibling branches may reuse a
+# name"). No corpus model carries that shape at a join endpoint, so this is a
+# synthetic descriptor: `Aviary` sorts before `Kennel`, so a family-wide search for
+# `keeperId` finds the sibling's Column first.
+_SHELTER_MODEL = {
+    "entities": [
+        {
+            "name": "Keeper",
+            "table": "keeper",
+            "attributes": [
+                {
+                    "name": "id",
+                    "type": "int64",
+                    "column": "id",
+                    "primaryKey": True,
+                    "pkGeneration": "application-assigned",
+                }
+            ],
+            "relationships": [
+                {
+                    "name": "kennels",
+                    "cardinality": "one-to-many",
+                    "join": {
+                        "source": "id",
+                        "target": {"entity": "Kennel", "attribute": "keeperId"},
+                    },
+                }
+            ],
+        },
+        {
+            "name": "Shelter",
+            "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+            "attributes": [
+                {
+                    "name": "id",
+                    "type": "int64",
+                    "column": "id",
+                    "primaryKey": True,
+                    "pkGeneration": "application-assigned",
+                }
+            ],
+        },
+        {
+            "name": "Aviary",
+            "table": "aviary",
+            "inheritance": {"role": "concrete-subtype", "parent": "Shelter"},
+            "attributes": [
+                {
+                    "name": "keeperId",
+                    "type": "int64",
+                    "column": "aviary_keeper_id",
+                    "nullable": True,
+                }
+            ],
+        },
+        {
+            "name": "Kennel",
+            "table": "kennel",
+            "inheritance": {"role": "concrete-subtype", "parent": "Shelter"},
+            "attributes": [
+                {
+                    "name": "keeperId",
+                    "type": "int64",
+                    "column": "kennel_keeper_id",
+                    "nullable": True,
+                }
+            ],
+            "relationships": [{"name": "keeper", "reverseOf": "Keeper.kennels"}],
+        },
+    ]
+}
+_SHELTER = formed(deserialize(_SHELTER_MODEL))
+
+
+def test_a_child_side_correlation_column_is_resolved_at_the_addressed_position() -> None:
+    plan = _plan(_SHELTER, "Keeper", (_path(_seg("Keeper.kennels")),))
+    kennels = plan.levels[0]
+    assert kennels.related is not None
+    assert kennels.related.identity == AttributeIdentity(EntityIdentity(None, "Kennel"), "keeperId")
+    assert kennels.related.column == "kennel_keeper_id"
+
+
+def test_an_owner_side_correlation_column_is_resolved_at_the_addressed_position() -> None:
+    plan = _plan(_SHELTER, "Keeper", (_path(_seg("Keeper.kennels"), _seg("Kennel.keeper")),))
+    keeper = plan.levels[1]
+    assert keeper.is_back_reference
+    assert keeper.owner.identity == AttributeIdentity(EntityIdentity(None, "Kennel"), "keeperId")
+    assert keeper.owner.column == "kennel_keeper_id"
 
 
 def test_a_level_names_the_direction_it_attaches_under_beside_its_attach_key() -> None:

@@ -21,11 +21,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Final
 
-from parallax.conformance import case_format, stale_web_edit
+from parallax.conformance import case_format, read_models, snapshot_recipes, stale_web_edit
 from parallax.conformance.claim import SNAPSHOT_CLAIM, Claim
 from parallax.conformance.graph_stories import GRAPH_STORIES, graph_story_snippet
 from parallax.conformance.read_stories import READ_STORIES, read_story_snippet
 from parallax.conformance.stories import WRITE_STORIES, story_snippet
+from parallax.conformance.story_models import OrderStatus
 
 __all__ = [
     "CASE_SKIP_REASONS",
@@ -72,6 +73,59 @@ class Recipe:
 
 
 RECIPES: Final[list[Recipe]] = [
+    Recipe(
+        title="Optional to one — the 1..1 and 0..1 declarations and the three runtime states",
+        spec=(
+            "`python.md` §2 (a to-one's multiplicity is its foreign key's nullability) "
+            "and §3 (closed-world relationships and `is_view_loaded`)"
+        ),
+        graded_by=(
+            "`tests/api/test_snapshot_recipes.py` (real Postgres: the 1..1 instance, "
+            "the 0..1 loaded null, and the unloaded arm of both, distinguished by "
+            "`is_view_loaded` and by the refusal an unloaded access raises)"
+        ),
+        snippet=(
+            inspect.getsource(OrderStatus)
+            + "\n\n"
+            + inspect.getsource(snapshot_recipes.read_to_one_relationship_states)
+        ),
+    ),
+    Recipe(
+        title="Family materialization — table-per-hierarchy and table-per-concrete-subtype",
+        spec=(
+            "`python.md` §2 (`AbstractRoot` / `AbstractSubtype` / `ConcreteSubtype` "
+            "declarations and the two strategies) and §4 (`type(node)` is the "
+            "polymorphic observation)"
+        ),
+        graded_by=(
+            "`tests/api/test_snapshot_recipes.py` (real Postgres: each root read "
+            "materializes one instance of each declared concrete class, carrying that "
+            "branch's own members and no sibling's). The corpus-keyed siblings "
+            "`m-inheritance-106`/`-107`/`-108`/`-109` grade the same materializer "
+            "against their own `then.graph` goldens"
+        ),
+        snippet=(
+            inspect.getsource(read_models.Payment)
+            + "\n\n"
+            + inspect.getsource(read_models.CardPayment)
+            + "\n\n"
+            + inspect.getsource(read_models.CashPayment)
+            + "\n\n"
+            + inspect.getsource(snapshot_recipes.read_a_table_per_hierarchy_family)
+            + "\n\n"
+            + inspect.getsource(read_models.Document)
+            + "\n\n"
+            + inspect.getsource(read_models.FinancialDocument)
+            + "\n\n"
+            + inspect.getsource(read_models.Invoice)
+            + "\n\n"
+            + inspect.getsource(read_models.Receipt)
+            + "\n\n"
+            + inspect.getsource(read_models.Memo)
+            + "\n\n"
+            + inspect.getsource(snapshot_recipes.read_a_table_per_concrete_subtype_family)
+        ),
+    ),
     Recipe(
         title="Stale web edit — Transaction-Time-Only (Balance)",
         spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
