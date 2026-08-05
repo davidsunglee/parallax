@@ -26,7 +26,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
-from parallax.conformance import _descriptor_family, case_format, models, provision, temporal_state
+from parallax.conformance import (
+    _assembly,
+    _descriptor_family,
+    case_format,
+    models,
+    provision,
+    temporal_state,
+)
+from parallax.conformance._assembly import find, find_history
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core import batch_write, inheritance, navigate, opt_lock, read_lock, storage_layout
 from parallax.core.base import (
@@ -86,13 +94,11 @@ from parallax.core.unit_work.write_planner import reject_readless_document_many
 from parallax.descriptor._errors import DescriptorError
 from parallax.descriptor._records import Attribute, Entity, Metamodel, declaring_entity
 from parallax.descriptor._serde import deserialize as deserialize_metamodel
-from parallax.snapshot import handle, materialize
+from parallax.snapshot import handle
 from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
     WriteLoweringError,
     build_write_planner,
-    find,
-    find_history,
     stream_lowered,
     validate_source_pin,
 )
@@ -413,11 +419,12 @@ def _driver_binds(binds: Sequence[object]) -> list[object]:
 
 
 # --------------------------------------------------------------------------- #
-# Graph reads (m-deep-fetch / m-snapshot-read): the                            #
-# production find executor (`parallax.snapshot.handle`) does EVERY level's own #
-# compile/execute/materialize — no engine-local level loop. This lane only     #
-# deserializes the case's operation, calls the shared executor, and renders    #
-# its neutral `materialize.Node`s to the wire `graph` / `graphs` observation.  #
+# Graph reads (m-deep-fetch / m-snapshot-read): the lane's own class-free       #
+# executor (`parallax.conformance._assembly`) does EVERY level's own            #
+# compile/execute/assemble. This lane deserializes the case's operation, calls  #
+# that executor, and renders its neutral `_assembly.Node`s to the wire `graph`  #
+# / `graphs` observation — the row-shaped, per-projection form the corpus       #
+# grades, which the developer-facing object graph does not retain.              #
 # --------------------------------------------------------------------------- #
 def run_graph_case(
     case: case_format.Case, dialect_name: str, port: DbPort
@@ -438,7 +445,7 @@ def run_graph_case(
         OperationError,
         SqlGenError,
         TemporalReadError,
-        materialize.MaterializeError,
+        _assembly.AssemblyError,
         KeyError,
     ) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -465,7 +472,13 @@ def run_graphs_case(
     try:
         raw_op = deserialize(operation_doc)
         result = find_history(raw_op, model, dialect, target, port)
-    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+    except (
+        OperationError,
+        SqlGenError,
+        TemporalReadError,
+        _assembly.AssemblyError,
+        KeyError,
+    ) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = [
         Emission("/operation", statement.sql, statement.binds)
@@ -482,7 +495,7 @@ def run_graphs_case(
 
 
 def _render_graph(
-    target: str, nodes: Sequence[materialize.Node], model: AcceptedMetamodel
+    target: str, nodes: Sequence[_assembly.Node], model: AcceptedMetamodel
 ) -> dict[str, list[Row]]:
     """The wire `then.graph` shape: root-class-keyed, each root row rendered
     through :func:`_render_node` (back-reference cycles truncate to a PK-only
@@ -491,7 +504,7 @@ def _render_graph(
 
 
 def _render_node(
-    node: materialize.Node,
+    node: _assembly.Node,
     visiting: frozenset[int],
     model: AcceptedMetamodel | None = None,
 ) -> Row:
@@ -530,7 +543,7 @@ def _put_rendered(rendered: Row, key: str, value: object) -> None:
     rendered[key] = value
 
 
-def _value_object_names(node: materialize.Node, model: AcceptedMetamodel | None) -> dict[str, str]:
+def _value_object_names(node: _assembly.Node, model: AcceptedMetamodel | None) -> dict[str, str]:
     if model is None:
         return {}
     entity = _rendered_node_entity(node, model)
@@ -569,9 +582,7 @@ def _claim_rendered_column(claimed: dict[str, str], column: str, contributor: st
     claimed[column] = contributor
 
 
-def _rendered_node_entity(
-    node: materialize.Node, model: AcceptedMetamodel
-) -> EntityMetadata | None:
+def _rendered_node_entity(node: _assembly.Node, model: AcceptedMetamodel) -> EntityMetadata | None:
     """Resolve a node through its assembler-propagated exact Entity Identity."""
     identity = node.resolved_entity
     if identity is None:
@@ -587,7 +598,7 @@ def _rendered_node_entity(
 def _render_value(
     value: object, visiting: frozenset[int], model: AcceptedMetamodel | None = None
 ) -> object:
-    if isinstance(value, materialize.Node):
+    if isinstance(value, _assembly.Node):
         return _render_node(value, visiting, model)
     if isinstance(value, list):
         return [_render_value(item, visiting, model) for item in cast("list[object]", value)]
@@ -598,7 +609,7 @@ def _render_value(
 
 
 def _evaluate_identity_checks(
-    case: case_format.Case, target: str, nodes: Sequence[materialize.Node]
+    case: case_format.Case, target: str, nodes: Sequence[_assembly.Node]
 ) -> list[dict[str, object]] | None:
     """The case's declared `then.identityChecks` (m-case-format / m-conformance-
     adapter), each evaluated as Python reference identity (`is`) over the
@@ -625,8 +636,8 @@ def _evaluate_identity_checks(
 
 
 def _resolve_graph_pointer(
-    case: case_format.Case, root_map: Mapping[str, Sequence[materialize.Node]], pointer: str
-) -> materialize.Node:
+    case: case_format.Case, root_map: Mapping[str, Sequence[_assembly.Node]], pointer: str
+) -> _assembly.Node:
     """Resolve a `/then/graph/<RootClass>/<index>/<key>/<index>/...` JSON Pointer
     against the assembled (pre-truncation) graph, alternating list-index and
     relationship-key navigation exactly as the pointer's own segments do."""
@@ -635,7 +646,7 @@ def _resolve_graph_pointer(
         raise EngineError(f"{case.path.name}: identityChecks pointer {pointer!r} is malformed")
     current: object = root_map[parts[2]][int(parts[3])]
     for part in parts[4:]:
-        if isinstance(current, materialize.Node):
+        if isinstance(current, _assembly.Node):
             if part in current.relationships:
                 current = current.relationships[part]
             else:
@@ -647,7 +658,7 @@ def _resolve_graph_pointer(
                 f"{case.path.name}: identityChecks pointer {pointer!r} does not resolve "
                 "against the assembled graph"
             )
-    if not isinstance(current, materialize.Node):
+    if not isinstance(current, _assembly.Node):
         raise EngineError(
             f"{case.path.name}: identityChecks pointer {pointer!r} does not name a graph node"
         )
@@ -1795,9 +1806,10 @@ def _run_snapshot_scenario(
     port: DbPort,
     steps: Sequence[Mapping[str, object]],
 ) -> tuple[list[Emission], int, list[dict[str, object]]]:
-    """Run a snapshot-read scenario: each find step materializes fresh neutral
-    nodes through the SAME production find executor every graph read uses (no
-    engine-local level loop); `mutate` runs the production write seam's
+    """Run a snapshot-read scenario: each find step assembles fresh neutral
+    nodes through the SAME lane executor every graph read uses
+    (:func:`~parallax.conformance._assembly.find`); `mutate` runs the production
+    write seam's
     finite-Transaction-Time-pin refusal against the referenced find step's own
     statement pin (:func:`_grade_mutate_step`) and, when accepted, applies its
     `set` directly to that step's own materialized node — a plain in-memory
@@ -1811,7 +1823,7 @@ def _run_snapshot_scenario(
     dialect = dialect_for(dialect_name)
     emissions: list[Emission] = []
     round_trips = 0
-    results: list[list[materialize.Node]] = []
+    results: list[list[_assembly.Node]] = []
     pins: list[Pin | None] = []
     errors: list[dict[str, object]] = []
     for index, step in enumerate(steps):
@@ -1857,7 +1869,7 @@ def _grade_mutate_step(
     case: case_format.Case,
     step: Mapping[str, object],
     steps: Sequence[Mapping[str, object]],
-    results: Sequence[list[materialize.Node]],
+    results: Sequence[list[_assembly.Node]],
     pins: Sequence[Pin | None],
 ) -> str | None:
     """Grade one scenario `mutate` action step through the SAME production
@@ -1897,7 +1909,7 @@ def _grade_mutate_step(
 
 
 def _apply_mutate_step(
-    case: case_format.Case, step: Mapping[str, object], results: Sequence[list[materialize.Node]]
+    case: case_format.Case, step: Mapping[str, object], results: Sequence[list[_assembly.Node]]
 ) -> None:
     _check_action_step(case, step)
     on = step.get("on")
