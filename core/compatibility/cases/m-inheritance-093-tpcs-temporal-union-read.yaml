@@ -19,11 +19,13 @@
 # identical — hence the per-dialect goldens. The interval columns are inherited, so they
 # are real references in EVERY branch (never NULL-cast).
 #
-# DepositRate now carries TWO Transaction-Time milestones sharing business key id=1 (the
-# strengthened fixtures/rate.yaml, m-inheritance-100's own witness); this read's
-# Transaction-Time Latest default (`out_z = ?` bind `infinity`) still resolves to exactly the
-# CURRENT row (amount 2.50 / grade A) — the same current-result values this case always
-# asserted — only its `in_z` moved to the milestone's own (later) from-instant.
+# DepositRate carries TWO Transaction-Time milestones under business key id=1 over the SAME
+# Valid-Time interval: a SUPERSEDED one closed at 2024-02-01 (amount 2.25 / grade B) and the
+# CURRENT one open from 2024-02-01 (amount 2.50 / grade A). The Transaction-Time Latest
+# default (`out_z = ?` bind `infinity`) therefore discriminates WITHIN one key's milestone
+# chain, not merely across branches: the DepositRate branch projects amount 2.50 / grade A
+# with `in_z` at that milestone's own start. m-inheritance-100 pins the superseded row from
+# the same fixture by reading Transaction-Time-past into the closed window.
 model: models/rate.yaml
 tags: [m-inheritance, m-temporal-read, m-sql, table-per-concrete-subtype, union-all, temporal, bitemporal, as-of, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
