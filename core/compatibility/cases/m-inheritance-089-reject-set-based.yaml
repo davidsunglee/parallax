@@ -1,4 +1,4 @@
-# Rejected write — a keyless SET-BASED inheritance write (m-inheritance, Phase 7 write
+# Rejected write — a keyless SET-BASED inheritance write (m-inheritance write
 # protocol).
 #
 # A per-object concrete-subtype write is KEYED: the tag guard rides with the primary-key

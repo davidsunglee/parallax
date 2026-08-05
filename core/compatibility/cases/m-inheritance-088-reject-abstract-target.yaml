@@ -1,5 +1,5 @@
-# Rejected write — a create handle aimed at an ABSTRACT target (m-inheritance, Phase 7
-# write protocol).
+# Rejected write — a create handle aimed at an ABSTRACT target (m-inheritance write
+# protocol).
 #
 # Writes are concrete-subtype only: a create / update / delete / terminate handle MUST
 # name a concrete subtype, never an abstract root or abstract subtype. This payload is a

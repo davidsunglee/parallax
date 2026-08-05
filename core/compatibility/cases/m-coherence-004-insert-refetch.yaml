@@ -1,4 +1,4 @@
-# Cross-process cache coherence — INSERT under full-cache re-fetch (Phase 11).
+# Cross-process cache coherence — INSERT under full-cache re-fetch.
 #
 # m-coherence-002 proves insert visibility under the partial-cache MARK-DIRTY strategy; this
 # pins the genuinely harder combination: an insert observed under the full-cache

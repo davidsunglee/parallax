@@ -1,5 +1,5 @@
-# Negative (m-inheritance, binding decision — COR-3 Phase 7 review remediation):
-# a NON-TEMPORAL table-per-hierarchy root with an INTERMEDIATE abstract subtype
+# Negative (m-inheritance, binding decision): a NON-TEMPORAL table-per-hierarchy
+# root with an INTERMEDIATE abstract subtype
 # that declares its own Temporality Profile.
 #
 # Temporality is a family-wide property: only the family ROOT may declare

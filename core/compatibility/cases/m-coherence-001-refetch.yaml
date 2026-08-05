@@ -1,4 +1,4 @@
-# Cross-process cache coherence — full-cache re-fetch (Phase 11).
+# Cross-process cache coherence — full-cache re-fetch.
 #
 # Two application servers (node A, node B) share ONE database. Node B reads a row
 # (and would, in-process, cache it). Node A — a DIFFERENT process, a different

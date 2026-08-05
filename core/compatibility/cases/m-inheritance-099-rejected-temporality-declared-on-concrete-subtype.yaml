@@ -1,6 +1,5 @@
-# Negative (m-inheritance, binding decision — COR-3 Phase 7 review remediation):
-# a table-per-concrete-subtype family whose CONCRETE subtype declares the
-# family's Temporality Profile.
+# Negative (m-inheritance, binding decision): a table-per-concrete-subtype family
+# whose CONCRETE subtype declares the family's Temporality Profile.
 #
 # Temporality is a family-wide property: the root ALONE declares the profile,
 # and every descendant inherits EXACTLY the axes it derives — a descendant MUST

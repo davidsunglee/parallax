@@ -1,5 +1,5 @@
 # Table-per-hierarchy BITEMPORAL terminateUntil: the inactivation is tag-GUARDED
-# (m-inheritance x m-bitemp-write x m-sql — Phase 8 temporal composition).
+# (m-inheritance x m-bitemp-write x m-sql).
 #
 # A terminateUntil over a BOUNDED Valid-Time window [validFrom, until) inactivates
 # the original on the Transaction-Time dimension and chains only HEAD (valid [from_z, validFrom))

@@ -1,5 +1,5 @@
 # Table-per-hierarchy ABSTRACT-ROOT read, INSTANCE-FORM sibling: the developer-surface
-# per-variant node shape (m-inheritance, m-case-format, m-sql — COR-3 Phase 8 part C).
+# per-variant node shape (m-inheritance, m-case-format, m-sql).
 #
 # Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
 # (`m-inheritance-003`) — Payment declares no value objects, so the instance-form

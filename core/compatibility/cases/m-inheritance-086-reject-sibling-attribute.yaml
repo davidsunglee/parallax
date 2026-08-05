@@ -1,5 +1,5 @@
-# Rejected write — a payload carrying a SIBLING branch's attribute (m-inheritance,
-# Phase 7 write protocol).
+# Rejected write — a payload carrying a SIBLING branch's attribute (m-inheritance
+# write protocol).
 #
 # The accepted fields of a concrete-subtype write are exactly the target's ancestry
 # chain (root + abstract ancestors + own). This payload to the Payment family carries

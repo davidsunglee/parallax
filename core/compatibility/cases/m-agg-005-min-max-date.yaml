@@ -1,6 +1,6 @@
 # min / max over a DATE attribute (Order.orderedOn).
 #
-# The Phase 4 `orderedOn` column gives min/max a date-typed attribute. The six
+# The `orderedOn` column gives min/max a date-typed attribute. The six
 # order dates span 2024-01-05 .. 2024-06-30, so min/max return those endpoints.
 # This is the third min/max domain (numeric / string / date) the suite exercises.
 model: models/orders.yaml

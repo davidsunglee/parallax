@@ -1,5 +1,5 @@
 # Table-per-concrete-subtype TEMPORAL abstract-root read: `union all` with PER-BRANCH
-# as-of binds (m-inheritance x m-temporal-read x m-sql — Phase 8 temporal composition).
+# as-of binds (m-inheritance x m-temporal-read x m-sql).
 #
 # Targeting the abstract root Rate (bitemporal) resolves to every concrete descendant
 # {DepositRate, LoanRate} (ALPHABETICAL branch order). With no shared table and no tag,

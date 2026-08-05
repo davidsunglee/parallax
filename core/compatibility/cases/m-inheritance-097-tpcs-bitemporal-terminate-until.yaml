@@ -1,5 +1,5 @@
 # Table-per-concrete-subtype BITEMPORAL terminateUntil: the inactivation targets the
-# subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql — Phase 8).
+# subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql).
 #
 # A terminateUntil over a bounded Valid-Time window inactivates the original on the
 # Transaction-Time dimension and chains HEAD + TAIL (no middle), so the value is absent inside the

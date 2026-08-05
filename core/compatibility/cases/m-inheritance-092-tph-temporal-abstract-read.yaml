@@ -1,5 +1,5 @@
 # Table-per-hierarchy TEMPORAL abstract-root read: the as-of predicate composes with the
-# shared-table abstract-read lowering (m-inheritance x m-temporal-read x m-sql — Phase 8).
+# shared-table abstract-read lowering (m-inheritance x m-temporal-read x m-sql).
 #
 # Targeting the abstract root Instrument (bitemporal) resolves to the whole family in the
 # shared `instrument` table, so the read injects NO tag predicate — just the as-of
