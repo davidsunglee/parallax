@@ -513,6 +513,42 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "parallax.core.entity._graph_input may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.core.entity._graph_input"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.db_port",
+    "parallax.core.deep_fetch",
+    "parallax.core.dialect",
+    "parallax.core.document_codec",
+    "parallax.core.inheritance",
+    "parallax.core.model_formation",
+    "parallax.core.navigate",
+    "parallax.core.op_algebra",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.read_lock",
+    "parallax.core.relationship",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
+    "parallax.core.temporal_read",
+    "parallax.core.txtime_write",
+    "parallax.core.unit_work",
+    "parallax.core.value_object",
+    "parallax.descriptor",
+    "parallax.postgres",
+    "parallax.snapshot._inspection",
+    "parallax.snapshot.handle",
+    "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
 name = "parallax.core.entity._query may import only its permitted dependencies"
 type = "forbidden"
 source_modules = ["parallax.core.entity._query"]
@@ -1205,9 +1241,9 @@ forbidden_modules = [
     "parallax.snapshot._inspection",
     "parallax.snapshot.handle._family",
     "parallax.snapshot.handle._keyed_sql",
+    "parallax.snapshot.handle._materializer",
     "parallax.snapshot.handle._preflight",
     "parallax.snapshot.handle._step_lowering",
-    "parallax.snapshot.handle._wrap",
     "parallax.snapshot.handle._write_lowering",
     "parallax.snapshot.handle._write_types",
     "parallax.snapshot.materialize",
@@ -1255,6 +1291,25 @@ forbidden_modules = [
     "parallax.postgres",
     "parallax.snapshot._inspection",
     "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.snapshot.handle._materializer may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.snapshot.handle._materializer"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core.auto_retry",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.dialect",
+    "parallax.core.pk_gen",
+    "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.txtime_write",
+    "parallax.descriptor",
+    "parallax.postgres",
 ]
 
 [[tool.importlinter.contracts]]
@@ -1308,25 +1363,6 @@ forbidden_modules = [
     "parallax.postgres",
     "parallax.snapshot._inspection",
     "parallax.snapshot.materialize",
-]
-
-[[tool.importlinter.contracts]]
-name = "parallax.snapshot.handle._wrap may import only its permitted dependencies"
-type = "forbidden"
-source_modules = ["parallax.snapshot.handle._wrap"]
-forbidden_modules = [
-    "parallax.conformance",
-    "parallax.core.auto_retry",
-    "parallax.core.batch_write",
-    "parallax.core.bitemp_write",
-    "parallax.core.db_error",
-    "parallax.core.dialect",
-    "parallax.core.pk_gen",
-    "parallax.core.read_lock",
-    "parallax.core.sql_gen",
-    "parallax.core.txtime_write",
-    "parallax.descriptor",
-    "parallax.postgres",
 ]
 
 [[tool.importlinter.contracts]]
@@ -1385,7 +1421,6 @@ forbidden_modules = [
     "parallax.core.bitemp_write",
     "parallax.core.db_error",
     "parallax.core.dialect",
-    "parallax.core.entity",
     "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",

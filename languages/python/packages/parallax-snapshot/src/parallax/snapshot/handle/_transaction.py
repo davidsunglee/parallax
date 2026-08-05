@@ -402,7 +402,7 @@ class Transaction:
             history_result = self._uow.read(
                 lambda: find_history(op, self._meta, self._dialect, target, self._conn)
             )
-            return snapshot_from_history_result(history_result, target, self._meta, runtime)
+            return snapshot_from_history_result(history_result, self._meta, runtime)
         observations = ReadObservations()
         find_result = self._uow.read(
             lambda: find(
@@ -416,7 +416,7 @@ class Transaction:
             )
         )
         record_observations(self._uow, self._meta, observations, pin)
-        return snapshot_from_find_result(find_result, target, self._meta, pin, runtime)
+        return snapshot_from_find_result(find_result, self._meta, runtime)
 
     def _buffer(
         self,

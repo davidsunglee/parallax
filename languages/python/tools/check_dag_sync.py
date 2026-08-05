@@ -174,6 +174,12 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.core.entity._expressions": frozenset(
         {"parallax.core.metamodel", "parallax.core.op_algebra"}
     ),
+    # Snapshot Graph Input and Entity Graph Construction share one exact recursive
+    # immutable algebra, so the carriers are scoped apart from the collaboration
+    # that consumes them. Granting the carriers alone is what keeps a graph-input
+    # producer structurally unable to reach the writer, `construct`, or model
+    # formation — the layering rule stays enforced rather than merely asserted.
+    "parallax.core.entity._graph_input": frozenset({"parallax.core.metamodel"}),
     # The Snapshot slice's own node-inspection surface is scoped apart from both
     # snapshot packages: it reads a node's loaded views, pin, and milestone edge
     # through the advanced Entity seam and nothing else, so its row proves it
@@ -212,17 +218,21 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.bitemp_write",
         }
     ),
-    "parallax.snapshot.handle._wrap": frozenset(
+    "parallax.snapshot.handle._materializer": frozenset(
         {
             "parallax.snapshot.materialize",
             "parallax.snapshot._inspection",
             "parallax.core.entity",
             "parallax.core.metamodel",
-            "parallax.core.relationship",
             "parallax.core.inheritance",
             "parallax.core.temporal_read",
         }
     ),
+    # The one Python-only support edge a BEHAVIOURAL scope carries: the shared
+    # carrier algebra has no language-neutral module tag, so `modules.md` cannot
+    # state it and §7 is its only declaration. Every other `m-snapshot-read` edge
+    # stays in `modules.md`, and this table's grants are unioned with those.
+    "parallax.snapshot.materialize": frozenset({"parallax.core.entity._graph_input"}),
     # The read gate is scoped apart from its own package so the generated
     # contract proves what its module docstring claims: a preflight that resolves
     # a target and validates an operation names no SQL generation, no dialect, no
@@ -285,8 +295,9 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
     "parallax.core.entity._query": "parallax.core.entity",
     "parallax.core.entity._expressions": "parallax.core.entity",
+    "parallax.core.entity._graph_input": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
-    "parallax.snapshot.handle._wrap": "parallax.snapshot.handle",
+    "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",
     "parallax.snapshot.handle._preflight": "parallax.snapshot.handle",
     "parallax.snapshot.handle._errors": "parallax.snapshot.handle",
     "parallax.snapshot.handle._family": "parallax.snapshot.handle",

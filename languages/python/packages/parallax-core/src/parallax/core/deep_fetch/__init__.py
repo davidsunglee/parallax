@@ -93,6 +93,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     NullPlacement,
+    RelationshipIdentity,
     SortDirection,
     TemporalDimension,
     entity_by_name,
@@ -149,7 +150,10 @@ class FetchLevel:
 
     ``attach_key`` is the relationship name, or — for a narrowed polymorphic hop
     (``m-deep-fetch`` "Polymorphic and narrowed deep fetch") — the derived
-    narrowed-view key ``<rel>[<Concrete>,<Concrete>]``. ``parent`` names which
+    narrowed-view key ``<rel>[<Concrete>,<Concrete>]``; ``relationship`` is the
+    same view's own direction as a structured Relationship Identity, so a caller
+    attaching this level names the modeled direction rather than re-resolving one
+    from the derived key. ``parent`` names which
     already-fetched rows this level gathers its distinct keys from (the root, or
     an earlier level); ``parent_column`` is the PHYSICAL column on those parent
     rows to gather, and ``parent_attribute`` is the SAME correlation named as a
@@ -194,6 +198,7 @@ class FetchLevel:
     """
 
     attach_key: str
+    relationship: RelationshipIdentity
     to_many: bool
     parent: ParentRef
     parent_column: str
@@ -397,6 +402,7 @@ class _PlanBuilder:
         if is_back_reference:
             level = FetchLevel(
                 attach_key=attach_key,
+                relationship=direction.identity,
                 to_many=to_many,
                 parent=parent_ref,
                 parent_column=parent_column,
@@ -409,6 +415,7 @@ class _PlanBuilder:
             child_target, narrow_to = _child_target(direction, position, segment)
             level = FetchLevel(
                 attach_key=attach_key,
+                relationship=direction.identity,
                 to_many=to_many,
                 parent=parent_ref,
                 parent_column=parent_column,

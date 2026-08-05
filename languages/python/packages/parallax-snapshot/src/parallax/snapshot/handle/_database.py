@@ -75,8 +75,6 @@ from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._preflight import preflight_find
 from parallax.snapshot.handle._read import (
     Snapshot,
-    declaring_metadata,
-    deep_fetch_statement_pin,
     find,
     find_history,
     snapshot_from_find_result,
@@ -294,12 +292,11 @@ class Database:
         runtime = self._connected.materializing()
         lowered = preflight_find(query, model=self._meta)
         target, op = lowered.target.name, lowered.operation
-        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
         if scans_an_axis(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
-            return snapshot_from_history_result(history_result, target, self._meta, runtime)
+            return snapshot_from_history_result(history_result, self._meta, runtime)
         find_result = find(op, self._meta, self._dialect, target, self._port)
-        return snapshot_from_find_result(find_result, target, self._meta, pin, runtime)
+        return snapshot_from_find_result(find_result, self._meta, runtime)
 
     def transact[T](
         self,

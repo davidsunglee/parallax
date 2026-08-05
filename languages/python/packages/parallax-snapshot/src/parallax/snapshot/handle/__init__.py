@@ -48,7 +48,7 @@ public-surface check promises. Where the exported names live:
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, plus the result surface they build
   (:class:`Snapshot`, :class:`Execution`, :class:`ExecutedStatement`,
-  :class:`FindResult`, :class:`HistoryFindResult`, :class:`MilestoneGraph`,
+  :class:`FindResult`, :class:`HistoryFindResult`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`) and
   :class:`ObservationCollector`, the optional seam a participating read hands its
   materialized rows to.
@@ -64,8 +64,8 @@ public-surface check promises. Where the exported names live:
   finite-Transaction-Time-pin refusal the keyed verbs and the conformance
   engine's scenario grading share.
 
-The modules behind no exported name (``_wrap``, ``_family``, ``_keyed_sql``,
-``_predicate_writes``, ``_preflight``) are reached only through the modules
+The modules behind no exported name (``_materializer``, ``_family``,
+``_keyed_sql``, ``_predicate_writes``, ``_preflight``) are reached only through the modules
 above; each documents its own place in the package's acyclic internal graph.
 ``_preflight`` in particular stays unexported: the read gate is an intra-package
 seam, and its own §7 scope is what proves it reaches no port.
@@ -91,7 +91,6 @@ from parallax.snapshot.handle._read import (
     Execution,
     FindResult,
     HistoryFindResult,
-    MilestoneGraph,
     NoResultFound,
     ObservationCollector,
     Snapshot,
@@ -115,7 +114,6 @@ __all__ = [
     "Execution",
     "FindResult",
     "HistoryFindResult",
-    "MilestoneGraph",
     "NoResultFound",
     "ObservationCollector",
     "QueryTargetError",

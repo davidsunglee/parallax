@@ -55,6 +55,14 @@ relationship's join reads a key from, and — on a level that issues a child que
 carry both as modeled member identities, addressed at the positions the join
 names them at, **alongside** whatever physical column each maps to.
 
+Step 4 attaches on a **relationship**, and the same rule applies to it: a planned
+level **MUST** carry the direction it attaches under as a modeled relationship
+identity, alongside the attach key — the relationship name, or the derived
+narrowed-view key of a narrowed polymorphic hop. The attach key stays, because it
+is the key the graph presents the view under; what the identity adds is again the
+inverse direction, so a consumer attaching the level names the declared direction
+instead of matching the derived key back against the owner's relationship names.
+
 The physical column stays: a level's own child statement is emitted against
 columns, and the keys it gathers are column values. What the member identity adds
 is the *inverse* direction. A consumer that has already turned a parent row into

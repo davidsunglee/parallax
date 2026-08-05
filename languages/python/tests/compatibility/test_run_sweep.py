@@ -44,7 +44,8 @@ from parallax.core.sql_gen import compile_read
 # m-inheritance-106/-107/-108/-109 compile byte-identical to their row-form
 # siblings (the shared `COMPILE_EXERCISED`) and are exercised
 # for real — but NOT through this file's own wire-level `_render_node`
-# rendering, permanently: that rendering shares the identical `materialize.Node`
+# rendering, permanently: that rendering shares the identical
+# `parallax.conformance._assembly.Node`
 # the VALUES-lane witnesses (m-inheritance-003/-013/-015/-052, and OTHER
 # already-exercised multi-concrete graph levels like `m-snapshot-read-012`'s
 # own root-typed `animals` attachment) need PADDED, unnarrowed, so the SAME

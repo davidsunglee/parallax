@@ -44,20 +44,20 @@ def test_module_path_folds_package_interfaces() -> None:
         own.module_path("parallax-core/src/parallax/core/base/__init__.py") == "parallax.core.base"
     )
     assert (
-        own.module_path("parallax-snapshot/src/parallax/snapshot/handle/_wrap.py")
-        == "parallax.snapshot.handle._wrap"
+        own.module_path("parallax-snapshot/src/parallax/snapshot/handle/_materializer.py")
+        == "parallax.snapshot.handle._materializer"
     )
 
 
 def test_owning_scopes_returns_the_chain_outermost_first() -> None:
-    owners = own.owning_scopes("parallax.snapshot.handle._wrap", own.declared_scopes())
-    assert owners == ["parallax.snapshot.handle", "parallax.snapshot.handle._wrap"]
+    owners = own.owning_scopes("parallax.snapshot.handle._materializer", own.declared_scopes())
+    assert owners == ["parallax.snapshot.handle", "parallax.snapshot.handle._materializer"]
     # ...and the most specific scope is the file's owner.
-    assert owners[-1] == "parallax.snapshot.handle._wrap"
+    assert owners[-1] == "parallax.snapshot.handle._materializer"
 
 
 def test_a_declared_child_chain_is_not_an_overlap() -> None:
-    chain = ["parallax.snapshot.handle", "parallax.snapshot.handle._wrap"]
+    chain = ["parallax.snapshot.handle", "parallax.snapshot.handle._materializer"]
     assert own.is_declared_chain(chain, dag.CHILD_SCOPE_PARENT)
     assert not own.is_declared_chain(chain, {})
 
@@ -196,11 +196,11 @@ def test_dropping_a_child_declaration_fails(
     tampered = {
         child: parent
         for child, parent in dag.CHILD_SCOPE_PARENT.items()
-        if child != "parallax.snapshot.handle._wrap"
+        if child != "parallax.snapshot.handle._materializer"
     }
     monkeypatch.setattr(dag, "CHILD_SCOPE_PARENT", tampered)
     assert own.main([]) == 1
-    assert "_wrap.py" in capsys.readouterr().err
+    assert "_materializer.py" in capsys.readouterr().err
 
 
 # --------------------------------------------------------------------------
@@ -357,9 +357,9 @@ def test_exemption_for_an_owned_file_fails(
 ) -> None:
     # An exemption kept alive after a scope grew to cover the file is dead weight
     # that hides which scope actually owns it.
-    owned = "parallax-snapshot/src/parallax/snapshot/handle/_wrap.py"
+    owned = "parallax-snapshot/src/parallax/snapshot/handle/_materializer.py"
     monkeypatch.setattr(own, "EXEMPTIONS", {**own.EXEMPTIONS, owned: "stale justification"})
     assert own.main([]) == 1
     err = capsys.readouterr().err
     assert "no longer describe the tree" in err
-    assert "now owned by parallax.snapshot.handle._wrap" in err
+    assert "now owned by parallax.snapshot.handle._materializer" in err

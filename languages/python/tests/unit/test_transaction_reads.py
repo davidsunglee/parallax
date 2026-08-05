@@ -42,7 +42,7 @@ from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import TX_TIME, opt_lock
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.op_algebra import Operation
 from parallax.core.unit_work import (
     FixedClock,
@@ -53,18 +53,7 @@ from parallax.snapshot.handle import Database, FindResult, ObservationCollector,
 from parallax.snapshot.handle import _database as database_module
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _transaction as transaction_module
-
-# `_pin_from_milestone` stays private because production callers are confined to
-# `_read`; this test import exercises its defensive missing-axis branch directly.
-from parallax.snapshot.handle._read import (
-    _pin_from_milestone,  # pyright: ignore[reportPrivateUsage] - unit test imports a private helper to exercise directly
-)
 from parallax.snapshot.handle._write_inputs import ReadObservations
-
-# The `_pin_from_milestone` probe's own instant — deliberately NOT the shared
-# `FIXED` clock instant: this test builds a milestone pin by hand and asserts the
-# same value comes back, so it must not depend on what the fake clock is set to.
-_MILESTONE_INSTANT = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 def _recording_find(
@@ -548,17 +537,6 @@ def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
     assert in_z in close_binds  # the transported Transaction-Time coordinate gates the close
     # The correction's replacement rows carry the edited field.
     assert any("New Name" in cast("tuple[object, ...]", op[2]) for op in write_ops[1:])
-
-
-def test_pin_from_milestone_skips_an_axis_absent_from_the_milestone_pin() -> None:
-    # `_pin_from_milestone` is generic over any `Mapping` (not tied to how
-    # `_edge_pin` always populates every declared axis in practice) — a
-    # bitemporal entity's OWN as-of-attribute loop must skip an axis absent
-    # from a given milestone's pin, not KeyError.
-    position = MODELS["position"].meta(EntityIdentity("parallax.compatibility", "Position"))
-    pin = _pin_from_milestone(position, {"transaction-time": _MILESTONE_INSTANT})
-    assert pin.tx_time == _MILESTONE_INSTANT
-    assert pin.valid_time is None
 
 
 # --------------------------------------------------------------------------- #
