@@ -1838,11 +1838,17 @@ or descriptor authoring form and performs no audit stamping.
   scalar or nested-occurrence identity and a present identity mapped to `None`
   are distinct stored-document states. Declared nullability says which of them
   a conforming stored document may hold — a required scalar or One occurrence
-  admits neither — but nothing on the read path judges that
-  (**Document-resident nullability** below). Both states read as `None`, while
-  the frozen Value Object retains
-  field presence so canonical document serialization omits the former and
-  emits the latter as explicit null. A Many occurrence is an ordered immutable
+  admits neither — but nothing inside a record judges that
+  (**Document-resident nullability** below). Both states read as `None`, and the
+  read carries the difference no further: the reduction that collapses them names
+  every declared member, so a materialized Value Object holds every field as
+  present. Field presence survives in the carriers instead — an omitted entry
+  stays outside the frozen Value Object's `model_fields_set` and an entry present
+  as `None` sits inside it, which is what lets canonical document serialization
+  omit the former and emit the latter as explicit null. A Value Object built by
+  ordinary construction is what exercises that distinction; one materialized from
+  storage names every member, so re-serializing it spells an originally omitted
+  key as explicit null. A Many occurrence is an ordered immutable
   `tuple` of non-null Value Object records and is never nullable: `()` is its
   sole zero-element value, and a present entry holding `None` or holding a
   `None` element is invalid. Omission is not invalid — it is that occurrence's
@@ -1946,21 +1952,33 @@ or descriptor authoring form and performs no audit stamping.
   `document_codec.reduce_declared_members` cannot consult `nullable` — so which
   not-present state the document was in does not survive it: an omitted leaf and
   a stored null arrive as the same value.
-  **No layer of Snapshot materialization enforces declared nullability at a
-  document-resident position** — not the read seam, not Entity Graph
-  Construction, and not the frozen Value Object it builds. A stored document
-  violating a required leaf or a required One occurrence materializes as `None`
-  (or `()`) instead of raising. The write path is untouched by this and still
-  enforces: a Value Object authored for an assignment is built by ordinary
-  Pydantic validation, where a required leaf admits neither omission nor `None`
-  (§2), which is how a write omitting a required attribute or a required One
-  occurrence is refused pre-SQL. Entity Graph
-  Construction validates everything else at those positions — structured
+  **Every document-resident position the collapse reaches goes unjudged**: the
+  reduction does not enforce declared nullability, nor does Entity Graph
+  Construction, nor the frozen Value Object it builds. A stored document
+  violating a required Value Object leaf or a required nested One occurrence
+  materializes as `None` instead of raising, and so does a violated top-level One
+  occurrence under `Columns` layout, where the occurrence holds a Structured
+  Column of its own and the whole column reaches the collapse.
+
+  One boundary is judged ahead of the collapse, and only under Relational
+  Document Layout: fanning the shared Structured Column out decodes each
+  projected member's Document Path through `document_codec.decode_path`, which
+  rejects a required top-level occurrence — and a document-placed Entity
+  Attribute — whose key is absent or holds JSON null as invalid stored data,
+  along with a key holding neither the object nor the array its multiplicity
+  stores. The check reaches that one key; the occurrence's own document arrives
+  whole, and every position inside it belongs to the collapse.
+
+  The write path is untouched by this and still enforces: a Value Object authored
+  for an assignment is built by ordinary Pydantic validation, where a required
+  leaf admits neither omission nor `None` (§2), which is how a write omitting a
+  required attribute or a required One occurrence is refused pre-SQL. Entity
+  Graph Construction validates everything else at those positions — structured
   identity, duplicate entries, occurrence shape (record versus tuple), exact
-  built-in tuple carriers, and Neutral Value validity. An Entity Attribute is
-  column-resident and unaffected: its declared nullability **is** enforced, and
-  a `None` for a non-nullable Attribute raises
-  `GraphConstructionError(entity-graph-invalid-value)`.
+  built-in tuple carriers, and Neutral Value validity. An Entity Attribute is no
+  document-resident position under this rule wherever its Member Placement puts
+  it: its declared nullability **is** enforced, and a `None` for a non-nullable
+  Attribute raises `GraphConstructionError(entity-graph-invalid-value)`.
 
   The gap is declined enforcement rather than a missing capability. Every state
   the collapse merges violates a required member, and construction still holds
