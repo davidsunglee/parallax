@@ -1948,7 +1948,10 @@ or descriptor authoring form and performs no audit stamping.
   collapsed by the read seam under `m-op-algebra`'s absence-collapse rule: a
   missing key, a stored null (SQL or JSON), and a non-object intermediate all
   arrive as `None`; for a Many, a missing key, a stored null, and a non-array
-  all arrive as `()`. The collapse takes no nullability argument —
+  all arrive as `()`. Every such position collapses but one — a top-level
+  occurrence inside the shared Structured Column under Relational Document
+  Layout, which the read seam judges instead of collapsing (below).
+  The collapse takes no nullability argument —
   `document_codec.reduce_declared_members` cannot consult `nullable` — so which
   not-present state the document was in does not survive it: an omitted leaf and
   a stored null arrive as the same value.
