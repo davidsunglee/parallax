@@ -1,7 +1,7 @@
 """``parallax.snapshot.materialize`` enforcement scope (m-snapshot-read).
 
-The **one assembler**: rows-per-level in, neutral (class-free) graph nodes out.
-:class:`Node` is the whole vocabulary — provenance-separated scalar, Value Object,
+The production read path's assembler: rows-per-level in, neutral (class-free)
+graph nodes out. :class:`Node` is the whole vocabulary — provenance-separated scalar, Value Object,
 relationship, and synthetic-variant fields plus its declared primary-key columns
 — because the developer surface (`Snapshot[T]`, in `parallax.snapshot.handle`)
 is a frozen wrapping over these SAME nodes, not a different graph, and nothing
@@ -22,11 +22,10 @@ find executor (``parallax.snapshot.handle``) drives, one level at a time, in
 
 Graph-local identity (`m-snapshot-read` "Graph-local identity resolution") is
 the assembler's own bookkeeping: every row it decodes registers under
-:func:`identity_key` — ``(family-normalized name, primary-key tuple)`` — the
+:func:`identity_key` — ``(family-normalized name, primary-key tuple)`` — and the
 FIRST node registered for a key is the one every later reference to that same
-row reuses (never re-decoded, never a second copy) — the mechanism a
-back-reference level's resolution depends on and what a future identity-check
-observation compares by Python reference (`is`), never by value.
+row reuses (never re-decoded, never a second copy), which is what a
+back-reference level's resolution depends on.
 
 ``m-snapshot-read`` depends directly on ``m-deep-fetch`` and
 ``m-document-codec``. The former transitively reaches ``m-metamodel`` /
