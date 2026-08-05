@@ -5,12 +5,10 @@
 # Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
 # (`m-inheritance-052`) — Document declares no value objects, so the instance-form
 # Document-slot delta is empty (the `union all` branches project the same columns either
-# way, verified against m-sql's *Read projection* rule during authoring). `then.graph`
-# asserts the per-variant node shape: the two Invoice nodes carry NO `paid_amount`
-# key; the Receipt node carries NO `amount_due` key. `m-inheritance-052` remains the
-# values-lane witness; the TPCS instance-form `db.find` refusal this golden exposes
-# (`SqlGenError` over a 2+-concrete union-all read) is a gap in the instance-form
-# read lane, not a property this case pins.
+# way, m-sql *Read projection*). `then.graph` asserts the per-variant node shape: the two
+# Invoice nodes carry NO `paid_amount` key; the Receipt node carries NO `amount_due` key.
+# `m-inheritance-052` remains the values-lane witness (the flat superset row); this is the
+# object-lane (developer-surface `db.find`) witness.
 model: models/document.yaml
 tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
