@@ -382,54 +382,42 @@ def _decoding_error(
 ) -> SnapshotDecodingError:
     """The refusal one codec failure becomes, resolved to the member at fault.
 
-    The codec reports the failing member as a document path relative to the
-    occurrence being reduced, followed by a detail that may quote the stored
-    value. Only the path is carried into the message; the detail stays on the
-    chained cause, so nothing a caller sees exposes stored data.
+    The codec names the failing member as a SEQUENCE of declared names relative to
+    the occurrence being reduced, and its detail may quote the stored value. Only
+    the names reach the message; the detail stays on the chained cause, so nothing
+    a caller sees exposes stored data.
     """
-    path, separator, _detail = str(exc).partition(": ")
-    relative = path if separator else ""
     occurrence = ".".join(declared.identity.path)
-    spelled = f"{occurrence}.{relative}" if relative else occurrence
+    spelled = ".".join((occurrence, *exc.path))
     return SnapshotDecodingError(
         f"{entity.canonical}.{spelled} holds data its declared shape does not admit",
         entity=entity,
-        member=_member_identity(declared, relative),
+        member=_member_identity(declared, exc.path),
         cause=exc,
     )
 
 
 def _member_identity(
-    declared: _VoContainer, path: str
+    declared: _VoContainer, path: tuple[str, ...]
 ) -> ValueObjectIdentity | ValueObjectAttributeIdentity:
     """The declared member ``path`` names inside ``declared``, descending through
     the nested occurrences on the way, or the occurrence itself where the codec
     reported no path — a whole document stored in a kind it cannot be read as.
 
-    The codec joins its path with ``.`` while a member name is any nonempty
-    string (`m-metamodel` "Canonical identities and order"), so the path is
-    matched against declared names rather than split on every separator: a leaf
-    whose own name contains a dot would otherwise resolve to nothing and report
-    its container. Each step takes an exact leaf match first, then the longest
-    nested occurrence whose name the path continues past.
+    Each step matches one declared name exactly. Resolving a rendered path
+    instead could not be exact: a member name is any nonempty string
+    (`m-metamodel` "Canonical identities and order"), so a leaf named ``a.b`` and
+    a leaf ``b`` inside an occurrence ``a`` spell one dotted path between them.
     """
     container = declared
-    remaining = path
-    while remaining:
-        leaf = next((one for one in container.attributes if one.identity.name == remaining), None)
+    for name in path:
+        leaf = next((one for one in container.attributes if one.identity.name == name), None)
         if leaf is not None:
             return leaf.identity
-        nested = max(
-            (
-                one
-                for one in container.value_objects
-                if remaining.startswith(f"{one.identity.path[-1]}.")
-            ),
-            key=lambda one: len(one.identity.path[-1]),
-            default=None,
+        nested = next(
+            (one for one in container.value_objects if one.identity.path[-1] == name), None
         )
         if nested is None:  # pragma: no cover - the codec reports declared members only
             break
         container = nested
-        remaining = remaining[len(nested.identity.path[-1]) + 1 :]
     return container.identity

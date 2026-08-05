@@ -11,7 +11,9 @@ whose target the connected model does not declare;
 :class:`DeferredFeatureError`, of a valid query whose execution Features this
 implementation has deferred; :class:`SnapshotConnectionError`, of a model that
 cannot materialize rows; :class:`TransactionOwnershipError`, the demarcation's
-own refusal of a nested ``transact`` through a handle that did not open it; and
+own refusal of a nested ``transact`` through a handle that did not open it;
+:class:`SnapshotDecodingError`, of stored data a read cannot convert into the
+graph-input algebra; and
 :class:`SnapshotMaterializationError`, the one translation of a failure to build
 the Entity graph a successful read's rows describe.
 
@@ -48,6 +50,7 @@ from parallax.snapshot.handle import (
     TransactionOwnershipError,
     connect,
 )
+from parallax.snapshot.materialize import SnapshotDecodingError
 
 __all__ = [
     "DeferredFeatureError",
@@ -56,6 +59,7 @@ __all__ = [
     "QueryTargetError",
     "Snapshot",
     "SnapshotConnectionError",
+    "SnapshotDecodingError",
     "SnapshotInspectionError",
     "SnapshotMaterializationError",
     "TooManyResultsFound",

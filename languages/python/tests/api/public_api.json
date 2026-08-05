@@ -358,6 +358,7 @@
     "QueryTargetError",
     "Snapshot",
     "SnapshotConnectionError",
+    "SnapshotDecodingError",
     "SnapshotInspectionError",
     "SnapshotMaterializationError",
     "TooManyResultsFound",

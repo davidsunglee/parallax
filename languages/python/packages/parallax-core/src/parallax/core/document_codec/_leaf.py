@@ -60,7 +60,24 @@ class LeafEncodingError(Exception):
     spelling the table gives some value of that space is the encoding of nothing here.
     The table is total over the type algebra and says nothing about either, and
     inventing an answer for one is exactly what this module exists to prevent.
+
+    ``path`` names the failing member as a SEQUENCE of declared names relative to
+    whatever the caller reduced, so a consumer resolves the member by name at each
+    step. A member name is any nonempty string (`m-metamodel` "Canonical
+    identities and order"), so the rendered ``.``-joined spelling is ambiguous —
+    a leaf named ``a.b`` and a leaf ``b`` inside an occurrence ``a`` render alike
+    — and only the sequence distinguishes them. Empty for a failure at the
+    reduced value itself.
     """
+
+    def __init__(self, detail: str, *, path: tuple[str, ...] = ()) -> None:
+        super().__init__(f"{'.'.join(path)}: {detail}" if path else detail)
+        self.detail = detail
+        self.path = path
+
+    def under(self, name: str) -> LeafEncodingError:
+        """The same failure reported one containment step out, under ``name``."""
+        return LeafEncodingError(self.detail, path=(name, *self.path))
 
 
 def is_text_compared(neutral_type: NeutralType) -> bool:
