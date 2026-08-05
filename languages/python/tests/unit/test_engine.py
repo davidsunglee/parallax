@@ -3000,10 +3000,9 @@ def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
 
 
 def test_relationship_attachment_preserves_a_same_named_value_object_storage_key() -> None:
-    from parallax.conformance import models
+    from parallax.conformance import _assembly, models
     from parallax.core.deep_fetch import FetchLevel, RootRef
     from parallax.descriptor._serde import parse_document
-    from parallax.snapshot import materialize
 
     model = models.accepted_model(
         parse_document(
@@ -3043,9 +3042,18 @@ def test_relationship_attachment_preserves_a_same_named_value_object_storage_key
             }
         )
     )
-    assembler = materialize.Assembler(model)
+    owner_identity = EntityIdentity(None, "Owner")
+    owner = model.entity(owner_identity)
+    assert owner is not None
+    assembler = _assembly.Assembler(model)
     parent_rows = [{"id": 1, "target_id": 7, "details": {"label": "stored"}}]
-    parents = assembler.materialize_root("Owner", parent_rows)
+    parents = assembler.materialize_root(
+        "Owner",
+        parent_rows,
+        resolved_entities=(owner_identity,),
+        family_variants=(None,),
+        documents=owner.declared_value_objects,
+    )
     level = FetchLevel(
         attach_key="details",
         to_many=False,
@@ -3061,7 +3069,6 @@ def test_relationship_attachment_preserves_a_same_named_value_object_storage_key
         parents,
         parent_rows,
         [{"id": 7}],
-        resolved_position=(target_identity,),
         resolved_entities=(target_identity,),
         family_variants=(None,),
     )
@@ -3134,7 +3141,7 @@ _VARIANT_MODEL = form_metamodel(
 
 
 def _value_object_node(*, resolved: EntityIdentity = _VARIANT_ROOT, variant: object = ...) -> Any:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
     value_objects: dict[str, object] = {
         "familyVariant": {"label": "mail"},
@@ -3143,7 +3150,7 @@ def _value_object_node(*, resolved: EntityIdentity = _VARIANT_ROOT, variant: obj
         "archive_profile": {"label": "archive"},
     }
     family_variant = cast("str | None", variant) if variant is not ... else None
-    return materialize.Node(
+    return _assembly.Node(
         fields={"id": 1},
         pk_columns=("id",),
         resolved_entity=resolved,
@@ -3163,9 +3170,9 @@ def test_value_object_names_use_the_static_entity_when_variant_is_absent() -> No
 
 
 def test_value_object_names_without_assembler_entity_bookkeeping_are_empty() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    node = materialize.Node(fields={"id": 1}, pk_columns=("id",))
+    node = _assembly.Node(fields={"id": 1}, pk_columns=("id",))
     assert (
         engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's defensive helper
             node, _VARIANT_MODEL
@@ -3195,10 +3202,10 @@ def test_value_object_names_resolve_a_qualified_namespaced_duplicate() -> None:
 
 
 def test_namespaced_duplicate_variants_flow_from_sql_plan_through_assembler_to_renderer() -> None:
+    from parallax.conformance import _assembly
     from parallax.core.dialect import POSTGRES
     from parallax.core.op_algebra import All
     from parallax.core.sql_gen import compile_read
-    from parallax.snapshot import materialize
 
     root = _VARIANT_MODEL.entity(_VARIANT_ROOT)
     assert root is not None
@@ -3217,12 +3224,12 @@ def test_namespaced_duplicate_variants_flow_from_sql_plan_through_assembler_to_r
     assert materialized.family_variant == "archive.SharedVariant"
     assert materialized.values["familyVariant"] == {"label": "mail"}
 
-    nodes = materialize.Assembler(_VARIANT_MODEL).materialize_root(
+    nodes = _assembly.Assembler(_VARIANT_MODEL).materialize_root(
         _VARIANT_ROOT.canonical,
         [materialized.values],
-        resolved_position=compiled.resolved_position,
         resolved_entities=[materialized.resolved_entity],
         family_variants=[materialized.family_variant],
+        documents=compiled.documents,
     )
     assert "familyVariant" not in nodes[0].fields
     assert nodes[0].value_objects["familyVariant"] == {"label": "mail"}
@@ -3249,10 +3256,10 @@ def test_value_object_name_rendering_defensively_rejects_a_column_collision() ->
 
 
 def test_render_node_does_not_stub_a_diamond_at_a_non_cyclic_position() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    child = materialize.Node(fields={"id": 11, "name": "child"}, pk_columns=("id",))
-    root = materialize.Node(
+    child = _assembly.Node(fields={"id": 11, "name": "child"}, pk_columns=("id",))
+    root = _assembly.Node(
         fields={"id": 1},
         pk_columns=("id",),
         relationships={"a": child, "b": child},
@@ -3263,18 +3270,18 @@ def test_render_node_does_not_stub_a_diamond_at_a_non_cyclic_position() -> None:
 
 
 def test_render_node_truncates_a_true_ancestor_cycle_to_a_pk_only_stub() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    root = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    root = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     root.relationships["self"] = root
     rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert rendered["self"] == {"id": 1}
 
 
 def test_resolve_graph_pointer_rejects_a_malformed_pointer() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    node = materialize.Node(fields={"id": 1}, pk_columns=("id",))
+    node = _assembly.Node(fields={"id": 1}, pk_columns=("id",))
     with pytest.raises(engine.EngineError, match="malformed"):
         engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-011"), {"Order": [node]}, "/nonsense"
@@ -3282,9 +3289,9 @@ def test_resolve_graph_pointer_rejects_a_malformed_pointer() -> None:
 
 
 def test_apply_mutate_step_updates_the_targeted_nodes_fields_in_place() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    node = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
     engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         _case("m-snapshot-read-010"), step, [[node]]
@@ -3301,9 +3308,9 @@ def test_apply_mutate_step_raises_when_the_target_step_materialized_zero_nodes()
 
 
 def test_apply_mutate_step_raises_when_the_target_step_materialized_many_nodes() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    nodes = [materialize.Node(fields={}, pk_columns=()), materialize.Node(fields={}, pk_columns=())]
+    nodes = [_assembly.Node(fields={}, pk_columns=()), _assembly.Node(fields={}, pk_columns=())]
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="expected exactly one"):
         engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
@@ -3312,9 +3319,9 @@ def test_apply_mutate_step_raises_when_the_target_step_materialized_many_nodes()
 
 
 def test_apply_mutate_step_raises_when_set_is_not_a_mapping() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    node = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     step = {"action": "mutate", "on": 0, "set": "not-a-mapping"}
     with pytest.raises(engine.EngineError, match="needs a `set` mapping"):
         engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
@@ -3425,9 +3432,9 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
 
 
 def test_render_value_recurses_into_a_nested_value_object_document() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    node = materialize.Node(
+    node = _assembly.Node(
         fields={"id": 1, "address": {"street": "x", "geo": {"country": "NO"}}},
         pk_columns=("id",),
     )
@@ -3436,9 +3443,9 @@ def test_render_value_recurses_into_a_nested_value_object_document() -> None:
 
 
 def test_resolve_graph_pointer_rejects_a_path_continuing_past_a_scalar() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    node = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     with pytest.raises(engine.EngineError, match="does not resolve"):
         engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-011"), {"Order": [node]}, "/then/graph/Order/0/name/x"
@@ -3446,9 +3453,9 @@ def test_resolve_graph_pointer_rejects_a_path_continuing_past_a_scalar() -> None
 
 
 def test_resolve_graph_pointer_rejects_a_pointer_resolving_to_a_non_node() -> None:
-    from parallax.snapshot import materialize
+    from parallax.conformance import _assembly
 
-    node = materialize.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+    node = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
     with pytest.raises(engine.EngineError, match="does not name a graph node"):
         engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             _case("m-snapshot-read-011"), {"Order": [node]}, "/then/graph/Order/0/name"

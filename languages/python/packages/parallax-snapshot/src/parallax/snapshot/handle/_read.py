@@ -6,10 +6,9 @@ The module DAG's snapshot-handle scope already reaches `materialize` + `m-sql`
 `m-snapshot-read` may not import `m-sql`; `m-sql` may not import `m-navigate`/
 `m-temporal-read`) are composed HERE, exactly like `_write_lowering` composes
 the write-side `m-unit-work` x `m-sql` edge — one executor, production-owned:
-`db.find`/`tx.find` and the conformance run lane both call the SAME
-:func:`find` / :func:`find_history`, wrap or render the SAME neutral
-:class:`~parallax.snapshot.materialize.Node`s, and no engine-local level loop
-exists anywhere in this codebase.
+`db.find` and `tx.find` both call the SAME :func:`find` / :func:`find_history`
+and wrap the SAME neutral :class:`~parallax.snapshot.materialize.Node`s, so the
+per-level loop exists exactly once on the developer-facing path.
 
 The executor's own results (:class:`ExecutedStatement`, :class:`Execution`,
 :class:`FindResult`, :class:`MilestoneGraph`, :class:`HistoryFindResult`) stay

@@ -3,15 +3,13 @@
 The **one assembler**: rows-per-level in, neutral (class-free) graph nodes out.
 :class:`Node` is the whole vocabulary — provenance-separated scalar, Value Object,
 relationship, and synthetic-variant fields plus its declared primary-key columns
-(for cycle-stub rendering) — because corpus models
-have no Python classes and the production developer surface (`Snapshot[T]`, in
-`parallax.snapshot.handle`) is a frozen wrapping over these SAME nodes, not a
-different graph.
+— because the developer surface (`Snapshot[T]`, in `parallax.snapshot.handle`)
+is a frozen wrapping over these SAME nodes, not a different graph, and nothing
+below that wrapping may reach an Entity Class.
 
-:class:`Assembler` is the stateful per-materialization builder a production find
-executor (``parallax.snapshot.handle``) or the conformance run lane drives, one
-level at a time, in :class:`~parallax.core.deep_fetch.FetchPlan` dependency
-order:
+:class:`Assembler` is the stateful per-materialization builder the production
+find executor (``parallax.snapshot.handle``) drives, one level at a time, in
+:class:`~parallax.core.deep_fetch.FetchPlan` dependency order:
 
 - :meth:`Assembler.materialize_root` decodes the root query's own rows.
 - :meth:`Assembler.attach_level` decodes one level's fetched child rows (or,
@@ -106,9 +104,9 @@ class Node:
     ``resolved_entity`` is this row's own STATICALLY known canonical Entity
     Identity — the sole concrete resolved by `_materialize` when one is known,
     otherwise the queried inheritance position whose family contains the row.
-    It is never wire-visible: unlike ``fields``, it is assembler-only
-    bookkeeping the `then.graph` renderer never walks). A table-per-concrete-
-    subtype read resolving to exactly ONE concrete emits no `familyVariant`
+    It is assembler-only bookkeeping rather than a field of the row. A
+    table-per-concrete-subtype read resolving to exactly ONE concrete emits no
+    `familyVariant`
     column at all (`m-sql`'s `_compile_tpcs_single`), so this is the ONLY
     place that knowledge survives past the SQL boundary for
     `parallax.snapshot.handle` to recover the row's own concrete class instead
@@ -363,17 +361,12 @@ def decode_row(
     *Read projection* slot 4), rendered here in whatever order the caller's own
     dict iterates (graph comparison is structural, never key-order-sensitive).
 
-    Deliberately UNNARROWED at this layer:
-    a multi-concrete position's row keeps every sibling's own null-padded
-    column here — the SAME neutral `Node` this module's own callers share
-    between the row-form values-lane witnesses (whose `then.graph` / wire
-    rendering, `parallax.conformance.engine._render_node`, WANTS the padded
-    superset) and `parallax.snapshot.handle`'s object-lane wrapping. Per-variant
-    narrowing is `wrap`'s OWN job (see its module docstring / `_wrap`): it
-    already resolves each column through the CONCRETE class's own
-    `wire_names_of`, so a sibling's column — absent from that class's own
-    declared members — is skipped, never assigned. Narrowing here would corrupt
-    the values-lane goldens that share this exact same `Node`.
+    Deliberately UNNARROWED at this layer: a multi-concrete position's row keeps
+    every sibling's own null-padded column here. Per-variant narrowing is
+    `wrap`'s OWN job (see its module docstring / `_wrap`): it already resolves
+    each column through the CONCRETE class's own `wire_names_of`, so a sibling's
+    column — absent from that class's own declared members — is skipped, never
+    assigned.
     """
     entity = _entity(meta, entity_name)
     position = _resolved_position(meta, entity, narrow_to)
