@@ -152,27 +152,36 @@ class FetchLevel:
     narrowed-view key ``<rel>[<Concrete>,<Concrete>]``. ``parent`` names which
     already-fetched rows this level gathers its distinct keys from (the root, or
     an earlier level); ``parent_column`` is the PHYSICAL column on those parent
-    rows to gather (the relationship join's owner-side attribute, mechanically
-    derived, never authored).
+    rows to gather, and ``parent_attribute`` is the SAME correlation named as a
+    modeled member — the relationship join's owner-side Attribute Identity,
+    addressed at the position the join names it at (m-deep-fetch "A level names
+    its correlation members, not only their columns"). Both are mechanically
+    derived and never authored.
 
     A **queryable** level (``is_back_reference`` false) additionally carries
     ``child_target`` (the entity this level's own read compiles against — a
     single concrete when the resolved position is exactly one, else the
     relationship's own polymorphic target), ``related_attr`` (the
-    child-side ``Class.attribute`` the ``IN`` membership binds against) and
-    ``related_column`` (the SAME attribute's physical column — what the
-    assembler groups the returned child rows by, fanning each back to its
-    parent), ``as_of_terms`` (the propagated per-axis as-of predicate, already
-    resolved), ``order_keys`` (the declared relationship ``orderBy``,
-    canonicalized to qualified `OrderKey`s), and ``narrow_to`` (the segment's own
-    authored narrow, carried only when the resolved position spans 2+ concretes —
-    a single-concrete resolution bypasses narrowing entirely by targeting that
-    concrete directly, m-sql's existing inheritance-read dispatch).
+    child-side ``Class.attribute`` REFERENCE STRING the ``IN`` membership binds
+    against, spelled in `m-op-algebra`'s own grammar), ``related_column`` (the
+    same attribute's physical column — what the assembler groups the returned
+    child rows by, fanning each back to its parent), ``related_attribute`` (that
+    attribute as a structured Identity, the child-side counterpart of
+    ``parent_attribute``), ``as_of_terms`` (the propagated per-axis as-of
+    predicate, already resolved), ``order_keys`` (the declared relationship
+    ``orderBy``, canonicalized to qualified `OrderKey`s), and ``narrow_to`` (the
+    segment's own authored narrow, carried only when the resolved position spans
+    2+ concretes — a single-concrete resolution bypasses narrowing entirely by
+    targeting that concrete directly, m-sql's existing inheritance-read
+    dispatch).
 
     A **back-reference** level (``is_back_reference`` true) carries none of the
     above — :meth:`child_operation` is never called for it; ``back_reference_family``
     names the family the assembler resolves through its identity map instead, as
-    that map keys a row on its family ROOT's declared name.
+    that map keys a row on its family ROOT's declared name. Its own
+    ``parent_attribute`` is still carried: a back-reference level gathers the
+    ancestor's key off the parent row exactly as a queried one does, it just
+    resolves that key in memory rather than through SQL.
 
     ``source_position`` is the path-root guard, and the one member of this class that
     qualifies the level's PARENT rows rather than its children: the concrete subtypes
@@ -188,11 +197,13 @@ class FetchLevel:
     to_many: bool
     parent: ParentRef
     parent_column: str
+    parent_attribute: AttributeIdentity
     is_back_reference: bool = False
     back_reference_family: EntityIdentity | None = None
     child_target: str | None = None
     related_attr: str | None = None
     related_column: str | None = None
+    related_attribute: AttributeIdentity | None = None
     as_of_terms: tuple[Operation, ...] = ()
     order_keys: tuple[OrderKey, ...] = ()
     narrow_to: tuple[str, ...] | None = None
@@ -389,6 +400,7 @@ class _PlanBuilder:
                 to_many=to_many,
                 parent=parent_ref,
                 parent_column=parent_column,
+                parent_attribute=direction.join.source,
                 is_back_reference=True,
                 back_reference_family=family,
                 source_position=source_position,
@@ -400,9 +412,11 @@ class _PlanBuilder:
                 to_many=to_many,
                 parent=parent_ref,
                 parent_column=parent_column,
+                parent_attribute=direction.join.source,
                 child_target=child_target,
                 related_attr=f"{child_target}.{direction.join.target.name}",
                 related_column=_attribute_column(self.families, direction.join.target),
+                related_attribute=direction.join.target,
                 as_of_terms=navigate.hop_as_of_terms(related_entity, self.model, self.root_pins),
                 order_keys=_order_keys(direction, child_target),
                 narrow_to=narrow_to,

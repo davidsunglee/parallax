@@ -11,9 +11,9 @@ plus the observation machinery a read leaves behind for it:
   (:func:`prepare_sparse_row`);
 * instance -> accepted-Metadata resolution (:func:`metadata_of_instance`) and the
   verb-time license key (:func:`observation_key`);
-* observation recording after a real :func:`~parallax.snapshot.handle.find`
-  (:func:`record_observations`), and the per-row column contributions a
-  materializing predicate-write resolve streams into its
+* the observation record a read leaves behind (:class:`ReadObservations`) and its
+  recording into the unit of work (:func:`record_observations`), plus the per-row
+  column contributions a materializing predicate-write resolve streams into its
   :class:`~parallax.core.unit_work.MaterializedWriteGroup`
   (:func:`is_no_op_assignment`, :func:`key_column_values`,
   :func:`predecessor_payload`), which share their payload extraction with
@@ -24,11 +24,9 @@ through :mod:`parallax.snapshot.handle._family` (the declaring root,
 family-effective axes and primary key, version attribute). Every PHYSICAL column
 instead comes from the row-owning Entity's Storage Layout view, which each entry
 point resolves once and carries into the helpers that read or write a row's
-columns. For the
-:class:`~parallax.snapshot.handle.FindResult` :func:`record_observations`
-consumes it also imports :mod:`parallax.snapshot.handle._read`. That edge is
-deliberately one-way: the pin helpers ``Transaction.find`` shares with the read
-executor stay in ``_read``, so ``_read`` never imports this module.
+columns. :class:`ReadObservations` satisfies the read executor's own
+``ObservationCollector`` structurally rather than by import, so this module and
+:mod:`parallax.snapshot.handle._read` name each other in neither direction.
 
 Names crossing a module boundary (read from ``_transaction`` / ``_predicate_writes``)
 are spelled bare; a helper whose every caller lives here keeps its underscore.
@@ -43,6 +41,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Final, cast
 
 from parallax.core.base import normalize_instant
@@ -85,9 +84,9 @@ from parallax.snapshot.handle._family import (
     tx_time_axis,
     version_attribute,
 )
-from parallax.snapshot.handle._read import FindResult
 
 __all__ = [
+    "ReadObservations",
     "TransactionTimePinReadOnlyError",
     "is_no_op_assignment",
     "key_column_values",
@@ -156,22 +155,72 @@ def observation_key(
     )
 
 
-def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pin: Pin) -> None:
+@dataclass(frozen=True, slots=True)
+class _ObservedRow:
+    """One materialized row's observable state, keyed by PHYSICAL column.
+
+    ``entity`` is the row's own queried or attached target name. ``columns`` is
+    every value the row materialized — the primary key, the version column, the
+    axis bounds, and every other applicable member — which is what makes a
+    Predecessor Row complete. ``document`` is the raw Structured Column under
+    Relational Document Layout.
+
+    It holds neither a raw driver row nor a materialized node, so the read
+    executor is free to release both the moment a level has been observed.
+    """
+
+    entity: str
+    columns: Mapping[str, object]
+    document: object | None
+
+
+class ReadObservations:
+    """What one :func:`~parallax.snapshot.handle.find` leaves behind for the
+    write side — the read executor's ``ObservationCollector``, satisfied
+    structurally.
+
+    A caller with a unit of work behind it constructs one and hands it to the
+    executor; a caller without one hands nothing, which is how a
+    non-transactional read allocates no observation state. Rows accumulate in the
+    order the executor materializes them (root first, then each level in plan
+    order), and :func:`record_observations` is the only consumer.
+    """
+
+    __slots__ = ("_rows",)
+
+    def __init__(self) -> None:
+        self._rows: list[_ObservedRow] = []
+
+    def observe_row(
+        self, entity: str, columns: Mapping[str, object], document: object | None
+    ) -> None:
+        """Copy one materialized row's observable state while the row is live."""
+        self._rows.append(_ObservedRow(entity, dict(columns), document))
+
+    @property
+    def rows(self) -> Sequence[_ObservedRow]:
+        """Every row observed so far, in materialization order."""
+        return self._rows
+
+
+def record_observations(
+    uow: UnitOfWork, meta: Metamodel, observations: ReadObservations, pin: Pin
+) -> None:
     """Record this unit of work's observed version/temporal-milestone for
-    every VERSIONED or TEMPORAL node :func:`find` materialized (`m-opt-lock`;
+    every VERSIONED or TEMPORAL row :func:`find` materialized (`m-opt-lock`;
     ADR 0013).
 
     Keyed by the SAME ``(entity name, ordered pk pairs)`` shape a subsequent
     keyed write's own :func:`~parallax.core.unit_work.object_key` computes —
-    ``entity_name`` here is the node's OWN queried/attached target (never
+    ``entity_name`` here is the row's OWN queried/attached target (never
     family-normalized to the root), matching `KeyedWrite.entity`'s own
     convention (a developer's later ``tx.update(copy)`` names its instance's
-    OWN class). A node whose (family-effective) primary key, version column,
-    or Transaction-Time interval is absent from its own materialized fields is
+    OWN class). A row whose (family-effective) primary key, version column,
+    or Transaction-Time interval is absent from its own observed columns is
     defensively skipped — never reachable for a well-formed corpus model, but
     this seam takes no data on faith. A versioned entity is never also
     temporal (`m-opt-lock`/`m-descriptor`: the two are mutually exclusive), so
-    each node takes exactly one branch.
+    each row takes exactly one branch.
 
     ``pin`` is the STATEMENT's OWN lowered as-of coordinates
     (``Transaction.find``'s own ``deep_fetch_statement_pin`` call): the whole-graph pin
@@ -183,20 +232,17 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, result: FindResult, pi
     own historical-observation rule).
 
     ``find`` is always INSTANCE-form, which projects every applicable Column, so
-    merging a node's scalar fields with its decoded documents yields the COMPLETE
-    persisted row a Predecessor Row requires. The two categories are kept apart on
-    the node so a document's storage key can equal a relationship name; they are
-    disjoint here because each occupies its own Column slot. Under Relational
-    Document Layout the read ALSO carried the row's raw Structured Column past the
-    fan-out that decoded those members, and a temporal observation retains it
-    (`m-unit-work`) so a successor is patched from what the row held rather than
-    rebuilt from the members this model declares — at no extra query, because the
-    predecessor read already materialized it.
+    an observed row's columns are the COMPLETE persisted row a Predecessor Row
+    requires. Under Relational Document Layout the read ALSO carried the row's raw
+    Structured Column past the fan-out that decoded those members, and a temporal
+    observation retains it (`m-unit-work`) so a successor is patched from what the
+    row held rather than rebuilt from the members this model declares — at no
+    extra query, because the predecessor read already materialized it.
     """
     basis = LATEST_PINNED if pin.tx_time is None or pin.tx_time is LATEST else HISTORICAL_PINNED
-    for observed in result.all_nodes:
-        entity_name, node = observed.entity, observed.node
-        observed_fields = {**node.fields, **node.value_objects}
+    for observed in observations.rows:
+        entity_name = observed.entity
+        observed_fields = observed.columns
         entity = entity_of(meta, entity_name)
         declaring_entity = declaring(meta, entity)
         layout = entity_layout(meta, entity)

@@ -24,7 +24,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, cast
+from typing import Any, Final, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
@@ -51,7 +51,7 @@ __all__ = [
     "HistoryFindResult",
     "MilestoneGraph",
     "NoResultFound",
-    "ObservedNode",
+    "ObservationCollector",
     "Snapshot",
     "TooManyResultsFound",
     "find",
@@ -160,37 +160,43 @@ class Snapshot[T]:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class ObservedNode:
-    """One materialized node with everything a write-side observation needs of it.
+class ObservationCollector(Protocol):
+    """Where :func:`find` hands each materialized row's observable state.
 
-    ``entity`` is the node's OWN target entity name (the same name a subsequent
-    keyed write on that row would carry, `m-unit-work` `KeyedWrite.entity`),
-    because ``Node`` carries no entity identity of its own (m-snapshot-read: a
-    neutral, class-free field dict). ``document`` is the raw Structured Column the
-    row arrived with under Relational Document Layout — provenance the fan-out
-    drops from the node's fields, retained here so a Temporal Observation keeps it
-    without a second read (`m-unit-work`) and absent under `Columns` layout.
+    Supplying one *is* the decision to observe: ``Transaction.find`` passes a
+    collector and ``Database.find`` passes ``None``, so a non-transactional read
+    — which has no unit of work to observe into — allocates no observation state
+    at all rather than building a record and discarding it.
+
+    The driver only ever hands rows over; it never reads a collector back. What
+    it hands over is PHYSICAL-column keyed, so the collector copies the values a
+    later write may need while the row is still live and retains no row and no
+    node of its own.
     """
 
-    entity: str
-    node: materialize.Node
-    document: object | None = None
+    def observe_row(
+        self, entity: str, columns: Mapping[str, object], document: object | None
+    ) -> None:
+        """Take one materialized row's observable state.
+
+        ``entity`` is the row's OWN queried or attached target name (never
+        family-normalized), which is the name a subsequent keyed write on that
+        row carries (`m-unit-work` ``KeyedWrite.entity``). ``columns`` is every
+        value the row materialized, keyed by physical column. ``document`` is the
+        raw Structured Column the row arrived with under Relational Document
+        Layout — provenance the member fan-out drops, so a Temporal Observation
+        can retain it without a second read (`m-unit-work`) — and ``None`` under
+        `Columns` layout.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
 class FindResult:
-    """A single-graph find's root nodes plus its execution record.
-
-    ``all_nodes`` is EVERY node this find materialized — root and every
-    attached deep-fetch level: the seam :meth:`Transaction.find` walks to record a
-    versioned row's observed version (`m-opt-lock`) and a temporal row's whole
-    predecessor milestone (`m-unit-work`).
-    """
+    """A single-graph find's root nodes plus its execution record."""
 
     nodes: tuple[materialize.Node, ...]
     execution: Execution
-    all_nodes: tuple[ObservedNode, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +228,7 @@ def find(
     port: DbPort,
     *,
     lock: LockMode | None = None,
+    observations: ObservationCollector | None = None,
 ) -> FindResult:
     """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
     "one query per non-empty relationship level"; m-snapshot-read "round trips").
@@ -253,6 +260,11 @@ def find(
     Returns the root's own materialized nodes — reached from them, every
     attached level's nodes hang off `Node.relationships` — plus the full ordered
     execution record.
+
+    ``observations``, when supplied, takes every materialized row (root and each
+    attached level) as the level materializes it, so a caller with a unit of work
+    behind it can record what a later write needs. Omitting it is how a
+    non-transactional read builds no observation state at all.
     """
     # ``meta`` is the accepted model the connected ``Database`` already holds, so
     # every level's own Entity resolves against it directly.
@@ -276,10 +288,8 @@ def find(
         family_variants=[row.family_variant for row in root_materialized],
         documents=root_compiled.documents,
     )
-    all_nodes: list[ObservedNode] = [
-        ObservedNode(target, node, materialized.document)
-        for node, materialized in zip(root_nodes, root_materialized, strict=True)
-    ]
+    if observations is not None:
+        _observe(observations, target, root_nodes, root_materialized)
 
     level_rows: list[Sequence[Row]] = []
     level_nodes: list[list[materialize.Node]] = []
@@ -325,14 +335,10 @@ def find(
         )
         level_rows.append(rows)
         level_nodes.append(nodes)
-        all_nodes.extend(
-            ObservedNode(child_target, node, materialized.document)
-            for node, materialized in zip(nodes, child_materialized, strict=True)
-        )
+        if observations is not None:
+            _observe(observations, child_target, nodes, child_materialized)
 
-    return FindResult(
-        nodes=tuple(root_nodes), execution=Execution(tuple(statements)), all_nodes=tuple(all_nodes)
-    )
+    return FindResult(nodes=tuple(root_nodes), execution=Execution(tuple(statements)))
 
 
 def find_history(
@@ -393,6 +399,24 @@ def find_history(
         for edge in order
     )
     return HistoryFindResult(graphs=graphs, execution=Execution(tuple(statements)))
+
+
+def _observe(
+    observations: ObservationCollector,
+    entity: str,
+    nodes: Sequence[materialize.Node],
+    materialized: Sequence[MaterializedReadRow],
+) -> None:
+    """Hand one level's materialized rows to the collector as that level lands.
+
+    A node's scalar and Value-Object namespaces are kept apart so a document's
+    storage key may equal a relationship name; both occupy their own Column slot,
+    so merging them yields the complete persisted row keyed by physical column —
+    which is exactly what an observation records against. The merge happens here
+    rather than in the collector so the collector never sees a node at all.
+    """
+    for node, row in zip(nodes, materialized, strict=True):
+        observations.observe_row(entity, {**node.fields, **node.value_objects}, row.document)
 
 
 def _execute_compiled(
