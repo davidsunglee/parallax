@@ -388,32 +388,48 @@ def _decoding_error(
     chained cause, so nothing a caller sees exposes stored data.
     """
     path, separator, _detail = str(exc).partition(": ")
-    tokens = tuple(path.split(".")) if separator else ()
-    member = _member_identity(declared, tokens)
-    spelled = ".".join((*declared.identity.path, *tokens))
+    relative = path if separator else ""
+    occurrence = ".".join(declared.identity.path)
+    spelled = f"{occurrence}.{relative}" if relative else occurrence
     return SnapshotDecodingError(
         f"{entity.canonical}.{spelled} holds data its declared shape does not admit",
         entity=entity,
-        member=member,
+        member=_member_identity(declared, relative),
         cause=exc,
     )
 
 
 def _member_identity(
-    declared: _VoContainer, tokens: tuple[str, ...]
+    declared: _VoContainer, path: str
 ) -> ValueObjectIdentity | ValueObjectAttributeIdentity:
-    """The declared leaf ``tokens`` name inside ``declared``, descending through
+    """The declared member ``path`` names inside ``declared``, descending through
     the nested occurrences on the way, or the occurrence itself where the codec
-    reported no path — a whole document stored in a kind it cannot be read as."""
+    reported no path — a whole document stored in a kind it cannot be read as.
+
+    The codec joins its path with ``.`` while a member name is any nonempty
+    string (`m-metamodel` "Canonical identities and order"), so the path is
+    matched against declared names rather than split on every separator: a leaf
+    whose own name contains a dot would otherwise resolve to nothing and report
+    its container. Each step takes an exact leaf match first, then the longest
+    nested occurrence whose name the path continues past.
+    """
     container = declared
-    for token in tokens:
-        leaf = next((one for one in container.attributes if one.identity.name == token), None)
+    remaining = path
+    while remaining:
+        leaf = next((one for one in container.attributes if one.identity.name == remaining), None)
         if leaf is not None:
             return leaf.identity
-        nested = next(
-            (one for one in container.value_objects if one.identity.path[-1] == token), None
+        nested = max(
+            (
+                one
+                for one in container.value_objects
+                if remaining.startswith(f"{one.identity.path[-1]}.")
+            ),
+            key=lambda one: len(one.identity.path[-1]),
+            default=None,
         )
         if nested is None:  # pragma: no cover - the codec reports declared members only
             break
         container = nested
+        remaining = remaining[len(nested.identity.path[-1]) + 1 :]
     return container.identity

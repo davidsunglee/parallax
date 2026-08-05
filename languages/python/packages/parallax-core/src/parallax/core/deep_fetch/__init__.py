@@ -115,6 +115,7 @@ from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
 
 __all__ = [
+    "CorrelationMember",
     "DeepFetchError",
     "FetchLevel",
     "FetchPlan",
@@ -145,6 +146,29 @@ ParentRef = RootRef | LevelRef
 
 
 @dataclass(frozen=True, slots=True)
+class CorrelationMember:
+    """One endpoint of a level's correlation, in every spelling the level needs.
+
+    A level correlates on an Attribute (`m-deep-fetch` "A level names its
+    correlation members, not only their columns"), and the three spellings are one
+    fact: ``identity`` is the modeled member addressed at the position the join
+    names it at, ``column`` is the physical column it maps to, and ``reference``
+    is the `m-op-algebra` ``Class.attribute`` reference string the child query's
+    ``in`` membership binds against. Bundling them is what keeps them aligned:
+    they are derived together from one join endpoint and are never authored.
+
+    ``reference`` is carried only on the child side, whose reference names the
+    level's own ``child_target`` rather than the Entity the identity is declared
+    on; the owner side is read off already-converted parent rows and binds
+    nothing.
+    """
+
+    identity: AttributeIdentity
+    column: str
+    reference: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class FetchLevel:
     """One deep-fetch level: an attach point, plus how to build its child query.
 
@@ -155,23 +179,16 @@ class FetchLevel:
     attaching this level names the modeled direction rather than re-resolving one
     from the derived key. ``parent`` names which
     already-fetched rows this level gathers its distinct keys from (the root, or
-    an earlier level); ``parent_column`` is the PHYSICAL column on those parent
-    rows to gather, and ``parent_attribute`` is the SAME correlation named as a
-    modeled member — the relationship join's owner-side Attribute Identity,
-    addressed at the position the join names it at (m-deep-fetch "A level names
-    its correlation members, not only their columns"). Both are mechanically
-    derived and never authored.
+    an earlier level), and ``owner`` is the :class:`CorrelationMember` on those
+    parent rows to gather — the relationship join's owner-side endpoint.
 
     A **queryable** level (``is_back_reference`` false) additionally carries
     ``child_target`` (the entity this level's own read compiles against — a
     single concrete when the resolved position is exactly one, else the
-    relationship's own polymorphic target), ``related_attr`` (the
-    child-side ``Class.attribute`` REFERENCE STRING the ``IN`` membership binds
-    against, spelled in `m-op-algebra`'s own grammar), ``related_column`` (the
-    same attribute's physical column — what the assembler groups the returned
-    child rows by, fanning each back to its parent), ``related_attribute`` (that
-    attribute as a structured Identity, the child-side counterpart of
-    ``parent_attribute``), ``as_of_terms`` (the propagated per-axis as-of
+    relationship's own polymorphic target), ``related`` (the child-side
+    :class:`CorrelationMember` — what the ``IN`` membership binds against and what
+    the assembler groups the returned child rows by, fanning each back to its
+    parent), ``as_of_terms`` (the propagated per-axis as-of
     predicate, already resolved), ``order_keys`` (the declared relationship
     ``orderBy``, canonicalized to qualified `OrderKey`s), and ``narrow_to`` (the
     segment's own authored narrow, carried only when the resolved position spans
@@ -182,10 +199,10 @@ class FetchLevel:
     A **back-reference** level (``is_back_reference`` true) carries none of the
     above — :meth:`child_operation` is never called for it; ``back_reference_family``
     names the family the assembler resolves through its identity map instead, as
-    that map keys a row on its family ROOT's declared name. Its own
-    ``parent_attribute`` is still carried: a back-reference level gathers the
-    ancestor's key off the parent row exactly as a queried one does, it just
-    resolves that key in memory rather than through SQL.
+    that map keys a row on its family ROOT's declared name. Its own ``owner`` is
+    still carried: a back-reference level gathers the ancestor's key off the
+    parent row exactly as a queried one does, it just resolves that key in memory
+    rather than through SQL.
 
     ``source_position`` is the path-root guard, and the one member of this class that
     qualifies the level's PARENT rows rather than its children: the concrete subtypes
@@ -201,14 +218,11 @@ class FetchLevel:
     relationship: RelationshipIdentity
     to_many: bool
     parent: ParentRef
-    parent_column: str
-    parent_attribute: AttributeIdentity
+    owner: CorrelationMember
     is_back_reference: bool = False
     back_reference_family: EntityIdentity | None = None
     child_target: str | None = None
-    related_attr: str | None = None
-    related_column: str | None = None
-    related_attribute: AttributeIdentity | None = None
+    related: CorrelationMember | None = None
     as_of_terms: tuple[Operation, ...] = ()
     order_keys: tuple[OrderKey, ...] = ()
     narrow_to: tuple[str, ...] | None = None
@@ -217,19 +231,19 @@ class FetchLevel:
     def child_operation(self, parent_keys: Sequence[Scalar]) -> tuple[str, Operation]:
         """Build ``(child entity name, child operation)`` from the gathered ``parent_keys``.
 
-        Plain algebra only: an ``in`` membership over :attr:`related_attr`, the
+        Plain algebra only: an ``in`` membership over the child-side
+        correlation's own reference, the
         propagated as-of predicate ANDed after it, optionally ``Narrow``-wrapped
         (a 2+-concrete resolved position), optionally ``OrderBy``-wrapped (the
         declared relationship ordering) — never compiled, never executed. Raises
         if called on a back-reference level (it issues no child query at all).
         """
-        if self.is_back_reference or self.child_target is None or self.related_attr is None:
+        reference = None if self.related is None else self.related.reference
+        if self.is_back_reference or self.child_target is None or reference is None:
             raise DeepFetchError(
                 f"{self.attach_key!r} is a back-reference level and issues no child query"
             )
-        predicate: Operation = Membership(
-            op="in", attr=self.related_attr, values=tuple(parent_keys)
-        )
+        predicate: Operation = Membership(op="in", attr=reference, values=tuple(parent_keys))
         if self.as_of_terms:
             predicate = And(operands=(predicate, *self.as_of_terms))
         if self.narrow_to is not None:
@@ -393,7 +407,10 @@ class _PlanBuilder:
 
         _, _, rel_local = segment.rel.rpartition(".")
         attach_key = _view_key(rel_local, narrowed, position, self.families)
-        parent_column = _attribute_column(self.families, direction.join.source)
+        owner = CorrelationMember(
+            identity=direction.join.source,
+            column=_attribute_column(self.families, direction.join.source),
+        )
         parent_ref: ParentRef = RootRef() if parent_id == _ROOT_ID else LevelRef(parent_id)
         # Only a PROPER guard restricts anything; one admitting the whole queried
         # position has already collapsed onto the broad path in the key above.
@@ -405,8 +422,7 @@ class _PlanBuilder:
                 relationship=direction.identity,
                 to_many=to_many,
                 parent=parent_ref,
-                parent_column=parent_column,
-                parent_attribute=direction.join.source,
+                owner=owner,
                 is_back_reference=True,
                 back_reference_family=family,
                 source_position=source_position,
@@ -418,12 +434,13 @@ class _PlanBuilder:
                 relationship=direction.identity,
                 to_many=to_many,
                 parent=parent_ref,
-                parent_column=parent_column,
-                parent_attribute=direction.join.source,
+                owner=owner,
                 child_target=child_target,
-                related_attr=f"{child_target}.{direction.join.target.name}",
-                related_column=_attribute_column(self.families, direction.join.target),
-                related_attribute=direction.join.target,
+                related=CorrelationMember(
+                    identity=direction.join.target,
+                    column=_attribute_column(self.families, direction.join.target),
+                    reference=f"{child_target}.{direction.join.target.name}",
+                ),
                 as_of_terms=navigate.hop_as_of_terms(related_entity, self.model, self.root_pins),
                 order_keys=_order_keys(direction, child_target),
                 narrow_to=narrow_to,

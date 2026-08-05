@@ -27,7 +27,7 @@ from parallax.conformance._assembly import (
 )
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
-from parallax.core.deep_fetch import FetchLevel, LevelRef, RootRef
+from parallax.core.deep_fetch import CorrelationMember, FetchLevel, LevelRef, RootRef
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -244,12 +244,11 @@ def _to_many_level(attach_key: str = "items") -> FetchLevel:
         relationship=RelationshipIdentity(EntityIdentity(_COMPATIBILITY, "Order"), attach_key),
         to_many=True,
         parent=RootRef(),
-        parent_column="id",
-        parent_attribute=_ORDER_ID,
+        owner=CorrelationMember(identity=_ORDER_ID, column="id"),
         child_target="OrderItem",
-        related_attr="OrderItem.orderId",
-        related_column="order_id",
-        related_attribute=_ITEM_ORDER_ID,
+        related=CorrelationMember(
+            identity=_ITEM_ORDER_ID, column="order_id", reference="OrderItem.orderId"
+        ),
     )
 
 
@@ -259,12 +258,11 @@ def _to_one_level(attach_key: str = "passport") -> FetchLevel:
         relationship=RelationshipIdentity(EntityIdentity(_COMPATIBILITY, "Order"), attach_key),
         to_many=False,
         parent=RootRef(),
-        parent_column="id",
-        parent_attribute=_ORDER_ID,
+        owner=CorrelationMember(identity=_ORDER_ID, column="id"),
         child_target="OrderItem",
-        related_attr="OrderItem.orderId",
-        related_column="person_id",
-        related_attribute=_ITEM_ORDER_ID,
+        related=CorrelationMember(
+            identity=_ITEM_ORDER_ID, column="person_id", reference="OrderItem.orderId"
+        ),
     )
 
 
@@ -318,8 +316,7 @@ def _back_reference_level(family: EntityIdentity) -> FetchLevel:
         relationship=RelationshipIdentity(EntityIdentity(_COMPATIBILITY, "OrderItem"), "order"),
         to_many=False,
         parent=LevelRef(0),
-        parent_column="order_id",
-        parent_attribute=_ITEM_ORDER_ID,
+        owner=CorrelationMember(identity=_ITEM_ORDER_ID, column="order_id"),
         is_back_reference=True,
         back_reference_family=family,
     )
@@ -364,12 +361,15 @@ def test_a_path_root_guard_admits_only_its_resolved_source_position() -> None:
         relationship=RelationshipIdentity(EntityIdentity(_COMPATIBILITY, "Animal"), "toys"),
         to_many=True,
         parent=RootRef(),
-        parent_column="id",
-        parent_attribute=AttributeIdentity(EntityIdentity(_COMPATIBILITY, "Animal"), "id"),
+        owner=CorrelationMember(
+            identity=AttributeIdentity(EntityIdentity(_COMPATIBILITY, "Animal"), "id"), column="id"
+        ),
         child_target="Toy",
-        related_attr="Toy.animalId",
-        related_column="animal_id",
-        related_attribute=AttributeIdentity(EntityIdentity(_COMPATIBILITY, "Toy"), "animalId"),
+        related=CorrelationMember(
+            identity=AttributeIdentity(EntityIdentity(_COMPATIBILITY, "Toy"), "animalId"),
+            column="animal_id",
+            reference="Toy.animalId",
+        ),
         source_position=(dog,),
     )
     rows: list[Row] = [{"id": 1}, {"id": 2}]

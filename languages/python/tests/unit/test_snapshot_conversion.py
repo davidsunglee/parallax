@@ -263,6 +263,33 @@ def test_a_decoding_refusal_names_a_nested_leaf_and_exposes_no_stored_value() ->
     assert "2026-13-40" in str(refusal.value.cause)
 
 
+def test_a_decoding_refusal_resolves_a_leaf_whose_own_name_carries_a_dot() -> None:
+    # Only an Entity name is dot-free; a member name is any nonempty string
+    # (m-metamodel "Canonical identities and order"). The codec reports the failing
+    # member as a `.`-joined path, so resolving it by splitting on every separator
+    # would find no such leaf and report the containing occurrence instead — a
+    # `ValueObjectIdentity` where the applicable identity is the leaf's own.
+    entity = Entity(
+        name="Dotted",
+        table="dotted",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        value_objects=(
+            ValueObject(
+                name="profile",
+                column="profile",
+                attributes=(ValueObjectAttribute(name="amount.v1", type="int32"),),
+            ),
+        ),
+    )
+    model = models.accepted_model(DescriptorMetamodel(entities=(entity,)))
+    with pytest.raises(SnapshotDecodingError) as refusal:
+        _converted(model, "Dotted", {"id": 1, "profile": {"amount.v1": "bogus"}})
+    assert refusal.value.member == ValueObjectAttributeIdentity(
+        ValueObjectIdentity(EntityIdentity(None, "Dotted"), ("profile",)), "amount.v1"
+    )
+    assert "Dotted.profile.amount.v1" in str(refusal.value)
+
+
 @pytest.mark.parametrize(
     ("member", "stored"),
     [

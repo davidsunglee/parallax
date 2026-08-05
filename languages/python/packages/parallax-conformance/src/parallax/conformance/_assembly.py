@@ -280,7 +280,7 @@ class Assembler:
                 node.relationships[level.attach_key] = empty
             return []
         assert level.child_target is not None
-        assert level.related_column is not None
+        assert level.related is not None
         child_nodes = self._materialize(
             level.child_target,
             child_rows,
@@ -290,9 +290,9 @@ class Assembler:
         )
         buckets: dict[object, list[Node]] = {}
         for row, node in zip(child_rows, child_nodes, strict=True):
-            buckets.setdefault(row[level.related_column], []).append(node)
+            buckets.setdefault(row[level.related.column], []).append(node)
         for row, node in zip(parent_rows, parent_nodes, strict=True):
-            matched = buckets.get(row[level.parent_column], [])
+            matched = buckets.get(row[level.owner.column], [])
             node.relationships[level.attach_key] = (
                 matched if level.to_many else _one_or_none(matched)
             )
@@ -306,7 +306,7 @@ class Assembler:
     ) -> list[Node]:
         assert level.back_reference_family is not None
         for row, node in zip(parent_rows, parent_nodes, strict=True):
-            fk = row[level.parent_column]
+            fk = row[level.owner.column]
             if fk is None:
                 node.relationships[level.attach_key] = [] if level.to_many else None
                 continue
@@ -425,7 +425,7 @@ def find(
             level_nodes.append(assembler.attach_level(level, parent_nodes, parent_rows, None))
             level_rows.append(())
             continue
-        keys = _distinct_keys(parent_rows, level.parent_column)
+        keys = _distinct_keys(parent_rows, level.owner.column)
         if not keys:
             level_nodes.append(assembler.attach_level(level, parent_nodes, parent_rows, None))
             level_rows.append(())
