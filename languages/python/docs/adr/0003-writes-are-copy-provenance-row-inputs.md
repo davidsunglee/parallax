@@ -61,3 +61,59 @@ Transaction-Time instants order by assignment, not commit. Edge transport is
 Reladomo's own mechanism (a detached copy carries its milestone `IN_Z`; the
 merge-back gate binds the carried value) translated to a slice without
 detached objects.
+
+## Amendment (2026-08, COR-63): the copy verb is `edit`, and one codec owns the row
+
+The decision above is unchanged — update inputs are edited copies carrying a
+change record, and recording originals is what detects a net-zero chain. What
+this amendment replaces is the mechanism named throughout it.
+
+`Entity.edit(**changes)` is the copy verb. Every inherited Pydantic copy path —
+`model_copy`, `copy`, `__copy__`, `__deepcopy__` — is actively refused as
+`EditError(edit-use-edit)` and creates no value, with or without `update=`.
+Overriding `model_copy` to validate was the wrong shape for the same reason
+Pydantic's own version was: a method whose name promises a plain copy is not
+where the framework's authoring rules belong, and leaving any inherited copy
+path reachable leaves a way to produce a provenance-less value that fails much
+later and elsewhere. `edit` is the object-copy verb; `update` remains the
+transaction persistence verb.
+
+One `EditError(ValueError)` covers both authoring surfaces — `edit(...)` and a
+predicate write's `Attr.set(...)` — because the assignment rules are one set,
+stated once in the shared judgement. A predicate-selected assignment is an edit
+expressed over a predicate rather than over a value, so a second class would
+give one rule family two names and two chances to drift. `ModelCopyError` and
+`ProvenanceError` are deleted rather than renamed, and the closed code set
+distinguishes the surfaces where they genuinely differ.
+
+`EditError` reports every violation rather than the first. Core ADR 0001 already
+requires a validation error to accumulate structured issues, and the edit
+surface is where that matters most: the normal idiom is a payload, so an
+application mapping a form into `edit(**payload)` needs every invalid field at
+once or it will reimplement the framework's rules to pre-validate. Each member
+contributes at most one violation — its own first verdict in the judgement's
+settled order — and every member is examined; violations carry structured
+locations and are canonically ordered by location then code, so a report never
+depends on caller keyword order. The framework's rules run to completion before
+construction, so an `EditError` and a Pydantic `ValidationError` never describe
+the same call.
+
+Row derivation moves behind one model-bound `EntityRowCodec` with `full_row`,
+`identity_row`, and `edited_row`. `edited_row` is the composition the write path
+already performed by hand — identity plus the canonical effective change set,
+and `None` when that set is empty — so the codec names an existing composition
+once rather than adding a layer. The module-level `full_row`, `primary_key_row`,
+`canonical_row`, `changed_fields`, and `effective_change_set` helpers are
+deleted: being model-free, they cannot delegate to a model-bound codec, so they
+end rather than thin. Codec misuse is first-party misuse rather than rejected
+developer input and raises `EntityRowError(RuntimeError)`; the developer-facing
+steering for handing a persistence verb a value with no change record belongs to
+that verb, which knows what the developer called.
+
+The provenance semantics carry over unchanged and are now stated rather than
+implied. A `one` value compares as a mask over the keys the caller authored, a
+`many` value compares as a whole because its elements have no identity, and an
+omitted key means un-authored rather than null — the same
+explicit-versus-defaulted distinction the serializer already draws. An edit
+whose effective change set is empty yields no row at all rather than an
+identity-only one, so "nothing to write" has a single representation.

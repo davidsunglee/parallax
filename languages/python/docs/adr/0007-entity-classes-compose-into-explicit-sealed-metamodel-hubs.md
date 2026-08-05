@@ -682,3 +682,32 @@ prose above states it in the names it was designed under —
 for each is tabulated one for one in the closing amendment of
 [the Python Metamodel Hub and Entity frontend design](../../../../docs/architecture/parallax-python-metamodel-hub-design.md).
 The decision itself is unaffected: what moved is spelling, not ownership.
+
+## Amendment (2026-08, COR-63): capabilities are reached one at a time
+
+The composition decision above is unchanged, as is the class index the COR-64
+amendment left in place of model identity. What this amendment retires is the
+atomic Entity Runtime — the three-part collaboration value containing the
+accepted Metamodel, Entity Graph Construction, and the Entity Row Codec, stated
+above to have no partial form.
+
+Building it showed that nothing wanted the composite. Read materialization
+crosses graph construction alone and write preparation crosses the row codec
+alone; the one caller that holds both, Snapshot's private connected-model value,
+holds two references as cheaply as one. The atomicity claimed as a guarantee
+therefore protected nothing — each capability derives on demand from the same
+model, so no state existed in which one was present and the other could not be.
+`graph_construction_of(model)` and `row_codec_of(model)` are the two seams, each
+returning its own capability and each retained by the model on first reach. A
+composite value would have bought only the appearance of a guarantee, at the
+price of a name that has to be kept accurate as capabilities are added.
+
+Codec binding resolves rather than owns, which extends this amendment's
+predecessor to the write side. A value reaches the codec, the codec resolves the
+Entity Identity that value's class declares, and a model declaring no such
+Entity is a resolution failure — the same distinction `QueryTargetError` already
+draws, and for the same reason: no ownership relation between a value and a
+model exists. The class index answers which class a row instantiates and is not
+an authorization structure, so it is not consulted to decide whether a value
+belongs. What the codec emits is a function of the resolved identity's declared
+members, so ownership could not have changed the answer anyway.
