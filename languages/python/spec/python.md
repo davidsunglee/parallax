@@ -1948,9 +1948,13 @@ or descriptor authoring form and performs no audit stamping.
   collapsed by the read seam under `m-op-algebra`'s absence-collapse rule: a
   missing key, a stored null (SQL or JSON), and a non-object intermediate all
   arrive as `None`; for a Many, a missing key, a stored null, and a non-array
-  all arrive as `()`. Every such position collapses but one — a top-level
-  occurrence inside the shared Structured Column under Relational Document
-  Layout, which the read seam judges instead of collapsing (below).
+  all arrive as `()`. Every such position collapses, and at one of them some
+  states are judged first: at a top-level occurrence inside the shared
+  Structured Column under Relational Document Layout, the read seam rejects a
+  key holding the wrong kind of value, and a required One's absent or null key,
+  as invalid stored data before either reaches the collapse; the states it
+  admits — a nullable One's absent or null key, and a Many's — collapse like
+  the rest (below).
   The collapse takes no nullability argument —
   `document_codec.reduce_declared_members` cannot consult `nullable` — so which
   not-present state the document was in does not survive it: an omitted leaf and
@@ -1970,7 +1974,8 @@ or descriptor authoring form and performs no audit stamping.
   Attribute — whose key is absent or holds JSON null as invalid stored data,
   along with a key holding neither the object nor the array its multiplicity
   stores. The check reaches that one key; the occurrence's own document arrives
-  whole, and every position inside it belongs to the collapse.
+  whole, and every position inside it belongs to the collapse — as does the key
+  itself in every state the check admits.
 
   The write path is untouched by this and still enforces: a Value Object authored
   for an assignment is built by ordinary Pydantic validation, where a required
