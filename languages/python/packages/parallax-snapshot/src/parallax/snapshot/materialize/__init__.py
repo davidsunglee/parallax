@@ -9,7 +9,9 @@ produce and consume it.
 - :mod:`~parallax.snapshot.materialize._convert` turns one driver row plus its
   level context into one node input. It is the ONLY place a physical column, a
   storage key, or a Document Path becomes a member identity, which is what lets a
-  driver release a row the moment that row is converted.
+  caller convert one row at a time: a materialized row is reachable only until
+  its conversion, and no consumer here reaches back into the raw result set the
+  driver answered a level's statement with.
 - :mod:`~parallax.snapshot.materialize._merge` collapses duplicate projections
   into one deterministic allocation order, holding integers and references only.
 

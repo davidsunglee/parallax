@@ -70,9 +70,9 @@ its own materialized form holds that form keyed by member, not by column, so
 without the identity it would have to invert a physical column back to a member
 to gather the level's keys — re-deriving a mapping the model already fixes, in a
 layer that otherwise never needs to know one. Carrying the identity is what lets
-a result surface **release a raw row as soon as it has been converted**, and it
-is what keeps column-to-member inversion confined to whichever layer legitimately
-owns it.
+a result surface **stop reaching for a row once that row has been converted**,
+and it is what keeps column-to-member inversion confined to whichever layer
+legitimately owns it.
 
 The identities are a property of the planned level alone. A level's emitted
 statement, its gathered key set, and its dedup identity are fixed by the hop's
