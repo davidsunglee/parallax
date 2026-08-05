@@ -11,7 +11,7 @@ must run through the
 shipped surface, not merely serialize a statement — a wire-level ``graph``
 grade proves the assembled NEUTRAL nodes are correct, but says nothing about
 the frozen-node WRAPPING (`parallax.snapshot.handle`) layered on top by
-``db.find`` — identity surviving the wrap, `is_loaded`/
+``db.find`` — identity surviving the wrap, `is_view_loaded`/
 `UnloadedRelationshipError`, closed-world zero-SQL access, `pin_of`/`edge_of`
 on a materialized node. Those developer-facing guarantees are exactly what the
 API Conformance Suite exists to prove (`m-api-conformance` "Two proof paths").

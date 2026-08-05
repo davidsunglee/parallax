@@ -37,9 +37,11 @@ public-surface check promises. Where the exported names live:
 - :mod:`~parallax.snapshot.handle._errors` — :class:`QueryTargetError`, the
   refusal of a query whose target the connected model does not declare, raised
   by the shared read-preflight seam and by the write side's target resolution
-  alike, and :class:`SnapshotConnectionError`, the refusal of a model that names
-  no Entity Class to materialize into. Both are defined in a dependency-free leaf
-  so every raiser can name them.
+  alike, :class:`SnapshotConnectionError`, the refusal of a model that names
+  no Entity Class to materialize into, and :class:`SnapshotMaterializationError`,
+  the one translation of a graph-construction or lifecycle failure at the
+  materialization boundary. All three are defined in a dependency-free leaf so
+  every raiser can name them.
 - :mod:`~parallax.snapshot.handle._features` — :class:`DeferredFeatureError`,
   beside the fixed inventory of Deferred Execution Features it reports and the
   recognizer that matches a canonical operation against them.
@@ -75,7 +77,11 @@ from parallax.snapshot.handle._database import (
     TransactionOwnershipError,
     connect,
 )
-from parallax.snapshot.handle._errors import QueryTargetError, SnapshotConnectionError
+from parallax.snapshot.handle._errors import (
+    QueryTargetError,
+    SnapshotConnectionError,
+    SnapshotMaterializationError,
+)
 from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._read import (
@@ -113,6 +119,7 @@ __all__ = [
     "QueryTargetError",
     "Snapshot",
     "SnapshotConnectionError",
+    "SnapshotMaterializationError",
     "TooManyResultsFound",
     "Transaction",
     "TransactionOptionConflictError",

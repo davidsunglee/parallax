@@ -89,7 +89,7 @@ class WherePosition(Bitemporal, table="where_position", namespace="parallax.comp
 WHERE_POSITION_META = DomainModel(WherePosition)
 
 
-NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}
+NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}
 
 
 def new_account() -> mm.Account:

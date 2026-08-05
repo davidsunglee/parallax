@@ -47,14 +47,15 @@ from parallax.conformance.graph_stories import (
     GRAPH_STORIES,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
 )
-from parallax.conformance.read_models import Cat, Dog
+from parallax.conformance.read_models import Animal, Cat, Dog
 from parallax.conformance.read_stories import READ_STORIES, ReadStory
 from parallax.conformance.stories import WRITE_STORIES, WriteStory
-from parallax.core import LATEST, DomainModel, edge_of, is_loaded, narrowed, pin_of
+from parallax.conformance.story_models import Order
+from parallax.core import LATEST, DomainModel
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import UnloadedRelationshipError, to_document
 from parallax.core.entity._model import model_of
-from parallax.snapshot import connect
+from parallax.snapshot import connect, edge_of, is_view_loaded, pin_of, view
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 
@@ -132,7 +133,7 @@ def test_story_runs_through_the_shipped_surface(story: WriteStory, provisioner: 
 # comparators): each assertion mirrors its case's own `then.graph`/           #
 # `identityChecks`/scenario oracle as closely as one in-process assertion     #
 # can — the developer-facing guarantees a wire grade cannot see (reference    #
-# identity surviving the frozen-node wrap, `is_loaded` /                      #
+# identity surviving the frozen-node wrap, `is_view_loaded` /                 #
 # `UnloadedRelationshipError`, `pin_of`/`edge_of` on a materialized node).     #
 # --------------------------------------------------------------------------- #
 _GRAPH_STORIES_BY_ID = {story.case_id: story for story in GRAPH_STORIES}
@@ -172,7 +173,7 @@ def test_closed_world_unloaded_access_raises_without_sql(provisioner: Any) -> No
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     order = snapshot.result()
-    assert is_loaded(order, "statuses") is False
+    assert is_view_loaded(order, Order.statuses) is False
     with pytest.raises(UnloadedRelationshipError, match="statuses"):
         order.statuses  # noqa: B018 - the access itself is the assertion
     # The access issues no SQL of its own: the materializing find is the only
@@ -282,7 +283,7 @@ def test_animal_owner_reaches_root_and_narrowed_subtype_view(provisioner: Any) -
     assert isinstance(alice, AnimalOwnerPerson)
     assert alice.name == "Alice"
     assert {pet.name for pet in alice.animals} == {"Rex", "Whiskers"}
-    dogs = narrowed(alice, AnimalOwnerPerson.pets.narrow(Dog))
+    dogs = view(alice, AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", dogs)] == ["Rex"]
     assert snapshot.execution.round_trips == 3
 
@@ -293,11 +294,11 @@ def test_narrowed_pets_view_populates_per_owner(provisioner: Any) -> None:
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {person.name: person for person in snapshot.results()}
-    alice_dogs = narrowed(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Dog))
+    alice_dogs = view(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
-    bob_dogs = narrowed(by_name["Bob"], AnimalOwnerPerson.pets.narrow(Dog))
+    bob_dogs = view(by_name["Bob"], AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", bob_dogs)] == ["Fido"]
-    carol_dogs = narrowed(by_name["Carol"], AnimalOwnerPerson.pets.narrow(Dog))
+    carol_dogs = view(by_name["Carol"], AnimalOwnerPerson.pets.narrow(Dog))
     assert carol_dogs == ()
     assert snapshot.execution.round_trips == 2
 
@@ -308,7 +309,7 @@ def test_equivalent_narrow_spellings_dedupe_to_one_view(provisioner: Any) -> Non
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     by_name = {person.name: person for person in snapshot.results()}
-    alice_view = narrowed(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Cat, Dog))
+    alice_view = view(by_name["Alice"], AnimalOwnerPerson.pets.narrow(Cat, Dog))
     assert {pet.name for pet in cast("tuple[Any, ...]", alice_view)} == {"Rex", "Whiskers"}
     assert snapshot.execution.round_trips == 2
 
@@ -319,8 +320,8 @@ def test_distinct_narrowed_views_populate_independently(provisioner: Any) -> Non
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = next(person for person in snapshot.results() if person.name == "Alice")
-    alice_dogs = narrowed(alice, AnimalOwnerPerson.pets.narrow(Dog))
-    alice_cats = narrowed(alice, AnimalOwnerPerson.pets.narrow(Cat))
+    alice_dogs = view(alice, AnimalOwnerPerson.pets.narrow(Dog))
+    alice_cats = view(alice, AnimalOwnerPerson.pets.narrow(Cat))
     assert [pet.name for pet in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
     assert [pet.name for pet in cast("tuple[Any, ...]", alice_cats)] == ["Whiskers"]
     assert snapshot.execution.round_trips == 3
@@ -332,10 +333,10 @@ def test_a_redundant_narrow_populates_a_view_beside_the_broad_one(provisioner: A
     db = connect(provisioner.port, meta)
     snapshot = story.run(db)
     alice = next(person for person in snapshot.results() if person.name == "Alice")
-    # `narrowed` derives its key from the AUTHORED spelling, so the story's
+    # `view` derives its key from the AUTHORED spelling, so the story's
     # `narrow(Pet)` view is reached by the equivalent concrete spelling — the same
     # accessor route `test_equivalent_narrow_spellings_dedupe_to_one_view` takes.
-    redundant = narrowed(alice, AnimalOwnerPerson.pets.narrow(Cat, Dog))
+    redundant = view(alice, AnimalOwnerPerson.pets.narrow(Cat, Dog))
     # The redundant narrow reaches exactly what the broad hop reaches, yet lands
     # under its own derived view key rather than merging into `pets`.
     assert sorted(pet.name for pet in alice.pets) == ["Rex", "Whiskers"]
@@ -356,7 +357,7 @@ def test_disjoint_root_guards_fill_one_owner_view(provisioner: Any) -> None:
     assert by_name["Whiskers"].owner.name == "Alice"
     # The WildBoar is admitted by neither guard, so its `owner` stays UNSET —
     # closed-world "never participated", not "no owner".
-    assert is_loaded(by_name["Tusker"], "owner") is False
+    assert is_view_loaded(by_name["Tusker"], Animal.owner) is False
     with pytest.raises(UnloadedRelationshipError, match="owner"):
         _ = by_name["Tusker"].owner
     assert snapshot.execution.round_trips == 3
@@ -390,12 +391,12 @@ def test_guarded_branches_keep_their_own_parents(provisioner: Any) -> None:
     assert by_name["Rex"].owner.name == "Alice"
     assert by_name["Fido"].owner.name == "Bob"
     assert by_name["Tusker"].owner.name == "Carol"
-    assert is_loaded(by_name["Whiskers"], "owner") is False
+    assert is_view_loaded(by_name["Whiskers"], Animal.owner) is False
     # `pets` continues from the DOG branch's owners alone, so the owner the
     # WildBoar branch reached carries none of it.
     assert sorted(pet.name for pet in by_name["Rex"].owner.pets) == ["Rex", "Whiskers"]
     assert [pet.name for pet in by_name["Fido"].owner.pets] == ["Fido"]
-    assert is_loaded(by_name["Tusker"].owner, AnimalOwnerPerson.pets) is False
+    assert is_view_loaded(by_name["Tusker"].owner, AnimalOwnerPerson.pets) is False
     assert snapshot.execution.round_trips == 4
 
 
@@ -408,15 +409,15 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> No
     alice = by_name["Rex"].owner
     assert alice.name == "Alice"
     # The root guard contributed no key of its own; the segment narrow did.
-    assert is_loaded(alice, AnimalOwnerPerson.pets) is False
-    alice_dogs = narrowed(alice, AnimalOwnerPerson.pets.narrow(Dog))
+    assert is_view_loaded(alice, AnimalOwnerPerson.pets) is False
+    alice_dogs = view(alice, AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", alice_dogs)] == ["Rex"]
-    bob_dogs = narrowed(by_name["Fido"].owner, AnimalOwnerPerson.pets.narrow(Dog))
+    bob_dogs = view(by_name["Fido"].owner, AnimalOwnerPerson.pets.narrow(Dog))
     assert [dog.name for dog in cast("tuple[Any, ...]", bob_dogs)] == ["Fido"]
     # The Cat reaches the SAME owner object the Dog does; the guard excludes only
     # the WildBoar, whose whole branch of the path is therefore absent.
     assert by_name["Whiskers"].owner is alice
-    assert is_loaded(by_name["Tusker"], "owner") is False
+    assert is_view_loaded(by_name["Tusker"], Animal.owner) is False
     assert snapshot.execution.round_trips == 3
 
 

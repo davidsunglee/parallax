@@ -17,7 +17,7 @@ from _sql_gen_support import model as accepted_model
 from _sql_gen_support import target
 
 from parallax.conformance import models
-from parallax.core import Edge, Pin, UndeclaredAxisError, edge_of, pin_of
+from parallax.core import Edge, Pin, UndeclaredAxisError
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
@@ -357,34 +357,10 @@ def test_scans_an_axis_peels_result_shaping_directives_off_a_nested_scan() -> No
     assert scans_an_axis(op)
 
 
-class _TemporalNode:
-    """A stand-in for a materialized node carrying its attached coordinates."""
-
-    __parallax_edge__: Edge
-    __parallax_pin__: Pin
-
-    def __init__(self, edge: Edge, pin: Pin) -> None:
-        self.__parallax_edge__ = edge
-        self.__parallax_pin__ = pin
-
-
-class _PlainNode:
-    """A node with no temporal coordinates (non-temporal / unmaterialized)."""
-
-
-def test_edge_of_and_pin_of_read_materialized_coordinates() -> None:
-    edge = Edge(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
-    pin = Pin(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC))
-    node = _TemporalNode(edge, pin)
-    assert edge_of(node) is edge
-    assert pin_of(node) is pin
-
-    with pytest.raises(TemporalReadError, match="materialized temporal node"):
-        edge_of(_PlainNode())
-    with pytest.raises(TemporalReadError, match="no temporal pin"):
-        pin_of(_PlainNode())
-
-
+# Reading a `Pin` or an `Edge` OFF a materialized node is the producing
+# lifecycle's question, so `parallax.snapshot.pin_of` / `edge_of` and their
+# refusals are pinned by `test_snapshot_inspection.py`. What stays here is the
+# lifecycle-neutral value model itself.
 def test_edge_is_frozen() -> None:
     # An Edge is hashable, so it must be immutable: reassigning or deleting an
     # axis after construction would silently invalidate any dict/set holding it.

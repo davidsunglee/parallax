@@ -4,9 +4,15 @@ The sole supported Python model-authoring surface: the frozen ``Entity`` and
 ``ValueObject`` bases and their temporal framework siblings, the ``Attr[T]`` /
 ``Rel[T]`` member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` /
 ``desc`` factories, the core-algebra spellings those take, ``DomainModel`` and
-its closed error-code sets, the Find Query surface, and the closed-world
-relationship load-state vocabulary. The underscored modules behind these names
-are implementation detail rather than caller seams.
+its closed error-code sets, and the Find Query surface. The underscored modules
+behind these names are implementation detail rather than caller seams.
+
+It additionally exposes the **advanced Entity Graph Construction collaboration**
+— ``entity_runtime_of``, ``EntityGraphConstruction``, its writer, handles, and
+immutable carriers, plus the two operations a lifecycle reads back
+(``relationship_value_of``, ``lifecycle_state_of``). Top-level ``parallax.core``
+does not re-export any of it: a first-party lifecycle package reaches it here on
+purpose, and a developer never needs it.
 
 Entity Classes are their own formation input: the declaration engine builds each
 class's ``UnresolvedEntityDeclaration`` eagerly at class creation, so this scope
@@ -31,10 +37,12 @@ from parallax.core.entity._entity import (
 )
 from parallax.core.entity._errors import (
     ENTITY_DEFINITION_CODES,
+    GRAPH_CONSTRUCTION_CODES,
     METAMODEL_DEFINITION_CODES,
     METAMODEL_LOOKUP_CODES,
     EntityDefinitionError,
     FrameworkOwnedAxisError,
+    GraphConstructionError,
     MetamodelDefinitionError,
     MetamodelLookupError,
     ModelCopyError,
@@ -52,6 +60,27 @@ from parallax.core.entity._expressions import (
     RelationshipPath,
     RelationshipRef,
     SortKey,
+)
+from parallax.core.entity._graph_construction import (
+    LOADED_NULL,
+    UNLOADED_VIEW,
+    EntityAttributeInput,
+    EntityGraphConstruction,
+    EntityGraphWriter,
+    EntityRelationshipInput,
+    LoadedMany,
+    LoadedNull,
+    LoadedOne,
+    NodeHandle,
+    RelationshipInput,
+    ResolutionView,
+    Unloaded,
+    ValueObjectAttributeInput,
+    ValueObjectOccurrenceInput,
+    ValueObjectRecord,
+    entity_runtime_of,
+    lifecycle_state_of,
+    relationship_value_of,
 )
 from parallax.core.entity._members import (
     MANY_TO_ONE,
@@ -85,10 +114,11 @@ from parallax.core.entity._members import (
 from parallax.core.entity._model import DomainModel
 from parallax.core.entity._query import FindQuery
 from parallax.core.entity._value_object import ValueObject, ValueObjectMeta, to_document
-from parallax.core.entity.graph_state import is_loaded, narrowed
 
 __all__ = [
     "ENTITY_DEFINITION_CODES",
+    "GRAPH_CONSTRUCTION_CODES",
+    "LOADED_NULL",
     "MANY_TO_ONE",
     "MAX",
     "METAMODEL_DEFINITION_CODES",
@@ -99,6 +129,7 @@ __all__ = [
     "READ_WRITE",
     "TABLE_PER_CONCRETE_SUBTYPE",
     "UNLOADED",
+    "UNLOADED_VIEW",
     "AbstractRoot",
     "AbstractSubtype",
     "AllPredicate",
@@ -114,31 +145,46 @@ __all__ = [
     "DomainModel",
     "ElementAttributeExpr",
     "Entity",
+    "EntityAttributeInput",
     "EntityDeclaration",
     "EntityDefinitionError",
+    "EntityGraphConstruction",
+    "EntityGraphWriter",
     "EntityMeta",
+    "EntityRelationshipInput",
     "FindQuery",
     "Float32",
     "FrameworkOwnedAxisError",
+    "GraphConstructionError",
     "IndexSpec",
     "Int32",
+    "LoadedMany",
+    "LoadedNull",
+    "LoadedOne",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
     "ModelCopyError",
+    "NodeHandle",
     "OrderTerm",
     "Predicate",
     "ProvenanceError",
     "Rel",
+    "RelationshipInput",
     "RelationshipPath",
     "RelationshipRef",
+    "ResolutionView",
     "ReverseRelSpec",
     "Sequence",
     "SortKey",
     "TablePerHierarchy",
     "TxTemporal",
+    "Unloaded",
     "UnloadedRelationshipError",
     "ValueObject",
+    "ValueObjectAttributeInput",
     "ValueObjectMeta",
+    "ValueObjectOccurrenceInput",
+    "ValueObjectRecord",
     "WireNames",
     "asc",
     "attr",
@@ -146,12 +192,13 @@ __all__ = [
     "changed_fields",
     "desc",
     "effective_change_set",
+    "entity_runtime_of",
     "full_row",
     "index",
-    "is_loaded",
-    "narrowed",
+    "lifecycle_state_of",
     "primary_key_row",
     "rel",
+    "relationship_value_of",
     "shape_of",
     "snake_to_camel",
     "to_document",

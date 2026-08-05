@@ -34,9 +34,14 @@ from typing import Any
 from parallax.core import opt_lock, read_lock
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import Dialect
-from parallax.core.entity import AttributeAssignment, FindQuery, full_row, primary_key_row
+from parallax.core.entity import (
+    AttributeAssignment,
+    EntityGraphConstruction,
+    FindQuery,
+    full_row,
+    primary_key_row,
+)
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity._model import ClassIndex
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
@@ -105,7 +110,7 @@ class Transaction:
     delegates to the unit of work, which fences use-after-scope).
     """
 
-    __slots__ = ("_classes", "_conn", "_dialect", "_inserted_keys", "_meta", "_uow")
+    __slots__ = ("_conn", "_dialect", "_inserted_keys", "_meta", "_runtime", "_uow")
 
     def __init__(
         self,
@@ -113,13 +118,13 @@ class Transaction:
         conn: DbPort,
         meta: Metamodel,
         dialect: Dialect,
-        classes: ClassIndex | None,
+        runtime: EntityGraphConstruction | None,
     ) -> None:
         self._uow = uow
         self._conn = conn
         self._meta = meta
         self._dialect = dialect
-        self._classes = classes
+        self._runtime = runtime
         # The object keys THIS transaction buffered an insert for — the
         # read-your-own-writes exemption from the §5 prior-observation license
         # (`_require_observed_milestone`): a same-transaction insert IS the
@@ -387,7 +392,7 @@ class Transaction:
         """
         # Both refusals precede `uow.read` deliberately: that read force-flushes
         # pending buffered writes, so a refused read must be refused before it.
-        classes = _materializing(self._classes)
+        runtime = _materializing(self._runtime)
         lowered = preflight_find(query, model=self._meta)
         target, op = lowered.target.name, lowered.operation
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
@@ -396,12 +401,12 @@ class Transaction:
             history_result = self._uow.read(
                 lambda: find_history(op, self._meta, self._dialect, target, self._conn)
             )
-            return snapshot_from_history_result(history_result, target, self._meta, classes)
+            return snapshot_from_history_result(history_result, target, self._meta, runtime)
         find_result = self._uow.read(
             lambda: find(op, self._meta, self._dialect, target, self._conn, lock=lock)
         )
         record_observations(self._uow, self._meta, find_result, pin)
-        return snapshot_from_find_result(find_result, target, self._meta, pin, classes)
+        return snapshot_from_find_result(find_result, target, self._meta, pin, runtime)
 
     def _buffer(
         self,
@@ -570,16 +575,16 @@ class Transaction:
         buffer_predicate_instruction(self._uow, self._meta, self._conn, self._dialect, instruction)
 
 
-def _materializing(classes: ClassIndex | None) -> ClassIndex:
-    """The class index a modeled read needs, or refuse before ``uow.read``.
+def _materializing(runtime: EntityGraphConstruction | None) -> EntityGraphConstruction:
+    """The graph construction a modeled read needs, or refuse before ``uow.read``.
 
     Absent only for the first-party construction that connects a Database to a
     bare accepted Metamodel for neutral write work; ``Database.connect`` admits
     no such model, so an application never reaches this.
     """
-    if classes is None:
+    if runtime is None:
         raise SnapshotConnectionError(
             "this Transaction's Database was connected to a model that composed no Entity "
             "Class, so it cannot materialize a Snapshot (snapshot-class-backed-model-required)"
         )
-    return classes
+    return runtime

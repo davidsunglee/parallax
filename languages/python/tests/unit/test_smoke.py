@@ -39,8 +39,15 @@ def test_top_package_public_surfaces() -> None:
         "NoResultFound",
         "QueryTargetError",
         "SnapshotConnectionError",
+        "SnapshotInspectionError",
+        "SnapshotMaterializationError",
         "TooManyResultsFound",
         "TransactionOwnershipError",
+        "UnloadedRelationshipError",
+        "is_view_loaded",
+        "view",
+        "pin_of",
+        "edge_of",
     }
     # §8 topology fixes the adapter's public export as PostgresAdapter alone;
     # psycopg bind mechanics (Jsonb) stay internal to the adapter.

@@ -22,14 +22,14 @@ the reverse edge would close a cycle.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.entity._model import ClassIndex
+from parallax.core.entity import EntityGraphConstruction
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import (
     EntityIdentity,
@@ -41,6 +41,7 @@ from parallax.core.metamodel import (
 from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot import materialize
+from parallax.snapshot.handle._errors import SnapshotMaterializationError
 from parallax.snapshot.handle._wrap import wrap_graph
 
 __all__ = [
@@ -578,18 +579,41 @@ def _pin_from_milestone(entity: EntityMetadata, milestone_pin: Mapping[str, obje
 
 
 def snapshot_from_find_result(
-    result: FindResult, target: str, meta: Metamodel, pin: Pin, classes: ClassIndex
+    result: FindResult, target: str, meta: Metamodel, pin: Pin, runtime: EntityGraphConstruction
 ) -> Snapshot[Any]:
-    roots = wrap_graph(result.nodes, target, meta, pin, classes)
+    roots = _materialized(lambda: wrap_graph(result.nodes, target, meta, pin, runtime))
     return Snapshot(roots, pin, result.execution)
 
 
 def snapshot_from_history_result(
-    result: HistoryFindResult, target: str, meta: Metamodel, classes: ClassIndex
+    result: HistoryFindResult, target: str, meta: Metamodel, runtime: EntityGraphConstruction
 ) -> Snapshot[Any]:
     entity = declaring_metadata(meta, _metadata(meta, target).identity)
     roots: list[Any] = []
     for graph in result.graphs:
         milestone_pin = _pin_from_milestone(entity, graph.pin)
-        roots.extend(wrap_graph(graph.nodes, target, meta, milestone_pin, classes))
+        roots.extend(
+            _materialized(lambda: wrap_graph(graph.nodes, target, meta, milestone_pin, runtime))  # noqa: B023
+        )
     return Snapshot(tuple(roots), Pin(), result.execution)
+
+
+def _materialized(build: Callable[[], tuple[object, ...]]) -> tuple[Any, ...]:
+    """One graph's roots, or the single translation of a materialization failure.
+
+    This is the ONE boundary where graph construction, lifecycle build, and
+    state-factory failures become
+    :class:`~parallax.snapshot.handle._errors.SnapshotMaterializationError`, so a
+    caller sees exactly one wrapping with the original cause chained. Everything
+    that failed BEFORE a graph was being built — the query, the connection, the
+    transaction, the adapter, SQL generation, neutral decoding — has already
+    raised with its own classification and never reaches here.
+    """
+    try:
+        return build()
+    except Exception as exc:
+        raise SnapshotMaterializationError(
+            "the read succeeded but its Entity graph could not be built "
+            "(snapshot-materialization-failed)",
+            cause=exc,
+        ) from exc

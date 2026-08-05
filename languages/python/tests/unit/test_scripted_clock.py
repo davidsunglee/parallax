@@ -140,7 +140,9 @@ def test_force_flush_and_commit_flush_share_one_instant_in_one_transaction() -> 
 
 def test_an_empty_or_read_only_transact_consumes_no_scripted_instant() -> None:
     clock = ScriptedClock([_I1])
-    port = _RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = _RecordingPort(
+        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
+    )
     account_db = Database.connect(port, _ACCOUNT, clock=clock)
 
     account_db.transact(lambda tx: None)
@@ -157,7 +159,9 @@ def test_a_nonempty_non_temporal_flush_consumes_no_scripted_instant() -> None:
     # including the force-flush a dependent read triggers — never asks the Clock
     # Strategy for one.
     clock = ScriptedClock([_I1])
-    port = _RecordingPort(rows=[{"id": 7, "owner": "Newton", "balance": 5.00, "version": 1}])
+    port = _RecordingPort(
+        rows=[{"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version": 1}]
+    )
     account_db = Database.connect(port, _ACCOUNT, clock=clock)
 
     def fn(tx: Transaction) -> None:

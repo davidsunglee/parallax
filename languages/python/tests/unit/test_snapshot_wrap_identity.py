@@ -2,7 +2,7 @@
 (spec §3/§4): ``parallax.snapshot.handle._wrap.wrap_graph`` over hand-built
 neutral graphs (the same ``materialize.Node`` vocabulary ``test_materialize.py``
 builds), diamond projection and narrowed views, and the closed-world load-state
-introspection (``is_loaded`` / ``narrowed`` / ``UnloadedRelationshipError``). The
+introspection (``is_view_loaded`` / ``view`` / ``UnloadedRelationshipError``). The
 value-object, temporal and ``Snapshot[T]`` half lives in
 ``test_snapshot_wrap_values.py``.
 """
@@ -21,10 +21,11 @@ from _support import snapshot_models as sm
 from parallax.conformance import read_models
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.story_models import Order as _soOrder
-from parallax.core import is_loaded, narrowed
+from parallax.conformance.story_models import OrderItem as _soOrderItem
 from parallax.core.entity import RelationshipPath, UnloadedRelationshipError
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import PathSegment
+from parallax.snapshot import SnapshotInspectionError, is_view_loaded, view
 from parallax.snapshot.materialize import Node
 
 _ORDERS = sm.SNAP_ORDERS_MODEL
@@ -129,8 +130,8 @@ def test_diamond_projection_merges_a_relationship_loaded_on_only_one_sibling_pat
     assert root.items[0] is root.items_by_ship_date[0]
     # …and the merged node carries the relationship EITHER path loaded — never
     # UNLOADED just because the FIRST-visited path (`items`) did not load it.
-    assert is_loaded(root.items[0], "order") is True
-    assert is_loaded(root.items_by_ship_date[0], "order") is True
+    assert is_view_loaded(root.items[0], _soOrderItem.order) is True
+    assert is_view_loaded(root.items_by_ship_date[0], _soOrderItem.order) is True
     assert root.items[0].order is root
     assert root.items_by_ship_date[0].order is root
 
@@ -172,7 +173,7 @@ def test_diamond_projection_does_not_double_wire_a_relationship_loaded_on_both_p
     (root,) = wrap((_diamond_order_conflicting_include(),), "Order", _STORY_ORDERS)
     assert isinstance(root, _soOrder)
     assert root.items[0] is root.items_by_ship_date[0]
-    assert is_loaded(root.items[0], "order") is True
+    assert is_view_loaded(root.items[0], _soOrderItem.order) is True
     assert root.items[0].order is root
 
 
@@ -191,7 +192,7 @@ def test_unloaded_relationship_access_raises_naming_the_path() -> None:
     )
     (root,) = wrap((bare,), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
-    assert is_loaded(root, "items") is False
+    assert is_view_loaded(root, sm.SnapOrder.items) is False
     with pytest.raises(UnloadedRelationshipError, match="items"):
         _ = root.items
 
@@ -200,7 +201,7 @@ def test_loaded_to_one_relationship_is_the_node_or_none() -> None:
     (root,) = wrap((_order_root(),), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     item = root.items[0]
-    assert is_loaded(item, "order") is True
+    assert is_view_loaded(item, sm.SnapOrderItem.order) is True
     assert item.order is root
 
 
@@ -218,7 +219,7 @@ def test_loaded_to_one_relationship_attached_as_none_wraps_to_none() -> None:
     )
     (root,) = wrap((orphan,), "SnapOrderItem", _ORDERS)
     assert isinstance(root, sm.SnapOrderItem)
-    assert is_loaded(root, "order") is True
+    assert is_view_loaded(root, sm.SnapOrderItem.order) is True
     assert root.order is None
 
 
@@ -239,7 +240,7 @@ def test_loaded_empty_to_many_is_an_empty_tuple() -> None:
     (root,) = wrap((parent,), "SnapOrder", _ORDERS)
     assert isinstance(root, sm.SnapOrder)
     assert root.items == ()
-    assert is_loaded(root, "items") is True
+    assert is_view_loaded(root, sm.SnapOrder.items) is True
 
 
 # --------------------------------------------------------------------------- #
@@ -299,17 +300,18 @@ def test_narrowed_view_is_independent_of_the_broad_relationship() -> None:
     (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
-    assert is_loaded(root, "pets") is False
-    assert is_loaded(root, sm.AnimalOwner.pets) is False  # an un-narrowed RelationshipPath
-    assert is_loaded(root, "not_a_declared_relationship") is False  # no such py_name at all
-    assert is_loaded(root, path) is True
-    view = cast("tuple[object, ...]", narrowed(root, path))
-    assert isinstance(view, tuple)
-    assert type(view[0]) is sm.Dog
+    assert is_view_loaded(root, sm.AnimalOwner.pets) is False  # the broad view stays unloaded
+    assert is_view_loaded(root, path) is True
+    narrowed_view = cast("tuple[object, ...]", view(root, path))
+    assert isinstance(narrowed_view, tuple)
+    assert type(narrowed_view[0]) is sm.Dog
     with pytest.raises(UnloadedRelationshipError, match="pets"):
         _ = root.pets
     with pytest.raises(UnloadedRelationshipError):
-        narrowed(root, sm.AnimalOwner.pets.narrow(sm.Cat))
+        view(root, sm.AnimalOwner.pets.narrow(sm.Cat))
+    with pytest.raises(SnapshotInspectionError) as unrelated:
+        is_view_loaded(root, sm.SnapOrder.items)
+    assert unrelated.value.code == "snapshot-view-owner-mismatch"
 
 
 def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
@@ -320,8 +322,8 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
     )
     (root,) = wrap((owner,), "AnimalOwner", _ANIMAL)
     assert isinstance(root, sm.AnimalOwner)
-    dogs = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Dog)))
-    cats = cast("tuple[object, ...]", narrowed(root, sm.AnimalOwner.pets.narrow(sm.Cat)))
+    dogs = cast("tuple[object, ...]", view(root, sm.AnimalOwner.pets.narrow(sm.Dog)))
+    cats = cast("tuple[object, ...]", view(root, sm.AnimalOwner.pets.narrow(sm.Cat)))
     assert type(dogs[0]) is sm.Dog
     assert type(cats[0]) is sm.Cat
 
@@ -344,9 +346,9 @@ def test_a_directly_built_relationship_path_keys_the_same_narrowed_view() -> Non
     path: RelationshipPath[sm.AnimalOwner, sm.Dog] = RelationshipPath(
         segments=(PathSegment(rel="AnimalOwner.pets", narrow=("Dog",)),), target="Dog"
     )
-    assert is_loaded(root, path) is True
-    view = cast("tuple[object, ...]", narrowed(root, path))
-    assert type(view[0]) is sm.Dog
+    assert is_view_loaded(root, path) is True
+    narrowed_view = cast("tuple[object, ...]", view(root, path))
+    assert type(narrowed_view[0]) is sm.Dog
 
 
 def test_narrowed_view_key_survives_copy_and_deepcopy_of_the_path() -> None:
@@ -359,10 +361,10 @@ def test_narrowed_view_key_survives_copy_and_deepcopy_of_the_path() -> None:
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
     for reconstructed in (copy.copy(path), copy.deepcopy(path)):
         assert reconstructed == path
-        assert is_loaded(root, reconstructed) is True
-        view = cast("tuple[object, ...]", narrowed(root, reconstructed))
-        assert len(view) == 1
-        assert type(view[0]) is sm.Dog
+        assert is_view_loaded(root, reconstructed) is True
+        narrowed_view = cast("tuple[object, ...]", view(root, reconstructed))
+        assert len(narrowed_view) == 1
+        assert type(narrowed_view[0]) is sm.Dog
 
 
 # --------------------------------------------------------------------------- #

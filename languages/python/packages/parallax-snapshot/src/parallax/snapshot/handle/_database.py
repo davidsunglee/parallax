@@ -45,12 +45,11 @@ from parallax.core.dialect import POSTGRES, Dialect
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.core.entity import DomainModel, FindQuery
-
 # First-party support, deliberately absent from `parallax.core.entity`'s exports:
 # this composition root connects to an accepted `Metamodel` and materializes
 # rows, so it needs both facts out of a Domain Model.
-from parallax.core.entity._model import ClassIndex, class_index, model_of
+from parallax.core.entity import DomainModel, EntityGraphConstruction, FindQuery, entity_runtime_of
+from parallax.core.entity._model import class_index, model_of
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
@@ -133,25 +132,30 @@ class TransactionOwnershipError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class _ConnectedModel:
-    """The model one ``Database`` serves: its accepted metadata and class index.
+    """The model one ``Database`` serves: its accepted metadata and, for a
+    class-backed model, the Entity Graph Construction collaboration that
+    materializes rows into instances of the classes it composed.
 
     Owned by the Database rather than by any query value, and carrying no
     identity of its own — two Databases over one Domain Model hold equal state
     and neither is preferred, while a query built from classes this model never
-    composed is refused by target resolution rather than by ownership.
+    composed is refused by target resolution rather than by ownership. Holding
+    the construction rather than the raw class index keeps materialization
+    capability behind ONE seam: there is no second capability bag to widen when a
+    new entry point (a Session) reaches the same materializer.
     """
 
     meta: Metamodel
-    classes: ClassIndex | None
+    runtime: EntityGraphConstruction | None
 
-    def materializing(self) -> ClassIndex:
-        """The class index a modeled read needs, or refuse before any I/O."""
-        if self.classes is None:
+    def materializing(self) -> EntityGraphConstruction:
+        """The graph construction a modeled read needs, or refuse before any I/O."""
+        if self.runtime is None:
             raise SnapshotConnectionError(
                 "this Database was connected to a model that composed no Entity Class, so it "
                 "cannot materialize a Snapshot (snapshot-class-backed-model-required)"
             )
-        return self.classes
+        return self.runtime
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,9 +217,12 @@ class Database:
         application never reaches that state.
         """
         self._connected = (
-            _ConnectedModel(meta=model_of(model), classes=class_index(model))
+            _ConnectedModel(
+                meta=model_of(model),
+                runtime=None if class_index(model) is None else entity_runtime_of(model),
+            )
             if isinstance(model, DomainModel)
-            else _ConnectedModel(meta=model, classes=None)
+            else _ConnectedModel(meta=model, runtime=None)
         )
         self._port = port
         self._meta: Metamodel = self._connected.meta
@@ -280,15 +287,15 @@ class Database:
         # `Transaction.find`: a Database that cannot materialize a Snapshot at
         # all answers that before it answers anything about this query, so the
         # two entry points refuse a classless connection in the same order.
-        classes = self._connected.materializing()
+        runtime = self._connected.materializing()
         lowered = preflight_find(query, model=self._meta)
         target, op = lowered.target.name, lowered.operation
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
         if scans_an_axis(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
-            return snapshot_from_history_result(history_result, target, self._meta, classes)
+            return snapshot_from_history_result(history_result, target, self._meta, runtime)
         find_result = find(op, self._meta, self._dialect, target, self._port)
-        return snapshot_from_find_result(find_result, target, self._meta, pin, classes)
+        return snapshot_from_find_result(find_result, target, self._meta, pin, runtime)
 
     def transact[T](
         self,
@@ -360,12 +367,12 @@ class Database:
         # holds; a joining call inherits the active unit of work's own.
         model = self._meta
 
-        classes = self._connected.classes
+        runtime = self._connected.runtime
 
         def attempt() -> T:
             def in_txn(conn: DbPort) -> T:
                 def body(uow: UnitOfWork) -> T:
-                    tx = Transaction(uow, conn, self._meta, self._dialect, classes)
+                    tx = Transaction(uow, conn, self._meta, self._dialect, runtime)
                     # Published for joining calls; visible only while core's
                     # active-transaction binding is, so it needs no cleanup.
                     uow.companion = _Demarcation(tx=tx, options=options, owner=self)

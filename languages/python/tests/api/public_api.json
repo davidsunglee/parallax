@@ -40,17 +40,12 @@
     "TemporalReadError",
     "TxTemporal",
     "UndeclaredAxisError",
-    "UnloadedRelationshipError",
     "VALID_TIME",
     "ValueObject",
     "asc",
     "attr",
     "desc",
-    "edge_of",
     "index",
-    "is_loaded",
-    "narrowed",
-    "pin_of",
     "rel"
   ],
   "parallax.descriptor": [
@@ -274,9 +269,16 @@
     "QueryTargetError",
     "Snapshot",
     "SnapshotConnectionError",
+    "SnapshotInspectionError",
+    "SnapshotMaterializationError",
     "TooManyResultsFound",
     "TransactionOwnershipError",
-    "connect"
+    "UnloadedRelationshipError",
+    "connect",
+    "edge_of",
+    "is_view_loaded",
+    "pin_of",
+    "view"
   ],
   "parallax.snapshot.handle": [
     "Database",
@@ -291,6 +293,7 @@
     "QueryTargetError",
     "Snapshot",
     "SnapshotConnectionError",
+    "SnapshotMaterializationError",
     "TooManyResultsFound",
     "Transaction",
     "TransactionOptionConflictError",

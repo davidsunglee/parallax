@@ -22,6 +22,7 @@ import datetime as dt
 from decimal import Decimal
 
 from parallax.core import (
+    MANY_TO_ONE,
     ONE_TO_MANY,
     AbstractRoot,
     AbstractSubtype,
@@ -142,8 +143,13 @@ class AnimalOwner(Entity, table="person", namespace=_NS):
 
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=32)
+    favorite_id: Attr[int | None]
     animals: Rel[tuple[Animal, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
     pets: Rel[tuple[Pet, ...]] = rel(cardinality=ONE_TO_MANY, join=("id", "owner_id"))
+    # A to-ONE hop into the same polymorphic family, so a narrowed view of a
+    # to-one position — whose value is a single node or loaded-null rather than a
+    # tuple — is reachable at all.
+    favorite: Rel[Animal | None] = rel(cardinality=MANY_TO_ONE, join=("favorite_id", "id"))
 
 
 ANIMAL_MODEL = DomainModel(Animal, Pet, Dog, Cat, WildBoar, AnimalOwner)

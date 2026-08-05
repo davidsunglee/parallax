@@ -65,7 +65,7 @@ def test_find_on_a_non_versioned_entity_records_no_observation() -> None:
     # node whose entity declares no `optimisticLocking` version column (every
     # Payment-family member) is skipped, never raising and never observing
     # anything a later write could consult.
-    port = RecordingPort(rows=[{"id": 1, "amount": 100.00, "card_network": "Visa"}])
+    port = RecordingPort(rows=[{"id": 1, "amount": Decimal("100.00"), "card_network": "Visa"}])
 
     def fn(tx: Transaction) -> None:
         tx.find(im.CardPayment.where(im.CardPayment.id == 1)).result()
@@ -128,7 +128,8 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     # does) — `_temporal_entity` (`parallax.snapshot.handle`) must resolve
     # through the root to compute both the statement pin and the row's own
     # milestone edge.
-    from parallax.core import LATEST, edge_of
+    from parallax.core import LATEST
+    from parallax.snapshot import edge_of
 
     port = RecordingPort(
         rows=[
