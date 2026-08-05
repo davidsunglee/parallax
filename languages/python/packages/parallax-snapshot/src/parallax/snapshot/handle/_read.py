@@ -187,9 +187,8 @@ class ObservationCollector(Protocol):
     at all rather than building a record and discarding it.
 
     The driver only ever hands rows over; it never reads a collector back. What
-    it hands over is PHYSICAL-column keyed, so the collector copies the values a
-    later write may need while the row is still live and retains no row and no
-    node of its own.
+    it hands over is PHYSICAL-column keyed, so the collector snapshots the values
+    a later write may need and retains no row and no node of its own.
     """
 
     def observe_row(
