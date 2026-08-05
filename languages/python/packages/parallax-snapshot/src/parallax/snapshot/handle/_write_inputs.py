@@ -194,7 +194,8 @@ class ReadObservations:
     def observe_row(
         self, entity: str, columns: Mapping[str, object], document: object | None
     ) -> None:
-        """Copy one materialized row's observable state while the row is live."""
+        """Snapshot one materialized row's observable state. ``columns`` stays the
+        caller's, so a later edit to it cannot reach the recorded observation."""
         self._rows.append(_ObservedRow(entity, dict(columns), document))
 
     @property

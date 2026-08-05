@@ -96,9 +96,9 @@ def test_a_fresh_collector_holds_no_rows() -> None:
 
 
 def test_the_collector_copies_the_columns_it_is_handed() -> None:
-    # `find` hands over a mapping built from a row that is released immediately
-    # afterwards, so the collector must own its copy: a later edit to the mapping
-    # it was handed cannot reach what a write will read.
+    # The seam accepts any caller-owned `Mapping`, so the collector snapshots its
+    # input: a later edit to the mapping it was handed cannot reach what a write
+    # will read.
     handed: dict[str, object] = {"id": 1, "owner": "Ada"}
     observations = ReadObservations()
     observations.observe_row("Account", handed, None)
