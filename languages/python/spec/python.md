@@ -1947,6 +1947,51 @@ or descriptor authoring form and performs no audit stamping.
   lifecycle-state factory invocation both follow allocation order. Every
   node-indexed error uses that index, and the first missing population is the
   lowest unpopulated index.
+- **Entity Graph Construction surface.** The collaboration is reached from
+  `parallax.core.entity` and is deliberately absent from top-level
+  `parallax.core`:
+
+  ```text
+  entity_runtime_of(model: DomainModel) -> EntityGraphConstruction
+  relationship_value_of(instance, relationship: RelationshipIdentity) -> object
+  lifecycle_state_of(instance) -> object | None
+
+  EntityGraphConstruction
+    construct(
+      build: (EntityGraphWriter) -> tuple[NodeHandle, ...],
+      *, state_factory: ((ResolutionView, NodeHandle) -> object) | None = None,
+    ) -> tuple[object, ...]
+
+  EntityGraphWriter
+    allocate(entity: EntityIdentity) -> NodeHandle
+    populate(
+      handle: NodeHandle,
+      attributes: tuple[EntityAttributeInput, ...],
+      value_objects: tuple[ValueObjectOccurrenceInput, ...],
+      relationships: tuple[EntityRelationshipInput, ...],
+    ) -> None
+
+  ResolutionView
+    resolve(handle: NodeHandle) -> object
+
+  NodeHandle          # opaque, callback-scoped, no public attribute
+  ```
+
+  `EntityGraphConstruction` is per Domain Model and is reached only through
+  `entity_runtime_of(model)`, so `construct(...)` takes no model argument and
+  cannot be handed a mismatched one; the per-Entity facts it derives once from
+  accepted metadata — concrete class, identity-to-member-name mapping, and the
+  declaration-ordered navigable relationships — live there rather than being
+  recomputed per read. `build` is invoked exactly once with a writer that closes
+  when it returns, and `state_factory` exactly once per node in allocation order
+  with a fresh single-use `ResolutionView` that closes when that invocation
+  returns. `relationship_value_of` answers the raw slot value including the
+  private unloaded sentinel, and `lifecycle_state_of` answers whatever the state
+  factory returned; these two are the whole of what a lifecycle reads back.
+  Misuse raises `GraphConstructionError(RuntimeError)` carrying `code`,
+  `message`, the applicable zero-based allocation `index`, the structured
+  `identity` at fault, and an optional conversion `cause`; its complete code set
+  is the nine `entity-graph-*` codes.
 - **Graph-construction phase barrier.** Entity Graph Construction has three
   non-overlapping phases: allocate every shell; close allocation permanently
   with the first `populate()` and populate every node; then, only after the
@@ -2723,8 +2768,9 @@ legalizes a forbidden edge.
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch`, `m-document-codec` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
-| Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
+| Snapshot handle wrapping (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._wrap` | `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-relationship`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity._query`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
 | Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
@@ -2786,7 +2832,13 @@ parallax.core.entity._query --> parallax.core.op_algebra
 parallax.core.entity._query --> parallax.core.temporal_read
 parallax.core.entity._expressions --> parallax.core.metamodel
 parallax.core.entity._expressions --> parallax.core.op_algebra
+parallax.snapshot._inspection --> parallax.core.entity
+parallax.snapshot._inspection --> parallax.core.metamodel
+parallax.snapshot._inspection --> parallax.core.inheritance
+parallax.snapshot._inspection --> parallax.core.relationship
+parallax.snapshot._inspection --> parallax.core.temporal_read
 parallax.snapshot.handle --> parallax.snapshot.materialize
+parallax.snapshot.handle --> parallax.snapshot._inspection
 parallax.snapshot.handle --> parallax.core.entity
 parallax.snapshot.handle --> parallax.core.base
 parallax.snapshot.handle --> parallax.core.metamodel
@@ -2807,6 +2859,7 @@ parallax.snapshot.handle --> parallax.core.batch_write
 parallax.snapshot.handle --> parallax.core.txtime_write
 parallax.snapshot.handle --> parallax.core.bitemp_write
 parallax.snapshot.handle._wrap --> parallax.snapshot.materialize
+parallax.snapshot.handle._wrap --> parallax.snapshot._inspection
 parallax.snapshot.handle._wrap --> parallax.core.entity
 parallax.snapshot.handle._wrap --> parallax.core.metamodel
 parallax.snapshot.handle._wrap --> parallax.core.relationship

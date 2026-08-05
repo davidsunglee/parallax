@@ -47,7 +47,8 @@ from typing import Any
 
 from parallax.conformance.read_models import Balance
 from parallax.conformance.vo_models import Branch
-from parallax.core import Edge, edge_of
+from parallax.core import Edge
+from parallax.snapshot import edge_of
 from parallax.snapshot.handle import Database, Transaction
 
 __all__ = [

@@ -97,10 +97,8 @@ __all__ = [
     "UndeclaredAxisError",
     "compile_facet",
     "conjunction_terms",
-    "edge_of",
     "inject_as_of",
     "milestone_edge",
-    "pin_of",
     "resolve_pinned_instants",
     "scans_an_axis",
     "statement_pin",
@@ -207,8 +205,8 @@ class Pin:
 
     A scanned axis (``history`` / ``as_of_range``) is **absent** (``None``), per the
     core rule that a scan is not a pin. A pinned axis carries either the finite pin
-    instant or the :data:`LATEST` sentinel. ``Pin`` is what
-    ``snapshot.pin`` reports and what :func:`pin_of` returns for one node.
+    instant or the :data:`LATEST` sentinel. ``Pin`` is what ``snapshot.pin``
+    reports and what ``parallax.snapshot.pin_of`` answers for one node.
     """
 
     tx_time: _dt.datetime | Latest | None = None
@@ -293,37 +291,10 @@ class Edge:
         return f"Edge(tx_time={self._tx_time!r}, valid_time={self._valid_time!r})"
 
 
-# The private attributes a materialized snapshot node carries (attached by the
-# snapshot materializer through its setattr backdoor). `pin_of` /
-# `edge_of` read them; the value model and the milestone-edge computation
-# (`milestone_edge`) are the reusable core the materializer builds on.
-_PIN_ATTR: Final[str] = "__parallax_pin__"
-_EDGE_ATTR: Final[str] = "__parallax_edge__"
-
-
-def pin_of(node: object) -> Pin:
-    """The as-of coordinates a materialized temporal node was read at (its :class:`Pin`).
-
-    The pin is attached to the node at materialization (whole-graph pinning,
-    ``m-snapshot-read``); a non-temporal node — or a node not produced by a
-    temporal materialization — carries none and raises.
-    """
-    pin = getattr(node, _PIN_ATTR, None)
-    if not isinstance(pin, Pin):
-        raise TemporalReadError("node carries no temporal pin (not a materialized temporal node)")
-    return pin
-
-
-def edge_of(node: object) -> Edge:
-    """The milestone :class:`Edge` of a materialized temporal node (its from-instants).
-
-    Defined for every temporal node regardless of how the read was pinned; calling
-    it on a non-temporal node (one with no attached edge) raises.
-    """
-    edge = getattr(node, _EDGE_ATTR, None)
-    if not isinstance(edge, Edge):
-        raise TemporalReadError("edge_of() requires a materialized temporal node")
-    return edge
+# `Pin` and `Edge` are lifecycle-neutral values, so reading either OFF a
+# materialized node belongs to the lifecycle that produced it
+# (`parallax.snapshot.pin_of` / `edge_of`). What stays here is the value model
+# and the milestone-edge computation every materializer builds on.
 
 
 def milestone_edge(entity: EntityMetadata, row: Mapping[str, object]) -> Edge:

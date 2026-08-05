@@ -381,9 +381,9 @@ def test_a_tampered_prose_row_alone_fails_generation(
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
         "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
-        "`parallax.core.entity`, `m-metamodel`,",
+        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`,",
         "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
-        "`parallax.core.entity`, `m-sql`, `m-metamodel`,",
+        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-sql`, `m-metamodel`,",
         1,
     )
     assert edited != original
@@ -457,9 +457,9 @@ def test_a_tampered_prose_row_alone_exits_one_at_the_command() -> None:
     original = dag.PYTHON_MD.read_text()
     edited = original.replace(
         "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
-        "`parallax.core.entity`, `m-metamodel`,",
+        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`,",
         "| `parallax.snapshot.handle._wrap` | `parallax.snapshot.materialize`, "
-        "`parallax.core.entity`, `m-sql`, `m-metamodel`,",
+        "`parallax.snapshot._inspection`, `parallax.core.entity`, `m-sql`, `m-metamodel`,",
         1,
     )
     assert edited != original

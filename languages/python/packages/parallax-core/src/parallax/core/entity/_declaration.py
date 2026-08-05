@@ -101,6 +101,7 @@ from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 __all__ = [
     "DECLARATION_MEMBER_NAMES",
     "FRAMEWORK_MINT",
+    "LIFECYCLE_STATE_SLOT",
     "RESERVED_MEMBER_NAMES",
     "STANDARD_TEMPORAL_NAMES",
     "DeclarationKind",
@@ -141,6 +142,20 @@ _AXES: Final = "__parallax_framework_axes__"
 _DECLARATION: Final = "__parallax_declaration__"
 _MEMBERS: Final = "__parallax_members__"
 _SHAPE: Final = "__parallax_shape__"
+
+LIFECYCLE_STATE_SLOT: Final = "__parallax_lifecycle__"
+"""The one per-instance slot a materialized node's lifecycle state occupies.
+
+Entity Graph Construction attaches whatever opaque value the constructing
+lifecycle's state factory returned and never interprets it, so a lifecycle
+package's own state — the Snapshot slice's views, pin, and edge, or a future
+managed slice's entirely different record — travels under one name that Entity
+neither reads nor exposes. One slot rather than a per-fact family is what keeps
+Entity free of every lifecycle's vocabulary.
+
+The value lands in the instance ``__dict__`` through ``object.__setattr__``,
+alongside field values but outside the Pydantic field set, so it is invisible to
+serialization, equality, and ``repr``."""
 
 _ATTR_TEXT = re.compile(r"^Attr\[(?P<inner>.+)\]$", re.DOTALL)
 _REL_TEXT = re.compile(r"^Rel\[(?P<inner>.+)\]$", re.DOTALL)

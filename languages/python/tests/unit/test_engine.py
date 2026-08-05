@@ -367,7 +367,9 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     # m-unit-work-005: all three steps (observe find, versioned update,
     # dependent find) share ONE `uow` group — a single `db.transact` call, not
     # three separate ones, so exactly one port-level commit fires.
-    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
     emissions, round_trips, _errors = engine.run_scenario_case(
         _case("m-unit-work-005"), "postgres", port
     )
@@ -392,7 +394,9 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     # write declares `rollback: true`); step 2 is an UNGROUPED post-abort find.
     # The GROUP rolls back as ONE unit (one port-level rollback, zero commits)
     # — never a separate transaction per step.
-    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
     emissions, round_trips, _errors = engine.run_scenario_case(
         _case("m-unit-work-002"), "postgres", port
     )
@@ -734,7 +738,9 @@ def test_run_interleaved_scenario_case_reraises_an_unexpected_worker_failure() -
     failure = RuntimeError("a worker thread's own unexpected defect")
     main_port = _ScriptedPort(raise_on_read=failure)
     peer_port = _ScriptedPort(
-        read_rows=[[{"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}]]
+        read_rows=[
+            [{"id": 2, "owner": "Linus", "balance": decimal.Decimal("250.00"), "version": 1}]
+        ]
     )
 
     with pytest.raises(RuntimeError, match="unexpected defect"):
@@ -2144,7 +2150,9 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
             },
         },
     )
-    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
     emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
@@ -2220,7 +2228,9 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
             },
         },
     )
-    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
     emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
@@ -2323,7 +2333,9 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
             },
         },
     )
-    port = FakeWritePort(find_rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = FakeWritePort(
+        find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
+    )
     with pytest.raises(engine.EngineError, match="SAME canonical operation"):
         engine.run_scenario_case(case, "postgres", port)
 

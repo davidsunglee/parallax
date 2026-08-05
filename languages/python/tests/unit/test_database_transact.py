@@ -406,7 +406,9 @@ def _observe_and_update(tx: Transaction) -> None:
 
 
 def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> None:
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
     port.write_affected_queue = [0]
     with pytest.raises(OptimisticLockConflictError):
         account_db(port).transact(_observe_and_update, concurrency="optimistic")
@@ -414,7 +416,9 @@ def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> 
 
 
 def test_optimistic_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
     port.write_affected_queue = [0, 1]
     account_db(port).transact(
         _observe_and_update, concurrency="optimistic", retry_optimistic_conflicts=True
@@ -423,7 +427,9 @@ def test_optimistic_conflict_is_auto_retried_to_success_with_the_opt_in() -> Non
 
 
 def test_optimistic_conflict_opt_in_exhausts_its_bound() -> None:
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
     port.write_affected_queue = [0, 0, 0]  # persistent — every attempt conflicts
     with pytest.raises(OptimisticLockConflictError) as excinfo:
         account_db(port).transact(
@@ -471,7 +477,9 @@ def test_optimistic_conflict_opt_in_is_inert_in_locking_mode() -> None:
     # column" — the shared read lock, not a version check, is what makes the
     # write correct), so there is nothing for the opt-in to ever retry: a
     # single-attempt commit, `retry_optimistic_conflicts` notwithstanding.
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
     account_db(port).transact(
         _observe_and_update, concurrency="locking", retry_optimistic_conflicts=True
     )
@@ -485,7 +493,9 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
     # A locking-mode versioned UPDATE renders no gate, so its zero-row shortfall
     # is the stale write: the shared read lock should have made it impossible,
     # which makes it a consistency failure no re-read resolves.
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
     port.write_affected_queue = [0, 1]
     with pytest.raises(StaleWriteError):
         account_db(port).transact(
@@ -513,7 +523,9 @@ def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
     # An EXCESS over the exact count means an accepted identity, storage, or
     # lowering invariant does not hold — an invariant failure rather than a
     # concurrency outcome, so the opt-in never widens to it either.
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
     port.write_affected_queue = [2, 1]
     with pytest.raises(CardinalityCorruptionError):
         account_db(port).transact(
@@ -536,7 +548,9 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
     # the outermost retry loop still applies per the ORIGINAL failure's
     # category (the conflict, not a `DatabaseError`), retriable here because
     # the opt-in is set.
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
     port.write_affected_queue = [0, 1]
     db = account_db(port)
 

@@ -26,8 +26,10 @@ from parallax.core import (
     ValueObject,
     attr,
 )
+from parallax.core.entity import GraphConstructionError
 from parallax.core.entity._model import model_of
-from parallax.core.temporal_read import Pin, edge_of, pin_of
+from parallax.core.temporal_read import Pin
+from parallax.snapshot import edge_of, pin_of
 from parallax.snapshot.handle import Execution, NoResultFound, Snapshot, TooManyResultsFound
 from parallax.snapshot.materialize import Node
 
@@ -142,9 +144,9 @@ def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
         pk_columns=("id",),
         value_objects={"profile": {"note": "x"}},
     )
-    match = r"_WrapScalarProfile\.profile: the bound Entity Class declares no"
-    with pytest.raises(LookupError, match=match):
+    with pytest.raises(GraphConstructionError) as refusal:
         wrap((node,), "_WrapScalarProfile", _SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)
+    assert refusal.value.code == "entity-graph-invalid-member"
 
 
 # --------------------------------------------------------------------------- #

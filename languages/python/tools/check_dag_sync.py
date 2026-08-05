@@ -174,9 +174,23 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.core.entity._expressions": frozenset(
         {"parallax.core.metamodel", "parallax.core.op_algebra"}
     ),
+    # The Snapshot slice's own node-inspection surface is scoped apart from both
+    # snapshot packages: it reads a node's loaded views, pin, and milestone edge
+    # through the advanced Entity seam and nothing else, so its row proves it
+    # reaches no driver, no planner, no SQL, and no Database Port.
+    "parallax.snapshot._inspection": frozenset(
+        {
+            "parallax.core.entity",
+            "parallax.core.metamodel",
+            "parallax.core.inheritance",
+            "parallax.core.relationship",
+            "parallax.core.temporal_read",
+        }
+    ),
     "parallax.snapshot.handle": frozenset(
         {
             "parallax.snapshot.materialize",
+            "parallax.snapshot._inspection",
             "parallax.core.entity",
             "parallax.core.base",
             "parallax.core.metamodel",
@@ -201,6 +215,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.handle._wrap": frozenset(
         {
             "parallax.snapshot.materialize",
+            "parallax.snapshot._inspection",
             "parallax.core.entity",
             "parallax.core.metamodel",
             "parallax.core.relationship",

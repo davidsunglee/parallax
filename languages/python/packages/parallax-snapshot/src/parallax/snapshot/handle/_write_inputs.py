@@ -73,6 +73,7 @@ from parallax.core.unit_work import (
     VersionObservation,
     instant_literal,
 )
+from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._family import (
     axis_columns,
     declaring,
@@ -332,12 +333,6 @@ def _row_payload(
 # resolved rows while streaming them into column builders — never an         #
 # implicit read of their own, and never a merged per-row dict of their own.   #
 # --------------------------------------------------------------------------- #
-# The private slot `parallax.snapshot.handle._wrap` attaches a materialized
-# temporal node's whole-graph Pin under — the same spelling
-# `parallax.core.temporal_read.pin_of` reads.
-_PIN_ATTR: Final[str] = "__parallax_pin__"
-
-
 def source_pin(instance: object) -> Pin | None:
     """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
     or ``None`` for anything else — a fresh instance, or an edited copy
@@ -346,8 +341,8 @@ def source_pin(instance: object) -> Pin | None:
     spec §3 stale-web-edit recipe's edge-pinned re-fetch -> edited-copy ->
     optimistic ``tx.update`` writable while the view itself stays
     read-only)."""
-    pin = getattr(instance, _PIN_ATTR, None)
-    return pin if isinstance(pin, Pin) else None
+    state = snapshot_state_of(instance)
+    return None if state is None else state.pin
 
 
 def validate_source_pin(entity_name: str, pin: Pin | None) -> None:

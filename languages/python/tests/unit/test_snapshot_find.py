@@ -26,11 +26,16 @@ from parallax.core import LATEST, TX_TIME
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import FindQuery
+from parallax.core.entity import FindQuery, GraphConstructionError
 from parallax.core.entity._query import LoweredFindQuery, lower_find_query
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import deserialize
-from parallax.snapshot import DeferredFeatureError, QueryTargetError, handle
+from parallax.snapshot import (
+    DeferredFeatureError,
+    QueryTargetError,
+    SnapshotMaterializationError,
+    handle,
+)
 from parallax.snapshot.handle import _preflight
 from parallax.snapshot.materialize import Node
 
@@ -536,3 +541,34 @@ def test_two_executions_of_one_query_lower_it_twice(monkeypatch: pytest.MonkeyPa
     first, second = lowerings
     assert first is not second
     assert first == second
+
+
+# --------------------------------------------------------------------------- #
+# The materialization boundary translates a graph-construction or lifecycle    #
+# failure exactly once, and publishes nothing.                                 #
+# --------------------------------------------------------------------------- #
+def test_a_graph_construction_failure_is_translated_once_at_the_read_boundary() -> None:
+    # The read itself succeeded — one statement, one row — and the failure is in
+    # building the graph that row describes: `balance` is a Decimal member and
+    # the row carries a string, which nothing between the driver and the frozen
+    # instance would otherwise reject.
+    port = QueuePort([[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]])
+    db = handle.Database.connect(port, ACCOUNT)
+    with pytest.raises(SnapshotMaterializationError) as refusal:
+        db.find(mm.Account.where(mm.Account.id == 1))
+    assert refusal.value.code == "snapshot-materialization-failed"
+    cause = refusal.value.cause
+    assert isinstance(cause, GraphConstructionError)
+    assert cause.code == "entity-graph-invalid-value"
+    # The original defect stays diagnosable rather than being replaced.
+    assert refusal.value.__cause__ is cause
+    assert len(port.executed) == 1
+
+
+def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None:
+    # The counterpart the single translation exists to keep separate: a refusal
+    # raised before any graph was being built is never re-classified as a
+    # materialization failure.
+    db = handle.Database.connect(NoIoPort(), ACCOUNT)
+    with pytest.raises(QueryTargetError):
+        db.find(Policy.where(Policy.all))

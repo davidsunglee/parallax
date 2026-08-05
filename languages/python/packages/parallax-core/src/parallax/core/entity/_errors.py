@@ -6,19 +6,29 @@ retains structured values rather than classes, models, or declarations.
 Rejections carry a stable code drawn from a closed per-family set, so a caller
 branches on the rule that fired rather than on a message substring.
 
-The three families are disjoint by the question they answer.
+The four families are disjoint by the question they answer.
 :class:`EntityDefinitionError` says a declaration is outside the grammar;
 :class:`MetamodelDefinitionError` says a Domain Model constructor call is
-malformed before any model exists; and :class:`MetamodelLookupError` says a
-developer-facing ``models.meta(...)`` lookup found nothing.
+malformed before any model exists; :class:`MetamodelLookupError` says a
+developer-facing ``models.meta(...)`` lookup found nothing; and
+:class:`GraphConstructionError` says a caller drove the advanced Entity Graph
+Construction collaboration outside its contract.
 """
 
 from __future__ import annotations
 
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from parallax.core.metamodel import (
+        EntityIdentity,
+        MemberIdentity,
+        RelationshipIdentity,
+    )
 
 __all__ = [
     "ENTITY_DEFINITION_CODES",
+    "GRAPH_CONSTRUCTION_CODES",
     "METAMODEL_DEFINITION_CODES",
     "METAMODEL_DUPLICATE_ENTITY_CLASS",
     "METAMODEL_EMPTY",
@@ -28,6 +38,7 @@ __all__ = [
     "METAMODEL_LOOKUP_CODES",
     "EntityDefinitionError",
     "FrameworkOwnedAxisError",
+    "GraphConstructionError",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
     "ModelCopyError",
@@ -122,6 +133,60 @@ class MetamodelLookupError(LookupError):
         super().__init__(f"{code}: {message}")
         self.code = code
         self.message = message
+
+
+GRAPH_CONSTRUCTION_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "entity-graph-invalid-entity",
+        "entity-graph-invalid-member",
+        "entity-graph-allocation-closed",
+        "entity-graph-scope-closed",
+        "entity-graph-foreign-handle",
+        "entity-graph-node-already-populated",
+        "entity-graph-node-unpopulated",
+        "entity-graph-invalid-root",
+        "entity-graph-invalid-value",
+    }
+)
+"""The complete Entity Graph Construction misuse vocabulary. Every code names a
+caller contract the collaboration checks itself, so no misuse of it surfaces as
+an assertion, a :class:`LookupError`, or a partially built graph."""
+
+
+class GraphConstructionError(RuntimeError):
+    """The advanced Entity Graph Construction collaboration was driven outside
+    its contract.
+
+    A ``RuntimeError`` because every code describes caller misuse or an
+    implementation defect rather than rejected data: the same reasoning that puts
+    model-formation contract failures on ``RuntimeError`` while a stored-value
+    rejection stays a ``ValueError``.
+
+    ``index`` is the deterministic zero-based allocation index of the node the
+    failure is about, absent for a failure that is about no single node.
+    ``identity`` is the structured Entity, member, or Relationship Identity at
+    fault, and ``cause`` the original conversion failure when one exists. Neither
+    a handle, a writer, a resolution view, nor a partially built Entity is ever
+    retained here.
+    """
+
+    def __init__(
+        self,
+        *,
+        code: str,
+        message: str,
+        index: int | None = None,
+        identity: EntityIdentity | MemberIdentity | RelationshipIdentity | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        if code not in GRAPH_CONSTRUCTION_CODES:
+            raise ValueError(f"{code!r} is not a graph construction code")
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+        self.index = index
+        self.identity = identity
+        self.cause = cause
 
 
 class UnloadedRelationshipError(AttributeError):

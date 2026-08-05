@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Final
 
-__all__ = ["QueryTargetError", "SnapshotConnectionError"]
+__all__ = ["QueryTargetError", "SnapshotConnectionError", "SnapshotMaterializationError"]
 
 
 class SnapshotConnectionError(ValueError):
@@ -48,6 +48,27 @@ class SnapshotConnectionError(ValueError):
     """
 
     code: Final[str] = "snapshot-class-backed-model-required"
+
+
+class SnapshotMaterializationError(RuntimeError):
+    """Building the Entity graph failed after the read itself had succeeded.
+
+    Raised exactly once, at the materialization boundary, for a graph-construction
+    refusal, a lifecycle build failure, or a state-factory failure. The original
+    exception is the ``__cause__`` and is also carried as :attr:`cause`, so the
+    defect stays diagnosable while callers branch on one stable code.
+
+    Everything upstream keeps its own classification: query, capability,
+    transaction, adapter, SQL, and neutral-decoding failures are never re-wrapped
+    here, because none of them is a failure to build a graph. No partial graph and
+    no Snapshot is published when this raises.
+    """
+
+    code: Final[str] = "snapshot-materialization-failed"
+
+    def __init__(self, message: str, *, cause: BaseException) -> None:
+        super().__init__(message)
+        self.cause = cause
 
 
 class QueryTargetError(RuntimeError):

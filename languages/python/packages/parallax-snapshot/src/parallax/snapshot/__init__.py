@@ -6,16 +6,36 @@ composition-root entry point — application code constructs a concrete adapter
 and calls ``parallax.snapshot.connect(adapter, model)``), :class:`Snapshot`
 (``Snapshot[T]``), and :class:`Execution`. :class:`NoResultFound` /
 :class:`TooManyResultsFound` are ``Snapshot.result()`` / ``.result_or_none()``'s
-own arity errors. The four refusals are :class:`QueryTargetError`, of a query
+own arity errors. The refusals are :class:`QueryTargetError`, of a query
 whose target the connected model does not declare;
 :class:`DeferredFeatureError`, of a valid query whose execution Features this
 implementation has deferred; :class:`SnapshotConnectionError`, of a model that
-cannot materialize rows; and :class:`TransactionOwnershipError`, the
-demarcation's own refusal of a nested ``transact`` through a handle that did not
-open it. The handle classes (``Database``, ``Transaction``) and the lowering seam
-stay importable from :mod:`parallax.snapshot.handle`.
+cannot materialize rows; :class:`TransactionOwnershipError`, the demarcation's
+own refusal of a nested ``transact`` through a handle that did not open it; and
+:class:`SnapshotMaterializationError`, the one translation of a failure to build
+the Entity graph a successful read's rows describe.
+
+It also publishes the surface that inspects a node this lifecycle produced —
+:func:`is_view_loaded`, :func:`view`, :func:`pin_of`, :func:`edge_of`, their
+:class:`SnapshotInspectionError` refusal, and the
+:class:`UnloadedRelationshipError` a closed-world access raises. These live here
+rather than on ``parallax.core`` because each is a question about the lifecycle
+that materialized the node; ``UnloadedRelationshipError`` is *defined* by
+``parallax.core.entity`` and re-exported here by the package that can produce the
+unloaded state, so a caller who never touches a Snapshot can never see it raised.
+
+The handle classes (``Database``, ``Transaction``) and the lowering seam stay
+importable from :mod:`parallax.snapshot.handle`.
 """
 
+from parallax.core.entity import UnloadedRelationshipError
+from parallax.snapshot._inspection import (
+    SnapshotInspectionError,
+    edge_of,
+    is_view_loaded,
+    pin_of,
+    view,
+)
 from parallax.snapshot.handle import (
     DeferredFeatureError,
     Execution,
@@ -23,6 +43,7 @@ from parallax.snapshot.handle import (
     QueryTargetError,
     Snapshot,
     SnapshotConnectionError,
+    SnapshotMaterializationError,
     TooManyResultsFound,
     TransactionOwnershipError,
     connect,
@@ -35,7 +56,14 @@ __all__ = [
     "QueryTargetError",
     "Snapshot",
     "SnapshotConnectionError",
+    "SnapshotInspectionError",
+    "SnapshotMaterializationError",
     "TooManyResultsFound",
     "TransactionOwnershipError",
+    "UnloadedRelationshipError",
     "connect",
+    "edge_of",
+    "is_view_loaded",
+    "pin_of",
+    "view",
 ]

@@ -68,9 +68,9 @@ _INFINITY: Final[TemporalBound] = INFINITY
 # `m-opt-lock-002` (the versioned, locking-mode keyed update) — the SAME triple
 # `core/compatibility/fixtures/account.yaml` seeds.
 _ACCOUNT_SEED_ROWS: Final[list[Row]] = [
-    {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1},
-    {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1},
-    {"id": 3, "owner": "Grace", "balance": 10.00, "version": 1},
+    {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
+    {"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1},
+    {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
 ]
 _BALANCE_SEED_ROWS: Final[list[Row]] = [
     {

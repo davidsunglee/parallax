@@ -104,7 +104,9 @@ def test_update_lowers_to_its_keyed_dml() -> None:
     # INSIDE this transaction — a versioned update requires a prior
     # observation; an edited copy fetched outside the writing transaction
     # cannot be updated directly (python.md §5).
-    port = RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
+    )
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -130,7 +132,9 @@ def test_delete_of_an_observed_versioned_row_is_ungated_in_locking_mode() -> Non
     # deleted row must be fetched INSIDE this transaction first, under the
     # shared read lock. The observation licenses the write; under the default
     # locking mode it renders no gate, exactly as a keyed update does.
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
@@ -168,7 +172,8 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
     # retriable optimistic conflict — classification follows the gate, uniformly
     # across update, delete, and close. The whole unit of work still rolls back.
     port = RecordingPort(
-        rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}], write_affected=0
+        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}],
+        write_affected=0,
     )
 
     def fn(tx: Transaction) -> None:
@@ -188,7 +193,8 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
     # gate, so a zero-row shortfall IS a detected lost update and raises the
     # retriable `OptimisticLockConflictError`.
     port = RecordingPort(
-        rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}], write_affected=0
+        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}],
+        write_affected=0,
     )
 
     def fn(tx: Transaction) -> None:
@@ -440,7 +446,9 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     # top-level member is untouched, never a violation, on any mutation but
     # `insert`. The version advances from this unit of work's own recorded
     # observation (`tx.find`), never a row-carried value (`m-opt-lock`).
-    port = RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": 100.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
+    )
 
     def fn(tx: Transaction) -> None:
         tx.find(mm.Account.where(mm.Account.id == 1)).result()
@@ -660,7 +668,9 @@ def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None
 
 
 def test_keyed_terminate_on_a_non_temporal_target_forbids_valid_from() -> None:
-    port = RecordingPort(rows=[{"id": 3, "owner": "Grace", "balance": 10.00, "version": 1}])
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 3)).result()
