@@ -349,9 +349,9 @@ def find_history(
     root-only graph per milestone, each with its OWN merge scope — graph-local
     identity never promises reuse across milestones.
 
-    Each row is converted into its own milestone's scope as it materializes and
-    released there, so the partition holds converted nodes rather than a second
-    copy of the result set; ordering is by the edge that OPENED each milestone,
+    Each row is converted into its own milestone's scope as it materializes, so
+    the partition holds converted nodes rather than a second copy of the result
+    set; ordering is by the edge that OPENED each milestone,
     which is why the chronological rank is taken off the row while it is still
     live. The graphs come out in chronological edge order (Valid Time first,
     matching the corpus's own authored `then.graphs` order) rather than in the

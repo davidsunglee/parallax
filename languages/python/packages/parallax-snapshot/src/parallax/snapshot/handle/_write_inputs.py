@@ -165,8 +165,8 @@ class _ObservedRow:
     Predecessor Row complete. ``document`` is the raw Structured Column under
     Relational Document Layout.
 
-    It holds neither a raw driver row nor a materialized node, so the read
-    executor is free to release both the moment a level has been observed.
+    It holds neither a raw driver row nor a materialized node, so an observation
+    outlives the read that produced it without pinning either.
     """
 
     entity: str

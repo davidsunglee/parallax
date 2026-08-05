@@ -112,8 +112,8 @@ def test_a_participating_find_hands_the_executor_a_collector() -> None:
 def test_the_collector_takes_every_attached_level_row_as_that_level_lands() -> None:
     # A deep fetch materializes the root and then each level, and the collector
     # takes every one of those rows — not only the root's. Each record carries
-    # that row's OWN physical columns, so the executor is free to release the raw
-    # row (and the node built from it) as soon as the level is done with it.
+    # that row's OWN physical columns, so an observation reads back without the
+    # row it was taken from or the node built beside it.
     from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     policy_row: Row = {
         "id": 1,
