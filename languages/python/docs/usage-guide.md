@@ -1443,6 +1443,114 @@ Spec-level idioms whose choreography spans more than any single corpus
 case: each recipe cites its normative spec section and the tests that
 grade it end-to-end (never a borrowed case id).
 
+### Optional to one — the 1..1 and 0..1 declarations and the three runtime states
+
+Spec: `python.md` §2 (a to-one's multiplicity is its foreign key's nullability) and §3 (closed-world relationships and `is_view_loaded`). Graded by `tests/api/test_snapshot_recipes.py` (real Postgres: the 1..1 instance, the 0..1 loaded null, and the unloaded arm of both, distinguished by `is_view_loaded` and by the refusal an unloaded access raises).
+
+```python
+class OrderStatus(
+    Entity,
+    table="order_status",
+    namespace=_NS,
+    indices=(index("order_status_order_id", "order_id"),),
+):
+    """Mirror of the ``OrderStatus`` entity of ``models/orders.yaml``: each
+    status belongs to an ``Order`` and OPTIONALLY to a specific ``OrderItem``
+    (a nullable many-to-one — the to-one navigate/deep-fetch nullable shape)."""
+
+    id: Attr[int] = attr(primary_key=True)
+    order_id: Attr[int]
+    order_item_id: Attr[int | None]
+    code: Attr[str] = attr(max_length=16)
+    order: Rel[Order | None] = rel(reverse_of="statuses")
+    order_item: Rel[OrderItem | None] = rel(reverse_of="statuses")
+
+
+def read_to_one_relationship_states(db: Database) -> tuple[Snapshot[Any], Snapshot[Any]]:
+    """The three runtime states a to-one relationship takes, over one Entity that
+    declares both multiplicities. A to-one's multiplicity is its foreign key's
+    nullability: ``order_id`` is non-nullable, so ``order`` is 1..1 and every
+    status resolves it to an instance, while ``order_item_id`` is nullable, so
+    ``order_item`` is 0..1 and an order-level status resolves it to ``None`` — a
+    LOADED null, not an absence of knowledge. Both are spelled ``Rel[T | None]``
+    because both are REVERSE directions, where nothing in the model guarantees a
+    counterpart row; a DEFINING to-one instead spells its key's nullability in
+    the annotation itself (``Rel[Customer]`` versus ``Rel["Coupon | None"]``) and
+    a mismatch is refused at model construction.
+
+    The second read includes neither, leaving both UNLOADED: access raises
+    ``UnloadedRelationshipError`` and issues no SQL, and
+    ``is_view_loaded(node, OrderStatus.order_item)`` is what tells that state
+    apart from the loaded null (``False`` versus ``True``)."""
+    included = db.find(
+        OrderStatus.where(OrderStatus.all).include(OrderStatus.order, OrderStatus.order_item)
+    )
+    return included, db.find(OrderStatus.where(OrderStatus.all))
+```
+
+### Family materialization — table-per-hierarchy and table-per-concrete-subtype
+
+Spec: `python.md` §2 (`AbstractRoot` / `AbstractSubtype` / `ConcreteSubtype` declarations and the two strategies) and §4 (`type(node)` is the polymorphic observation). Graded by `tests/api/test_snapshot_recipes.py` (real Postgres: each root read materializes one instance of each declared concrete class, carrying that branch's own members and no sibling's). The corpus-keyed siblings `m-inheritance-106`/`-107`/`-108`/`-109` grade the same materializer against their own `then.graph` goldens.
+
+```python
+class Payment(
+    Entity,
+    table="payment",
+    namespace=_NS,
+    inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
+):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+class CardPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value="card")):
+    card_network: Attr[str | None] = attr(max_length=16)
+
+
+class CashPayment(Payment, namespace=_NS, inheritance=ConcreteSubtype(tag_value="cash")):
+    tendered: Attr[Decimal | None] = attr(precision=18, scale=2)
+
+
+def read_a_table_per_hierarchy_family(db: Database) -> Snapshot[Any]:
+    """An abstract-root read of a table-per-hierarchy family: every row of the one
+    shared table, each materialized as the concrete class its declared tag value
+    names. ``type(node)`` is the observation (``python.md`` §4) — a ``CardPayment``
+    node carries ``card_network`` and no ``tendered`` at all, and a ``CashPayment``
+    node the reverse, never a sibling's null-padded column."""
+    return db.find(Payment.where(Payment.all))
+
+
+class Document(Entity, namespace=_NS, inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE)):
+    id: Attr[int] = attr(primary_key=True)
+    title: Attr[str] = attr(max_length=64)
+    folder_id: Attr[int | None]
+
+
+class FinancialDocument(Document, namespace=_NS, inheritance=AbstractSubtype):
+    currency: Attr[str] = attr(max_length=3)
+
+
+class Invoice(FinancialDocument, table="invoice", namespace=_NS, inheritance=ConcreteSubtype):
+    amount_due: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+class Receipt(FinancialDocument, table="receipt", namespace=_NS, inheritance=ConcreteSubtype):
+    paid_amount: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+class Memo(Document, table="memo", namespace=_NS, inheritance=ConcreteSubtype):
+    body: Attr[str] = attr(max_length=64)
+
+
+def read_a_table_per_concrete_subtype_family(db: Database) -> Snapshot[Any]:
+    """The same read over a table-per-concrete-subtype family, whose concretes own
+    separate tables and no tag at all: the read unions them, and each row still
+    materializes as its own declared concrete class — including one reached
+    through an intermediate abstract subtype (``Invoice``/``Receipt`` under
+    ``FinancialDocument``) and one declared directly under the root (``Memo``)."""
+    return db.find(Document.where(Document.all))
+```
+
 ### Stale web edit — Transaction-Time-Only (Balance)
 
 Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api/test_stale_web_edit.py` (real Postgres: the clean submit, the concurrent-supersession conflict, and both negative pins) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves.

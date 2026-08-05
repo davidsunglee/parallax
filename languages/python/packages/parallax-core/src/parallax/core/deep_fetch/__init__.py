@@ -500,17 +500,19 @@ def _attribute_column(facet: InheritanceFacet, attribute: AttributeIdentity) -> 
     """The PHYSICAL column ``attribute`` names on the position it is addressed at.
 
     A join reaches an Attribute through a position, which may be an inheritance
-    participant that inherits it, so the search widens to the family root's own
-    projection superset. A standalone Entity is its own root and its own
-    superset, so the widening is the identity there rather than a second path.
+    participant that inherits the declaration, so the lookup runs over that
+    position's own ancestry chain — the members applicable there — rather than
+    over the family-wide projection superset. Disjoint sibling branches may reuse
+    a member name (`m-inheritance` "Members do not shadow across ancestry"), so
+    the superset can hold two same-named Attributes over different Columns and
+    only the chain says which one the join addresses.
     """
-    root = _entity_view(facet, attribute.entity).root
-    for candidate in _entity_view(facet, root).superset_attributes:
-        if candidate.identity.name == attribute.name:
-            return candidate.storage.name
-    raise DeepFetchError(  # pragma: no cover - guards an unvalidated relationship
-        f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute"
-    )
+    declared = _entity_view(facet, attribute.entity).applicable_attribute(attribute.name)
+    if declared is None:  # pragma: no cover - guards an unvalidated relationship
+        raise DeepFetchError(
+            f"{attribute.entity.canonical}: {attribute.name!r} names no declared attribute"
+        )
+    return declared.storage.name
 
 
 def _narrowed_position(

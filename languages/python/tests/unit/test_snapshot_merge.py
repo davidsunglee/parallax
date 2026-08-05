@@ -185,6 +185,28 @@ def test_a_view_both_projections_carried_wires_exactly_once() -> None:
     assert root.items[0].order is root
 
 
+def test_each_to_many_view_keeps_its_own_order_through_the_merge() -> None:
+    # The diamond's two views are ordered differently by their own declared
+    # `orderBy`, and both reach the same two logical rows. Merging shares one
+    # instance per row, so a per-view order that survived only because the two
+    # tuples happened to hold distinct objects would be indistinguishable from
+    # one that did not — which is what a REVERSED sibling states.
+    builder = GraphBuilder(_STORY_ORDERS)
+    order = builder.node("Order", _ORDER_ROW)
+    first_by_id = builder.node("OrderItem", {**_ITEM_ROW, "id": 12, "sku": "later"})
+    second_by_id = builder.node("OrderItem", _ITEM_ROW)
+    first_by_ship_date = builder.node("OrderItem", _ITEM_ROW)
+    second_by_ship_date = builder.node("OrderItem", {**_ITEM_ROW, "id": 12, "sku": "later"})
+    builder.attach(order, "Order.items", (first_by_id, second_by_id))
+    builder.attach(order, "Order.itemsByShipDate", (first_by_ship_date, second_by_ship_date))
+    (root,) = builder.materialize(order)
+    assert isinstance(root, _soOrder)
+    assert [item.id for item in root.items] == [12, 11]
+    assert [item.id for item in root.items_by_ship_date] == [11, 12]
+    assert root.items[0] is root.items_by_ship_date[1]
+    assert root.items[1] is root.items_by_ship_date[0]
+
+
 def test_a_scalar_the_first_projection_carries_wins_without_comparison() -> None:
     # Duplicate projections of one logical node are value-identical by
     # construction — same row, same pin — so the merge takes the first entry it
