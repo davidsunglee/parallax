@@ -17,6 +17,8 @@ from typing import Any, cast
 import pytest
 
 from _support import snapshot_models as sm
+from parallax.core import Attr, Bitemporal, attr
+from parallax.core.base import INFINITY
 from parallax.core.entity import (
     GRAPH_CONSTRUCTION_CODES,
     LOADED_NULL,
@@ -91,6 +93,11 @@ class _ClasslessSource:
     @property
     def entities(self) -> tuple[UnresolvedEntityDeclaration, ...]:
         return (sm.SnapOrderStatus,)
+
+
+class _RootsSubclass(tuple[Any, ...]):
+    """A caller-defined collection subtype: a ``tuple`` for ``isinstance``, and
+    still not the exact built-in the seams take."""
 
 
 def _one_order(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
@@ -293,6 +300,11 @@ def test_a_build_callback_answering_something_other_than_handles_is_refused() ->
         del writer
         return []
 
+    def answers_a_tuple_subclass(writer: EntityGraphWriter) -> Any:
+        handle = writer.allocate(_ORDER)
+        writer.populate(handle, _ORDER_SCALARS, (), ())
+        return _RootsSubclass((handle,))
+
     def answers_a_string(writer: EntityGraphWriter) -> Any:
         del writer
         return ("root",)
@@ -300,6 +312,10 @@ def test_a_build_callback_answering_something_other_than_handles_is_refused() ->
     with pytest.raises(GraphConstructionError) as not_a_tuple:
         _construct(answers_a_list)
     assert not_a_tuple.value.code == "entity-graph-invalid-root"
+
+    with pytest.raises(GraphConstructionError) as not_exactly_a_tuple:
+        _construct(answers_a_tuple_subclass)
+    assert not_exactly_a_tuple.value.code == "entity-graph-invalid-root"
 
     with pytest.raises(GraphConstructionError) as not_a_handle:
         _construct(answers_a_string)
@@ -406,6 +422,51 @@ def test_a_to_one_direction_refuses_a_loaded_many_arm() -> None:
     assert refusal.value.code == "entity-graph-invalid-value"
 
 
+def test_a_node_handle_publishes_nothing_a_build_callback_could_read() -> None:
+    # The handle is the whole of what a callback holds between allocation and
+    # publication, so a public attribute on it would hand that callback the
+    # partially built instances a failed construction must leave unreachable, and
+    # an allocation index the writer alone owns.
+    captured: list[NodeHandle] = []
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        handle = writer.allocate(_ORDER)
+        captured.append(handle)
+        writer.populate(handle, _ORDER_SCALARS, (), ())
+        return (handle,)
+
+    _construct(build)
+    handle = captured[0]
+    assert [name for name in dir(handle) if not name.startswith("__")] == []
+    with pytest.raises(AttributeError):
+        cast("Any", handle).index = 0
+
+
+@pytest.mark.parametrize(
+    "collection",
+    [
+        pytest.param(list, id="a-mutable-collection"),
+        pytest.param(_RootsSubclass, id="a-caller-defined-collection-subtype"),
+    ],
+)
+def test_a_loaded_many_arm_carries_only_an_exact_tuple_of_handles(collection: Any) -> None:
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        order = writer.allocate(_ORDER)
+        item = writer.allocate(_ITEM)
+        writer.populate(item, _ITEM_SCALARS, (), ())
+        writer.populate(
+            order,
+            _ORDER_SCALARS,
+            (),
+            (EntityRelationshipInput(_rel(_ORDER, "items"), LoadedMany(collection((item,)))),),
+        )
+        raise AssertionError("unreachable")
+
+    with pytest.raises(GraphConstructionError) as refusal:
+        _construct(build)
+    assert refusal.value.code == "entity-graph-invalid-value"
+
+
 def test_a_value_that_is_no_relationship_arm_at_all_is_refused() -> None:
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         item = writer.allocate(_ITEM)
@@ -504,11 +565,17 @@ def test_a_many_occurrence_preserves_its_record_order() -> None:
     assert [tag.label for tag in cast("Any", root).tags] == ["first", "second"]
 
 
-def test_a_many_occurrence_refuses_anything_but_an_exact_tuple() -> None:
+@pytest.mark.parametrize(
+    "collection",
+    [
+        pytest.param(list, id="a-mutable-collection"),
+        pytest.param(_RootsSubclass, id="a-caller-defined-collection-subtype"),
+    ],
+)
+def test_a_many_occurrence_refuses_anything_but_an_exact_tuple(collection: Any) -> None:
+    records = collection((_tag("x", occurrence=_TAGS),))
     with pytest.raises(GraphConstructionError) as refusal:
-        _construct(
-            _status(ValueObjectOccurrenceInput(_TAGS, cast("Any", [_tag("x", occurrence=_TAGS)])))
-        )
+        _construct(_status(ValueObjectOccurrenceInput(_TAGS, records)))
     assert refusal.value.code == "entity-graph-invalid-value"
 
 
@@ -542,6 +609,55 @@ def test_a_null_one_occurrence_is_the_documents_own_absent_state() -> None:
     # nullability verdict here would contradict that collapse.
     (root,) = _construct(_status(ValueObjectOccurrenceInput(_PRIMARY_TAG, None)))
     assert cast("Any", root).primary_tag is None
+
+
+# --------------------------------------------------------------------------- #
+# Native infinity, admitted only where a temporal interval is left open.        #
+# --------------------------------------------------------------------------- #
+
+
+class _Milestone(Bitemporal, table="graph_milestone", namespace="parallax.test"):
+    id: Attr[int] = attr(primary_key=True)
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+
+
+_MILESTONES = DomainModel(_Milestone)
+_MILESTONE = _Milestone.identity
+
+
+def _bound(name: str) -> tuple[object, ...]:
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        node = writer.allocate(_MILESTONE)
+        writer.populate(
+            node,
+            (
+                EntityAttributeInput(_attr(_MILESTONE, "id"), 1),
+                EntityAttributeInput(_attr(_MILESTONE, "amount"), Decimal("1.00")),
+                EntityAttributeInput(_attr(_MILESTONE, name), INFINITY),
+            ),
+            (),
+            (),
+        )
+        return (node,)
+
+    return entity_runtime_of(_MILESTONES).construct(build)
+
+
+@pytest.mark.parametrize("name", ["txEnd", "validEnd"])
+def test_a_temporal_end_attribute_carries_the_open_upper_bound(name: str) -> None:
+    (root,) = _bound(name)
+    assert getattr(root, "tx_end" if name == "txEnd" else "valid_end") is INFINITY
+
+
+@pytest.mark.parametrize("name", ["txStart", "validStart"])
+def test_a_temporal_start_attribute_admits_no_infinity(name: str) -> None:
+    # Native infinity is the OPEN UPPER BOUND of a temporal interval (m-core);
+    # a milestone's start is a finite instant like any other timestamp, however
+    # framework-owned both endpoints are.
+    with pytest.raises(GraphConstructionError) as refusal:
+        _bound(name)
+    assert refusal.value.code == "entity-graph-invalid-value"
+    assert refusal.value.identity == _attr(_MILESTONE, name)
 
 
 # --------------------------------------------------------------------------- #
@@ -708,6 +824,10 @@ def test_a_model_that_composed_no_entity_class_can_construct_no_graph() -> None:
     "entries",
     [
         pytest.param([EntityAttributeInput(_attr(_ORDER, "id"), 1)], id="an-abstract-sequence"),
+        pytest.param(
+            _RootsSubclass((EntityAttributeInput(_attr(_ORDER, "id"), 1),)),
+            id="a-caller-defined-collection-subtype",
+        ),
         pytest.param(("id",), id="a-wrong-carrier-type"),
     ],
 )

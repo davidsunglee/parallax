@@ -214,7 +214,7 @@ class _EntityFacts:
     attributes: tuple[AttributeMetadata, ...]
     attribute_py: Mapping[AttributeIdentity, str]
     attribute_meta: Mapping[AttributeIdentity, AttributeMetadata]
-    axis_governed: frozenset[AttributeIdentity]
+    open_ended: frozenset[AttributeIdentity]
     value_objects: tuple[ValueObjectMetadata, ...]
     value_object_py: Mapping[ValueObjectIdentity, str]
     value_object_class: Mapping[ValueObjectIdentity, type]
@@ -247,15 +247,12 @@ def _entity_facts(model: Metamodel, classes: ClassIndex, identity: EntityIdentit
     names = wire_names_of(cls)
     attribute_py: dict[AttributeIdentity, str] = {}
     attribute_meta: dict[AttributeIdentity, AttributeMetadata] = {}
-    axis_governed: set[AttributeIdentity] = set()
     for attribute in attributes:
         py_name = names.name_to_py.get(attribute.identity.name)
         if py_name is None:  # pragma: no cover - a composed class carries every family member
             continue
         attribute_py[attribute.identity] = py_name
         attribute_meta[attribute.identity] = attribute
-        if py_name in names.axis_governed_py:
-            axis_governed.add(attribute.identity)
     value_object_py: dict[ValueObjectIdentity, str] = {}
     value_object_class: dict[ValueObjectIdentity, type] = {}
     for occurrence in value_objects:
@@ -280,13 +277,34 @@ def _entity_facts(model: Metamodel, classes: ClassIndex, identity: EntityIdentit
         attributes=attributes,
         attribute_py=attribute_py,
         attribute_meta=attribute_meta,
-        axis_governed=frozenset(axis_governed),
+        open_ended=_open_ended_attributes(model, identity),
         value_objects=value_objects,
         value_object_py=value_object_py,
         value_object_class=value_object_class,
         relationship_py=relationship_py,
         relationship_many=relationship_many,
     )
+
+
+def _open_ended_attributes(
+    model: Metamodel, identity: EntityIdentity
+) -> frozenset[AttributeIdentity]:
+    """The Attributes whose value space admits ``m-core``'s native infinity: each
+    declared As-Of Axis's **end** Attribute, and nothing else.
+
+    Infinity is the open upper bound of a temporal interval, so an axis's start
+    Attribute — a finite instant like any other timestamp — is excluded even
+    though both endpoints are framework-owned. The axes are family-wide metadata
+    declared on the family root, reached here through the ancestry chain.
+    """
+    position = inheritance_view(model).entity(identity)
+    chain = tuple(position.ancestry) if position is not None else (identity,)
+    ends: set[AttributeIdentity] = set()
+    for ancestor in chain:
+        metadata = model.entity(ancestor)
+        if metadata is not None:  # pragma: no branch - every ancestry member is accepted
+            ends.update(axis.end_attribute for axis in metadata.declared_as_of_axes)
+    return frozenset(ends)
 
 
 def _navigable_relationships(
@@ -318,55 +336,66 @@ def _navigable_relationships(
 # --------------------------------------------------------------------------- #
 
 
-class _CallScope:
-    """One ``construct(...)`` call's private state — the identity a handle belongs
-    to, and the allocation-indexed arrays every phase reads back."""
-
-    __slots__ = ("closed", "facts", "instances", "populated")
-
-    def __init__(self) -> None:
-        self.closed = False
-        self.facts: list[_EntityFacts] = []
-        self.instances: list[object] = []
-        self.populated: list[bool] = []
-
-
 class NodeHandle:
     """An opaque, callback-scoped reference to one allocated node.
 
-    It carries no ordering and no meaning outside the ``construct(...)`` call
-    that issued it: a caller composes graph shape by passing handles back, never
-    by reading anything off one. What it holds is the issuing call's state and
-    that node's allocation index, and both are opaque outside this module —
-    ``_CallScope`` is module-private, and the index names a slot only this module
-    can index into.
+    It holds nothing whatever: the issuing construction owns the mapping from
+    handle to allocation index, so a handle exposes no attribute to read, no
+    index to restate, and no route to a partially built instance. A caller
+    composes graph shape by passing handles back, never by reading anything off
+    one, and a handle means nothing outside the ``construct(...)`` call that
+    issued it.
     """
 
-    __slots__ = ("index", "scope")
-
-    scope: _CallScope
-    index: int
-
-    def __init__(self, scope: _CallScope, index: int) -> None:
-        self.scope = scope
-        self.index = index
-
-    def __repr__(self) -> str:  # pragma: no cover - debug aid only
-        return f"NodeHandle(#{self.index})"
+    __slots__ = ()
 
 
-def _scoped(scope: _CallScope, candidate: object, *, operation: str) -> NodeHandle:
-    """``candidate`` as a handle of ``scope``, or the foreign-handle refusal.
+class _CallScope:
+    """One ``construct(...)`` call's private state — the allocation-indexed arrays
+    every phase reads back, and the handles naming them.
+
+    Because a handle carries no state, belonging is a lookup here rather than a
+    comparison there: a handle names a node exactly when this scope issued it,
+    which is what makes a foreign handle and a value that is no handle at all one
+    and the same miss.
+    """
+
+    __slots__ = ("_indices", "facts", "handles", "instances", "populated")
+
+    def __init__(self) -> None:
+        self.facts: list[_EntityFacts] = []
+        self.handles: list[NodeHandle] = []
+        self.instances: list[object] = []
+        self.populated: list[bool] = []
+        self._indices: dict[int, int] = {}
+
+    def issue(self) -> NodeHandle:
+        """A fresh handle naming the next allocation index."""
+        handle = NodeHandle()
+        self._indices[id(handle)] = len(self.handles)
+        self.handles.append(handle)
+        return handle
+
+    def index_of(self, candidate: object) -> int | None:
+        """``candidate``'s allocation index, or ``None`` when this construction
+        issued no such handle. Every issued handle is retained, so no later object
+        can take a dead handle's identity."""
+        return self._indices.get(id(candidate))
+
+
+def _index_of(scope: _CallScope, candidate: object, *, operation: str) -> int:
+    """``candidate``'s allocation index in ``scope``, or the foreign-handle refusal.
 
     A value that is no handle at all is refused the same way a handle from
     another construction is: neither names a node this construction allocated.
     """
-    if isinstance(candidate, NodeHandle) and candidate.scope is scope:
-        return candidate
-    raise GraphConstructionError(
-        code="entity-graph-foreign-handle",
-        message=f"{operation} accepts only a node handle this construction allocated",
-    )
+    index = scope.index_of(candidate)
+    if index is None:
+        raise GraphConstructionError(
+            code="entity-graph-foreign-handle",
+            message=f"{operation} accepts only a node handle this construction allocated",
+        )
+    return index
 
 
 class EntityGraphWriter:
@@ -403,11 +432,10 @@ class EntityGraphWriter:
                 identity=entity,
             )
         facts = self._construction.facts_for(entity)
-        index = len(self._scope.facts)
         self._scope.facts.append(facts)
         self._scope.instances.append(_shell(facts))
         self._scope.populated.append(False)
-        return NodeHandle(self._scope, index)
+        return self._scope.issue()
 
     def populate(
         self,
@@ -424,8 +452,7 @@ class EntityGraphWriter:
         """
         self._require_open()
         self._allocation_closed = True
-        scoped = _scoped(self._scope, handle, operation="populate")
-        index = scoped.index
+        index = _index_of(self._scope, handle, operation="populate")
         if self._scope.populated[index]:
             raise GraphConstructionError(
                 code="entity-graph-node-already-populated",
@@ -470,8 +497,7 @@ class ResolutionView:
                 code="entity-graph-scope-closed",
                 message="this resolution view closed when its factory invocation returned",
             )
-        scoped = _scoped(self._scope, handle, operation="resolve")
-        return self._scope.instances[scoped.index]
+        return self._scope.instances[_index_of(self._scope, handle, operation="resolve")]
 
     def close(self) -> None:
         """Close this view; its one factory invocation has returned."""
@@ -521,13 +547,11 @@ class EntityGraphConstruction:
         finally:
             writer.close()
         _require_populated(scope)
-        handles = _validated_roots(scope, roots)
+        published = _validated_roots(scope, roots)
         states = _factory_results(scope, state_factory)
         for index, state in enumerate(states):
             object.__setattr__(scope.instances[index], LIFECYCLE_STATE_SLOT, state)
-        published = tuple(scope.instances[handle.index] for handle in handles)
-        scope.closed = True
-        return published
+        return tuple(scope.instances[index] for index in published)
 
     def facts_for(self, entity: EntityIdentity) -> _EntityFacts:
         """``entity``'s derived construction facts, computed once per model."""
@@ -616,32 +640,35 @@ def _require_populated(scope: _CallScope) -> None:
             )
 
 
-def _validated_roots(scope: _CallScope, roots: object) -> tuple[NodeHandle, ...]:
-    """``roots`` as handles, checked left to right for shape, then construction,
-    then membership."""
-    if not isinstance(roots, tuple):
+def _validated_roots(scope: _CallScope, roots: object) -> tuple[int, ...]:
+    """The roots' allocation indices, checked left to right for value shape and
+    then for the construction that issued each handle.
+
+    Membership needs no third check: an index exists exactly for a handle this
+    construction issued, and issuing one is what allocating a node does.
+    """
+    if type(roots) is not tuple:
         raise GraphConstructionError(
             code="entity-graph-invalid-root",
-            message=f"a build callback answers a tuple of node handles, not {type(roots).__name__}",
+            message=(
+                "a build callback answers an exact tuple of node handles, "
+                f"not {type(roots).__name__}"
+            ),
         )
-    checked: list[NodeHandle] = []
+    checked: list[int] = []
     for position, candidate in enumerate(cast("tuple[object, ...]", roots)):
         if not isinstance(candidate, NodeHandle):
             raise GraphConstructionError(
                 code="entity-graph-invalid-root",
                 message=(f"root {position} is a {type(candidate).__name__}, not a node handle"),
             )
-        if candidate.scope is not scope:
+        index = scope.index_of(candidate)
+        if index is None:
             raise GraphConstructionError(
                 code="entity-graph-foreign-handle",
                 message=f"root {position} was allocated by another construction",
             )
-        if not 0 <= candidate.index < len(scope.instances):  # pragma: no cover
-            raise GraphConstructionError(
-                code="entity-graph-invalid-root",
-                message=f"root {position} names no node this construction allocated",
-            )
-        checked.append(candidate)
+        checked.append(index)
     return tuple(checked)
 
 
@@ -658,10 +685,10 @@ def _factory_results(
     if state_factory is None:
         return ()
     buffered: list[object] = []
-    for index in range(len(scope.instances)):
+    for handle in scope.handles:
         view = ResolutionView(scope)
         try:
-            buffered.append(state_factory(view, NodeHandle(scope, index)))
+            buffered.append(state_factory(view, handle))
         finally:
             view.close()
     return tuple(buffered)
@@ -712,7 +739,7 @@ def _populate(
             index=index,
             identity=attribute.identity,
             label=f"{facts.identity.canonical}.{attribute.identity.name}",
-            open_ended=attribute.identity in facts.axis_governed,
+            open_ended=attribute.identity in facts.open_ended,
         )
         object.__setattr__(
             instance,
@@ -765,7 +792,7 @@ def _indexed[T: _Identified](
 ) -> dict[object, T]:
     """``entries`` keyed by structured identity, rejecting a wrong carrier, an
     undeclared member, and a duplicate within this node."""
-    if not isinstance(cast("object", entries), tuple):
+    if type(cast("object", entries)) is not tuple:
         raise GraphConstructionError(
             code="entity-graph-invalid-member",
             message=f"{kind} entries arrive as an exact tuple, not {type(entries).__name__}",
@@ -818,10 +845,11 @@ def _check_value(
     construction bypasses Pydantic validation, so the writer's own Neutral Value
     check is what stands in its place.
 
-    ``open_ended`` names an axis-governed interval bound, whose value space
+    ``open_ended`` names a temporal interval's end Attribute, whose value space
     additionally admits ``m-core``'s native-infinity sentinel — the open upper
     bound is a temporal fact distinct from every finite instant and from ``None``,
-    and it is what a current milestone's end attribute actually carries.
+    and it is what a current milestone's end attribute actually carries. A start
+    Attribute is a finite instant and admits no sentinel.
 
     ``collapsed`` names a document-resident position, where ``None`` is the
     member's own NOT-PRESENT state rather than a stored null: reading a document
@@ -872,8 +900,20 @@ def _relationship_value(
                 index=index,
                 identity=identity,
             )
+        nodes = cast("object", arm.nodes)
+        if type(nodes) is not tuple:
+            raise GraphConstructionError(
+                code="entity-graph-invalid-value",
+                message=(
+                    f"{identity.name} takes a loaded-many arm of an exact tuple of node "
+                    f"handles, not {type(nodes).__name__}"
+                ),
+                index=index,
+                identity=identity,
+            )
         return tuple(
-            scope.instances[_scoped(scope, node, operation="populate").index] for node in arm.nodes
+            scope.instances[_index_of(scope, node, operation="populate")]
+            for node in cast("tuple[object, ...]", nodes)
         )
     if many:
         raise GraphConstructionError(
@@ -885,7 +925,7 @@ def _relationship_value(
     if isinstance(arm, LoadedNull):
         return None
     if isinstance(arm, LoadedOne):
-        return scope.instances[_scoped(scope, arm.node, operation="populate").index]
+        return scope.instances[_index_of(scope, arm.node, operation="populate")]
     raise GraphConstructionError(
         code="entity-graph-invalid-value",
         message=f"{identity.name} received {type(arm).__name__}, which is no relationship arm",
@@ -903,16 +943,18 @@ def _build_occurrence(
     entity: EntityIdentity,
 ) -> object:
     """One Value Object occurrence as frozen instances, checked for container
-    shape first."""
+    shape first.
+
+    A Many occurrence has no absent state at all: it takes an exact tuple, empty
+    for its zero-element value.
+    """
     identity = declared.identity
+    label = f"{entity.canonical}.{'.'.join(identity.path)}"
     if declared.multiplicity is Multiplicity.MANY:
-        if not isinstance(value, tuple):
+        if type(value) is not tuple:
             raise GraphConstructionError(
                 code="entity-graph-invalid-value",
-                message=(
-                    f"{entity.canonical}.{'.'.join(identity.path)} is a Many occurrence and "
-                    "takes an exact tuple of records"
-                ),
+                message=f"{label} is a Many occurrence and takes an exact tuple of records",
                 index=index,
                 identity=identity,
             )
@@ -979,6 +1021,9 @@ def _build_record(
     for leaf in declared.attributes:
         py_name = _member_py(shape, leaf.identity.name)
         entry = leaves.get(leaf.identity)
+        label = (
+            f"{entity.canonical}.{'.'.join(leaf.identity.value_object.path)}.{leaf.identity.name}"
+        )
         if entry is None:
             values[py_name] = None
             continue
@@ -988,10 +1033,7 @@ def _build_record(
             nullable=leaf.nullable,
             index=index,
             identity=leaf.identity,
-            label=(
-                f"{entity.canonical}."
-                f"{'.'.join(leaf.identity.value_object.path)}.{leaf.identity.name}"
-            ),
+            label=label,
             collapsed=True,
         )
         present.add(py_name)
