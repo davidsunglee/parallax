@@ -448,7 +448,7 @@ def reduce_declared_members(
                 try:
                     reduced[member.name] = decode_leaf(member.type, raw)
                 except LeafEncodingError as exc:
-                    raise LeafEncodingError(f"{member.name}: {exc}") from exc
+                    raise exc.under(member.name) from exc
         elif member.multiplicity is Multiplicity.MANY:
             if raw is None:
                 values: Sequence[object] = ()
@@ -457,7 +457,9 @@ def reduce_declared_members(
             elif collapse_invalid_occurrences:
                 values = ()
             else:
-                raise LeafEncodingError(f"{member.name}: expected array, got {type(raw).__name__}")
+                raise LeafEncodingError(
+                    f"expected array, got {type(raw).__name__}", path=(member.name,)
+                )
             try:
                 reduced[member.name] = [
                     reduce_declared_members(
@@ -468,7 +470,7 @@ def reduce_declared_members(
                     for value in values
                 ]
             except LeafEncodingError as exc:
-                raise LeafEncodingError(f"{member.name}.{exc}") from exc
+                raise exc.under(member.name) from exc
         else:
             nested_names = None if names is None else names.get(member.name)
             try:
@@ -486,5 +488,5 @@ def reduce_declared_members(
                         collapse_invalid_occurrences=collapse_invalid_occurrences,
                     )
             except LeafEncodingError as exc:
-                raise LeafEncodingError(f"{member.name}.{exc}") from exc
+                raise exc.under(member.name) from exc
     return reduced

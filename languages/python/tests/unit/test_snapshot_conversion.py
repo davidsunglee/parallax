@@ -52,6 +52,7 @@ from parallax.core.model_formation import MetamodelValidationError
 from parallax.descriptor._records import (
     Attribute,
     Entity,
+    NestedValueObject,
     ValueObject,
     ValueObjectAttribute,
 )
@@ -263,12 +264,54 @@ def test_a_decoding_refusal_names_a_nested_leaf_and_exposes_no_stored_value() ->
     assert "2026-13-40" in str(refusal.value.cause)
 
 
+def test_a_decoding_refusal_separates_two_members_that_spell_one_dotted_path() -> None:
+    # `origin` holding a leaf `city.name`, and `origin.city` holding a leaf `name`,
+    # render the same dotted path, so no reading of a `.`-joined spelling can tell
+    # them apart. The codec reports its member as a sequence of declared names and
+    # the refusal resolves it step by step, which is what makes the applicable
+    # identity (`python.md` §3) the one whose stored value actually failed.
+    entity = Entity(
+        name="Twin",
+        table="twin",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        value_objects=(
+            ValueObject(
+                name="profile",
+                column="profile",
+                value_objects=(
+                    NestedValueObject(
+                        name="origin",
+                        attributes=(ValueObjectAttribute(name="city.name", type="int32"),),
+                    ),
+                    NestedValueObject(
+                        name="origin.city",
+                        attributes=(ValueObjectAttribute(name="name", type="int32"),),
+                    ),
+                ),
+            ),
+        ),
+    )
+    model = models.accepted_model(DescriptorMetamodel(entities=(entity,)))
+    with pytest.raises(SnapshotDecodingError) as refusal:
+        _converted(model, "Twin", {"id": 1, "profile": {"origin": {"city.name": "bogus"}}})
+    assert refusal.value.member == ValueObjectAttributeIdentity(
+        ValueObjectIdentity(EntityIdentity(None, "Twin"), ("profile", "origin")), "city.name"
+    )
+
+    with pytest.raises(SnapshotDecodingError) as sibling:
+        _converted(model, "Twin", {"id": 1, "profile": {"origin.city": {"name": "bogus"}}})
+    assert sibling.value.member == ValueObjectAttributeIdentity(
+        ValueObjectIdentity(EntityIdentity(None, "Twin"), ("profile", "origin.city")), "name"
+    )
+
+
 def test_a_decoding_refusal_resolves_a_leaf_whose_own_name_carries_a_dot() -> None:
     # Only an Entity name is dot-free; a member name is any nonempty string
     # (m-metamodel "Canonical identities and order"). The codec reports the failing
-    # member as a `.`-joined path, so resolving it by splitting on every separator
-    # would find no such leaf and report the containing occurrence instead — a
-    # `ValueObjectIdentity` where the applicable identity is the leaf's own.
+    # member as a sequence of declared names, so resolving it by splitting a
+    # rendered path on every separator would find no such leaf and report the
+    # containing occurrence instead — a `ValueObjectIdentity` where the applicable
+    # identity is the leaf's own.
     entity = Entity(
         name="Dotted",
         table="dotted",

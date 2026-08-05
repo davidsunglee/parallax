@@ -13,9 +13,12 @@ loop exists exactly once on the developer-facing path.
 
 Each level's rows are converted as they arrive and released immediately: a
 converted node names its correlation members, so the next level gathers its keys
-off the converted parent rather than off a retained row. Nothing below this
-module holds a row, and no row survives into the graph input, the Snapshot, or
-the observation record.
+off the converted parent rather than off a retained row. The port answers one
+statement with its whole `list[Row]` (`m-db-port`), so that list is the level's
+own lifetime; what this module never does is materialize a second copy of it or
+keep a row reachable past its conversion. Nothing below this module holds a row,
+and no row survives into the graph input, the Snapshot, or the observation
+record.
 
 The executor's own results (:class:`ExecutedStatement`, :class:`Execution`,
 :class:`FindResult`, :class:`HistoryFindResult`) stay
@@ -30,7 +33,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra
@@ -228,6 +231,20 @@ class HistoryFindResult:
     execution: Execution
 
 
+def _new_roots() -> list[SnapshotNodeRef]:
+    return []
+
+
+@dataclass(slots=True)
+class _Milestone:
+    """One milestone-set partition under construction: its own merge scope, the
+    chronological rank of the row that opened it, and its converted roots."""
+
+    scope: MergeScope
+    rank: tuple[object, ...]
+    roots: list[SnapshotNodeRef] = field(default_factory=_new_roots)
+
+
 def find(
     op: op_algebra.Operation,
     meta: Metamodel,
@@ -331,10 +348,16 @@ def find_history(
     full matching milestone SET in one statement, partitioned here by each
     row's own edge (`~parallax.core.temporal_read.milestone_edge`) into one
     root-only graph per milestone, each with its OWN merge scope — graph-local
-    identity never promises reuse across milestones. Rows are grouped in
-    chronological edge order (Valid Time first, matching the corpus's own authored
-    `then.graphs` order) rather than relying on the database's unspecified natural
-    row order.
+    identity never promises reuse across milestones.
+
+    Each row is converted into its own milestone's scope as it materializes and
+    released there, so the partition holds converted nodes rather than a second
+    copy of the result set; ordering is by the edge that OPENED each milestone,
+    which is why the chronological rank is taken off the row while it is still
+    live. The graphs come out in chronological edge order (Valid Time first,
+    matching the corpus's own authored `then.graphs` order) rather than in the
+    database's unspecified natural row order, and rows within one milestone keep
+    that natural order.
     """
     metadata = _metadata(meta, target)
     plan_ = deep_fetch.plan(metadata, op, meta)
@@ -350,27 +373,25 @@ def find_history(
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root_operation, meta, dialect, metadata, result_form="instance")
     statements: list[ExecutedStatement] = []
-    order: list[Edge] = []
-    groups: dict[Edge, list[MaterializedReadRow]] = {}
-    for row in sorted(
-        _execute_compiled(port, dialect, compiled, statements),
-        key=lambda row: _edge_sort_key(entity, row.values),
-    ):
+    milestones: dict[Edge, _Milestone] = {}
+    for row in _execute_compiled(port, dialect, compiled, statements):
         edge = milestone_edge(entity, row.values)
-        if edge not in groups:
-            groups[edge] = []
-            order.append(edge)
-        groups[edge].append(row)
-
-    graphs: list[SnapshotGraphInput] = []
-    for edge in order:
-        scope = MergeScope(meta)
-        refs = tuple(
-            convert_row(row.values, LevelContext(row.resolved_entity, compiled.documents), scope)
-            for row in groups.pop(edge)
+        milestone = milestones.get(edge)
+        if milestone is None:
+            milestone = _Milestone(MergeScope(meta), _edge_sort_key(entity, row.values))
+            milestones[edge] = milestone
+        milestone.roots.append(
+            convert_row(
+                row.values,
+                LevelContext(row.resolved_entity, compiled.documents),
+                milestone.scope,
+            )
         )
-        graphs.append(scope.build(refs, _edge_pin(edge)))
-    return HistoryFindResult(graphs=tuple(graphs), execution=Execution(tuple(statements)))
+    graphs = tuple(
+        milestone.scope.build(tuple(milestone.roots), _edge_pin(edge))
+        for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
+    )
+    return HistoryFindResult(graphs=graphs, execution=Execution(tuple(statements)))
 
 
 def _convert_level(
@@ -518,10 +539,11 @@ def _execute_compiled(
     self-containment — it makes `find`'s "compile, execute, convert"
     structural rather than a convention every level has to remember.
 
-    The statement runs and is recorded on the way in; only the per-row
-    materialization is lazy, so each materialized row is reachable for exactly as
-    long as its consumer takes to convert it and the level never holds a second
-    copy of itself.
+    The statement runs and is recorded on the way in; the port's own whole-result
+    `list[Row]` is what a row-returning execute answers by contract, and only the
+    per-row materialization is lazy — so each MATERIALIZED row is reachable for
+    exactly as long as its consumer takes to convert it, and the level never
+    holds a second copy of its result set.
     """
     return map(compiled.materialize_row, _execute(port, dialect, compiled.statement, statements))
 
@@ -625,8 +647,9 @@ def _start_column(entity: EntityMetadata, axis: AcceptedAsOfAxis) -> str:
 def _edge_sort_key(entity: EntityMetadata, row: Row) -> tuple[object, ...]:
     """Valid Time first, then Transaction Time (m-sql's bind-order convention),
     each dimension's start-column value — used only to chronologically order a
-    milestone-set read's grouped graphs, never to select or filter rows. A
-    Temporal Dimension's member value IS that canonical rank."""
+    milestone-set read's per-milestone graphs, never to select or filter rows. A
+    Temporal Dimension's member value IS that canonical rank, so the row that
+    opens a milestone carries the rank of every row that joins it."""
     ordered = sorted(entity.declared_as_of_axes, key=lambda axis: axis.dimension.value)
     return tuple(row[_start_column(entity, axis)] for axis in ordered)
 
