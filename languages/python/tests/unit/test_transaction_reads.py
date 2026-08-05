@@ -2,14 +2,16 @@
 
 `Transaction.find` and `Database.find`: force-flush before a read
 (read-your-own-writes), the participation-mode lock suffix, statement and
-milestone pin derivation, history statements, and the observations a read leaves
-behind — proven through the writes they license or refuse. Also the spec §3
-stale-web-edit recipe's Docker-free halves.
+milestone pin derivation, history statements, which of the two entry points
+hands the executor an observation collector and what that collector takes, and
+the observations a read leaves behind — proven through the writes they license
+or refuse. Also the spec §3 stale-web-edit recipe's Docker-free halves.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from decimal import Decimal
 from typing import cast
 
@@ -38,26 +40,120 @@ from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import TX_TIME, opt_lock
-from parallax.core.db_port import JsonDocument, Row
-from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.db_port import DbPort, JsonDocument, Row
+from parallax.core.dialect import POSTGRES, Dialect, LockMode
+from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.op_algebra import Operation
 from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
 )
 from parallax.snapshot import DeferredFeatureError, QueryTargetError
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, FindResult, ObservationCollector, Transaction
+from parallax.snapshot.handle import _database as database_module
+from parallax.snapshot.handle import _read as handle_read
+from parallax.snapshot.handle import _transaction as transaction_module
 
 # `_pin_from_milestone` stays private because production callers are confined to
 # `_read`; this test import exercises its defensive missing-axis branch directly.
 from parallax.snapshot.handle._read import (
     _pin_from_milestone,  # pyright: ignore[reportPrivateUsage] - unit test imports a private helper to exercise directly
 )
+from parallax.snapshot.handle._write_inputs import ReadObservations
 
 # The `_pin_from_milestone` probe's own instant — deliberately NOT the shared
 # `FIXED` clock instant: this test builds a milestone pin by hand and asserts the
 # same value comes back, so it must not depend on what the fake clock is set to.
 _MILESTONE_INSTANT = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+
+
+def _recording_find(
+    calls: list[ObservationCollector | None],
+) -> Callable[..., FindResult]:
+    """A ``find`` stand-in recording the collector each call was handed.
+
+    Spelled with the executor's full signature rather than ``*args`` so the
+    recorded parameter is the real one — a rename or a move to a positional
+    parameter fails here rather than silently recording ``None`` forever.
+    """
+    real = handle_read.find
+
+    def recording(
+        op: Operation,
+        meta: Metamodel,
+        dialect: Dialect,
+        target: str,
+        port: DbPort,
+        *,
+        lock: LockMode | None = None,
+        observations: ObservationCollector | None = None,
+    ) -> FindResult:
+        calls.append(observations)
+        return real(op, meta, dialect, target, port, lock=lock, observations=observations)
+
+    return recording
+
+
+def test_a_non_transactional_find_hands_the_executor_no_observation_collector() -> None:
+    # Presence IS the decision: `Database.find` has no unit of work to observe
+    # into, so it supplies no collector at all and the executor allocates no
+    # observation state — rather than building a record and discarding it.
+    calls: list[ObservationCollector | None] = []
+    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = db_for(BALANCE, port)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(database_module, "find", _recording_find(calls))
+        db.find(mm.Balance.where(mm.Balance.id == 1)).result()
+    assert calls == [None]
+
+
+def test_a_participating_find_hands_the_executor_a_collector() -> None:
+    # The other side of the same decision: `Transaction.find` has a unit of work
+    # behind it, so it supplies the collector every observation is recorded from.
+    calls: list[ObservationCollector | None] = []
+    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = db_for(BALANCE, port)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(transaction_module, "find", _recording_find(calls))
+        db.transact(lambda tx: tx.find(mm.Balance.where(mm.Balance.id == 1)).result())
+    assert len(calls) == 1
+    assert calls[0] is not None
+
+
+def test_the_collector_takes_every_attached_level_row_as_that_level_lands() -> None:
+    # A deep fetch materializes the root and then each level, and the collector
+    # takes every one of those rows — not only the root's. Each record carries
+    # that row's OWN physical columns, so the executor is free to release the raw
+    # row (and the node built from it) as soon as the level is done with it.
+    from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    policy_row: Row = {
+        "id": 1,
+        "name": "P-1",
+        "from_z": from_z,
+        "thru_z": INFINITY_INSTANT,
+        "in_z": from_z,
+        "out_z": INFINITY_INSTANT,
+    }
+    coverage_row: Row = {
+        "id": 10,
+        "policy_id": 1,
+        "amount": Decimal("250.00"),
+        "from_z": from_z,
+        "thru_z": INFINITY_INSTANT,
+        "in_z": from_z,
+        "out_z": INFINITY_INSTANT,
+    }
+    calls: list[ObservationCollector | None] = []
+    port = RecordingPort(row_queue=([policy_row], [coverage_row]))
+    db = db_for(POLICY_MODEL, port)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(transaction_module, "find", _recording_find(calls))
+        db.transact(
+            lambda tx: tx.find(Policy.where(Policy.id == 1).include(Policy.coverages)).result()
+        )
+    collector = calls[0]
+    assert isinstance(collector, ReadObservations)
+    assert [dict(record.columns) for record in collector.rows] == [policy_row, coverage_row]
 
 
 def test_find_on_a_non_versioned_entity_records_no_observation() -> None:

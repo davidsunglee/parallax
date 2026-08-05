@@ -126,6 +126,10 @@ class RecordingPort:
     ``txn_faults`` raises at the next ``transaction`` entries (a driver failure
     the adapter translated and rolled back); ``read_faults`` raises from the
     next ``execute`` calls (a failure inside the transaction body).
+    ``row_queue`` scripts a SEQUENCE of result sets across successive ``execute``
+    calls — what a multi-statement read (a deep fetch's root then each level)
+    needs — falling back to the constant ``rows`` once exhausted, so every
+    single-result-set caller is unchanged.
     ``write_affected_queue`` scripts a SEQUENCE of
     affected-row counts across successive ``execute_write`` calls — an
     optimistic-lock retry-loop probe's own oracle: attempt 0's gated UPDATE
@@ -135,9 +139,16 @@ class RecordingPort:
     unchanged).
     """
 
-    def __init__(self, *, rows: Sequence[Row] = (), write_affected: int = 1) -> None:
+    def __init__(
+        self,
+        *,
+        rows: Sequence[Row] = (),
+        row_queue: Sequence[Sequence[Row]] = (),
+        write_affected: int = 1,
+    ) -> None:
         self.ops: list[tuple[object, ...]] = []
         self.rows = list(rows)
+        self.row_queue = [list(result) for result in row_queue]
         self.write_affected = write_affected
         self.write_affected_queue: list[int] = []
         self.txn_faults: list[DatabaseError] = []
@@ -147,7 +158,8 @@ class RecordingPort:
         if self.read_faults:
             raise self.read_faults.pop(0)
         self.ops.append(("read", sql, tuple(binds)))
-        return [dict(row) for row in self.rows]
+        result = self.row_queue.pop(0) if self.row_queue else self.rows
+        return [dict(row) for row in result]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.ops.append(("write", sql, tuple(binds)))

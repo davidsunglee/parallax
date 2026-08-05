@@ -75,6 +75,7 @@ from parallax.snapshot.handle._read import (
     snapshot_from_history_result,
 )
 from parallax.snapshot.handle._write_inputs import (
+    ReadObservations,
     metadata_of_instance,
     observation_key,
     prepare_sparse_row,
@@ -402,10 +403,19 @@ class Transaction:
                 lambda: find_history(op, self._meta, self._dialect, target, self._conn)
             )
             return snapshot_from_history_result(history_result, target, self._meta, runtime)
+        observations = ReadObservations()
         find_result = self._uow.read(
-            lambda: find(op, self._meta, self._dialect, target, self._conn, lock=lock)
+            lambda: find(
+                op,
+                self._meta,
+                self._dialect,
+                target,
+                self._conn,
+                lock=lock,
+                observations=observations,
+            )
         )
-        record_observations(self._uow, self._meta, find_result, pin)
+        record_observations(self._uow, self._meta, observations, pin)
         return snapshot_from_find_result(find_result, target, self._meta, pin, runtime)
 
     def _buffer(

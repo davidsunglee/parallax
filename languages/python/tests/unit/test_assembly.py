@@ -29,7 +29,7 @@ from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
 from parallax.core.deep_fetch import FetchLevel, LevelRef, RootRef
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.op_algebra import deserialize
 from parallax.descriptor._records import (
     Attribute,
@@ -228,15 +228,21 @@ def test_a_row_count_that_disagrees_with_its_family_variants_is_refused() -> Non
 # --------------------------------------------------------------------------- #
 # Level attachment.                                                           #
 # --------------------------------------------------------------------------- #
+_ORDER_ID = AttributeIdentity(EntityIdentity(_COMPATIBILITY, "Order"), "id")
+_ITEM_ORDER_ID = AttributeIdentity(EntityIdentity(_COMPATIBILITY, "OrderItem"), "orderId")
+
+
 def _to_many_level(attach_key: str = "items") -> FetchLevel:
     return FetchLevel(
         attach_key=attach_key,
         to_many=True,
         parent=RootRef(),
         parent_column="id",
+        parent_attribute=_ORDER_ID,
         child_target="OrderItem",
         related_attr="OrderItem.orderId",
         related_column="order_id",
+        related_attribute=_ITEM_ORDER_ID,
     )
 
 
@@ -246,9 +252,11 @@ def _to_one_level(attach_key: str = "passport") -> FetchLevel:
         to_many=False,
         parent=RootRef(),
         parent_column="id",
+        parent_attribute=_ORDER_ID,
         child_target="OrderItem",
         related_attr="OrderItem.orderId",
         related_column="person_id",
+        related_attribute=_ITEM_ORDER_ID,
     )
 
 
@@ -302,6 +310,7 @@ def _back_reference_level(family: EntityIdentity) -> FetchLevel:
         to_many=False,
         parent=LevelRef(0),
         parent_column="order_id",
+        parent_attribute=_ITEM_ORDER_ID,
         is_back_reference=True,
         back_reference_family=family,
     )
@@ -346,9 +355,11 @@ def test_a_path_root_guard_admits_only_its_resolved_source_position() -> None:
         to_many=True,
         parent=RootRef(),
         parent_column="id",
+        parent_attribute=AttributeIdentity(EntityIdentity(_COMPATIBILITY, "Animal"), "id"),
         child_target="Toy",
         related_attr="Toy.animalId",
         related_column="animal_id",
+        related_attribute=AttributeIdentity(EntityIdentity(_COMPATIBILITY, "Toy"), "animalId"),
         source_position=(dog,),
     )
     rows: list[Row] = [{"id": 1}, {"id": 2}]

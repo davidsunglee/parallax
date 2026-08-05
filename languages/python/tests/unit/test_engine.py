@@ -26,6 +26,7 @@ from parallax.core.base import STRING, InstantError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.metamodel import (
     AbstractRoot,
+    AttributeIdentity,
     Column,
     ConcreteSubtype,
     EntityIdentity,
@@ -3071,9 +3072,11 @@ def test_relationship_attachment_preserves_a_same_named_value_object_storage_key
         to_many=False,
         parent=RootRef(),
         parent_column="target_id",
+        parent_attribute=AttributeIdentity(owner_identity, "targetId"),
         child_target="Target",
         related_attr="Target.id",
         related_column="id",
+        related_attribute=AttributeIdentity(EntityIdentity(None, "Target"), "id"),
     )
     target_identity = EntityIdentity(None, "Target")
     assembler.attach_level(

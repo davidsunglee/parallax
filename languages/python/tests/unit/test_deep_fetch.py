@@ -4,9 +4,10 @@ Exercises `parallax.core.deep_fetch.plan` independently of the Docker-gated
 compile/run sweeps: shared-prefix dedup, broad-vs-narrowed distinct hops,
 equivalent-narrowing convergence, the `1 + L` accounting, child-operation
 composition (`in` membership + propagated as-of + declared relationship
-`orderBy`), narrowed view-key derivation, and back-reference (ancestor-revisit)
-cycle detection. The planner never compiles or executes anything — every
-assertion here is over the returned `FetchPlan` / `FetchLevel` shape alone.
+`orderBy`), narrowed view-key derivation, each level's correlation members
+beside their correlation columns, and back-reference (ancestor-revisit) cycle
+detection. The planner never compiles or executes anything — every assertion
+here is over the returned `FetchPlan` / `FetchLevel` shape alone.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from _sql_gen_support import model as accepted_model
 from _sql_gen_support import target as entity_of
 
 from parallax.core import deep_fetch
-from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
 from parallax.core.op_algebra import (
     All,
     And,
@@ -381,6 +382,51 @@ def test_a_root_guard_qualifies_only_the_first_level_of_its_path() -> None:
     assert (owner.attach_key, pets.attach_key) == ("owner", "pets[Dog]")
     assert owner.source_position is not None
     assert pets.source_position is None
+
+
+# --------------------------------------------------------------------------- #
+# Correlation members beside correlation columns (m-deep-fetch "A level names  #
+# its correlation members, not only their columns").                          #
+# --------------------------------------------------------------------------- #
+def test_a_queried_level_carries_both_correlation_members_beside_their_columns() -> None:
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
+    items = plan.levels[0]
+    assert items.parent_column == "id"
+    assert items.parent_attribute == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", "Order"), "id"
+    )
+    assert items.related_column == "order_id"
+    assert items.related_attribute == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", "OrderItem"), "orderId"
+    )
+
+
+def test_a_back_reference_level_carries_the_owner_side_member_and_no_child_side_one() -> None:
+    # A back-reference gathers the ancestor's key off the parent row exactly as a
+    # queried level does — it just resolves that key in memory — so the owner-side
+    # member is carried while the child side, which only a child query would need,
+    # stays absent alongside `related_attr` / `related_column`.
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
+    order = plan.levels[1]
+    assert order.is_back_reference
+    assert order.parent_column == "order_id"
+    assert order.parent_attribute == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", "OrderItem"), "orderId"
+    )
+    assert order.related_attribute is None
+
+
+def test_a_correlation_member_is_addressed_at_the_position_the_join_names_it_at() -> None:
+    # `Person.pets` joins to `{ entity: Pet, attribute: ownerId }`, and `ownerId` is
+    # declared on the family ROOT `Animal`. The column resolves through that root's
+    # projection superset, while the Identity keeps the position the join wrote —
+    # the two answer different questions and must not be collapsed into one.
+    plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets")),))
+    pets = plan.levels[0]
+    assert pets.related_column == "owner_id"
+    assert pets.related_attribute == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", "Pet"), "ownerId"
+    )
 
 
 # --------------------------------------------------------------------------- #

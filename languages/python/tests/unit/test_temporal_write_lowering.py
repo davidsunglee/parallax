@@ -65,16 +65,12 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
-    Execution,
-    FindResult,
-    ObservedNode,
     WriteLoweringError,
     build_write_planner,
     lower_step,
     plan_temporal_close,
 )
-from parallax.snapshot.handle._write_inputs import record_observations
-from parallax.snapshot.materialize import Node
+from parallax.snapshot.handle._write_inputs import ReadObservations, record_observations
 
 
 def _accepted(name: str, meta: Metamodel) -> tuple[AcceptedMetamodel, EntityMetadata]:
@@ -817,6 +813,18 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
     ]
 
 
+# One materialized SpotQuote row as the read executor hands it to a collector:
+# physical-column keyed, complete (instance-form projects every applicable
+# Column), and carrying no node of its own.
+_SPOT_QUOTE_COLUMNS: Mapping[str, object] = {
+    "id": 1,
+    "price": 50.00,
+    "symbol": "ACME",
+    "in_z": "2024-01-01T00:00:00+00:00",
+    "out_z": "infinity",
+}
+
+
 def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -> None:
     # An observation's payload comes from the row-owning Entity's OWN Table Layout
     # selection, so a member declared on a concrete subtype — SpotQuote's `symbol` —
@@ -825,22 +833,11 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     # narrowed to the declaring root's members would silently NULL `symbol` on the
     # next milestone instead of carrying it forward.
     model, _entity = _accepted("SpotQuote", QUOTE)
-    node = Node(
-        fields={
-            "id": 1,
-            "price": 50.00,
-            "symbol": "ACME",
-            "in_z": "2024-01-01T00:00:00+00:00",
-            "out_z": "infinity",
-        },
-        pk_columns=("id",),
-    )
-    result = FindResult(
-        nodes=(node,), execution=Execution(()), all_nodes=(ObservedNode("SpotQuote", node),)
-    )
+    observations = ReadObservations()
+    observations.observe_row("SpotQuote", _SPOT_QUOTE_COLUMNS, None)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        record_observations(uow, model, result, Pin(tx_time=LATEST))
+        record_observations(uow, model, observations, Pin(tx_time=LATEST))
         return uow.observation_for(("SpotQuote", (("id", 1),)))
 
     observation = run_unit_of_work(
@@ -870,31 +867,19 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
 
 
 def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation() -> None:
-    # The fan-out drops the Structured Column from a node's fields, so a temporal
-    # observation would lose it exactly where a successor needs it. `find` carries
-    # it beside the node instead, and the Predecessor Row retains it beside — never
-    # among — the members it was decoded from, so a key no member declares is still
-    # there when the successor is patched (`m-unit-work`).
+    # The fan-out drops the Structured Column from a row's member columns, so a
+    # temporal observation would lose it exactly where a successor needs it. `find`
+    # hands it to the collector beside those columns instead, and the Predecessor
+    # Row retains it beside — never among — the members it was decoded from, so a
+    # key no member declares is still there when the successor is patched
+    # (`m-unit-work`).
     model, _entity = _accepted("SpotQuote", QUOTE)
-    node = Node(
-        fields={
-            "id": 1,
-            "price": 50.00,
-            "symbol": "ACME",
-            "in_z": "2024-01-01T00:00:00+00:00",
-            "out_z": "infinity",
-        },
-        pk_columns=("id",),
-    )
     stored = {"price": "50.00", "symbol": "ACME", "charterCode": "NB-118"}
-    result = FindResult(
-        nodes=(node,),
-        execution=Execution(()),
-        all_nodes=(ObservedNode("SpotQuote", node, stored),),
-    )
+    observations = ReadObservations()
+    observations.observe_row("SpotQuote", _SPOT_QUOTE_COLUMNS, stored)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        record_observations(uow, model, result, Pin(tx_time=LATEST))
+        record_observations(uow, model, observations, Pin(tx_time=LATEST))
         return uow.observation_for(("SpotQuote", (("id", 1),)))
 
     observation = run_unit_of_work(

@@ -279,6 +279,10 @@ class Database:
         wrapping, and observation recording. The lowering the seam answers is
         kept locally through this execution and recomputed on the next one.
 
+        There being no unit of work to observe into, this passes the executor no
+        observation collector at all, so a non-transactional read builds no
+        observation record rather than building one and discarding it.
+
         The Snapshot's parameter is the query's RESULT — what ``narrow`` moved
         it to, or the queried Entity itself — so a narrowed find yields the
         narrowed rows' type without a caller-side annotation.

@@ -38,7 +38,7 @@ from parallax.core.base import (
 from parallax.core.deep_fetch import FetchLevel, LevelRef, RootRef
 from parallax.core.dialect import POSTGRES
 from parallax.core.document_codec import encode_leaf
-from parallax.core.metamodel import EntityIdentity, EntityMetadata
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.sql_gen import compile_read
 from parallax.descriptor._records import (
@@ -476,15 +476,21 @@ def test_materialize_root_omitted_narrow_to_defaults_to_none() -> None:
 # --------------------------------------------------------------------------- #
 # attach_level: to-many fan-back, to-one fan-back, the empty-level shape.     #
 # --------------------------------------------------------------------------- #
+_ORDER_ID = AttributeIdentity(EntityIdentity("parallax.compatibility", "Order"), "id")
+_ITEM_ORDER_ID = AttributeIdentity(EntityIdentity("parallax.compatibility", "OrderItem"), "orderId")
+
+
 def _to_many_level(attach_key: str = "items") -> FetchLevel:
     return FetchLevel(
         attach_key=attach_key,
         to_many=True,
         parent=RootRef(),
         parent_column="id",
+        parent_attribute=_ORDER_ID,
         child_target="OrderItem",
         related_attr="OrderItem.orderId",
         related_column="order_id",
+        related_attribute=_ITEM_ORDER_ID,
     )
 
 
@@ -497,9 +503,11 @@ def _to_one_level(attach_key: str = "passport") -> FetchLevel:
         to_many=False,
         parent=RootRef(),
         parent_column="id",
+        parent_attribute=_ORDER_ID,
         child_target="OrderItem",
         related_attr="OrderItem.orderId",
         related_column="person_id",
+        related_attribute=_ITEM_ORDER_ID,
     )
 
 
@@ -565,6 +573,7 @@ def _back_reference_level(family: EntityIdentity, to_many: bool = False) -> Fetc
         to_many=to_many,
         parent=LevelRef(0),
         parent_column="order_id",
+        parent_attribute=_ITEM_ORDER_ID,
         is_back_reference=True,
         back_reference_family=family,
     )
