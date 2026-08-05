@@ -29,7 +29,7 @@ the reverse edge would close a cycle.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
@@ -261,7 +261,7 @@ def find(
     here from the operation a second time.
 
     Keys are gathered and fanned back by MEMBER identity
-    (`FetchLevel.parent_attribute` / `related_attribute`), which is what lets each
+    (`FetchLevel.owner` / `related`), which is what lets each
     level's rows be released the moment they are converted: no column-to-member
     inversion happens here, and no row outlives its own level.
 
@@ -295,7 +295,7 @@ def find(
             _attach_back_reference(scope, meta, level, parents)
             level_refs.append(())
             continue
-        keys = _distinct_keys(scope, parents, _correlation_member(meta, level.parent_attribute))
+        keys = _distinct_keys(scope, parents, _correlation_member(meta, level.owner.identity))
         if not keys:
             _attach_empty(scope, level, parents)
             level_refs.append(())
@@ -350,14 +350,12 @@ def find_history(
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root_operation, meta, dialect, metadata, result_form="instance")
     statements: list[ExecutedStatement] = []
-    materialized_rows = [
-        compiled.materialize_row(row)
-        for row in _execute(port, dialect, compiled.statement, statements)
-    ]
-
     order: list[Edge] = []
     groups: dict[Edge, list[MaterializedReadRow]] = {}
-    for row in sorted(materialized_rows, key=lambda row: _edge_sort_key(entity, row.values)):
+    for row in sorted(
+        _execute_compiled(port, dialect, compiled, statements),
+        key=lambda row: _edge_sort_key(entity, row.values),
+    ):
         edge = milestone_edge(entity, row.values)
         if edge not in groups:
             groups[edge] = []
@@ -369,7 +367,7 @@ def find_history(
         scope = MergeScope(meta)
         refs = tuple(
             convert_row(row.values, LevelContext(row.resolved_entity, compiled.documents), scope)
-            for row in groups[edge]
+            for row in groups.pop(edge)
         )
         graphs.append(scope.build(refs, _edge_pin(edge)))
     return HistoryFindResult(graphs=tuple(graphs), execution=Execution(tuple(statements)))
@@ -418,9 +416,9 @@ def _attach_children(
 ) -> None:
     """Fan one level's converted children back to their parents in memory,
     preserving fetched order within each to-many bucket."""
-    assert level.related_attribute is not None
-    related = _correlation_member(meta, level.related_attribute)
-    owner = _correlation_member(meta, level.parent_attribute)
+    assert level.related is not None
+    related = _correlation_member(meta, level.related.identity)
+    owner = _correlation_member(meta, level.owner.identity)
     buckets: dict[object, list[SnapshotNodeRef]] = {}
     for child in children:
         key = attribute_value(scope.node(child), related)
@@ -464,7 +462,7 @@ def _attach_back_reference(
     """
     assert level.back_reference_family is not None
     view = _view_key(level)
-    owner = _correlation_member(meta, level.parent_attribute)
+    owner = _correlation_member(meta, level.owner.identity)
     for parent in parents:
         key = attribute_value(scope.node(parent), owner)
         if key is None:
@@ -489,21 +487,25 @@ def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> Attrib
     Attribute `Animal` declares). A converted node keys every family-effective
     member by its own DECLARING identity, so the two spellings must be reconciled
     once here rather than by loosening how a node is keyed.
+
+    Resolution runs over the addressed position's own ancestry chain rather than
+    the family-wide projection superset, which is what keeps the member addressed
+    where the join names it: disjoint sibling branches may reuse a member name
+    (`m-inheritance` "Members do not shadow across ancestry"), so the superset can
+    hold two same-named Attributes and only the chain distinguishes them.
     """
-    facet = inheritance.view(meta)
-    position = facet.entity(attribute.entity)
-    root = facet.entity(attribute.entity if position is None else position.root)
-    if root is None:  # pragma: no cover - the facet covers every accepted Entity
+    position = inheritance.view(meta).entity(attribute.entity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
         return attribute
-    for candidate in root.superset_attributes:
-        if candidate.identity.name == attribute.name:
-            return candidate.identity
-    return attribute  # pragma: no cover - a resolved join names a declared member
+    declared = position.applicable_attribute(attribute.name)
+    if declared is None:  # pragma: no cover - a resolved join names a declared member
+        return attribute
+    return declared.identity
 
 
 def _execute_compiled(
     port: DbPort, dialect: Dialect, compiled: CompiledRead, statements: list[ExecutedStatement]
-) -> list[MaterializedReadRow]:
+) -> Iterator[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN transform.
 
     Takes the whole `~parallax.core.sql_gen.CompiledRead` rather than a statement
@@ -515,11 +517,13 @@ def _execute_compiled(
     Keeping the pair bundled here is the caller-side half of `CompiledRead`'s own
     self-containment — it makes `find`'s "compile, execute, convert"
     structural rather than a convention every level has to remember.
+
+    The statement runs and is recorded on the way in; only the per-row
+    materialization is lazy, so each materialized row is reachable for exactly as
+    long as its consumer takes to convert it and the level never holds a second
+    copy of itself.
     """
-    return [
-        compiled.materialize_row(row)
-        for row in _execute(port, dialect, compiled.statement, statements)
-    ]
+    return map(compiled.materialize_row, _execute(port, dialect, compiled.statement, statements))
 
 
 def _execute(

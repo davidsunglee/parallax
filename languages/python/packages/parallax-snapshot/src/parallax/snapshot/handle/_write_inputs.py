@@ -313,12 +313,13 @@ def _temporal_observation(
     (:func:`~parallax.snapshot.materialize.observable_columns`, a real
     ``Transaction.find``), or one resolved row of a materializing predicate-write
     resolve (:func:`predecessor_payload`) — so both callers share the SAME
-    extraction rather than duplicating it. Every extracted
-    value passes through EXACTLY as the port returned it (a real ``timestamptz``
-    column may be a driver-native ``datetime.datetime`` or the native-infinity
-    sentinel, never pre-rendered to a wire string here) — the SAME
-    driver-native-passthrough contract every other temporal bind in this seam
-    already carries; wire-rendering for REPORTING is the conformance ADAPTER's
+    extraction rather than duplicating it. Extraction renders nothing of its own:
+    every value passes through EXACTLY as ``fields`` carries it, which for a
+    scalar or interval column is exactly what the port returned (a real
+    ``timestamptz`` column may be a driver-native ``datetime.datetime`` or the
+    native-infinity sentinel, never pre-rendered to a wire string here) — the
+    SAME driver-native-passthrough contract every other temporal bind in this
+    seam already carries; wire-rendering for REPORTING is the conformance ADAPTER's
     own boundary concern (`parallax.conformance.engine._json_bind`), never this
     seam's.
 

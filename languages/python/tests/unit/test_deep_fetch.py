@@ -396,12 +396,13 @@ def test_a_root_guard_qualifies_only_the_first_level_of_its_path() -> None:
 def test_a_queried_level_carries_both_correlation_members_beside_their_columns() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items")),))
     items = plan.levels[0]
-    assert items.parent_column == "id"
-    assert items.parent_attribute == AttributeIdentity(
+    assert items.owner.column == "id"
+    assert items.owner.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "Order"), "id"
     )
-    assert items.related_column == "order_id"
-    assert items.related_attribute == AttributeIdentity(
+    assert items.related is not None
+    assert items.related.column == "order_id"
+    assert items.related.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "OrderItem"), "orderId"
     )
 
@@ -410,15 +411,15 @@ def test_a_back_reference_level_carries_the_owner_side_member_and_no_child_side_
     # A back-reference gathers the ancestor's key off the parent row exactly as a
     # queried level does — it just resolves that key in memory — so the owner-side
     # member is carried while the child side, which only a child query would need,
-    # stays absent alongside `related_attr` / `related_column`.
+    # stays absent entirely.
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
     order = plan.levels[1]
     assert order.is_back_reference
-    assert order.parent_column == "order_id"
-    assert order.parent_attribute == AttributeIdentity(
+    assert order.owner.column == "order_id"
+    assert order.owner.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "OrderItem"), "orderId"
     )
-    assert order.related_attribute is None
+    assert order.related is None
 
 
 def test_a_correlation_member_is_addressed_at_the_position_the_join_names_it_at() -> None:
@@ -428,8 +429,9 @@ def test_a_correlation_member_is_addressed_at_the_position_the_join_names_it_at(
     # the two answer different questions and must not be collapsed into one.
     plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets")),))
     pets = plan.levels[0]
-    assert pets.related_column == "owner_id"
-    assert pets.related_attribute == AttributeIdentity(
+    assert pets.related is not None
+    assert pets.related.column == "owner_id"
+    assert pets.related.identity == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "Pet"), "ownerId"
     )
 
@@ -465,7 +467,7 @@ def test_back_reference_hop_is_detected() -> None:
     assert not items.is_back_reference
     assert order.is_back_reference
     assert order.back_reference_family == EntityIdentity("parallax.compatibility", "Order")
-    assert order.parent_column == "order_id"
+    assert order.owner.column == "order_id"
 
 
 def test_the_inverse_edge_is_recognized_below_the_first_level_too() -> None:
@@ -498,7 +500,8 @@ def test_a_to_one_revisit_over_another_association_is_an_ordinary_queried_level(
     assert not any(level.is_back_reference for level in plan.levels)
     order = plan.levels[2]
     assert order.child_target == "parallax.compatibility.Order"
-    assert order.related_attr == "parallax.compatibility.Order.id"
+    assert order.related is not None
+    assert order.related.reference == "parallax.compatibility.Order.id"
 
 
 def test_ordinary_deeper_level_is_not_flagged_a_back_reference() -> None:

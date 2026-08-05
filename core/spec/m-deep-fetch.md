@@ -74,8 +74,10 @@ a result surface **release a raw row as soon as it has been converted**, and it
 is what keeps column-to-member inversion confined to whichever layer legitimately
 owns it.
 
-This is a property of the planned level alone. It changes no statement, no
-gathered key set, no dedup identity, and nothing the harness grades.
+The identities are a property of the planned level alone. A level's emitted
+statement, its gathered key set, and its dedup identity are fixed by the hop's
+columns and its authored narrow, so each stays exactly what the rules above
+state whether or not a consumer reads the identities.
 
 ### The 1 → N → N proof
 

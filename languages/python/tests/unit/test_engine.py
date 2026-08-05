@@ -3015,7 +3015,7 @@ def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
 
 def test_relationship_attachment_preserves_a_same_named_value_object_storage_key() -> None:
     from parallax.conformance import _assembly, models
-    from parallax.core.deep_fetch import FetchLevel, RootRef
+    from parallax.core.deep_fetch import CorrelationMember, FetchLevel, RootRef
     from parallax.descriptor._serde import parse_document
 
     model = models.accepted_model(
@@ -3073,12 +3073,15 @@ def test_relationship_attachment_preserves_a_same_named_value_object_storage_key
         relationship=RelationshipIdentity(owner_identity, "details"),
         to_many=False,
         parent=RootRef(),
-        parent_column="target_id",
-        parent_attribute=AttributeIdentity(owner_identity, "targetId"),
+        owner=CorrelationMember(
+            identity=AttributeIdentity(owner_identity, "targetId"), column="target_id"
+        ),
         child_target="Target",
-        related_attr="Target.id",
-        related_column="id",
-        related_attribute=AttributeIdentity(EntityIdentity(None, "Target"), "id"),
+        related=CorrelationMember(
+            identity=AttributeIdentity(EntityIdentity(None, "Target"), "id"),
+            column="id",
+            reference="Target.id",
+        ),
     )
     target_identity = EntityIdentity(None, "Target")
     assembler.attach_level(

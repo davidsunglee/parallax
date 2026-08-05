@@ -369,6 +369,27 @@
     "pin_of",
     "view"
   ],
+  "parallax.snapshot.materialize": [
+    "GraphMerge",
+    "LevelContext",
+    "LogicalKey",
+    "MergeScope",
+    "MergedNode",
+    "MergedRelationshipView",
+    "RelationshipViewKey",
+    "SNAPSHOT_DECODING_FAILED",
+    "SnapshotDecodingError",
+    "SnapshotGraphInput",
+    "SnapshotNodeInput",
+    "SnapshotNodeRef",
+    "SnapshotRelationshipViewInput",
+    "attribute_value",
+    "convert_row",
+    "logical_key",
+    "merge_graph_input",
+    "observable_columns",
+    "validate_graph_input"
+  ],
   "parallax.snapshot.handle": [
     "Database",
     "DeferredFeatureError",

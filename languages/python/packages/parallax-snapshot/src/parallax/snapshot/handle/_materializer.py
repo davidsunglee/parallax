@@ -27,7 +27,7 @@ non-terminating, so such nodes are shareable but not hashable.
 
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Callable
 
 from parallax.core.entity import LOADED_NULL as _LOADED_NULL
 from parallax.core.entity import (
@@ -67,41 +67,40 @@ def materialize_graph(
 
 
 class _Materialization:
-    """One graph's construction drive: the merge, and the two callbacks over it."""
+    """One graph's construction drive: the merge, and the two callbacks over it.
 
-    __slots__ = ("_edges", "_merge", "_model", "_narrowed", "_pending")
+    Between the two callbacks it retains the allocation handles and nothing else.
+    A node's own merged inputs are recomposed from the merge at each callback, so
+    no narrowed view's payload is accumulated into a second graph-sized structure
+    beside Snapshot Graph Input and the merge itself.
+    """
+
+    __slots__ = ("_handles", "_merge", "_model", "_pending")
 
     def __init__(self, merge: GraphMerge, model: Metamodel) -> None:
         self._merge = merge
         self._model = model
-        self._narrowed: dict[int, dict[str, object]] = {}
-        self._edges: list[Edge | None] = []
+        self._handles: list[NodeHandle] = []
         self._pending = iter(range(len(merge.order)))
 
     def run(self, runtime: EntityGraphConstruction) -> tuple[object, ...]:
         return runtime.construct(self.build, state_factory=self.state)
 
     def build(self, writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handles = [writer.allocate(identity) for identity in self._merge.order]
-        for index, handle in enumerate(handles):
+        self._handles = [writer.allocate(identity) for identity in self._merge.order]
+        for index, handle in enumerate(self._handles):
             node = self._merge.node(index)
-            views: dict[str, object] = {}
-            entries: list[EntityRelationshipInput] = []
-            for merged in node.views:
-                key = merged.view.narrowed_view
-                if key is None:
-                    entries.append(
-                        EntityRelationshipInput(
-                            merged.view.relationship, _arm(merged.value, handles)
-                        )
-                    )
-                else:
-                    views[key] = _resolvable(merged.value, handles)
-            writer.populate(handle, node.attributes, node.value_objects, tuple(entries))
-            if views:
-                self._narrowed[index] = views
-            self._edges.append(self._edge(node))
-        return tuple(handles[index] for index in self._merge.roots)
+            writer.populate(
+                handle,
+                node.attributes,
+                node.value_objects,
+                tuple(
+                    EntityRelationshipInput(merged.view.relationship, self._arm(merged.value))
+                    for merged in node.views
+                    if merged.view.narrowed_view is None
+                ),
+            )
+        return tuple(self._handles[index] for index in self._merge.roots)
 
     def state(self, view: ResolutionView, handle: NodeHandle) -> SnapshotNodeState:
         """One node's Snapshot state, built in allocation order.
@@ -111,15 +110,33 @@ class _Materialization:
         having been exposed.
         """
         del handle
-        index = next(self._pending)
-        edge = self._edges[index]
+        node = self._merge.node(next(self._pending))
+        edge = self._edge(node)
         return SnapshotNodeState(
-            entity=self._merge.order[index],
+            entity=node.concrete_entity,
             views={
-                key: _resolved(view, value) for key, value in self._narrowed.get(index, {}).items()
+                merged.view.narrowed_view: self._resolved(view, merged.value)
+                for merged in node.views
+                if merged.view.narrowed_view is not None
             },
             pin=self._merge.pin if edge is not None else None,
             edge=edge,
+        )
+
+    def _arm(self, value: int | tuple[int, ...] | None) -> RelationshipInput:
+        return _by_arm(
+            value,
+            null=_LOADED_NULL,
+            one=lambda index: LoadedOne(self._handles[index]),
+            many=lambda indices: LoadedMany(tuple(self._handles[index] for index in indices)),
+        )
+
+    def _resolved(self, view: ResolutionView, value: int | tuple[int, ...] | None) -> object:
+        return _by_arm(
+            value,
+            null=None,
+            one=lambda index: view.resolve(self._handles[index]),
+            many=lambda indices: tuple(view.resolve(self._handles[index]) for index in indices),
         )
 
     def _edge(self, node: MergedNode) -> Edge | None:
@@ -137,30 +154,25 @@ class _Materialization:
         )
 
 
-def _arm(value: int | tuple[int, ...] | None, handles: list[NodeHandle]) -> RelationshipInput:
+def _by_arm[T](
+    value: int | tuple[int, ...] | None,
+    *,
+    null: T,
+    one: Callable[[int], T],
+    many: Callable[[tuple[int, ...]], T],
+) -> T:
+    """Dispatch on a merged view's arm — the one place its shape is read.
+
+    A merged view carries its arm in its shape (`_merge`): a tuple is
+    loaded-many, ``None`` is loaded-null, and a lone allocation index is
+    loaded-one. Every consumer of an arm goes through here, so adding an arm is
+    one cascade to change rather than one per consumer.
+    """
     if isinstance(value, tuple):
-        return LoadedMany(tuple(handles[index] for index in value))
+        return many(value)
     if value is None:
-        return _LOADED_NULL
-    return LoadedOne(handles[value])
-
-
-def _resolvable(
-    value: int | tuple[int, ...] | None, handles: list[NodeHandle]
-) -> NodeHandle | tuple[NodeHandle, ...] | None:
-    if isinstance(value, tuple):
-        return tuple(handles[index] for index in value)
-    if value is None:
-        return None
-    return handles[value]
-
-
-def _resolved(view: ResolutionView, value: object) -> object:
-    if value is None:
-        return None
-    if isinstance(value, tuple):
-        return tuple(view.resolve(handle) for handle in cast("tuple[NodeHandle, ...]", value))
-    return view.resolve(cast("NodeHandle", value))
+        return null
+    return one(value)
 
 
 def _declaring(model: Metamodel, identity: EntityIdentity) -> EntityMetadata | None:
