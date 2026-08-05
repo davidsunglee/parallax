@@ -1836,9 +1836,11 @@ or descriptor authoring form and performs no audit stamping.
   never escapes one graph: nodes from different `find` calls never coalesce.
 - **Value Object presence.** Within a present Value Object record, an omitted
   scalar or nested-occurrence identity and a present identity mapped to `None`
-  are distinct stored-document states. Either is legal only when the scalar or
-  One occurrence is nullable; a required scalar or One occurrence rejects
-  both. Both legal states read as `None`, while the frozen Value Object retains
+  are distinct stored-document states. Declared nullability says which of them
+  a conforming stored document may hold — a required scalar or One occurrence
+  admits neither — but nothing on the read path judges that
+  (**Document-resident nullability** below). Both states read as `None`, while
+  the frozen Value Object retains
   field presence so canonical document serialization omits the former and
   emits the latter as explicit null. A Many occurrence is an ordered immutable
   `tuple` of non-null Value Object records and is never nullable: `()` is its
@@ -1919,18 +1921,46 @@ or descriptor authoring form and performs no audit stamping.
   and validates and constructs them in accepted metadata declaration order.
   Only a Many occurrence's record tuple has semantic order, preserved exactly.
   Conversion from physical structured-document values into this algebra owns
-  stored-document presence, nullability, container-shape, and Neutral Value
-  validation. A failure raises exported
+  stored-document presence, container-shape, and Neutral Value validation.
+  A failure raises exported
   `SnapshotDecodingError(ValueError)` with stable code
   `snapshot-decoding-failed`, the concrete `EntityIdentity`, the applicable
   `ValueObjectIdentity | ValueObjectAttributeIdentity`, and an optional
   original cause; it exposes no raw database value and is never wrapped as
   `SnapshotMaterializationError`. Entity Graph Construction nevertheless
-  revalidates every identity, duplicate, occurrence shape, nullability state,
-  and Neutral Value; invalid direct first-party input raises
-  `GraphConstructionError` with `entity-graph-invalid-member` or
+  revalidates every identity, duplicate, occurrence shape, and Neutral Value;
+  invalid direct first-party input raises `GraphConstructionError` with
+  `entity-graph-invalid-member` or
   `entity-graph-invalid-value`. A public Snapshot read reaches that path only
   through an implementation defect.
+- **Document-resident nullability.** A **document-resident** position — a Value
+  Object leaf, and a to-one or to-many occurrence inside a Structured Column —
+  reaches Entity Graph Construction with its not-present states already
+  collapsed by the read seam under `m-op-algebra`'s absence-collapse rule: a
+  missing key, a stored null (SQL or JSON), and a non-object intermediate all
+  arrive as `None`; for a Many, a missing key, a stored null, and a non-array
+  all arrive as `()`. The collapse is lossy by design and takes no nullability
+  argument — `document_codec.reduce_declared_members` cannot consult `nullable`
+  — so a document that omitted a required leaf and one that stored a legal null
+  arrive as the same value, and no nullability verdict is recoverable from it.
+  **No layer enforces declared nullability at a document-resident position**:
+  not the read seam, not Entity Graph Construction, and not the frozen Value
+  Object it builds. A stored document violating a required leaf or a required
+  One occurrence materializes as `None` (or `()`) instead of raising. Entity
+  Graph Construction validates everything else at those positions — structured
+  identity, duplicate entries, occurrence shape (record versus tuple), exact
+  built-in tuple carriers, and Neutral Value validity. An Entity Attribute is
+  column-resident and unaffected: its declared nullability **is** enforced, and
+  a `None` for a non-nullable Attribute raises
+  `GraphConstructionError(entity-graph-invalid-value)`.
+
+  The gap is declined enforcement rather than an oversight. The core corpus
+  specifies the collapse — `m-value-object-023` grades `city: null` for a leaf
+  whose model declares no `nullable` — and core specifications and the
+  compatibility corpus outrank this document. Enforcement would also be
+  disproportionate to the fault: state attachment and root publication are
+  atomic, so a construction failure publishes nothing and one malformed stored
+  document would render an entire result unreadable.
 - **Single graph input.** Projection merging may retain a transient logical
   identity index, references to input projections, and slot-level winner
   references. It MUST NOT clone each node's scalar, Value Object, and
