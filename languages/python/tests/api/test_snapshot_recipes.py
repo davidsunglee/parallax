@@ -1,22 +1,15 @@
 """The Usage-Guide Snapshot read recipes, against real Postgres.
 
 Each recipe (`parallax.conformance.snapshot_recipes`) mirrors a spec section
-rather than one corpus case, so — like the stale-web-edit pair — it is graded
-here as a standalone Docker-backed proof rather than as a case-keyed
-`api_suite.EXAMPLES` entry, and the Usage Guide renders it through the case-free
-`api_suite.RECIPES` section. One source, both consumers.
+rather than one corpus case, so it is graded here as a standalone Docker-backed
+proof rather than as a case-keyed `api_suite.EXAMPLES` entry, while the Usage
+Guide renders the same body through the case-free `api_suite.RECIPES` section.
 
 Each test seeds its own rows through the public write surface instead of
-borrowing a case's fixtures, which is also what makes the family recipes proofs
-of the ACCEPTED DECLARATIONS end to end: the same `AbstractRoot` /
+borrowing a case's fixtures, which is what makes the family recipes proofs of
+the ACCEPTED DECLARATIONS end to end: the same `AbstractRoot` /
 `AbstractSubtype` / `ConcreteSubtype` classes decide the tables written and the
 concrete class each row materializes back as.
-
-The last section drives every recipe body against a canned fake `m-db-port`, so
-those bodies contribute to the database-free coverage gate exactly as
-`test_graph_story_no_drift.py` keeps the graph stories in it. The grading above
-is the real proof; that driver only pins that each body RUNS through the public
-surface with no database at all.
 """
 
 from __future__ import annotations

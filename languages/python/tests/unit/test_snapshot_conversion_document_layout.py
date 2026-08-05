@@ -3,9 +3,8 @@
 The production read path's own document-layout witness. Every corpus case over
 `models/document-layout.yaml` grades a rejected model, a write sequence, a row-form
 oracle, or a graph the compatibility engine assembles itself, so none of them reaches
-`parallax.snapshot.materialize` — the layout is fully specified and fully graded, and
-until this suite nothing proved that a *materializing* read of one of its rows
-answers the same members a `Columns` row answers.
+`parallax.snapshot.materialize`; a *materializing* read of a document row answering
+the same members a `Columns` row answers is graded here instead.
 
 What runs here is the driver's own sequence, database aside: the layout's own
 instance-form projection (`compile_read`), the fan-out that lands each
@@ -23,14 +22,13 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
-from _document_layout_support import columns_model, document_model
-from _document_layout_support import entity as declared
+from _document_layout_support import columns_model, document_model, entity
 from _snapshot_graph_support import documents_of
 
 from parallax.conformance import models
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata, Metamodel
+from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import compile_read
 from parallax.snapshot.materialize import (
     LevelContext,
@@ -44,16 +42,9 @@ _TWIN_DOCUMENT = document_model()
 _TWIN_COLUMNS = columns_model()
 
 
-def _target(model: Metamodel, name: str) -> EntityMetadata:
-    for candidate in model.entities:
-        if candidate.identity.name == name:
-            return candidate
-    raise KeyError(name)
-
-
 def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> SnapshotNodeInput:
     """One stored row through the production read sequence, database aside."""
-    target = _target(model, name)
+    target = entity(model, name)
     compiled = compile_read(oa.All(), model, POSTGRES, target, result_form="instance")
     materialized = compiled.materialize_row(stored)
     scope = MergeScope(model)
@@ -164,7 +155,7 @@ def test_an_entity_with_no_document_resident_member_converts_off_its_columns_alo
     # is physically present, is carried by a materializing read, and holds no
     # member at all. Conversion answers the row's own Columns and contributes
     # nothing for the document.
-    identity = declared(_TWIN_DOCUMENT, "Marker").identity
+    identity = entity(_TWIN_DOCUMENT, "Marker").identity
     assert documents_of(_TWIN_DOCUMENT, identity) == ()
     node = _converted(_TWIN_DOCUMENT, "Marker", {"id": 5, "payload": {}})
     assert _members(node) == {"id": 5}

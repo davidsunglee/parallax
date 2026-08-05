@@ -9,10 +9,9 @@ together with the runtime states that declaration produces, which spans more
 than any single case's goldens — registering one under a borrowed case id would
 misrepresent what that case grades.
 
-Both recipes are graded end-to-end against real Postgres by
-``tests/api/test_snapshot_recipes.py``, which seeds its own rows through the
-same public write surface rather than borrowing a case's fixtures, so the guide
-and the grading read one source.
+A recipe seeds nothing: its caller supplies a ``Database`` already holding the
+rows the recipe reads, so the same body serves as both the rendered snippet and
+an executable proof.
 """
 
 from __future__ import annotations
