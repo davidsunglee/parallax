@@ -384,8 +384,9 @@ def _decoding_error(
 
     The codec names the failing member as a SEQUENCE of declared names relative to
     the occurrence being reduced, and its detail may quote the stored value. Only
-    the names reach the message; the detail stays on the chained cause, so nothing
-    a caller sees exposes stored data.
+    the names reach the refusal's OWN message; the detail stays on the chained
+    cause, which is where a first-party diagnosis reads the stored spelling the
+    refusal is about.
     """
     occurrence = ".".join(declared.identity.path)
     spelled = ".".join((occurrence, *exc.path))

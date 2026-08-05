@@ -11,14 +11,14 @@ and build the SAME
 :class:`~parallax.snapshot.materialize.SnapshotGraphInput`, so the per-level
 loop exists exactly once on the developer-facing path.
 
-Each level's rows are converted as they arrive and released immediately: a
-converted node names its correlation members, so the next level gathers its keys
-off the converted parent rather than off a retained row. The port answers one
-statement with its whole `list[Row]` (`m-db-port`), so that list is the level's
-own lifetime; what this module never does is materialize a second copy of it or
-keep a row reachable past its conversion. Nothing below this module holds a row,
-and no row survives into the graph input, the Snapshot, or the observation
-record.
+Each level's rows are materialized and converted one at a time: a converted node
+names its correlation members, so the next level gathers its keys off the
+converted parent rather than off a retained row. The port answers one statement
+with its whole `list[Row]` (`m-db-port`), so that raw result set is the level's
+own lifetime; what this module never does is build a second collection over it —
+a materialized row is reachable only until its conversion, and no level
+accumulates them. Nothing below this module holds a row, and no row survives into
+the graph input, the Snapshot, or the observation record.
 
 The executor's own results (:class:`ExecutedStatement`, :class:`Execution`,
 :class:`FindResult`, :class:`HistoryFindResult`) stay
@@ -279,7 +279,7 @@ def find(
 
     Keys are gathered and fanned back by MEMBER identity
     (`FetchLevel.owner` / `related`), which is what lets each
-    level's rows be released the moment they are converted: no column-to-member
+    level's rows be converted one at a time: no column-to-member
     inversion happens here, and no row outlives its own level.
 
     Returns the whole Snapshot Graph Input — every projection, the root
@@ -403,7 +403,7 @@ def _convert_level(
     entity: str,
     observations: ObservationCollector | None,
 ) -> tuple[SnapshotNodeRef, ...]:
-    """Execute one level and convert its rows, releasing them as it goes.
+    """Execute one level and convert each of its rows as that row materializes.
 
     The observation, when one is being collected, is taken from the SAME row the
     conversion reads, while that row is still live. It is deliberately physical:
