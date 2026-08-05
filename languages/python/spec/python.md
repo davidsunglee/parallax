@@ -1935,8 +1935,11 @@ or descriptor authoring form and performs no audit stamping.
   `SnapshotDecodingError(ValueError)` with stable code
   `snapshot-decoding-failed`, the concrete `EntityIdentity`, the applicable
   `ValueObjectIdentity | ValueObjectAttributeIdentity`, and an optional
-  original cause; it exposes no raw database value and is never wrapped as
-  `SnapshotMaterializationError`. Entity Graph Construction nevertheless
+  original cause. Its own message names only the Entity and the member at
+  fault and so exposes no raw database value; the value that provoked the
+  failure survives on the chained cause, which a first-party diagnosis needs
+  because the stored spelling is itself what the refusal is about. It is never
+  wrapped as `SnapshotMaterializationError`. Entity Graph Construction nevertheless
   revalidates every identity, duplicate, occurrence shape, and Neutral Value;
   invalid direct first-party input raises `GraphConstructionError` with
   `entity-graph-invalid-member` or
