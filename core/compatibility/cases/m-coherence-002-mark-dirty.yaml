@@ -1,4 +1,4 @@
-# Cross-process cache coherence — partial-cache mark-dirty (Phase 11).
+# Cross-process cache coherence — partial-cache mark-dirty.
 #
 # The complementary invalidation strategy to m-coherence-001's full-cache re-fetch. A node
 # holding a bounded, evictable cache does not re-fetch on a peer write; it EVICTS

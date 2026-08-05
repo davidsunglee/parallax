@@ -1,5 +1,5 @@
 # Table-per-hierarchy BITEMPORAL plain TERMINATE: the inactivation is tag-GUARDED
-# (m-inheritance x m-bitemp-write x m-sql — Phase 8 temporal composition).
+# (m-inheritance x m-bitemp-write x m-sql).
 #
 # A plain (unbounded) bitemporal terminate ends a value from a Valid-Time instant B onward,
 # leaving it intact before B: it inactivates the original Latest rectangle on the

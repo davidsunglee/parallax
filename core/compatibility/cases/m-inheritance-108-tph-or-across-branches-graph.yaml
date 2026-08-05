@@ -1,6 +1,6 @@
 # Table-per-hierarchy OR across two concrete-subtype branches, INSTANCE-FORM sibling:
 # the developer-surface per-variant node shape (m-inheritance, m-op-algebra,
-# m-case-format, m-sql — COR-3 Phase 8 part C).
+# m-case-format, m-sql).
 #
 # Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
 # (`m-inheritance-015`) — Animal declares no value objects, so the instance-form

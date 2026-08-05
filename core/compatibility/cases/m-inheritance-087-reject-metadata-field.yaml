@@ -1,5 +1,5 @@
-# Rejected write — a payload carrying framework-owned METADATA (m-inheritance, Phase 7
-# write protocol).
+# Rejected write — a payload carrying framework-owned METADATA (m-inheritance write
+# protocol).
 #
 # The tag column and the `tag` / `tagValue` / `familyVariant` handles are
 # framework-owned metadata a concrete-subtype write DERIVES from the subtype's tagValue

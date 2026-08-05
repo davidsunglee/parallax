@@ -1,6 +1,6 @@
 # Table-per-concrete-subtype narrow to an ABSTRACT SUBTYPE, INSTANCE-FORM sibling:
 # the developer-surface per-variant node shape (m-inheritance, m-op-algebra,
-# m-case-format, m-sql — COR-3 Phase 8 part C).
+# m-case-format, m-sql).
 #
 # Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
 # (`m-inheritance-052`) — Document declares no value objects, so the instance-form
@@ -8,9 +8,9 @@
 # way, verified against m-sql's *Read projection* rule during authoring). `then.graph`
 # asserts the per-variant node shape: the two Invoice nodes carry NO `paid_amount`
 # key; the Receipt node carries NO `amount_due` key. `m-inheritance-052` remains the
-# values-lane witness; the TPCS instance-form `db.find` refusal this new golden
-# exposes (`SqlGenError` over a 2+-concrete union-all read) is COR-3 Phase 8
-# increment 7 (ledger D-22).
+# values-lane witness; the TPCS instance-form `db.find` refusal this golden exposes
+# (`SqlGenError` over a 2+-concrete union-all read) is a gap in the instance-form
+# read lane, not a property this case pins.
 model: models/document.yaml
 tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read

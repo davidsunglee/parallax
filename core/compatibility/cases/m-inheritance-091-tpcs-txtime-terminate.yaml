@@ -1,6 +1,6 @@
 # Table-per-concrete-subtype Transaction-Time-Only concrete-subtype TERMINATE: the milestone close
 # targets the subtype's OWN table with NO tag guard (m-inheritance x m-txtime-write x
-# m-sql — Phase 8 temporal composition).
+# m-sql).
 #
 # In a table-per-concrete-subtype family the concrete subtype is selected by WHICH table
 # the DML targets, so terminating a SpotQuote closes the current milestone in the concrete

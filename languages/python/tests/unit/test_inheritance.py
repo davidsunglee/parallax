@@ -625,7 +625,7 @@ def test_a_rootless_family_is_reported_beside_a_rooted_one() -> None:
     ]
 
 
-def test_a_descendant_axis_is_located_at_the_axis_it_declares() -> None:
+def test_a_descendant_temporality_is_rejected_at_the_axis_its_profile_derives() -> None:
     (model,) = [
         inline
         for name, inline, _ in _REJECTIONS

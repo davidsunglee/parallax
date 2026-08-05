@@ -1,5 +1,5 @@
 # Table-per-concrete-subtype BITEMPORAL plain TERMINATE: the inactivation targets the
-# subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql — Phase 8).
+# subtype's OWN table with NO tag guard (m-inheritance x m-bitemp-write x m-sql).
 #
 # A plain bitemporal terminate inactivates the original Latest rectangle on the
 # Transaction-Time dimension and chains only a HEAD (valid [from_z, B)) — no tail, no middle

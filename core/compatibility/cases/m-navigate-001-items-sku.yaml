@@ -8,7 +8,7 @@
 # `id in (select order_id from order_item where sku = ...)` subquery is the
 # independent oracle.
 #
-# Cross-dialect (Phase 10): the correlated EXISTS semi-join is identical SQL on
+# Cross-dialect: the correlated EXISTS semi-join is identical SQL on
 # Postgres and MariaDB, so this case proves the navigation/join contract across
 # both dialects in the matrix.
 model: models/orders.yaml

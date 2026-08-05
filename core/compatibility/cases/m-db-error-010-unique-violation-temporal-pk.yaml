@@ -2,7 +2,7 @@
 # against the derived `policy_pk`. Both inserts carry Policy 1 with `thru_z` and
 # `out_z` at infinity but DIFFERENT `from_z` / `in_z`, so they are distinct
 # under a start-keyed physical key and collide only under the end-keyed one the
-# derived primary-key index now carries: this is the `(id, validEnd, txEnd)`
+# derived primary-key index carries: this is the `(id, validEnd, txEnd)`
 # uniqueness invariant, witnessed by the database rather than asserted in
 # metadata. Two temporal rows may share a key only when they differ at their
 # upper bounds, which is exactly what milestone chaining produces — closing the
