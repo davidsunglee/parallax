@@ -20,7 +20,8 @@ import pytest
 from _transact_support import ACCOUNT, PERSON, NoIoPort
 
 from _support import mirrored_models as mm
-from parallax.conformance import models
+from parallax.conformance import models, read_models
+from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.core import LATEST, TX_TIME
 from parallax.core.base import INFINITY
@@ -28,8 +29,9 @@ from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import FindQuery, GraphConstructionError
 from parallax.core.entity._query import LoweredFindQuery, lower_find_query
-from parallax.core.metamodel import EntityIdentity
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.op_algebra import deserialize
+from parallax.core.temporal_read import Pin, TemporalReadError
 from parallax.snapshot import (
     DeferredFeatureError,
     QueryTargetError,
@@ -37,7 +39,14 @@ from parallax.snapshot import (
     handle,
 )
 from parallax.snapshot.handle import _preflight
-from parallax.snapshot.materialize import Node
+from parallax.snapshot.handle._read import Execution
+from parallax.snapshot.materialize import (
+    SnapshotDecodingError,
+    SnapshotGraphInput,
+    SnapshotNodeInput,
+    SnapshotNodeRef,
+    attribute_value,
+)
 
 _MODELS = models.load_models()
 ORDERS = models.accepted_model(_MODELS["orders"])
@@ -49,14 +58,31 @@ DOCUMENT = models.accepted_model(_MODELS["document"])
 _UTC = dt.UTC
 
 
-def _kids(node: Node, key: str) -> list[Node]:
-    """A to-many relationship attachment, typed for test-side assertions."""
-    return cast("list[Node]", node.relationships[key])
+def _root(result: handle.FindResult) -> SnapshotNodeInput:
+    graph = result.graph
+    return graph.nodes[graph.roots[0].node_index]
 
 
-def _kid(node: Node, key: str) -> Node | None:
-    """A to-one relationship attachment, typed for test-side assertions."""
-    return cast("Node | None", node.relationships[key])
+def _value(graph: SnapshotGraphInput, ref: SnapshotNodeRef, entity: str, member: str) -> object:
+    """One converted projection's value for a member, named structurally."""
+    node = graph.nodes[ref.node_index]
+    return attribute_value(
+        node, AttributeIdentity(EntityIdentity("parallax.compatibility", entity), member)
+    )
+
+
+def _view(graph: SnapshotGraphInput, node: SnapshotNodeInput, attach_key: str) -> object:
+    """The value a node's view carries, found by the attach key a plan derived."""
+    del graph
+    return next(
+        entry.value
+        for entry in node.relationship_views
+        if (entry.view.narrowed_view or entry.view.relationship.name) == attach_key
+    )
+
+
+def _refs(value: object) -> tuple[SnapshotNodeRef, ...]:
+    return cast("tuple[SnapshotNodeRef, ...]", value)
 
 
 class QueuePort:
@@ -106,7 +132,8 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
     )
     result = handle.find(op, ORDERS, POSTGRES, "Order", port)
     assert result.execution.round_trips == 2
-    assert [n.fields["id"] for n in _kids(result.nodes[0], "items")] == [11]
+    items = _refs(_view(result.graph, _root(result), "items"))
+    assert [_value(result.graph, ref, "OrderItem", "id") for ref in items] == [11]
 
 
 def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
@@ -121,7 +148,7 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
     )
     result = handle.find(op, ORDERS, POSTGRES, "Order", port)
     assert result.execution.round_trips == 1
-    assert result.nodes == ()
+    assert result.graph.roots == ()
     assert len(port.executed) == 1
 
 
@@ -152,7 +179,7 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
     )
     result = handle.find(op, ORDERS, POSTGRES, "Order", port)
     assert result.execution.round_trips == 2
-    assert result.nodes[0].relationships["items"] == []
+    assert _view(result.graph, _root(result), "items") == ()
 
 
 def test_find_back_reference_level_issues_no_additional_statement() -> None:
@@ -182,8 +209,9 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
     )
     result = handle.find(op, ORDERS, POSTGRES, "Order", port)
     assert result.execution.round_trips == 2  # the back-reference costs nothing
-    item = _kids(result.nodes[0], "items")[0]
-    assert _kid(item, "order") is result.nodes[0]
+    (item,) = _refs(_view(result.graph, _root(result), "items"))
+    back = _view(result.graph, result.graph.nodes[item.node_index], "order")
+    assert back == result.graph.roots[0]
 
 
 @pytest.mark.parametrize(
@@ -256,9 +284,11 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
         }
     )
     result = handle.find(op, ANIMAL, POSTGRES, "Person", port)
-    animal = _kids(result.nodes[0], "animals")[0]
-    assert animal.family_variant == "Dog"
-    assert "kind" not in animal.fields
+    (animal,) = _refs(_view(result.graph, _root(result), "animals"))
+    node = result.graph.nodes[animal.node_index]
+    assert node.concrete_entity == EntityIdentity("parallax.compatibility", "Dog")
+    # The synthetic tag is nobody's member, so no converted entry carries it.
+    assert all(entry.identity.name != "kind" for entry in node.attributes)
 
 
 def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
@@ -284,8 +314,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     )
     op = deserialize({"narrow": {"entity": "Document", "to": ["Invoice"], "operand": {"all": {}}}})
     result = handle.find(op, DOCUMENT, POSTGRES, "Document", port)
-    assert result.nodes[0].family_variant is None
-    assert result.nodes[0].resolved_entity == EntityIdentity("parallax.compatibility", "Invoice")
+    assert _root(result).concrete_entity == EntityIdentity("parallax.compatibility", "Invoice")
 
 
 def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graphs() -> None:
@@ -319,11 +348,11 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
     )
     result = handle.find_history(op, INVOICE, POSTGRES, "InvoiceLine", port)
     assert result.execution.round_trips == 1
-    assert [g.pin["transaction-time"] for g in result.graphs] == [
+    assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 4, 1, tzinfo=_UTC),
     ]
-    assert [g.nodes[0].fields["amount"] for g in result.graphs] == [
+    assert [_value(g, g.roots[0], "InvoiceLine", "amount") for g in result.graphs] == [
         Decimal("50.00"),
         Decimal("75.00"),
     ]
@@ -364,7 +393,8 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
     )
     result = handle.find_history(op, INVOICE, POSTGRES, "InvoiceLine", port)
     assert len(result.graphs) == 1
-    assert [n.fields["id"] for n in result.graphs[0].nodes] == [1000, 2000]
+    graph = result.graphs[0]
+    assert [_value(graph, ref, "InvoiceLine", "id") for ref in graph.roots] == [1000, 2000]
 
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
@@ -405,16 +435,16 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         }
     )
     result = handle.find_history(op, RATE, POSTGRES, "DepositRate", port)
-    assert [g.pin["transaction-time"] for g in result.graphs] == [
+    assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
     ]
-    assert [g.nodes[0].fields["amount"] for g in result.graphs] == [
+    assert [_value(g, g.roots[0], "Rate", "amount") for g in result.graphs] == [
         Decimal("2.25"),
         Decimal("2.50"),
     ]
     # The Valid-Time dimension rides along too (bitemporal): both milestones share it.
-    assert all(g.pin["valid-time"] == dt.datetime(2024, 1, 1, tzinfo=_UTC) for g in result.graphs)
+    assert all(g.pin.valid_time == dt.datetime(2024, 1, 1, tzinfo=_UTC) for g in result.graphs)
 
 
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
@@ -572,3 +602,142 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
     db = handle.Database.connect(NoIoPort(), ACCOUNT)
     with pytest.raises(QueryTargetError):
         db.find(Policy.where(Policy.all))
+
+
+def test_a_conversion_failure_keeps_its_own_classification_and_publishes_nothing() -> None:
+    # Stored data that contradicts its declared shape is refused BEFORE any graph
+    # is being built, so it surfaces as its own decoding refusal rather than as a
+    # materialization failure — and no Snapshot is published either way.
+    port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": 7}}]])
+    db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
+    with pytest.raises(SnapshotDecodingError) as refusal:
+        db.find(vo.Customer.where(vo.Customer.id == 1))
+    assert refusal.value.code == "snapshot-decoding-failed"
+    assert not isinstance(refusal.value, SnapshotMaterializationError)
+
+
+def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> None:
+    # The read and the conversion both succeed; what fails is deriving the node's
+    # own milestone edge, because the row carries no Transaction-Time start at
+    # all. State attachment and root publication are atomic, so the whole result
+    # is refused rather than partly published.
+    port = QueuePort([[{"bal_id": 1, "acct_num": "A-1", "val": Decimal("5.00")}]])
+    db = handle.Database.connect(port, read_models.BALANCE_MODEL)
+    with pytest.raises(SnapshotMaterializationError) as refusal:
+        db.find(read_models.Balance.where(read_models.Balance.id == 1))
+    assert refusal.value.code == "snapshot-materialization-failed"
+    assert isinstance(refusal.value.cause, TemporalReadError)
+
+
+# --------------------------------------------------------------------------- #
+# Snapshot[T]'s own arity accessors, over roots this executor's result surface  #
+# publishes.                                                                   #
+# --------------------------------------------------------------------------- #
+def _snapshot(roots: tuple[object, ...]) -> handle.Snapshot[object]:
+    return handle.Snapshot(roots, Pin(), Execution(()))
+
+
+def test_result_raises_on_zero_and_on_more_than_one() -> None:
+    with pytest.raises(handle.NoResultFound):
+        _snapshot(()).result()
+    with pytest.raises(handle.TooManyResultsFound):
+        _snapshot((1, 2)).result()
+    assert _snapshot((1,)).result() == 1
+
+
+def test_result_or_none_returns_none_on_zero_and_raises_on_more_than_one() -> None:
+    assert _snapshot(()).result_or_none() is None
+    assert _snapshot((1,)).result_or_none() == 1
+    with pytest.raises(handle.TooManyResultsFound):
+        _snapshot((1, 2)).result_or_none()
+
+
+def test_results_returns_a_fresh_list_per_call() -> None:
+    snapshot = _snapshot((1, 2))
+    first = snapshot.results()
+    assert first == [1, 2]
+    assert first is not snapshot.results()
+
+
+def test_snapshot_has_no_iteration_len_or_indexing() -> None:
+    snapshot = _snapshot((1, 2))
+    assert not hasattr(snapshot, "__iter__")
+    assert not hasattr(snapshot, "__len__")
+    assert not hasattr(snapshot, "__getitem__")
+
+
+def test_snapshot_pin_and_execution_and_repr() -> None:
+    pin = Pin(tx_time=dt.datetime(2024, 1, 1, tzinfo=_UTC))
+    snapshot = handle.Snapshot((1,), pin, Execution(()))
+    assert snapshot.pin is pin
+    assert snapshot.execution.round_trips == 0
+    assert "Snapshot(roots=1" in repr(snapshot)
+
+
+def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> None:
+    # m-deep-fetch: an empty gathered parent-key set issues NO child query at all,
+    # and every admitted parent still gets a LOADED view rather than an unset one.
+    # The root's own `ownerId` is null, so there is no key to gather at all.
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "name": "Rex",
+                    "owner_id": None,
+                    "license_id": None,
+                    "indoor": None,
+                    "bark_volume": 7,
+                    "tusk_length": None,
+                    "kind": "dog",
+                }
+            ]
+        ]
+    )
+    op = deserialize(
+        {
+            "deepFetch": {
+                "operand": {"eq": {"attr": "Animal.id", "value": 1}},
+                "paths": [{"segments": [{"rel": "Animal.owner"}]}],
+            }
+        }
+    )
+    result = handle.find(op, ANIMAL, POSTGRES, "Animal", port)
+    assert result.execution.round_trips == 1
+    assert _view(result.graph, _root(result), "owner") is None
+
+
+def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
+    # A null correlation key needs no identity lookup at all — no ancestor row
+    # exists to resolve — so the view is attached as loaded-null directly.
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1,
+                    "name": "Ada",
+                    "sku": "A",
+                    "qty": 1,
+                    "price": Decimal("1"),
+                    "active": True,
+                    "ordered_on": dt.date(2024, 1, 1),
+                }
+            ],
+            [{"id": 11, "order_id": None, "sku": "x", "quantity": 1, "shipped_on": None}],
+        ]
+    )
+    op = deserialize(
+        {
+            "deepFetch": {
+                "operand": {"eq": {"attr": "Order.id", "value": 1}},
+                "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
+            }
+        }
+    )
+    result = handle.find(op, ORDERS, POSTGRES, "Order", port)
+    item = next(
+        node
+        for node in result.graph.nodes
+        if node.concrete_entity == EntityIdentity("parallax.compatibility", "OrderItem")
+    )
+    assert _view(result.graph, item, "order") is None

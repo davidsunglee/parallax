@@ -207,6 +207,10 @@ m-deep-fetch --> m-relationship
 m-op-list --> m-deep-fetch
 m-snapshot-read --> m-deep-fetch
 m-snapshot-read --> m-document-codec
+m-snapshot-read --> m-metamodel
+m-snapshot-read --> m-inheritance
+m-snapshot-read --> m-relationship
+m-snapshot-read --> m-temporal-read
 m-temporal-read --> m-op-algebra
 m-temporal-read --> m-metamodel
 m-temporal-read --> m-model-formation
@@ -333,6 +337,17 @@ construction it may reference any behavioral module it harnesses.
   document leaves and reduces occurrences to their declared members through the
   codec's single shape-aware operation. The codec remains independent of lifecycle
   and graph construction.
+- **`m-snapshot-read --> m-metamodel` / `m-inheritance` / `m-relationship` /
+  `m-temporal-read`.** A snapshot graph is stated in **members**, not columns:
+  converting a row names each Attribute, Value Object occurrence, and
+  relationship view by its declared identity (`m-metamodel`), resolves a row's
+  concrete position and its family-effective member set (`m-inheritance`), orders
+  a node's views by accepted relationship declaration order (`m-relationship`),
+  and carries the whole-graph pin and each node's milestone edge
+  (`m-temporal-read`). All four were previously reachable only through
+  `m-deep-fetch`; naming them directly is what makes the vocabulary a snapshot
+  graph is built from legible to every language target rather than an accident of
+  the planner's own closure.
 - **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
   optimistic-lock version analogue is derived from `txStart` / physical `in_z`, so
   an optimistic close references the milestoning read model.

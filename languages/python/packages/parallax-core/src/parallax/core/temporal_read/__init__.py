@@ -99,6 +99,7 @@ __all__ = [
     "conjunction_terms",
     "inject_as_of",
     "milestone_edge",
+    "milestone_edge_of",
     "resolve_pinned_instants",
     "scans_an_axis",
     "statement_pin",
@@ -303,24 +304,43 @@ def milestone_edge(entity: EntityMetadata, row: Mapping[str, object]) -> Edge:
     Each declared axis's edge is its milestone's own **from-instant** — the value of
     the axis's start Attribute column in ``row`` — the one instant guaranteed to re-select
     exactly that milestone on a half-open ``[from, to)`` interval. This is the
-    reusable core the snapshot materializer uses to edge-pin each
-    ``history`` / ``as_of_range`` result; here it is unit-verifiable against corpus
-    row values without a materialized graph.
+    reusable core a read uses to edge-pin each ``history`` / ``as_of_range``
+    result; here it is unit-verifiable against corpus row values without a
+    materialized graph.
 
     ``entity`` is the Entity whose declaration carries the family's axes, which
     the caller resolves; a position that inherits them declares none of its own.
     """
+    return _edge(
+        entity,
+        {
+            axis.start_attribute: row.get(_column_for_attribute(entity, axis.start_attribute))
+            for axis in entity.declared_as_of_axes
+        },
+    )
+
+
+def milestone_edge_of(entity: EntityMetadata, values: Mapping[AttributeIdentity, object]) -> Edge:
+    """The same edge-pin rule, read off values keyed by **member identity**.
+
+    The form a materialized node answers in: once a row has been converted, its
+    interval values are held by Attribute Identity and the physical column that
+    carried them is gone. Inverting one back would re-derive a mapping the model
+    already fixes, in a layer that otherwise never needs to know one.
+    """
+    return _edge(entity, values)
+
+
+def _edge(entity: EntityMetadata, values: Mapping[AttributeIdentity, object]) -> Edge:
     name = entity.identity.name
     if not entity.declared_as_of_axes:
         raise TemporalReadError(f"{name} is not a temporal entity")
     coords: dict[AcceptedDimension, _dt.datetime] = {}
     for axis in entity.declared_as_of_axes:
-        start_column = _column_for_attribute(entity, axis.start_attribute)
-        value = row.get(start_column)
+        value = values.get(axis.start_attribute)
         if not isinstance(value, _dt.datetime):
             raise TemporalReadError(
-                f"{name}.{axis.start_attribute.name}: milestone start column "
-                f"{start_column!r} "
+                f"{name}.{axis.start_attribute.name}: the milestone start value "
                 "is not a timestamp instant"
             )
         coords[axis.dimension] = normalize_instant(value)

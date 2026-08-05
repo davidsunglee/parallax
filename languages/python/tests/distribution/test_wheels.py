@@ -78,17 +78,27 @@ def test_snapshot_wheel_ships_handle_package(wheelhouse: Wheelhouse) -> None:
     assert "parallax/snapshot/handle/_database.py" in names
     assert "parallax/snapshot/handle/_family.py" in names
     assert "parallax/snapshot/handle/_keyed_sql.py" in names
+    assert "parallax/snapshot/handle/_materializer.py" in names
     assert "parallax/snapshot/handle/_predicate_writes.py" in names
     assert "parallax/snapshot/handle/_read.py" in names
     assert "parallax/snapshot/handle/_transaction.py" in names
-    assert "parallax/snapshot/handle/_wrap.py" in names
     assert "parallax/snapshot/handle/_write_inputs.py" in names
     assert "parallax/snapshot/handle/_write_lowering.py" in names
     assert "parallax/snapshot/handle/_write_types.py" in names
     assert "parallax/snapshot/handle.py" not in names
-    # `wrap.py` moved INTO the package rather than being copied; a wheel carrying
-    # both would mean two live copies of `wrap_graph`.
-    assert "parallax/snapshot/wrap.py" not in names
+
+
+def test_snapshot_wheel_ships_the_materialize_package(wheelhouse: Wheelhouse) -> None:
+    # Same idiom, same reasoning: the ABSENT `materialize.py` is the load-bearing
+    # half — every required path below would still pass against a tree that kept
+    # the old single-file assembler beside the split, and a wheel carrying both
+    # would mean two live copies of the conversion seam.
+    names = _names(wheelhouse, "parallax-snapshot")
+    assert "parallax/snapshot/materialize/__init__.py" in names
+    assert "parallax/snapshot/materialize/_convert.py" in names
+    assert "parallax/snapshot/materialize/_input.py" in names
+    assert "parallax/snapshot/materialize/_merge.py" in names
+    assert "parallax/snapshot/materialize.py" not in names
 
 
 def test_descriptor_wheel_ships_the_privatized_frontend(wheelhouse: Wheelhouse) -> None:

@@ -4,7 +4,12 @@ Exposed from ``parallax.core.entity`` and deliberately **not** from top-level
 ``parallax.core``: it is the seam a lifecycle package builds a graph of frozen
 Entity instances through, not developer surface.
 
-The collaboration owns everything about turning immutable carriers into Entity
+The immutable carriers it is stated in live in the sibling
+:mod:`parallax.core.entity._graph_input` scope, so a lifecycle package building
+Snapshot Graph Input can be granted that algebra without being granted this
+collaboration.
+
+The collaboration owns everything about turning those carriers into Entity
 and Value Object instances — concrete class selection, canonical-to-Python member
 mapping, recursive Value Object construction, Pydantic's ``model_construct`` plus
 the ``object.__setattr__`` backdoor, broad relationship-slot installation, the one
@@ -45,7 +50,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Container, Mapping
 from dataclasses import dataclass
-from typing import Any, Final, Protocol, cast
+from typing import Any, Protocol, cast
 
 from parallax.core.base import INFINITY, NeutralType, Timestamp, matches_neutral_type
 from parallax.core.entity._declaration import (
@@ -56,6 +61,19 @@ from parallax.core.entity._declaration import (
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.entity._errors import GraphConstructionError
 from parallax.core.entity._expressions import UNLOADED
+from parallax.core.entity._graph_input import (
+    UNLOADED_VIEW,
+    EntityAttributeInput,
+    EntityRelationshipInput,
+    LoadedMany,
+    LoadedNull,
+    LoadedOne,
+    NodeHandle,
+    Unloaded,
+    ValueObjectAttributeInput,
+    ValueObjectOccurrenceInput,
+    ValueObjectRecord,
+)
 from parallax.core.entity._model import ClassIndex, DomainModel, class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -74,124 +92,13 @@ from parallax.core.relationship import RelationshipMetadata
 from parallax.core.relationship import view as relationship_view
 
 __all__ = [
-    "LOADED_NULL",
-    "UNLOADED_VIEW",
-    "EntityAttributeInput",
     "EntityGraphConstruction",
     "EntityGraphWriter",
-    "EntityRelationshipInput",
-    "LoadedMany",
-    "LoadedNull",
-    "LoadedOne",
-    "NodeHandle",
-    "RelationshipInput",
     "ResolutionView",
-    "Unloaded",
-    "ValueObjectAttributeInput",
-    "ValueObjectOccurrenceInput",
-    "ValueObjectRecord",
     "entity_runtime_of",
     "lifecycle_state_of",
     "relationship_value_of",
 ]
-
-
-# --------------------------------------------------------------------------- #
-# The immutable carriers both this seam and Snapshot Graph Input are stated in. #
-# Frozen slotted records and exact built-in tuples only: no mapping, abstract   #
-# sequence, mutable collection, raw document dictionary, or caller-defined      #
-# collection subtype crosses either seam.                                       #
-# --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True, slots=True)
-class EntityAttributeInput:
-    """One scalar Attribute entry: its structured identity and its Neutral Value.
-
-    ``value`` is ``None`` exactly for a loaded-null scalar, which is legal only
-    where the Attribute is nullable. Omitting the entry entirely leaves the member
-    at its declared default instead.
-    """
-
-    identity: AttributeIdentity
-    value: object | None
-
-
-@dataclass(frozen=True, slots=True)
-class ValueObjectAttributeInput:
-    """One scalar leaf of one Value Object occurrence."""
-
-    identity: ValueObjectAttributeIdentity
-    value: object | None
-
-
-@dataclass(frozen=True, slots=True)
-class ValueObjectRecord:
-    """One Value Object value, as its scalar leaves and nested occurrences.
-
-    Entry order in either tuple is non-semantic: entries are indexed by structured
-    identity and constructed in accepted metadata declaration order. Absence is
-    represented only by omitting the entry.
-    """
-
-    attributes: tuple[ValueObjectAttributeInput, ...] = ()
-    value_objects: tuple[ValueObjectOccurrenceInput, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class ValueObjectOccurrenceInput:
-    """One Value Object occurrence entry at any containment depth.
-
-    A One occurrence carries a record or ``None``; a Many occurrence carries an
-    ordered tuple of records whose order is semantic and preserved exactly.
-    """
-
-    identity: ValueObjectIdentity
-    value: ValueObjectRecord | tuple[ValueObjectRecord, ...] | None
-
-
-@dataclass(frozen=True, slots=True)
-class Unloaded:
-    """The relationship arm meaning the read did not fetch this view at all."""
-
-
-@dataclass(frozen=True, slots=True)
-class LoadedNull:
-    """The relationship arm meaning a to-one view was fetched and is null."""
-
-
-@dataclass(frozen=True, slots=True)
-class LoadedOne:
-    """The relationship arm meaning a to-one view was fetched and reached a node."""
-
-    node: NodeHandle
-
-
-@dataclass(frozen=True, slots=True)
-class LoadedMany:
-    """The relationship arm meaning a to-many view was fetched; order is semantic
-    and ``()`` is loaded-empty."""
-
-    nodes: tuple[NodeHandle, ...]
-
-
-type RelationshipInput = Unloaded | LoadedNull | LoadedOne | LoadedMany
-"""The closed arm algebra one relationship view's populated state is stated in."""
-
-UNLOADED_VIEW: Final[Unloaded] = Unloaded()
-"""The sole :class:`Unloaded` value; the arms are values rather than sentinels so
-a mistyped arm is a shape rejection rather than a silent pass-through."""
-
-LOADED_NULL: Final[LoadedNull] = LoadedNull()
-"""The sole :class:`LoadedNull` value."""
-
-
-@dataclass(frozen=True, slots=True)
-class EntityRelationshipInput:
-    """One relationship view entry: the direction it names and its loaded state."""
-
-    identity: RelationshipIdentity
-    value: RelationshipInput
 
 
 # --------------------------------------------------------------------------- #
@@ -332,22 +239,8 @@ def _navigable_relationships(
 
 
 # --------------------------------------------------------------------------- #
-# Handles, scopes, and the writer                                              #
+# Scopes and the writer                                                        #
 # --------------------------------------------------------------------------- #
-
-
-class NodeHandle:
-    """An opaque, callback-scoped reference to one allocated node.
-
-    It holds nothing whatever: the issuing construction owns the mapping from
-    handle to allocation index, so a handle exposes no attribute to read, no
-    index to restate, and no route to a partially built instance. A caller
-    composes graph shape by passing handles back, never by reading anything off
-    one, and a handle means nothing outside the ``construct(...)`` call that
-    issued it.
-    """
-
-    __slots__ = ()
 
 
 class _CallScope:

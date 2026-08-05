@@ -29,7 +29,13 @@ from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
 from parallax.core.deep_fetch import FetchLevel, LevelRef, RootRef
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    EntityMetadata,
+    Metamodel,
+    RelationshipIdentity,
+)
 from parallax.core.op_algebra import deserialize
 from parallax.descriptor._records import (
     Attribute,
@@ -235,6 +241,7 @@ _ITEM_ORDER_ID = AttributeIdentity(EntityIdentity(_COMPATIBILITY, "OrderItem"), 
 def _to_many_level(attach_key: str = "items") -> FetchLevel:
     return FetchLevel(
         attach_key=attach_key,
+        relationship=RelationshipIdentity(EntityIdentity(_COMPATIBILITY, "Order"), attach_key),
         to_many=True,
         parent=RootRef(),
         parent_column="id",
@@ -249,6 +256,7 @@ def _to_many_level(attach_key: str = "items") -> FetchLevel:
 def _to_one_level(attach_key: str = "passport") -> FetchLevel:
     return FetchLevel(
         attach_key=attach_key,
+        relationship=RelationshipIdentity(EntityIdentity(_COMPATIBILITY, "Order"), attach_key),
         to_many=False,
         parent=RootRef(),
         parent_column="id",
@@ -307,6 +315,7 @@ def test_a_to_one_level_matches_at_most_one_child_per_parent() -> None:
 def _back_reference_level(family: EntityIdentity) -> FetchLevel:
     return FetchLevel(
         attach_key="order",
+        relationship=RelationshipIdentity(EntityIdentity(_COMPATIBILITY, "OrderItem"), "order"),
         to_many=False,
         parent=LevelRef(0),
         parent_column="order_id",
@@ -352,6 +361,7 @@ def test_a_path_root_guard_admits_only_its_resolved_source_position() -> None:
     cat = EntityIdentity(_COMPATIBILITY, "Cat")
     level = FetchLevel(
         attach_key="toys",
+        relationship=RelationshipIdentity(EntityIdentity(_COMPATIBILITY, "Animal"), "toys"),
         to_many=True,
         parent=RootRef(),
         parent_column="id",

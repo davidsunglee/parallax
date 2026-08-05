@@ -17,7 +17,7 @@ accumulator: with nothing per-scope left on it, exactly ONE exists per statement
 all` branch), nested scopes just keep pointing at it, and the frozen-dataclass
 costume plus its one-element `alias_seq` cell — a workaround for incrementing an
 int on a frozen field — both retire. Precedent for the `slots`-only mutable
-builder: `parallax.snapshot.materialize.Node`.
+builder: `parallax.snapshot.materialize.MergeScope`.
 
 :class:`ColumnScope` and :class:`PlanScope` are the NARROWED views of a
 resolution scope handed to the plan-only modules (`_inheritance`, `_navigation`),

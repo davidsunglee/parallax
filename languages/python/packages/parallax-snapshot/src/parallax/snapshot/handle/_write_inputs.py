@@ -308,11 +308,12 @@ def _temporal_observation(
     values"; `m-value-object` "the document rides every chained/split row
     whole").
 
-    ``fields`` is a plain column-keyed mapping — a materialized
-    :class:`~parallax.snapshot.materialize.Node`'s own ``.fields`` merged with
-    its documents (a real ``Transaction.find``), or one resolved row of a
-    materializing predicate-write resolve (:func:`predecessor_payload`) — so both
-    callers share the SAME extraction rather than duplicating it. Every extracted
+    ``fields`` is a plain column-keyed mapping — one materialized row's own
+    observable columns, documents decoded
+    (:func:`~parallax.snapshot.materialize.observable_columns`, a real
+    ``Transaction.find``), or one resolved row of a materializing predicate-write
+    resolve (:func:`predecessor_payload`) — so both callers share the SAME
+    extraction rather than duplicating it. Every extracted
     value passes through EXACTLY as the port returned it (a real ``timestamptz``
     column may be a driver-native ``datetime.datetime`` or the native-infinity
     sentinel, never pre-rendered to a wire string here) — the SAME

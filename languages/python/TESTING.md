@@ -48,7 +48,7 @@ surface pytest collects first; `pyrightconfig.json`'s `extraPaths` mirrors it. A
 test module imports from `_support`, never from another test module.
 
 Support code only one surface uses stays inside that surface —
-`tests/unit/_metamodel_support.py`, `_snapshot_wrap_support.py`,
+`tests/unit/_metamodel_support.py`, `_snapshot_graph_support.py`,
 `_sql_gen_support.py`, `_transact_support.py`, and
 `tests/unit/value_object_bad_models.py`.
 

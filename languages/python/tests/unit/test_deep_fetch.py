@@ -17,7 +17,12 @@ from _sql_gen_support import model as accepted_model
 from _sql_gen_support import target as entity_of
 
 from parallax.core import deep_fetch
-from parallax.core.metamodel import AttributeIdentity, EntityIdentity, Metamodel
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityIdentity,
+    Metamodel,
+    RelationshipIdentity,
+)
 from parallax.core.op_algebra import (
     All,
     And,
@@ -426,6 +431,28 @@ def test_a_correlation_member_is_addressed_at_the_position_the_join_names_it_at(
     assert pets.related_column == "owner_id"
     assert pets.related_attribute == AttributeIdentity(
         EntityIdentity("parallax.compatibility", "Pet"), "ownerId"
+    )
+
+
+def test_a_level_names_the_direction_it_attaches_under_beside_its_attach_key() -> None:
+    # A narrowed hop's attach key is a DERIVED spelling of the resolved concrete
+    # set, so matching it back against the owner's relationship names is exactly
+    # the inversion the identity removes: the identity names the declaring
+    # position and the declared direction, whatever the key spells.
+    plan = _plan(ANIMAL, "Person", (_path(_seg("Person.pets", ("Dog",))),))
+    pets = plan.levels[0]
+    assert pets.attach_key == "pets[Dog]"
+    assert pets.relationship == RelationshipIdentity(
+        EntityIdentity("parallax.compatibility", "Person"), "pets"
+    )
+
+
+def test_a_back_reference_level_names_its_direction_too() -> None:
+    plan = _plan(ORDERS, "Order", (_path(_seg("Order.items"), _seg("OrderItem.order")),))
+    order = plan.levels[1]
+    assert order.is_back_reference
+    assert order.relationship == RelationshipIdentity(
+        EntityIdentity("parallax.compatibility", "OrderItem"), "order"
     )
 
 

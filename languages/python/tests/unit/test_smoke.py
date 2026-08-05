@@ -81,12 +81,12 @@ def test_every_scope_submodule_imports() -> None:
 
 @pytest.mark.parametrize(
     "module",
-    ["parallax.snapshot", "parallax.snapshot.handle", "parallax.snapshot.handle._wrap"],
+    ["parallax.snapshot", "parallax.snapshot.handle", "parallax.snapshot.handle._materializer"],
 )
 def test_snapshot_imports_cold_in_a_fresh_interpreter(module: str) -> None:
     # The in-process checks above cannot see an import cycle: by the time they
     # run, pytest collection has already imported `parallax.snapshot`, so a
-    # partially-initialized-module failure is masked. `handle._wrap` imports
+    # partially-initialized-module failure is masked. `handle._materializer` imports
     # `parallax.snapshot.materialize` back through the parent package — the shape
     # that breaks only on a cold import, and only for some entry points, so each
     # entry point gets its own probe.

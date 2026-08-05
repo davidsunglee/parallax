@@ -7,11 +7,18 @@ The module DAG's snapshot-handle scope already reaches `materialize` + `m-sql`
 `m-temporal-read`) are composed HERE, exactly like `_write_lowering` composes
 the write-side `m-unit-work` x `m-sql` edge — one executor, production-owned:
 `db.find` and `tx.find` both call the SAME :func:`find` / :func:`find_history`
-and wrap the SAME neutral :class:`~parallax.snapshot.materialize.Node`s, so the
-per-level loop exists exactly once on the developer-facing path.
+and build the SAME
+:class:`~parallax.snapshot.materialize.SnapshotGraphInput`, so the per-level
+loop exists exactly once on the developer-facing path.
+
+Each level's rows are converted as they arrive and released immediately: a
+converted node names its correlation members, so the next level gathers its keys
+off the converted parent rather than off a retained row. Nothing below this
+module holds a row, and no row survives into the graph input, the Snapshot, or
+the observation record.
 
 The executor's own results (:class:`ExecutedStatement`, :class:`Execution`,
-:class:`FindResult`, :class:`MilestoneGraph`, :class:`HistoryFindResult`) stay
+:class:`FindResult`, :class:`HistoryFindResult`) stay
 co-located with it, together with the developer-facing :class:`Snapshot`
 surface they convert into and the pin helpers that carry a query's or a
 milestone's as-of coordinates across that conversion. Those helpers stay here
@@ -24,7 +31,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, Protocol, cast
+from typing import Any, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_port import DbPort, Row
@@ -32,24 +39,32 @@ from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import EntityGraphConstruction
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import (
+    AttributeIdentity,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    TemporalDimension,
     entity_by_name,
 )
 from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
-from parallax.snapshot import materialize
 from parallax.snapshot.handle._errors import SnapshotMaterializationError
-from parallax.snapshot.handle._wrap import wrap_graph
+from parallax.snapshot.handle._materializer import materialize_graph
+from parallax.snapshot.materialize import (
+    LevelContext,
+    MergeScope,
+    RelationshipViewKey,
+    SnapshotGraphInput,
+    SnapshotNodeRef,
+    attribute_value,
+    convert_row,
+    observable_columns,
+)
 
 __all__ = [
     "ExecutedStatement",
     "Execution",
     "FindResult",
     "HistoryFindResult",
-    "MilestoneGraph",
     "NoResultFound",
     "ObservationCollector",
     "Snapshot",
@@ -193,30 +208,23 @@ class ObservationCollector(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class FindResult:
-    """A single-graph find's root nodes plus its execution record."""
+    """A single-graph find's Snapshot Graph Input plus its execution record."""
 
-    nodes: tuple[materialize.Node, ...]
+    graph: SnapshotGraphInput
     execution: Execution
 
 
 @dataclass(frozen=True, slots=True)
-class MilestoneGraph:
-    """One `history` / `asOfRange` milestone's own edge-pinned graph (m-snapshot-
-    read "The whole-graph pin"): ``pin`` maps each declared as-of attribute name
-    to its edge (from-instant) coordinate for this milestone; ``nodes`` is the
-    root-only graph at that milestone (a v1 milestone-set graph carries no
-    includes, m-case-format)."""
-
-    pin: Mapping[str, object]
-    nodes: tuple[materialize.Node, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class HistoryFindResult:
-    """A milestone-set find's ordered per-milestone graphs plus its (single-
-    statement) execution record."""
+    """A milestone-set find's ordered per-milestone graph inputs plus its
+    (single-statement) execution record.
 
-    graphs: tuple[MilestoneGraph, ...]
+    Each entry is a root-only graph pinned at its own milestone's from-instant
+    (m-snapshot-read "The whole-graph pin"); a v1 milestone-set graph carries no
+    includes (m-case-format).
+    """
+
+    graphs: tuple[SnapshotGraphInput, ...]
     execution: Execution
 
 
@@ -238,28 +246,28 @@ def find(
     — a plain snapshot read, or the source find behind a scenario `mutate`
     action). Canonicalizes the root query (`m-temporal-read` + `m-navigate`,
     composed here), compiles and executes it, then for each
-    planned level: restricts the parent rows to the ones a path-root guard admits
+    planned level: restricts the parent nodes to the ones a path-root guard admits
     (`FetchLevel.source_position`, m-deep-fetch — an excluded parent contributes no
     key and receives no attachment, so its view stays unset); gathers the distinct
     non-null parent keys; an empty gathered
     set attaches the empty/null relationship result and issues no child SQL; a
-    back-reference level issues no SQL either (resolved via the assembler's own
-    graph-local identity map); otherwise compiles and executes ONE child query
+    back-reference level issues no SQL either (resolved through the merge scope's
+    own graph-local identity map); otherwise compiles and executes ONE child query
     (carrying the level's declared relationship ordering), applies
-    `familyVariant` materialization (`m-sql`) to its rows, and
-    feeds the assembler. Every level is the same three steps — compile,
-    execute, transform — with `familyVariant` materialization coming from that
-    level's OWN `~parallax.core.sql_gen.CompiledRead.transform_row`, never
-    re-derived here from the operation a second time. The root's own authored
-    narrow (if any, `~parallax.core.sql_gen.CompiledRead.narrow_to`) threads
-    into `Assembler.materialize_root` the SAME way a deep-fetch child level's own
-    `FetchLevel.narrow_to` already threads through `attach_level`: a
-    table-per-concrete-subtype root position
-    resolving to exactly one concrete emits no `familyVariant` column, so this
-    is what lets the assembler still recover the row's own concrete identity.
-    Returns the root's own materialized nodes — reached from them, every
-    attached level's nodes hang off `Node.relationships` — plus the full ordered
-    execution record.
+    `familyVariant` materialization (`m-sql`) to its rows, and converts them.
+    Every level is the same three steps — compile, execute, convert — with
+    `familyVariant` materialization and each row's resolved concrete Entity coming
+    from that level's OWN `~parallax.core.sql_gen.CompiledRead`, never re-derived
+    here from the operation a second time.
+
+    Keys are gathered and fanned back by MEMBER identity
+    (`FetchLevel.parent_attribute` / `related_attribute`), which is what lets each
+    level's rows be released the moment they are converted: no column-to-member
+    inversion happens here, and no row outlives its own level.
+
+    Returns the whole Snapshot Graph Input — every projection, the root
+    references in result order, and the query's own lowered pin — plus the full
+    ordered execution record.
 
     ``observations``, when supplied, takes every materialized row (root and each
     attached level) as the level materializes it, so a caller with a unit of work
@@ -271,42 +279,26 @@ def find(
     root_entity = _metadata(meta, target)
     plan_ = deep_fetch.plan(root_entity, op, meta)
     statements: list[ExecutedStatement] = []
+    scope = MergeScope(meta)
 
     root_compiled = compile_read(
         plan_.root_operation, meta, dialect, root_entity, result_form="instance", lock=lock
     )
-    root_materialized = _execute_compiled(port, dialect, root_compiled, statements)
-    root_rows = [row.values for row in root_materialized]
-
-    assembler = materialize.Assembler(meta=meta)
-    root_nodes = assembler.materialize_root(
-        target,
-        root_rows,
-        narrow_to=root_compiled.narrow_to,
-        resolved_position=root_compiled.resolved_position,
-        resolved_entities=[row.resolved_entity for row in root_materialized],
-        family_variants=[row.family_variant for row in root_materialized],
-        documents=root_compiled.documents,
+    root_refs = _convert_level(
+        scope, port, dialect, root_compiled, statements, target, observations
     )
-    if observations is not None:
-        _observe(observations, target, root_nodes, root_materialized)
 
-    level_rows: list[Sequence[Row]] = []
-    level_nodes: list[list[materialize.Node]] = []
+    level_refs: list[tuple[SnapshotNodeRef, ...]] = []
     for level in plan_.levels:
-        parent_rows, parent_nodes = _guarded_parents(
-            level, *_parent_data(level.parent, root_rows, root_nodes, level_rows, level_nodes)
-        )
+        parents = _guarded_parents(scope, level, _parent_refs(level.parent, root_refs, level_refs))
         if level.is_back_reference:
-            nodes = assembler.attach_level(level, parent_nodes, parent_rows, None)
-            level_rows.append(())
-            level_nodes.append(nodes)
+            _attach_back_reference(scope, meta, level, parents)
+            level_refs.append(())
             continue
-        keys = _distinct_keys(parent_rows, level.parent_column)
+        keys = _distinct_keys(scope, parents, _correlation_member(meta, level.parent_attribute))
         if not keys:
-            nodes = assembler.attach_level(level, parent_nodes, parent_rows, None)
-            level_rows.append(())
-            level_nodes.append(nodes)
+            _attach_empty(scope, level, parents)
+            level_refs.append(())
             continue
         child_target, child_op = level.child_operation(keys)
         child_entity = _metadata(meta, child_target)
@@ -319,26 +311,16 @@ def find(
             lock=lock,
         )
         # A child level takes its narrow from `FetchLevel.narrow_to` (consumed
-        # inside `attach_level`), never from the compiled read — only the ROOT
+        # inside `child_operation`), never from the compiled read — only the ROOT
         # has no planner-supplied narrow to fall back on.
-        child_materialized = _execute_compiled(port, dialect, child_compiled, statements)
-        rows = [row.values for row in child_materialized]
-        nodes = assembler.attach_level(
-            level,
-            parent_nodes,
-            parent_rows,
-            rows,
-            resolved_position=child_compiled.resolved_position,
-            resolved_entities=[row.resolved_entity for row in child_materialized],
-            family_variants=[row.family_variant for row in child_materialized],
-            documents=child_compiled.documents,
+        child_refs = _convert_level(
+            scope, port, dialect, child_compiled, statements, child_target, observations
         )
-        level_rows.append(rows)
-        level_nodes.append(nodes)
-        if observations is not None:
-            _observe(observations, child_target, nodes, child_materialized)
+        _attach_children(scope, meta, level, parents, child_refs)
+        level_refs.append(child_refs)
 
-    return FindResult(nodes=tuple(root_nodes), execution=Execution(tuple(statements)))
+    pin = deep_fetch_statement_pin(op, declaring_metadata(meta, root_entity.identity))
+    return FindResult(graph=scope.build(root_refs, pin), execution=Execution(tuple(statements)))
 
 
 def find_history(
@@ -348,10 +330,11 @@ def find_history(
     m-case-format "Milestone-set graphs"): `history` / `asOfRange` return the
     full matching milestone SET in one statement, partitioned here by each
     row's own edge (`~parallax.core.temporal_read.milestone_edge`) into one
-    root-only graph per milestone — no levels (a v1 milestone-set graph carries
-    no includes). Rows are grouped in chronological edge order (Valid Time
-    first, matching the corpus's own authored `then.graphs` order) rather than
-    relying on the database's unspecified natural row order.
+    root-only graph per milestone, each with its OWN merge scope — graph-local
+    identity never promises reuse across milestones. Rows are grouped in
+    chronological edge order (Valid Time first, matching the corpus's own authored
+    `then.graphs` order) rather than relying on the database's unspecified natural
+    row order.
     """
     metadata = _metadata(meta, target)
     plan_ = deep_fetch.plan(metadata, op, meta)
@@ -362,8 +345,8 @@ def find_history(
     # FAMILY's actual temporal declaration (the root, for a participant —
     # temporality is family-wide, `m-inheritance`); every
     # `~parallax.core.temporal_read` per-entity primitive below (`milestone_edge`,
-    # `_edge_pin`, `_edge_sort_key`) MUST resolve through it rather than the
-    # queried target's own (possibly locally-empty) axes.
+    # `_edge_sort_key`) MUST resolve through it rather than the queried target's
+    # own (possibly locally-empty) axes.
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root_operation, meta, dialect, metadata, result_form="instance")
     statements: list[ExecutedStatement] = []
@@ -381,42 +364,141 @@ def find_history(
             order.append(edge)
         groups[edge].append(row)
 
-    graphs = tuple(
-        MilestoneGraph(
-            pin=_edge_pin(entity, edge),
-            nodes=tuple(
-                materialize.Assembler(meta=meta).materialize_root(
-                    target,
-                    [row.values for row in groups[edge]],
-                    narrow_to=compiled.narrow_to,
-                    resolved_position=compiled.resolved_position,
-                    resolved_entities=[row.resolved_entity for row in groups[edge]],
-                    family_variants=[row.family_variant for row in groups[edge]],
-                    documents=compiled.documents,
-                )
-            ),
+    graphs: list[SnapshotGraphInput] = []
+    for edge in order:
+        scope = MergeScope(meta)
+        refs = tuple(
+            convert_row(row.values, LevelContext(row.resolved_entity, compiled.documents), scope)
+            for row in groups[edge]
         )
-        for edge in order
-    )
-    return HistoryFindResult(graphs=graphs, execution=Execution(tuple(statements)))
+        graphs.append(scope.build(refs, _edge_pin(edge)))
+    return HistoryFindResult(graphs=tuple(graphs), execution=Execution(tuple(statements)))
 
 
-def _observe(
-    observations: ObservationCollector,
+def _convert_level(
+    scope: MergeScope,
+    port: DbPort,
+    dialect: Dialect,
+    compiled: CompiledRead,
+    statements: list[ExecutedStatement],
     entity: str,
-    nodes: Sequence[materialize.Node],
-    materialized: Sequence[MaterializedReadRow],
-) -> None:
-    """Hand one level's materialized rows to the collector as that level lands.
+    observations: ObservationCollector | None,
+) -> tuple[SnapshotNodeRef, ...]:
+    """Execute one level and convert its rows, releasing them as it goes.
 
-    A node's scalar and Value-Object namespaces are kept apart so a document's
-    storage key may equal a relationship name; both occupy their own Column slot,
-    so merging them yields the complete persisted row keyed by physical column —
-    which is exactly what an observation records against. The merge happens here
-    rather than in the collector so the collector never sees a node at all.
+    The observation, when one is being collected, is taken from the SAME row the
+    conversion reads, while that row is still live. It is deliberately physical:
+    a Predecessor Row is column-keyed by contract, so the write side is served by
+    its own explicitly physical extraction rather than by a converted node
+    carrying columns it has no other use for.
     """
-    for node, row in zip(nodes, materialized, strict=True):
-        observations.observe_row(entity, {**node.fields, **node.value_objects}, row.document)
+    refs: list[SnapshotNodeRef] = []
+    for row in _execute_compiled(port, dialect, compiled, statements):
+        context = LevelContext(row.resolved_entity, compiled.documents)
+        refs.append(convert_row(row.values, context, scope))
+        if observations is not None:
+            observations.observe_row(entity, observable_columns(row.values, context), row.document)
+    return tuple(refs)
+
+
+def _view_key(level: deep_fetch.FetchLevel) -> RelationshipViewKey:
+    """The view ``level`` attaches under: its declared direction, plus the derived
+    narrowed-view key when the level's attach key is not simply that direction's
+    own name."""
+    narrowed = None if level.attach_key == level.relationship.name else level.attach_key
+    return RelationshipViewKey(level.relationship, narrowed)
+
+
+def _attach_children(
+    scope: MergeScope,
+    meta: Metamodel,
+    level: deep_fetch.FetchLevel,
+    parents: tuple[SnapshotNodeRef, ...],
+    children: tuple[SnapshotNodeRef, ...],
+) -> None:
+    """Fan one level's converted children back to their parents in memory,
+    preserving fetched order within each to-many bucket."""
+    assert level.related_attribute is not None
+    related = _correlation_member(meta, level.related_attribute)
+    owner = _correlation_member(meta, level.parent_attribute)
+    buckets: dict[object, list[SnapshotNodeRef]] = {}
+    for child in children:
+        key = attribute_value(scope.node(child), related)
+        buckets.setdefault(key, []).append(child)
+    view = _view_key(level)
+    for parent in parents:
+        matched = buckets.get(attribute_value(scope.node(parent), owner), [])
+        scope.attach(
+            parent,
+            view,
+            tuple(matched) if level.to_many else (matched[0] if matched else None),
+        )
+
+
+def _attach_empty(
+    scope: MergeScope, level: deep_fetch.FetchLevel, parents: tuple[SnapshotNodeRef, ...]
+) -> None:
+    """Attach the empty/null relationship result to every admitted parent.
+
+    m-deep-fetch: an empty gathered parent-key set issues no child query at all,
+    and every parent still gets a LOADED view — empty or null — rather than an
+    unset one.
+    """
+    view = _view_key(level)
+    empty: tuple[SnapshotNodeRef, ...] | None = () if level.to_many else None
+    for parent in parents:
+        scope.attach(parent, view, empty)
+
+
+def _attach_back_reference(
+    scope: MergeScope,
+    meta: Metamodel,
+    level: deep_fetch.FetchLevel,
+    parents: tuple[SnapshotNodeRef, ...],
+) -> None:
+    """Resolve an ancestor-revisit level against the scope's own identity map.
+
+    A back-reference issues no SQL: m-case-format's "Back-reference cycles"
+    guarantees the ancestor is already converted, so the parent's own correlation
+    member names a node this scope has already registered.
+    """
+    assert level.back_reference_family is not None
+    view = _view_key(level)
+    owner = _correlation_member(meta, level.parent_attribute)
+    for parent in parents:
+        key = attribute_value(scope.node(parent), owner)
+        if key is None:
+            scope.attach(parent, view, () if level.to_many else None)
+            continue
+        referenced = scope.resolve(level.back_reference_family, (key,))
+        if referenced is None:  # pragma: no cover - guards a malformed plan
+            raise ValueError(
+                f"back-reference {level.attach_key!r}: no already-converted "
+                f"{level.back_reference_family.canonical} node for key {key!r} (m-case-format "
+                "'Back-reference cycles' guarantees the ancestor is already known)"
+            )
+        scope.attach(parent, view, (referenced,) if level.to_many else referenced)
+
+
+def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> AttributeIdentity:
+    """The Identity a converted node carries for the member ``attribute`` names.
+
+    A relationship join addresses a correlation Attribute at the POSITION it
+    reaches it through, which for an inheritance participant may be a descendant
+    of the position that declares it (`Person.pets` joins `Pet.ownerId` for an
+    Attribute `Animal` declares). A converted node keys every family-effective
+    member by its own DECLARING identity, so the two spellings must be reconciled
+    once here rather than by loosening how a node is keyed.
+    """
+    facet = inheritance.view(meta)
+    position = facet.entity(attribute.entity)
+    root = facet.entity(attribute.entity if position is None else position.root)
+    if root is None:  # pragma: no cover - the facet covers every accepted Entity
+        return attribute
+    for candidate in root.superset_attributes:
+        if candidate.identity.name == attribute.name:
+            return candidate.identity
+    return attribute  # pragma: no cover - a resolved join names a declared member
 
 
 def _execute_compiled(
@@ -431,7 +513,7 @@ def _execute_compiled(
     that raises deep inside the tag transform in one direction and, in the other,
     silently leaves the raw tag column standing where `familyVariant` should be.
     Keeping the pair bundled here is the caller-side half of `CompiledRead`'s own
-    self-containment — it makes `find`'s "compile, execute, transform"
+    self-containment — it makes `find`'s "compile, execute, convert"
     structural rather than a convention every level has to remember.
     """
     return [
@@ -451,68 +533,53 @@ def _execute(
     return rows
 
 
-def _parent_data(
+def _parent_refs(
     parent: deep_fetch.ParentRef,
-    root_rows: Sequence[Row],
-    root_nodes: Sequence[materialize.Node],
-    level_rows: Sequence[Sequence[Row]],
-    level_nodes: Sequence[list[materialize.Node]],
-) -> tuple[Sequence[Row], Sequence[materialize.Node]]:
+    root_refs: tuple[SnapshotNodeRef, ...],
+    level_refs: Sequence[tuple[SnapshotNodeRef, ...]],
+) -> tuple[SnapshotNodeRef, ...]:
     if isinstance(parent, deep_fetch.RootRef):
-        return root_rows, root_nodes
-    return level_rows[parent.index], level_nodes[parent.index]
+        return root_refs
+    return level_refs[parent.index]
 
 
 def _guarded_parents(
-    level: deep_fetch.FetchLevel,
-    parent_rows: Sequence[Row],
-    parent_nodes: Sequence[materialize.Node],
-) -> tuple[Sequence[Row], Sequence[materialize.Node]]:
-    """The parent rows and nodes a path-root guard admits into ``level``
+    scope: MergeScope, level: deep_fetch.FetchLevel, parents: tuple[SnapshotNodeRef, ...]
+) -> tuple[SnapshotNodeRef, ...]:
+    """The parent nodes a path-root guard admits into ``level``
     (m-deep-fetch "Path-root guards").
 
-    A guard is a SOURCE filter, not a view: it selects which already-materialized
+    A guard is a SOURCE filter, not a view: it selects which already-converted
     parents this level gathers keys from and attaches to, so an excluded parent
-    never sees the level's ``attach_key`` at all — the closed-world distinction
+    never sees the level's view at all — the closed-world distinction
     between "no such related row" and "this object never participated". Selection
     is by each parent's OWN resolved concrete Entity, which is exactly what a
-    guard's resolved source set enumerates. An unguarded level returns both
-    sequences unchanged.
+    guard's resolved source set enumerates. An unguarded level returns the
+    sequence unchanged.
     """
     if level.source_position is None:
-        return parent_rows, parent_nodes
+        return parents
     admitted = frozenset(level.source_position)
-    pairs = [
-        (row, node)
-        for row, node in zip(parent_rows, parent_nodes, strict=True)
-        if node.resolved_entity in admitted
-    ]
-    return [row for row, _ in pairs], [node for _, node in pairs]
+    return tuple(parent for parent in parents if scope.node(parent).concrete_entity in admitted)
 
 
-def _distinct_keys(rows: Sequence[Row], column: str) -> list[op_algebra.Scalar]:
-    """The distinct NON-NULL values of ``column`` across ``rows``, in first-
+def _distinct_keys(
+    scope: MergeScope, parents: tuple[SnapshotNodeRef, ...], member: AttributeIdentity
+) -> list[op_algebra.Scalar]:
+    """The distinct NON-NULL values of ``member`` across ``parents``, in first-
     encountered order (m-deep-fetch: the gathered set is unordered for grading
     purposes — an implementation MUST NOT sort at runtime to match a fixture —
     so encounter order is as good as any, and deterministic run to run).
 
     A gathered key is always a declared PRIMARY-KEY (or unique FK) attribute's
-    own value — one of `m-op-algebra`'s neutral scalar types — even though the
-    port's own row values are typed as plain ``object`` (`m-db-port`); the cast
-    reflects that runtime invariant, not a widening of the membership node's
-    own typed-literal contract.
+    own value — one of `m-op-algebra`'s neutral scalar types — even though a
+    converted node's values are typed as plain ``object``; the cast reflects that
+    runtime invariant, not a widening of the membership node's own typed-literal
+    contract.
     """
-    values = dict.fromkeys(row[column] for row in rows if row[column] is not None)
+    gathered = (attribute_value(scope.node(parent), member) for parent in parents)
+    values = dict.fromkeys(value for value in gathered if value is not None)
     return cast("list[op_algebra.Scalar]", list(values))
-
-
-# The wire spelling each Temporal Dimension is emitted under in a milestone-set
-# graph's `then.graphs` pin entry (`m-case-format`). The dimension itself is
-# structured everywhere above this seam.
-_DIMENSION_NAMES: Final[Mapping[TemporalDimension, str]] = {
-    TemporalDimension.VALID_TIME: "valid-time",
-    TemporalDimension.TRANSACTION_TIME: "transaction-time",
-}
 
 
 def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
@@ -560,14 +627,14 @@ def _edge_sort_key(entity: EntityMetadata, row: Row) -> tuple[object, ...]:
     return tuple(row[_start_column(entity, axis)] for axis in ordered)
 
 
-def _edge_pin(entity: EntityMetadata, edge: Edge) -> dict[str, object]:
-    """The milestone-set `then.graphs` `pin` entry keyed by dimension."""
-    return {
-        _DIMENSION_NAMES[axis.dimension]: (
-            edge.valid_time if axis.dimension is TemporalDimension.VALID_TIME else edge.tx_time
-        )
-        for axis in entity.declared_as_of_axes
-    }
+def _edge_pin(edge: Edge) -> Pin:
+    """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
+    milestone-set root is edge-pinned at its own milestone's from-instant).
+
+    An axis the Entity does not declare answers absent on both sides, so the
+    rendering needs no per-entity axis list of its own.
+    """
+    return Pin(tx_time=edge.tx_time_or_none, valid_time=edge.valid_time_or_none)
 
 
 def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -> Pin:
@@ -588,37 +655,19 @@ def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -
     return statement_pin(pin_op, entity)
 
 
-def _pin_from_milestone(entity: EntityMetadata, milestone_pin: Mapping[str, object]) -> Pin:
-    """One milestone's own edge, rendered as a :class:`Pin` (spec §3: each
-    milestone-set root is edge-pinned at its own milestone's from-instant)."""
-    coords: dict[str, object] = {}
-    for axis in entity.declared_as_of_axes:
-        name = _DIMENSION_NAMES[axis.dimension]
-        if name in milestone_pin:
-            coords[name] = milestone_pin[name]
-    return Pin(
-        tx_time=cast("Any", coords.get("transaction-time")),
-        valid_time=cast("Any", coords.get("valid-time")),
-    )
-
-
 def snapshot_from_find_result(
-    result: FindResult, target: str, meta: Metamodel, pin: Pin, runtime: EntityGraphConstruction
+    result: FindResult, meta: Metamodel, runtime: EntityGraphConstruction
 ) -> Snapshot[Any]:
-    roots = _materialized(lambda: wrap_graph(result.nodes, target, meta, pin, runtime))
-    return Snapshot(roots, pin, result.execution)
+    roots = _materialized(lambda: materialize_graph(result.graph, meta, runtime))
+    return Snapshot(roots, result.graph.pin, result.execution)
 
 
 def snapshot_from_history_result(
-    result: HistoryFindResult, target: str, meta: Metamodel, runtime: EntityGraphConstruction
+    result: HistoryFindResult, meta: Metamodel, runtime: EntityGraphConstruction
 ) -> Snapshot[Any]:
-    entity = declaring_metadata(meta, _metadata(meta, target).identity)
     roots: list[Any] = []
     for graph in result.graphs:
-        milestone_pin = _pin_from_milestone(entity, graph.pin)
-        roots.extend(
-            _materialized(lambda: wrap_graph(graph.nodes, target, meta, milestone_pin, runtime))  # noqa: B023
-        )
+        roots.extend(_materialized(lambda: materialize_graph(graph, meta, runtime)))  # noqa: B023
     return Snapshot(tuple(roots), Pin(), result.execution)
 
 
@@ -630,7 +679,7 @@ def _materialized(build: Callable[[], tuple[object, ...]]) -> tuple[Any, ...]:
     :class:`~parallax.snapshot.handle._errors.SnapshotMaterializationError`, so a
     caller sees exactly one wrapping with the original cause chained. Everything
     that failed BEFORE a graph was being built — the query, the connection, the
-    transaction, the adapter, SQL generation, neutral decoding — has already
+    transaction, the adapter, SQL generation, row conversion — has already
     raised with its own classification and never reaches here.
     """
     try:

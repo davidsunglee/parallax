@@ -31,6 +31,7 @@ from parallax.core.metamodel import (
     ConcreteSubtype,
     EntityIdentity,
     ExactEntityReference,
+    RelationshipIdentity,
     Table,
     TablePerHierarchy,
     ValueObjectAttributeDeclaration,
@@ -3069,6 +3070,7 @@ def test_relationship_attachment_preserves_a_same_named_value_object_storage_key
     )
     level = FetchLevel(
         attach_key="details",
+        relationship=RelationshipIdentity(owner_identity, "details"),
         to_many=False,
         parent=RootRef(),
         parent_column="target_id",
