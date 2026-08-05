@@ -1844,8 +1844,11 @@ or descriptor authoring form and performs no audit stamping.
   field presence so canonical document serialization omits the former and
   emits the latter as explicit null. A Many occurrence is an ordered immutable
   `tuple` of non-null Value Object records and is never nullable: `()` is its
-  sole zero-element value, while omission, `None`, and `None` elements are
-  invalid. The same rules apply recursively at every nesting depth.
+  sole zero-element value, and a present entry holding `None` or holding a
+  `None` element is invalid. Omission is not invalid — it is that occurrence's
+  own absence form, which absence collapse resolves to `()`
+  (**Document-resident nullability** below). The same rules apply recursively at
+  every nesting depth.
 - **Exact immutable Graph Input carriers.** Snapshot Graph Input is a private
   first-party graph of frozen slotted records and exact built-in tuples:
 
@@ -1939,28 +1942,37 @@ or descriptor authoring form and performs no audit stamping.
   collapsed by the read seam under `m-op-algebra`'s absence-collapse rule: a
   missing key, a stored null (SQL or JSON), and a non-object intermediate all
   arrive as `None`; for a Many, a missing key, a stored null, and a non-array
-  all arrive as `()`. The collapse is lossy by design and takes no nullability
-  argument — `document_codec.reduce_declared_members` cannot consult `nullable`
-  — so a document that omitted a required leaf and one that stored a legal null
-  arrive as the same value, and no nullability verdict is recoverable from it.
-  **No layer enforces declared nullability at a document-resident position**:
-  not the read seam, not Entity Graph Construction, and not the frozen Value
-  Object it builds. A stored document violating a required leaf or a required
-  One occurrence materializes as `None` (or `()`) instead of raising. Entity
-  Graph Construction validates everything else at those positions — structured
+  all arrive as `()`. The collapse takes no nullability argument —
+  `document_codec.reduce_declared_members` cannot consult `nullable` — so which
+  not-present state the document was in does not survive it: an omitted leaf and
+  a stored null arrive as the same value.
+  **No layer of Snapshot materialization enforces declared nullability at a
+  document-resident position** — not the read seam, not Entity Graph
+  Construction, and not the frozen Value Object it builds. A stored document
+  violating a required leaf or a required One occurrence materializes as `None`
+  (or `()`) instead of raising. The write path is untouched by this and still
+  enforces: a Value Object authored for an assignment is built by ordinary
+  Pydantic validation, where a required leaf admits neither omission nor `None`
+  (§2), which is how a write omitting a required attribute or a required One
+  occurrence is refused pre-SQL. Entity Graph
+  Construction validates everything else at those positions — structured
   identity, duplicate entries, occurrence shape (record versus tuple), exact
   built-in tuple carriers, and Neutral Value validity. An Entity Attribute is
   column-resident and unaffected: its declared nullability **is** enforced, and
   a `None` for a non-nullable Attribute raises
   `GraphConstructionError(entity-graph-invalid-value)`.
 
-  The gap is declined enforcement rather than an oversight. The core corpus
-  specifies the collapse — `m-value-object-023` grades `city: null` for a leaf
-  whose model declares no `nullable` — and core specifications and the
-  compatibility corpus outrank this document. Enforcement would also be
-  disproportionate to the fault: state attachment and root publication are
-  atomic, so a construction failure publishes nothing and one malformed stored
-  document would render an entire result unreadable.
+  The gap is declined enforcement rather than a missing capability. Every state
+  the collapse merges violates a required member, and construction still holds
+  the member's declared `nullable`, so a verdict is derivable; what the collapse
+  costs is only the ability to say which violation a document committed.
+  Enforcement is declined because the core corpus specifies the collapse —
+  `m-value-object-023` grades `city: null` for a leaf whose model declares no
+  `nullable` — and core specifications and the compatibility corpus outrank this
+  document. Enforcement would also be disproportionate to the fault: state
+  attachment and root publication are atomic, so a construction failure
+  publishes nothing and one malformed stored document would render an entire
+  result unreadable.
 - **Single graph input.** Projection merging may retain a transient logical
   identity index, references to input projections, and slot-level winner
   references. It MUST NOT clone each node's scalar, Value Object, and

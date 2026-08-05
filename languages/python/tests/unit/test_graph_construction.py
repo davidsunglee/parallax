@@ -95,7 +95,7 @@ class _ClasslessSource:
         return (sm.SnapOrderStatus,)
 
 
-class _RootsSubclass(tuple[Any, ...]):
+class _CallerDefinedTuple(tuple[Any, ...]):
     """A caller-defined collection subtype: a ``tuple`` for ``isinstance``, and
     still not the exact built-in the seams take."""
 
@@ -303,7 +303,7 @@ def test_a_build_callback_answering_something_other_than_handles_is_refused() ->
     def answers_a_tuple_subclass(writer: EntityGraphWriter) -> Any:
         handle = writer.allocate(_ORDER)
         writer.populate(handle, _ORDER_SCALARS, (), ())
-        return _RootsSubclass((handle,))
+        return _CallerDefinedTuple((handle,))
 
     def answers_a_string(writer: EntityGraphWriter) -> Any:
         del writer
@@ -446,7 +446,7 @@ def test_a_node_handle_publishes_nothing_a_build_callback_could_read() -> None:
     "collection",
     [
         pytest.param(list, id="a-mutable-collection"),
-        pytest.param(_RootsSubclass, id="a-caller-defined-collection-subtype"),
+        pytest.param(_CallerDefinedTuple, id="a-caller-defined-collection-subtype"),
     ],
 )
 def test_a_loaded_many_arm_carries_only_an_exact_tuple_of_handles(collection: Any) -> None:
@@ -569,7 +569,7 @@ def test_a_many_occurrence_preserves_its_record_order() -> None:
     "collection",
     [
         pytest.param(list, id="a-mutable-collection"),
-        pytest.param(_RootsSubclass, id="a-caller-defined-collection-subtype"),
+        pytest.param(_CallerDefinedTuple, id="a-caller-defined-collection-subtype"),
     ],
 )
 def test_a_many_occurrence_refuses_anything_but_an_exact_tuple(collection: Any) -> None:
@@ -825,7 +825,7 @@ def test_a_model_that_composed_no_entity_class_can_construct_no_graph() -> None:
     [
         pytest.param([EntityAttributeInput(_attr(_ORDER, "id"), 1)], id="an-abstract-sequence"),
         pytest.param(
-            _RootsSubclass((EntityAttributeInput(_attr(_ORDER, "id"), 1),)),
+            _CallerDefinedTuple((EntityAttributeInput(_attr(_ORDER, "id"), 1),)),
             id="a-caller-defined-collection-subtype",
         ),
         pytest.param(("id",), id="a-wrong-carrier-type"),

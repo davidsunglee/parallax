@@ -97,8 +97,14 @@ Three properties of this design matter beyond the table:
 - **Enforcement is spent entirely at hydration.** A non-nullable attribute has no null bit
   (`generator/MithraObjectTypeWrapper.java:981-990`), so no downstream accessor could detect the
   violation even in principle.
-- **Failure granularity is one row.** The throw occurs while inflating a single result-set row;
-  other rows in the same result are unaffected.
+- **The check is row-triggered but aborts the whole query result.** The throw occurs while inflating
+  a single result-set row, and nothing catches it per row: `processResultSet` calls
+  `inflateDataGenericSource` inside a bare `while (res.next())` loop
+  (`mithra/database/MithraAbstractDatabaseObject.java:1580-1618`), and its caller catches only
+  `SQLException` (`:1273-1309`), so a `MithraBusinessException` unwinds past both and no result is
+  delivered. Rows already inflated are not rolled back: the loop hands each completed batch of
+  `DATA_ARRAY_SIZE = 32` (`:143`) to `getManyObjects`, which puts those objects into the cache
+  (`:1636-1651`) before the failing row is reached.
 
 A second, unrelated read path for tuple and temp-object columns returns `null` on `wasNull()` with
 no nullability check whatsoever (`mithra/attribute/SingleColumnIntegerAttribute.java:351-354`, called
