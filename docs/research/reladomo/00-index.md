@@ -101,6 +101,7 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [23-transaction-integration.md](23-transaction-integration.md) | Nesting joins the outer transaction (no savepoints); JTA/XA integration spans container TMs, pooled XA connections, and JMS two-phase commit |
 | [24-pure-temp-objects-and-extraction.md](24-pure-temp-objects-and-extraction.md) | Pure objects are cache-only (no-op persister), temp objects are real temp tables with scoped contexts, and extractor/reverse-engineering tools round-trip data and schema |
 | [25-cascade-operations.md](25-cascade-operations.md) | Cascade operations walk dependent lifecycle graphs for insert, delete, and temporal termination, including list and business-window-bounded variants |
+| [26-stored-nullability-violations.md](26-stored-nullability-violations.md) | A stored NULL in a non-nullable column raises per row at hydration for most types but passes silently for `String`/`Timestamp`; INSERT enforces the mirror-image subset; embedded values have no absent-versus-null distinction |
 
 ## Research questions
 
@@ -141,6 +142,13 @@ cascade insert/delete/terminate families, mixed-temporality dispatch, list behav
 integration, then applied those findings to a Parallax module-boundary recommendation and compatibility
 case matrix ([25](25-cascade-operations.md)). Unlike the descriptive first and second passes, this
 applied note intentionally includes recommendations.
+
+**Stored-nullability pass (2026-08-05, same commit).** A task-directed source pass answered how
+Reladomo behaves when a row already in the database violates the model's declared nullability —
+declaration and codegen treatment, the hydration-time check and its type dispatch, the read/write
+asymmetry, the embedded-value analogue, and the schema-drift posture
+([26](26-stored-nullability-violations.md)). Descriptive, like the first and second passes: it
+records what Reladomo does and makes no Parallax recommendation.
 
 ## Scope — what this research does not cover
 
