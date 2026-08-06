@@ -240,6 +240,90 @@ def test_declaring_entity_resolves_to_the_family_root_from_every_position() -> N
         assert declaring.as_of_axes == meta.entity("Root").as_of_axes
 
 
+def test_declaring_entity_walks_a_chain_that_repeats_a_local_name() -> None:
+    # A local Entity name may be declared in more than one namespace, so two
+    # positions of ONE valid chain may share it. The cycle guard therefore has
+    # to remember canonical identities: keyed on the bare name, reaching the
+    # second `Node` looks like a revisit, the walk reports a cycle the
+    # descriptor never declared, and the leaf loses its root-declared key.
+    root = Entity(
+        name="Root",
+        namespace="top",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    mid = Entity(
+        name="Node",
+        namespace="mid",
+        inheritance=Inheritance(role="abstract-subtype", parent="top.Root"),
+    )
+    leaf = Entity(
+        name="Node",
+        namespace="leaf",
+        table="leaf_node",
+        inheritance=Inheritance(role="concrete-subtype", parent="mid.Node"),
+    )
+    meta = Metamodel(entities=(root, mid, leaf))
+    assert declaring_entity(meta, leaf) is root
+    assert family_root_name(meta, leaf) == "top.Root"
+
+
+def test_declaring_entity_resolves_a_bare_parent_within_its_own_namespace() -> None:
+    # A bare parent reference is relative to the declaring entity's namespace.
+    # Each leaf below reaches its OWN root even though the local name `Record`
+    # admits no unambiguous model-wide spelling, so a model-wide lookup would
+    # leave both leaves without the root that declares their key.
+    catalog_root = Entity(
+        name="Record",
+        namespace="catalog",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    archive_root = Entity(
+        name="Record",
+        namespace="archive",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="archiveId", type="int64", column="id", primary_key=True),),
+    )
+    catalog_leaf = Entity(
+        name="CatalogLeaf",
+        namespace="catalog",
+        table="catalog_leaf",
+        inheritance=Inheritance(role="concrete-subtype", parent="Record"),
+    )
+    archive_leaf = Entity(
+        name="ArchiveLeaf",
+        namespace="archive",
+        table="archive_leaf",
+        inheritance=Inheritance(role="concrete-subtype", parent="Record"),
+    )
+    meta = Metamodel(entities=(catalog_root, archive_root, catalog_leaf, archive_leaf))
+    assert declaring_entity(meta, catalog_leaf) is catalog_root
+    assert declaring_entity(meta, archive_leaf) is archive_root
+
+
+def test_declaring_entity_reads_no_bare_parent_across_a_namespace_boundary() -> None:
+    # Resolution has no model-wide unique-name fallback: a bare parent the
+    # declaring namespace does not declare reaches nothing, even when exactly
+    # one entity of the whole model carries that local name. Adopting the other
+    # namespace's `Record` would hand this leaf a foreign family's primary key.
+    root = Entity(
+        name="Record",
+        namespace="catalog",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    stray = Entity(
+        name="StrayLeaf",
+        namespace="elsewhere",
+        table="stray_leaf",
+        inheritance=Inheritance(role="concrete-subtype", parent="Record"),
+    )
+    meta = Metamodel(entities=(root, stray))
+    assert declaring_entity(meta, stray) is stray
+    assert family_root_name(meta, stray) is None
+
+
 def test_declaring_entity_is_the_entity_itself_outside_a_family() -> None:
     # A non-inheritance temporal entity remains unaffected: `declaring_entity`
     # is a strict identity for it (m-inheritance only applies within a family).

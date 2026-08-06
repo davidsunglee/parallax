@@ -215,6 +215,49 @@ def test_two_families_with_same_named_roots_in_different_namespaces_stay_apart()
     assert [attr.name for attr in family_primary_key(descriptor, archive)] == ["archiveId"]
 
 
+def test_a_bare_parent_reaches_its_own_namespaces_root() -> None:
+    # Each subtype below spells its parent bare, and the local name `Record`
+    # names a root in two namespaces. A bare parent is relative to the declaring
+    # entity's namespace, so both sides still reach a root: read as a model-wide
+    # name, neither would, and each subtype's family-effective primary key would
+    # collapse to its own EMPTY local one — leaving every row of it
+    # unidentifiable for keyed writes, observations, and coalescing lookups.
+    descriptor = deserialize(
+        {
+            "entities": [
+                {
+                    "name": "Record",
+                    "namespace": "catalog",
+                    "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                    "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                },
+                {
+                    "name": "Record",
+                    "namespace": "archive",
+                    "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                    "attributes": [{"name": "archiveId", "type": "int64", "primaryKey": True}],
+                },
+                {
+                    "name": "CatalogVariant",
+                    "namespace": "catalog",
+                    "table": "catalog_variant",
+                    "inheritance": {"role": "concrete-subtype", "parent": "Record"},
+                },
+                {
+                    "name": "ArchiveVariant",
+                    "namespace": "archive",
+                    "table": "archive_variant",
+                    "inheritance": {"role": "concrete-subtype", "parent": "Record"},
+                },
+            ]
+        }
+    )
+    catalog = descriptor.entity("catalog.CatalogVariant")
+    archive = descriptor.entity("archive.ArchiveVariant")
+    assert [attr.name for attr in family_primary_key(descriptor, catalog)] == ["id"]
+    assert [attr.name for attr in family_primary_key(descriptor, archive)] == ["archiveId"]
+
+
 def _cyclic_pair() -> Metamodel:
     attrs = (Attribute(name="id", type="int64", column="id", primary_key=True),)
     return Metamodel(
