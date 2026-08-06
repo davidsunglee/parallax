@@ -22,16 +22,25 @@ from _support import value_object_models as vom
 from parallax.core import (
     Attr,
     DomainModel,
+    EditError,
     Entity,
     FindQuery,
-    ModelCopyError,
     QueryDefinitionError,
     TxTemporal,
     ValueObject,
     attr,
 )
-from parallax.core.entity import AttributeAssignment
+from parallax.core.entity import AttributeAssignment, AttributeExpr
 from parallax.core.entity._query import mutation_selection
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeLocation,
+    EntityIdentity,
+    EntityLocation,
+    ValueObjectAttributeIdentity,
+    ValueObjectAttributeLocation,
+    ValueObjectIdentity,
+)
 from parallax.core.op_algebra import All
 from parallax.core.temporal_read import LATEST, TX_TIME
 
@@ -94,8 +103,44 @@ def test_set_on_a_nested_value_object_path_raises() -> None:
     # value object always binds its WHOLE document, never a nested path. The
     # refusal carries the assignment family every other `.set(...)` refusal does,
     # so one `except` clause covers the whole surface.
-    with pytest.raises(ModelCopyError, match="top-level attribute or value-object member"):
+    with pytest.raises(EditError, match="top-level attribute or value-object member") as caught:
         vom.Customer.address.city.set("Oslo")
+    violation = caught.value.violations[0]
+    assert violation.code == "edit-nested-path"
+    assert violation.member_name == "address.city"
+
+
+def test_a_nested_path_refusal_locates_the_scalar_inside_the_occurrence() -> None:
+    # The one member position only this surface can name: a keyword edit cannot
+    # spell a path, so `edit(...)` never produces this code or this location.
+    customer = EntityIdentity("parallax.compatibility", "Customer")
+    with pytest.raises(EditError) as caught:
+        vom.Customer.address.geo.country.set("NO")
+    assert caught.value.violations[0].location == ValueObjectAttributeLocation(
+        ValueObjectAttributeIdentity(ValueObjectIdentity(customer, ("address", "geo")), "country")
+    )
+
+
+def test_a_path_hopped_off_a_scalar_locates_at_the_scalar_it_hopped_from() -> None:
+    # A hop resolves dynamically, so a path off a SCALAR builds as readily as
+    # one off an occurrence. There is no member below a scalar to locate at, so
+    # the refusal names the scalar the caller started from.
+    with pytest.raises(EditError) as caught:
+        mm.Person.name.city.set("Oslo")
+    assert caught.value.violations[0].location == AttributeLocation(
+        AttributeIdentity(EntityIdentity("parallax.compatibility", "Person"), "name")
+    )
+
+
+def test_a_nested_path_refusal_on_a_directly_built_expression_names_its_bare_entity() -> None:
+    # An expression built directly carries no member, so the only Entity it
+    # names is the bare string it was constructed with — which is what an
+    # ownerless Entity Identity means. The refusal still fires: the built
+    # assignment would have dropped the path and bound the whole occurrence.
+    address: AttributeExpr[Any, Any] = AttributeExpr("Customer", "address")
+    with pytest.raises(EditError) as caught:
+        address.city.set("Oslo")
+    assert caught.value.violations[0].location == EntityLocation(EntityIdentity(None, "Customer"))
 
 
 def test_set_on_a_top_level_value_object_serializes_to_its_document() -> None:
@@ -126,19 +171,20 @@ def test_set_on_a_scalar_passes_a_plain_literal_through_unchanged() -> None:
 # whole model, and an Attribute Expression built from a class carries the       #
 # member's own declared Metadata — so `.set(...)` reaches the SAME judgement    #
 # (`~parallax.core.metamodel.judge_assignment`) the engine/serialized path      #
-# reaches for a case-authored predicate-write assignment, and `model_copy`      #
+# reaches for a case-authored predicate-write assignment, and `edit(...)`       #
 # reaches for an edited copy. Only the resolution in front of it differs        #
 # (`test_write_instructions.py` and `test_model_free_authoring.py` are the      #
-# other callers). The rejection is spelled `ModelCopyError` because §5's        #
-# assignment rules are one family with `model_copy`'s own `update=` rules (§3). #
+# other callers). The rejection is spelled `EditError` because §5's assignment  #
+# rules are one family with `edit(**changes)`'s own rules (§3), and one call    #
+# names one target, so it always carries exactly one violation.                 #
 # --------------------------------------------------------------------------- #
 def test_set_on_a_primary_key_attribute_raises() -> None:
-    with pytest.raises(ModelCopyError, match="primary-key fields may not be assigned"):
+    with pytest.raises(EditError, match="primary-key fields may not be assigned"):
         mm.Person.id.set(2)
 
 
 def test_set_on_a_framework_owned_version_attribute_raises() -> None:
-    with pytest.raises(ModelCopyError, match="framework-owned fields"):
+    with pytest.raises(EditError, match="framework-owned fields"):
         mm.Account.version.set(5)
 
 
@@ -146,7 +192,7 @@ def test_set_on_a_scalar_with_a_mismatched_type_raises() -> None:
     # An assignment's value is the member's own, so the parameter refuses this
     # before anything runs; the suppression is what lets the runtime rule be
     # exercised, and the two must agree.
-    with pytest.raises(ModelCopyError, match="does not match the declared type"):
+    with pytest.raises(EditError, match="does not match the declared type"):
         mm.Person.name.set(42)  # pyright: ignore[reportArgumentType]
 
 
@@ -158,7 +204,7 @@ def test_set_states_its_rule_from_the_descriptors_member_alone() -> None:
         label: Attr[str] = attr(max_length=8)
 
     assert _Uncomposed.label.set("x").value == "x"
-    with pytest.raises(ModelCopyError, match="primary-key fields may not be assigned"):
+    with pytest.raises(EditError, match="primary-key fields may not be assigned"):
         _Uncomposed.id.set(2)
 
 
@@ -170,7 +216,7 @@ def test_set_refuses_a_read_only_member() -> None:
         id: Attr[int] = attr(primary_key=True)
         derived: Attr[str] = attr(max_length=8, read_only=True)
 
-    with pytest.raises(ModelCopyError, match="read-only fields may not be assigned"):
+    with pytest.raises(EditError, match="read-only fields may not be assigned"):
         _Computed.derived.set("x")
 
 
@@ -181,7 +227,7 @@ def test_set_refuses_a_read_only_member() -> None:
 # a value object is not itself a rejection).                                    #
 # --------------------------------------------------------------------------- #
 def test_set_on_a_value_object_with_a_non_document_value_raises() -> None:
-    with pytest.raises(ModelCopyError, match="does not match the declared type"):
+    with pytest.raises(EditError, match="does not match the declared type"):
         vom.Customer.address.set(42)  # pyright: ignore[reportArgumentType]
 
 
@@ -208,7 +254,7 @@ def test_set_on_a_value_object_with_a_well_formed_document_is_accepted() -> None
 def test_set_on_a_non_nullable_value_object_with_none_raises() -> None:
     # A non-nullable member's declared type excludes `None`, so the parameter
     # refuses the clearing assignment the runtime rule refuses too.
-    with pytest.raises(ModelCopyError, match="required value object is absent"):
+    with pytest.raises(EditError, match="required value object is absent"):
         _WhereShipment.destination.set(None)  # pyright: ignore[reportArgumentType]
 
 
@@ -220,7 +266,7 @@ def test_set_on_a_nullable_value_object_with_none_is_accepted() -> None:
 
 
 def test_set_on_a_non_nullable_scalar_with_none_raises() -> None:
-    with pytest.raises(ModelCopyError, match="required attribute is absent"):
+    with pytest.raises(EditError, match="required attribute is absent"):
         _WhereShipment.name.set(None)  # pyright: ignore[reportArgumentType]
 
 

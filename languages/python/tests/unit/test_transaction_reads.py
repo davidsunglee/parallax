@@ -261,7 +261,7 @@ def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_obser
                 tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(fetched.model_copy(update={"value": Decimal("9.00")}))
+        tx.update(fetched.edit(value=Decimal("9.00")))
 
     with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
         db.transact(fn)  # locking is the default concurrency
@@ -280,7 +280,7 @@ def test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in
                 tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
             )
         ).result()
-        tx.update(fetched.model_copy(update={"value": Decimal("9.00")}))
+        tx.update(fetched.edit(value=Decimal("9.00")))
 
     db.transact(fn, concurrency="optimistic")
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -321,7 +321,7 @@ def test_transaction_time_only_update_via_a_sparse_copy_carries_untouched_fields
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
-        tx.update(fetched.model_copy(update={"value": Decimal("150.00")}))
+        tx.update(fetched.edit(value=Decimal("150.00")))
 
     db.transact(fn)
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -359,7 +359,7 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
         tx.update(
-            fetched.model_copy(update={"name": "Renamed Branch"}),
+            fetched.edit(name="Renamed Branch"),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         )
 
@@ -399,7 +399,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
         tx.update(
-            fetched.model_copy(update={"name": "Renamed Branch"}),
+            fetched.edit(name="Renamed Branch"),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
         )
 
@@ -652,7 +652,7 @@ def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update()
 
     def fn(tx: Transaction) -> None:
         vault = tx.find(om.Vault.where(om.Vault.id == 1).include(om.Vault.slips)).result()
-        tx.update(vault.slips[0].model_copy(update={"memo": "after"}))
+        tx.update(vault.slips[0].edit(memo="after"))
 
     db_for(om.VAULT_MODEL, port).transact(fn, concurrency="optimistic")
     (write_op,) = [op for op in port.ops if op[0] == "write"]

@@ -1,32 +1,43 @@
 """Entity-frontend errors — a strict leaf within the Entity implementation cluster.
 
 Every module in the cluster may depend on this one; it depends on none of them,
-imports only the standard library and class-free core identity values, and
+imports only the standard library and class-free core identity, location, and
+issue-ordering values, and
 retains structured values rather than classes, models, or declarations.
 Rejections carry a stable code drawn from a closed per-family set, so a caller
 branches on the rule that fired rather than on a message substring.
 
-The four families are disjoint by the question they answer.
+The five families are disjoint by the question they answer.
 :class:`EntityDefinitionError` says a declaration is outside the grammar;
 :class:`MetamodelDefinitionError` says a Domain Model constructor call is
 malformed before any model exists; :class:`MetamodelLookupError` says a
-developer-facing ``models.meta(...)`` lookup found nothing; and
+developer-facing ``models.meta(...)`` lookup found nothing;
 :class:`GraphConstructionError` says a caller drove the advanced Entity Graph
-Construction collaboration outside its contract.
+Construction collaboration outside its contract; and :class:`EditError` says an
+authored assignment to a live value breaks the shared assignment rules.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
+
+from parallax.core.metamodel import canonical_location_key
 
 if TYPE_CHECKING:
     from parallax.core.metamodel import (
         EntityIdentity,
         MemberIdentity,
+        ModelLocation,
+        ModelLocationKey,
         RelationshipIdentity,
     )
 
 __all__ = [
+    "EDIT_CODES",
+    "EDIT_CODE_BY_RULE",
     "ENTITY_DEFINITION_CODES",
     "GRAPH_CONSTRUCTION_CODES",
     "METAMODEL_DEFINITION_CODES",
@@ -36,11 +47,12 @@ __all__ = [
     "METAMODEL_INVALID_ENTITY_CLASS",
     "METAMODEL_INVALID_ENTITY_REFERENCE",
     "METAMODEL_LOOKUP_CODES",
+    "EditError",
+    "EditViolation",
     "EntityDefinitionError",
     "GraphConstructionError",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
-    "ModelCopyError",
     "ProvenanceError",
     "UnloadedRelationshipError",
 ]
@@ -201,18 +213,106 @@ class UnloadedRelationshipError(AttributeError):
         self.path = path
 
 
-class ModelCopyError(TypeError):
-    """An assignment the §3 rule family refuses, whichever surface authored it.
+EDIT_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "edit-use-edit",
+        "edit-unknown-member",
+        "edit-relationship-member",
+        "edit-nested-path",
+        "edit-primary-key",
+        "edit-read-only",
+        "edit-framework-owned",
+        "edit-value-mismatch",
+    }
+)
+"""The complete edit-refusal vocabulary. Four codes classify a name a surface
+resolved for itself and four classify the shared assignment judgement's own
+verdicts, so a caller branches on the rule that fired rather than on wording."""
 
-    Two surfaces raise it, because the rules are one set: ``model_copy(update=
-    ...)`` and ``Attr.set(...)``. A name that reaches no assignable member —
-    unknown or a relationship — is refused by the surface itself; every other
-    refusal is the shared assignment judgement's, so this class equally carries a
-    primary-key, read-only, or framework-owned target, a value that does not
-    match the member's declared type, and a cleared member that is not nullable.
+EDIT_CODE_BY_RULE: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "primary-key": "edit-primary-key",
+        "read-only": "edit-read-only",
+        "framework-owned": "edit-framework-owned",
+        "value-type-mismatch": "edit-value-mismatch",
+    }
+)
+"""The edit code reporting each classification the shared assignment judgement
+raises. Every surface translates through this one mapping, so the judgement owns
+the rule and the edit surface owns only its own spelling of it."""
+
+
+@dataclass(frozen=True, slots=True)
+class EditViolation:
+    """One refused assignment, located in the model's own vocabulary.
+
+    ``code`` is a member of :data:`EDIT_CODES`. ``location`` is the resolved
+    member's own — Attribute, Relationship, Value Object occurrence, or a scalar
+    inside one — or the :class:`~parallax.core.metamodel.EntityLocation` of the
+    Entity whose declaration was searched when the authored name reached no
+    member; a location is never absent, because a member location would have to
+    name a member the model does not declare. ``member_name`` carries the
+    resolved member's canonical name, the authored name when none resolved, and
+    is absent for a refusal that examines no member at all.
+
+    ``message`` is explanatory and excluded from equality, exactly as a
+    Metamodel Issue's is: two surfaces refusing the same assignment at the same
+    position produce one violation identity whatever each one's wording.
     """
+
+    code: str
+    location: ModelLocation
+    member_name: str | None = None
+    message: str = field(default="", compare=False)
+
+
+class EditError(ValueError):
+    """Every assignment rule the authored edit breaks, in one report.
+
+    One class covers both authoring surfaces — ``Entity.edit(**changes)`` and a
+    predicate write's ``Attr.set(...)`` — because the assignment rules are one
+    set with one home. ``.set(...)`` names one target and therefore always
+    carries exactly one violation; an edit names as many as the caller wrote and
+    reports each member's own first verdict, so correcting an edit takes one
+    round trip rather than one per mistake.
+
+    ``violations`` is nonempty and canonically ordered by location, then code,
+    then member name with an unset name first, so a report never depends on
+    caller keyword order. There is deliberately no ``code`` attribute:
+    selecting one violation to expose would misreport the others, which is what
+    ``codes`` is for. Constructing one with no violation raises
+    :class:`ValueError` — a refusal that names no rule is not a report.
+    """
+
+    violations: tuple[EditViolation, ...]
+    codes: frozenset[str]
+
+    def __init__(self, violations: Sequence[EditViolation]) -> None:
+        reported = tuple(sorted(violations, key=_canonical_violation_key))
+        if not reported:
+            raise ValueError("an edit refusal reports at least one violation")
+        self.violations = reported
+        self.codes = frozenset(violation.code for violation in reported)
+        summary = ", ".join(sorted(self.codes))
+        detail = "".join(f"\n  {violation.code}: {violation.message}" for violation in reported)
+        super().__init__(f"{len(reported)} edit violation(s): {summary}{detail}")
+
+
+def _canonical_violation_key(violation: EditViolation) -> tuple[ModelLocationKey, str, bool, str]:
+    """The sort key placing ``violation`` in canonical order.
+
+    The first two terms order accumulated Metamodel Issues as well; the third and
+    fourth exist because two names that reached no member share one Entity
+    location and one code, and would otherwise tie into caller keyword order.
+    """
+    return (
+        canonical_location_key(violation.location),
+        violation.code,
+        violation.member_name is not None,
+        violation.member_name or "",
+    )
 
 
 class ProvenanceError(ValueError):
-    """An instance carries no Change Record (never produced via ``model_copy``)
+    """An instance carries no Change Record (never produced via ``edit(...)``)
     and cannot drive a sparse ``tx.update`` (spec §5)."""

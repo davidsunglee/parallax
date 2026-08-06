@@ -110,7 +110,7 @@ def test_update_lowers_to_its_keyed_dml() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
+        tx.update(fetched.edit(balance=Decimal("175.00")))
 
     account_db(port).transact(fn)
     assert port.ops == [
@@ -178,7 +178,7 @@ def test_versioned_update_shortfall_in_locking_mode_is_a_stale_write() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
+        tx.update(fetched.edit(balance=Decimal("175.00")))
 
     with pytest.raises(StaleWriteError, match="Account"):
         account_db(port).transact(fn)
@@ -199,7 +199,7 @@ def test_versioned_update_shortfall_in_optimistic_mode_is_a_lock_conflict() -> N
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
-        tx.update(fetched.model_copy(update={"balance": Decimal("175.00")}))
+        tx.update(fetched.edit(balance=Decimal("175.00")))
 
     with pytest.raises(OptimisticLockConflictError, match="Account"):
         account_db(port).transact(fn, concurrency="optimistic")
@@ -266,11 +266,11 @@ def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
 
 
 def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
-    # A `model_copy()` with no `update=` carries forward the SAME (empty)
+    # An `edit()` with no changes carries forward the SAME (empty)
     # Change Record: the sparse-update no-op rule (spec §3/§5).
     port = RecordingPort()
     fetched = mm.Account.model_construct(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
-    edited = fetched.model_copy(update={"balance": Decimal("100.00")})  # net-zero touch
+    edited = fetched.edit(balance=Decimal("100.00"))  # net-zero touch
 
     def fn(tx: Transaction) -> None:
         tx.update(edited)
@@ -500,7 +500,7 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
-        tx.update(fetched.model_copy(update={"value": Decimal("200.00")}), valid_from=valid_from)
+        tx.update(fetched.edit(value=Decimal("200.00")), valid_from=valid_from)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
@@ -536,7 +536,7 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
         tx.update_until(
-            fetched.model_copy(update={"value": Decimal("200.00")}),
+            fetched.edit(value=Decimal("200.00")),
             valid_from=valid_from,
             until=until,
         )
@@ -550,7 +550,7 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
 
 def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # The SAME sparse-update no-op rule `update` applies (spec §3/§5): a
-    # `model_copy()` whose Change Record nets to zero issues no DML at all --
+    # An `edit()` whose Change Record nets to zero issues no DML at all --
     # but only AFTER its (here, valid) Valid-Time window is validated
     # (window validation runs BEFORE the
     # no-op return, for every window verb, never the reverse -- see the
@@ -566,7 +566,7 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
         tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         tx_end=INFINITY_INSTANT,
     )
-    edited = fetched.model_copy(update={"value": Decimal("100.00")})  # net-zero touch
+    edited = fetched.edit(value=Decimal("100.00"))  # net-zero touch
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
@@ -596,7 +596,7 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
         tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         tx_end=INFINITY_INSTANT,
     )
-    edited = fetched.model_copy(update={"value": Decimal("100.00")})  # net-zero touch
+    edited = fetched.edit(value=Decimal("100.00"))  # net-zero touch
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
@@ -622,7 +622,7 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
         tx.update_until(
-            fetched.model_copy(update={"value": Decimal("200.00")}),
+            fetched.edit(value=Decimal("200.00")),
             valid_from=valid_from,
             until=naive_until,
         )
@@ -659,7 +659,7 @@ def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None
 
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
-        tx.update(fetched.model_copy(update={"value": Decimal("200.00")}))
+        tx.update(fetched.edit(value=Decimal("200.00")))
 
     with pytest.raises(ValueError, match="requires valid_from"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
@@ -697,7 +697,7 @@ def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
     def fn(tx: Transaction) -> None:
         fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
         tx.update_until(
-            fetched.model_copy(update={"value": Decimal("200.00")}),
+            fetched.edit(value=Decimal("200.00")),
             valid_from=valid_from,
             until=valid_from,
         )
@@ -757,7 +757,7 @@ def test_unobserved_temporal_update_from_a_cross_transaction_copy_raises() -> No
     node = db.find(mm.Balance.where(mm.Balance.id == 1)).result()
 
     def fn(tx: Transaction) -> None:
-        tx.update(node.model_copy(update={"value": Decimal("9.00")}))
+        tx.update(node.edit(value=Decimal("9.00")))
 
     with pytest.raises(opt_lock.UnobservedMilestoneError, match="transaction-scoped find"):
         db.transact(fn)
@@ -775,7 +775,7 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
     def fn(tx: Transaction) -> None:
         fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(fresh)
-        tx.update(fresh.model_copy(update={"value": Decimal("2.00")}))
+        tx.update(fresh.edit(value=Decimal("2.00")))
 
     db.transact(fn)
     write_ops = [op for op in port.ops if op[0] == "write"]
@@ -869,7 +869,7 @@ def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
 
 
 def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_stays_writable() -> None:
-    # The pin stays with the VIEW: `model_copy(update=...)` builds a fresh
+    # The pin stays with the VIEW: `edit(**changes)` builds a fresh
     # validated instance carrying no pin, so the spec §3 stale-web-edit
     # recipe's optimistic edge-pinned re-fetch -> edited copy -> `tx.update`
     # lands (a concurrent supersession is detected by the observed-`in_z`
@@ -878,7 +878,7 @@ def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_stays_writable(
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, tx_time=_TX_PIN)
-        tx.update(node.model_copy(update={"value": Decimal("200.00")}), valid_from=_CORRECTION_FROM)
+        tx.update(node.edit(value=Decimal("200.00")), valid_from=_CORRECTION_FROM)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"

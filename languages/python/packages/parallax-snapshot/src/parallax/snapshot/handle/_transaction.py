@@ -190,7 +190,7 @@ class Transaction:
         — the no-op-first ordering `m-opt-lock` fixes: dropped before any
         observation or locking concern). Raises
         :class:`~parallax.core.entity.ProvenanceError` for a provenance-less
-        instance (never produced via ``model_copy``). The version column, if
+        instance (never produced via ``edit(...)``). The version column, if
         any, is never authored here — it is framework-owned end to end
         (`m-opt-lock`; ADR 0013): the write seam derives its advance from this
         unit of work's own recorded observation at lowering

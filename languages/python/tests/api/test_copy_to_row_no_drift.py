@@ -7,7 +7,7 @@ equals its corpus model (`test_descriptor_no_drift.py`); a registered write
 story's wire DML equals its corpus golden byte-exact
 (`test_write_no_drift.py`). None of them isolates the ONE seam every keyed
 UPDATE driven by an edited copy shares regardless of which story exercises
-it: ``model_copy``'s Change Record feeds `parallax.core.entity.
+it: ``edit``'s Change Record feeds `parallax.core.entity.
 effective_change_set`, which `Transaction.update` narrows to a sparse
 (non-temporal) or observation-merged (temporal) row — and the row's own
 version/Transaction-Time columns are ALWAYS framework-owned, never the copy's
@@ -16,7 +16,7 @@ own carried value (`m-opt-lock`; ADR 0003/0013).
 This guard drives that seam directly, Docker-free, scoped to
 the write shapes that actually pass through edited-copy lowering: a keyed
 non-temporal (versioned) update and a keyed temporal (audit-only) update. It
-builds a fixture instance, edits a copy through ``model_copy``, derives the
+builds a fixture instance, edits a copy through ``edit``, derives the
 row through the SAME helpers ``Transaction.update`` calls
 (``primary_key_row`` / ``canonical_row`` / ``effective_change_set``), and
 lowers it through the shipped seam with a SYNTHETIC observation — proving the
@@ -24,8 +24,8 @@ lowered statement binds exactly that observation's value, and a companion
 assertion with a DIFFERENT observation proves the bound value tracks the
 observation every time, never a value the copy itself happens to carry
 (inserts, deletes/terminates, and set-based materialize paths never touch
-``model_copy`` lowering at all, so they carry no analogous risk here). A
-third assertion proves the version guard itself: ``model_copy`` refuses a
+``edit`` lowering at all, so they carry no analogous risk here). A
+third assertion proves the version guard itself: ``edit`` refuses a
 ``version`` reassignment at the entity frontend, before any row is ever
 derived — the copy-to-row seam never even reaches
 ``reject_caller_authored_version``'s own row-level backstop (pinned
@@ -47,7 +47,7 @@ from _support.lowering_probes import lower_instruction
 from parallax.conformance import models
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import (
-    ModelCopyError,
+    EditError,
     canonical_row,
     effective_change_set,
     primary_key_row,
@@ -70,7 +70,7 @@ def _edited_account_row(*, version: int = 1) -> dict[str, object]:
     fetched = mm.Account.model_construct(
         id=1, owner="Ada", balance=Decimal("100.00"), version=version
     )
-    copy = fetched.model_copy(update={"balance": Decimal("175.00")})
+    copy = fetched.edit(balance=Decimal("175.00"))
     row = primary_key_row(copy)
     row.update(canonical_row(copy, effective_change_set(copy)))
     return row
@@ -113,14 +113,14 @@ def test_copy_to_row_never_reaches_a_caller_authored_version() -> None:
     # directly (the raw-document/rejected-write route, pinned by
     # `test_write_lowering.test_versioned_update_carrying_a_literal_version_
     # is_refused`) -- but the copy-to-row seam THIS guard exercises cannot
-    # itself reach that backstop: `model_copy` refuses a `version` key
+    # itself reach that backstop: `edit` refuses a `version` key
     # earlier, at the entity frontend, before any row is ever derived (spec
     # §3's own frontend guard, ADR 0013). Proving that here keeps the two
     # defenses distinct and both accounted for, rather than assuming the
     # copy-to-row path free-rides on the row-level one.
     fetched = mm.Account.model_construct(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
-    with pytest.raises(ModelCopyError, match="framework-owned"):
-        fetched.model_copy(update={"balance": Decimal("175.00"), "version": 99})
+    with pytest.raises(EditError, match="framework-owned"):
+        fetched.edit(balance=Decimal("175.00"), version=99)
 
 
 def _edited_balance_row() -> dict[str, object]:
@@ -136,7 +136,7 @@ def _edited_balance_row() -> dict[str, object]:
         tx_start=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
         tx_end=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
     )
-    copy = fetched.model_copy(update={"value": Decimal("150.00")})
+    copy = fetched.edit(value=Decimal("150.00"))
     row = primary_key_row(copy)
     row.update(canonical_row(copy, effective_change_set(copy)))
     return row

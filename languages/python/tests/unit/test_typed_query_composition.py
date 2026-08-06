@@ -102,11 +102,11 @@ from parallax.core import (
     Attr,
     ConcreteSubtype,
     DomainModel,
+    EditError,
     Entity,
     EntityDefinitionError,
     FindQuery,
     Int32,
-    ModelCopyError,
     OperationRejectedError,
     Predicate,
     QueryDefinitionError,
@@ -689,7 +689,7 @@ def test_an_assignment_value_is_the_members_own_declared_type() -> None:
     # The contrast with the comparison literal above: an assignment's value IS a
     # member value rather than a wire literal, so the parameter narrows to the
     # member's declared type and the same judgement runs anyway.
-    with pytest.raises(ModelCopyError, match="does not match the declared type"):
+    with pytest.raises(EditError, match="does not match the declared type"):
         SnapOrder.price.set("abc")  # pyright: ignore[reportArgumentType]
 
 

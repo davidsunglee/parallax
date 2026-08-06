@@ -19,7 +19,7 @@ IMPLEMENTING.md "Continuous API Conformance Lane"):
 The story functions deliberately carry no docstrings: their bodies are the guide
 snippets. They use the full transaction verbs: ``tx.insert(instance)`` (the
 Create Payload), ``tx.update(copy)``
-(an edited copy carrying a Change Record — ``model_copy(update={...})``),
+(an edited copy carrying a Change Record — ``edit(**changes)``),
 ``tx.delete(node_or_instance)``, and ``tx.find(statement)`` returning
 ``Snapshot[T]``. The `m-opt-lock` observation-gating rule (`python.md` §5)
 requires the edited copy's or
@@ -154,7 +154,7 @@ def insert_then_read_your_own_write(db: Database) -> list[Entity]:
 
 def aborted_update_is_discarded(db: Database) -> list[Entity]:
     fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
-    edited = fetched.model_copy(update={"balance": Decimal("999.00")})
+    edited = fetched.edit(balance=Decimal("999.00"))
 
     def doomed(tx: Transaction) -> None:
         tx.update(edited)
@@ -187,7 +187,7 @@ def fk_ordered_inserts(db: Database) -> None:
 def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the row
-        tx.update(current.model_copy(update={"balance": Decimal("175.00")}))
+        tx.update(current.edit(balance=Decimal("175.00")))
         tx.find(Account.where(Account.id == 1))  # forces the flush
         raise RuntimeError("abort")  # even the force-flushed write is rolled back
 
@@ -197,7 +197,7 @@ def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
 def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
-        tx.update(current.model_copy(update={"balance": Decimal("175.00")}))
+        tx.update(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
 
     return db.transact(fn)
@@ -250,7 +250,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         deleted = tx.find(Account.where(Account.id == 3)).result()  # observe the version
         tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00")))
-        tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
+        tx.update(current.edit(balance=Decimal("20.00")))
         tx.delete(deleted)
         return list(tx.find(Account.where(Account.balance < 50.00)).results())
 
@@ -316,7 +316,7 @@ def transaction_time_only_chain_update_via_a_sparse_copy(db: Database) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
         # The edited copy touches only `value`; observed-payload merging keeps
         # the chained row's untouched `acct_num` value.
-        tx.update(current.model_copy(update={"value": Decimal("150.00")}))
+        tx.update(current.edit(value=Decimal("150.00")))
 
     db.transact(insert)
     db.transact(update)
@@ -328,7 +328,7 @@ def transaction_time_only_chain_update_carries_every_new_attribute(db: Database)
 
     def update(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the milestone
-        tx.update(current.model_copy(update={"acct_num": "B", "value": Decimal("250.00")}))
+        tx.update(current.edit(acct_num="B", value=Decimal("250.00")))
 
     db.transact(insert)
     db.transact(update)
@@ -342,7 +342,7 @@ def transaction_time_only_chain_update_from_existing_history(db: Database) -> No
     # exactly the ONE current row even with a superseded prior on record.
     def update(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1)).result()  # observe the CURRENT milestone
-        tx.update(current.model_copy(update={"value": Decimal("175.00")}))
+        tx.update(current.edit(value=Decimal("175.00")))
 
     db.transact(update)
 
@@ -358,7 +358,7 @@ def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) 
     # shape): no trailing find, the committed table state is the oracle.
     def fn(tx: Transaction) -> None:
         current = tx.find(Account.where(Account.id == 2)).result()  # observe the version
-        tx.update(current.model_copy(update={"balance": Decimal("500.00")}))
+        tx.update(current.edit(balance=Decimal("500.00")))
 
     db.transact(fn)
 
@@ -411,7 +411,7 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
     def correct(tx: Transaction) -> None:
         current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
         tx.update(
-            current.model_copy(update={"value": Decimal("200.00")}),
+            current.edit(value=Decimal("200.00")),
             valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
         )
 
@@ -443,7 +443,7 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
     def split(tx: Transaction) -> None:
         current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
         tx.update_until(
-            current.model_copy(update={"value": Decimal("200.00")}),
+            current.edit(value=Decimal("200.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
         )
@@ -477,18 +477,16 @@ def supplier_transaction_time_only_chain_update_carries_the_document(db: Databas
         # The edited copy touches only `address`; observed-payload merging
         # keeps the chained row's untouched `name` value.
         tx.update(
-            current.model_copy(
-                update={
-                    "address": Address(
-                        street="2 New Avenue",
-                        city="Bergen",
-                        geo=Geo(country="NO"),
-                        phones=(
-                            Phone(type="work", number="555-0200"),
-                            Phone(type="home", number="555-0201"),
-                        ),
-                    )
-                }
+            current.edit(
+                address=Address(
+                    street="2 New Avenue",
+                    city="Bergen",
+                    geo=Geo(country="NO"),
+                    phones=(
+                        Phone(type="work", number="555-0200"),
+                        Phone(type="home", number="555-0201"),
+                    ),
+                )
             )
         )
 
@@ -515,18 +513,16 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
     def split(tx: Transaction) -> None:
         current = tx.find(Branch.where(Branch.id == 1)).result()  # observe the rectangle
         tx.update_until(
-            current.model_copy(
-                update={
-                    "address": Address(
-                        street="30 New Road",
-                        city="Tampere",
-                        geo=Geo(country="FI"),
-                        phones=(
-                            Phone(type="main", number="555-3000"),
-                            Phone(type="fax", number="555-3001"),
-                        ),
-                    )
-                }
+            current.edit(
+                address=Address(
+                    street="30 New Road",
+                    city="Tampere",
+                    geo=Geo(country="FI"),
+                    phones=(
+                        Phone(type="main", number="555-3000"),
+                        Phone(type="fax", number="555-3001"),
+                    ),
+                )
             ),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
             until=dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
@@ -584,14 +580,12 @@ def customer_update_replaces_the_whole_address_document(db: Database) -> None:
         # a WHOLE-document replace, never a path-level merge with the prior
         # value (`m-value-object-026`'s own note).
         tx.update(
-            current.model_copy(
-                update={
-                    "address": CustomerAddress(
-                        street="9 New Way",
-                        city="Stavanger",
-                        phones=(CustomerPhone(type="work", number="555-2222"),),
-                    )
-                }
+            current.edit(
+                address=CustomerAddress(
+                    street="9 New Way",
+                    city="Stavanger",
+                    phones=(CustomerPhone(type="work", number="555-2222"),),
+                )
             )
         )
 
@@ -613,7 +607,7 @@ def customer_update_nulls_the_address_document_out(db: Database) -> None:
 
     def null_out(tx: Transaction) -> None:
         current = tx.find(Customer.where(Customer.id == 300)).result()  # observe the row
-        tx.update(current.model_copy(update={"address": None}))
+        tx.update(current.edit(address=None))
 
     db.transact(insert)
     db.transact(null_out)

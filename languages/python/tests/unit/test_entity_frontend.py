@@ -52,7 +52,7 @@ from parallax.core.entity import (
 )
 from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
-from parallax.core.entity._errors import ModelCopyError, ProvenanceError
+from parallax.core.entity._errors import EditError, ProvenanceError
 from parallax.core.entity._query import lower_find_query
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -762,7 +762,7 @@ def test_a_hydrated_framework_owned_value_is_readable_and_survives_an_edit() -> 
     hydrated = Reading.model_construct(
         id=1, celsius=1.0, tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
     )
-    edited = hydrated.model_copy(update={"celsius": 2.0})
+    edited = hydrated.edit(celsius=2.0)
     assert edited.tx_start == dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
@@ -771,17 +771,17 @@ def test_an_edited_copy_records_its_earliest_original_and_drops_a_net_zero_chang
     assert changed_fields(order) is None
     with pytest.raises(ProvenanceError):
         effective_change_set(order)
-    once = order.model_copy(update={"qty": 5})
+    once = order.edit(qty=5)
     assert changed_fields(once) == {"qty": 2}
     assert effective_change_set(once) == {"qty": 5}
-    back = once.model_copy(update={"qty": 2})
+    back = once.edit(qty=2)
     assert effective_change_set(back) == {}
 
 
 @pytest.mark.parametrize("member", ["id", "version", "customer", "nonesuch"])
 def test_an_unassignable_copy_target_is_rejected(member: str) -> None:
-    with pytest.raises(ModelCopyError):
-        _order().model_copy(update={member: 1})
+    with pytest.raises(EditError):
+        _order().edit(**{member: 1})
 
 
 def test_every_entity_class_is_frozen_without_declaring_it() -> None:

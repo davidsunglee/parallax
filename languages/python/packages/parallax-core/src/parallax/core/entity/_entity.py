@@ -33,19 +33,28 @@ from parallax.core.entity._declaration import (
     members_of,
 )
 from parallax.core.entity._errors import (
+    EditError,
+    EditViolation,
     EntityDefinitionError,
-    ModelCopyError,
     ProvenanceError,
 )
-from parallax.core.entity._expressions import AllPredicate, Predicate, serialize_member
+from parallax.core.entity._expressions import (
+    AllPredicate,
+    Predicate,
+    judged_edit_violation,
+    serialize_member,
+)
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
 from parallax.core.entity._query import FindQuery, build_find_query
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
     EntityIdentity,
+    EntityLocation,
     IndexMetadata,
     PersistenceMode,
+    RelationshipIdentity,
+    RelationshipLocation,
     StorageContainer,
     StorageLayout,
     TemporalDimension,
@@ -53,8 +62,6 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipDeclaration,
     ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
-    WriteAssignmentError,
-    judge_assignment,
 )
 from parallax.core.op_algebra import All, Narrow, Operation
 
@@ -330,7 +337,7 @@ def effective_change_set(copy: object) -> dict[str, object]:
     if changes is None:
         raise ProvenanceError(
             f"{type(copy).__name__} carries no Change Record; derive an edited copy via "
-            "`instance.model_copy(update={...})` before passing it to `tx.update`"
+            "`instance.edit(**changes)` before passing it to `tx.update`"
         )
     return {
         py_name: current
@@ -362,35 +369,99 @@ def _assignment_matches_original(assigned: object, original: object) -> bool:
     return assigned_value == original_value
 
 
-def _validate_copy_update(cls_name: str, names: WireNames, update: Mapping[str, Any]) -> None:
-    """Reject an unassignable ``model_copy(update=...)`` entry (spec §3).
+def _edit_violations(
+    entity: EntityIdentity, cls_name: str, names: WireNames, changes: Mapping[str, object]
+) -> tuple[EditViolation, ...]:
+    """Every rule the authored ``changes`` break, one per named member (spec §3).
 
     The split is by what each half can know. Resolving a Python name to a member
     is a class-shaped question and is answered here: a relationship member and an
-    undeclared name never reach a member at all. Everything a resolved member
+    undeclared name never reach a member at all, and each contributes its
+    resolution violation instead of a judgement. Everything a resolved member
     then decides — primary-key, read-only, and framework-owned targets, in that
     order, plus declared-type and nullability conformance — is
     :func:`~parallax.core.metamodel.judge_assignment`'s single verdict, the SAME
     one ``Attr.set(...)`` and the serialized write boundary reach, so an edited
-    copy and a write can never disagree about what may be assigned.
+    value and a write can never disagree about what may be assigned.
+
+    Every named member is examined and contributes at most one violation, so a
+    caller correcting several mistakes learns all of them at once rather than one
+    round trip at a time.
 
     A Value Object value is rendered to its canonical document before it is
     judged, exactly as ``.set(...)`` renders it, so both paths judge one shape;
-    the copy itself still merges the caller's own live value.
+    the edit itself still merges the caller's own live value.
     """
-    for py_name, value in update.items():
-        if py_name in names.relationship_py.values():
-            raise ModelCopyError(
-                f"{cls_name}.{py_name}: relationship members are not assignable via model_copy "
-                "(no cascade or association-mutation semantics to lower it to)"
+    relationship_names = {
+        py_name: canonical for canonical, py_name in names.relationship_py.items()
+    }
+    violations: list[EditViolation] = []
+    for py_name, value in changes.items():
+        relationship = relationship_names.get(py_name)
+        if relationship is not None:
+            violations.append(
+                EditViolation(
+                    code="edit-relationship-member",
+                    location=RelationshipLocation(RelationshipIdentity(entity, relationship)),
+                    member_name=relationship,
+                    message=(
+                        f"{cls_name}.{py_name}: relationship members are not assignable via "
+                        "edit(...) (no cascade or association-mutation semantics to lower it to)"
+                    ),
+                )
             )
+            continue
         member = names.members.get(py_name)
         if member is None:
-            raise ModelCopyError(f"{cls_name}.{py_name}: unknown member name")
-        try:
-            judge_assignment(member, serialize_member(value))
-        except WriteAssignmentError as error:
-            raise ModelCopyError(f"{cls_name}.{error}") from error
+            violations.append(
+                EditViolation(
+                    code="edit-unknown-member",
+                    location=EntityLocation(entity),
+                    member_name=py_name,
+                    message=f"{cls_name}.{py_name}: unknown member name",
+                )
+            )
+            continue
+        violation = judged_edit_violation(member, serialize_member(value), owner=cls_name)
+        if violation is not None:
+            violations.append(violation)
+    return tuple(violations)
+
+
+def _restate[E: Entity](value: E, record: dict[str, object]) -> E:
+    """A fresh value holding exactly ``value``'s state under ``record``.
+
+    An edit that authors nothing validates nothing, so it builds through the
+    validation-free construction path materialization already uses rather than
+    through the constructor — which is also the only path left once every
+    inherited copy door is refused.
+    """
+    restated = type(value).model_construct()
+    object.__setattr__(restated, "__dict__", dict(value.__dict__))
+    object.__setattr__(restated, "__pydantic_fields_set__", set(value.__pydantic_fields_set__))
+    object.__setattr__(restated, "__parallax_changes__", record)
+    return restated
+
+
+def _use_edit(cls: type, door: str) -> EditError:
+    """The refusal of an inherited copy path (spec §3).
+
+    It examines no argument and names no member, so it locates at the Entity
+    whose value was copied and carries no member name.
+    """
+    return EditError(
+        [
+            EditViolation(
+                code="edit-use-edit",
+                location=EntityLocation(declaration_of(cls).identity),
+                message=(
+                    f"{cls.__name__}.{door}(...) creates no value: derive an edited copy with "
+                    "`value.edit(**changes)`, the one door that judges every assignment and "
+                    "records what it touched"
+                ),
+            )
+        ]
+    )
 
 
 class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
@@ -463,41 +534,43 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         operand: Operation = where.op if where is not None else All()
         return Predicate(Narrow(entity=cls.identity.name, to=to, operand=operand))
 
-    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
-        """The validating override (spec §3).
+    def edit(self, **changes: object) -> Self:
+        """The one door to an Edited Copy (spec §3).
 
-        A copy carries a Change Record mapping each touched member to its
-        earliest original across copy chains. Unlike Pydantic's own
-        ``model_copy``, ``update=`` data is validated: an unknown or
-        relationship member raises, every remaining entry is judged by the SAME
-        assignment rules ``Attr.set(...)`` and the serialized write boundary
-        apply (:func:`_validate_copy_update`), and the merged instance still
-        goes back through the ordinary constructor for the §2 input policies.
+        The result carries a Change Record mapping each touched member to its
+        earliest original across edit chains. ``changes`` is validated: every
+        named member is resolved and judged by the SAME assignment rules
+        ``Attr.set(...)`` and the serialized write boundary apply
+        (:func:`_edit_violations`), every violation is reported in one
+        :class:`EditError` raised before anything is built, and the merged
+        instance then goes back through the ordinary constructor for the §2 input
+        policies — whose own ``ValidationError`` propagates unchanged, because a
+        value the judgement accepted and the annotation refused is a judgement
+        coverage defect rather than a developer-input refusal.
 
-        ``update`` is READ EXACTLY ONCE, into a snapshot every subsequent step
-        works from — the judgement, the merge, the carry-forward, and the
-        Change Record. Reading it again would let a stateful mapping pass
-        judgement with one value and be copied with another.
+        An edit with no changes is legal and builds nothing new to validate,
+        because nothing was authored: the result is this value's own state and
+        its own record, whose effective change set is empty either way.
 
         A framework-owned member is carried forward without re-validation: its
         value was never authored, so re-running it through the constructor would
         submit stored state as a caller assignment — which that constructor
         refuses — and a materialized current milestone's endpoint there is the
         framework's open-interval sentinel, which the wrapping construction never
-        validated either. The copy's ``update`` cannot name one: the shared
-        judgement refuses it before any merge.
+        validated either. ``changes`` cannot name one: the shared judgement
+        refuses it before any merge.
         """
-        edits = dict(update) if update is not None else {}
-        if not edits:
-            copied = super().model_copy(update=None, deep=deep)
-            carried = dict(changed_fields(self) or {})
-            object.__setattr__(copied, "__parallax_changes__", carried)
-            return copied
+        record = dict(changed_fields(self) or {})
+        if not changes:
+            return _restate(self, record)
         names = wire_names_of(type(self))
-        _validate_copy_update(type(self).__name__, names, edits)
+        entity = declaration_of(type(self)).identity
+        violations = _edit_violations(entity, type(self).__name__, names, changes)
+        if violations:
+            raise EditError(violations) from None
         declared = set(names.py_to_name)
         merged = {k: v for k, v in self.__dict__.items() if k in declared}
-        merged.update(edits)
+        merged.update(changes)
         carry_forward = {
             py_name: merged.pop(py_name)
             for py_name in names.framework_owned_py
@@ -506,12 +579,42 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         validated = type(self)(**merged)  # re-validates the whole instance (§2 input policies)
         for py_name, value in carry_forward.items():
             object.__setattr__(validated, py_name, value)
-        changes = dict(changed_fields(self) or {})
-        for py_name in edits:
-            if py_name not in changes:
-                changes[py_name] = getattr(self, py_name)
-        object.__setattr__(validated, "__parallax_changes__", changes)
+        for py_name in changes:
+            if py_name not in record:
+                record[py_name] = getattr(self, py_name)
+        object.__setattr__(validated, "__parallax_changes__", record)
         return validated
+
+    def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:
+        """Refused: ``edit(**changes)`` is the object-copy verb (spec §3).
+
+        Pydantic's own signature has no place to put an edit's contract —
+        ``deep=True`` on a frozen value carrying a Change Record has no defined
+        meaning — and the name promises Pydantic semantics this class does not
+        keep. Refused with or without ``update=``, before any argument is
+        examined.
+        """
+        del update, deep  # neither is examined: the refusal precedes both
+        raise _use_edit(type(self), "model_copy")
+
+    def copy(self, **kwargs: object) -> Self:
+        """Refused: the deprecated Pydantic v1 shim reaches neither the
+        framework's name resolution nor its judgement, so a primary key or a
+        framework-owned member could be set through it (spec §3)."""
+        del kwargs  # not examined: the refusal precedes every argument
+        raise _use_edit(type(self), "copy")
+
+    def __copy__(self) -> Self:
+        """Refused: a shallow copy of the instance dictionary carries the Change
+        Record living in it, so the result would claim provenance it did not earn
+        and lower to a sparse row built from originals that were never its own
+        (spec §3)."""
+        raise _use_edit(type(self), "__copy__")
+
+    def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
+        """Refused for :meth:`__copy__`'s reason, plus deep-copied originals."""
+        del memo  # not examined: the refusal precedes every argument
+        raise _use_edit(type(self), "__deepcopy__")
 
 
 class TxTemporal(Entity, _mint=FRAMEWORK_MINT, _axes=(TemporalDimension.TRANSACTION_TIME,)):
