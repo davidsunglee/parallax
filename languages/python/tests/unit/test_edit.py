@@ -1,8 +1,13 @@
-"""``Entity.edit(**changes)``, the refused copy doors, and the Change Record —
-``changed_fields`` / ``effective_change_set`` / ``full_row`` /
-``primary_key_row`` / ``canonical_row`` (spec §3/§5). The version column's own
-advance is framework-owned end to end at the write seam (`m-opt-lock`); see
-``test_write_lowering.py`` / ``test_opt_lock.py``.
+"""``Entity.edit(**changes)``, the refused copy doors, and the Change Record it
+stamps (spec §3).
+
+What that record then MEANS to a write — the effective change set, the derived
+row, and the refusals of a value carrying none — is the Entity Row Codec's, and
+is pinned in ``test_row_codec.py``. Here the record is read straight out of the
+private slot the edit surface owns, because what this suite proves is what
+``edit`` wrote. The version column's own advance is framework-owned end to end at
+the write seam (`m-opt-lock`); see ``test_write_lowering.py`` /
+``test_opt_lock.py``.
 """
 
 from __future__ import annotations
@@ -10,12 +15,12 @@ from __future__ import annotations
 import copy as copy_module
 import datetime as dt
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from pydantic import ValidationError
 
 from _support import mirrored_models as mm
-from _support import snapshot_models as sm
 from _support import value_object_models as vm
 from parallax.core import Attr, Entity, attr
 from parallax.core.base import INFINITY
@@ -24,17 +29,9 @@ from parallax.core.entity import (
     EditError,
     EditViolation,
     EntityDefinitionError,
-    ProvenanceError,
-    canonical_row,
-    changed_fields,
-    effective_change_set,
-    full_row,
-    primary_key_row,
     wire_names_of,
 )
-from parallax.core.entity._entity import (
-    _assignment_matches_original,  # pyright: ignore[reportPrivateUsage]
-)
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,
@@ -56,18 +53,24 @@ def _fetched_account(balance: str = "100.00", version: int = 1) -> mm.Account:
     return mm.Account.model_construct(id=1, owner="Ada", balance=Decimal(balance), version=version)
 
 
+def _record(value: object) -> dict[str, object] | None:
+    """``value``'s Change Record as the edit surface wrote it, read from the one
+    private slot that surface owns."""
+    return cast("dict[str, object] | None", value.__dict__.get(CHANGE_RECORD_SLOT))
+
+
 # --------------------------------------------------------------------------- #
 # Provenance and the Change Record.                                          #
 # --------------------------------------------------------------------------- #
 def test_a_fresh_instance_carries_no_change_record() -> None:
-    assert changed_fields(_account()) is None
+    assert CHANGE_RECORD_SLOT not in _account().__dict__
 
 
 def test_an_edit_records_the_earliest_original_value() -> None:
     original = _account(balance="100.00")
     edited = original.edit(balance=Decimal("175.00"))
     assert edited.balance == Decimal("175.00")
-    changes = changed_fields(edited)
+    changes = _record(edited)
     assert changes is not None
     assert changes["balance"] == Decimal("100.00")
 
@@ -76,46 +79,20 @@ def test_copies_of_copies_merge_records_keeping_the_earliest_original() -> None:
     original = _account(balance="100.00")
     once = original.edit(balance=Decimal("150.00"))
     twice = once.edit(balance=Decimal("200.00"))
-    changes = changed_fields(twice)
+    changes = _record(twice)
     assert changes is not None
     assert changes["balance"] == Decimal("100.00")  # earliest, not 150.00
     assert twice.balance == Decimal("200.00")
 
 
-def test_a_net_zero_chain_still_tracks_the_touch_but_drops_from_the_effective_set() -> None:
+def test_a_net_zero_chain_still_records_the_touch() -> None:
+    # The record keeps the touch whatever the values net to; whether that touch
+    # reaches a row is the codec's question, not the record's.
     original = _account(balance="100.00")
     round_tripped = original.edit(balance=Decimal("200.00")).edit(balance=Decimal("100.00"))
-    changes = changed_fields(round_tripped)
+    changes = _record(round_tripped)
     assert changes is not None
-    assert "balance" in changes  # touched...
-    assert effective_change_set(round_tripped) == {}  # ...but nets to zero
-
-
-def test_effective_change_set_includes_only_touched_and_different_fields() -> None:
-    original = _account(balance="100.00")
-    edited = original.edit(balance=Decimal("175.00"))
-    assert effective_change_set(edited) == {"balance": Decimal("175.00")}
-
-
-def test_effective_change_set_compares_only_authored_occurrence_members() -> None:
-    original = mm.Traveler(
-        id=1,
-        address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
-        tags=(),
-    )
-    edited = original.edit(address=mm.TravelerAddress(city="Oslo"))
-
-    assert effective_change_set(edited) == {}
-
-
-def test_assignment_scoped_comparison_covers_nested_and_many_boundaries() -> None:
-    assert _assignment_matches_original({}, {"future": 1})
-    assert not _assignment_matches_original({"city": "Oslo"}, None)
-    assert not _assignment_matches_original({"city": "Oslo"}, {"city": "Bergen"})
-    assert not _assignment_matches_original([{"city": "Oslo"}], [{"city": "Oslo", "future": 1}])
-    assert not _assignment_matches_original([{"city": "Oslo"}], [])
-    assert not _assignment_matches_original([{"city": "Oslo"}], {"city": "Oslo"})
-    assert not _assignment_matches_original("Oslo", "Bergen")
+    assert changes["balance"] == Decimal("100.00")
 
 
 def test_an_edit_with_no_changes_is_legal_and_carries_the_existing_record() -> None:
@@ -127,18 +104,11 @@ def test_an_edit_with_no_changes_is_legal_and_carries_the_existing_record() -> N
     assert plain is not edited
     assert plain.balance == Decimal("175.00")
     assert plain.model_fields_set == edited.model_fields_set
-    assert changed_fields(plain) == changed_fields(edited)
+    assert _record(plain) == _record(edited)
 
 
 def test_an_edit_with_no_changes_on_a_never_edited_value_records_nothing() -> None:
-    plain = _account().edit()
-    assert changed_fields(plain) == {}
-    assert effective_change_set(plain) == {}
-
-
-def test_effective_change_set_raises_provenance_error_for_a_fresh_instance() -> None:
-    with pytest.raises(ProvenanceError, match="Change Record"):
-        effective_change_set(_account())
+    assert _record(_account().edit()) == {}
 
 
 # --------------------------------------------------------------------------- #
@@ -170,46 +140,6 @@ def test_an_invalid_scalar_value_raises_at_edit_time_not_at_the_database() -> No
         _account().edit(balance="not-a-decimal")
 
 
-# --------------------------------------------------------------------------- #
-# Write-row builders (spec §5).                                              #
-# --------------------------------------------------------------------------- #
-def test_full_row_projects_every_field_the_caller_set() -> None:
-    account = _account(balance="5.00")
-    assert full_row(account) == {"id": 1, "owner": "Ada", "balance": Decimal("5.00")}
-
-
-def test_primary_key_row_projects_only_the_declared_keys() -> None:
-    assert primary_key_row(_account()) == {"id": 1}
-
-
-def test_canonical_row_translates_python_names_to_canonical_names() -> None:
-    account = _account()
-    assert canonical_row(account, {"balance": Decimal("9.99")}) == {"balance": Decimal("9.99")}
-
-
-def test_full_row_serializes_a_value_object_member_to_its_canonical_document() -> None:
-    address = vm.Address(street="Main St", city="Berlin", geo=None, phones=())
-    customer = vm.Customer(id=1, name="Ada", address=address)
-    row = full_row(customer)
-    assert row["address"] == {"street": "Main St", "city": "Berlin", "geo": None, "phones": []}
-
-
-def test_full_row_serializes_a_cardinality_many_value_object_member_to_a_list_of_documents() -> (
-    None
-):
-    tag = sm.Tag(label="a", detail=None, details=())
-    status = sm.SnapOrderStatus(
-        id=1,
-        order_id=1,
-        order_item_id=None,
-        code="shipped",
-        primary_tag=None,
-        tags=(tag,),
-    )
-    row = full_row(status)
-    assert row["tags"] == [{"label": "a", "detail": None, "details": []}]
-
-
 def test_wire_names_of_rejects_a_class_that_declares_nothing() -> None:
     with pytest.raises(EntityDefinitionError, match="not a Parallax Entity Class"):
         wire_names_of(int)
@@ -224,7 +154,6 @@ def test_an_audit_only_instance_constructs_cleanly_without_axis_values() -> None
     balance = mm.Balance(id=1, acct_num="A", value=Decimal("100.00"))
     assert balance.tx_start is None
     assert balance.tx_end is None
-    assert full_row(balance) == {"id": 1, "acctNum": "A", "value": Decimal("100.00")}
 
 
 def test_a_bitemporal_instance_constructs_cleanly_without_axis_values() -> None:
@@ -233,7 +162,6 @@ def test_a_bitemporal_instance_constructs_cleanly_without_axis_values() -> None:
     assert branch.valid_end is None
     assert branch.tx_start is None
     assert branch.tx_end is None
-    assert full_row(branch) == {"id": 1, "name": "Central", "address": None}
 
 
 def test_a_versioned_instance_constructs_cleanly_without_its_version() -> None:

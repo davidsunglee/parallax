@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Final, Self, cast
 
 from pydantic import BaseModel
 from pydantic._internal._model_construction import ModelMetaclass
@@ -32,12 +32,7 @@ from parallax.core.entity._declaration import (
     declaration_of,
     members_of,
 )
-from parallax.core.entity._errors import (
-    EditError,
-    EditViolation,
-    EntityDefinitionError,
-    ProvenanceError,
-)
+from parallax.core.entity._errors import EditError, EditViolation, EntityDefinitionError
 from parallax.core.entity._expressions import (
     AllPredicate,
     Predicate,
@@ -71,16 +66,12 @@ if TYPE_CHECKING:
     from parallax.core.entity._members import AbstractSubtype, ConcreteSubtype
 
 __all__ = [
+    "CHANGE_RECORD_SLOT",
     "Bitemporal",
     "Entity",
     "EntityMeta",
     "TxTemporal",
     "WireNames",
-    "canonical_row",
-    "changed_fields",
-    "effective_change_set",
-    "full_row",
-    "primary_key_row",
     "wire_names_of",
 ]
 
@@ -287,86 +278,25 @@ def _family_axes(cls: type) -> tuple[AsOfAxisMetadata, ...]:
     return ()
 
 
-def full_row(instance: Entity) -> dict[str, object]:
-    """Every member of ``instance`` the caller actually set, keyed by canonical name.
+CHANGE_RECORD_SLOT: Final = "__parallax_changes__"
+"""The one private instance slot an Edited Copy's Change Record lives in.
 
-    Filtered by Pydantic's ``model_fields_set`` rather than by the declared
-    member set, so a member the caller never populated is omitted and the
-    narrower insert is emitted. A framework-owned member is never in that set on
-    a value the caller built, because the constructor refuses one.
+Only :meth:`Entity.edit` ever writes it, and the Entity Row Codec is its only
+reader. It lives in ``__dict__`` rather than in a declared field so it stays
+outside ``model_fields_set``, outside canonical serialization, and outside the
+declared model — which is also why every inherited copy door that shallow-copies
+that dictionary is refused."""
+
+
+def _change_record(value: object) -> dict[str, object] | None:
+    """``value``'s Change Record, or ``None`` when it carries none.
+
+    The edit surface's own reader: it needs only the record it will extend, and
+    an unedited value extends an empty one. Telling an absent record apart from
+    an unreadable one is the Row Codec's question, not this one's.
     """
-    names = wire_names_of(type(instance))
-    fields_set = instance.model_fields_set
-    return {
-        canonical: serialize_member(getattr(instance, py_name))
-        for canonical, py_name in names.name_to_py.items()
-        if py_name in fields_set
-    }
-
-
-def primary_key_row(instance: object) -> dict[str, object]:
-    """``instance``'s primary-key members, keyed by canonical name (spec §5)."""
-    names = wire_names_of(type(instance))
-    return {names.py_to_name[py_name]: getattr(instance, py_name) for py_name in names.pk_py}
-
-
-def canonical_row(instance: object, py_row: dict[str, object]) -> dict[str, object]:
-    """Translate a Python-name-keyed row to its canonical, write-serialized form."""
-    names = wire_names_of(type(instance))
-    return {names.py_to_name[py_name]: serialize_member(value) for py_name, value in py_row.items()}
-
-
-def changed_fields(instance: object) -> dict[str, object] | None:
-    """``instance``'s Change Record — each touched member to its earliest recorded
-    original across the copy chain — or ``None`` when it carries none."""
-    changes = (
-        instance.__dict__.get("__parallax_changes__") if hasattr(instance, "__dict__") else None
-    )
-    if isinstance(changes, dict):
-        return cast("dict[str, object]", changes)
-    return None
-
-
-def effective_change_set(copy: object) -> dict[str, object]:
-    """The touched-and-different members of an edited copy (spec §3/§5).
-
-    A touched member whose current value equals its recorded original drops out,
-    so a net-zero copy chain is a no-op.
-    """
-    changes = changed_fields(copy)
-    if changes is None:
-        raise ProvenanceError(
-            f"{type(copy).__name__} carries no Change Record; derive an edited copy via "
-            "`instance.edit(**changes)` before passing it to `tx.update`"
-        )
-    return {
-        py_name: current
-        for py_name, original in changes.items()
-        if not _assignment_matches_original(current := getattr(copy, py_name), original)
-    }
-
-
-def _assignment_matches_original(assigned: object, original: object) -> bool:
-    """Compare authored ``one`` members as a mask and ``many`` values as wholes.
-
-    Mapping omission represents un-authored nested ``one`` state. Lists have no
-    element identity, so their complete serialized elements must match rather
-    than inheriting the mapping subset rule.
-    """
-    assigned_value = serialize_member(assigned)
-    original_value = serialize_member(original)
-    if isinstance(assigned_value, Mapping):
-        if not isinstance(original_value, Mapping):
-            return False
-        assigned_items = cast("Mapping[object, object]", assigned_value)
-        original_items = cast("Mapping[object, object]", original_value)
-        return all(
-            name in original_items and _assignment_matches_original(value, original_items[name])
-            for name, value in assigned_items.items()
-        )
-    if isinstance(assigned_value, list):
-        return isinstance(original_value, list) and assigned_value == original_value
-    return assigned_value == original_value
+    record = value.__dict__.get(CHANGE_RECORD_SLOT)
+    return cast("dict[str, object]", record) if isinstance(record, dict) else None
 
 
 def _edit_violations(
@@ -439,7 +369,7 @@ def _restate[E: Entity](value: E, record: dict[str, object]) -> E:
     restated = type(value).model_construct()
     object.__setattr__(restated, "__dict__", dict(value.__dict__))
     object.__setattr__(restated, "__pydantic_fields_set__", set(value.__pydantic_fields_set__))
-    object.__setattr__(restated, "__parallax_changes__", record)
+    object.__setattr__(restated, CHANGE_RECORD_SLOT, record)
     return restated
 
 
@@ -560,7 +490,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         validated either. ``changes`` cannot name one: the shared judgement
         refuses it before any merge.
         """
-        record = dict(changed_fields(self) or {})
+        record = dict(_change_record(self) or {})
         if not changes:
             return _restate(self, record)
         names = wire_names_of(type(self))
@@ -582,7 +512,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         for py_name in changes:
             if py_name not in record:
                 record[py_name] = getattr(self, py_name)
-        object.__setattr__(validated, "__parallax_changes__", record)
+        object.__setattr__(validated, CHANGE_RECORD_SLOT, record)
         return validated
 
     def model_copy(self, *, update: Mapping[str, Any] | None = None, deep: bool = False) -> Self:

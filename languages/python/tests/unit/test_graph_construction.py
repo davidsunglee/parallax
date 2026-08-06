@@ -35,7 +35,7 @@ from parallax.core.entity import (
     ValueObjectAttributeInput,
     ValueObjectOccurrenceInput,
     ValueObjectRecord,
-    entity_runtime_of,
+    graph_construction_of,
     lifecycle_state_of,
     relationship_value_of,
 )
@@ -82,7 +82,7 @@ _ITEM_SCALARS: tuple[EntityAttributeInput, ...] = (
 
 
 def _construct(build: Any, *, state_factory: Any = None) -> tuple[object, ...]:
-    return entity_runtime_of(_ORDERS).construct(build, state_factory=state_factory)
+    return graph_construction_of(_ORDERS).construct(build, state_factory=state_factory)
 
 
 class _ClasslessSource:
@@ -640,7 +640,7 @@ def _bound(name: str) -> tuple[object, ...]:
         )
         return (node,)
 
-    return entity_runtime_of(_MILESTONES).construct(build)
+    return graph_construction_of(_MILESTONES).construct(build)
 
 
 @pytest.mark.parametrize("name", ["txEnd", "validEnd"])
@@ -792,8 +792,8 @@ def test_reading_a_relationship_the_class_family_does_not_declare_is_refused() -
 
 
 def test_one_construction_is_reused_for_one_domain_model() -> None:
-    assert entity_runtime_of(_ORDERS) is entity_runtime_of(_ORDERS)
-    assert entity_runtime_of(_ORDERS) is not entity_runtime_of(sm.ANIMAL_MODEL)
+    assert graph_construction_of(_ORDERS) is graph_construction_of(_ORDERS)
+    assert graph_construction_of(_ORDERS) is not graph_construction_of(sm.ANIMAL_MODEL)
 
 
 # --------------------------------------------------------------------------- #
@@ -834,7 +834,7 @@ def test_a_model_that_composed_no_entity_class_can_construct_no_graph() -> None:
         raise AssertionError("unreachable")
 
     with pytest.raises(GraphConstructionError) as refusal:
-        entity_runtime_of(descriptor_backed).construct(build)
+        graph_construction_of(descriptor_backed).construct(build)
     assert refusal.value.code == "entity-graph-invalid-entity"
 
 

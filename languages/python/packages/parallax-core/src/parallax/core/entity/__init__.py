@@ -8,11 +8,14 @@ its closed error-code sets, and the Find Query surface. The underscored modules
 behind these names are implementation detail rather than caller seams.
 
 It additionally exposes the **advanced Entity Graph Construction collaboration**
-— ``entity_runtime_of``, ``EntityGraphConstruction``, its writer, handles, and
-immutable carriers, plus the two operations a lifecycle reads back
-(``relationship_value_of``, ``lifecycle_state_of``). Top-level ``parallax.core``
-does not re-export any of it: a first-party lifecycle package reaches it here on
-purpose, and a developer never needs it.
+— ``graph_construction_of``, ``EntityGraphConstruction``, its writer, handles,
+and immutable carriers, plus the two operations a lifecycle reads back
+(``relationship_value_of``, ``lifecycle_state_of``) — and the **Entity Row
+Codec** a write path derives rows through, reached by ``row_codec_of``. The two
+are this scope's named model-bound capability seams, and there is no composite
+value over them. Top-level ``parallax.core`` re-exports neither: a first-party
+lifecycle or persistence package reaches them here on purpose, and a developer
+never needs either.
 
 Entity Classes are their own formation input: the declaration engine builds each
 class's ``UnresolvedEntityDeclaration`` eagerly at class creation, so this scope
@@ -28,26 +31,22 @@ from parallax.core.entity._entity import (
     EntityMeta,
     TxTemporal,
     WireNames,
-    canonical_row,
-    changed_fields,
-    effective_change_set,
-    full_row,
-    primary_key_row,
     wire_names_of,
 )
 from parallax.core.entity._errors import (
     EDIT_CODES,
     ENTITY_DEFINITION_CODES,
+    ENTITY_ROW_CODES,
     GRAPH_CONSTRUCTION_CODES,
     METAMODEL_DEFINITION_CODES,
     METAMODEL_LOOKUP_CODES,
     EditError,
     EditViolation,
     EntityDefinitionError,
+    EntityRowError,
     GraphConstructionError,
     MetamodelDefinitionError,
     MetamodelLookupError,
-    ProvenanceError,
     UnloadedRelationshipError,
 )
 from parallax.core.entity._expressions import (
@@ -66,7 +65,7 @@ from parallax.core.entity._graph_construction import (
     EntityGraphConstruction,
     EntityGraphWriter,
     ResolutionView,
-    entity_runtime_of,
+    graph_construction_of,
     lifecycle_state_of,
     relationship_value_of,
 )
@@ -116,11 +115,13 @@ from parallax.core.entity._members import (
 )
 from parallax.core.entity._model import DomainModel
 from parallax.core.entity._query import FindQuery
+from parallax.core.entity._row_codec import EntityRowCodec, row_codec_of
 from parallax.core.entity._value_object import ValueObject, ValueObjectMeta, to_document
 
 __all__ = [
     "EDIT_CODES",
     "ENTITY_DEFINITION_CODES",
+    "ENTITY_ROW_CODES",
     "GRAPH_CONSTRUCTION_CODES",
     "LOADED_NULL",
     "MANY_TO_ONE",
@@ -158,6 +159,8 @@ __all__ = [
     "EntityGraphWriter",
     "EntityMeta",
     "EntityRelationshipInput",
+    "EntityRowCodec",
+    "EntityRowError",
     "FindQuery",
     "Float32",
     "GraphConstructionError",
@@ -171,7 +174,6 @@ __all__ = [
     "NodeHandle",
     "OrderTerm",
     "Predicate",
-    "ProvenanceError",
     "Rel",
     "RelationshipInput",
     "RelationshipPath",
@@ -192,17 +194,13 @@ __all__ = [
     "WireNames",
     "asc",
     "attr",
-    "canonical_row",
-    "changed_fields",
     "desc",
-    "effective_change_set",
-    "entity_runtime_of",
-    "full_row",
+    "graph_construction_of",
     "index",
     "lifecycle_state_of",
-    "primary_key_row",
     "rel",
     "relationship_value_of",
+    "row_codec_of",
     "shape_of",
     "snake_to_camel",
     "to_document",

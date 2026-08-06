@@ -4,11 +4,10 @@ Everything a write verb needs BEFORE an instruction reaches the unit of work,
 plus the observation machinery a read leaves behind for it:
 
 * build-time window validation every keyed AND ``_where`` temporal verb shares
-  (:func:`validate_valid_from`, :func:`validate_until`), the finite-Transaction-
-  Time-pin refusal every keyed verb runs on its source instance
-  (:class:`TransactionTimePinReadOnlyError`, :func:`validate_source_pin`,
-  :func:`source_pin`), and the sparse keyed ``update`` row
-  (:func:`prepare_sparse_row`);
+  (:func:`validate_valid_from`, :func:`validate_until`) and the
+  finite-Transaction-Time-pin refusal every keyed verb runs on its source
+  instance (:class:`TransactionTimePinReadOnlyError`,
+  :func:`validate_source_pin`, :func:`source_pin`);
 * instance -> accepted-Metadata resolution (:func:`metadata_of_instance`) and the
   verb-time license key (:func:`observation_key`);
 * the observation record a read leaves behind (:class:`ReadObservations`) and its
@@ -47,7 +46,6 @@ from typing import Final, cast
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import canonical_row, effective_change_set, primary_key_row
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -93,7 +91,6 @@ __all__ = [
     "metadata_of_instance",
     "observation_key",
     "predecessor_payload",
-    "prepare_sparse_row",
     "record_observations",
     "source_pin",
     "validate_source_pin",
@@ -137,15 +134,19 @@ def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
 
 
 def observation_key(
-    record: EntityMetadata, declaring_entity: EntityMetadata, instance: object
+    record: EntityMetadata, declaring_entity: EntityMetadata, row: Mapping[str, object]
 ) -> ObjectKey:
     """The observation key for a WRITTEN instance — the same key
     :func:`record_observations` records under (the instance's OWN Entity
     Identity, never family-normalized; pk pairs by canonical attribute name, in
     the declaring entity's primary-key order) and `unit_work.object_key`
     computes at flush, so a verb-time license lookup and the flush-time attach
-    can never diverge."""
-    row = primary_key_row(instance)
+    can never diverge.
+
+    ``row`` is that instance's identity row as the Entity Row Codec derived it,
+    passed in rather than derived here: this module owns the semantic family
+    facts the key's ORDER comes from, and the codec owns what an Entity value's
+    canonical primary key IS."""
     return ObjectKey(
         record.identity,
         tuple(
@@ -375,8 +376,7 @@ def _row_payload(
 # Predicate-write materialization (m-opt-lock                                 #
 # "Predicate-selected writes materialize when observations are needed";       #
 # ADR 0014) — plus the build-time window/no-op validators every keyed AND     #
-# `_where` temporal verb shares (`validate_valid_from` / `validate_until`#
-# / `prepare_sparse_row`).                                                    #
+# `_where` temporal verb shares (`validate_valid_from` / `validate_until`).   #
 # `is_no_op_assignment` / `key_column_values` / `predecessor_payload` below   #
 # are pure per-row functions the SOLE caller                                  #
 # (`_predicate_writes._materialize_predicate_write`) drives against its OWN   #
@@ -443,24 +443,6 @@ def validate_valid_from(
             f"({name!r} declares no Valid-Time dimension to bound)"
         )
     return None
-
-
-def prepare_sparse_row(copy: EntityBase) -> dict[str, object] | None:
-    """The sparse keyed ``update``/``updateUntil`` row: primary key + the
-    edited copy's own effective
-    change set (:func:`effective_change_set`) — ``None`` for an EMPTY
-    effective set (the no-op-first rule, spec §3/§5): ``update`` returns
-    immediately on ``None`` (no window to validate); ``updateUntil`` calls
-    this AFTER its own window-order validation already ran
-    (:func:`validate_until` runs BEFORE this no-op
-    check, never after, so an equal or reversed window still rejects even
-    when the effective change set would otherwise have been empty)."""
-    effective = effective_change_set(copy)
-    if not effective:
-        return None
-    row: dict[str, object] = primary_key_row(copy)
-    row.update(canonical_row(copy, effective))
-    return row
 
 
 def validate_until(

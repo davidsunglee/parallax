@@ -95,7 +95,7 @@ __all__ = [
     "EntityGraphConstruction",
     "EntityGraphWriter",
     "ResolutionView",
-    "entity_runtime_of",
+    "graph_construction_of",
     "lifecycle_state_of",
     "relationship_value_of",
 ]
@@ -404,8 +404,9 @@ class EntityGraphConstruction:
     derived once from accepted metadata — the concrete class, the
     identity-to-member-name mapping, and the declaration-ordered navigable
     relationships — and models are few and long-lived where reads are many.
-    Because it is reached through :func:`entity_runtime_of`, ``construct(...)``
-    takes no model argument and cannot be handed a mismatched one.
+    Because it is reached through :func:`graph_construction_of`,
+    ``construct(...)`` takes no model argument and cannot be handed a mismatched
+    one.
     """
 
     __slots__ = ("_cache", "_classes", "_model")
@@ -465,17 +466,23 @@ class EntityGraphConstruction:
         return facts
 
 
-def entity_runtime_of(model: DomainModel) -> EntityGraphConstruction:
+def graph_construction_of(model: DomainModel) -> EntityGraphConstruction:
     """``model``'s construction collaboration — the reach seam for it.
 
     One per Domain Model, created on first reach and retained by the model, so
     every read of one model shares the per-Entity facts derived from it.
+
+    Created on first reach because this module sits above ``_model`` in §7's
+    import DAG: a :class:`DomainModel` cannot construct one without inverting an
+    edge the generated import contracts reject, so this function is the only
+    place that can build one. The guard is a dependency-direction consequence,
+    not a performance hedge.
     """
-    runtime = model._runtime  # pyright: ignore[reportPrivateUsage] - first-party seam
-    if not isinstance(runtime, EntityGraphConstruction):
-        runtime = EntityGraphConstruction(model)
-        model._runtime = runtime  # pyright: ignore[reportPrivateUsage] - first-party seam
-    return runtime
+    construction = model._graph_construction  # pyright: ignore[reportPrivateUsage] - first-party seam
+    if not isinstance(construction, EntityGraphConstruction):
+        construction = EntityGraphConstruction(model)
+        model._graph_construction = construction  # pyright: ignore[reportPrivateUsage] - first-party seam
+    return construction
 
 
 def relationship_value_of(instance: object, relationship: RelationshipIdentity) -> object:

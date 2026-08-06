@@ -55,7 +55,7 @@ __all__ = ["materialize_graph"]
 
 
 def materialize_graph(
-    graph: SnapshotGraphInput, model: Metamodel, runtime: EntityGraphConstruction
+    graph: SnapshotGraphInput, model: Metamodel, construction: EntityGraphConstruction
 ) -> tuple[object, ...]:
     """Merge ``graph`` and construct its roots as frozen Entity instances.
 
@@ -63,7 +63,7 @@ def materialize_graph(
     object that already exists, and the whole result publishes at once or not at
     all.
     """
-    return _Materialization(merge_graph_input(graph, model), model).run(runtime)
+    return _Materialization(merge_graph_input(graph, model), model).run(construction)
 
 
 class _Materialization:
@@ -83,8 +83,8 @@ class _Materialization:
         self._handles: list[NodeHandle] = []
         self._pending = iter(range(len(merge.order)))
 
-    def run(self, runtime: EntityGraphConstruction) -> tuple[object, ...]:
-        return runtime.construct(self.build, state_factory=self.state)
+    def run(self, construction: EntityGraphConstruction) -> tuple[object, ...]:
+        return construction.construct(self.build, state_factory=self.state)
 
     def build(self, writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
         self._handles = [writer.allocate(identity) for identity in self._merge.order]
