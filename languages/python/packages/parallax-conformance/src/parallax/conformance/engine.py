@@ -880,43 +880,39 @@ def _versioned_non_temporal_version_attribute(
 
 
 def _row_object_key(
-    meta: Metamodel, entity_name: str, row: Mapping[str, object], *, by_column: bool
+    meta: Metamodel, entity: EntityIdentity, row: Mapping[str, object]
 ) -> ObjectKey | None:
     """The SAME identity :func:`~parallax.core.unit_work.object_key` computes for
-    a keyed write, derived from a raw FOUND row instead (a scenario find
-    step's own ``expectRows`` entry, or a real ``port.execute`` row) — so a
-    later write's own key lookup against :data:`ScenarioObservations` matches.
+    a keyed write, derived from a raw FOUND row instead — so a later write's own
+    key lookup against :data:`ScenarioObservations` matches.
 
-    ``by_column`` selects the row's own field-naming convention: the compile
-    lane's authored ``expectRows`` are ATTRIBUTE-named (`m-case-format`'s flat
-    attribute-named row vocabulary); the run lane's real ``port.execute`` rows
-    are COLUMN-named (the raw driver row — the SAME convention
+    ``entity`` is the row's OWN resolved Entity Identity, a per-row fact under
+    table-per-hierarchy, never the position a find targeted: a keyed write
+    resolves its key from the concrete it names
+    (`~parallax.core.unit_work.resolve_object_key`), so an observation recorded
+    under anything else is unreachable by the write it licenses.
+
+    ``row`` is COLUMN-named (a real ``port.execute`` row — the SAME convention
     `parallax.snapshot.handle`'s own observation recording reads via
-    ``node.fields[attr.column]``). ``None`` when the (family-effective)
-    primary key is absent from ``row`` — never reachable for a well-formed
-    corpus find, but this seam takes no data on faith.
-
-    ``entity_name`` is resolved to its Entity Identity rather than carried into
-    the key, so a case naming one entity bare and another canonically reaches
-    one key either way."""
-    entity = meta.entity(entity_name)
-    pk_attrs = _descriptor_family.family_primary_key(meta, entity)
+    ``node.fields[attr.column]``). ``None`` when the (family-effective) primary
+    key is absent from ``row`` — never reachable for a well-formed corpus find,
+    but this seam takes no data on faith."""
+    pk_attrs = _descriptor_family.family_primary_key(meta, meta.entity(entity.name))
     if not pk_attrs:  # pragma: no cover - defends a malformed model
         return None
     pairs: list[tuple[str, object]] = []
     for attr in pk_attrs:
-        field = attr.column if by_column else attr.name
-        if field not in row:  # pragma: no cover - defends a malformed row/projection
+        if attr.column not in row:  # pragma: no cover - defends a malformed row/projection
             return None
-        pairs.append((attr.name, row[field]))
-    return ObjectKey(EntityIdentity(entity.namespace, entity.name), tuple(pairs))
+        pairs.append((attr.name, row[attr.column]))
+    return ObjectKey(entity, tuple(pairs))
 
 
 def _observe_group_find(
     tx: handle.Transaction,
     observations: ScenarioObservations,
     meta: Metamodel,
-    entity_name: str,
+    compiled: CompiledRead,
     rows: Sequence[Mapping[str, object]],
 ) -> None:
     """Record a `uow` GROUP's own OBSERVED version for every row a grouped
@@ -937,12 +933,20 @@ def _observe_group_find(
     at all. A no-op for a temporal or unversioned target
     (:func:`_versioned_non_temporal_version_attribute` returns ``None``) and
     for any row missing its primary key or version field — never reachable
-    for a well-formed corpus find, but this seam takes no data on faith."""
-    version_attr = _versioned_non_temporal_version_attribute(meta, entity_name)
+    for a well-formed corpus find, but this seam takes no data on faith.
+
+    Each row is keyed by the Entity ``compiled`` resolves that ROW to, never by
+    the position the find targeted: an abstract table-per-hierarchy target
+    returns rows of several concretes, and each one's observation must be
+    reachable by the keyed write that names that concrete. The version column
+    itself is family-wide metadata declared on the root (`m-opt-lock`), so
+    whether the family is observed at all is a property of the target and is
+    decided once."""
+    version_attr = _versioned_non_temporal_version_attribute(meta, compiled.target.name)
     if version_attr is None:
         return
     for row in rows:
-        key = _row_object_key(meta, entity_name, row, by_column=True)
+        key = _row_object_key(meta, compiled.materialize_row(row).resolved_entity, row)
         if key is None or version_attr.column not in row:
             continue
         observation = VersionObservation(observed_version=cast("int", row[version_attr.column]))
@@ -1565,7 +1569,7 @@ def _lower_predicate_write_step(
     return statements[0]
 
 
-def _lower_find(
+def _compile_find(
     step: Mapping[str, object],
     meta: Metamodel,
     model: AcceptedMetamodel,
@@ -1573,8 +1577,14 @@ def _lower_find(
     concurrency: Concurrency | None,
     *,
     result_form: Literal["row", "instance"] = "instance",
-) -> Statement:
+) -> CompiledRead:
     """Compile a scenario ``find`` step through the read path with the read-lock suffix.
+
+    The whole :class:`~parallax.core.sql_gen.CompiledRead` is returned rather
+    than its :class:`~parallax.core.sql_gen.Statement` alone: a step's emission
+    is graded on the statement, but a GROUPED find additionally resolves each
+    returned row to its own concrete Entity (:func:`_observe_group_find`), and
+    that resolution belongs to the compiled read that projected the row.
 
     A scenario find is an in-transaction object find; ``concurrency`` (the case's
     own ``when.uow.concurrency``) decides the ``m-sql`` shared-row-lock suffix
@@ -1612,7 +1622,7 @@ def _lower_find(
     itself REQUIRES one. Re-routing through a production API would mean
     inventing a new one solely to serve this untyped input, the opposite of
     engine-thinning; this function stays the adapter's own translation from
-    "raw case step" to "compiled Statement", composing production's `m-sql` /
+    "raw case step" to compiled read, composing production's `m-sql` /
     `m-read-lock` building blocks rather than duplicating their logic.
     """
     target = step.get("targetEntity")
@@ -1622,9 +1632,6 @@ def _lower_find(
     metadata = case_entity(model, meta.entity(target))
     operation = _canonicalize_read(find_doc, metadata, model)
     lock = read_lock.mode_for(concurrency)
-    # A scenario find's emission is graded on SQL text and binds alone — the
-    # compiled read's row transform belongs to whoever consumes the rows, and a
-    # scenario find step's rows are consumed by the production find executor.
     return compile_read(
         operation,
         model,
@@ -1632,7 +1639,7 @@ def _lower_find(
         metadata,
         result_form=result_form,
         lock=lock,
-    ).statement
+    )
 
 
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_LoweredStep]:
@@ -1694,7 +1701,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
                         _LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
                     )
             else:
-                statement = _lower_find(step, meta, model, dialect, find_lock)
+                statement = _compile_find(step, meta, model, dialect, find_lock).statement
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
@@ -2433,13 +2440,13 @@ def _run_uow_group(
                     )
                 )
             else:
-                statement = _lower_find(step, meta, model, dialect, concurrency)
-                target = cast("str", step["targetEntity"])
+                compiled = _compile_find(step, meta, model, dialect, concurrency)
+                statement = compiled.statement
                 conn = tx._conn  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
                 rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
-                _observe_group_find(tx, group_observations, meta, target, rows)
+                _observe_group_find(tx, group_observations, meta, compiled, rows)
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
         if doomed:
             # Force any still-buffered DML onto the wire (and count its round
@@ -2636,13 +2643,13 @@ def _run_interleaved_group(
                 if is_last:
                     tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             else:
-                statement = _lower_find(step, meta, model, dialect, concurrency)
-                target = cast("str", step["targetEntity"])
+                compiled = _compile_find(step, meta, model, dialect, concurrency)
+                statement = compiled.statement
                 conn = tx._conn  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
                 rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
-                _observe_group_find(tx, group_observations, meta, target, rows)
+                _observe_group_find(tx, group_observations, meta, compiled, rows)
                 result.rows[index] = rows
                 lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
             if not is_last:
@@ -3234,7 +3241,7 @@ def run_interleaved_scenario_case(
                 "interleaved uow race is unsupported — m-opt-lock-012's own ungrouped "
                 "step is a trailing verify find only"
             )
-        statement = _lower_find(step, meta, model, dialect, concurrency)
+        statement = _compile_find(step, meta, model, dialect, concurrency).statement
         rows_by_index[index] = _execute_reads(port, dialect, (statement,))
         lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
 
@@ -3311,7 +3318,7 @@ def run_scenario_case(
                     )
                     index += 2
                     continue
-                statement = _lower_find(step, meta, model, dialect, find_lock)
+                statement = _compile_find(step, meta, model, dialect, find_lock).statement
                 _execute_reads(port, dialect, (statement,))
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
                 index += 1
@@ -3420,7 +3427,7 @@ def read_table_state(
 
 def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statement]) -> list[Row]:
     """Execute every statement and return the LAST one's rows — a scenario find
-    step is always single-statement (:func:`_lower_find`), so ``statements`` is
+    step is always single-statement (:func:`_compile_find`), so ``statements`` is
     always a one-tuple in practice; the raw, COLUMN-keyed rows are a GROUPED
     find's own source for :func:`_observe_group_find` (mirroring the
     production ``Transaction.find`` -> ``uow.observe`` seam that
