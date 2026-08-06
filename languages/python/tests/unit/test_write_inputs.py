@@ -17,7 +17,11 @@ import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
 
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
+from _support.planner_probes import (
+    TEST_SUBJECT_IDENTITY,
+    corpus_entity,
+    corpus_object_key,
+)
 from parallax.conformance import models
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import LATEST, Pin
@@ -101,7 +105,7 @@ def test_the_collector_copies_the_columns_it_is_handed() -> None:
     # will read.
     handed: dict[str, object] = {"id": 1, "owner": "Ada"}
     observations = ReadObservations()
-    observations.observe_row("Account", handed, None)
+    observations.observe_row(corpus_entity("Account"), handed, None)
     handed["owner"] = "Grace"
     handed["version"] = 9
     assert dict(observations.rows[0].columns) == {"id": 1, "owner": "Ada"}
@@ -109,9 +113,12 @@ def test_the_collector_copies_the_columns_it_is_handed() -> None:
 
 def test_rows_accumulate_in_the_order_they_are_observed() -> None:
     observations = ReadObservations()
-    observations.observe_row("Order", {"id": 1}, None)
-    observations.observe_row("OrderItem", {"id": 11}, None)
-    assert [row.entity for row in observations.rows] == ["Order", "OrderItem"]
+    observations.observe_row(corpus_entity("Order"), {"id": 1}, None)
+    observations.observe_row(corpus_entity("OrderItem"), {"id": 11}, None)
+    assert [row.entity for row in observations.rows] == [
+        corpus_entity("Order"),
+        corpus_entity("OrderItem"),
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -119,8 +126,10 @@ def test_rows_accumulate_in_the_order_they_are_observed() -> None:
 # --------------------------------------------------------------------------- #
 def test_a_versioned_row_records_its_observed_version() -> None:
     observations = ReadObservations()
-    observations.observe_row("Account", _account_columns(), None)
-    observation = _recorded(_accepted("account"), observations, ("Account", (("id", 1),)))
+    observations.observe_row(corpus_entity("Account"), _account_columns(), None)
+    observation = _recorded(
+        _accepted("account"), observations, corpus_object_key("Account", ("id", 1))
+    )
     assert observation == VersionObservation(observed_version=4)
 
 
@@ -128,14 +137,19 @@ def test_a_versioned_row_whose_version_column_the_projection_omitted_records_not
     # The seam takes no data on faith: a row that reached it without the version
     # column it would gate on records nothing rather than observing a guess.
     observations = ReadObservations()
-    observations.observe_row("Account", _account_columns(version=None), None)
-    assert _recorded(_accepted("account"), observations, ("Account", (("id", 1),))) is None
+    observations.observe_row(corpus_entity("Account"), _account_columns(version=None), None)
+    assert (
+        _recorded(_accepted("account"), observations, corpus_object_key("Account", ("id", 1)))
+        is None
+    )
 
 
 def test_a_row_that_is_neither_versioned_nor_temporal_records_nothing() -> None:
     observations = ReadObservations()
-    observations.observe_row("Order", {"id": 1, "customer_id": 2}, None)
-    assert _recorded(_accepted("orders"), observations, ("Order", (("id", 1),))) is None
+    observations.observe_row(corpus_entity("Order"), {"id": 1, "customer_id": 2}, None)
+    assert (
+        _recorded(_accepted("orders"), observations, corpus_object_key("Order", ("id", 1))) is None
+    )
 
 
 def test_a_temporal_row_records_its_whole_predecessor_milestone() -> None:
@@ -143,8 +157,10 @@ def test_a_temporal_row_records_its_whole_predecessor_milestone() -> None:
     # bounds — because a chained successor carries forward members the authored
     # mutation never mentioned.
     observations = ReadObservations()
-    observations.observe_row("Balance", _balance_columns(), None)
-    observation = _recorded(_accepted("balance"), observations, ("Balance", (("id", 1),)))
+    observations.observe_row(corpus_entity("Balance"), _balance_columns(), None)
+    observation = _recorded(
+        _accepted("balance"), observations, corpus_object_key("Balance", ("id", 1))
+    )
     assert isinstance(observation, TemporalObservation)
     assert dict(observation.predecessor.members) == {
         "id": 1,
@@ -175,13 +191,14 @@ def test_an_observation_is_keyed_by_the_rows_own_entity_never_its_family_root() 
         "out_z": _INFINITY,
     }
     observations = ReadObservations()
-    observations.observe_row("DepositRate", columns, None)
+    observations.observe_row(corpus_entity("DepositRate"), columns, None)
     assert isinstance(
-        _recorded(model, observations, ("DepositRate", (("id", 1),))), TemporalObservation
+        _recorded(model, observations, corpus_object_key("DepositRate", ("id", 1))),
+        TemporalObservation,
     )
     observations_again = ReadObservations()
-    observations_again.observe_row("DepositRate", columns, None)
-    assert _recorded(model, observations_again, ("Rate", (("id", 1),))) is None
+    observations_again.observe_row(corpus_entity("DepositRate"), columns, None)
+    assert _recorded(model, observations_again, corpus_object_key("Rate", ("id", 1))) is None
 
 
 def test_a_latest_pin_records_a_latest_pinned_basis_and_a_finite_one_records_historical() -> None:
@@ -191,15 +208,15 @@ def test_a_latest_pin_records_a_latest_pinned_basis_and_a_finite_one_records_his
     # two sides of that one decision.
     model = _accepted("balance")
     latest = ReadObservations()
-    latest.observe_row("Balance", _balance_columns(), None)
-    at_latest = _recorded(model, latest, ("Balance", (("id", 1),)))
+    latest.observe_row(corpus_entity("Balance"), _balance_columns(), None)
+    at_latest = _recorded(model, latest, corpus_object_key("Balance", ("id", 1)))
     assert isinstance(at_latest, TemporalObservation)
     assert at_latest.transaction_time_basis is LATEST_PINNED
 
     historical = ReadObservations()
-    historical.observe_row("Balance", _balance_columns(), None)
+    historical.observe_row(corpus_entity("Balance"), _balance_columns(), None)
     at_instant = _recorded(
-        model, historical, ("Balance", (("id", 1),)), pin=Pin(tx_time=_HISTORICAL)
+        model, historical, corpus_object_key("Balance", ("id", 1)), pin=Pin(tx_time=_HISTORICAL)
     )
     assert isinstance(at_instant, TemporalObservation)
     assert at_instant.transaction_time_basis is HISTORICAL_PINNED
@@ -207,9 +224,9 @@ def test_a_latest_pin_records_a_latest_pinned_basis_and_a_finite_one_records_his
 
 def test_an_omitted_transaction_time_axis_is_latest_pinned_like_an_explicit_latest() -> None:
     observations = ReadObservations()
-    observations.observe_row("Balance", _balance_columns(), None)
+    observations.observe_row(corpus_entity("Balance"), _balance_columns(), None)
     observation = _recorded(
-        _accepted("balance"), observations, ("Balance", (("id", 1),)), pin=Pin()
+        _accepted("balance"), observations, corpus_object_key("Balance", ("id", 1)), pin=Pin()
     )
     assert isinstance(observation, TemporalObservation)
     assert observation.transaction_time_basis is LATEST_PINNED
@@ -220,14 +237,14 @@ def test_every_observed_row_records_under_its_own_key() -> None:
     # more than one row and each records independently.
     model = _accepted("account")
     observations = ReadObservations()
-    observations.observe_row("Account", _account_columns(id_=1, version=4), None)
-    observations.observe_row("Account", _account_columns(id_=2, version=7), None)
+    observations.observe_row(corpus_entity("Account"), _account_columns(id_=1, version=4), None)
+    observations.observe_row(corpus_entity("Account"), _account_columns(id_=2, version=7), None)
 
     def observe(uow: UnitOfWork) -> tuple[WriteObservation | None, WriteObservation | None]:
         record_observations(uow, model, observations, _LATEST_PIN)
         return (
-            uow.observation_for(("Account", (("id", 1),))),
-            uow.observation_for(("Account", (("id", 2),))),
+            uow.observation_for(corpus_object_key("Account", ("id", 1))),
+            uow.observation_for(corpus_object_key("Account", ("id", 2))),
         )
 
     first, second = run_unit_of_work(

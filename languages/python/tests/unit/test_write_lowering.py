@@ -41,7 +41,7 @@ from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import inert_instant
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
+from _support.planner_probes import TEST_SUBJECT_IDENTITY, corpus_object_key
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
@@ -670,8 +670,8 @@ def test_mixed_flush_lowers_insert_then_update_then_delete_in_order() -> None:
         ],
         ACCOUNT,
         observations={
-            ("Account", (("id", 1),)): VersionObservation(observed_version=1),
-            ("Account", (("id", 3),)): VersionObservation(observed_version=1),
+            corpus_object_key("Account", ("id", 1)): VersionObservation(observed_version=1),
+            corpus_object_key("Account", ("id", 3)): VersionObservation(observed_version=1),
         },
     )
     assert [(s.sql, s.binds) for s in statements] == [

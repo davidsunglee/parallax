@@ -51,6 +51,7 @@ from parallax.core.entity import canonical_row, effective_change_set, primary_ke
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.metamodel import (
     AttributeMetadata,
+    EntityIdentity,
     EntityMetadata,
     Metamodel,
     Multiplicity,
@@ -77,7 +78,6 @@ from parallax.snapshot.handle._family import (
     axis_columns,
     declaring,
     entity_layout,
-    entity_of,
     members,
     placed_members,
     slot_column,
@@ -139,15 +139,15 @@ def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
 def observation_key(
     record: EntityMetadata, declaring_entity: EntityMetadata, instance: object
 ) -> ObjectKey:
-    """The ``(entity name, ordered pk pairs)`` observation key for a WRITTEN
-    instance — the same shape :func:`record_observations` records under (the
-    instance's OWN entity name, never family-normalized; pk pairs by canonical
-    attribute name, in the declaring entity's primary-key order) and
-    `unit_work.object_key` computes at flush, so a verb-time license lookup
-    and the flush-time attach can never diverge."""
+    """The observation key for a WRITTEN instance — the same key
+    :func:`record_observations` records under (the instance's OWN Entity
+    Identity, never family-normalized; pk pairs by canonical attribute name, in
+    the declaring entity's primary-key order) and `unit_work.object_key`
+    computes at flush, so a verb-time license lookup and the flush-time attach
+    can never diverge."""
     row = primary_key_row(instance)
-    return (
-        record.identity.name,
+    return ObjectKey(
+        record.identity,
         tuple(
             (attr.identity.name, row[attr.identity.name])
             for attr in _declared_primary_key(declaring_entity)
@@ -159,9 +159,9 @@ def observation_key(
 class _ObservedRow:
     """One materialized row's observable state, keyed by PHYSICAL column.
 
-    ``entity`` is the row's own queried or attached target name. ``columns`` is
-    every value the row materialized — the primary key, the version column, the
-    axis bounds, and every other applicable member — which is what makes a
+    ``entity`` is the row's own resolved concrete Entity. ``columns`` is every
+    value the row materialized — the primary key, the version column, the axis
+    bounds, and every other applicable member — which is what makes a
     Predecessor Row complete. ``document`` is the raw Structured Column under
     Relational Document Layout.
 
@@ -169,7 +169,7 @@ class _ObservedRow:
     outlives the read that produced it without pinning either.
     """
 
-    entity: str
+    entity: EntityIdentity
     columns: Mapping[str, object]
     document: object | None
 
@@ -192,7 +192,7 @@ class ReadObservations:
         self._rows: list[_ObservedRow] = []
 
     def observe_row(
-        self, entity: str, columns: Mapping[str, object], document: object | None
+        self, entity: EntityIdentity, columns: Mapping[str, object], document: object | None
     ) -> None:
         """Snapshot one materialized row's observable state. ``columns`` stays the
         caller's, so a later edit to it cannot reach the recorded observation."""
@@ -211,15 +211,15 @@ def record_observations(
     every VERSIONED or TEMPORAL row :func:`find` materialized (`m-opt-lock`;
     ADR 0013).
 
-    Keyed by the SAME ``(entity name, ordered pk pairs)`` shape a subsequent
+    Keyed by the SAME :class:`~parallax.core.unit_work.ObjectKey` a subsequent
     keyed write's own :func:`~parallax.core.unit_work.object_key` computes —
-    ``entity_name`` here is the row's OWN queried/attached target (never
-    family-normalized to the root), matching `KeyedWrite.entity`'s own
-    convention (a developer's later ``tx.update(copy)`` names its instance's
-    OWN class). A row whose (family-effective) primary key, version column,
-    or Transaction-Time interval is absent from its own observed columns is
-    defensively skipped — never reachable for a well-formed corpus model, but
-    this seam takes no data on faith. A versioned entity is never also
+    the Entity here is the row's OWN resolved concrete Entity (never
+    family-normalized to the root), which is what a developer's later
+    ``tx.update(copy)`` resolves its instance's own class to. A row whose
+    (family-effective) primary key, version column, or Transaction-Time
+    interval is absent from its own observed columns is defensively skipped —
+    never reachable for a well-formed corpus model, but this seam takes no data
+    on faith. A versioned entity is never also
     temporal (`m-opt-lock`/`m-descriptor`: the two are mutually exclusive), so
     each row takes exactly one branch.
 
@@ -242,9 +242,10 @@ def record_observations(
     """
     basis = LATEST_PINNED if pin.tx_time is None or pin.tx_time is LATEST else HISTORICAL_PINNED
     for observed in observations.rows:
-        entity_name = observed.entity
         observed_fields = observed.columns
-        entity = entity_of(meta, entity_name)
+        entity = meta.entity(observed.entity)
+        if entity is None:  # pragma: no cover - a materialized row resolved within this model
+            continue
         declaring_entity = declaring(meta, entity)
         layout = entity_layout(meta, entity)
         if layout is None:  # pragma: no cover - a materialized node always owns rows
@@ -255,8 +256,8 @@ def record_observations(
             column not in observed_fields for column in pk_columns
         ):
             continue
-        key: ObjectKey = (
-            entity_name,
+        key = ObjectKey(
+            observed.entity,
             tuple(
                 (attr.identity.name, observed_fields[column])
                 for attr, column in zip(pk_attrs, pk_columns, strict=True)
