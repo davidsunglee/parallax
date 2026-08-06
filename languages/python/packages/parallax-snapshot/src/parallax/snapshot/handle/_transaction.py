@@ -335,8 +335,7 @@ class Transaction:
         actually carries the temporal/versioned shape), refuse a source view
         pinned at a finite Transaction-Time instant
         (:func:`validate_source_pin` — the Transaction-Time past is read-only;
-        an edited copy carries no pin, so the stale-web-edit recipe's
-        optimistic edge-pinned re-fetch stays writable), then validate +
+        an edited copy carries no pin), then validate +
         render ``valid_from`` against that declaring entity's own
         temporality (:func:`validate_valid_from`, spec §5). Returns the
         record (``_buffer``'s own entity-name argument), the declaring entity
