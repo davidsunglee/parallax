@@ -890,14 +890,17 @@ def _row_object_key(
     table-per-hierarchy, never the position a find targeted: a keyed write
     resolves its key from the concrete it names
     (`~parallax.core.unit_work.resolve_object_key`), so an observation recorded
-    under anything else is unreachable by the write it licenses.
+    under anything else is unreachable by the write it licenses. Its descriptor
+    metadata resolves through the identity's CANONICAL spelling, never its bare
+    name: a bare name is not an identity, and two entities sharing one across
+    namespaces admit no bare lookup at all.
 
     ``row`` is COLUMN-named (a real ``port.execute`` row — the SAME convention
     `parallax.snapshot.handle`'s own observation recording reads via
     ``node.fields[attr.column]``). ``None`` when the (family-effective) primary
     key is absent from ``row`` — never reachable for a well-formed corpus find,
     but this seam takes no data on faith."""
-    pk_attrs = _descriptor_family.family_primary_key(meta, meta.entity(entity.name))
+    pk_attrs = _descriptor_family.family_primary_key(meta, meta.entity(entity.canonical))
     if not pk_attrs:  # pragma: no cover - defends a malformed model
         return None
     pairs: list[tuple[str, object]] = []
@@ -942,7 +945,7 @@ def _observe_group_find(
     itself is family-wide metadata declared on the root (`m-opt-lock`), so
     whether the family is observed at all is a property of the target and is
     decided once."""
-    version_attr = _versioned_non_temporal_version_attribute(meta, compiled.target.name)
+    version_attr = _versioned_non_temporal_version_attribute(meta, compiled.target.canonical)
     if version_attr is None:
         return
     for row in rows:
