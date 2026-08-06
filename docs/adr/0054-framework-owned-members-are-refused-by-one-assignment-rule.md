@@ -3,8 +3,20 @@
 Accepted Attribute metadata carries a single `framework_owned` designation, and
 every surface that assigns a member consults one shared assignment rule that
 refuses a framework-owned target. The designation answers who supplies the
-value — the framework, never the caller. It is derived during Model Formation
-and has no authoring form.
+value — the framework, never the caller. It is derived rather than authored and
+has no authoring form.
+
+Derivation runs where declarations are normalized, not only where they are
+accepted. The fact is a function of two levels — a flag on the Attribute, and
+axis-endpoint membership knowable only from the Entity's As-Of Axes — so a
+frontend computes it while assembling an Entity's declared Attributes, and
+every frontend computes it through one shared rule rather than its own copy.
+That placement is forced by the surfaces the refusal has to cover: two of the
+three assigning surfaces judge a declared member with no accepted model in
+reach, so a designation that first appeared in accepted Metadata would silently
+accept there what it refuses elsewhere — the divergence this record exists to
+prevent. One rule with several callers is the requirement; a second
+implementation of that rule is not one of them.
 
 ADR 0013 settled this for the optimistic-lock version: Parallax sources the
 value from the row the unit of work observed and computes the advance itself, so

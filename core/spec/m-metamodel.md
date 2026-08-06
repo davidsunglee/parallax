@@ -436,6 +436,7 @@ AttributeMetadata
   max_length: positive integer | absent
   read_only: boolean
   optimistic_locking: boolean
+  framework_owned: boolean
 ```
 
 Primary-key
@@ -443,6 +444,29 @@ generation is available only through the `PrimaryKey` branch; a
 non-primary-key attribute cannot carry a meaningless ApplicationAssigned,
 Max, or Sequence value. Frontends normalize an omitted generator on a declared
 primary key to `PrimaryKey(ApplicationAssigned)`.
+
+`framework_owned` is **derived, never authored**. It answers who supplies the
+value — the framework, never the caller — and is true exactly when the
+attribute carries `optimistic_locking`, or its `identity` appears as the
+`start_attribute` or `end_attribute` of one of the containing Entity's As-Of
+Axes (below). Further categories a later contract designates set the same
+member, so designating one is the whole cost of adding it: no assigning surface
+changes and no rejection joins the vocabulary.
+Because the fact is a function of two levels — a flag on the attribute, and
+axis membership knowable only from the Entity — a frontend derives it while
+normalizing an Entity's declarations, and one derivation serves every frontend.
+
+Derivation carries three consequences worth stating rather than inferring. The
+designation has **no authoring form**: no descriptor key, no schema property,
+no fixture, and no corpus record changes, and a frontend that accepted one
+would be accepting a fact it must compute. It is a member of accepted Metadata
+rather than a lookup a consumer performs, so a surface that resolves a member
+without the Entity around it — a language frontend judging an assignment
+against a class's own declared member — states the same verdict as one that
+has the whole model. And it is a **distinct** fact from the two designations
+beside it: `optimistic_locking` names a role, `read_only` says the caller
+supplies the value once and may not change it, and keeping the three apart is
+what lets a rejection say which of the three it is.
 
 `NeutralType` and `NeutralValue` belong to `m-core`; descriptor type and value
 spellings do not cross this interface.
@@ -509,7 +533,9 @@ The dimension identifies the axis. There is no separate axis name, identity,
 kind, or query-default member. Both attributes belong to the containing Entity,
 have Timestamp Neutral Type, are distinct, and form `[start, end)`. Valid Time
 conventionally maps `validStart`/`validEnd` to `from_z`/`thru_z`; Transaction
-Time maps `txStart`/`txEnd` to `in_z`/`out_z`.
+Time maps `txStart`/`txEnd` to `in_z`/`out_z`. Both endpoint Attributes carry
+the derived `framework_owned` designation, which is where that membership is
+observable to a surface holding one Attribute and no axis.
 
 ## Issues and locations
 
