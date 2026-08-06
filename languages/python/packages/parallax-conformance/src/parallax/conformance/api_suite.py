@@ -1129,6 +1129,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-104": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-125": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-128": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-130": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     # -- m-inheritance: temporal write family -------------------------------- #
     "m-inheritance-090": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-091": _INHERITANCE_WRITE_PHASE8_REASON,

@@ -26,7 +26,7 @@ mode-driven half every transactional read consumer re-derives through, rather
 than re-deriving the mode -> lock mapping inline at each call site:
 :meth:`~parallax.snapshot.handle.Transaction.find`, the materializing
 predicate-write resolve in `~parallax.snapshot.handle`, and the conformance
-engine's own `~parallax.conformance.engine._lower_find`.
+engine's own `~parallax.conformance.engine._compile_find`.
 
 Prior art (Reladomo; semantics, not idioms): the shared read lock mirrors
 ``FullTransactionalParticipationMode`` (a read enrolls with

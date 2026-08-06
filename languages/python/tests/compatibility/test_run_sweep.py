@@ -322,7 +322,7 @@ def _scenario_find_row_transforms(case: case_format.Case, meta: Any) -> list[Cal
     and its Table Layout rather than of the predicate — so compiling a bare
     ``all()`` read of the same target recovers exactly the one the executed read
     carried. A document-mapped read projects that one column in either result
-    form, so the instance form :func:`engine._lower_find` compiles a scenario
+    form, so the instance form :func:`engine._compile_find` compiles a scenario
     find as is the fan-out that answers here too. Under `Columns` layout every
     transform is the identity, which is what makes this inert for every other
     case in this lane.

@@ -1,0 +1,87 @@
+# An abstract table-per-hierarchy find licenses the CONCRETE subtype's own gated update
+# (m-inheritance x m-opt-lock x m-unit-work).
+#
+# m-inheritance-084 pins the resolved bind order of a concrete-subtype gated UPDATE whose
+# observed version is AUTHORED. This case pins where that version legitimately comes from
+# when nothing authors it: the group's own observing find. The find targets the ABSTRACT
+# root Vehicle and the write names Car, because concrete-subtype writes are the only keyed
+# writes a family admits (m-inheritance "Concrete-subtype writes") — so the row the
+# abstract read observed and the object the concrete write names must be recognized as ONE
+# object. An abstract-root read projects the raw tag column, which is what resolves each
+# returned row to its own concrete (`kind = 'car'` -> Car) and makes that recognition
+# possible; recording the observation under the position the query addressed (Vehicle)
+# instead leaves the update with NO observation, and a versioned update that requires one
+# and has none is a planning error (m-unit-work "A required observation that is missing"),
+# never an ungated write. So step 1's binds are the whole case: they exist only if the
+# abstract find's observation was reachable under Car.
+#
+# All three steps share ONE `uow` group, so the write resolves against the find's own
+# transaction-scoped observation rather than any scenario-wide state, and the verify find
+# reads the updated row back through that SAME held transaction.
+#
+#   step 0 find  : abstract-ROOT read of vehicle 1 (Sedan, version 5), 1 round trip. A
+#                  root read injects no tag predicate — every row of the shared table
+#                  belongs to the family — but still projects the tag column. It asserts
+#                  no rows of its own: what it observed is stated by the gate it licenses
+#                  below, and the verify read states the row.
+#   step 1 write : rename Car 1 with NO authored `observedVersion`. The gate binds the 5
+#                  step 0 observed and advances to 6, the tag guard riding with the pk and
+#                  the version binding last (m-inheritance-084's own bind order).
+#   step 2 find  : read the row back as the CONCRETE Car the write named — its own branch
+#                  (id, name, version, doors) under the tag predicate, observing Coupe at
+#                  version 6 through the group's own held transaction
+#                  (read-your-own-writes, m-unit-work). The group COMMITS after this, its
+#                  last step.
+#
+# Optimistic mode, so no find renders the m-read-lock shared-row-lock suffix.
+model: models/vehicle.yaml
+tags: [m-inheritance, m-opt-lock, m-unit-work, table-per-hierarchy, tag, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the update's version gate is the version the group's own observing find returned - a query result (m-opt-lock, m-unit-work uow grouping)"
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: observe-and-update
+      targetEntity: Vehicle
+      find:
+        eq:
+          attr: Vehicle.id
+          value: 1
+      roundTrips: 1
+      note: observe vehicle 1 through the abstract root; the row resolves to the concrete Car
+      statements:
+        - sql:
+            postgres: select t0.id, t0.kind, t0.name, t0.version, t0.doors, t0.axles from vehicle t0 where t0.id = ?
+          binds: [1]
+    - uow: observe-and-update
+      write:
+        - mutation: update
+          entity: Car
+          rows:
+            - { id: 1, name: Coupe }
+      roundTrips: 1
+      note: no authored observedVersion - the gate binds the version step 0 observed
+      statements:
+        - sql:
+            postgres: update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
+          binds: [Coupe, 6, 1, car, 5]
+    - uow: observe-and-update
+      targetEntity: Car
+      find:
+        eq:
+          attr: Car.id
+          value: 1
+      roundTrips: 1
+      note: read the renamed row back as the concrete the write named; the group COMMITS after this
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.version, t0.doors from vehicle t0 where t0.id = ? and t0.kind = ?
+          binds: [1, car]
+      expectRows:
+        - { id: 1, name: Coupe, version: 6, doors: 4 }
+then:
+  roundTrips: 3
