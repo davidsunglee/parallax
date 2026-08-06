@@ -384,21 +384,21 @@ def _partition_declared(
     without either caller learning its name.
 
     Both branches of :meth:`Entity.edit` partition here, so neither can hold its
-    own opinion of the boundary. They have held opposite ones: an authored edit
-    kept the declared half alone and dropped every relationship slot and the
-    lifecycle slot, so a relationship access on that copy failed on a missing key
-    while a change-free edit answered it.
+    own opinion of the boundary.
     """
-    declared = set(names.py_to_name)
-    kept: dict[str, object] = {}
+    declared_names = set(names.py_to_name)
+    declared_state: dict[str, object] = {}
     carried: dict[str, object] = {}
     for key, member in value.__dict__.items():
-        (kept if key in declared else carried)[key] = member
-    return kept, carried
+        (declared_state if key in declared_names else carried)[key] = member
+    return declared_state, carried
 
 
 def _restate[E: Entity](
-    value: E, declared: dict[str, object], carried: dict[str, object], record: dict[str, object]
+    value: E,
+    declared_state: dict[str, object],
+    carried: dict[str, object],
+    record: dict[str, object],
 ) -> E:
     """A fresh value holding exactly ``value``'s state under ``record``.
 
@@ -408,7 +408,7 @@ def _restate[E: Entity](
     inherited copy door is refused.
     """
     restated = type(value).model_construct()
-    object.__setattr__(restated, "__dict__", declared | carried)
+    object.__setattr__(restated, "__dict__", declared_state | carried)
     object.__setattr__(restated, "__pydantic_fields_set__", set(value.__pydantic_fields_set__))
     object.__setattr__(restated, CHANGE_RECORD_SLOT, record)
     return restated
@@ -544,20 +544,21 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         """
         record = dict(_change_record(self) or {})
         names = wire_names_of(type(self))
-        merged, carried = _partition_declared(self, names)
+        declared_state, carried = _partition_declared(self, names)
         if not changes:
-            return _restate(self, merged, carried, record)
+            return _restate(self, declared_state, carried, record)
         entity = declaration_of(type(self)).identity
         violations = _edit_violations(entity, type(self).__name__, names, changes)
         if violations:
             raise EditError(violations) from None
-        merged.update(changes)
+        declared_state.update(changes)
         carry_forward = {
-            py_name: merged.pop(py_name)
+            py_name: declared_state.pop(py_name)
             for py_name in names.framework_owned_py
-            if py_name in merged
+            if py_name in declared_state
         }
-        validated = type(self)(**merged)  # re-validates the whole instance (§2 input policies)
+        # re-validates the whole instance (§2 input policies)
+        validated = type(self)(**declared_state)
         for py_name, value in carry_forward.items():
             object.__setattr__(validated, py_name, value)
         for py_name, member in carried.items():
