@@ -705,6 +705,17 @@ def animal_owner_reaches_root_and_narrowed_subtype_view(db: Database) -> Snapsho
     )
 ```
 
+## An edited copy answers its source node's views, with zero SQL
+
+Corpus case: `m-snapshot-read-015`
+
+```python
+def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[Any], Any]:
+    snapshot = db.find(Order.where(Order.id == 1))  # no `.include(...)`: `statuses` stays unloaded
+    edited = snapshot.result().edit(name="Mutant")  # the copy keeps the node's view state
+    return snapshot, edited
+```
+
 ## As-of read at a past instant
 
 Corpus case: `m-temporal-read-003`

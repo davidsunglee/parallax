@@ -137,6 +137,12 @@ def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
     return mutated, reread
 
 
+def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[Any], Any]:
+    snapshot = db.find(Order.where(Order.id == 1))  # no `.include(...)`: `statuses` stays unloaded
+    edited = snapshot.result().edit(name="Mutant")  # the copy keeps the node's view state
+    return snapshot, edited
+
+
 def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -> Snapshot[Any]:
     """SUPPLEMENTAL — not a registered ``GraphStory`` and not counted toward any
     case's exercised status (`m-inheritance-100`'s own point read is exercised
@@ -455,6 +461,12 @@ GRAPH_STORIES: tuple[GraphStory, ...] = (
         "Mutating a snapshot node never writes back",
         "orders",
         mutation_has_no_writeback,
+    ),
+    GraphStory(
+        "m-snapshot-read-015",
+        "An edited copy answers its source node's views, with zero SQL",
+        "orders",
+        an_edited_copy_keeps_its_source_nodes_views,
     ),
     GraphStory(
         "m-snapshot-read-007",

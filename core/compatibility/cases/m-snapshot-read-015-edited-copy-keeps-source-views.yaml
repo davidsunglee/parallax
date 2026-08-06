@@ -1,0 +1,54 @@
+# An edited snapshot copy keeps its source node's views (m-snapshot-read): a
+# relationship access on the copy answers exactly as the same access on the node it
+# was derived from, and still issues ZERO SQL.
+#
+# Step 0 materializes a snapshot of order 1 (a plain-value read, no includes). Step 1
+# derives an edited copy of that node, assigning `name` in memory — no DML, exactly as
+# m-snapshot-read-010 pins. Step 2 accesses `statuses` ON THE COPY: the snapshot the
+# copy came from never included that relationship, so the copy is closed-world too and
+# the relationship is found ABSENT with NO query issued (roundTrips 0). Deriving a copy
+# neither resolves a deferred load nor discards what the read already materialized: the
+# copy's view state IS its source's, so an INCLUDED relationship would answer the same
+# already-materialized objects on the copy and an un-included one is absent on both.
+#
+# The semantic distinction: m-snapshot-read-009 pins closed-world access on the node a
+# read returned, and m-snapshot-read-010 pins that mutating a node writes nothing back.
+# Neither says what the DERIVED value answers, which is where a language that rebuilds
+# the copy from its declared members alone silently loses every view the read paid for
+# — observably, since the access then fails on a missing member rather than reporting
+# the same absence its source reports. The per-language absence representation (null /
+# empty / a raised access error) is deliberately unconstrained here exactly as it is in
+# -009, and the copy is a plain in-memory value with no lifecycle of its own, so this
+# is graded by each language's API Conformance Suite (api-conformance lane); the wire
+# assertion is only that neither the derivation nor the access fires any SQL.
+model: models/orders.yaml
+tags: [m-snapshot-read, closed-world, relationship, mutation, scenario, slice-snapshot-1]
+shape: scenario
+lane: api-conformance
+when:
+  scenario:
+    - targetEntity: Order
+      find:
+        eq:
+          attr: Order.id
+          value: 1
+      roundTrips: 1
+      note: materialize a snapshot of order 1 (no relationships included)
+      statements:
+        - sql:
+            postgres: select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0 where t0.id = ?
+          binds: [1]
+      expectRows:
+        - { id: 1, name: Ada, sku: A-100, qty: 5, price: 10.50, active: true, ordered_on: 2024-01-05 }
+    - action: mutate
+      "on": 0
+      set: { name: Mutant }
+      roundTrips: 0
+      note: derive an edited copy of the snapshot node -> NO DML (a snapshot has no write-back)
+    - action: access
+      "on": 1
+      path: statuses
+      roundTrips: 0
+      note: access an UNINCLUDED relationship on the EDITED COPY -> closed-world absent, ZERO SQL, the same answer its source node gives; absence representation is per-language
+then:
+  roundTrips: 1

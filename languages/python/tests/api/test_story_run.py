@@ -226,6 +226,23 @@ def test_mutation_has_no_writeback(provisioner: Any) -> None:
     assert reread.result().name == "Ada"  # the re-read never observes it
 
 
+def test_an_edited_copy_keeps_its_source_nodes_views(provisioner: Any) -> None:
+    story = _GRAPH_STORIES_BY_ID["m-snapshot-read-015"]
+    meta = _reset_for(story.case_id, provisioner)
+    db = connect(provisioner.port, meta)
+    snapshot, edited = story.run(db)
+    order = snapshot.result()
+    assert (edited.name, order.name) == ("Mutant", "Ada")
+    # The copy is closed-world exactly as the node is, and answers the absence
+    # the same way rather than failing on a member the rebuild dropped.
+    assert is_view_loaded(edited, Order.statuses) is False
+    with pytest.raises(UnloadedRelationshipError, match="statuses"):
+        edited.statuses  # noqa: B018 - the access itself is the assertion
+    # Neither the derivation nor the access issues SQL: the materializing find is
+    # still the only round trip on record.
+    assert snapshot.execution.round_trips == 1
+
+
 def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisioner: Any) -> None:
     # This history check is not tied to any case's exercised status.
     # `m-inheritance-100`'s point read is graded by its `ReadStory`

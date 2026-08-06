@@ -21,15 +21,31 @@ import pytest
 from pydantic import ValidationError
 
 from _support import mirrored_models as mm
+from _support import snapshot_models as sm
 from _support import value_object_models as vm
 from parallax.conformance.read_models import Dog
 from parallax.core import Attr, Entity, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
     EDIT_CODES,
+    UNLOADED,
     EditError,
     EditViolation,
+    EntityAttributeInput,
     EntityDefinitionError,
+    EntityGraphWriter,
+    EntityRelationshipInput,
+    LoadedMany,
+    LoadedOne,
+    NodeHandle,
+    UnloadedRelationshipError,
+    ValueObjectAttributeInput,
+    ValueObjectOccurrenceInput,
+    ValueObjectRecord,
+    WireNames,
+    graph_construction_of,
+    lifecycle_state_of,
+    relationship_value_of,
     wire_names_of,
 )
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
@@ -41,6 +57,8 @@ from parallax.core.metamodel import (
     EntityLocation,
     RelationshipIdentity,
     RelationshipLocation,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
 )
 
 
@@ -430,3 +448,209 @@ def test_a_refused_copy_door_retains_no_cause_while_another_error_is_handled() -
                 door()
         assert caught.value.__cause__ is None
         assert caught.value.__suppress_context__
+
+
+# --------------------------------------------------------------------------- #
+# The carry: an edit replaces declared member state and preserves everything   #
+# else. Only Entity Graph Construction produces the state at stake — one slot  #
+# per navigable relationship (a loaded value, or the closed-world sentinel for #
+# a view the read never fetched) and the lifecycle's own state — and the       #
+# authored branch rebuilds through the validating constructor, which knows the #
+# declared fields alone. Everything outside them is therefore installed after  #
+# construction and BY COMPLEMENT, so a kind of state no test here names        #
+# travels too. Driven through construction directly, because that is where     #
+# this state comes from; what the carried lifecycle state then MEANS to the    #
+# Snapshot lifecycle that installed it is graded in                            #
+# `test_snapshot_inspection.py`.                                               #
+# --------------------------------------------------------------------------- #
+_ORDER = sm.SnapOrder.identity
+_ITEM = sm.SnapOrderItem.identity
+_STATUS = sm.SnapOrderStatus.identity
+_PRIMARY_TAG = ValueObjectIdentity(_STATUS, ("primaryTag",))
+
+_ORDER_SCALARS: tuple[EntityAttributeInput, ...] = (
+    EntityAttributeInput(AttributeIdentity(_ORDER, "id"), 1),
+    EntityAttributeInput(AttributeIdentity(_ORDER, "name"), "Ada"),
+    EntityAttributeInput(AttributeIdentity(_ORDER, "sku"), None),
+    EntityAttributeInput(AttributeIdentity(_ORDER, "qty"), 1),
+    EntityAttributeInput(AttributeIdentity(_ORDER, "price"), Decimal("1.00")),
+    EntityAttributeInput(AttributeIdentity(_ORDER, "active"), True),
+    EntityAttributeInput(AttributeIdentity(_ORDER, "orderedOn"), dt.date(2024, 1, 1)),
+)
+_ITEM_SCALARS: tuple[EntityAttributeInput, ...] = (
+    EntityAttributeInput(AttributeIdentity(_ITEM, "id"), 11),
+    EntityAttributeInput(AttributeIdentity(_ITEM, "orderId"), 1),
+    EntityAttributeInput(AttributeIdentity(_ITEM, "sku"), "x"),
+    EntityAttributeInput(AttributeIdentity(_ITEM, "quantity"), 1),
+    EntityAttributeInput(AttributeIdentity(_ITEM, "shippedOn"), None),
+)
+_STATUS_SCALARS: tuple[EntityAttributeInput, ...] = (
+    EntityAttributeInput(AttributeIdentity(_STATUS, "id"), 21),
+    EntityAttributeInput(AttributeIdentity(_STATUS, "orderId"), 1),
+    EntityAttributeInput(AttributeIdentity(_STATUS, "orderItemId"), None),
+    EntityAttributeInput(AttributeIdentity(_STATUS, "code"), "SHIPPED"),
+)
+
+# The kinds of state an edit is asked to carry are the parameters, not the
+# assertions: both branches answer the same, which is the invariant one shared
+# partition exists to make unbreakable.
+_BRANCHES: dict[str, dict[str, object]] = {"authored": {"name": "renamed"}, "change-free": {}}
+
+
+def _materialized_order(state: object = "one lifecycle's own state") -> sm.SnapOrder:
+    """One `SnapOrder` as a lifecycle materializes it: `items` loaded to a single
+    child that points back at it, `statuses` never fetched, and lifecycle state
+    attached."""
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        order = writer.allocate(_ORDER)
+        item = writer.allocate(_ITEM)
+        writer.populate(
+            order,
+            _ORDER_SCALARS,
+            (),
+            (EntityRelationshipInput(RelationshipIdentity(_ORDER, "items"), LoadedMany((item,))),),
+        )
+        writer.populate(
+            item,
+            _ITEM_SCALARS,
+            (),
+            (EntityRelationshipInput(RelationshipIdentity(_ITEM, "order"), LoadedOne(order)),),
+        )
+        return (order,)
+
+    (root,) = graph_construction_of(sm.SNAP_ORDERS_MODEL).construct(
+        build, state_factory=lambda _view, _handle: state
+    )
+    return cast("sm.SnapOrder", root)
+
+
+def _materialized_status() -> sm.SnapOrderStatus:
+    """One `SnapOrderStatus` carrying a Value Object occurrence — the declared
+    kind `SnapOrder` has none of."""
+    tag = ValueObjectRecord(
+        attributes=(
+            ValueObjectAttributeInput(
+                ValueObjectAttributeIdentity(_PRIMARY_TAG, "label"), "urgent"
+            ),
+        )
+    )
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        status = writer.allocate(_STATUS)
+        writer.populate(
+            status, _STATUS_SCALARS, (ValueObjectOccurrenceInput(_PRIMARY_TAG, tag),), ()
+        )
+        return (status,)
+
+    (root,) = graph_construction_of(sm.SNAP_ORDERS_MODEL).construct(
+        build, state_factory=lambda _view, _handle: "one lifecycle's own state"
+    )
+    return cast("sm.SnapOrderStatus", root)
+
+
+@pytest.mark.parametrize("changes", list(_BRANCHES.values()), ids=list(_BRANCHES))
+def test_an_edit_preserves_a_loaded_relationship_view(changes: dict[str, object]) -> None:
+    node = _materialized_order()
+    copy = node.edit(**changes)
+    # The SAME materialized children, not a re-read and not a lookalike: an edit
+    # can never change a relationship, so the source's views describe the copy
+    # exactly as they described the source.
+    assert copy.items[0] is node.items[0]
+    assert copy.items[0].order is node
+
+
+@pytest.mark.parametrize("changes", list(_BRANCHES.values()), ids=list(_BRANCHES))
+def test_an_edit_preserves_the_closed_world_sentinel(changes: dict[str, object]) -> None:
+    # The view the read never fetched stays unloaded rather than becoming absent,
+    # which is what keeps ordinary access a steered refusal naming the include
+    # fix instead of a bare missing-key failure.
+    copy = _materialized_order().edit(**changes)
+    assert relationship_value_of(copy, RelationshipIdentity(_ORDER, "statuses")) is UNLOADED
+    with pytest.raises(UnloadedRelationshipError, match="statuses"):
+        copy.statuses  # noqa: B018 - the access itself is the assertion
+
+
+@pytest.mark.parametrize("changes", list(_BRANCHES.values()), ids=list(_BRANCHES))
+def test_an_edit_preserves_the_lifecycle_state(changes: dict[str, object]) -> None:
+    node = _materialized_order()
+    assert lifecycle_state_of(node.edit(**changes)) is lifecycle_state_of(node)
+
+
+@pytest.mark.parametrize("changes", list(_BRANCHES.values()), ids=list(_BRANCHES))
+def test_an_edit_carries_a_slot_no_declaration_and_no_lifecycle_names(
+    changes: dict[str, object],
+) -> None:
+    # The proof that the carry is by COMPLEMENT: this slot belongs to no kind
+    # either `edit` or a lifecycle knows, and it travels anyway.
+    node = _materialized_order()
+    marker = object()
+    object.__setattr__(node, "__parallax_unnamed__", marker)
+    assert node.edit(**changes).__dict__["__parallax_unnamed__"] is marker
+
+
+def test_the_freshly_merged_change_record_replaces_the_carried_one() -> None:
+    # The source's own record is outside the declared set, so it is carried like
+    # any other state — and then overwritten by the merged one as the last step,
+    # which is the ordering that keeps a chain's earliest originals intact.
+    once = _materialized_order().edit(name="renamed")
+    twice = once.edit(qty=2)
+    assert _record(twice) == {"name": "Ada", "qty": 1}
+
+
+def test_an_edit_of_a_plainly_constructed_value_adds_no_lifecycle_state_or_view() -> None:
+    # The carry only ever preserves state a value already had, so provenance —
+    # not editedness — is what distinguishes an edited node from an edited
+    # construction: this value never had a view or a state to keep.
+    copy = sm.SnapOrder(
+        id=1,
+        name="Ada",
+        sku=None,
+        qty=1,
+        price=Decimal("1.00"),
+        active=True,
+        ordered_on=dt.date(2024, 1, 1),
+    ).edit(name="renamed")
+    assert lifecycle_state_of(copy) is None
+    assert "items" not in copy.__dict__
+
+
+# The kinds of instance state a materialized node's edited copy carries, named
+# by hand rather than read off the code that installs them, so a kind added on
+# either side fails here instead of agreeing with itself. A fifth kind lands in
+# no bucket, and answering this failure is where its author decides whether an
+# edit carries it.
+_STATE_KINDS = frozenset(
+    {
+        "declared attribute",
+        "declared value object",
+        "relationship slot",
+        "lifecycle state",
+        "change record",
+    }
+)
+
+
+def _state_kind(py_name: str, names: WireNames) -> str | None:
+    if py_name == "__parallax_lifecycle__":
+        return "lifecycle state"
+    if py_name == "__parallax_changes__":
+        return "change record"
+    if py_name in names.relationship_identities:
+        return "relationship slot"
+    if py_name in names.vo_classes:
+        return "declared value object"
+    if py_name in names.py_to_name:
+        return "declared attribute"
+    return None
+
+
+def test_every_kind_of_state_an_edited_node_carries_is_one_of_the_five_named() -> None:
+    observed: set[str] = set()
+    for node in (_materialized_order().edit(name="renamed"), _materialized_status().edit(code="X")):
+        names = wire_names_of(type(node))
+        for py_name in node.__dict__:
+            kind = _state_kind(py_name, names)
+            assert kind is not None, py_name
+            observed.add(kind)
+    assert observed == _STATE_KINDS

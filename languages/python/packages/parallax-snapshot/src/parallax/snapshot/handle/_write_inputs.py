@@ -385,12 +385,14 @@ def _row_payload(
 # --------------------------------------------------------------------------- #
 def source_pin(instance: object) -> Pin | None:
     """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
-    or ``None`` for anything else — a fresh instance, or an edited copy
-    (``edit(**changes)`` builds a new validated instance, so the pin
-    stays with the materialized view it describes; that is what keeps the
-    spec §3 stale-web-edit recipe's edge-pinned re-fetch -> edited-copy ->
-    optimistic ``tx.update`` writable while the view itself stays
-    read-only)."""
+    or ``None`` for anything else — a plainly constructed instance, or an edited
+    copy of one.
+
+    An edited copy of a NODE answers the node's own pin: an edit preserves every
+    kind of instance state outside the declared members, lifecycle state among
+    them (``Entity.edit``), so the write a developer derives from a pinned view
+    is refused exactly as a write of the view itself is. What a value answers
+    here is therefore its provenance, not its editedness."""
     state = snapshot_state_of(instance)
     return None if state is None else state.pin
 

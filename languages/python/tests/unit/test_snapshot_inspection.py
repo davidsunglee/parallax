@@ -299,7 +299,12 @@ def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() 
 # --------------------------------------------------------------------------- #
 
 
-def test_a_temporal_node_answers_the_whole_graph_pin_and_its_own_edge() -> None:
+_MILESTONE_PIN = Pin(tx_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+
+
+def _balance_graph() -> Any:
+    """One temporal `Balance` root materialized under a finite Transaction-Time
+    pin, whose own milestone started earlier than the pin selects it at."""
     builder = GraphBuilder(_BALANCE)
     balance = builder.node(
         "Balance",
@@ -311,9 +316,13 @@ def test_a_temporal_node_answers_the_whole_graph_pin_and_its_own_edge() -> None:
             "out_z": dt.datetime(9999, 12, 31, tzinfo=dt.UTC),
         },
     )
-    pin = Pin(tx_time=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-    (root,) = builder.materialize(balance, pin=pin)
-    assert pin_of(root) is pin
+    (root,) = builder.materialize(balance, pin=_MILESTONE_PIN)
+    return root
+
+
+def test_a_temporal_node_answers_the_whole_graph_pin_and_its_own_edge() -> None:
+    root = _balance_graph()
+    assert pin_of(root) is _MILESTONE_PIN
     assert edge_of(root).tx_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
@@ -341,3 +350,42 @@ def test_the_inspection_code_set_is_closed_against_an_unlisted_code() -> None:
         SnapshotInspectionError(
             code="snapshot-nosuch", message="invented", operation="is_view_loaded"
         )
+
+
+# --------------------------------------------------------------------------- #
+# An Edited Copy. An edit replaces declared member state and preserves         #
+# everything else, so the copy carries the very `SnapshotNodeState` its source  #
+# node carries: every operation here answers for it, and answers the same.      #
+# The carry itself is graded in `test_edit.py`; what it means to this surface   #
+# is graded here.                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_an_edited_copy_answers_every_view_question_as_its_source_node_did() -> None:
+    root = _order_graph(items=(_item_row(11),))
+    copy = root.edit(name="renamed")
+    assert copy.name == "renamed"
+    assert is_view_loaded(copy, sm.SnapOrder.items) is True
+    assert is_view_loaded(copy, sm.SnapOrder.statuses) is False
+    assert view(copy, sm.SnapOrder.items) == view(root, sm.SnapOrder.items)
+    with pytest.raises(UnloadedRelationshipError, match="statuses"):
+        view(copy, sm.SnapOrder.statuses)
+
+
+def test_an_edited_copys_relationships_answer_through_ordinary_attribute_access() -> None:
+    # The developer's own spelling, which is the one the closed world is stated
+    # over: a loaded view is the value the read paid for, and an unloaded one is
+    # a steered refusal naming the include fix — never a bare missing key.
+    copy = _order_graph(items=(_item_row(11),)).edit(name="renamed")
+    assert [item.id for item in copy.items] == [11]
+    with pytest.raises(UnloadedRelationshipError, match="statuses"):
+        copy.statuses  # noqa: B018 - the access itself is the assertion
+
+
+def test_an_edited_copy_of_a_temporal_node_answers_the_same_pin_and_edge() -> None:
+    # The pin travels with the copy, which is what makes a mutation derived from
+    # a view pinned in the Transaction-Time past refusable at the verb.
+    root = _balance_graph()
+    copy = root.edit(value=Decimal("9.00"))
+    assert pin_of(copy) is _MILESTONE_PIN
+    assert edge_of(copy) is edge_of(root)

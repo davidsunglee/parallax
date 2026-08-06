@@ -8,7 +8,9 @@ requires the private :class:`SnapshotNodeState` the materializer's state factory
 attached: a plain instance, or one a different lifecycle produced, is refused as
 ``snapshot-node-required`` before any path, relationship, or temporal validation,
 so a wrong-lifecycle argument never answers ``False`` and never surfaces as an
-unrelated failure.
+unrelated failure. An Edited Copy of such a node answers here exactly as the node
+does, because an edit preserves the state this module reads; provenance, not
+editedness, is what these operations turn on.
 
 The two relationship operations take only a class-derived Relationship Path. A
 bare name string is not accepted: the path is what carries the starting owner the
@@ -103,7 +105,13 @@ class SnapshotNodeState:
 
 def snapshot_state_of(node: object) -> SnapshotNodeState | None:
     """``node``'s Snapshot state, or ``None`` for anything this lifecycle did not
-    materialize — a fresh instance, an edited copy, or another lifecycle's node."""
+    materialize — a fresh instance, an edited copy of one, or another lifecycle's
+    node.
+
+    An edited copy of a node this lifecycle DID materialize answers that node's
+    own state, because an edit preserves every kind of instance state outside the
+    declared members. What this answers is therefore a value's provenance, not
+    its editedness."""
     state = _lifecycle_state_of(node)
     return state if isinstance(state, SnapshotNodeState) else None
 
