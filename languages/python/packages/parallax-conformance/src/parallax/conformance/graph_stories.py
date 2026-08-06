@@ -37,7 +37,11 @@ proof: a public-API-only demonstration ``test_story_run.py`` still executes
 and grades directly (never through the ``GraphStory``/``Example`` machinery),
 proving a capability alongside a case's own exercised example without being
 counted toward that (or any) case's exercised status — see
-`history_of_a_concrete_temporal_node_distinguishes_milestones`.
+`history_of_a_concrete_temporal_node_distinguishes_milestones`. A case OUTSIDE
+the claimed active slice can only be proven this way: registering it would
+enter it as an `Example`, and the coverage partition admits an exercised id
+only from the active slice — see
+`a_finite_transaction_time_pinned_view_is_read_only`.
 
 The Customer/Location/Depot predicate reads (`m-value-object-001/002/007/
 015/016/017/019`) belong here rather than in ``read_stories.ReadStory``,
@@ -63,12 +67,14 @@ import datetime as dt
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.graph_models import Policy
 from parallax.conformance.read_models import (
     Animal,
+    Balance,
     Cat,
     DepositRate,
     Document,
@@ -82,7 +88,7 @@ from parallax.conformance.read_models import (
 from parallax.conformance.story_models import Order
 from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
 from parallax.core.temporal_read import LATEST, TX_TIME
-from parallax.snapshot.handle import Database, Snapshot
+from parallax.snapshot.handle import Database, Snapshot, Transaction
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]
 
@@ -141,6 +147,38 @@ def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[
     snapshot = db.find(Order.where(Order.id == 1))  # no `.include(...)`: `statuses` stays unloaded
     edited = snapshot.result().edit(name="Mutant")  # the copy keeps the node's view state
     return snapshot, edited
+
+
+def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
+    """SUPPLEMENTAL — not a registered ``GraphStory``, because `m-identity-map-010`
+    is not in :data:`~parallax.conformance.claim.SNAPSHOT_CLAIM`'s active slice
+    (`m-identity-map`, `slice-managed-1`): the coverage partition admits an
+    exercised id only from the active slice, so registering this would report a
+    stale exercised id rather than coverage. ``test_story_run.py`` and the
+    Docker-free graph-story driver execute and grade it directly instead, exactly
+    as they do the supplemental history proof below.
+
+    What it proves that the wire lane cannot: the mutate step's refusal graded on
+    the scenario lane is derived from the STEP's own find operation, over
+    class-free neutral nodes that carry no lifecycle state at all — a path that
+    never reaches ``edit``. Here the pin travels on the value, so the refusal is
+    the one an ordinary developer receives, and it is the finite-Transaction-Time
+    read-only rule holding through the real derivation. Optimistic mode matches
+    the case's own ``when.uow.concurrency`` and is the sharper half: it is the
+    mode that would otherwise leave a past-pinned keyed write to the
+    observed-``in_z`` gate, answering a temporal-correctness question with a
+    concurrency-protocol outcome, where locking mode would refuse it for an
+    unrelated reason (the observation-currency licence). The verb-time refusal
+    precedes both.
+    """
+
+    def mutate_the_pinned_view(tx: Transaction) -> None:
+        superseded = tx.find(
+            Balance.where(Balance.id == 1).as_of(tx_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC))
+        ).result()
+        tx.update(superseded.edit(value=Decimal("999.00")))  # refused at the verb, before any DML
+
+    db.transact(mutate_the_pinned_view, concurrency="optimistic")
 
 
 def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -> Snapshot[Any]:

@@ -45,6 +45,7 @@ from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_stories import (
     GRAPH_STORIES,
+    a_finite_transaction_time_pinned_view_is_read_only,
     history_of_a_concrete_temporal_node_distinguishes_milestones,
 )
 from parallax.conformance.read_models import Animal, Cat, Dog
@@ -56,6 +57,7 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.entity import UnloadedRelationshipError, ValueObject, shape_of
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect, edge_of, is_view_loaded, pin_of, view
+from parallax.snapshot.handle import TransactionTimePinReadOnlyError
 
 _CASES = {c.case_id: c for c in case_format.load_cases()}
 
@@ -241,6 +243,26 @@ def test_an_edited_copy_keeps_its_source_nodes_views(provisioner: Any) -> None:
     # Neither the derivation nor the access issues SQL: the materializing find is
     # still the only round trip on record.
     assert snapshot.execution.round_trips == 1
+
+
+def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) -> None:
+    # `m-identity-map-010` is graded here rather than through a `GraphStory`
+    # because it sits outside the claimed active slice (see the story's own
+    # docstring). What the corpus lane's own mutate-step grading cannot reach:
+    # that refusal is derived from the step's find operation, never from the
+    # value the derivation produced, so it holds whether or not an edited copy
+    # carries its source node's pin. This runs the ordinary developer sequence —
+    # pinned find, edit, keyed verb — and the pin is carried on the value.
+    meta = _reset_for("m-identity-map-010", provisioner)
+    db = connect(provisioner.port, meta)
+    before = engine.read_table_state(provisioner.port, model_of(meta), POSTGRES)
+    with pytest.raises(TransactionTimePinReadOnlyError) as refused:
+        a_finite_transaction_time_pinned_view_is_read_only(db)
+    assert refused.value.code == "transaction-time-pin-read-only"
+    # The case's own `roundTrips: 0` on the mutate step, graded as durable state:
+    # the superseded milestone and the current one stand exactly as they were, so
+    # nothing appended and nothing was rewritten.
+    assert engine.read_table_state(provisioner.port, model_of(meta), POSTGRES) == before
 
 
 def test_history_of_a_concrete_temporal_node_distinguishes_milestones(provisioner: Any) -> None:
