@@ -2374,9 +2374,14 @@ or descriptor authoring form and performs no audit stamping.
   could be set through it. `edit` is the object-copy verb; `update` remains the
   Transaction persistence verb.
 
-  `edit()` with **no changes** is legal and yields an Edited Copy with an empty
-  Change Record, so its `edited_row` (§5) is `None`. Nothing is validated,
-  because nothing was authored. Refusing it would need a ninth code to prevent
+  `edit()` with **no changes** is legal and yields an Edited Copy carrying the
+  receiver's **own** Change Record forward, which is what the merge rule above
+  already says a zero-change merge of records is. On a never-edited value that
+  record is empty, so its `edited_row` (§5) is `None`; on an already-edited
+  value the pending edit survives, because stamping an empty record would
+  discard it and silently turn a write into nothing to write. Nothing is
+  validated, because nothing was authored. Refusing it would need a ninth code
+  to prevent
   something already represented as "nothing to write", and it would draw a line
   a caller cannot predict: a net-zero edit means the same thing and is not
   detectable at the call site, so only one of the two could ever be refused.
@@ -2434,6 +2439,17 @@ or descriptor authoring form and performs no audit stamping.
   refusal that examines no member at all. No cause is retained: the error is
   raised `from None`, and each violation's message carries the judgement's own
   rendered text.
+
+  A message states **what the violation is**, with the facts needed to diagnose
+  it: the member as the model declares it, which of the three designations
+  refused it, and — for a mismatch — the offending value and the declared type.
+  It does not prescribe a remedy, and `edit-use-edit` is the deliberate
+  exception that names one. The four judgement-sourced rules refuse an
+  assignment that no other call makes legal, so there is no alternative to name;
+  and their text is the shared judgement's, rendered verbatim by the serialized
+  write boundary (§5), where a remedy phrased for an `edit(...)` caller would be
+  wrong. `edit-use-edit` refuses a *call*, is unreachable from any other
+  surface, and its remedy is exactly the call the caller should have made.
 
   `edit-value-mismatch` preserves the judgement's deliberate collapse of scalar
   type, Value Object document, multiplicity, and nullability failures into one

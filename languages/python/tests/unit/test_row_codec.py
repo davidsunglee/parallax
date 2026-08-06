@@ -13,9 +13,10 @@ import datetime as dt
 import uuid
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from _snapshot_graph_support import GraphBuilder
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -398,6 +399,45 @@ def test_edited_row_compares_a_many_occurrence_as_a_whole() -> None:
     row = row_codec_of(mm.DOCUMENT_LAYOUT_MODEL).edited_row(edited)
     assert row is not None
     assert row["tags"] == [{"label": "b"}]
+
+
+def test_edited_row_writes_an_authored_null_a_materialized_read_never_set() -> None:
+    # Storage holds a `Customer.address` document that never wrote `geo` at all,
+    # so the materialized read's own `address` names `geo` ABSENT rather than
+    # null (`model_fields_set` omits it) — presence at materialization is what
+    # `test_snapshot_merge.py`'s
+    # `test_a_materialized_value_object_names_exactly_what_storage_held` pins.
+    # Authoring `geo=None` on the edit is then a REAL difference from what was
+    # read, not a repeat of a fabricated original, and `edited_row` must carry
+    # it through as an explicit null rather than let it cancel out.
+    builder = GraphBuilder(vm.CUSTOMER_MODEL)
+    node = builder.node(
+        "Customer",
+        {
+            "id": 1,
+            "name": "Ada",
+            "address": {"street": "Main St", "city": "Oslo", "phones": [{"number": "555-0100"}]},
+        },
+    )
+    (root,) = builder.materialize(node)
+    customer = cast("vm.Customer", root)
+    address = customer.address
+    assert address is not None
+    assert address.model_fields_set == {"street", "city", "phones"}
+
+    edited = customer.edit(
+        address=vm.Address(
+            street=address.street, city=address.city, geo=None, phones=address.phones
+        )
+    )
+    row = row_codec_of(vm.CUSTOMER_MODEL).edited_row(edited)
+    assert row is not None
+    assert row["address"] == {
+        "street": "Main St",
+        "city": "Oslo",
+        "geo": None,
+        "phones": [{"number": "555-0100"}],
+    }
 
 
 def test_assignment_scoped_comparison_covers_nested_and_many_boundaries() -> None:
