@@ -2729,8 +2729,10 @@ or descriptor authoring form and performs no audit stamping.
   bidirectional Entity Identity/Entity Class index is never consulted to decide
   whether a value belongs; it exists for materialization and is never an
   authorization structure. A value from another model whose identity this model
-  also declares is therefore **accepted**, because the emitted row is a function
-  of the resolved identity's declared members alone.
+  also declares therefore **resolves**, because the emitted row is a function of
+  the resolved identity's declared members alone. Resolving is not the whole
+  call: whether such a value yields a row is the member rule's business below,
+  and that rule's answer varies by operation.
 
   **The candidate set is the model's; the selection is the operation's.**
   Members come from the model's family-effective metadata, which also supplies
@@ -2743,17 +2745,22 @@ or descriptor authoring form and performs no audit stamping.
   but the resolved identity does not declare raises
   `entity-row-member-missing` rather than being dropped — the codec can emit no
   canonical key for it, and silently discarding a value the caller authored
-  would signal nothing. **Refusal follows emission**, so the rule reaches an
-  operation's own selection and nothing else. The harm it names is losing a
-  value the operation would otherwise have emitted, and an operation that drops
+  would signal nothing. **Refusal follows selection**, so the rule reaches an
+  operation's own selection and nothing else — neither the populated set at
+  large nor the narrower set the finished row carries. The harm it names is
+  losing a member the operation's selection claims, and an operation that drops
   members by contract — `identity_row` every non-key member, `edited_row` every
-  untouched one — loses nothing by dropping one more. So a populated undeclared
-  member an edit never touched is outside `edited_row`'s selection and outside
-  its judgement, while `full_row` on that same value still raises. Judging the
-  populated set uniformly instead would refuse a keyed write over a member no
-  keyed write emits, and it would refuse it on exactly the cross-model value the
-  resolution-not-ownership rule above deliberately accepts, whose class is free
-  to declare members this model does not.
+  member its Change Record does not name — loses nothing by dropping one more.
+  So a populated undeclared member an edit never touched is outside
+  `edited_row`'s selection and outside its judgement, while `full_row` on that
+  same value still raises. Effectiveness is weighed after the selection is
+  judged and never narrows it: an undeclared recorded name still raises when the
+  edit that touched it restored its original value, though the row would have
+  carried nothing for it. Judging the populated set uniformly instead would
+  refuse a keyed write over a member no keyed write emits, and it would refuse
+  it on exactly the cross-model value the resolution-not-ownership rule above
+  admits past resolution, whose class is free to declare members this model does
+  not.
 
   **Rows are fresh, plain, caller-owned `dict[str, object]`**, keyed by
   canonical Attribute names and ordered by family-effective member declaration
