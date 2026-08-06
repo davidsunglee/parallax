@@ -102,6 +102,7 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [24-pure-temp-objects-and-extraction.md](24-pure-temp-objects-and-extraction.md) | Pure objects are cache-only (no-op persister), temp objects are real temp tables with scoped contexts, and extractor/reverse-engineering tools round-trip data and schema |
 | [25-cascade-operations.md](25-cascade-operations.md) | Cascade operations walk dependent lifecycle graphs for insert, delete, and temporal termination, including list and business-window-bounded variants |
 | [26-stored-nullability-violations.md](26-stored-nullability-violations.md) | A stored NULL in a non-nullable column raises per row at hydration for most types but passes silently for `String`/`Timestamp`; INSERT enforces the mirror-image subset; embedded values have no absent-versus-null distinction |
+| [27-read-enrollment-and-write-licensing.md](27-read-enrollment-and-write-licensing.md) | Transaction read state is keyed by object identity *plus* temporal coordinate, never by primary key alone; write eligibility is re-checked on the object being written, and every dated UPDATE is unconditionally gated on the milestone's own end columns |
 
 ## Research questions
 
@@ -149,6 +150,17 @@ declaration and codegen treatment, the hydration-time check and its type dispatc
 asymmetry, the embedded-value analogue, and the schema-drift posture
 ([26](26-stored-nullability-violations.md)). Descriptive, like the first and second passes: it
 records what Reladomo does and makes no Parallax recommendation.
+
+**Read-enrollment and write-licensing pass (2026-08-06, same commit).** A task-directed source pass
+answered what transaction state Reladomo carries between reading one logical row at two temporal
+coordinates and then writing it — the three read-enrollment layers and their keys, the coordinate-folded
+identity-map key, the infinity check that refuses a write to a historical milestone, what the optimistic
+gate compares and where it reads that value from, and the absence of any read-licenses-write predicate
+under pessimistic locking ([27](27-read-enrollment-and-write-licensing.md)). Descriptive, with one
+clearly labeled closing section contrasting the key construction against a primary-key-keyed observation
+map; it recommends nothing. It fills a gap [06](06-bitemporal-milestoning.md) and
+[09](09-transactions-locking.md) left: those cover milestone chaining and optimistic retry, but not the
+enrollment structures or their key construction.
 
 ## Scope — what this research does not cover
 
