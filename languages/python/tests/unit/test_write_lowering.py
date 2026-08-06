@@ -37,11 +37,12 @@ from types import MappingProxyType
 from typing import cast
 
 import pytest
+from _corpus_identity_support import corpus_object_key
 from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import inert_instant
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, corpus_object_key
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa

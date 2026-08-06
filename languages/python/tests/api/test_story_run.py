@@ -39,7 +39,6 @@ from _support.corpus import (
     compare_graph,
     compare_rows,
     instance_row,
-    value_object_projection,
 )
 from parallax.conformance import case_format, engine
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
@@ -54,7 +53,7 @@ from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, DomainModel
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import UnloadedRelationshipError
+from parallax.core.entity import UnloadedRelationshipError, ValueObject, shape_of
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect, edge_of, is_view_loaded, pin_of, view
 
@@ -422,18 +421,49 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> No
     assert snapshot.execution.round_trips == 3
 
 
+def _value_object_projection(value: Any) -> dict[str, Any] | None:
+    """One materialized Value Object as the DECLARED projection a `then.graph`
+    leaf grades: EVERY declared member, canonically named, valued as the carrier
+    reads it, recursively. A member the stored document omitted collapses to
+    `None` / `()` exactly as one it stored as JSON null does — the absence
+    collapse `m-op-algebra` fixes and `m-value-object-023` states in its own
+    words ("every declared member is present").
+
+    Deliberately not `to_document`: canonical document serialization is
+    presence-filtered, so it omits a member storage never held. The carrier keeps
+    that distinction — it is what lets an edited copy author an explicit null
+    over an omission — and `then.graph` deliberately does not grade it. Values
+    stay MANAGED here, exactly as the wire-level engine's own graph rendering
+    leaves them, so both sides normalize through one wire rule.
+    """
+    if value is None:
+        return None
+    declared = shape_of(cast("type[ValueObject]", type(value)))
+    projected: dict[str, Any] = {}
+    for py_name, canonical in declared.py_to_name.items():
+        member: Any = getattr(value, py_name)
+        if py_name in declared.many_py:
+            projected[canonical] = [_value_object_projection(element) for element in member]
+        elif isinstance(member, ValueObject):
+            projected[canonical] = _value_object_projection(member)
+        else:
+            projected[canonical] = member
+    return projected
+
+
 def _vo_owner_row(instance: Any, vo_py_name: str = "address") -> dict[str, Any]:
     """A materialized VO-bearing owner's own row, PHYSICAL-column-keyed
     (``instance_row``), with its value-object member rendered as the declared
-    projection (``value_object_projection``) so ``compare_graph`` can recurse
-    into it exactly like the wire-level engine's own `then.graph` grading.
+    projection (:func:`_value_object_projection`) so ``compare_graph`` can
+    recurse into it exactly like the wire-level engine's own `then.graph`
+    grading.
 
     The projection, not the canonical document: a read preserves the stored
     document's own field presence, so serializing the carrier would omit a
     member storage never held, while `then.graph` grades every declared member
     with absence collapsed."""
     row = instance_row(instance)
-    row[vo_py_name] = value_object_projection(getattr(instance, vo_py_name))
+    row[vo_py_name] = _value_object_projection(getattr(instance, vo_py_name))
     return row
 
 

@@ -15,6 +15,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import cast
 
+import observation_models as om
 import pytest
 from _transact_support import (
     ACCOUNT,
@@ -36,7 +37,6 @@ from _transact_support import (
 
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
-from _support import observation_models as om
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
