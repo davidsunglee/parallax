@@ -1,7 +1,7 @@
 """Derive ``CREATE TABLE`` DDL from a model descriptor (dialect-aware).
 
 The neutral-type -> column-type mapping is the m-core table; it lives behind the
-dialect (m-dialect). Postgres is round-1; Phase 10 adds MariaDB as the second dialect
+dialect (m-dialect). Postgres and MariaDB are the supported dialects
 behind the same seam. The harness derives DDL from the descriptor so the database
 schema is never authored by hand — it is a function of the metamodel, exactly as
 an implementation's would be.
@@ -38,13 +38,13 @@ _POSTGRES_BASE_TYPES = {
     "time": "time",
     "timestamp": "timestamptz",
     "uuid": "uuid",
-    # The embedded-value `json` type maps to Postgres JSONB (m-core/m-value-object, Phase 9): a
+    # The embedded-value `json` type maps to Postgres JSONB: a
     # whole valueObject is stored in one structured column rather than
     # column-flattened.
     "json": "jsonb",
 }
 
-# m-core neutral type -> MariaDB column type (Phase 10, the second dialect). The
+# m-core neutral type -> MariaDB column type. The
 # divergences from Postgres that matter here:
 #   * `boolean`   -> MariaDB has no native boolean; `tinyint(1)` is the idiom
 #                    (and `TRUE`/`FALSE` are aliases for `1`/`0`).

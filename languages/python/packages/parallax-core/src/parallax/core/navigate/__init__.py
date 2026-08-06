@@ -19,7 +19,7 @@ polymorphic target — the inheritance family's temporal declaration, always car
 the family root (`m-inheritance`) — never the tag/branch shape ``m-sql`` derives
 independently and directly from the same metamodel.
 
-Per the dependency graph (ADR 0025), ``m-navigate``
+Per the dependency graph, ``m-navigate``
 depends on ``m-op-algebra`` (the ``navigate``/``exists``/``notExists`` nodes it walks
 **are** algebra vocabulary), ``m-unit-work`` (navigation resolves through the unit of
 work), ``m-temporal-read`` (a pinned as-of value propagates per hop — the reason this

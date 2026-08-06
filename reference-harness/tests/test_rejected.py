@@ -1023,7 +1023,7 @@ def test_runner_fails_when_the_named_rule_is_wrong() -> None:
         run_case(case, None)  # type: ignore[arg-type]
 
 
-# --- the _assert_schema XOR guard: EXACTLY ONE of operation/write (COR-10, Q7) --
+# --- the _assert_schema XOR guard: EXACTLY ONE of operation/write ------------
 #
 # A defense-in-depth mirror of the schema `oneOf`: even a case that reaches the
 # runner without schema validation MUST carry EXACTLY ONE invalid input, so

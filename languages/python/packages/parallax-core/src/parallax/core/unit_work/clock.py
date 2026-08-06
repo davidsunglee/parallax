@@ -1,4 +1,4 @@
-"""The Clock Strategy — the injectable Transaction-Time source (m-unit-work, ADR 0010).
+"""The Clock Strategy — the injectable Transaction-Time source.
 
 A temporal write's **Transaction-Time instant** (its ``in_z``) is never authored on a
 write instruction: it is supplied at flush from the unit of work's configured
@@ -76,7 +76,7 @@ def instant_literal(value: _dt.datetime) -> str:
 
 @dataclass(slots=True)
 class TransactionInstant:
-    """One attempt's lazily captured, memoized Transaction Instant (ADR 0010).
+    """One attempt's lazily captured, memoized Transaction Instant.
 
     Constructing one reads no clock. :meth:`value` captures on first call and
     memoizes, so *whether* the Clock Strategy is consulted follows from the work

@@ -129,7 +129,7 @@ def test_table_per_concrete_subtype_model_validates() -> None:
     assert model.entity("FinancialDocument").table == ""
     # Each concrete subtype maps to its OWN table (no shared table, no tag) —
     # Invoice/Receipt under FinancialDocument, plus the concrete sibling Memo. The
-    # Phase 6 polymorphic owner `Folder` is a plain (non-inheritance) row-owning entity
+    # Polymorphic owner `Folder` is a plain (non-inheritance) row-owning entity
     # with its own `folder` table.
     tables = {e.table for e in model.entities if not e.is_abstract}
     assert tables == {"invoice", "receipt", "memo", "folder"}
@@ -215,7 +215,7 @@ def test_concrete_subtype_derives_the_full_inherited_attribute_chain() -> None:
     # table-per-concrete-subtype: the concrete table carries the full inherited chain,
     # with NO tag column. Invoice's chain threads the root (id, title, folder_id) and
     # the intermediate abstract subtype FinancialDocument (currency) before its own
-    # amount_due. folder_id is the Phase 6 polymorphic-owner FK on the root Document.
+    # amount_due. folder_id is the polymorphic-owner FK on the root Document.
     document = load_model(COMPATIBILITY_ROOT, "models/document.yaml")
     assert _entity_columns(document, "Invoice") == [
         "id",
@@ -403,7 +403,7 @@ def test_value_object_ddl_emits_one_document_column_and_no_nested_columns() -> N
     dialect. The two-loop ddl_builder shape never walks the nested structure."""
     model = load_model(COMPATIBILITY_ROOT, "models/customer.yaml")
     for dialect, document_type in {"postgres": "jsonb", "mariadb": "json"}.items():
-        # customer.yaml gained a VO-bearing sibling `Location` table in COR-3 Phase 5b;
+        # customer.yaml has a VO-bearing sibling `Location` table;
         # this per-table invariant is asserted on the root Customer's CREATE.
         (create,) = [c for c in ddl_for(model, dialect) if "create table customer (" in c]
         emitted = _emitted_columns(create)
@@ -416,7 +416,7 @@ def test_value_object_ddl_emits_one_document_column_and_no_nested_columns() -> N
         assert _NESTED_MEMBER_NAMES.isdisjoint(emitted)
 
 
-# --- negative: table-per-class is rejected (the Phase 9 negative test) --------
+# --- negative: table-per-class is rejected -----------------------------------
 
 
 @pytest.mark.parametrize("strategy", ["table-per-class", "table-per-leaf"])
@@ -511,12 +511,12 @@ def test_shared_hierarchy_table_ddl_unions_subtype_columns_and_the_derived_tag()
     assert "amount numeric(18,2)" in create  # the inherited root column
 
 
-# --- negative: optimistic-lock x temporal composition is rejected (COR-14) ---
+# --- negative: optimistic-lock x temporal composition is rejected ------------
 
 
 def test_schema_rejects_optimistic_locking_on_temporal_entity() -> None:
     """A temporal (as-of) entity that ALSO declares an ``optimisticLocking``
-    attribute MUST fail metamodel validation (m-descriptor/m-temporal-read/m-opt-lock, COR-14).
+    attribute MUST fail metamodel validation.
 
     A Transaction-Time temporal entity DERIVES its optimistic key from the
     Transaction-Time start column (`in_z` is the version analogue), so it carries no

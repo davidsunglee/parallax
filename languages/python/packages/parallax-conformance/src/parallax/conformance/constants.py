@@ -18,5 +18,5 @@ POSTGRES_DIGEST: Final[str] = (
 
 # The exact image reference (tag pinned to its content digest) the provisioner
 # boots. Digest-pinning makes the base image reproducible; the human-readable tag
-# rides alongside for review.
+# rides alongside for inspection.
 POSTGRES_IMAGE: Final[str] = f"postgres:16.4-alpine@{POSTGRES_DIGEST}"

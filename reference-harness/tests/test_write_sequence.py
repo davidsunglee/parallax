@@ -1,4 +1,4 @@
-"""Unit tests for the Phase 5 write-sequence machinery (no database).
+"""Unit tests for write-sequence machinery (no database).
 
 These pin the DB-free invariants of a milestone-chaining write case: the
 statement-count consistency check (sum of per-step counts == then.statements DML count
@@ -340,7 +340,7 @@ def test_tph_insert_rejects_tag_authored_in_row() -> None:
 
 def test_tpcs_insert_targets_concrete_table_without_tag() -> None:
     # m-inheritance-010: a table-per-concrete-subtype INSERT targets the subtype's own
-    # table with no tag column and no shared table. Phase 7 makes currency REQUIRED on
+    # table with no tag column and no shared table. Currency is REQUIRED on
     # the FinancialDocument branch, so the Invoice insert SUPPLIES it (the full ancestry
     # chain), and the routing oracle confirms the write hits `invoice`, not a shared table.
     case = _write_case_by_id("m-inheritance-010")
@@ -350,7 +350,7 @@ def test_tpcs_insert_targets_concrete_table_without_tag() -> None:
     _assert_write_input_columns(case, "postgres")
 
 
-# --- concrete-subtype existing-row tag guard + table routing (m-inheritance, Phase 7) ---
+# --- concrete-subtype existing-row tag guard + table routing ------------------
 #
 # A TABLE-PER-HIERARCHY existing-row write (update / delete) carries the tag GUARD among
 # the identity predicates, right after the primary-key equality, with the opt-lock gate
@@ -490,7 +490,7 @@ def test_detach_noop_merge_back_issues_no_dml() -> None:
     _assert_scenario_count_consistency(case, "postgres")
 
 
-# --- role-aware DB-computed marker interpretation (COR-10) ------------------
+# --- role-aware DB-computed marker interpretation -----------------------------
 #
 # A DB-computed marker (`{computed}` / `{increment}`) is a SCALAR-ATTRIBUTE-only
 # interpretation: a value-object (document) column ALWAYS binds its WHOLE literal

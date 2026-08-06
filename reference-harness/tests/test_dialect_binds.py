@@ -1,4 +1,4 @@
-"""DB-free tests for the per-dialect binds / referenceSql polymorphism (COR-10).
+"""DB-free tests for per-dialect binds / referenceSql polymorphism.
 
 Value-object cases carry Postgres AND MariaDB golden SQL whose bind holes diverge
 (Postgres per-segment JSON keys vs a MariaDB single ``'$.a.b'`` path bind), so

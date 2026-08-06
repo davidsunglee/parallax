@@ -1,4 +1,4 @@
-"""DB-free unit tests for the abstract-target inheritance READ oracle (Phase 4).
+"""DB-free unit tests for the abstract-target inheritance READ oracle.
 
 The read-side counterpart of the write-derivation oracle (m-inheritance / m-sql,
 resolved Q6): from the descriptor alone the harness derives a narrow's effective
@@ -972,7 +972,7 @@ def test_materialize_fails_when_tag_column_missing() -> None:
         _materialize_family_variant(case, [row])
 
 
-# --- row-count-independence of the projection-shape check (Phase 4 review) ------
+# --- row-count-independence of the projection-shape check ---------------------
 #
 # The projection shape is derived from the GOLDEN SELECT, not a sample row, so a
 # ZERO-row abstract-target read still witnesses a golden that drops a superset / tag
@@ -1008,7 +1008,7 @@ def test_materialize_zero_row_correct_golden_passes() -> None:
     assert _materialize_family_variant(case, []) == []
 
 
-# --- table-per-concrete-subtype `union all` oracle (Phase 5) -----------------
+# --- table-per-concrete-subtype `union all` oracle -----------------------------
 #
 # The TPCS counterpart of the TPH projection-shape check: from the descriptor alone
 # the harness recomputes the `union all` branch count/order (the effective concrete
@@ -1031,7 +1031,7 @@ def _document_defs() -> list[dict[str, Any]]:
 # (id, title, folder_id) first, then the OWN-column blocks in alphabetical subtype
 # order — Invoice's amount_due, Memo's body, Receipt's paid_amount (currency is
 # FinancialDocument's inherited attribute, contributed where Invoice's chain first
-# surfaces it; folder_id is the Phase 6 polymorphic-owner FK on the root). The
+# surfaces it; folder_id is the polymorphic-owner FK on the root). The
 # failing-mode tests mutate one aspect of this to witness the check.
 _DOCUMENT_ROOT_UNION = (
     "select t0.id, t0.title, t0.folder_id, t0.currency, t0.amount_due, "
@@ -1169,14 +1169,14 @@ def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
     assert out["familyVariant"] == "Memo"
 
 
-# --- Phase 5 review remediations -------------------------------------------------
+# --- union-all validation ------------------------------------------------------
 #
-# Finding 1 (oracle side): the branch walk accepted any `SetOperation`, so a golden
+# The branch walk accepts only `union all`, so a golden
 # using a de-duplicating plain `union` (or `intersect`) passed the shape check.
-# Finding 2: the shape check validated output NAMES and the trailing literal but not
+# The shape check validates output NAMES, the trailing literal, and
 # the per-column cast SHAPE, so a bare `null <col>` or a wrong-typed cast passed.
-# Finding 3: the per-column cast type is asserted per dialect (Postgres `varchar` /
-# MariaDB `char`). Finding 5: a real column colliding with the synthetic
+# The per-column cast type is asserted per dialect (Postgres `varchar` /
+# MariaDB `char`). A real column colliding with the synthetic
 # `family_variant` alias is rejected. All reproduce-then-green.
 
 
@@ -1234,7 +1234,7 @@ def test_tpcs_mariadb_char_cast_golden_is_accepted() -> None:
 
 def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
     # A MariaDB golden that used `varchar` (a Postgres-only CAST target) is rejected by
-    # the per-dialect cast-type check — proving Finding 3's assertion is dialect-aware.
+    # the per-dialect cast-type check.
     bad_mariadb = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char(64)")  # leaves varchar(3)
     case = _document_case("Document", {"all": {}})
     case.raw["then"]["statements"][0]["sql"] = {"mariadb": bad_mariadb}
@@ -1253,7 +1253,7 @@ def test_tpcs_family_variant_column_requires_a_hygienic_internal_alias() -> None
         _materialize_family_variant(case, [])
 
 
-# --- Phase 6: polymorphic navigation + narrowed deep-fetch view keys ------------
+# --- polymorphic navigation + narrowed deep-fetch view keys -------------------
 #
 # The relationship-target narrowing (resolved Q10) and the deterministic narrowed
 # view key `<rel>[<Concrete>,<Concrete>]` (m-deep-fetch), derived from the descriptor
@@ -1474,7 +1474,7 @@ def test_operation_narrow_in_navigation_filter_rejects_outside_target() -> None:
 
 
 def test_operation_narrow_in_navigation_filter_rejects_entity_naming_wrong_position() -> None:
-    # Reproduce-then-green (Phase 6 review, Finding 1): a narrow in a navigation
+    # A narrow in a navigation
     # filter's `op` MUST NAME the relationship target as its `entity` (m-navigate).
     # `Person.pets` targets Pet ({Cat, Dog}); a narrow declaring the BROADER root
     # Animal as its `entity` — even one whose `to` ([Dog]) lands inside Pet's set —

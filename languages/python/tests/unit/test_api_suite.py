@@ -40,9 +40,9 @@ def test_active_slice_is_non_empty_and_all_snapshot_tagged() -> None:
 def test_build_skips_covers_cases_without_examples() -> None:
     # With one synthetic example, the registries cover every other active case
     # EXCEPT cases whose module carries no broad bucket entry AND whose own id
-    # the case-scoped registry does not name (the backbone review's partition
-    # red-check): a bucket-free module's cases are covered only by a real
-    # example or their own case-scoped skip, never a generic module reason.
+    # the case-scoped registry does not name: a bucket-free module's cases are
+    # covered only by a real example or their own case-scoped skip, never a
+    # generic module reason.
     active = api_suite.active_slice()
     examples = [Example(active[0].case_id, "t", "snippet")]
     skips = api_suite.build_skips(active, examples)
@@ -310,7 +310,7 @@ def test_usage_guide_main_check_detects_drift(
 
 
 def test_dropping_a_write_example_fails_the_partition() -> None:
-    # The backbone review's partition red-check, made effective: m-unit-work has
+    # m-unit-work has
     # no broad module bucket, so a case that loses its example is covered by
     # NEITHER registry and the partition fails — never silently reclassified
     # under a coalescing-witness reason. m-unit-work-001 (unlike -005/-006/-009)

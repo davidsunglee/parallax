@@ -81,7 +81,7 @@ def table_layout(
 # author remembers. A planner is handed one of the protocols below instead of   #
 # the concrete resolution scope; neither exposes `bind`, `binds`, nor the `ctx` #
 # that owns them, so `scope.bind(...)` and `scope.ctx.bind(...)` are both type  #
-# errors rather than review findings. `_predicate.EntityScope` satisfies both   #
+# errors. `_predicate.EntityScope` satisfies both                                #
 # structurally, so the narrowing costs the caller nothing — it just passes its  #
 # own scope.                                                                   #
 # --------------------------------------------------------------------------- #

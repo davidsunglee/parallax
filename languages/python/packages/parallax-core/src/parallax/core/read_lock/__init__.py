@@ -19,7 +19,7 @@ This module renders **no SQL** and owns **no append site**: `m-dialect` keeps
 `distinct` projection/aggregation suppresses the suffix and never errors —
 `m-sql` *Read-lock suffix*, `m-read-lock.md` "Automatic read-lock
 correctness": a projection's result rows have no identifiable base row to
-lock, and per ADR 0002 a projection is plain unmanaged data that never enters
+lock, and a projection is plain unmanaged data that never enters
 the write path). That data-shape-driven suppression stays where the compiled
 read's own shape (``distinct``) is visible; :func:`mode_for` is the SEPARATE,
 mode-driven half every transactional read consumer re-derives through, rather

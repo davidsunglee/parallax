@@ -40,7 +40,7 @@ Three collapse rules (``m-batch-write.md`` "Batching is a membership decision"):
   statement with an ``IN`` predicate when the new value is UNIFORM across the
   keys. A **versioned** entity's update NEVER collapses (even when uniform) —
   every row's gate/advance binds its OWN observed version, which one shared
-  statement cannot carry (``m-opt-lock``, ADR 0014); it always decomposes to
+  statement cannot carry; it always decomposes to
   per-row keyed updates.
 - **delete** — same-entity, NON-VERSIONED deletes collapse into one ``DELETE``
   with an ``IN`` predicate; a VERSIONED entity's delete never collapses. Every
@@ -175,7 +175,7 @@ def update_collapses(
     keyed statement per distinct key, never this module's concern). A
     **versioned** entity's update NEVER collapses,
     uniform or not — the gate/advance binds a PER-ROW observed version no
-    shared statement can carry (`m-opt-lock`, ADR 0014)."""
+    shared statement can carry."""
     if _is_temporal(model, entity):
         return False
     if _is_versioned(model, entity):

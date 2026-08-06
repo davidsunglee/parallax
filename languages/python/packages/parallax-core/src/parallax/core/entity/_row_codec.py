@@ -9,8 +9,8 @@ the identity, and the effective caller-authored changes — and a consumer askin
 for one learns nothing about Pydantic, the private Change Record slot, physical
 column names, temporal planning, or Audit Provenance. It is an **authoring**
 codec: it emits only what a caller authored, never computes or stamps a
-framework-owned value, and is never an Audit Provenance extension point
-(ADR 0037). Its dependencies are the accepted Metamodel and the value's own
+framework-owned value, and is never an Audit Provenance extension point. Its
+dependencies are the accepted Metamodel and the value's own
 class, and nothing else.
 
 Input validation **resolves; it does not own.** The codec resolves the Entity

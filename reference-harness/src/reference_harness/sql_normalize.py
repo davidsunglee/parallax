@@ -38,7 +38,7 @@ from sqlglot.parser import Parser
 from sqlglot.tokenizer_core import Token, TokenType
 
 # Map a parallax dialect identifier to the sqlglot dialect that parses/renders
-# it. ``mariadb`` (Phase 10, the second dialect behind the m-dialect seam) has no
+# it. ``mariadb`` has no
 # dedicated sqlglot dialect; MariaDB is MySQL-protocol-compatible and sqlglot's
 # ``mysql`` dialect parses + renders the SQL we need, so the MariaDB normalization
 # pass runs through ``mysql``. Any dialect not listed here is passed to sqlglot
@@ -123,8 +123,8 @@ _STRING_TOKENS = frozenset({TokenType.STRING, TokenType.NATIONAL_STRING, TokenTy
 # tight-binding the renderer would insert a space (``decimal (18, 2)``) because a
 # type name is neither a value token nor a VAR function name. This is sqlglot's OWN
 # full type-token classification (``Parser.TYPE_TOKENS``) rather than a hand-curated
-# allowlist, so ANY parametrized type a future cast introduces (Phase 8 temporal
-# TPCS: ``timestamp(6)``, ``datetime(6)``, ``numeric``, ...) renders correctly with
+# allowlist, so ANY parametrized type a future cast introduces (for example,
+# ``timestamp(6)``, ``datetime(6)``, ``numeric``, ...) renders correctly with
 # no edit here. It is only consulted when the token is immediately followed by ``(``
 # (a parametrized type); ``TYPE_TOKENS`` excludes clause keywords such as ``in`` /
 # ``values``, so ``in (?, …)`` still renders with its space.
@@ -425,7 +425,7 @@ def _assert_canonical(tree: Expr) -> None:
 # no ``for share``; MDEV-17514). So for MariaDB we strip sqlglot's lock from the
 # AST and append the canonical MariaDB suffix ourselves. The form is unaliased
 # (``lock in share mode``, never ``of t0``), unlike Postgres' ``for share of t0``
-# — exactly the read-lock divergence Phase 10 exercises through the seam.
+# — exactly the read-lock divergence exercised through the seam.
 _MARIADB_READ_LOCK = "lock in share mode"
 
 

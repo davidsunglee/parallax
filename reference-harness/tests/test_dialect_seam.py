@@ -1,4 +1,4 @@
-"""Unit tests for the Phase 10 MariaDB dialect seam (m-dialect), DB-free.
+"""DB-free unit tests for the MariaDB dialect seam.
 
 These pin the localization claim: adding MariaDB as the second dialect touches
 ONLY the dialect seam — the normalizer's dialect mapping + read-lock rendering,
@@ -59,7 +59,7 @@ def test_temporal_read_and_insert_are_canonical_on_mariadb() -> None:
 
 def test_read_lock_diverges_per_dialect() -> None:
     """Postgres `for share of t0` and MariaDB `lock in share mode` are EACH the
-    canonical fixed point for their own dialect — the marquee Phase 10 seam."""
+    canonical fixed point for their own dialect."""
     pg = "select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? for share of t0"
     md = "select t0.id, t0.owner, t0.balance from account t0 where t0.id = ? lock in share mode"
     assert is_canonical(pg, "postgres")

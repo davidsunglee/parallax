@@ -71,7 +71,7 @@ __all__ = ["RECTANGLE_SPLIT", "RectangleSplit"]
 
 # The inactivation gates on the observed Transaction-Time start exactly as a
 # single-axis close does: the Valid-Time end addresses the rectangle, and the
-# concurrency condition is a separate fact (ADR 0046).
+# concurrency condition is a separate fact.
 _SUPERSEDES: Final = MilestoneClosure(
     cause=SUPERSEDED, gate_basis=TemporalDimension.TRANSACTION_TIME
 )

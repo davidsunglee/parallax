@@ -102,7 +102,7 @@ INHERITANCE_TAG_ON_CONCRETE_SUBTYPE_STRATEGY = "inheritance-tag-on-concrete-subt
 # `temporality`; an `abstract-subtype` or `concrete-subtype` that declares its
 # own — whether the root is itself non-temporal or temporal — is rejected.
 INHERITANCE_TEMPORALITY_NOT_ROOT_OWNED = "inheritance-temporality-not-root-owned"
-# Optimistic locking is likewise a family-wide property (D-25 / ADR 0027): only
+# Optimistic locking is likewise a family-wide property: only
 # the root may declare an `optimisticLocking` attribute; an `abstract-subtype`
 # or `concrete-subtype` that declares its own — whether the root is itself
 # versioned or not — is rejected. A family is versioned together or not at all.
@@ -752,7 +752,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
             )
 
     # 4b. A non-root participant MUST NOT declare its own `optimisticLocking`
-    #     attribute (D-25 / ADR 0027): the version attribute is family-wide, so
+    #     attribute: the version attribute is family-wide, so
     #     only the root may declare one, regardless of whether the root itself
     #     is versioned. Fires for BOTH malformed shapes (a non-versioned root
     #     with a version-declaring descendant, and a versioned root whose

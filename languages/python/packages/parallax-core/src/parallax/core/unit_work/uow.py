@@ -2,10 +2,10 @@
 
 The transaction scope's stateful machinery around the pure :class:`~parallax.
 core.unit_work.write_planner.WritePlanner`: the frame stack (a nested scope
-joins the active transaction, ADR 0005), the write buffer, the recorded
+joins the active transaction), the write buffer, the recorded
 observations, call-time reads that force-flush pending writes so a dependent
 read observes them (read-your-own-writes), and abort — which discards buffered
-effects and **withholds** the callback value (ADR 0006).
+effects and **withholds** the callback value.
 
 This is deliberately **not** ``db.transact``: there is no public sentinel-backed
 option surface and no bounded-retry loop. The shell exposes the
@@ -144,7 +144,7 @@ class UnitOfWork:
         # One attempt, one lazy instant: constructing it reads no clock, and
         # every flush this scope plans carries the SAME holder, so all
         # timestamp-requiring work in the attempt shares one captured value
-        # while work that needs none never captures at all (ADR 0010).
+        # while work that needs none never captures at all.
         self._transaction_instant = TransactionInstant(clock)
         self._closed = False
 
@@ -264,7 +264,7 @@ class UnitOfWork:
         self._frame_depth += 1
         try:
             # The joined body returns immediately; commit/abort/retry belong to the
-            # outermost boundary (ADR 0005). An inner failure dooms the whole txn.
+            # outermost boundary. An inner failure dooms the whole txn.
             return body(self)
         except BaseException as exc:
             self.mark_rollback_only(exc)

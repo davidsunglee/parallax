@@ -1,7 +1,7 @@
 """Emit the compatibility-matrix report (implementations x databases).
 
 The only "implementation" is the reference suite itself (the golden SQL); the
-databases are Postgres and MariaDB (Phase 10 added MariaDB as the second dialect
+databases are Postgres and MariaDB (the supported dialects
 behind the m-db-port provider seam). The report shape was built in from day one so the
 matrix grows without a redesign: adding a dialect adds a column; adding a language
 implementation adds a row.

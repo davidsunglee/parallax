@@ -101,7 +101,7 @@ def test_empty_root_deep_fetch_executes_no_child_sql() -> None:
     _assert_deep_fetch(case, db)
 
     # Projections follow the m-sql base read-projection rule (Order's full scalar
-    # set), re-goldened in COR-3 Phase 5b; this pin mirrors m-deep-fetch-006.
+    # set); this pin mirrors m-deep-fetch-006.
     assert db.queries == [
         (
             "select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on "
@@ -502,8 +502,7 @@ def test_existing_non_temporal_deep_fetch_still_passes():
     )
 
     # Rows carry the full m-sql base read projection (Order's 7 scalars,
-    # OrderItem's `shipped_on`), re-goldened into m-deep-fetch-002 in COR-3
-    # Phase 5b; the fake DB mirrors that projected column set.
+    # OrderItem's `shipped_on`); the fake DB mirrors that projected column set.
     class _OrdersDb:
         dialect = "postgres"
 

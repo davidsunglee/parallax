@@ -1,4 +1,4 @@
-"""DB-free fidelity tests for the grouped compatibility-case schema (COR-23).
+"""DB-free fidelity tests for the grouped compatibility-case schema.
 
 Pinned fixture documents against the new ``compatibility-case.schema.json``: a
 minimal well-formed document for each of the eight shapes is ACCEPTED, and a
@@ -99,7 +99,7 @@ def _scenario_case() -> dict[str, Any]:
 
 
 def _action_scenario_case() -> dict[str, Any]:
-    """A scenario with lifecycle ACTION steps (m-case-format, COR-30).
+    """A scenario with lifecycle ACTION steps.
 
     Exercises the new action-step vocabulary end to end: `action` verbs, `on`,
     `path`, `set` (mutate-only), and the per-step observables `expectState` and
@@ -359,7 +359,7 @@ def _boundary_case() -> dict[str, Any]:
 
 
 def _rejected_operation_case() -> dict[str, Any]:
-    """A rejected case carrying an invalid OPERATION + the violated rule (COR-10, Q7)."""
+    """A rejected case carrying an invalid OPERATION and the violated rule."""
     return {
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
@@ -370,7 +370,7 @@ def _rejected_operation_case() -> dict[str, Any]:
 
 
 def _rejected_write_case() -> dict[str, Any]:
-    """A rejected case carrying an invalid WRITE input + the violated rule (COR-10, Q7)."""
+    """A rejected case carrying an invalid WRITE input and the violated rule."""
     return {
         "model": "models/contact.yaml",
         "tags": ["m-value-object"],
@@ -381,7 +381,7 @@ def _rejected_write_case() -> dict[str, Any]:
 
 
 def _action_boundary_no_on_case() -> dict[str, Any]:
-    """A scenario whose BOUNDARY action verbs (`flush` / `commit`) omit `on` (COR-30).
+    """A scenario whose BOUNDARY action verbs (`flush` / `commit`) omit `on`.
 
     The boundary / unit-of-work verbs operate on the whole unit of work, not a
     specific prior object, so `on` is inapplicable and MAY be omitted — the per-verb
@@ -426,7 +426,7 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
 
 
 def _graphs_read_case() -> dict[str, Any]:
-    """A read case carrying per-milestone `then.graphs` (m-snapshot-read, COR-30 Q5a).
+    """A read case carrying per-milestone `then.graphs`.
 
     A `history` snapshot read materializes one edge-pinned graph per milestone: the
     `then.graphs` array pairs each milestone's `pin` (its own from-instant, keyed by
@@ -471,7 +471,7 @@ def _graphs_read_case() -> dict[str, Any]:
 
 
 def _identity_checks_read_case() -> dict[str, Any]:
-    """A read case carrying a `then.identityChecks` back-reference cycle (COR-30 Q5b).
+    """A read case carrying a `then.identityChecks` back-reference cycle.
 
     A back-reference cycle (`[items, items.order]`) serializes the cycle point as a
     PK-only stub; the same-node claim rides `then.identityChecks`, an array of
@@ -535,7 +535,7 @@ def test_schema_accepts_minimal_case_for_every_shape(shape: str) -> None:
     assert errors == [], f"{shape} case should validate, got: {[e.message for e in errors]}"
 
 
-# --- value-object document whose content is marker-SHAPED (COR-10) ---------
+# --- value-object document whose content is marker-SHAPED -------------------
 #
 # A DB-computed marker (`{computed}` / `{increment}`) vs a value-object document is
 # a MODEL-ROLE decision the model-agnostic schema cannot make, so the write-value
@@ -691,7 +691,7 @@ def _coherence_read_missing_target_entity() -> dict[str, Any]:
 
 
 def _rejected_without_rule() -> dict[str, Any]:
-    """A rejected case missing `then.rejectedRule` (COR-10, Q7): the branch requires it."""
+    """A rejected case missing `then.rejectedRule`: the branch requires it."""
     doc = _rejected_operation_case()
     del doc["then"]["rejectedRule"]
     return doc
@@ -719,7 +719,7 @@ def _rejected_cross_shape_when_member() -> dict[str, Any]:
 
 
 def _rejected_both_operation_and_write() -> dict[str, Any]:
-    """A rejected case carrying BOTH `operation` and `write` (COR-10, Q7).
+    """A rejected case carrying BOTH `operation` and `write`.
 
     A rejected case pins a SINGLE invalid input, so its `when` MUST carry EXACTLY ONE
     of operation/write. The schema `oneOf` (each alternative requiring one member)
@@ -732,7 +732,7 @@ def _rejected_both_operation_and_write() -> dict[str, Any]:
 
 
 def _rejected_neither_operation_nor_write() -> dict[str, Any]:
-    """A rejected case carrying NEITHER `operation` nor `write` (COR-10, Q7).
+    """A rejected case carrying NEITHER `operation` nor `write`.
 
     An empty `when` matches no `oneOf` alternative, so the rejected branch fails and
     no other top-level branch matches (the `shape` const gates them) — the document
@@ -744,7 +744,7 @@ def _rejected_neither_operation_nor_write() -> dict[str, Any]:
 
 
 def _action_unknown_verb() -> dict[str, Any]:
-    """An action step naming a verb outside the closed enum (COR-30)."""
+    """An action step naming a verb outside the closed enum."""
     doc = _action_scenario_case()
     doc["when"]["scenario"][1]["action"] = "teleport"
     return doc
@@ -758,7 +758,7 @@ def _action_stray_key() -> dict[str, Any]:
 
 
 def _action_unknown_expect_error() -> dict[str, Any]:
-    """An action step naming an `expectError` outside the closed enum (COR-30)."""
+    """An action step naming an `expectError` outside the closed enum."""
     doc = _action_identity_error_case()
     doc["when"]["scenario"][2]["expectError"] = "not-a-real-error"
     return doc
@@ -784,7 +784,7 @@ def _action_set_on_non_mutate() -> dict[str, Any]:
 
 
 def _action_object_verb_missing_on() -> dict[str, Any]:
-    """An OBJECT-TARGETING action (step 1 is a `load`) missing `on` (COR-30).
+    """An OBJECT-TARGETING action (step 1 is a `load`) missing `on`.
 
     The per-verb conditional makes `on` REQUIRED for `mutate` / `detachCopy` /
     `load` / `access` / `mergeBack` — each acts on a prior step's result — so a
@@ -796,7 +796,7 @@ def _action_object_verb_missing_on() -> dict[str, Any]:
 
 
 def _action_on_duplicate_index() -> dict[str, Any]:
-    """An array-form `on` naming the SAME source twice (COR-30).
+    """An array-form `on` naming the SAME source twice.
 
     The array form is `uniqueItems`: a coordinate-grouped action references each
     source at most once, so `on: [0, 0]` is rejected."""
@@ -806,7 +806,7 @@ def _action_on_duplicate_index() -> dict[str, Any]:
 
 
 def _graphs_entry_missing_pin() -> dict[str, Any]:
-    """A `then.graphs` entry missing `pin` (COR-30 Q5a) — the entry requires it.
+    """A `then.graphs` entry missing `pin` — the entry requires it.
 
     Each per-milestone graph MUST declare the edge coordinate it is pinned at, so an
     entry carrying only `graph` is rejected."""
@@ -823,7 +823,7 @@ def _graphs_entry_stray_key() -> dict[str, Any]:
 
 
 def _identity_check_missing_same() -> dict[str, Any]:
-    """A `then.identityChecks` entry missing `same` (COR-30 Q5b) — the entry requires it.
+    """A `then.identityChecks` entry missing `same` — the entry requires it.
 
     An identity check without its reference verdict asserts nothing, so it is rejected."""
     doc = _identity_checks_read_case()
