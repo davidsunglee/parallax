@@ -77,11 +77,12 @@ coordinates*, not a copy of one row:
   `m-bitemp-write`), **every held view reflects the post-write timeline at its
   own pin**: a latest-pinned view shows the newly chained milestone; a view
   pinned at a finite past instant keeps showing the milestone its pin selects.
-- A view pinned at a **finite Transaction-Time instant** is **read-only** — the
-  Transaction-Time past records what the system knew and is never rewritten.
-  Mutating such a view raises the neutral **`transaction-time-pin-read-only`**
-  error and emits no DML — an application-lifecycle error, distinct from the
-  `m-db-error` taxonomy, asserted by a compatibility case with a step-level
+- A view pinned at a **finite Transaction-Time instant** is **read-only** — this
+  lifecycle's instance of `m-txtime-write`'s invariant that the Transaction-Time
+  past is never rewritten. Mutating such a view raises the neutral
+  **`transaction-time-pin-read-only`** error and emits no DML — an
+  application-lifecycle error, distinct from the `m-db-error` taxonomy, asserted
+  by a compatibility case with a step-level
   `expectError: transaction-time-pin-read-only` (`m-case-format`) and graded by
   the API Conformance Suite. A finite Valid-Time pin is writable: mutating it is
   the retroactive correction that lowers to the `m-bitemp-write` rectangle split.
