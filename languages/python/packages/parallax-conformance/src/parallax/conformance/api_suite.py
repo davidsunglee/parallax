@@ -64,12 +64,18 @@ class Recipe:
     render-then-submit round trip) is larger than any single case's goldens,
     and force-registering it under a borrowed case id would misrepresent what
     that case grades. It renders under its own Usage-Guide heading with a
-    spec citation plus the tests that grade it end-to-end."""
+    spec citation plus the tests that grade it end-to-end.
+
+    ``notes`` carries prose the snippet itself cannot: a fact about the code
+    rather than a citation of where it is specified or graded. It renders as a
+    paragraph between the citation line and the snippet, and is omitted when
+    empty."""
 
     title: str
     spec: str
     graded_by: str
     snippet: str
+    notes: str = ""
 
 
 RECIPES: Final[list[Recipe]] = [
@@ -128,11 +134,12 @@ RECIPES: Final[list[Recipe]] = [
     ),
     Recipe(
         title="Stale web edit — Transaction-Time-Only (Balance)",
-        spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
+        spec="`python.md` §3 (the recipe and the edge it transports)",
         graded_by=(
-            "`tests/api/test_stale_web_edit.py` (real Postgres: the clean "
-            "submit, the concurrent-supersession conflict, and both negative pins) and "
-            "`tests/unit/test_transaction_reads.py`'s Docker-free recipe halves"
+            "`tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and "
+            "the concurrent-supersession refusal, each under both concurrency modes) "
+            "and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves "
+            "(the observed-`in_z` gate a zero-row close raises through)"
         ),
         snippet=(
             inspect.getsource(stale_web_edit.render_balance_milestone)
@@ -141,17 +148,41 @@ RECIPES: Final[list[Recipe]] = [
         ),
     ),
     Recipe(
-        title="Stale web edit — bitemporal (Branch, both axes transported)",
-        spec="`python.md` §3 (the recipe) and §5 (why it runs optimistic)",
+        title="Stale web edit — bitemporal (Branch, the displayed rectangle re-read)",
+        spec="`python.md` §3 (the recipe and the edge it transports)",
         graded_by=(
-            "`tests/api/test_stale_web_edit.py` (real Postgres) and "
-            "`tests/unit/test_transaction_reads.py`'s Docker-free recipe halves"
+            "`tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and "
+            "the concurrent-supersession refusal, each under both concurrency modes) "
+            "and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves"
         ),
         snippet=(
             inspect.getsource(stale_web_edit.render_branch_milestone)
             + "\n\n"
             + inspect.getsource(stale_web_edit.submit_branch_edit)
         ),
+    ),
+    Recipe(
+        title="Stale web edit — the staleness signal, and why either concurrency mode is legal",
+        spec="`python.md` §3 (the recipe) and §5 (the concurrency modes)",
+        graded_by=(
+            "`tests/api/test_stale_web_edit.py` (real Postgres: each variant's "
+            "clean submit is graded twice, once per mode, and the read-time "
+            "refusal is graded under both)"
+        ),
+        notes=(
+            "`StaleMilestoneError` is **application**-owned, defined by the recipe itself "
+            "and shown below so the snippets above name nothing undefined. It must not "
+            "borrow the framework's `OptimisticLockConflictError`: that error means an "
+            "optimistic gate matched zero rows, which is neither what happened here nor "
+            "something that can happen under `locking` at all. The submit body is legal "
+            "under **both** modes, for different reasons — `locking` takes a shared read "
+            "lock on the current row at read time, so once the edge comparison passes "
+            "nothing can supersede the row before the flush; `optimistic` takes no lock, "
+            "and the observed-`in_z` gate covers exactly the window between the read and "
+            "the flush, raising `OptimisticLockConflictError` if a writer chains a "
+            "replacement inside it."
+        ),
+        snippet=inspect.getsource(stale_web_edit.StaleMilestoneError),
     ),
 ]
 
@@ -1435,6 +1466,9 @@ def render_usage_guide(examples: list[Example], recipes: list[Recipe] | None = N
             lines.append("")
             lines.append(f"Spec: {recipe.spec}. Graded by {recipe.graded_by}.")
             lines.append("")
+            if recipe.notes:
+                lines.append(recipe.notes)
+                lines.append("")
             lines.append("```python")
             lines.append(recipe.snippet.rstrip("\n"))
             lines.append("```")

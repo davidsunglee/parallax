@@ -791,8 +791,7 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
 # at the call, before any buffering, with the neutral                          #
 # `transaction-time-pin-read-only` error. A LATEST Transaction-Time pin and a  #
 # finite Valid-Time pin stay writable (the Valid-Time case is the retroactive  #
-# correction), and an EDITED COPY carries no pin at all — the stale-web-edit   #
-# recipe's optimistic edge-pinned re-fetch keeps working.                      #
+# correction), and an EDITED COPY carries no pin at all.                       #
 # --------------------------------------------------------------------------- #
 _TX_PIN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _VALID_PIN = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
@@ -871,10 +870,9 @@ def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
 
 def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_stays_writable() -> None:
     # The pin stays with the VIEW: `edit(**changes)` builds a fresh
-    # validated instance carrying no pin, so the spec §3 stale-web-edit
-    # recipe's optimistic edge-pinned re-fetch -> edited copy -> `tx.update`
-    # lands (a concurrent supersession is detected by the observed-`in_z`
-    # gate at flush, never by this verb-time refusal).
+    # validated instance carrying no pin, so a pinned read -> edited copy ->
+    # `tx.update` lands (a concurrent supersession is detected by the
+    # observed-`in_z` gate at flush, never by this verb-time refusal).
     port = RecordingPort(rows=[_position_row_dt()])
 
     def fn(tx: Transaction) -> None:

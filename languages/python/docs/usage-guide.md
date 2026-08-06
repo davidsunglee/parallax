@@ -1547,7 +1547,7 @@ def read_a_table_per_concrete_subtype_family(db: Database) -> Snapshot[Any]:
 
 ### Stale web edit — Transaction-Time-Only (Balance)
 
-Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api/test_stale_web_edit.py` (real Postgres: the clean submit, the concurrent-supersession conflict, and both negative pins) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves.
+Spec: `python.md` §3 (the recipe and the edge it transports). Graded by `tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and the concurrent-supersession refusal, each under both concurrency modes) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves (the observed-`in_z` gate a zero-row close raises through).
 
 ```python
 def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
@@ -1558,26 +1558,39 @@ def render_balance_milestone(db: Database, *, id: int) -> tuple[Balance, Edge]:
     return node, edge_of(node)
 
 
-def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any]) -> None:
-    """SUBMIT time (Transaction-Time-Only): re-fetch pinned at the transported edge,
-    inside an OPTIMISTIC transaction (`python.md` §5: an edge-pinned
-    observation is never latest-pinned, so a locking-mode write over it
-    raises ``HistoricalObservationError`` before any DML), apply ``fields``
-    via ``edit``, and update. A concurrent chain since the render
-    leaves the observed row's ``in_z`` stale — the gated close matches zero
-    rows, ``OptimisticLockConflictError``; an untouched row's gate matches,
-    and the edit lands."""
+def submit_balance_edit(
+    db: Database,
+    *,
+    id: int,
+    edge: Edge,
+    fields: Mapping[str, Any],
+    concurrency: Concurrency = "optimistic",
+) -> None:
+    """SUBMIT time (Transaction-Time-Only): read the CURRENT milestone, refuse
+    the submit when its edge is not the transported one (a writer chained a
+    replacement before this read), then apply ``fields`` via ``edit`` and
+    update. Legal under either concurrency mode: ``locking``'s shared read lock
+    holds the compared row until the flush, and ``optimistic``'s
+    observed-``in_z`` gate closes zero rows —
+    ``OptimisticLockConflictError`` — if one is chained after it."""
 
     def fn(tx: Transaction) -> None:
-        current = tx.find(Balance.where(Balance.id == id).as_of(tx_time=edge.tx_time)).result()
+        current = tx.find(Balance.where(Balance.id == id)).result()
+        current_edge = edge_of(current)
+        if current_edge.tx_time != edge.tx_time:
+            raise StaleMilestoneError(
+                f"balance {id} was superseded before this submit: the form displayed the "
+                f"milestone starting {edge.tx_time.isoformat()}, but the current one starts "
+                f"{current_edge.tx_time.isoformat()}"
+            )
         tx.update(current.edit(**fields))
 
-    db.transact(fn, concurrency="optimistic")
+    db.transact(fn, concurrency=concurrency)
 ```
 
-### Stale web edit — bitemporal (Branch, both axes transported)
+### Stale web edit — bitemporal (Branch, the displayed rectangle re-read)
 
-Spec: `python.md` §3 (the recipe) and §5 (why it runs optimistic). Graded by `tests/api/test_stale_web_edit.py` (real Postgres) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves.
+Spec: `python.md` §3 (the recipe and the edge it transports). Graded by `tests/api/test_stale_web_edit.py` (real Postgres: the clean submit and the concurrent-supersession refusal, each under both concurrency modes) and `tests/unit/test_transaction_reads.py`'s Docker-free recipe halves.
 
 ```python
 def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
@@ -1589,29 +1602,58 @@ def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
 
 
 def submit_branch_edit(
-    db: Database, *, id: int, edge: Edge, fields: Mapping[str, Any], valid_from: dt.datetime
+    db: Database,
+    *,
+    id: int,
+    edge: Edge,
+    fields: Mapping[str, Any],
+    valid_from: dt.datetime,
+    concurrency: Concurrency = "optimistic",
 ) -> None:
-    """SUBMIT time (bitemporal): re-fetch with EVERY declared axis pinned at
-    the transported edge (`as_of(tx_time=..., valid_time=...)` — the DISPLAY
-    coordinate, licensing the optimistic re-fetch) inside an OPTIMISTIC
-    transaction, apply ``fields`` via ``edit``, and issue a PLAIN
-    (unbounded) bitemporal correction effective from ``valid_from`` (the
-    mutation's OWN Valid-Time instant `B` — the everyday "this correction takes
-    effect from B onward" idiom, `m-bitemp-write-006`; independent of the
-    displayed edge's own Valid-Time coordinate, which only licenses the
-    re-fetch: ``valid_from`` equal to the displayed rectangle's own
-    `from_z` degenerates the head interval to empty and is a build-time
-    caller error, out of this recipe's scope). A concurrent split since the
-    render leaves the observed row's ``in_z`` stale — the gated close still
-    addresses the displayed rectangle by its own Valid-Time end, but its gate
-    matches zero rows, ``OptimisticLockConflictError``; an untouched
-    rectangle's gate matches, and the edit lands."""
+    """SUBMIT time (bitemporal): re-read the displayed RECTANGLE — Valid Time
+    pinned at the transported coordinate (`as_of(valid_time=...)`, which
+    selects which rectangle was displayed; a finite Valid-Time pin is the
+    writable retroactive correction), Transaction Time left at its latest
+    default so the read answers the rectangle's current milestone. Refuse the
+    submit when that milestone's edge is not the transported one, then apply
+    ``fields`` via ``edit`` and issue a PLAIN (unbounded) bitemporal
+    correction effective from ``valid_from`` (the mutation's OWN Valid-Time
+    instant `B` — the everyday "this correction takes effect from B onward"
+    idiom, `m-bitemp-write-006`; independent of the displayed edge's own
+    Valid-Time coordinate, which only selects the rectangle: ``valid_from``
+    equal to the displayed rectangle's own `from_z` degenerates the head
+    interval to empty and is a build-time caller error, out of this recipe's
+    scope). A concurrent split between this read and the flush leaves the
+    observed row's ``in_z`` stale — the gated close still addresses the
+    displayed rectangle by its own Valid-Time end, but its gate matches zero
+    rows, ``OptimisticLockConflictError``."""
 
     def fn(tx: Transaction) -> None:
-        current = tx.find(
-            Branch.where(Branch.id == id).as_of(tx_time=edge.tx_time, valid_time=edge.valid_time)
-        ).result()
+        current = tx.find(Branch.where(Branch.id == id).as_of(valid_time=edge.valid_time)).result()
+        current_edge = edge_of(current)
+        if current_edge.tx_time != edge.tx_time:
+            raise StaleMilestoneError(
+                f"branch {id} was superseded before this submit: the form displayed the "
+                f"rectangle's milestone starting {edge.tx_time.isoformat()}, but the current "
+                f"one starts {current_edge.tx_time.isoformat()}"
+            )
         tx.update(current.edit(**fields), valid_from=valid_from)
 
-    db.transact(fn, concurrency="optimistic")
+    db.transact(fn, concurrency=concurrency)
+```
+
+### Stale web edit — the staleness signal, and why either concurrency mode is legal
+
+Spec: `python.md` §3 (the recipe) and §5 (the concurrency modes). Graded by `tests/api/test_stale_web_edit.py` (real Postgres: each variant's clean submit is graded twice, once per mode, and the read-time refusal is graded under both).
+
+`StaleMilestoneError` is **application**-owned, defined by the recipe itself and shown below so the snippets above name nothing undefined. It must not borrow the framework's `OptimisticLockConflictError`: that error means an optimistic gate matched zero rows, which is neither what happened here nor something that can happen under `locking` at all. The submit body is legal under **both** modes, for different reasons — `locking` takes a shared read lock on the current row at read time, so once the edge comparison passes nothing can supersede the row before the flush; `optimistic` takes no lock, and the observed-`in_z` gate covers exactly the window between the read and the flush, raising `OptimisticLockConflictError` if a writer chains a replacement inside it.
+
+```python
+class StaleMilestoneError(RuntimeError):
+    """The displayed milestone was superseded before the submit read.
+
+    Application-owned, not framework-owned: it is the answer this recipe's own
+    edge comparison gives, and it means the same thing under either
+    concurrency mode.
+    """
 ```

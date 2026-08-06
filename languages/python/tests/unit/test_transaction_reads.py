@@ -467,9 +467,10 @@ def test_tx_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 # --------------------------------------------------------------------------- #
 # The spec §3 stale-web-edit recipe module (`parallax.conformance.            #
 # stale_web_edit`) — the Docker-free halves of the api-conformance stories:   #
-# render captures the transported edge; submit replays it optimistically.     #
+# render captures the transported edge; submit reads the CURRENT milestone    #
+# and compares its edge against the transported one.                         #
 # --------------------------------------------------------------------------- #
-def test_stale_web_edit_balance_render_then_submit_gates_on_the_transported_edge() -> None:
+def test_stale_web_edit_balance_render_then_submit_gates_on_the_observed_edge() -> None:
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     port = RecordingPort(rows=[balance_row(in_z=in_z)])
     db = db_for(BALANCE, port)
@@ -486,16 +487,46 @@ def test_stale_web_edit_balance_render_then_submit_gates_on_the_transported_edge
     assert close_sql == POSTGRES.to_driver_sql(
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
-    assert close_binds[-1] == in_z  # the TRANSPORTED edge, never a re-resolved latest
+    # The gate binds the coordinate the submit's OWN read observed. The
+    # transported edge never reaches the statement — it is only ever compared,
+    # and the comparison passing is what says the two coordinates agree.
+    assert close_binds[-1] == in_z
     # The chained replacement row preserves fields omitted from the submitted edit.
     chain_binds = cast("tuple[object, ...]", write_ops[1][2])
     assert "A-1" in chain_binds
     assert Decimal("9.00") in chain_binds
 
 
+def test_stale_web_edit_balance_submit_refuses_a_milestone_superseded_before_the_read() -> None:
+    # The render read one milestone; by the submit read a concurrent writer has
+    # chained a replacement, so the CURRENT milestone's edge is not the
+    # transported one. The recipe's own comparison refuses, and nothing is
+    # authored — the earlier of the two points staleness surfaces at.
+    rendered_in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    superseding_in_z = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+    port = RecordingPort(
+        row_queue=[
+            [balance_row(in_z=rendered_in_z)],
+            [balance_row(in_z=superseding_in_z)],
+        ]
+    )
+    db = db_for(BALANCE, port)
+
+    _node, edge = stale_web_edit.render_balance_milestone(db, id=1)
+    assert edge.tx_time == rendered_in_z
+
+    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
+        stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
+    assert not any(op[0] == "write" for op in port.ops)
+
+
 def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict() -> None:
-    # A concurrent writer chained a replacement between render and submit: the
-    # observed `in_z` is stale, the gated close matches ZERO rows.
+    # The later of the two points staleness surfaces at: the submit read saw
+    # the milestone the form displayed, so the comparison passes, and a writer
+    # chains a replacement between that read and the flush. The observed `in_z`
+    # is stale by then, so the gated close matches ZERO rows -- which is the
+    # window `optimistic` covers by gating and `locking` covers by holding a
+    # shared read lock on the row the comparison passed on.
     in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
     port = RecordingPort(rows=[balance_row(in_z=in_z)], write_affected=0)
     db = db_for(BALANCE, port)
@@ -505,10 +536,8 @@ def test_stale_web_edit_balance_submit_conflict_raises_optimistic_lock_conflict(
         stale_web_edit.submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("9.00")})
 
 
-def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
-    from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
-    branch_row: Row = {
+def _branch_milestone_row(*, from_z: dt.datetime, in_z: dt.datetime) -> Row:
+    return {
         "br_id": 1,
         "name": "Old Name",
         "from_z": from_z,
@@ -517,7 +546,16 @@ def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
         "out_z": INFINITY_INSTANT,
         "address": None,
     }
-    port = RecordingPort(rows=[branch_row])
+
+
+def test_stale_web_edit_branch_render_then_submit_pins_valid_time_only() -> None:
+    # The bitemporal variant transports both coordinates but replays them
+    # differently: Valid Time is PINNED, because a finite Valid-Time pin selects
+    # which rectangle was displayed and stays writable, while Transaction Time
+    # is COMPARED against the rectangle's current milestone.
+    from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
+    port = RecordingPort(rows=[_branch_milestone_row(from_z=from_z, in_z=in_z)])
     db = db_for(MODELS["branch"], port)
 
     node, edge = stale_web_edit.render_branch_milestone(db, id=1)
@@ -532,13 +570,48 @@ def test_stale_web_edit_branch_render_then_submit_pins_both_axes() -> None:
         fields={"name": "New Name"},
         valid_from=dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
     )
+    submit_read_binds = cast("tuple[object, ...]", [op for op in port.ops if op[0] == "read"][1][2])
+    # The transported Valid-Time coordinate reaches the submit read's own
+    # containment terms; the Transaction-Time one never reaches a statement.
+    assert from_z.isoformat() in submit_read_binds
+    assert in_z.isoformat() not in submit_read_binds
     write_ops = [op for op in port.ops if op[0] == "write"]
     close_sql = cast("str", write_ops[0][1])
     close_binds = cast("tuple[object, ...]", write_ops[0][2])
     assert close_sql.startswith("update branch set out_z = ")
-    assert in_z in close_binds  # the transported Transaction-Time coordinate gates the close
+    assert in_z in close_binds  # the OBSERVED Transaction-Time coordinate gates the close
     # The correction's replacement rows carry the edited field.
     assert any("New Name" in cast("tuple[object, ...]", op[2]) for op in write_ops[1:])
+
+
+def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_read() -> None:
+    # The Valid-Time pin still selects the displayed RECTANGLE, so a concurrent
+    # correction is not hidden by it: the pinned re-read answers that
+    # rectangle's current milestone, whose Transaction-Time coordinate is the
+    # concurrent writer's, and the comparison refuses.
+    from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    rendered_in_z = dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
+    superseding_in_z = dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
+    port = RecordingPort(
+        row_queue=[
+            [_branch_milestone_row(from_z=from_z, in_z=rendered_in_z)],
+            [_branch_milestone_row(from_z=from_z, in_z=superseding_in_z)],
+        ]
+    )
+    db = db_for(MODELS["branch"], port)
+
+    _node, edge = stale_web_edit.render_branch_milestone(db, id=1)
+    assert edge.tx_time == rendered_in_z
+
+    with pytest.raises(stale_web_edit.StaleMilestoneError, match="superseded"):
+        stale_web_edit.submit_branch_edit(
+            db,
+            id=1,
+            edge=edge,
+            fields={"name": "New Name"},
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        )
+    assert not any(op[0] == "write" for op in port.ops)
 
 
 # --------------------------------------------------------------------------- #

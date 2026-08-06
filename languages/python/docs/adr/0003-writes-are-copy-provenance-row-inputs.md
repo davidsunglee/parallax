@@ -124,3 +124,26 @@ omitted key means un-authored rather than null — the same
 explicit-versus-defaulted distinction the serializer already draws. An edit
 whose effective change set is empty yields no row at all rather than an
 identity-only one, so "nothing to write" has a single representation.
+
+## Amendment (2026-08, COR-88): the transported edge is compared, not replayed as a pin
+
+The decision above is unchanged — the stale-web-edit workflow still needs no
+merge-back gate, and it still transports the displayed milestone's edge rather
+than reconstructing a coordinate. What this amendment replaces is how the
+submit half consumes it.
+
+The submit reads the **current** milestone and compares its Transaction-Time
+coordinate against the transported one, refusing the submit with the
+application's own error when they differ. Pinning the re-fetch at the
+transported coordinate was doing two jobs — selecting the displayed milestone,
+and asserting it was still current — and only the second was ever wanted on
+that axis. A pin cannot make the assertion, because it selects the displayed
+milestone whether or not it is still current. A bitemporal target still pins
+Valid Time at the transported coordinate: that pin genuinely selects which
+rectangle was displayed, and a finite Valid-Time pin is the writable
+retroactive correction.
+
+The consequence for concurrency is that the workflow no longer depends on a
+mode. Staleness before the submit read is caught by the comparison; staleness
+between the read and the flush is caught by optimistic mode's observed-`in_z`
+gate or prevented by locking mode's shared read lock on the compared row.

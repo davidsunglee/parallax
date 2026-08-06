@@ -2201,7 +2201,8 @@ or descriptor authoring form and performs no audit stamping.
   and is always finite — never `LATEST`, never absent-because-scanned. The
   strict accessors keep replay code narrowing-free: a caller replaying an
   Entity's declared dimensions reads `edge.tx_time` as a plain `datetime` and
-  passes it straight to `as_of(...)` (the stale-web-edit recipe below). The
+  either passes it straight to `as_of(...)` or compares it against a freshly
+  read edge (the stale-web-edit recipe below). The
   `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
   builds an ordinary valid Find Query with no Snapshot feature metadata. After
@@ -2329,33 +2330,51 @@ or descriptor authoring form and performs no audit stamping.
   `Edge` answers each declared dimension's start instant as a plain `datetime`
   (`edge.tx_time` is the displayed milestone's own `tx_start`, mapped
   to `in_z`) — and sends the
-  whole edge with the form. On submit, the service re-fetches with **every
-  declared dimension** pinned at the transported edge —
-  `as_of(tx_time=edge.tx_time)` for a
-  Transaction-Time-Only Entity,
-  `as_of(tx_time=edge.tx_time,
-  valid_time=edge.valid_time)` for a Bitemporal one; a replay passes exactly
-  its Entity's declared dimensions, so
-  every `as_of` argument is strictly `datetime`-typed with no narrowing —
-  inside an optimistic transaction, applies the payload
-  fields to a copy, and updates. A milestone's from-instant lies inside its
-  own `[start, end)` interval on each dimension by construction, so the
-  re-fetch selects exactly the **displayed** rectangle — never a different
-  Valid-Time rectangle reached through a defaulted-Latest dimension — even
-  after a concurrent
-  writer has chained a replacement: the transaction observes the displayed
-  `in_z`, and the concurrent chain leaves a current row whose fresh `in_z`
-  fails the observed-`in_z` gate (a zero-row close — the conflict; a Bitemporal
-  Entity's close additionally *addresses* the observed rectangle's own
-  Valid-Time end, in both modes, so it means exactly that rectangle whether or
-  not it gates, per `m-bitemp-write`), while an
-  untouched row succeeds. Weaker transports fail: the `LATEST` sentinel is
-  not replayable (it re-resolves to whatever milestone is current at submit
-  time), and a wall-clock display instant is racy because Transaction-Time instants
-  order by **assignment**, not commit — a writer whose transaction began
+  whole edge with the form. On submit, the service reads the **current**
+  milestone and **compares** its Transaction-Time coordinate against the
+  transported one: `edge_of(current).tx_time != edge.tx_time` is the
+  application's own staleness test, and the refusal it raises is the
+  application's own error rather than a framework one — no framework error
+  carries the meaning "the milestone the form displayed is no longer the
+  current one", and the framework is not a party to this comparison under
+  either concurrency mode. A
+  Transaction-Time pin cannot make that assertion in a comparison's place: it
+  *selects* the displayed milestone whether or not it is still current, which
+  is the one thing the submit needs to know. A **Bitemporal** Entity still
+  pins Valid Time at the transported coordinate —
+  `as_of(valid_time=edge.valid_time)`, strictly `datetime`-typed with no
+  narrowing — because a milestone's from-instant lies inside its own
+  `[start, end)` interval by construction, so that pin selects exactly the
+  **displayed** rectangle rather than a different one reached through a
+  defaulted-Latest dimension; its Transaction-Time axis is left at the latest
+  default, so the read answers that rectangle's current milestone. The service
+  then applies the payload fields to a copy and updates.
+
+  Staleness surfaces at two points and the recipe covers both. A writer who
+  chained a replacement **before** the submit read is caught by the
+  comparison, which authors no DML at all. A writer who chains one **between**
+  the submit read and the flush is caught by the write: the transaction
+  observed the current `in_z`, and the concurrent chain leaves a row whose
+  fresh `in_z` fails the observed-`in_z` gate (a zero-row close — the conflict;
+  a Bitemporal Entity's close additionally *addresses* the observed
+  rectangle's own Valid-Time end, in both modes, so it means exactly that
+  rectangle whether or not it gates, per `m-bitemp-write`), while an untouched
+  row succeeds. The recipe is therefore legal under **both** concurrency
+  modes, for different reasons (§5): `locking` takes a shared read lock on the
+  current row at read time, so once the comparison passes nothing can
+  supersede that row before the flush, while `optimistic` takes no lock and
+  the gate covers exactly that window.
+
+  Weaker transports fail. The `LATEST` sentinel is not a coordinate: it
+  re-resolves to whatever milestone is current at submit time, so a comparison
+  against it holds vacuously and the stale edit lands. A wall-clock display
+  instant is not the milestone's own coordinate: Transaction-Time instants
+  order by **assignment**, not commit, so a writer whose transaction began
   before the display fetch can commit a replacement whose `in_z` predates the
-  captured instant, which a wall-clock replay then selects, letting the stale
-  overwrite pass. Edge transport is Reladomo's own answer with the detach
+  captured instant — a wall-clock value need not equal the `in_z` of the
+  milestone actually displayed, and comparing against a coordinate that is not
+  the milestone's identity answers a question the submit did not ask. Only the
+  edge is exact. Edge transport is Reladomo's own answer with the detach
   removed: its detached copy carries the milestone's `IN_Z` offline and the
   merge-back gate binds that carried coordinate — transport, never
   reconstruction. The idiom requires no detached objects.

@@ -1,7 +1,11 @@
 """The spec §3 stale-web-edit recipe, both variants, against real Postgres.
 
-The scenarios exercise the `HistoricalObservationError` locking-mode rule in
-`python.md` §5 as well as the render-then-submit recipe in §3.
+Every submit runs twice, once per concurrency mode: the recipe reads the
+current milestone and asserts currency by comparing edges in its own code, so
+it is legal under both. A separate closure written out by hand — never the
+recipe — pins a milestone in the Transaction-Time past instead, which is what
+still exercises the `HistoricalObservationError` locking-mode rule in
+`python.md` §5.
 
 Neither variant maps to a single active corpus case one-to-one (every
 `m-opt-lock`/`m-bitemp-write` `conflict`-shape case that touches this same
@@ -35,6 +39,7 @@ from parallax.conformance.class_models import MODELS
 from parallax.conformance.read_models import Balance
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.stale_web_edit import (
+    StaleMilestoneError,
     render_balance_milestone,
     render_branch_milestone,
     submit_balance_edit,
@@ -43,7 +48,7 @@ from parallax.conformance.stale_web_edit import (
 from parallax.conformance.vo_models import Address, Branch, Geo
 from parallax.core import opt_lock
 from parallax.core.entity._model import model_of
-from parallax.core.unit_work import OptimisticLockConflictError
+from parallax.core.unit_work import Concurrency
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, Transaction
 
@@ -53,6 +58,12 @@ _BRANCH = MODELS["branch"]
 _I1 = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _I2 = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 _I3 = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+
+# Both modes grade every submit. They protect the window between the submit
+# read and the flush differently -- `locking` holds a shared read lock on the
+# compared row, `optimistic` gates the close on the observed `in_z` -- and the
+# recipe depends on neither, so its outcome is the same under each.
+_MODES: tuple[Concurrency, ...] = ("optimistic", "locking")
 
 
 def _seed_balance(db: Database, *, id: int = 1) -> None:
@@ -75,7 +86,10 @@ def _seed_branch(db: Database, *, id: int = 1) -> None:
 # --------------------------------------------------------------------------- #
 # The AUDIT-ONLY variant (Balance — a single Transaction-Time dimension).                #
 # --------------------------------------------------------------------------- #
-def test_audit_only_stale_web_edit_updates_the_displayed_milestone(provisioner: Any) -> None:
+@pytest.mark.parametrize("concurrency", _MODES)
+def test_audit_only_stale_web_edit_updates_the_displayed_milestone(
+    provisioner: Any, concurrency: Concurrency
+) -> None:
     provisioner.reset(model_of(_BALANCE), {})
     db = connect(provisioner.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
     _seed_balance(db)
@@ -83,11 +97,46 @@ def test_audit_only_stale_web_edit_updates_the_displayed_milestone(provisioner: 
     node, edge = render_balance_milestone(db, id=1)  # RENDER time
     assert node.value == Decimal("100.00")
 
-    submit_balance_edit(db, id=1, edge=edge, fields={"value": Decimal("150.00")})  # SUBMIT time
+    submit_balance_edit(  # SUBMIT time
+        db, id=1, edge=edge, fields={"value": Decimal("150.00")}, concurrency=concurrency
+    )
 
     current = db.find(Balance.where(Balance.id == 1)).result()
     assert current.value == Decimal("150.00")
     assert current.acct_num == "A"  # the merge preserves untouched fields
+
+
+@pytest.mark.parametrize("concurrency", _MODES)
+def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
+    provisioner: Any, concurrency: Concurrency
+) -> None:
+    # A concurrent writer chains a replacement BETWEEN the render and the
+    # submit, so the submit's own read of the CURRENT milestone answers an edge
+    # the form never displayed. The recipe's comparison catches that before it
+    # authors anything -- the earlier of the two points staleness surfaces at,
+    # and the one no gate and no lock can cover, because it happened before the
+    # transaction started.
+    provisioner.reset(model_of(_BALANCE), {})
+    db = connect(provisioner.port, _BALANCE, clock=ScriptedClock([_I1, _I3]))
+    _seed_balance(db)
+
+    _node, edge = render_balance_milestone(db, id=1)  # RENDER time -- the stale edge
+
+    peer_db = connect(provisioner.peer(), _BALANCE, clock=ScriptedClock([_I2]))
+
+    def concurrent_write(tx: Transaction) -> None:
+        current = tx.find(Balance.where(Balance.id == 1)).result()
+        tx.update(current.edit(value=Decimal("200.00")))
+
+    peer_db.transact(concurrent_write)
+
+    with pytest.raises(StaleMilestoneError, match="superseded"):
+        submit_balance_edit(
+            db, id=1, edge=edge, fields={"value": Decimal("150.00")}, concurrency=concurrency
+        )
+
+    current = db.find(Balance.where(Balance.id == 1)).result()
+    assert current.value == Decimal("200.00")  # the stale edit never landed
 
 
 def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode(
@@ -115,7 +164,10 @@ def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode
 # --------------------------------------------------------------------------- #
 # The BITEMPORAL variant (Branch — both axes transported).                    #
 # --------------------------------------------------------------------------- #
-def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(provisioner: Any) -> None:
+@pytest.mark.parametrize("concurrency", _MODES)
+def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(
+    provisioner: Any, concurrency: Concurrency
+) -> None:
     provisioner.reset(model_of(_BRANCH), {})
     db = connect(provisioner.port, _BRANCH, clock=ScriptedClock([_I1, _I2]))
     _seed_branch(db)
@@ -126,18 +178,29 @@ def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(provisioner: 
     # SUBMIT time — the correction takes effect from I2 onward, distinct from
     # the displayed rectangle's own Valid-Time start (I1): a `valid_from`
     # equal to the rectangle's own `from_z` degenerates the head interval.
-    submit_branch_edit(db, id=1, edge=edge, fields={"name": "Renamed Branch"}, valid_from=_I2)
+    submit_branch_edit(
+        db,
+        id=1,
+        edge=edge,
+        fields={"name": "Renamed Branch"},
+        valid_from=_I2,
+        concurrency=concurrency,
+    )
 
     current = db.find(Branch.where(Branch.id == 1)).result()
     assert current.name == "Renamed Branch"
     assert current.address is not None  # the untouched VO document survives the merge
 
 
-def test_bitemporal_stale_web_edit_optimistic_conflict_surfaces(provisioner: Any) -> None:
-    # A concurrent writer chains a replacement rectangle BETWEEN the render
-    # and the submit: the transported edge's own `in_z` is now stale, so the
-    # submit's gated close matches zero rows -- the conflict, surfaced
-    # through the PUBLIC verb, never a detached object's own merge-back.
+@pytest.mark.parametrize("concurrency", _MODES)
+def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
+    provisioner: Any, concurrency: Concurrency
+) -> None:
+    # A concurrent writer chains a replacement rectangle BETWEEN the render and
+    # the submit. The submit's Valid-Time pin still selects the rectangle the
+    # form displayed, but its Transaction-Time axis reads that rectangle's
+    # CURRENT milestone, whose edge is the concurrent writer's -- so the
+    # comparison refuses the stale submit before it authors anything.
     provisioner.reset(model_of(_BRANCH), {})
     db = connect(provisioner.port, _BRANCH, clock=ScriptedClock([_I1, _I3]))
     _seed_branch(db)
@@ -154,11 +217,18 @@ def test_bitemporal_stale_web_edit_optimistic_conflict_surfaces(provisioner: Any
 
     peer_db.transact(concurrent_write)
 
-    with pytest.raises(OptimisticLockConflictError):
-        # SUBMIT time — the correction was never applied (the close never
-        # affects any row), so its own `valid_from` value is immaterial to
-        # the conflict; any instant distinct from the rectangle's own start.
-        submit_branch_edit(db, id=1, edge=edge, fields={"name": "My Stale Edit"}, valid_from=_I3)
+    with pytest.raises(StaleMilestoneError, match="superseded"):
+        # SUBMIT time — nothing is ever applied, so the correction's own
+        # `valid_from` is immaterial; any instant distinct from the rectangle's
+        # own start.
+        submit_branch_edit(
+            db,
+            id=1,
+            edge=edge,
+            fields={"name": "My Stale Edit"},
+            valid_from=_I3,
+            concurrency=concurrency,
+        )
 
     current = db.find(Branch.where(Branch.id == 1)).result()
     assert current.name == "Renamed By Someone Else"  # the stale edit never landed
