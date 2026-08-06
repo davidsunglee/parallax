@@ -515,6 +515,22 @@ def test_a_net_zero_edit_of_a_rekeyed_value_is_refused_rather_than_answering_non
     assert "'id'" in refusal.value.message
 
 
+def test_a_recorded_name_the_value_supplies_no_attribute_for_is_refused() -> None:
+    # The other side of the pairing, reached through the RECORDED half of
+    # `edited_row`'s selection rather than the key half: `extra` is declared by
+    # the resolved identity and named by the record, and this narrower class
+    # carries no attribute to compare it against its original. Suppliedness is
+    # judged before effectiveness because weighing effectiveness would itself
+    # read that attribute, escaping the closed code set with an `AttributeError`.
+    narrow = Widget(id=1, label="a")
+    object.__setattr__(narrow, CHANGE_RECORD_SLOT, {"extra": "x"})
+    with pytest.raises(EntityRowError) as refusal:
+        row_codec_of(WIDER_MODEL).edited_row(narrow)
+    assert refusal.value.code == "entity-row-member-missing"
+    assert "'extra'" in refusal.value.message
+    assert refusal.value.identity == Widget.identity
+
+
 def test_a_never_edited_value_derives_no_edited_row() -> None:
     with pytest.raises(EntityRowError) as refusal:
         _accounts().edited_row(_account())

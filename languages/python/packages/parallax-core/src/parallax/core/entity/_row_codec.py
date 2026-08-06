@@ -150,25 +150,27 @@ class EntityRowCodec:
 
         Refusal follows selection, and effectiveness is weighed afterwards: the
         whole selection — the primary key and every recorded name — is judged
-        before a net-zero edit can answer ``None``, because what the rule
-        protects is a selection the codec cannot key. So a recorded name the
-        resolved identity does not declare is refused even when the edit that
-        touched it restored the original value, and a value whose class supplies
-        no attribute for a selected key member is refused even when its chain
-        nets to zero.
+        from both sides before a net-zero edit can answer ``None``, because what
+        the rule protects is a selection the codec cannot emit. So a recorded
+        name the resolved identity does not declare is refused even when the edit
+        that touched it restored the original value, and a value whose class
+        supplies no attribute for a selected member — key or recorded — is
+        refused even when its chain nets to zero. Weighing effectiveness first
+        would read that attribute to compare it, so the judgement has to precede
+        the comparison rather than merely the emission.
         """
         facts, names = self._resolved(value)
         record = _change_record(facts, value)
         touched = {
-            names.py_to_name.get(py_name, py_name): (py_name, original)
-            for py_name, original in record.items()
+            names.py_to_name.get(py_name, py_name): original for py_name, original in record.items()
         }
         self._require_declared(facts, touched, "edited_row")
         row = self._identity_row(facts, names, value, "edited_row")
+        py_names = self._require_supplied(facts, names, touched, "edited_row")
         effective = frozenset(
             canonical
-            for canonical, (py_name, original) in touched.items()
-            if not _assignment_matches_original(getattr(value, py_name), original)
+            for canonical, original in touched.items()
+            if not _assignment_matches_original(getattr(value, py_names[canonical]), original)
         )
         if not effective:
             return None
@@ -367,7 +369,13 @@ def _change_record(facts: _RowFacts, value: object) -> Mapping[str, object]:
 
 def _is_change_record(candidate: object) -> bool:
     """Whether the private slot holds a readable Change Record: a mapping from
-    member names to the values they held when the chain first touched them."""
+    member names to the values they held when the chain first touched them.
+
+    Readability is a question about the carrier's shape alone. Whether the names
+    it holds can be declared and emitted belongs to the member rule, which judges
+    them beside the primary key as one selection; deciding it here would report
+    corruption for a member a selection merely cannot emit.
+    """
     return isinstance(candidate, dict) and all(
         isinstance(key, str) for key in cast("dict[object, object]", candidate)
     )
