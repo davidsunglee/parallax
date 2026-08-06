@@ -1550,16 +1550,28 @@ Conformance coverage, the active slice claim, the Python deferred list,
 `_DEFERRED_EXECUTION_FEATURES`, and any applicable ledger entry advance
 together.
 
-A class-backed Domain Model exposes its model-bound capabilities through two
-named seams and no composite value:
+A Domain Model exposes its model-bound capabilities through two named seams and
+no composite value:
 
 ```text
 graph_construction_of(model: DomainModel) -> EntityGraphConstruction   # §3
 row_codec_of(model: DomainModel)          -> EntityRowCodec            # §5
 ```
 
-Each seam answers one capability and is retained by the model on first reach, so
-repeat calls for one model return the same value. Both are reached from
+Each seam answers one capability and is **total**: every accepted Domain Model
+reaches both and neither ever answers absence, because a capability derives from
+the accepted Metamodel and every model has one. A descriptor-backed model
+composes no Entity Class, so the graph construction it reaches can instantiate
+nothing and refuses each allocation as
+`GraphConstructionError(entity-graph-invalid-entity)` (§3), while the codec it
+reaches is fully functional — the codec resolves an Entity Identity against
+declared metadata and never consults the Entity Identity/Entity Class index
+(§5). Refusing a descriptor-backed model is therefore the job of the caller that
+needs classes — `Database.connect`, by name and before adapter work — and never
+of a seam answering absence.
+
+Each seam is retained by the model on first reach, so repeat calls for one model
+return the same value. Both are reached from
 `parallax.core.entity`, and neither is re-exported from top-level
 `parallax.core`. There is no `EntityRuntime`, no capability pair, tuple, or record, and no
 keyed capability bag: read materialization crosses graph construction alone,
@@ -2393,21 +2405,32 @@ or descriptor authoring form and performs no audit stamping.
   ```
 
   `ModelLocation` is the accepted closed union `MetamodelIssue` already uses,
-  and `member_name` carries the authored name where the name resolved to no
-  member and there is therefore no location. There
-  is deliberately no `.code` attribute: selecting one violation to expose would
-  misreport the others, which is what `codes` is for.
+  and every violation carries one. A violation of a member the authored name
+  resolved to locates **at that member** — `AttributeLocation`,
+  `RelationshipLocation`, or `ValueObjectAttributeLocation` — and carries the
+  member's name. A violation of a name that resolved to **no** member locates at
+  the `EntityLocation` of the Entity whose declaration was searched, with
+  `member_name` carrying the authored name; the location degrades to the Entity
+  rather than becoming absent, because a member location would have to name a
+  member the model does not declare. `edit-use-edit` examines no member, so it
+  carries that same `EntityLocation` and a `member_name` of `None`. The Entity
+  is known at every one of these surfaces, so no violation is ever located at
+  `ModelRoot`. There is deliberately no `.code` attribute: selecting one
+  violation to expose would misreport the others, which is what `codes` is for.
 
   Reporting is **aggregated, not first-failure**, as core ADR 0001 requires.
   Every member the call names is examined and each contributes **at most one**
   violation — its own first verdict in the shared judgement's settled rule
   order — with resolution preceding judgement, so a name that resolves to no
-  member contributes its resolution violation and nothing else. Violations are ordered
-  by canonical location key then code, exactly as accumulated Metamodel Issues
-  are, so a report never depends on caller keyword order. `edit-use-edit` is
-  the one refusal that examines no member at all. No cause is retained: the
-  error is raised `from None`, and each violation's message carries the
-  judgement's own rendered text.
+  member contributes its resolution violation and nothing else. Violations are
+  ordered by canonical location key, then code, then `member_name` with an unset
+  name first — the first two terms exactly as accumulated Metamodel Issues are
+  ordered, and the third because two names that reached no member share one
+  `EntityLocation` and one code and would otherwise tie. Ordering is total, so a
+  report never depends on caller keyword order. `edit-use-edit` is the one
+  refusal that examines no member at all. No cause is retained: the error is
+  raised `from None`, and each violation's message carries the judgement's own
+  rendered text.
 
   `edit-value-mismatch` preserves the judgement's deliberate collapse of scalar
   type, Value Object document, multiplicity, and nullability failures into one
@@ -2728,13 +2751,29 @@ or descriptor authoring form and performs no audit stamping.
   **serialized** values; the asymmetry is preserved deliberately rather than
   incidentally.
 
-  `edited_row` requires accepted Edited Copy provenance — a value carrying no
-  Change Record raises `entity-row-no-change-record` and a malformed one raises
-  `entity-row-malformed-provenance` — and returns the identity row plus the
-  **effective** caller-authored changes, those whose current value differs from
-  the recorded original. It preserves first-touched originals across a chain and
-  returns `None` for a net-zero edit, so "nothing to write" has exactly one
-  representation. Provenance comparison is stated rather than implied: a
+  `edited_row` requires accepted Edited Copy provenance and returns the identity
+  row plus the **effective** caller-authored changes, those whose current value
+  differs from the recorded original. It preserves first-touched originals
+  across a chain and returns `None` for a net-zero edit, so "nothing to write"
+  has exactly one representation.
+
+  A **Change Record** is a mapping from each member the edit chain touched to
+  the value that member held when it was first touched, stored in one private
+  first-party slot that only `edit(...)` ever writes. Its two refusals are told
+  apart by that slot rather than by its contents: a value carrying **no** Change
+  Record raises `entity-row-no-change-record` — the ordinary refusal of a plain,
+  never-edited value — while a value whose slot holds something that is not a
+  Change Record raises `entity-row-malformed-provenance`. The second reports
+  corruption of private first-party state rather than classifying anything a
+  developer authored, which is why the two are separate codes rather than one:
+  collapsing an unreadable carrier into "never edited" would name the wrong
+  defect and leave the corruption unreported. A recorded name the resolved
+  identity does not declare is not a provenance defect — it is the same
+  populated-member case `full_row` reports, so it raises
+  `entity-row-member-missing`, judged after the carrier's shape so that a
+  record which is not a Change Record is never read for member names.
+
+  Provenance comparison is stated rather than implied: a
   `one` value compares as a **mask over the keys the caller authored**, a `many`
   value compares as a **whole** because its elements have no identity, and an
   omitted key means un-authored rather than null — the same
