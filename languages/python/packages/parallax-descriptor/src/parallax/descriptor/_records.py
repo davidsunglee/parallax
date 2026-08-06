@@ -422,7 +422,14 @@ def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
 
 
 def family_root_name(metamodel: Metamodel, entity: Entity) -> str | None:
-    """The name of ``entity``'s family root, or ``None`` if it has none.
+    """The CANONICAL name of ``entity``'s family root, or ``None`` if it has none.
+
+    Canonical rather than local because this value identifies a family: a local
+    name may be declared in more than one namespace of one model, so two
+    independent families whose roots share a bare name would otherwise answer
+    with the same string and merge. ``Entity.canonical_name`` is the spelling
+    that is unique model-wide, and it is also what :attr:`Metamodel.by_name`
+    always keys, so the result stays a usable lookup key.
 
     ``None`` covers both a non-participant and a participant whose ancestry does
     not resolve to a root: :func:`declaring_entity` already falls back to
@@ -435,7 +442,7 @@ def family_root_name(metamodel: Metamodel, entity: Entity) -> str | None:
     resolved = declaring_entity(metamodel, entity)
     if resolved.inheritance is None or resolved.inheritance.role != "root":
         return None
-    return resolved.name
+    return resolved.canonical_name
 
 
 def _role_of(entity: Entity) -> InheritanceRole | None:
