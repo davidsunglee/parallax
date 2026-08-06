@@ -2743,10 +2743,17 @@ or descriptor authoring form and performs no audit stamping.
   but the resolved identity does not declare raises
   `entity-row-member-missing` rather than being dropped — the codec can emit no
   canonical key for it, and silently discarding a value the caller authored
-  would signal nothing. The rule reaches an operation's own selection and
-  nothing else: `edited_row` carries no untouched member by contract, so a
-  populated undeclared member the edit never touched is outside its selection
-  and outside its judgement, while `full_row` on that same value still raises.
+  would signal nothing. **Refusal follows emission**, so the rule reaches an
+  operation's own selection and nothing else. The harm it names is losing a
+  value the operation would otherwise have emitted, and an operation that drops
+  members by contract — `identity_row` every non-key member, `edited_row` every
+  untouched one — loses nothing by dropping one more. So a populated undeclared
+  member an edit never touched is outside `edited_row`'s selection and outside
+  its judgement, while `full_row` on that same value still raises. Judging the
+  populated set uniformly instead would refuse a keyed write over a member no
+  keyed write emits, and it would refuse it on exactly the cross-model value the
+  resolution-not-ownership rule above deliberately accepts, whose class is free
+  to declare members this model does not.
 
   **Rows are fresh, plain, caller-owned `dict[str, object]`**, keyed by
   canonical Attribute names and ordered by family-effective member declaration
