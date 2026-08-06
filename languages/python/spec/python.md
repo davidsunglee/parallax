@@ -2754,10 +2754,16 @@ or descriptor authoring form and performs no audit stamping.
   key plus the members the Change Record names. Neither side alone would do:
   metadata cannot know what the caller populated, and the class cannot be the
   authority on which members the model declares. A member an operation selects
-  but the resolved identity does not declare raises
-  `entity-row-member-missing` rather than being dropped — the codec can emit no
-  canonical key for it, and silently discarding a value the caller authored
-  would signal nothing. **Refusal follows selection**, so the rule reaches an
+  but **cannot emit** raises `entity-row-member-missing` rather than being
+  dropped, and that one code names the one harm from either side of the pairing:
+  the resolved identity declares no such member, so no canonical key names it,
+  or the value's class carries no attribute for one it does declare. The second
+  side reaches only the cross-model value resolution admits, whose own
+  declaration of the same Entity is free to key it by other members — an
+  `identity_row` that dropped those would hand a keyed write an unkeyed row.
+  Silently discarding a value the caller authored, and emitting a row short of
+  what the selection claims, both signal nothing.
+  **Refusal follows selection**, so the rule reaches an
   operation's own selection and nothing else — neither the populated set at
   large nor the narrower set the finished row carries. The harm it names is
   losing a member the operation's selection claims, and an operation that drops
@@ -2775,9 +2781,16 @@ or descriptor authoring form and performs no audit stamping.
   not.
 
   **Rows are fresh, plain, caller-owned `dict[str, object]`**, keyed by
-  canonical Attribute names and ordered by family-effective member declaration
-  order, base-first, so a row reads like the declaration and is a function of
-  the model and the value rather than of caller keyword order. Physical names
+  canonical Attribute names and ordered by an explicit category pass over the
+  family-effective members — Attributes in declaration order, base-first, then
+  top-level Value Objects in theirs — the same category-then-declaration-order
+  shape every other ordered projection of a model already takes
+  (`m-storage-layout`'s Column claim order, `m-descriptor`'s derived
+  primary-key index). A row's key order is therefore a function of the model
+  alone, never of caller keyword order and never of the value's class: where a
+  declaration interleaves an Attribute and a Value Object, that interleaving is
+  recoverable only from the class, while the accepted Metamodel a row is derived
+  from keeps the two as separate declaration-ordered sequences. Physical names
   never appear: the canonical-member-to-default-column rule stays authoritative,
   so `taxID` is emitted as `taxID` and its column `tax_i_d` is
   `m-storage-layout`'s business. `identity_row` is the primary-key row and
