@@ -171,6 +171,27 @@ def test_family_root_name_resolves_a_root_and_reports_none_off_a_family() -> Non
     assert family_root_name(Metamodel(entities=(plain,)), plain) is None
 
 
+def test_family_root_name_spells_a_namespaced_root_canonically() -> None:
+    # The value identifies a family, and a bare root name is not an identity: a
+    # model may declare the same local name in two namespaces, so the local
+    # spelling would give two independent families one answer.
+    root = Entity(
+        name="Record",
+        namespace="catalog",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+    )
+    leaf = Entity(
+        name="Variant",
+        namespace="catalog",
+        table="variant",
+        inheritance=Inheritance(role="concrete-subtype", parent="catalog.Record"),
+    )
+    meta = Metamodel(entities=(root, leaf))
+    assert family_root_name(meta, leaf) == "catalog.Record"
+    assert family_root_name(meta, root) == "catalog.Record"
+
+
 def test_family_root_name_is_none_for_an_ancestry_that_reaches_no_root() -> None:
     cyclic = _cyclic_pair()
     assert family_root_name(cyclic, cyclic.entity("A")) is None

@@ -69,6 +69,10 @@ def family_of(metamodel: Metamodel) -> Family:
 def family_attributes(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]:
     """Every attribute declared anywhere in ``entity``'s inheritance family.
 
+    Membership is decided by the root's CANONICAL identity
+    (:func:`~parallax.descriptor._records.family_root_name`), so two independent
+    families whose roots share a bare name across namespaces stay apart.
+
     Assumes attribute names are unique within one family (the shared-table /
     ancestry-derived column set is a disjoint union, m-inheritance).
     """

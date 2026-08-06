@@ -11,7 +11,12 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
-from parallax.conformance._descriptor_family import family_attributes, family_of, validate
+from parallax.conformance._descriptor_family import (
+    family_attributes,
+    family_of,
+    family_primary_key,
+    validate,
+)
 from parallax.core.inheritance import InheritanceError
 from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
 from parallax.descriptor._serde import deserialize
@@ -160,6 +165,54 @@ def test_family_attributes_is_the_entitys_own_attributes_outside_a_family() -> N
     account = _MODELS["account"]
     entity = account.entity("Account")
     assert family_attributes(account, entity) == entity.attributes
+
+
+def test_two_families_with_same_named_roots_in_different_namespaces_stay_apart() -> None:
+    # A local Entity name may be declared in more than one namespace of one
+    # model, roots included. Family membership therefore has to key on the
+    # root's CANONICAL identity: keyed on the bare one, both families answer
+    # "Record" and merge, so each side's family-effective primary key picks up
+    # the OTHER root's key attribute and no row can satisfy the composite.
+    descriptor = deserialize(
+        {
+            "entities": [
+                {
+                    "name": "Record",
+                    "namespace": "catalog",
+                    "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                    "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
+                },
+                {
+                    "name": "Record",
+                    "namespace": "archive",
+                    "inheritance": {"role": "root", "strategy": "table-per-concrete-subtype"},
+                    "attributes": [{"name": "archiveId", "type": "int64", "primaryKey": True}],
+                },
+                {
+                    "name": "CatalogVariant",
+                    "namespace": "catalog",
+                    "table": "catalog_variant",
+                    "inheritance": {"role": "concrete-subtype", "parent": "catalog.Record"},
+                    "attributes": [{"name": "catalogLabel", "type": "string", "maxLength": 16}],
+                },
+                {
+                    "name": "ArchiveVariant",
+                    "namespace": "archive",
+                    "table": "archive_variant",
+                    "inheritance": {"role": "concrete-subtype", "parent": "archive.Record"},
+                    "attributes": [{"name": "archiveLabel", "type": "string", "maxLength": 16}],
+                },
+            ]
+        }
+    )
+    catalog = descriptor.entity("catalog.CatalogVariant")
+    archive = descriptor.entity("archive.ArchiveVariant")
+    assert [attr.name for attr in family_attributes(descriptor, catalog)] == [
+        "id",
+        "catalogLabel",
+    ]
+    assert [attr.name for attr in family_primary_key(descriptor, catalog)] == ["id"]
+    assert [attr.name for attr in family_primary_key(descriptor, archive)] == ["archiveId"]
 
 
 def _cyclic_pair() -> Metamodel:
