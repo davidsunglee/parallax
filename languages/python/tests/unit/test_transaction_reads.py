@@ -258,9 +258,7 @@ def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
     # before any DML — the copy carries the pinned view's own read-only state
     # (`transaction-time-pin-read-only`), and no concurrency mode is a way past
     # that, because the Transaction-Time past is never rewritten. The mode
-    # therefore selects nothing here, which is the point of parametrizing it:
-    # optimistic mode once licensed this write and chained a replacement
-    # milestone over history.
+    # therefore selects nothing here, which is the point of parametrizing it.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
 
