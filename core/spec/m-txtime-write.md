@@ -35,6 +35,38 @@ Key invariants the suite pins down:
 This matches `AuditOnlyTemporalDirector` / `GenericBiTemporalDirector`'s
 close-old-insert-new discipline (research §6), restricted to Transaction Time.
 
+### The Transaction-Time past is never rewritten
+
+Across the required parity surface, Parallax never rewrites the Transaction-Time
+past. Every write **MUST** reach the new state by appending — closing the current
+milestone and chaining whatever successors the mutation defines (`terminate`
+defines none) — never by editing or removing a milestone that is already
+superseded. A write based on an observation of a *historical* milestone is no
+exception: it still addresses `out_z = infinity` and never copies a finite
+historical end into that address (*The close addresses a Milestone Target*,
+below). So the Transaction-Time past records what the system knew, and a read of
+it is stable under concurrent writing.
+
+The invariant reaches every surface that authors these writes, which is what
+makes a view pinned at a finite Transaction-Time instant **read-only** rather
+than merely inadvisable: mutating one raises the neutral
+`transaction-time-pin-read-only` error and emits no DML (`m-identity-map`).
+
+The append is what the suite grades, so the cases grading it discharge the
+invariant. `m-txtime-write-002` and `-005` assert the resulting milestone rows —
+`-005` chains onto persisted history and carries the superseded prior through
+`then.tableState` unchanged; `m-txtime-write-003` asserts that a `terminate`
+leaves no current row while deleting nothing; `m-identity-map-010` and
+`m-bitemp-write-016` assert the refusal at the mutation surface.
+
+The administrative operations that would widen this invariant are
+`m-bitemp-write`'s MAY-tier `insertForRecovery`, `purge`, and
+`inactivateForArchiving` — they write verbatim milestone bounds or physically
+delete a milestone chain, and they sit outside the required parity surface.
+Naming them here is non-normative and licenses nothing: providing one widens the
+invariant deliberately, wherever that operation is specified, rather than taking
+an exception this invariant admits.
+
 ### Composition with inheritance
 
 A milestone-chaining write on an inheritance participant (a concrete subtype of a
