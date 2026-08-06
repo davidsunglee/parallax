@@ -269,7 +269,7 @@ def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # A `model_copy()` with no `update=` carries forward the SAME (empty)
     # Change Record: the sparse-update no-op rule (spec §3/§5).
     port = RecordingPort()
-    fetched = mm.Account(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
+    fetched = mm.Account.model_construct(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
     edited = fetched.model_copy(update={"balance": Decimal("100.00")})  # net-zero touch
 
     def fn(tx: Transaction) -> None:
@@ -557,7 +557,7 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
     # sibling equal-bounds pin immediately below for the corrected
     # precedence made visible).
     port = RecordingPort()
-    fetched = WherePosition(
+    fetched = WherePosition.model_construct(
         id=1,
         acct_num="A",
         value=Decimal("100.00"),
@@ -587,7 +587,7 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
     # return would let an equal/reversed window slip through when the change
     # set is empty.
     port = RecordingPort()
-    fetched = WherePosition(
+    fetched = WherePosition.model_construct(
         id=1,
         acct_num="A",
         value=Decimal("100.00"),

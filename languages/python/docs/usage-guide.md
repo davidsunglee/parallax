@@ -808,7 +808,7 @@ Corpus case: `m-unit-work-001`
 ```python
 def insert_then_read_your_own_write(db: Database) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
-        tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1))
+        tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
 
     return db.transact(fn)  # the dependent find observes the flushed insert
@@ -946,7 +946,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
     def fn(tx: Transaction) -> list[Entity]:
         current = tx.find(Account.where(Account.id == 1)).result()  # observe the version
         deleted = tx.find(Account.where(Account.id == 3)).result()  # observe the version
-        tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00"), version=1))
+        tx.insert(Account(id=9, owner="Noether", balance=Decimal("5.00")))
         tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
         tx.delete(deleted)
         return list(tx.find(Account.where(Account.balance < 50.00)).results())
@@ -961,7 +961,7 @@ Corpus case: `m-unit-work-011`
 ```python
 def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
     def doomed(tx: Transaction) -> None:
-        tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1))
+        tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         raise RuntimeError("abort")
 
     with contextlib.suppress(RuntimeError):

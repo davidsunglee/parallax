@@ -29,7 +29,7 @@ class WriteAssignmentError(ValueError):
     """A write assignment names an unassignable target or an ill-typed value.
 
     ``rule`` is the shared classification every caller reuses verbatim in its own
-    error text: ``"primary-key"``, ``"read-only"``, ``"optimistic-locking"``, or
+    error text: ``"primary-key"``, ``"read-only"``, ``"framework-owned"``, or
     ``"value-type-mismatch"``.
     """
 
@@ -42,7 +42,8 @@ def judge_assignment(member: AttributeMetadata | ValueObjectMetadata, value: obj
     """Judge writing ``value`` to the already-resolved ``member``, or raise.
 
     A scalar Attribute refuses a primary-key, read-only, or framework-owned
-    (optimistic-locking) target outright; otherwise ``None`` is a clearing
+    target outright — three distinct designations, so the verdict says which one
+    it is; otherwise ``None`` is a clearing
     assignment legal only where the member is nullable, and any other value must
     conform to the declared `m-core` neutral type after the developer input
     policy's coercion. A Value Object occurrence refuses ``None`` unless nullable
@@ -63,10 +64,9 @@ def _judge_attribute(attribute: AttributeMetadata, value: object) -> None:
         raise WriteAssignmentError("primary-key", f"{name}: primary-key fields may not be assigned")
     if attribute.read_only:
         raise WriteAssignmentError("read-only", f"{name}: read-only fields may not be assigned")
-    if attribute.optimistic_locking:
+    if attribute.framework_owned:
         raise WriteAssignmentError(
-            "optimistic-locking",
-            f"{name}: framework-owned fields (the version column) may not be assigned",
+            "framework-owned", f"{name}: framework-owned fields may not be assigned"
         )
     if value is None:
         if not attribute.nullable:

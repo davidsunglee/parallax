@@ -334,8 +334,14 @@ def _attribute(
     generation: PkGeneration = APPLICATION_ASSIGNED,
     nullable: bool = False,
     max_length: int | None = None,
+    framework_owned: bool = False,
 ) -> AttributeMetadata:
-    """One Attribute whose column defaults from its canonical name."""
+    """One Attribute whose column defaults from its canonical name.
+
+    ``framework_owned`` is stated rather than derived here, as the derived
+    primary-key Index beside it is: this alternate implementation carries the
+    accepted facts a frontend computes, without recomputing them.
+    """
     return AttributeMetadata(
         identity=AttributeIdentity(entity, name),
         type=type,
@@ -343,6 +349,7 @@ def _attribute(
         primary_key=PrimaryKey(generation) if key else NOT_PRIMARY_KEY,
         nullable=nullable,
         max_length=max_length,
+        framework_owned=framework_owned,
     )
 
 
@@ -450,8 +457,8 @@ def parity_model(facets: Mapping[FacetKey[Any], object] | None = None) -> Metamo
                 declared_persistence=PersistenceMode.READ_ONLY,
                 declared_attributes=(
                     _attribute(AUDIT, "id", INT64, key=True),
-                    _attribute(AUDIT, "txStart", TIMESTAMP, column="in_z"),
-                    _attribute(AUDIT, "txEnd", TIMESTAMP, column="out_z"),
+                    _attribute(AUDIT, "txStart", TIMESTAMP, column="in_z", framework_owned=True),
+                    _attribute(AUDIT, "txEnd", TIMESTAMP, column="out_z", framework_owned=True),
                 ),
                 declared_as_of_axes=(
                     AsOfAxisMetadata(

@@ -276,11 +276,11 @@ updates are rejected before DML. Each mapped Audit Attribute uses its Python
 property name as its fixed physical column; the temporal `revised_at` exception
 uses `in_z` through its `tx_start` alias. `terminated_by` always attributes an
 explicit State Termination, never an ordinary update's revision closure.
-At full-row extraction, an explicitly supplied Audit Attribute raises the
-generic `FrameworkOwnedAttributeError` also shared by axis-governed
-attributes; the existing `FrameworkOwnedAxisError` remains its temporal
-compatibility subtype. Copy and set-based assignment paths retain their
-established `ModelCopyError` and framework-owned assignment rejections.
+Designating an Audit Attribute framework-owned is the whole cost of adding one:
+construction refuses a caller-supplied value where it is authored, copy and
+set-based assignment paths reach the one shared framework-owned assignment
+rejection, and row derivation omits the member rather than emitting it as an
+authored assignment.
 _Avoid_: audit field, caller-authored provenance, `*_time`
 
 **Audit Authoring**:

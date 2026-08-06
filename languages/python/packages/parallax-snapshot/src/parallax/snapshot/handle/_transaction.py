@@ -134,13 +134,11 @@ class Transaction:
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
-        spec §5): every member the instance actually SET. Raises
-        :class:`~parallax.core.entity.base.FrameworkOwnedAxisError` when
-        ``instance`` itself SET an axis-governed attribute
-        (``in_z``/``out_z``, bitemporal
-        ``from_z``/``thru_z``) — those columns are framework-stamped at flush
-        (the Clock Strategy), never caller-authored. :func:`full_row` rejects
-        that invalid state during construction.
+        spec §5): every member the instance actually SET. A framework-owned
+        member is never among them: the interval bounds (``in_z``/``out_z``,
+        bitemporal ``from_z``/``thru_z``) are stamped at flush from the Clock
+        Strategy and the version is derived, so the Entity constructor refuses a
+        caller-authored one and the row carries none.
 
         ``valid_from`` is the plain Bitemporal insert's Valid-Time instant — the
         open rectangle's lower bound ``[valid_from, infinity)`` (`m-bitemp-write` "insert /
@@ -168,10 +166,9 @@ class Transaction:
         that does not satisfy ``valid_from < until``
         (equal or reversed bounds) raises at THIS call, before any buffering
         (:func:`validate_until`, `python.md` §5 "all validated at build").
-        Raises :class:`~parallax.core.entity.base.FrameworkOwnedAxisError`
-        when ``instance`` itself SET an axis-governed attribute — the window
-        bounds come from THESE verb arguments, never from instance fields
-        (the Reladomo verb-argument precedent, decision 2)."""
+        The window bounds come from THESE verb arguments, never from instance
+        fields (the Reladomo verb-argument precedent, decision 2), which is why
+        the Entity constructor refuses an authored one outright."""
         record, declaring, valid_from_literal = self._prepare_keyed_write(
             instance, "insertUntil", valid_from
         )

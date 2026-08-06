@@ -37,7 +37,6 @@ __all__ = [
     "METAMODEL_INVALID_ENTITY_REFERENCE",
     "METAMODEL_LOOKUP_CODES",
     "EntityDefinitionError",
-    "FrameworkOwnedAxisError",
     "GraphConstructionError",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
@@ -217,13 +216,3 @@ class ModelCopyError(TypeError):
 class ProvenanceError(ValueError):
     """An instance carries no Change Record (never produced via ``model_copy``)
     and cannot drive a sparse ``tx.update`` (spec §5)."""
-
-
-class FrameworkOwnedAxisError(ValueError):
-    """A fresh instance names an axis-governed attribute at construction.
-
-    The temporal write path stamps every milestone bound itself — from the Clock
-    Strategy and the verb's own window arguments — so a caller-supplied value is
-    never a legitimate alternative and is rejected rather than silently
-    discarded.
-    """

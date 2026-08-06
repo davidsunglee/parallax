@@ -162,7 +162,7 @@ def run_boundary_actions(tx: Transaction, actions: Sequence[str]) -> Account | N
             current = current.model_copy(update={"balance": current.balance + _BUMP})
             tx.update(current)
         elif action == "create":
-            current = Account(id=90, owner="Boundary", balance=Decimal("0.00"), version=1)
+            current = Account(id=90, owner="Boundary", balance=Decimal("0.00"))
             tx.insert(current)
         elif action == "delete":
             if current is None:

@@ -33,6 +33,7 @@ from _transact_support import (
     db_for,
     deadlock,
     new_account,
+    read_account,
 )
 
 from _support import mirrored_models as mm
@@ -183,7 +184,7 @@ def test_a_non_transactional_find_opens_no_unit_of_work_to_observe_into() -> Non
     # unit of work behind it is handed no observation collector and builds no
     # observation record at all (`test_transaction_reads.py` pins that half).
     port = RecordingPort(rows=[NEW_ROW])
-    assert account_db(port).find(mm.Account.where(mm.Account.id == 7)).results() == [new_account()]
+    assert account_db(port).find(mm.Account.where(mm.Account.id == 7)).results() == [read_account()]
     assert [op[0] for op in port.ops] == ["read"]
 
 

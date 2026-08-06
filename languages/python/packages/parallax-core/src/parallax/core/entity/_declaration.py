@@ -89,6 +89,7 @@ from parallax.core.metamodel import (
     default_column_name,
     derive_primary_key_index,
     derive_temporal_structure,
+    designate_framework_owned,
     resolve_entity_reference,
     temporality_profile,
     value_object_metadata,
@@ -179,9 +180,11 @@ DECLARATION_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
 """The ``UnresolvedEntityDeclaration`` members the Entity metaclass publishes on
 the class object itself."""
 
-# The reserved query-root and introspection spellings, plus the declaration
-# members above. A member reusing one would be shadowed by the metaclass
-# declaration at class level, so the collision is rejected where it is authored.
+# The reserved query-root and introspection spellings, the instance-level copy
+# verb, plus the declaration members above. A member reusing one either loses to
+# the metaclass declaration at class level or wins over the frontend's own
+# binding — a declared `edit` installs its descriptor over the copy verb and
+# silently disables editing — so the collision is rejected where it is authored.
 RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
     {
         "all",
@@ -193,6 +196,7 @@ RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
         "history",
         "meta",
         "descriptor",
+        "edit",
         *DECLARATION_MEMBER_NAMES,
     }
 )
@@ -296,8 +300,6 @@ class MemberNames:
     the same object the ``Attr`` descriptor installs, so a rule stated over a
     member reaches the identical facts from a name and from an expression."""
     pk_py: frozenset[str]
-    framework_owned_py: frozenset[str]
-    axis_governed_py: frozenset[str]
     vo_classes: dict[str, type]
 
 
@@ -410,6 +412,10 @@ def build_class(
     rejection whole rather than inheriting a blanket exemption for a type it
     never binds.
     """
+    if mint is None and kind is DeclarationKind.ENTITY:
+        # Before the configuration below, which itself binds a reserved
+        # ``model_*`` name: the rejection is about what the class body authored.
+        _reject_shadowed_class_names(cls_name, ns)
     ns["model_config"] = ConfigDict(
         frozen=True, ignored_types=ignored_types if mint is not None else ()
     )
@@ -847,7 +853,7 @@ def _build_value_object(
             )
         )
 
-    _install_fields(annotations, ns, shapes, nested_classes, many_py, axis_governed=frozenset())
+    _install_fields(annotations, ns, shapes, nested_classes, many_py, framework_owned=frozenset())
     ns[_SHAPE] = ValueObjectShape(
         shape=ValueObjectShapeDeclaration(
             key=ValueObjectShapeKey(),
@@ -885,17 +891,11 @@ def _build_entity(
 
     annotations = _class_body_annotations(ns)
     globalns = _module_globals(ns)
-    _reject_shadowed_class_names(cls_name, ns)
     if axes:
         _reject_temporal_redeclaration(cls_name, annotations, ns)
     if shape_owner:
         _inject_temporal_members(annotations, ns, axes)
     axis_members = _axis_metadata(identity, axes) if shape_owner else ()
-    axis_names = {
-        name
-        for axis in axis_members
-        for name in (axis.start_attribute.name, axis.end_attribute.name)
-    }
 
     attributes: list[AttributeMetadata] = []
     relationships: list[UnresolvedRelationshipDeclaration] = []
@@ -911,8 +911,6 @@ def _build_entity(
     relationship_py: dict[str, str] = {}
     relationship_shapes: dict[str, RelationshipAnnotation] = {}
     pk_py: set[str] = set()
-    framework_owned_py: set[str] = set()
-    axis_governed_py: set[str] = set()
     vo_classes: dict[str, type] = {}
     many_py: set[str] = set()
     shapes: dict[str, _Shape] = {}
@@ -995,16 +993,23 @@ def _build_entity(
         if attr_spec.primary_key is not NOT_PRIMARY_KEY:
             pk_py.add(py_name)
             _reject_incompatible_generation(attr_spec.primary_key, shape.base, where)
-        if attr_spec.optimistic_locking:
-            framework_owned_py.add(py_name)
-        if canonical in axis_names:
-            axis_governed_py.add(py_name)
         attribute = _attribute(identity, canonical, column, attr_spec, shape, where)
         attributes.append(attribute)
         members[canonical] = attribute
 
+    # Both frontends derive the designation through the one shared rule, and the
+    # descriptors installed below carry the designated Metadata — which is what
+    # lets a class composed into no model judge an assignment the way the whole
+    # model would.
+    declared_attributes = designate_framework_owned(attributes, axis_members)
+    members.update({attribute.identity.name: attribute for attribute in declared_attributes})
+    framework_owned_py = frozenset(
+        name_to_py[attribute.identity.name]
+        for attribute in declared_attributes
+        if attribute.framework_owned
+    )
     _install_fields(
-        annotations, ns, shapes, vo_classes, many_py, axis_governed=frozenset(axis_governed_py)
+        annotations, ns, shapes, vo_classes, many_py, framework_owned=framework_owned_py
     )
     container = _container(cls_name, header)
     ns[_DECLARATION] = EntityDeclaration(
@@ -1012,13 +1017,13 @@ def _build_entity(
         container=container,
         persistence=_persistence(cls_name, header),
         layout=_layout(cls_name, header),
-        attributes=tuple(attributes),
+        attributes=declared_attributes,
         relationships=tuple(relationships),
         value_objects=tuple(occurrences),
         as_of_axes=axis_members,
         inheritance=_accepted_inheritance(role, parent),
         indices=_indices(
-            identity, container, tuple(attributes), axis_members, header.indices, py_to_name
+            identity, container, declared_attributes, axis_members, header.indices, py_to_name
         ),
     )
     ns[_MEMBERS] = MemberNames(
@@ -1029,8 +1034,6 @@ def _build_entity(
         relationship_shapes=relationship_shapes,
         members={py_name: members[canonical] for py_name, canonical in py_to_name.items()},
         pk_py=frozenset(pk_py),
-        framework_owned_py=frozenset(framework_owned_py),
-        axis_governed_py=frozenset(axis_governed_py),
         vo_classes=vo_classes,
     )
     cls = _pydantic_class(mcs, cls_name, bases, ns)
@@ -1343,7 +1346,7 @@ def _member_spec(value: object, where: str, *, expect: str) -> AttrSpec | RelSpe
 
 
 def _reject_reserved(where: str, py_name: str) -> None:
-    if py_name in RESERVED_MEMBER_NAMES or py_name.startswith("model_"):
+    if _is_reserved_member_name(py_name):
         raise EntityDefinitionError(
             code="entity-reserved-member-name",
             message=f"{where}: reuses a reserved query-root or introspection name",
@@ -1357,13 +1360,23 @@ def _reject_shadowed_class_names(cls_name: str, ns: dict[str, object]) -> None:
     carry, so a body binding — a member's declaration value, a method, or a class
     variable — reusing one makes the declaration unreachable rather than merely
     shadowing it. An annotation-only member is caught by the member walk instead.
+
+    The ``model_*`` prefix is checked here for the same reason it is checked
+    there: an unannotated ``def model_copy`` is a binding rather than a declared
+    member, and admitting it would reinstate a copy door the edit surface
+    refuses. This runs against the body as authored, before the engine installs
+    its own configuration under one of those names.
     """
-    taken = sorted(RESERVED_MEMBER_NAMES & set(ns))
+    taken = sorted(name for name in ns if _is_reserved_member_name(name))
     if taken:
         raise EntityDefinitionError(
             code="entity-reserved-member-name",
             message=f"{cls_name}.{taken[0]}: reuses a reserved query-root or introspection name",
         )
+
+
+def _is_reserved_member_name(py_name: str) -> bool:
+    return py_name in RESERVED_MEMBER_NAMES or py_name.startswith("model_")
 
 
 def _reject_temporal_redeclaration(
@@ -1545,24 +1558,30 @@ def _install_fields(
     vo_classes: dict[str, type],
     many_py: set[str],
     *,
-    axis_governed: frozenset[str],
+    framework_owned: frozenset[str],
 ) -> None:
     """Rewrite the class body into ordinary Pydantic field declarations.
 
     ``Attr[T]`` collapses to ``T`` so Pydantic builds an inner-typed field, the
     declaration value leaves the namespace, and a member whose absence is
     representable takes the matching Python default: ``None`` for a nullable
-    member or a framework-stamped axis member, and the empty tuple for a Many
-    occurrence.
+    member or a framework-owned one, and the empty tuple for a Many occurrence.
+
+    A framework-owned member is defaulted because the caller never supplies its
+    value and is refused for trying, so requiring one at construction would make
+    the Entity unconstructible; the value the framework supplies arrives by
+    hydration, which builds through Pydantic's validation-free path.
     """
     for py_name, shape in shapes.items():
         annotations[py_name] = _field_annotation(shape)
         if shape.multiplicity is Multiplicity.MANY:
             ns[py_name] = ()
-        elif shape.nullable or py_name in axis_governed:
+        elif shape.nullable or py_name in framework_owned:
             ns[py_name] = None
         else:
             ns.pop(py_name, None)
+    for py_name in framework_owned:
+        ns[f"_reject_framework_owned_{py_name}"] = _framework_owned_validator(py_name)
     for py_name, vo_class in vo_classes.items():
         multiplicity = Multiplicity.MANY if py_name in many_py else Multiplicity.ONE
         ns[f"_validate_vo_{py_name}"] = _value_object_validator(py_name, vo_class, multiplicity)
@@ -1576,6 +1595,33 @@ def _field_annotation(shape: _Shape) -> object:
     if shape.nullable:
         return inner | None
     return inner
+
+
+def _framework_owned_validator(py_name: str) -> Any:
+    """A ``mode="before"`` validator refusing a caller-authored framework-owned value.
+
+    The refusal belongs at construction, where the mistake is, rather than
+    several steps later when a row is derived. It raises ``ValueError`` so
+    Pydantic reports it as an ordinary ``ValidationError`` alongside every other
+    rejection of that call — construction is not an edit, so it is deliberately
+    not the edit family's refusal. Hydration is unaffected: it builds through
+    ``model_construct`` and never reaches the validating constructor.
+
+    A defaulted member skips its validators, so omitting the member is how a
+    caller legitimately constructs one.
+    """
+
+    def _validate(_cls: type, value: object) -> object:
+        # Pydantic distinguishes a `(cls, value)` validator from a `(value, info)`
+        # one only by `isinstance(func, classmethod)`, hence the explicit wrap
+        # below even though this validator never reads `cls`.
+        raise ValueError(
+            f"{py_name}: framework-owned members are supplied by the framework and are never "
+            "authored — omit it and let the write path stamp it"
+        )
+
+    bound = cast("Any", classmethod(_validate))
+    return field_validator(py_name, mode="before")(bound)
 
 
 def _value_object_validator(py_name: str, vo_class: type, multiplicity: Multiplicity) -> Any:

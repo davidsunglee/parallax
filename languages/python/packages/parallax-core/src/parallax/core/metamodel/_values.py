@@ -11,7 +11,8 @@ fact never reaches a consumer.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from typing import Final
 
 from parallax.core.base import NeutralType, String
@@ -386,6 +387,12 @@ class AttributeMetadata:
     absent or a positive length on a String Attribute; a nonpositive length, or
     one on any other type, raises :class:`ValueError`. Both constraints are local
     to one Attribute, so no Rule Set owns them.
+
+    ``framework_owned`` answers who supplies the value — the framework, never
+    the caller — and is derived rather than authored, by
+    :func:`designate_framework_owned`. It carries no local invariant, because
+    the fact is a function of the Entity as well as the Attribute and so cannot
+    be checked from here.
     """
 
     identity: AttributeIdentity
@@ -396,6 +403,7 @@ class AttributeMetadata:
     max_length: int | None = None
     read_only: bool = False
     optimistic_locking: bool = False
+    framework_owned: bool = False
 
     def __post_init__(self) -> None:
         if self.max_length is None:
@@ -417,6 +425,36 @@ class AsOfAxisMetadata:
     dimension: TemporalDimension
     start_attribute: AttributeIdentity
     end_attribute: AttributeIdentity
+
+
+def designate_framework_owned(
+    attributes: Iterable[AttributeMetadata], as_of_axes: Iterable[AsOfAxisMetadata]
+) -> tuple[AttributeMetadata, ...]:
+    """One Entity's declared Attributes with ``framework_owned`` derived.
+
+    The designation is true of the optimistic-lock version Attribute and of
+    every As-Of Axis endpoint, so it is a function of two levels: a flag on the
+    Attribute, and axis membership knowable only from the Entity. A frontend
+    calls this while assembling an Entity's declarations, which is what lets a
+    surface holding one declared member and no model state the same verdict as
+    one holding the whole model.
+
+    Total rather than additive: the designation each Attribute leaves with is
+    derived from these arguments alone, whatever it arrived carrying.
+    """
+    endpoints = {
+        identity for axis in as_of_axes for identity in (axis.start_attribute, axis.end_attribute)
+    }
+    return tuple(
+        attribute
+        if attribute.framework_owned == (owned := _is_framework_owned(attribute, endpoints))
+        else replace(attribute, framework_owned=owned)
+        for attribute in attributes
+    )
+
+
+def _is_framework_owned(attribute: AttributeMetadata, endpoints: set[AttributeIdentity]) -> bool:
+    return attribute.optimistic_locking or attribute.identity in endpoints
 
 
 @dataclass(frozen=True, slots=True)

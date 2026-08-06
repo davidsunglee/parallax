@@ -42,6 +42,7 @@ from parallax.core.metamodel import (
     UnresolvedRelationshipDeclaration,
     ValueObjectOccurrenceDeclaration,
     default_column_name,
+    designate_framework_owned,
     resolve,
 )
 
@@ -50,7 +51,12 @@ NAMESPACE: Final[str] = "parallax.test"
 
 @dataclass(frozen=True, slots=True)
 class Declaration:
-    """One Entity exactly as a frontend would hand it to formation."""
+    """One Entity exactly as a frontend would hand it to formation.
+
+    Including the derived ``framework_owned`` designation, which every frontend
+    computes while assembling an Entity's declarations — so a hand-built
+    declaration reaches formation carrying what a real one carries.
+    """
 
     identity: EntityIdentity
     container: StorageContainer | None = None
@@ -62,6 +68,11 @@ class Declaration:
     as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     inheritance: UnresolvedInheritance | None = None
     indices: tuple[IndexMetadata, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "attributes", designate_framework_owned(self.attributes, self.as_of_axes)
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -34,7 +34,6 @@ from parallax.core.entity._declaration import (
 )
 from parallax.core.entity._errors import (
     EntityDefinitionError,
-    FrameworkOwnedAxisError,
     ModelCopyError,
     ProvenanceError,
 )
@@ -215,9 +214,18 @@ class WireNames:
     a second spelling of it here is exactly the drift the single judgement
     exists to prevent."""
     pk_py: frozenset[str]
-    framework_owned_py: frozenset[str]
-    axis_governed_py: frozenset[str]
     vo_classes: dict[str, type]
+
+    @property
+    def framework_owned_py(self) -> frozenset[str]:
+        """The members whose values the framework supplies and the caller never
+        authors, read off :attr:`members` rather than recorded beside it — one
+        designation, projected where a Python-name question needs it."""
+        return frozenset(
+            py_name
+            for py_name, member in self.members.items()
+            if isinstance(member, AttributeMetadata) and member.framework_owned
+        )
 
 
 def wire_names_of(cls: type) -> WireNames:
@@ -228,8 +236,6 @@ def wire_names_of(cls: type) -> WireNames:
     relationship_py: dict[str, str] = {}
     members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
     pk_py: set[str] = set()
-    framework_owned_py: set[str] = set()
-    axis_governed_py: set[str] = set()
     vo_classes: dict[str, type] = {}
     declared = False
     for ancestor in reversed(cls.__mro__):
@@ -243,8 +249,6 @@ def wire_names_of(cls: type) -> WireNames:
         relationship_py.update(names.relationship_py)
         members.update(names.members)
         pk_py.update(names.pk_py)
-        framework_owned_py.update(names.framework_owned_py)
-        axis_governed_py.update(names.axis_governed_py)
         vo_classes.update(names.vo_classes)
     if not declared:
         raise EntityDefinitionError(
@@ -257,8 +261,6 @@ def wire_names_of(cls: type) -> WireNames:
         relationship_py=relationship_py,
         members=members,
         pk_py=frozenset(pk_py),
-        framework_owned_py=frozenset(framework_owned_py),
-        axis_governed_py=frozenset(axis_governed_py),
         vo_classes=vo_classes,
     )
 
@@ -283,19 +285,11 @@ def full_row(instance: Entity) -> dict[str, object]:
 
     Filtered by Pydantic's ``model_fields_set`` rather than by the declared
     member set, so a member the caller never populated is omitted and the
-    narrower insert is emitted. Raises :class:`FrameworkOwnedAxisError` when the
-    caller set an axis-governed attribute, before the row is built.
+    narrower insert is emitted. A framework-owned member is never in that set on
+    a value the caller built, because the constructor refuses one.
     """
     names = wire_names_of(type(instance))
     fields_set = instance.model_fields_set
-    supplied = sorted(names.axis_governed_py & fields_set)
-    if supplied:
-        py_name = supplied[0]
-        raise FrameworkOwnedAxisError(
-            f"{type(instance).__name__}.{py_name} ({names.py_to_name[py_name]!r}): "
-            "axis-governed attributes are framework-stamped at write time — omit it at "
-            "construction and let the verb stamp it"
-        )
     return {
         canonical: serialize_member(getattr(instance, py_name))
         for canonical, py_name in names.name_to_py.items()
@@ -481,14 +475,17 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         goes back through the ordinary constructor for the §2 input policies.
 
         ``update`` is READ EXACTLY ONCE, into a snapshot every subsequent step
-        works from — the judgement, the merge, the axis carry-forward, and the
+        works from — the judgement, the merge, the carry-forward, and the
         Change Record. Reading it again would let a stateful mapping pass
         judgement with one value and be copied with another.
 
-        An axis-governed member this copy's ``update`` never names is carried
-        forward without re-validation: a materialized current milestone's value
-        there may be the framework's open-interval sentinel, which the wrapping
-        construction never validated either.
+        A framework-owned member is carried forward without re-validation: its
+        value was never authored, so re-running it through the constructor would
+        submit stored state as a caller assignment — which that constructor
+        refuses — and a materialized current milestone's endpoint there is the
+        framework's open-interval sentinel, which the wrapping construction never
+        validated either. The copy's ``update`` cannot name one: the shared
+        judgement refuses it before any merge.
         """
         edits = dict(update) if update is not None else {}
         if not edits:
@@ -501,9 +498,10 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         declared = set(names.py_to_name)
         merged = {k: v for k, v in self.__dict__.items() if k in declared}
         merged.update(edits)
-        untouched_axis = names.axis_governed_py - set(edits)
         carry_forward = {
-            py_name: merged.pop(py_name) for py_name in untouched_axis if py_name in merged
+            py_name: merged.pop(py_name)
+            for py_name in names.framework_owned_py
+            if py_name in merged
         }
         validated = type(self)(**merged)  # re-validates the whole instance (§2 input policies)
         for py_name, value in carry_forward.items():

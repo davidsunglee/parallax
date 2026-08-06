@@ -14,6 +14,8 @@ serialized write boundary is the property that must not have moved.
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 from _transact_support import FIXED, NoIoPort, RecordingPort
 
@@ -22,6 +24,7 @@ from parallax.core import (
     DomainModel,
     Entity,
     ModelCopyError,
+    TxTemporal,
     attr,
 )
 from parallax.core.entity._model import DomainModel as _Fixed
@@ -33,6 +36,7 @@ from parallax.snapshot import QueryTargetError, SnapshotConnectionError
 from parallax.snapshot.handle import Database, Transaction
 
 _NS = "parallax.compatibility"
+_INSTANT = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
 class Widget(Entity, table="widget", namespace=_NS):
@@ -40,6 +44,11 @@ class Widget(Entity, table="widget", namespace=_NS):
     label: Attr[str] = attr(max_length=16)
     version: Attr[int] = attr(optimistic_locking=True)
     computed: Attr[str | None] = attr(max_length=16, read_only=True)
+
+
+class Gadget(TxTemporal, table="gadget", namespace=_NS):
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
 
 
 class Gizmo(Entity, table="gizmo", namespace=_NS):
@@ -50,6 +59,7 @@ class Gizmo(Entity, table="gizmo", namespace=_NS):
 # Entity of every model that composed it, so both of these are authoritative.
 WIDGETS = DomainModel(Widget)
 WIDGETS_AND_GIZMOS = DomainModel(Widget, Gizmo)
+GADGETS = DomainModel(Gadget)
 
 
 class _Source:
@@ -83,7 +93,7 @@ def test_one_entity_class_is_written_through_every_model_that_composed_it() -> N
         port = RecordingPort()
 
         def insert(tx: Transaction) -> None:
-            tx.insert(Widget(id=1, label="x", version=1))
+            tx.insert(Widget(id=1, label="x"))
 
         _db(model, port).transact(insert)
         assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
@@ -162,7 +172,7 @@ def test_a_bare_metamodel_transaction_refuses_a_read_before_it_can_force_flush()
     database = Database(port, model_of(WIDGETS), clock=FixedClock(FIXED))
 
     def body(tx: Transaction) -> None:
-        tx.insert(Widget(id=1, label="x", version=1))
+        tx.insert(Widget(id=1, label="x"))
         with pytest.raises(SnapshotConnectionError):
             tx.find(Widget.where(Widget.id == 1))
         assert [op[0] for op in port.ops] == ["begin"]
@@ -173,28 +183,30 @@ def test_a_bare_metamodel_transaction_refuses_a_read_before_it_can_force_flush()
 # --------------------------------------------------------------------------- #
 # One judgement, three callers                                                 #
 # --------------------------------------------------------------------------- #
-def _typed_verdict(member: str, value: object) -> str | None:
+def _typed_verdict(entity: type[Entity], member: str, value: object) -> str | None:
     """What ``.set(...)`` says about ``value``, or absence — the member alone."""
     try:
-        getattr(Widget, member).set(value)
+        getattr(entity, member).set(value)
     except ModelCopyError as error:
         return str(error)
     return None
 
 
-def _boundary_verdict(member: str, value: object) -> str | None:
+def _boundary_verdict(
+    model: DomainModel, entity: type[Entity], member: str, value: object
+) -> str | None:
     """The same, through the write boundary's own family-effective resolution."""
     try:
-        validate_write_assignment(model_of(WIDGETS), WIDGETS.meta(Widget), member, value)
+        validate_write_assignment(model_of(model), model.meta(entity), member, value)
     except WriteAssignmentError as error:
         return str(error)
     return None
 
 
-def _copy_verdict(member: str, value: object) -> str | None:
+def _copy_verdict(instance: Entity, member: str, value: object) -> str | None:
     """The same, through ``model_copy(update=...)``'s own name resolution."""
     try:
-        Widget(id=1, label="x", version=1).model_copy(update={member: value})
+        instance.model_copy(update={member: value})
     except ModelCopyError as error:
         return str(error)
     return None
@@ -219,8 +231,33 @@ def test_every_assignment_surface_reaches_one_verdict(member: str, value: object
     # two of them. `model_copy` is in this comparison because an edited copy
     # becomes a write: a rule it does not apply is a rule the write path is
     # entered around.
-    assert _typed_verdict(member, value) == _boundary_verdict(member, value)
-    assert _copy_verdict(member, value) == _boundary_verdict(member, value)
+    boundary = _boundary_verdict(WIDGETS, Widget, member, value)
+    assert _typed_verdict(Widget, member, value) == boundary
+    assert _copy_verdict(Widget(id=1, label="x"), member, value) == boundary
+
+
+def test_every_assignment_surface_refuses_a_temporal_endpoint_the_same_way() -> None:
+    # The second designated category, which no surface can see from the
+    # Attribute's own authored flags: the endpoint carries none, and only the
+    # Entity's As-Of Axis says it is framework-owned. The three surfaces still
+    # render one verdict, which is what deriving the designation at declaration
+    # rather than at acceptance buys.
+    boundary = _boundary_verdict(GADGETS, Gadget, "txStart", _INSTANT)
+    assert boundary == "Gadget.txStart: framework-owned fields may not be assigned"
+    assert _typed_verdict(Gadget, "tx_start", _INSTANT) == boundary
+    assert _copy_verdict(Gadget(id=1, label="x"), "tx_start", _INSTANT) == boundary
+
+
+def test_a_rejection_still_says_which_of_the_three_designations_it_is() -> None:
+    # Three distinct designations, so the classification distinguishes an
+    # Attribute the framework supplies, one the caller supplies once, and the
+    # key that addresses the row — none of them collapsed into the others.
+    rules: list[str] = []
+    for member, value in (("version", 1), ("computed", "x"), ("id", 1)):
+        with pytest.raises(WriteAssignmentError) as caught:
+            validate_write_assignment(model_of(WIDGETS), WIDGETS.meta(Widget), member, value)
+        rules.append(caught.value.rule)
+    assert rules == ["framework-owned", "read-only", "primary-key"]
 
 
 def test_every_surface_classifies_a_read_only_member_the_same_way() -> None:
@@ -231,7 +268,7 @@ def test_every_surface_classifies_a_read_only_member_the_same_way() -> None:
     with pytest.raises(ModelCopyError, match="read-only fields may not be assigned"):
         Widget.computed.set("x")
     with pytest.raises(ModelCopyError, match="read-only fields may not be assigned"):
-        Widget(id=1, label="x", version=1).model_copy(update={"computed": "x"})
+        Widget(id=1, label="x").model_copy(update={"computed": "x"})
     with pytest.raises(WriteAssignmentError) as caught:
         validate_write_assignment(model_of(WIDGETS), WIDGETS.meta(Widget), "computed", "x")
     assert caught.value.rule == "read-only"

@@ -69,7 +69,7 @@ def _deadlock() -> DatabaseError:
 
 
 def _account(account_id: int) -> Account:
-    return Account(id=account_id, owner="Newton", balance=Decimal("5.00"), version=1)
+    return Account(id=account_id, owner="Newton", balance=Decimal("5.00"))
 
 
 def _balance(balance_id: int) -> Balance:
