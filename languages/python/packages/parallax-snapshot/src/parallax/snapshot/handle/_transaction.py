@@ -178,7 +178,8 @@ class Transaction:
         (equal or reversed bounds) raises at THIS call, before any buffering
         (:func:`validate_until`, `python.md` §5 "all validated at build").
         The window bounds come from THESE verb arguments, never from instance
-        fields (the Reladomo verb-argument precedent, decision 2), which is why
+        fields: an As-Of Axis endpoint is framework-owned and the temporal write
+        path derives every interval bound itself (`python.md` §2), which is why
         the Entity constructor refuses an authored one outright."""
         record, declaring, valid_from_literal = self._prepare_keyed_write(
             instance, "insertUntil", valid_from
