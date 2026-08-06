@@ -384,6 +384,20 @@ class Entity:
         return self.name if self.namespace is None else f"{self.namespace}.{self.name}"
 
 
+def _parent_identity(entity: Entity, parent: str | None) -> str | None:
+    """The CANONICAL name a ``parent`` reference authored on ``entity`` names,
+    or ``None`` when it names nothing.
+
+    A dot-qualified reference is exact and a bare one is relative to the
+    declaring entity's own namespace (`m-metamodel` "References and foundational
+    resolution"). There is no model-wide unique-name fallback, so a bare parent
+    never reaches a same-named entity of another namespace.
+    """
+    if parent is None or entity.namespace is None or "." in parent:
+        return parent
+    return f"{entity.namespace}.{parent}"
+
+
 def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
     """The entity that actually DECLARES ``entity``'s primary key and temporal
     (as-of) axes: the family root for an inheritance participant — temporality,
@@ -403,22 +417,31 @@ def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
     ancestry-to-root walk is implemented; every caller needing a raw descriptor
     record's own declaring entity — the conformance engine's case-format
     write/read seams — composes with this rather than re-deriving it.
+
+    Every step of the walk is by CANONICAL identity: each ``parent`` resolves
+    under the exact/relative reference rule (:func:`_parent_identity`) against
+    the canonical spellings alone, and the cycle guard remembers canonical
+    names. A local name may repeat across namespaces, so a bare one identifies
+    neither the position reached nor the positions already visited — a family
+    whose chain passes through two namespaces sharing a local name is valid, and
+    treating the repeat as a revisit would report a cycle the descriptor does
+    not declare.
     """
     inheritance = entity.inheritance
     if inheritance is None:
         return entity
-    by_name = metamodel.by_name
+    by_canonical = {candidate.canonical_name: candidate for candidate in metamodel.entities}
     current = entity
     seen: set[str] = set()
     while True:
         current_inheritance = current.inheritance
         if current_inheritance is None or current_inheritance.role == "root":
             return current
-        parent = current_inheritance.parent
-        if parent is None or current.name in seen or parent not in by_name:
+        ancestor = _parent_identity(current, current_inheritance.parent)
+        if ancestor is None or current.canonical_name in seen or ancestor not in by_canonical:
             return entity
-        seen.add(current.name)
-        current = by_name[parent]
+        seen.add(current.canonical_name)
+        current = by_canonical[ancestor]
 
 
 def family_root_name(metamodel: Metamodel, entity: Entity) -> str | None:
