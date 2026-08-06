@@ -1,6 +1,6 @@
 """Testcontainers-backed MariaDB provider (dialect = "mariadb").
 
-The **second** concrete dialect behind the m-db-port database-provider seam (Phase 10),
+The MariaDB concrete dialect behind the m-db-port database-provider seam,
 proving "equivalent SQL per database, optimized per dialect" beyond Postgres.
 MariaDB is fully open-source and exercises exactly the seam points Postgres does
 not:
@@ -188,7 +188,7 @@ class MariaDbProvider:
         self._conn = connection
         self._dbname = dbname
         # Connection parameters for opening a second, independent connection to the
-        # SAME database (the Phase 11 two-node coherence seam). A peer is created
+        # SAME database. A peer is created
         # by reconnecting with these and selecting the working database.
         self._connect_params = connect_params or {}
 
@@ -288,7 +288,7 @@ class MariaDbProvider:
     def open_peer(self) -> Iterator[Node]:
         """Yield a second, independent connection to the SAME MariaDB database.
 
-        Cross-process coherence (Phase 11): node B reconnects with the provider's
+        Cross-process coherence: node B reconnects with the provider's
         own connection parameters and ``USE``\\ s the working database, so it shares
         node A's data while holding its own session. MariaDB ``execute`` COMMITs,
         so a write on node A is visible to a read on node B — the observable half
@@ -410,7 +410,7 @@ def mariadb_provider() -> Iterator[MariaDbProvider]:
 def _connect_params(container: MySqlContainer) -> dict[str, Any]:
     """The pymysql connection parameters for the booted container (sans database).
 
-    Shared by the provider's own connection and the Phase 11 peer connection, so a
+    Shared by the provider's own connection and the peer connection, so a
     coherence case's node B reaches the same server with the same credentials.
     """
     return {

@@ -1561,7 +1561,7 @@ def test_the_frozen_buffering_seam_refuses_an_unvalidated_inheritance_family_ins
 
 
 def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
-    # The ordering Phase 3 established for reads holds for a predicate write
+    # The ordering established for reads holds for a predicate write
     # too: the resolving read a materializing verb performs force-flushes
     # pending writes, so a refused predicate write must be refused before
     # `uow.read` and before `uow.buffer` — otherwise an invalid write flushes

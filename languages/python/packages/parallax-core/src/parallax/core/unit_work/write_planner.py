@@ -495,7 +495,7 @@ class WritePlanner:
         a write MEANS rather than how it reads: an inheritance-family target
         has no per-object write to select (`m-inheritance`), and a versioned
         or temporal target has no readless template at all — it materializes
-        to keyed writes at buffer time (ADR 0014), so reaching this stage is a
+        to keyed writes at buffer time, so reaching this stage is a
         caller wiring defect. Both guards are total rather than upstream-only:
         this seam is reached straight from a deserialized instruction as well
         as from the developer verbs.
@@ -1046,7 +1046,7 @@ def _non_temporal_concurrency(
     An unversioned target has nothing to gate on. A versioned one binds its
     observation as a gate when gated and records an explicit `Ungated`
     decision otherwise, whose shared read lock is what makes the write correct
-    instead (ADR 0047).
+    instead.
     """
     if version_attr is None or observed_version is None:
         return UNVERSIONED
@@ -1086,7 +1086,7 @@ def _planned_row(
 
     A versioned Entity's row derives the INITIAL version at its own Attribute
     (`m-opt-lock`), ignoring any value the row carries — the version is
-    framework-owned end to end (ADR 0013), and the initial value the caller
+    framework-owned end to end, and the initial value the caller
     already resolved is a constant rather than an observation. ``version`` is
     absent for a temporal successor row, which carries no version column.
     """

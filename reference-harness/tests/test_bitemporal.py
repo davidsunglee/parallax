@@ -1,6 +1,6 @@
-"""Unit tests for the Phase 8 full-bitemporal machinery (no database).
+"""Unit tests for full-bitemporal machinery (no database).
 
-These pin the DB-free invariants of the Phase 8 temporal slice: the bitemporal
+These pin the DB-free invariants of the bitemporal slice: the bitemporal
 DDL (a two-axis temporal entity's physical primary key spans BOTH as-of
 start columns so the milestone rectangles are admissible), and the
 write-step-count consistency of the `*Until` rectangle-split write sequences (the
@@ -146,7 +146,7 @@ def _temporal_write_input_cases():
 
 def test_temporal_write_input_holds_for_authored_cases() -> None:
     cases = _temporal_write_input_cases()
-    # The Phase 3 in-slice audit trio all carry ① (rows + at).
+    # The in-slice audit trio all carry ① (rows + at).
     assert {_case_id(case.path.stem) for case in cases} >= {
         "m-txtime-write-001",
         "m-txtime-write-002",
@@ -544,7 +544,7 @@ def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:
     assert len(update_until.golden_statements("postgres")) == 5
 
 
-# --- Phase 8 temporal inheritance composition (m-inheritance x m-audit/m-bitemp/m-sql) ---
+# --- temporal inheritance composition -----------------------------------------
 #
 # A temporal inheritance participant composes the milestone-chaining writes / as-of reads
 # with the strategy's routing + tag guard. Under table-per-hierarchy every EXISTING-ROW
@@ -766,6 +766,6 @@ def test_tpcs_temporal_union_read_dropped_branch_binds_is_rejected() -> None:
 
 def test_non_temporal_tpcs_union_read_asof_oracle_is_noop() -> None:
     # The per-branch as-of oracle is a no-op on a NON-temporal TPCS abstract union read
-    # (the existing document family), so it never touches the Phase 3-6 union cases.
+    # (the existing document family), so it never touches the non-temporal union cases.
     case = _inheritance_case("m-inheritance-050")
     _assert_temporal_union_binds(case, "postgres")  # must not raise (returns early)

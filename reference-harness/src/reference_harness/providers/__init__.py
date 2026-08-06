@@ -2,9 +2,8 @@
 
 A ``DatabaseProvider`` yields a clean, migrated, isolated database for a single
 dialect. The runner is written against this protocol only, so adding a dialect is
-a new provider behind the same seam — never a runner redesign. Phase 10 adds the
-second concrete dialect (MariaDB) alongside Postgres, proving the seam. This is
-also the seam the compatibility matrix grows along.
+a new provider behind the same seam — never a runner redesign. This is also the
+seam the compatibility matrix grows along.
 
 Each provider exposes:
 
@@ -16,7 +15,7 @@ Each provider exposes:
 * ``query(sql, binds)`` — execute a read and return rows as ordered dicts.
 * ``execute(sql, binds)`` — execute a write (DML) and return the affected count.
 
-Phase 11 adds the **two-node** seam for cross-process cache coherence:
+The **two-node** seam supports cross-process cache coherence:
 ``open_peer()`` yields a second, INDEPENDENT connection to the SAME database,
 modeling a peer application server (node B) alongside the provider's own
 connection (node A). A write committed on one connection is visible to a read on
@@ -37,7 +36,7 @@ from typing import Any, Protocol, runtime_checkable
 class Node(Protocol):
     """A single application-server node: one independent connection to the DB.
 
-    A coherence case (Phase 11) runs over two nodes — the provider itself (node A,
+    A coherence case runs over two nodes — the provider itself (node A,
     the writer) and a peer (node B) opened via :meth:`DatabaseProvider.open_peer`.
     Both expose the read/write surface against the same database; a write
     committed on one is observable by a read on the other.
@@ -83,7 +82,7 @@ class DatabaseProvider(Protocol):
     def open_peer(self) -> AbstractContextManager[Node]:  # pragma: no cover - protocol stub
         """Context-manage a second, independent connection to the SAME database.
 
-        OPTIONAL (Phase 11, cross-process coherence). The yielded :class:`Node` is
+        OPTIONAL for cross-process coherence. The yielded :class:`Node` is
         a peer application server (node B) to the provider's own connection
         (node A); a write committed on either is visible to a read on the other.
         """

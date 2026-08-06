@@ -141,7 +141,7 @@ def test_run_rejects_milestone_set_graph_entry_without_graph() -> None:
     assert list(_validator().iter_errors(_valid_run(observations)))
 
 
-# --- lifecycle observations: stateChecks + errors (COR-30) --------------------
+# --- lifecycle observations: stateChecks + errors -----------------------------
 
 
 def test_run_accepts_lifecycle_observations() -> None:

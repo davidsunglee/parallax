@@ -1,4 +1,4 @@
-"""Predicate-selected write contract tests (COR-35, no database)."""
+"""DB-free predicate-selected write contract tests."""
 
 from __future__ import annotations
 

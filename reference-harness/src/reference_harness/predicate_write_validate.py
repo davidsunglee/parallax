@@ -1,4 +1,4 @@
-"""Model-aware validation for predicate-selected write instructions (COR-35).
+"""Model-aware validation for predicate-selected write instructions.
 
 The case schema proves the instruction's structural shape.  This module resolves
 that neutral shape against a descriptor before any SQL is emitted: the predicate

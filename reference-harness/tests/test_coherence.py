@@ -1,4 +1,4 @@
-"""Unit tests for the Phase 11 cross-process coherence runner logic, DB-free.
+"""DB-free unit tests for cross-process coherence runner logic.
 
 The end-to-end two-node observation (node B re-fetches node A's committed write)
 runs against a real database in the compatibility suite (``-k coherence``). These

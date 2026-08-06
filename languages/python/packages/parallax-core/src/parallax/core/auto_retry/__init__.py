@@ -31,8 +31,8 @@ STRUCTURALLY different signal from a transient database failure, never forced
 into that hierarchy just to reuse one predicate. The Write Effect Error family
 is owned by ``m-unit-work``, which this module already depends on, so the
 canonical conflict is named DIRECTLY here rather than injected by a composition
-root whose only purpose would be carrying a type across a module boundary
-(ADR 0048). Recognizing it is not the same as retrying it: a conflict is caught
+root whose only purpose would be carrying a type across a module boundary.
+Recognizing it is not the same as retrying it: a conflict is caught
 so the caller's ``extra_retriable`` opt-in can be consulted, and stays
 non-retriable when that opt-in is absent.
 

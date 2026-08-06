@@ -1,4 +1,4 @@
-"""Unit tests for the Phase 6 (m-unit-work) scenario machinery (no database).
+"""Unit tests for the m-unit-work scenario machinery (no database).
 
 These pin the DB-free invariants of a cache / identity scenario case: the
 per-step round-trip / golden-SQL count consistency (each step's declared
@@ -53,7 +53,7 @@ def test_scenario_cases_are_discovered_and_self_describe() -> None:
             assert "roundTrips" in step
             # A step is EXACTLY ONE of a read step (carries `find`), a write step
             # (carries `write`), or a lifecycle-action step (carries `action`,
-            # m-case-format COR-30).
+            # m-case-format).
             kinds = ("find" in step) + ("write" in step) + ("action" in step)
             assert kinds == 1, "a scenario step is exactly one of find / write / action"
             if "write" in step:
@@ -399,7 +399,7 @@ def test_scenario_non_read_action_step_reads_no_entity() -> None:
     assert _scenario_step_read_entity(case, {"action": "flush", "roundTrips": 0}, []) is None
 
 
-# --- `uow` scenario-step grouping (amendment-review remediation) ------------
+# --- `uow` scenario-step grouping --------------------------------------------
 #
 # The DB-free bookkeeping (:func:`_scenario_uow_groups` / :func:`_uow_group_is_
 # doomed`) is pinned directly on the corpus's own re-authored cases; the
@@ -412,7 +412,7 @@ def test_scenario_non_read_action_step_reads_no_entity() -> None:
 
 
 def test_scenario_uow_groups_finds_the_five_reauthored_spans() -> None:
-    # Every m-unit-work case the amendment-review remediation grouped: -002's
+    # The grouped m-unit-work cases cover -002's
     # doomed pair, -005/-006's three-step commit spans, -009's four-step span,
     # -012's doomed triple (its post-abort find stays UNGROUPED).
     assert _scenario_uow_groups(_scenario_by_id("m-unit-work-002")) == {"doomed-update": [0, 1]}
@@ -453,7 +453,7 @@ class _FakeSession:
     """A canned, call-recording grouped session — the surface `_PgTxSession` /
     `_MariaTxSession` expose (`dialect` / `execute` / `query` / `commit` /
     `rollback`), with pre-programmed `query()` responses so a grouped find's
-    read-your-own-writes visibility (and, since Finding 1, its `referenceSql`
+    read-your-own-writes visibility (including its `referenceSql`
     oracle) is asserted by the TEST, not a real database."""
 
     dialect = "postgres"
@@ -647,7 +647,7 @@ def _interleaved_synthetic_case() -> Case:
 
 
 def test_grouped_scenario_reference_sql_oracle_runs_on_the_held_session() -> None:
-    # Confirmation-pass residual (Finding 1): a GROUPED find's `referenceSql`
+    # A GROUPED find's `referenceSql`
     # independent oracle must run on the SAME held session as its golden read,
     # not the top-level autocommit `db` — after an uncommitted grouped write the
     # two connections would otherwise observe DIFFERENT states, silently
@@ -672,7 +672,7 @@ def test_grouped_scenario_reference_sql_oracle_runs_on_the_held_session() -> Non
 def _uncommitted_write_then_reference_sql_synthetic_case() -> Case:
     """A minimal scenario case (Account model) whose ONE `uow` group applies an
     UNCOMMITTED write then a mid-group find carrying `referenceSql` — the
-    read-your-own-writes oracle shape Finding 1 fixes: both the golden read and
+    read-your-own-writes oracle shape: both the golden read and
     the independent oracle MUST observe the SAME (uncommitted) in-transaction
     state, so both MUST run on the group's own held session."""
     base = _scenario_by_id("m-unit-work-001")

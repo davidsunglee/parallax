@@ -216,7 +216,7 @@ class PostgresProvider:
     def open_peer(self) -> Iterator[Node]:
         """Yield a second, independent connection to the SAME Postgres database.
 
-        Cross-process coherence (Phase 11): node B is a fresh ``PostgresProvider``
+        Cross-process coherence: node B is a fresh ``PostgresProvider``
         bound to the same connection URL — its own socket, its own session — so a
         write COMMITTED on node A (this provider, autocommit) is visible to a read
         on node B, exactly as two app servers sharing one database would observe.

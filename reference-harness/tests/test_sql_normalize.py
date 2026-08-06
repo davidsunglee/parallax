@@ -193,7 +193,7 @@ def test_union_all_preserves_all_and_branch_order() -> None:
     assert order == sorted(order)
 
 
-# --- only `union all` is a canonical set operation (Phase 5 review, Finding 1) ------
+# --- only `union all` is a canonical set operation ----------------------------
 # `union all` is the ONLY canonical m-sql set operation (the TPCS abstract-read
 # lowering). A plain `union` silently DE-DUPLICATES rows — changing the read's
 # semantics — and `intersect` / `except` are never emitted; all three are non-canonical
@@ -228,7 +228,7 @@ def test_nested_plain_union_inside_union_all_is_not_canonical() -> None:
     assert not is_canonical(mixed, "postgres")
 
 
-# --- MariaDB `union all` + `char` NULL-placeholder casts (Phase 5 review, Finding 3) --
+# --- MariaDB `union all` + `char` NULL-placeholder casts ----------------------
 # The TPCS abstract-read goldens run on BOTH dialects. MariaDB's CAST target grammar
 # does not accept `varchar`, so a bounded-string placeholder casts to `char(n)`
 # (m-dialect); `decimal(p, s)` is identical on both. The MariaDB golden must be a

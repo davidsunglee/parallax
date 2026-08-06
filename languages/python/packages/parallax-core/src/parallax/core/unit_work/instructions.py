@@ -20,12 +20,12 @@ framework-honest and are enforced here:
 - **The instant surface is dimension-explicit.** Valid-Time bounds are named
   ``validFrom`` / ``until``; a bounded ``*Until`` mutation carries BOTH.
   The **Transaction-Time instant** is NOT an instruction field — it is Clock-supplied
-  flush context (ADR 0010), so the corpus's ``at`` authoring alias is an
+  flush context, so the corpus's ``at`` authoring alias is an
   UNEXPECTED key here and :func:`deserialize` rejects it (the caller-facing shape
   cannot smuggle one in).
 - **The transaction observation is not an instruction field.** The reserved
   control keys ``observedVersion`` / ``observedTxStart`` are FORBIDDEN on a durable
-  write row (ADR 0013); the observation is attached per materialized row at flush
+  write row; the observation is attached per materialized row at flush
   (:mod:`parallax.core.unit_work.planner`), never carried on the instruction.
 
 Construction is value-only (mirroring ``m-op-algebra`` nodes): structural shape is
@@ -84,7 +84,7 @@ _BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
 _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 
 # The framework-owned transaction observation is NOT durable instruction state
-# (ADR 0013): these control keys are forbidden on a write row.
+# these control keys are forbidden on a write row.
 _FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedTxStart"})
 
 
@@ -222,7 +222,7 @@ def _reject_extra(node: Mapping[str, object], allowed: frozenset[str], shape: st
     extra = sorted(set(node) - allowed)
     if extra:
         # `at` is the corpus's Clock-context alias, an UNEXPECTED key here — the
-        # canonical instruction never carries a Transaction-Time instant (ADR 0010).
+        # canonical instruction never carries a Transaction-Time instant.
         raise WriteInstructionError(f"{shape}: unexpected key(s) {extra}")
 
 

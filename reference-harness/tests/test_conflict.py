@@ -1,4 +1,4 @@
-"""Unit tests for the Phase 7 (m-detach / m-opt-lock) machinery (no database).
+"""Unit tests for the m-detach / m-opt-lock machinery (no database).
 
 These pin the DB-free invariants of the lifecycle-detach (m-detach) write-sequence
 cases and the optimistic-lock (m-opt-lock) conflict cases: a conflict case is

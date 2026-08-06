@@ -144,7 +144,7 @@ def _validate_document(value_object: dict[str, Any], document: Any) -> None:
         _validate_member(nested, document[name])
 
 
-# --- concrete-subtype write validation (m-inheritance, Phase 7) --------------
+# --- concrete-subtype write validation ----------------------------------------
 #
 # A write to an inheritance family is a CONCRETE-SUBTYPE write: its accepted fields
 # are exactly the target's ancestry chain (root + abstract ancestors + own). The

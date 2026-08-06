@@ -5073,7 +5073,7 @@ def _scenario_root_entity(case: Case) -> Entity:
     return case.model.root_entity
 
 
-# Action-step verbs (m-case-format lifecycle vocabulary, COR-30). The DML verbs
+# Action-step verbs in the m-case-format lifecycle vocabulary. The DML verbs
 # COMMIT their buffered golden SQL (a `flush` materializes pending writes, a
 # `mergeBack` / `commit` reconciles at the boundary); the READ verbs execute a
 # relationship / list query and return rows (a `load` triggers a deferred fetch,
@@ -5178,7 +5178,7 @@ def _reuse_prior_rows(
 def _assert_action_on(
     case: Case, index: int, step: dict[str, Any], pairs: list[tuple[str, list[Any]]]
 ) -> None:
-    """Validate an action step's ``on`` source indices (m-case-format, COR-30).
+    """Validate an action step's ``on`` source indices.
 
     Every index in ``on`` — a single int, or an array of coordinate-group sources —
     MUST name a REAL earlier step: ``>= 0``, strictly EARLIER than this step, and,
@@ -5466,7 +5466,7 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                 _finish_uow_group(case, index, label, group_states, dialect)
                 continue
             if "action" in step:
-                # A lifecycle ACTION step (m-case-format, COR-30): execute its golden SQL
+                # A lifecycle ACTION step: execute its golden SQL
                 # (a load / access relationship query, a flush / mergeBack / commit DML)
                 # and grade its row-level observables; identity / state / error observables
                 # are adapter-delegated (validated, then skipped on the wire lane). The
