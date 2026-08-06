@@ -14,17 +14,22 @@ framework-owned value, and is never an Audit Provenance extension point
 class, and nothing else.
 
 Input validation **resolves; it does not own.** The codec resolves the Entity
-Identity the value's class declares and refuses only when its model declares no
-such Entity, so a value from another model whose identity this model also
-declares yields a row: the row is a function of the resolved identity's declared
-members alone. The Entity Identity/Entity Class index is never consulted, which
-is also why a model composing no class at all reaches a fully functional codec.
+Identity the value's class declares and refuses at resolution only when its model
+declares no such Entity, so a value from another model whose identity this model
+also declares reaches the member rule rather than a resolution refusal: the row
+is a function of the resolved identity's declared members alone. The Entity
+Identity/Entity Class index is never consulted, which is also why a model
+composing no class at all reaches a fully functional codec.
 
 **The candidate set is the model's; the selection is the operation's.** The
 model's family-effective metadata supplies the candidates, their canonical keys,
 and their order; each operation then selects from those candidates by its own
 rule, and :data:`ENTITY_ROW_MEMBER_MISSING` reaches an operation's own selection
-and nothing else.
+and nothing else. It names one harm from either side of that pairing: the
+resolved identity declares no such member, so no canonical key names it, or the
+value's class carries no attribute for one it does declare. Both leave the
+operation unable to emit a member its selection claims, and a row is never
+emitted short of one.
 """
 
 from __future__ import annotations
@@ -69,8 +74,11 @@ class _RowFacts:
 
     Family-effective throughout: an inherited member reaches a concrete subtype
     as its own candidate, so ``members`` is the whole family-effective candidate
-    set in declaration order, base-first — which is the order every row it keys
-    is emitted in.
+    set, and its order is the order every row it keys is emitted in. That order
+    is by category — Attributes in declaration order, base-first, then top-level
+    Value Objects in theirs — chosen rather than incidental: an authored
+    interleaving of the two is recoverable only from the value's class, and a
+    row's keys are a function of the model alone.
     """
 
     identity: EntityIdentity
@@ -115,7 +123,7 @@ class EntityRowCodec:
             canonical for py_name, canonical in names.py_to_name.items() if py_name in populated
         )
         self._require_declared(facts, selected, "full_row")
-        return self._serialized(facts, names, value, selected)
+        return self._serialized(facts, names, value, selected, "full_row")
 
     def identity_row(self, value: object) -> dict[str, object]:
         """``value``'s primary-key members, keyed by canonical name.
@@ -123,11 +131,13 @@ class EntityRowCodec:
         Its values are **raw** where :meth:`full_row` and :meth:`edited_row`
         carry serialized ones — a deliberately preserved asymmetry rather than
         an accident. Its selection is the resolved identity's own declared
-        primary key, so it never reports a missing member: every candidate it
-        names came from the metadata that decides what a candidate is.
+        primary key, so it names no candidate the metadata did not supply; a
+        cross-model value whose own class keys the same Entity by other members
+        carries no attribute to read one from, and that is refused rather than
+        dropped, because an unkeyed row is no identity row.
         """
         facts, names = self._resolved(value)
-        return self._identity_row(facts, names, value)
+        return self._identity_row(facts, names, value, "identity_row")
 
     def edited_row(self, value: object) -> dict[str, object] | None:
         """``value``'s identity plus its effective caller-authored changes, or
@@ -157,8 +167,8 @@ class EntityRowCodec:
         )
         if not effective:
             return None
-        row = self._identity_row(facts, names, value)
-        row.update(self._serialized(facts, names, value, effective))
+        row = self._identity_row(facts, names, value, "edited_row")
+        row.update(self._serialized(facts, names, value, effective, "edited_row"))
         return row
 
     # --- resolution and the shared emission ------------------------------- #
@@ -237,33 +247,68 @@ class EntityRowCodec:
             identity=facts.identity,
         )
 
-    def _identity_row(self, facts: _RowFacts, names: WireNames, value: object) -> dict[str, object]:
-        row: dict[str, object] = {}
-        for canonical in facts.primary_key:
-            py_name = names.name_to_py.get(canonical)
-            if py_name is None:  # pragma: no cover - a value's class carries its own family's key
-                continue
-            row[canonical] = getattr(value, py_name)
-        return row
+    def _require_supplied(
+        self, facts: _RowFacts, names: WireNames, emitted: Iterable[str], operation: str
+    ) -> dict[str, str]:
+        """``emitted``'s canonical-to-Python names, refusing one the value cannot
+        supply.
+
+        The resolved identity decides what a candidate is; the value's class
+        decides what can be read for one. Those two are the same class only for a
+        value of this model's own: a cross-model value resolves through an
+        identity this model also declares, and its class's own declaration of
+        that Entity is free to name the members otherwise — so a selection can
+        name a member no attribute of the value answers.
+        """
+        supplied = {
+            canonical: names.name_to_py[canonical]
+            for canonical in emitted
+            if canonical in names.name_to_py
+        }
+        unsupplied = sorted(canonical for canonical in emitted if canonical not in supplied)
+        if unsupplied:
+            named = ", ".join(repr(name) for name in unsupplied)
+            raise EntityRowError(
+                code=ENTITY_ROW_MEMBER_MISSING,
+                message=(
+                    f"{operation} selects {named}, which this {facts.identity.canonical} value's "
+                    "class does not carry: its own declaration of that Entity names those members "
+                    "otherwise, and a row short of what its selection claims would signal nothing"
+                ),
+                identity=facts.identity,
+            )
+        return supplied
+
+    def _identity_row(
+        self, facts: _RowFacts, names: WireNames, value: object, operation: str
+    ) -> dict[str, object]:
+        py_names = self._require_supplied(facts, names, facts.primary_key, operation)
+        return {canonical: getattr(value, py_names[canonical]) for canonical in facts.primary_key}
 
     def _serialized(
-        self, facts: _RowFacts, names: WireNames, value: object, selected: frozenset[str]
+        self,
+        facts: _RowFacts,
+        names: WireNames,
+        value: object,
+        selected: frozenset[str],
+        operation: str,
     ) -> dict[str, object]:
-        """``selected``'s serialized values in family-effective declaration order.
+        """``selected``'s serialized values in the model's own candidate order.
 
         Iterating the candidates rather than the selection is what makes a row's
         key order a function of the model, never of the order a caller populated
         or edited members in.
         """
-        row: dict[str, object] = {}
-        for canonical in facts.members:
-            if canonical not in selected or canonical in facts.framework_owned:
-                continue
-            py_name = names.name_to_py.get(canonical)
-            if py_name is None:  # pragma: no cover - a value's class carries every family member
-                continue
-            row[canonical] = serialize_member(getattr(value, py_name))
-        return row
+        emitted = tuple(
+            canonical
+            for canonical in facts.members
+            if canonical in selected and canonical not in facts.framework_owned
+        )
+        py_names = self._require_supplied(facts, names, emitted, operation)
+        return {
+            canonical: serialize_member(getattr(value, py_names[canonical]))
+            for canonical in emitted
+        }
 
 
 def row_codec_of(model: DomainModel) -> EntityRowCodec:

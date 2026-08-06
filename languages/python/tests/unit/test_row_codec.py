@@ -21,7 +21,7 @@ from _support import mirrored_models as mm
 from _support import snapshot_models as sm
 from _support import value_object_models as vm
 from parallax.conformance import read_models as rm
-from parallax.core import Attr, Entity, attr
+from parallax.core import Attr, Entity, ValueObject, attr
 from parallax.core.entity import (
     ENTITY_ROW_CODES,
     DomainModel,
@@ -67,8 +67,32 @@ class WiderWidget(Entity, name="Widget", table="widget", namespace=_NS):
     extra: Attr[str | None]
 
 
+class RekeyedWidget(Entity, name="Widget", table="widget", namespace=_NS):
+    """A THIRD class declaring the identical Entity Identity keyed by a member of
+    another name — nothing requires two declarations of one Entity to agree on
+    the primary key, and this is the value whose class supplies no attribute for
+    a member the resolved identity does declare."""
+
+    key: Attr[int] = attr(primary_key=True)
+    label: Attr[str]
+
+
+class Detail(ValueObject):
+    note: Attr[str | None]
+
+
+class Interleaved(Entity, table="interleaved", namespace=_NS):
+    """A declaration interleaving an Attribute and a top-level Value Object,
+    which is the only shape a row's category order is visible in."""
+
+    id: Attr[int] = attr(primary_key=True)
+    detail: Attr[Detail | None]
+    tail: Attr[str]
+
+
 NARROW_MODEL = DomainModel(Widget)
 WIDER_MODEL = DomainModel(WiderWidget)
+INTERLEAVED_MODEL = DomainModel(Interleaved)
 
 
 class _ClasslessSource:
@@ -230,6 +254,17 @@ def test_a_row_is_ordered_by_the_models_family_effective_declaration_order() -> 
     card = rm.CardPayment(card_network="Visa", amount=Decimal("10.00"), id=1)
     row = row_codec_of(mm.PAYMENT_MODEL).full_row(card)
     assert list(row) == ["id", "amount", "cardNetwork"]
+
+
+def test_a_row_orders_attributes_before_top_level_value_objects() -> None:
+    # The order is a stable CATEGORY pass — Attributes in declaration order, then
+    # top-level Value Objects in theirs — so `tail` precedes the earlier-declared
+    # `detail`. Ordering by the declaration's own interleaving would make a row's
+    # keys depend on the value's class, which a row never does.
+    row = row_codec_of(INTERLEAVED_MODEL).full_row(
+        Interleaved(id=1, detail=Detail(note="n"), tail="t")
+    )
+    assert list(row) == ["id", "tail", "detail"]
 
 
 def test_a_row_is_a_fresh_plain_caller_owned_dict() -> None:
@@ -437,6 +472,26 @@ def test_a_restored_undeclared_member_is_still_refused_by_edited_row() -> None:
     with pytest.raises(EntityRowError) as refusal:
         row_codec_of(NARROW_MODEL).edited_row(restored)
     assert refusal.value.code == "entity-row-member-missing"
+
+
+def test_a_cross_model_value_keyed_by_another_member_derives_no_identity_row() -> None:
+    # The resolved identity declares `id`; this value's class keys the same
+    # Entity by `key` and carries no attribute to read `id` from. Dropping it
+    # would hand a keyed write an unkeyed `{}` outside the closed vocabulary.
+    with pytest.raises(EntityRowError) as refusal:
+        row_codec_of(NARROW_MODEL).identity_row(RekeyedWidget(key=1, label="a"))
+    assert refusal.value.code == "entity-row-member-missing"
+    assert "'id'" in refusal.value.message
+    assert refusal.value.identity == Widget.identity
+
+
+def test_a_cross_model_value_keyed_by_another_member_derives_no_edited_row() -> None:
+    # `edited_row` selects the primary key too, so the identity half is judged by
+    # the same rule rather than emitted short.
+    with pytest.raises(EntityRowError) as refusal:
+        row_codec_of(NARROW_MODEL).edited_row(RekeyedWidget(key=1, label="a").edit(label="b"))
+    assert refusal.value.code == "entity-row-member-missing"
+    assert "'id'" in refusal.value.message
 
 
 def test_a_never_edited_value_derives_no_edited_row() -> None:
