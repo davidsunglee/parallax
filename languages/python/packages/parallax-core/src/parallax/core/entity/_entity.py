@@ -205,6 +205,10 @@ class WireNames:
     name_to_py: dict[str, str]
     py_to_name: dict[str, str]
     relationship_py: dict[str, str]
+    relationship_identities: dict[str, RelationshipIdentity]
+    """Each Python relationship name to the Identity its own declaration built,
+    so an inherited relationship keeps the declaring Entity a descendant reaches
+    it through cannot supply."""
     members: dict[str, AttributeMetadata | ValueObjectMetadata]
     """Each Python member name to the accepted Metadata that decides what may be
     written to it. Which members are assignable is not recorded here as a name
@@ -232,6 +236,7 @@ def wire_names_of(cls: type) -> WireNames:
     name_to_py: dict[str, str] = {}
     py_to_name: dict[str, str] = {}
     relationship_py: dict[str, str] = {}
+    relationship_identities: dict[str, RelationshipIdentity] = {}
     members: dict[str, AttributeMetadata | ValueObjectMetadata] = {}
     pk_py: set[str] = set()
     vo_classes: dict[str, type] = {}
@@ -245,6 +250,12 @@ def wire_names_of(cls: type) -> WireNames:
         name_to_py.update(names.name_to_py)
         py_to_name.update(names.py_to_name)
         relationship_py.update(names.relationship_py)
+        relationship_identities.update(
+            {
+                names.relationship_py[declaration.identity.name]: declaration.identity
+                for declaration in declaration_of(ancestor).relationships
+            }
+        )
         members.update(names.members)
         pk_py.update(names.pk_py)
         vo_classes.update(names.vo_classes)
@@ -257,6 +268,7 @@ def wire_names_of(cls: type) -> WireNames:
         name_to_py=name_to_py,
         py_to_name=py_to_name,
         relationship_py=relationship_py,
+        relationship_identities=relationship_identities,
         members=members,
         pk_py=frozenset(pk_py),
         vo_classes=vo_classes,
@@ -318,22 +330,24 @@ def _edit_violations(
     caller correcting several mistakes learns all of them at once rather than one
     round trip at a time.
 
+    A resolved member locates at the Identity its own declaration built, so an
+    inherited member reports where it was declared rather than at the subtype the
+    name was searched through; ``entity`` locates only the name that resolved to
+    no member at all, which no declaration can name.
+
     A Value Object value is rendered to its canonical document before it is
     judged, exactly as ``.set(...)`` renders it, so both paths judge one shape;
     the edit itself still merges the caller's own live value.
     """
-    relationship_names = {
-        py_name: canonical for canonical, py_name in names.relationship_py.items()
-    }
     violations: list[EditViolation] = []
     for py_name, value in changes.items():
-        relationship = relationship_names.get(py_name)
+        relationship = names.relationship_identities.get(py_name)
         if relationship is not None:
             violations.append(
                 EditViolation(
                     code="edit-relationship-member",
-                    location=RelationshipLocation(RelationshipIdentity(entity, relationship)),
-                    member_name=relationship,
+                    location=RelationshipLocation(relationship),
+                    member_name=relationship.name,
                     message=(
                         f"{cls_name}.{py_name}: relationship members are not assignable via "
                         "edit(...) (no cascade or association-mutation semantics to lower it to)"
@@ -524,27 +538,27 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         keep. Refused with or without ``update=``, before any argument is
         examined.
         """
-        del update, deep  # neither is examined: the refusal precedes both
-        raise _use_edit(type(self), "model_copy")
+        del update, deep
+        raise _use_edit(type(self), "model_copy") from None
 
     def copy(self, **kwargs: object) -> Self:
         """Refused: the deprecated Pydantic v1 shim reaches neither the
         framework's name resolution nor its judgement, so a primary key or a
         framework-owned member could be set through it (spec §3)."""
-        del kwargs  # not examined: the refusal precedes every argument
-        raise _use_edit(type(self), "copy")
+        del kwargs
+        raise _use_edit(type(self), "copy") from None
 
     def __copy__(self) -> Self:
         """Refused: a shallow copy of the instance dictionary carries the Change
         Record living in it, so the result would claim provenance it did not earn
         and lower to a sparse row built from originals that were never its own
         (spec §3)."""
-        raise _use_edit(type(self), "__copy__")
+        raise _use_edit(type(self), "__copy__") from None
 
     def __deepcopy__(self, memo: dict[int, Any] | None = None) -> Self:
         """Refused for :meth:`__copy__`'s reason, plus deep-copied originals."""
-        del memo  # not examined: the refusal precedes every argument
-        raise _use_edit(type(self), "__deepcopy__")
+        del memo
+        raise _use_edit(type(self), "__deepcopy__") from None
 
 
 class TxTemporal(Entity, _mint=FRAMEWORK_MINT, _axes=(TemporalDimension.TRANSACTION_TIME,)):

@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 from _support import mirrored_models as mm
 from _support import value_object_models as vm
+from parallax.conformance.read_models import Dog
 from parallax.core import Attr, Entity, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
@@ -133,6 +134,19 @@ def test_relationship_field_is_rejected() -> None:
     person = mm.Person(id=1, name="Ada")
     with pytest.raises(EditError, match="relationship"):
         person.edit(passport=None)
+
+
+def test_an_inherited_relationship_locates_at_the_entity_that_declares_it() -> None:
+    # `owner` is declared on `Animal` and reached through `Dog`, so the violation
+    # names the declaring member: a Relationship Identity names the source Entity
+    # that declares it, and `Dog` declares no `owner` for one to name.
+    with pytest.raises(EditError) as caught:
+        Dog(id=1, name="Rex").edit(owner=None)
+    violation = caught.value.violations[0]
+    assert violation.location == RelationshipLocation(
+        RelationshipIdentity(EntityIdentity("parallax.compatibility", "Animal"), "owner")
+    )
+    assert violation.member_name == "owner"
 
 
 def test_an_invalid_scalar_value_raises_at_edit_time_not_at_the_database() -> None:
@@ -395,3 +409,24 @@ def test_every_inherited_copy_path_is_refused() -> None:
             EntityIdentity("parallax.compatibility", "Account")
         )
         assert "edit(**changes)" in violation.message
+
+
+def test_a_refused_copy_door_retains_no_cause_while_another_error_is_handled() -> None:
+    # A copy door examines nothing, so whatever the caller happened to be
+    # handling is not why it refused; displaying that unrelated failure beside
+    # the refusal would misattribute it.
+    edited = _account().edit(balance=Decimal("175.00"))
+    doors = (
+        lambda: edited.model_copy(),
+        lambda: edited.copy(),
+        lambda: copy_module.copy(edited),
+        lambda: copy_module.deepcopy(edited),
+    )
+    for door in doors:
+        try:
+            raise RuntimeError("an unrelated failure being handled")
+        except RuntimeError:
+            with pytest.raises(EditError) as caught:
+                door()
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__
