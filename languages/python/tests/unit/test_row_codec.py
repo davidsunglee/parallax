@@ -494,6 +494,27 @@ def test_a_cross_model_value_keyed_by_another_member_derives_no_edited_row() -> 
     assert "'id'" in refusal.value.message
 
 
+@pytest.mark.parametrize(
+    "net_zero",
+    [
+        RekeyedWidget(key=1, label="a").edit(),
+        RekeyedWidget(key=1, label="a").edit(label="b").edit(label="a"),
+    ],
+    ids=["no-changes", "restored-chain"],
+)
+def test_a_net_zero_edit_of_a_rekeyed_value_is_refused_rather_than_answering_none(
+    net_zero: RekeyedWidget,
+) -> None:
+    # Effectiveness never narrows the selection, and the primary key is half of
+    # it: an empty effective set cannot excuse a key member the value's class
+    # supplies no attribute for, or "nothing to write" would answer for a value
+    # no write could have keyed.
+    with pytest.raises(EntityRowError) as refusal:
+        row_codec_of(NARROW_MODEL).edited_row(net_zero)
+    assert refusal.value.code == "entity-row-member-missing"
+    assert "'id'" in refusal.value.message
+
+
 def test_a_never_edited_value_derives_no_edited_row() -> None:
     with pytest.raises(EntityRowError) as refusal:
         _accounts().edited_row(_account())

@@ -148,10 +148,14 @@ class EntityRowCodec:
         first recorded, so a net-zero chain answers ``None`` and "nothing to
         write" has exactly one representation.
 
-        Refusal follows selection, and effectiveness is weighed afterwards: a
-        recorded name the resolved identity does not declare is refused even
-        when the edit that touched it restored the original value, because what
-        the rule protects is a selection the codec cannot key.
+        Refusal follows selection, and effectiveness is weighed afterwards: the
+        whole selection — the primary key and every recorded name — is judged
+        before a net-zero edit can answer ``None``, because what the rule
+        protects is a selection the codec cannot key. So a recorded name the
+        resolved identity does not declare is refused even when the edit that
+        touched it restored the original value, and a value whose class supplies
+        no attribute for a selected key member is refused even when its chain
+        nets to zero.
         """
         facts, names = self._resolved(value)
         record = _change_record(facts, value)
@@ -160,6 +164,7 @@ class EntityRowCodec:
             for py_name, original in record.items()
         }
         self._require_declared(facts, touched, "edited_row")
+        row = self._identity_row(facts, names, value, "edited_row")
         effective = frozenset(
             canonical
             for canonical, (py_name, original) in touched.items()
@@ -167,7 +172,6 @@ class EntityRowCodec:
         )
         if not effective:
             return None
-        row = self._identity_row(facts, names, value, "edited_row")
         row.update(self._serialized(facts, names, value, effective, "edited_row"))
         return row
 
