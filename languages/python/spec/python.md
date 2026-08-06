@@ -263,14 +263,17 @@ mutations, exceptions, or exports.
   framework-owned, and read-only targets are rejected, as are values
   that require coercion or violate the declared type or nullability; a
   relationship exposes no `.set(...)` at all. Failure
-  raises `ModelCopyError(TypeError)` from `.set(...)` itself; it is never
-  postponed until a Transaction mutation method, write boundary, or database
-  call. That class rather than a `query-*` code is deliberate. The assignment
-  rules are one set with one home: `.set(...)`, `model_copy(update=...)` (§3),
+  raises `EditError(ValueError)` (§3) from `.set(...)` itself, carrying exactly
+  one violation — one call names one target, so there is nothing to aggregate —
+  and it is never postponed until a Transaction mutation method, write boundary,
+  or database call. That class rather than a `query-*` code is deliberate. The
+  assignment rules are one set with one home: `.set(...)`, `edit(...)` (§3),
   and the serialized write boundary (§5) all reach the same judgement over the
   member's metadata and the raw value, differing only in the resolution in front
-  of it, so `.set(...)` reports the copy surface's refusal rather than minting a
-  second verdict for the same rule. Assignment-list validation remains separate:
+  of it, so `.set(...)` reports the edit surface's refusal rather than minting a
+  second verdict for the same rule — a predicate-selected assignment is an edit
+  expressed over a predicate rather than over a value, and one rule family with
+  two names would have two chances to drift. Assignment-list validation remains separate:
   an assignment-bearing mutation checks nonemptiness, duplicates, and exact
   target compatibility when combining already-valid Assignments with its
   Find Query.
@@ -1149,7 +1152,9 @@ surface lives and the class-level name would win. Four families are reserved,
 and a collision fails at class creation (`entity-reserved-member-name`):
 
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
-  `as_of`, `as_of_range`, `history`, `meta`, `descriptor`;
+  `as_of`, `as_of_range`, `history`, `meta`, `descriptor` — together with the
+  instance-level copy verb `edit` (§3), which a declared `edit` member would
+  otherwise overwrite, silently disabling editing for that Entity;
 - the `model_*` namespace Pydantic reserves;
 - the framework temporal members, on a class whose family extends `TxTemporal`
   or `Bitemporal` and is therefore supplied them. The reservation is on the
@@ -1170,7 +1175,9 @@ all: any class-body name taking one of the ten — a declared member, a class
 variable, or a method — wins the lookup, and the class then presents something
 other than its declaration to every reader, including Domain Model construction. The
 rejection therefore covers every binding a class body makes, not only declared
-members.
+members. The `model_*` reservation is checked the same way and for the same
+reason: an unannotated `def model_copy` in a class body is a binding rather than
+a declared member, and admitting it would reinstate a copy door §3 refuses.
 
 #### Relationships — `Rel[T]` and `rel(...)`
 
@@ -1346,7 +1353,7 @@ set is:
 | `entity-member-value-invalid` | class creation | the assignment slot holds a bare value, an `attr(...)` under `Rel[...]`, or a `rel(...)` under `Attr[...]` |
 | `entity-option-invalid-value` | factory call | an intrinsically invalid argument value: an ill-typed or out-of-range `attr(...)`, `rel(...)`, `index(...)`, or `Sequence(...)` argument |
 | `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `MAX`/`Sequence(...)` generation on a non-integer member |
-| `entity-reserved-member-name` | class creation | a reserved query-root or introspection name, a `model_*` name, a framework-temporal member name, or one of the nine declaration member names |
+| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, a `model_*` name, a framework-temporal member name, or one of the ten declaration member names |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
 | `entity-relationship-annotation-mismatch` | Domain Model construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
@@ -1543,21 +1550,31 @@ Conformance coverage, the active slice claim, the Python deferred list,
 `_DEFERRED_EXECUTION_FEATURES`, and any applicable ledger entry advance
 together.
 
-The separate `EntityRuntime` is a frozen slotted value containing exactly the
-accepted `Metamodel`, `EntityGraphConstruction`, and
-`EntityRowCodec`. It exists only as that complete three-part value: there is no
-partial Entity Runtime with absent capabilities. It references rather than
-copies the accepted model, exposes no
-bidirectional Entity Identity/Entity Class index, and is a
-closed first-party collaboration value rather than a registry, extension map,
-third-party adapter interface, or generic capability bag. It is not re-exported
-from top-level `parallax.core`. COR-50 owns constructing one complete runtime
-per class-backed Domain Model and the advanced first-party
-`entity_runtime_of(model) -> EntityRuntime | None` query; descriptor-backed
-models return `None`, while repeat calls for one class-backed model return the
-same runtime. COR-64 neither constructs nor calls this seam. Snapshot may
-replace `_ConnectedModel`'s transitional materialization dependency with the
-complete Entity Runtime without changing the connected Metamodel contract.
+A class-backed Domain Model exposes its model-bound capabilities through two
+named seams and no composite value:
+
+```text
+graph_construction_of(model: DomainModel) -> EntityGraphConstruction   # §3
+row_codec_of(model: DomainModel)          -> EntityRowCodec            # §5
+```
+
+Each seam answers one capability and is retained by the model on first reach, so
+repeat calls for one model return the same value. Both are reached from
+`parallax.core.entity`, and neither is re-exported from top-level
+`parallax.core`. There is no `EntityRuntime`, no capability pair, tuple, or record, and no
+keyed capability bag: read materialization crosses graph construction alone,
+write preparation crosses the codec alone, and the one caller that holds both —
+Snapshot's private connected-model value — holds two references as cheaply as
+one. Atomicity across the pair would guarantee nothing, because each capability
+derives on demand from the same accepted model and no state exists in which one
+is present and the other cannot be built.
+
+Both seams construct lazily, and the reason is dependency direction rather than
+cost. Each capability module sits **above** the Domain Model module in §7's
+import DAG, so `DomainModel.__init__` cannot construct either without inverting
+an edge the generated import contracts reject; the seam function is therefore
+the only place that can build one. The guard is not a performance hedge and
+removing it is not an optimization.
 
 `parallax.descriptor` publicly exports the ingestion base
 `DescriptorError(ValueError)` and its `DescriptorSyntaxError`,
@@ -1862,16 +1879,25 @@ or descriptor authoring form and performs no audit stamping.
   are distinct stored-document states. Declared nullability says which of them
   a conforming stored document may hold — a required scalar or One occurrence
   admits neither — but nothing inside a record judges that
-  (**Document-resident nullability** below). Both states read as `None`, and the
-  read carries the difference no further: the reduction that collapses them names
-  every declared member, so a materialized Value Object holds every field as
-  present. Field presence survives in the carriers instead — an omitted entry
-  stays outside the frozen Value Object's `model_fields_set` and an entry present
-  as `None` sits inside it, which is what lets canonical document serialization
-  omit the former and emit the latter as explicit null. A Value Object built by
-  ordinary construction is what exercises that distinction; one materialized from
-  storage names every member, so re-serializing it spells an originally omitted
-  key as explicit null. A Many occurrence is an ordered immutable
+  (**Document-resident nullability** below). Both states read as `None`, and
+  which of the two the document held is **not** what the value reports; whether
+  the document held the member at all is. Field presence lives in the carrier —
+  an omitted entry stays outside the frozen Value Object's `model_fields_set`
+  and an entry present as `None` sits inside it — which is what lets canonical
+  document serialization omit the former and emit the latter as explicit null.
+  **Presence survives materialization at every containment depth.** A Value
+  Object read back from storage reports as present exactly the members the
+  stored document carried, whether it is a top-level occurrence, a nested One,
+  or an element of a Many at any depth; the document reduction the read path
+  performs takes its presence from the source document rather than from the
+  declared member list. So a Value Object built by ordinary construction and one
+  materialized from storage draw the same distinction, and re-serializing a
+  materialized occurrence neither invents a key storage omitted nor drops one it
+  held. Preserving presence is a distinct option on the reduction from the
+  authored-member mask a mutation comparison supplies, and the two are not
+  interchangeable: one asks which members **this document** holds, the other asks
+  which members the **caller** authored.
+  A Many occurrence is an ordered immutable
   `tuple` of non-null Value Object records and is never nullable: `()` is its
   sole zero-element value, and a present entry holding `None` or holding a
   `None` element is invalid. Omission is not invalid — it is that occurrence's
@@ -2046,7 +2072,7 @@ or descriptor authoring form and performs no audit stamping.
   `parallax.core`:
 
   ```text
-  entity_runtime_of(model: DomainModel) -> EntityGraphConstruction
+  graph_construction_of(model: DomainModel) -> EntityGraphConstruction
   relationship_value_of(instance, relationship: RelationshipIdentity) -> object
   lifecycle_state_of(instance) -> object | None
 
@@ -2072,7 +2098,7 @@ or descriptor authoring form and performs no audit stamping.
   ```
 
   `EntityGraphConstruction` is per Domain Model and is reached only through
-  `entity_runtime_of(model)`, so `construct(...)` takes no model argument and
+  `graph_construction_of(model)`, so `construct(...)` takes no model argument and
   cannot be handed a mismatched one; the per-Entity facts it derives once from
   accepted metadata — concrete class, identity-to-member-name mapping, and the
   declaration-ordered navigable relationships — live there rather than being
@@ -2262,21 +2288,20 @@ or descriptor authoring form and performs no audit stamping.
   ceiling holds and is observable via `snapshot.execution.round_trips`.
 - **Explicit writes.** All writes go through the Parallax Transaction
   (§5) — the handle has no write methods. Graph edits are impossible (nodes
-  are frozen); the only mutation idiom is deriving an **edited copy**: the
-  Parallax base class overrides `model_copy` so a copy of a node carries a
-  **Change Record** mapping each touched field to its **original** value —
-  the value the field held when first touched in the copy chain (copies of
-  copies merge records, keeping the earliest original per field). The
-  override also **validates**: Pydantic's own `model_copy` does not validate
-  `update=` data, so the Parallax override applies the same build-time rules
-  as construction — unknown field names are rejected, framework-owned fields
-  (the version column) and primary-key fields may not be assigned,
-  **relationship fields are rejected outright** (only mapped scalar
+  are frozen); the only mutation idiom is deriving an **Edited Copy** through
+  `value.edit(**changes)`, which returns the same frozen Entity Class carrying
+  a **Change Record** mapping each touched field to its **original** value —
+  the value the field held when first touched in the edit chain (edits of
+  edits merge records, keeping the earliest original per field). `edit`
+  **validates**: it applies the same build-time rules as construction —
+  unknown member names are rejected, primary-key, read-only, and
+  framework-owned members may not be assigned,
+  **relationship members are rejected outright** (only mapped scalar
   attributes and value-object members are assignable; a relationship edit has
   no canonical row lowering in this slice — no cascade and no deferred
   association mutation semantics exist to lower it to), and every
   value passes the §2 scalar input policies — so an invalid edit raises at
-  copy time, never at the database. Nodes carry no change tracking; the
+  edit time, never at the database. Nodes carry no change tracking; the
   derived copy's change record is an explicit write input, and there is no
   merge-back (no re-association, no returned managed object). At lowering, a
   touched field whose current value equals its recorded original drops out of
@@ -2284,7 +2309,7 @@ or descriptor authoring form and performs no audit stamping.
   contributes nothing and an update whose effective change set is empty
   issues **no DML** — uniformly for non-temporal and temporal entities
   alike (§5). Write inputs are the entity classes themselves:
-  full instances for `insert` (the Create Payload), edited copies or
+  full instances for `insert` (the Create Payload), Edited Copies or
   instances for the other verbs (§5). The **stale-web-edit** recipe
   transports the displayed milestone's **edge on every declared dimension**: at
   render time the service reads the row and captures `edge_of(node)` — the
@@ -2321,6 +2346,117 @@ or descriptor authoring form and performs no audit stamping.
   removed: its detached copy carries the milestone's `IN_Z` offline and the
   merge-back gate binds that carried coordinate — transport, never
   reconstruction. The idiom requires no detached objects.
+- **`edit` is the only door, and every inherited copy path is refused.**
+  `model_copy` with or without `update=`, the deprecated Pydantic v1 `copy`,
+  `__copy__`, and `__deepcopy__` each raise `EditError(edit-use-edit)` and
+  create no value. The refusal short-circuits the whole call before any
+  argument is examined, so no partially built value and no unjudged assignment
+  exists at any point. One reachable copy path would defeat the purpose, which
+  is that no provenance-less Entity value and no unearned Change Record exists:
+  `__copy__` and `__deepcopy__` shallow- and deep-copy the instance dictionary
+  the Change Record lives in, so the result would carry provenance it did not
+  earn and lower to a sparse row built from originals that were never its own;
+  and the deprecated `copy` shim reaches neither the framework's name
+  resolution nor its judgement, so a primary key or a framework-owned member
+  could be set through it. `edit` is the object-copy verb; `update` remains the
+  Transaction persistence verb.
+
+  `edit()` with **no changes** is legal and yields an Edited Copy with an empty
+  Change Record, so its `edited_row` (§5) is `None`. Nothing is validated,
+  because nothing was authored. Refusing it would need a ninth code to prevent
+  something already represented as "nothing to write", and it would draw a line
+  a caller cannot predict: a net-zero edit means the same thing and is not
+  detectable at the call site, so only one of the two could ever be refused.
+- **Edit refusals are aggregated, coded, and canonically ordered.** One
+  `EditError(ValueError)` covers both authoring surfaces — `edit(...)` here and
+  a predicate write's `Attr.set(...)` (§2) — because the assignment rules are
+  one set with one home. There is no `ModelCopyError` and no `ProvenanceError`;
+  the shared judgement carrier stays internal to `parallax.core.metamodel` and
+  is never re-exported from top-level `parallax.core`.
+
+  ```text
+  EDIT_CODES                # the complete set, closed at eight
+    edit-use-edit             edit-primary-key
+    edit-unknown-member       edit-read-only
+    edit-relationship-member  edit-framework-owned
+    edit-nested-path          edit-value-mismatch
+
+  EditViolation             # frozen, slotted
+    code: str               # drawn from EDIT_CODES
+    location: ModelLocation
+    member_name: str | None
+    message: str            # non-empty; excluded from equality
+
+  EditError(ValueError)
+    violations: tuple[EditViolation, ...]   # non-empty, canonically ordered
+    codes: frozenset[str]
+  ```
+
+  `ModelLocation` is the accepted closed union `MetamodelIssue` already uses,
+  and `member_name` carries the authored name where the name resolved to no
+  member and there is therefore no location. There
+  is deliberately no `.code` attribute: selecting one violation to expose would
+  misreport the others, which is what `codes` is for.
+
+  Reporting is **aggregated, not first-failure**, as core ADR 0001 requires.
+  Every member the call names is examined and each contributes **at most one**
+  violation — its own first verdict in the shared judgement's settled rule
+  order — with resolution preceding judgement, so a name that resolves to no
+  member contributes its resolution violation and nothing else. Violations are ordered
+  by canonical location key then code, exactly as accumulated Metamodel Issues
+  are, so a report never depends on caller keyword order. `edit-use-edit` is
+  the one refusal that examines no member at all. No cause is retained: the
+  error is raised `from None`, and each violation's message carries the
+  judgement's own rendered text.
+
+  `edit-value-mismatch` preserves the judgement's deliberate collapse of scalar
+  type, Value Object document, multiplicity, and nullability failures into one
+  classification; the finer reason travels in the message, never in the code.
+  `edit-read-only` stays separate from `edit-framework-owned` because
+  `attr(read_only=True)` is developer-declared.
+
+  **The framework's assignment rules never partially report**: every violation
+  of them is in the `EditError`, and the whole aggregate is raised before
+  construction begins. That is a claim about those rules, not about the call.
+  The judgement checks conformance to the declared Neutral Type; Pydantic
+  checks the Python annotation and any author-declared `@field_validator` or
+  `@model_validator`, which continue to run on an Edited Copy (§2's build-time
+  rules). A value that passes judgement and then fails the validating
+  constructor propagates its `ValidationError` **unchanged**. Re-rendering it
+  as `edit-value-mismatch` would launder a framework defect into a
+  developer-input refusal and make the aggregate dishonest: a disagreement
+  between the two about a value is a judgement coverage defect to fix in the
+  judgement.
+- **Framework-owned members behave three ways.** Accepted metadata designates a
+  member `framework_owned` (`core/spec/m-metamodel.md`) when the framework
+  supplies its value and the caller never does — today the optimistic-lock
+  version column and both endpoints of every declared As-Of Axis, and every
+  category a later contract designates without adding a code or a rejection.
+  Where such a value arrives from decides what happens:
+
+  - **Authored at construction** — refused where the mistake is, by a
+    `field_validator` the declaration engine installs on each framework-owned
+    field. It surfaces as Pydantic's own `ValidationError`, in the same report
+    as every other construction-time rejection of that call. It is deliberately
+    not an `EditError`: construction is not an edit, and minting an edit code
+    for it is exactly where the two error families would come to describe one
+    call.
+  - **Assigned after authoring** — through `edit(...)`, `Attr.set(...)`, or the
+    serialized write boundary — refused by the shared judgement as
+    `edit-framework-owned`. One rule rather than three checks is the point:
+    those surfaces differ only in how they resolve a name to a member.
+  - **Arrived by hydration** — readable on the value and silently omitted from
+    the Entity Row Codec's `full_row` and `edited_row` (§5), never an error.
+    Refusing it would make a stored row unreadable, and emitting it would
+    launder stored state into an assignment the caller never made.
+    Materialization is safe by construction: it builds through Pydantic's
+    validation-free path and never reaches the validating constructor.
+
+  The designation is derived rather than authored, so no declaration surface
+  gains an option and the canonical descriptor is unchanged. It stays distinct
+  from `optimistic_locking`, which names a role, and from `read_only`, which is
+  the weaker "authored once, then immutable" claim, so a rejection can say
+  which of the three it is.
 
 ## 4. Result collections and materialization
 
@@ -2476,6 +2612,31 @@ or descriptor authoring form and performs no audit stamping.
   "neither" are both unrepresentable. Only a temporal observation can answer
   anything but latest-pinned, which is why the locking-mode historical check
   below concerns temporal writes alone.
+- **An observation is keyed by the row's own resolved Entity Identity.** A read
+  observes each row under the exact Entity that row's own compiled read
+  resolved it to — a per-row fact under table-per-hierarchy — never under the
+  position the query targeted. Root and included levels alike follow that one
+  rule, so a keyed write on any node a participating read materialized is
+  licensed by that read's observation: an included child, a polymorphic level's
+  concrete, and an abstract-target root's concrete are each reachable by the
+  write that names them. The key carries the structured Entity Identity rather
+  than a spelling of it, so no producer stringifies one and two entities
+  sharing a bare name across namespaces cannot resolve one another's
+  observations. A serialized write instruction keeps its wire `str` entity,
+  which planning resolves to an identity before keying.
+- **A read observation's carrier stays physical.** The carrier an observation
+  records is keyed by **physical column**, and that is settled rather than
+  interim. Snapshot Graph Input structurally cannot carry the raw Structured
+  Column, which a temporal observation retains so a successor is patched from
+  what the row held rather than rebuilt from the members the model declares
+  (ADR 0042). Collection happens at the read executor while the row is live,
+  deliberately upstream of Graph Input, which is what lets a non-transactional
+  read allocate no observation state at all. And physical keying is the
+  carrier's purpose rather than its convenience: it is a faithful record of a
+  persisted row for a later SQL comparison, not a projection of the model.
+  Retaining a second, logical carrier beside it would be strictly worse than
+  the single one that exists, and the identity-to-Column translation already
+  goes through the Storage Layout facet.
 - **Write verbs and temporal spellings.** Verb names: `insert`, `update`,
   `delete` (non-temporal), `terminate` (temporal), and the bitemporal
   `insert_until`, `update_until`, `terminate_until`. Inputs are entity
@@ -2515,6 +2676,89 @@ or descriptor authoring form and performs no audit stamping.
   trailing `and in_z = ?` gate varies. A key plus `out_z = infinity` alone would
   be ambiguous on a Bitemporal Entity, whose one key may have several disjoint
   Valid-Time rectangles current on Transaction Time.
+- **The Entity Row Codec derives every row.** One model-bound `EntityRowCodec`,
+  reached through `row_codec_of(model)` (§2), is what turns an Entity value into
+  a canonical row. The framework asks it for a row and learns nothing about
+  Pydantic, private provenance storage, physical column names, temporal
+  planning, or Audit Provenance:
+
+  ```text
+  EntityRowCodec                    # model-bound; per-Entity facts memoized
+                                    #   by EntityIdentity
+    full_row(value)     -> dict[str, object]
+    identity_row(value) -> dict[str, object]
+    edited_row(value)   -> dict[str, object] | None
+
+  row_codec_of(model: DomainModel) -> EntityRowCodec
+
+  EntityRowError(RuntimeError)      # exported from parallax.core.entity
+    entity-row-not-an-entity          entity-row-no-change-record
+    entity-row-target-not-in-model    entity-row-malformed-provenance
+    entity-row-member-missing
+  ```
+
+  **Input validation resolves; it does not own.** The codec resolves the Entity
+  Identity the value's class declares and fails with
+  `entity-row-target-not-in-model` when its model declares no such Entity — the
+  same resolution-not-ownership distinction `QueryTargetError` draws (§2). The
+  bidirectional Entity Identity/Entity Class index is never consulted to decide
+  whether a value belongs; it exists for materialization and is never an
+  authorization structure. A value from another model whose identity this model
+  also declares is therefore **accepted**, because the emitted row is a function
+  of the resolved identity's declared members alone.
+
+  **The candidate set is the model's; the emitted set is the value's.** Members
+  come from the model's family-effective metadata, which also supplies the
+  canonical keys, and `model_fields_set` decides which of those candidates are
+  emitted. Neither alone would do: metadata cannot know what the caller
+  populated, and the class cannot be the authority on which members the model
+  declares. A **populated** member the resolved identity does not declare raises
+  `entity-row-member-missing` rather than being dropped — the codec can emit no
+  canonical key for it, and silently discarding a value the caller authored
+  would signal nothing.
+
+  **Rows are fresh, plain, caller-owned `dict[str, object]`**, keyed by
+  canonical Attribute names and ordered by family-effective member declaration
+  order, base-first, so a row reads like the declaration and is a function of
+  the model and the value rather than of caller keyword order. Physical names
+  never appear: the canonical-member-to-default-column rule stays authoritative,
+  so `taxID` is emitted as `taxID` and its column `tax_i_d` is
+  `m-storage-layout`'s business. `identity_row` is the primary-key row and
+  carries **raw** primary-key values, while `full_row` and `edited_row` carry
+  **serialized** values; the asymmetry is preserved deliberately rather than
+  incidentally.
+
+  `edited_row` requires accepted Edited Copy provenance — a value carrying no
+  Change Record raises `entity-row-no-change-record` and a malformed one raises
+  `entity-row-malformed-provenance` — and returns the identity row plus the
+  **effective** caller-authored changes, those whose current value differs from
+  the recorded original. It preserves first-touched originals across a chain and
+  returns `None` for a net-zero edit, so "nothing to write" has exactly one
+  representation. Provenance comparison is stated rather than implied: a
+  `one` value compares as a **mask over the keys the caller authored**, a `many`
+  value compares as a **whole** because its elements have no identity, and an
+  omitted key means un-authored rather than null — the same
+  explicit-versus-defaulted distinction canonical document serialization draws
+  (§3).
+
+  **The codec is an authoring codec, never a provenance decorator.** It emits
+  only caller-authored identity and domain values in canonical Attribute-keyed
+  form, and it never computes, stamps, preserves as an assignment, or accepts a
+  caller-authored framework-owned value (§3). It depends on no Principal,
+  Subject Identity, Session, Clock Strategy, Transaction Instant, Audit
+  Metadata, AuditFacet, audit enablement policy, temporal topology planning,
+  Write Planner, SQL, or Storage Layout, and §7's generated import contracts
+  enforce that rather than leaving it to review. Future Audit Provenance is
+  applied to typed Planned Writes inside the Write Planner (ADR 0037) and is
+  never a codec extension point.
+
+  Codec misuse is first-party misuse rather than rejected developer input, so
+  `EntityRowError` sits in the `RuntimeError` tier `GraphConstructionError`
+  already reasons about, and `entity-row-not-an-entity` refuses a value that is
+  no Entity at all. The developer-facing steering for handing a persistence verb
+  a value with no Change Record belongs to that verb, which knows what the
+  developer called; the codec knows only that it received a value its operation
+  does not accept.
 - **Versioned keyed writes require prior observation; set-based writes
   materialize.** One observation rule, matching `m-opt-lock` exactly, ordered
   no-op-first. **First**, no-op detection: an update whose effective change
@@ -2827,12 +3071,12 @@ remains observable rather than making Python its own oracle.
   nothing for the discarded buffer). The fourth is a Docker-free, database-free
   **copy-to-row contract test** (`tests/api/test_copy_to_row_no_drift.py`, in the
   `dbfree` class), scoped to the
-  write shapes that actually pass through edited-copy lowering — keyed
-  non-temporal updates and keyed temporal updates driven by an edited copy;
-  inserts, deletes/terminates, and set-based materialize paths never touch
-  `model_copy` lowering and are proven by the ordinary conformance path. For
+  write shapes that actually pass through Edited Copy lowering — keyed
+  non-temporal updates and keyed temporal updates driven by an Edited Copy;
+  inserts, deletes/terminates, and set-based materialize paths never reach
+  `edited_row` and are proven by the ordinary conformance path. For
   each in-scope claimed write case it builds the fixture node, applies the
-  case's changes through `model_copy`, and lowers the edited copy through the
+  case's changes through `edit(...)`, and lowers the Edited Copy through the
   lowering seam, which takes the **transaction observation** (the observed
   version or `in_z` the unit of work supplies at flush) as an explicit input:
   the test supplies a synthetic observation and asserts the lowered

@@ -94,9 +94,15 @@ once or it will reimplement the framework's rules to pre-validate. Each member
 contributes at most one violation — its own first verdict in the judgement's
 settled order — and every member is examined; violations carry structured
 locations and are canonically ordered by location then code, so a report never
-depends on caller keyword order. The framework's rules run to completion before
-construction, so an `EditError` and a Pydantic `ValidationError` never describe
-the same call.
+depends on caller keyword order. The framework's assignment rules never
+partially report: every violation of them is in the `EditError`, raised whole
+before construction begins. Those are not Pydantic's rules, though — the shared
+judgement decides conformance to the declared neutral type, while the validating
+constructor decides the language annotation and any invariant an author declared
+on top of it. A value that passes the judgement and then fails the constructor
+propagates its `ValidationError` unchanged, because re-rendering it as an edit
+refusal would launder a coverage defect in the framework's own judgement into a
+refusal of developer input.
 
 Row derivation moves behind one model-bound `EntityRowCodec` with `full_row`,
 `identity_row`, and `edited_row`. `edited_row` is the composition the write path

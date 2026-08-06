@@ -691,7 +691,8 @@ atomic Entity Runtime — the three-part collaboration value containing the
 accepted Metamodel, Entity Graph Construction, and the Entity Row Codec, stated
 above to have no partial form.
 
-Building it showed that nothing wanted the composite. Read materialization
+It was specified and never built, and building the capabilities it would have
+paired showed why: nothing wanted the composite. Read materialization
 crosses graph construction alone and write preparation crosses the row codec
 alone; the one caller that holds both, Snapshot's private connected-model value,
 holds two references as cheaply as one. The atomicity claimed as a guarantee

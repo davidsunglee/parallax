@@ -784,10 +784,10 @@ only through Entity declarations and is not passed to the model separately.
   containing the accepted Metamodel and the class index the existing wrapper
   requires, and no identity. It obtains both
   through the private `model_of` / `class_index` pair, never by retaining the
-  concrete `DomainModel` lifecycle, export, or construction surface. COR-50 may
-  replace only that transitional materialization dependency with the complete
-  Entity Runtime described below. Descriptor-backed models have neither a class
-  index nor an Entity Runtime.
+  concrete `DomainModel` lifecycle, export, or construction surface. That
+  transitional materialization dependency is replaced by the two model-bound
+  capabilities described below, each reached through its own seam.
+  Descriptor-backed models have neither a class index nor either capability.
 
 ### Public error model
 
@@ -893,11 +893,14 @@ only through Entity declarations and is not passed to the model separately.
   or a bare accepted Metamodel raises it before adapter validation or access,
   and a classless connection built through `Database(port, model)` — the neutral
   write-lane form — is refused the same way at `find`. The error exposes neither
-  an Entity Runtime nor a class index.
-- `EditError(ValueError)` covers invalid `edit(...)` input and active rejection
-  of inherited Pydantic copy paths. `Entity.model_copy(...)` always raises
-  `EditError(code="edit-use-edit")`; it never creates an Entity value, even
-  without an `update=` argument.
+  a model-bound capability nor a class index.
+- `EditError(ValueError)` covers invalid `edit(...)` input, a predicate write's
+  `Attr.set(...)` refusal, and active rejection of every inherited Pydantic copy
+  path. It carries a non-empty, canonically ordered tuple of structured
+  violations and the set of codes they draw — never one selected `code`, which
+  would misreport the rest. `model_copy`, `copy`, `__copy__`, and `__deepcopy__`
+  each contribute the single violation `edit-use-edit` and create no Entity
+  value, with or without an `update=` argument.
 - Registry-collision, copy, provenance, and query-scope exception classes are
   removed or become private implementation details. Database-provider
   capability is not a public query-execution classification.
@@ -1487,7 +1490,7 @@ only through Entity declarations and is not passed to the model separately.
   `DomainModel` type. The representation-independent `m-metamodel` contract
   remains implemented by the dedicated `parallax.core.metamodel` package, but
   the model stays in `parallax.core.entity`: its class-backed constructor owns
-  Python realization, atomic Entity Class claims, and the Metamodel Binding.
+  Python realization and the bidirectional Entity Identity/Entity Class index.
   Moving the model into `m-metamodel` would invert that module's dependency on
   Entity realization or require a generic callback/registration seam. The
   private `parallax.descriptor._hub` orchestration leaf therefore owns the
@@ -1637,8 +1640,9 @@ operations here are rationale, not a second surface definition.
   adapter validation or access. The pairing is not ownership: one model connects
   to any number of Databases.
 - The Database owns one private `_ConnectedModel` containing the accepted
-  Metamodel and the class index the transitional materializer requires, and no
-  identity. COR-64 introduces no partial Entity Runtime. The neutral
+  Metamodel and the class index the materializer requires, and no
+  identity. It holds each model-bound capability as its own reference rather
+  than a composite value. The neutral
   `Database(port, model)` constructor still admits a bare accepted Metamodel for
   the conformance write lanes, and such a classless connection is refused at
   `find` with the same `SnapshotConnectionError` — before target resolution and
@@ -1748,9 +1752,9 @@ refer to that contract and do not redefine it.
   identity/slot index points into the original payloads and emits writer
   operations directly, avoiding a second graph-sized merged representation.
 - `parallax.core.entity` instead provides one advanced concrete
-  `EntityGraphConstruction` capability. It is backed by the Metamodel Binding,
-  is not a protocol with interchangeable adapters, and is not re-exported from
-  top-level `parallax.core`. The Python spec owns its exact callback, tuple
+  `EntityGraphConstruction` capability. It is backed by the accepted Domain
+  Model, is not a protocol with interchangeable adapters, and is not re-exported
+  from top-level `parallax.core`. The Python spec owns its exact callback, tuple
   carrier, `NodeHandle`, inspection, lifecycle-factory, and error contracts.
   Architecturally, the capability exists to concentrate Pydantic allocation,
   canonical-to-Python member mapping, and cycle closure behind one narrow,
@@ -1800,43 +1804,47 @@ refer to that contract and do not redefine it.
   construction. It emits construction operations directly through the
   callback-scoped writer. No descriptor record, column/wire name, Pydantic
   value, or private slot name crosses this seam.
-- `parallax.core.entity` also provides a separate first-party `EntityRowCodec`
-  protocol with `full_row(value)`, `identity_row(value)`, and
+- `parallax.core.entity` also provides a separate first-party model-bound
+  `EntityRowCodec` with `full_row(value)`, `identity_row(value)`, and
   `edited_row(value)`. `edited_row` returns the canonical sparse row of identity
-  plus effective changes, or `None` for a net-zero edit.
-- `parallax.core.entity.EntityRuntime` is one frozen slotted value created
-  during each successful class-backed Domain Model construction:
+  plus effective changes, or `None` for a net-zero edit. The codec is an
+  authoring codec: it emits caller-authored identity and domain values in
+  canonical Attribute-keyed form and is never a provenance decorator or an Audit
+  Provenance extension point. The Python spec owns its exact operations,
+  ordering, value conventions, and `EntityRowError` codes.
+- Model-bound capabilities are reached one at a time, through two named seams
+  and no composite value:
 
   ```text
-  EntityRuntime
-    model: Metamodel
-    graph_construction: EntityGraphConstruction
-    row_codec: EntityRowCodec
-
-  entity_runtime_of(model: DomainModel) -> EntityRuntime | absent
+  graph_construction_of(model: DomainModel) -> EntityGraphConstruction
+  row_codec_of(model: DomainModel)          -> EntityRowCodec
   ```
 
-  `entity_runtime_of(...)` is a nonthrowing advanced first-party query and,
-  once COR-50 installs the complete runtime, returns the same Entity Runtime
-  object for every call on one class-backed model. It returns absent for a
-  descriptor-backed model. The runtime references the one accepted Metamodel the
-  model already owns; it copies no model fact and
-  exposes no Entity Identity/Class index. It
-  is not a registry, extension map, protocol with third-party adapters, or
-  generic capability bag, and neither it nor its query is re-exported from
-  top-level `parallax.core`.
-- Entity Runtime is atomic: the accepted Metamodel,
-  Entity Graph Construction, and Entity Row Codec appear together or not at
-  all. COR-64 neither constructs nor exposes a partial runtime. When COR-50
-  lands, Snapshot obtains the complete runtime before adapter work and replaces
-  only `_ConnectedModel`'s transitional materialization dependency with its
-  Graph Construction and Row Codec. The connected Metamodel contract does
-  not change.
+  Each seam answers one capability and each is retained by the model on first
+  reach, so repeat calls for one class-backed model return the same value.
+  Neither is re-exported from top-level `parallax.core`. There is no
+  `EntityRuntime`: nothing wants the composite, because read materialization
+  crosses graph construction alone and write preparation crosses the codec
+  alone, and the one caller that holds both holds two references as cheaply as
+  one. Atomicity across the pair would have guaranteed nothing — each capability
+  derives on demand from the same accepted model, so no state exists in which
+  one is present and the other cannot be built. Both seams reference the one
+  accepted Metamodel the model already owns; neither copies a model fact and
+  neither exposes the Entity Identity/Class index. Laziness is a
+  dependency-direction consequence rather than a performance choice: each
+  capability module sits above the Domain Model module in the import DAG, so the
+  seam function is the only place that can construct one.
+- Codec binding resolves rather than owns. The codec resolves the Entity
+  Identity a value's class declares and fails when its model declares no such
+  Entity — the distinction `QueryTargetError` already draws. The class index is
+  never consulted to decide whether a value belongs; it answers which class a
+  row instantiates and is not an authorization structure. A value from another
+  model whose identity this model also declares is accepted, because the emitted
+  row is a function of the resolved identity's declared members alone.
 - Snapshot connection does not use `model_of(...)` as an executability test.
   A descriptor-backed model remains readable by `model_of(...)`, but it composes
-  no Entity Class, so `class_index(...)` is absent and Snapshot refuses it.
-  After COR-50, it also has no Entity Runtime and cannot construct Entity
-  instances.
+  no Entity Class, so `class_index(...)` is absent and Snapshot refuses it. It
+  can supply neither capability and cannot construct Entity instances.
 - Read materialization crosses only Entity Graph Construction; transaction
   write preparation crosses only the Entity Row Codec. Snapshot imports the
   advanced Entity construction interface but no registry, concrete Entity
@@ -1857,10 +1865,25 @@ refer to that contract and do not redefine it.
 - `edit` is the object-copy verb; `update` remains the transaction persistence
   verb.
 - Copies of copies retain the first-touched original value. Lowering emits only
-  effective changes, and a net-zero edit emits no DML.
-- Entity actively overrides Pydantic's broad `model_copy(...)`; every call,
-  with or without `update=`, raises `EditError(edit-use-edit)` and creates no
-  value. `edit(...)` is the sole authored copy-with-changes path.
+  effective changes, and a net-zero edit emits no DML. `edit()` with no changes
+  is legal and yields an Edited Copy whose `edited_row` is `None`, so "nothing
+  to write" has one representation.
+- Entity actively refuses every inherited Pydantic copy path — `model_copy`
+  with or without `update=`, the deprecated `copy`, `__copy__`, and
+  `__deepcopy__`. Each raises `EditError(edit-use-edit)` and creates no value,
+  so `edit(...)` is the sole authored copy-with-changes path and no
+  provenance-less Entity value or unearned Change Record exists.
+- One `EditError(ValueError)` covers `edit(...)` and a predicate write's
+  `Attr.set(...)`, because the assignment rules are one set stated once in the
+  shared judgement. It reports every violation rather than the first, as core
+  ADR 0001 requires. `ModelCopyError`, `ProvenanceError`, and
+  `FrameworkOwnedAxisError` are deleted rather than renamed. The Python spec
+  owns the closed code set, the violation shape, and the ordering rule.
+- Accepted Attribute metadata carries one derived `framework_owned` designation
+  covering the version column and both temporal axis endpoints (core ADR 0054).
+  A caller-authored framework-owned value is refused at construction, a
+  caller-assigned one is refused by the shared judgement, and a hydrated one
+  stays readable and is omitted from every derived row.
 
 ### Amendment (2026-08, COR-50): the Snapshot graph spellings that landed
 
@@ -1877,19 +1900,14 @@ silently rewritten.
 |---|---|
 | `SnapshotGraphMaterializer` | `parallax.snapshot.handle._materializer` — a private driver turning merge state into writer calls, never an exported type. `SnapshotGraphInput` and `SnapshotNodeInput` landed as specified |
 | `EntityGraphResolution` | `ResolutionView` — the same fresh, single-use, one-per-factory-invocation contract under a shorter name |
-| `EntityRuntime`, the frozen value pairing model, graph construction, and row codec | `EntityGraphConstruction` alone. The Entity Row Codec is unbuilt, so there is no pair to make atomic yet; [COR-63](https://linear.app/flimflam/issue/COR-63/implement-entity-edits-and-the-audit-neutral-entity-row-codec) owns the codec and re-decides the pairing there |
-| `entity_runtime_of(model) -> EntityRuntime` answering absence for a descriptor-backed model | `entity_runtime_of(model) -> EntityGraphConstruction`, total and never absent. A descriptor-backed model is refused earlier and by name — `SnapshotConnectionError(snapshot-class-backed-model-required)` at connect and at `find` — and constructing over one raises `GraphConstructionError(entity-graph-invalid-entity)` |
+| `EntityRuntime`, the frozen value pairing model, graph construction, and row codec | nothing — the composite is retired. `graph_construction_of(model)` and `row_codec_of(model)` are the two seams, each answering one capability |
+| `entity_runtime_of(model) -> EntityRuntime` answering absence for a descriptor-backed model | `graph_construction_of(model) -> EntityGraphConstruction`, total and never absent. A descriptor-backed model is refused earlier and by name — `SnapshotConnectionError(snapshot-class-backed-model-required)` at connect and at `find` — and constructing over one raises `GraphConstructionError(entity-graph-invalid-entity)` |
 | `SnapshotInspectionError(snapshot-model-mismatch)` | `SnapshotInspectionError(snapshot-view-owner-mismatch)`. The check is that the path's starting owner applies to the node's concrete Entity; there is no exact-model comparison left to fail, because COR-64 removed model identity from every composed value |
 | `is_loaded(node, path)` and `narrowed(node, path)` on `parallax.core` | `parallax.snapshot.is_view_loaded(node, path)` and `parallax.snapshot.view(node, path)`. One pair of names covers broad and narrowed views alike, since a narrowed view is a view key rather than a second kind of question |
 | `snapshot._errors` as one leaf | Split by scope grant: `parallax.snapshot.handle._errors` keeps the connection, query-target, deferred-feature, transaction-ownership, and materialization refusals in a zero-grant scope, while `SnapshotInspectionError` and `SnapshotDecodingError` live with the code that raises them because each carries a structured Identity that scope cannot import |
 | `snapshot._graph` | The `parallax.snapshot.materialize` package — `_input` (the Graph Input carriers), `_convert` (per-row conversion), `_merge` (projection merging) — with `handle._materializer` driving construction over it |
 | `snapshot._state` | `parallax.snapshot._inspection`, which owns `SnapshotNodeState` and all four inspection operations |
 | `LoweredFindQuery` and `lower_find_query` as `parallax.core.entity` exports | neither is exported. Both are private to `parallax.core.entity._query` and reached only by `parallax.snapshot.handle._preflight`, the one seam that lowers. A COR-64 residue this sweep found rather than a COR-50 move, recorded here so the `Supported Python interfaces` list above is not read as the surface |
-
-Two names above are **pending rather than retired**, and this amendment settles
-neither: `EntityRowCodec` and the `edit(...)` / `EditError(edit-use-edit)` copy
-verb are unbuilt, and their conflict with the shipped `model_copy` /
-`ModelCopyError` spelling belongs to COR-63.
 
 One module is an **addition** rather than a replacement, so the topology tree
 below does not list it: `parallax.core.entity._graph_input` holds the scalar and
@@ -2007,11 +2025,11 @@ additional caller seams.
 | `descriptor` private conversion modules | Immutable descriptor records, JSON/YAML decoding and deterministic writing, packaged-schema validation, descriptor-to-Unresolved adaptation, and accepted-Metamodel canonical export. They expose no second public metadata API. |
 | `entity._declaration` | Shared lower-level Pydantic metaclass engine for Entity and Value Object classes, typed header/annotation parsing through `_members`, immutable declaration payloads and private kind markers, and immediate class-shape validation. It imports neither concrete frontend class nor expression behavior. |
 | `entity._model` | `DomainModel`, public fixed-class construction, private first-party Unresolved-source construction, the constructor's formation and realization sequence, delegation to the one accepted Metamodel, the Class Index when applicable, and introspection. It owns no descriptor behavior, accepted Metadata/facet copies, or independent normalized accepted-metadata indexes. |
-| `entity._entity` | The small frozen `Entity` façade built on `_declaration`, plus delegation to Find Query and Edited Copy behavior. |
+| `entity._entity` | The small frozen `Entity` façade built on `_declaration`, plus delegation to Find Query behavior, the `edit(**changes)` verb, and the refusal of every inherited copy path. |
 | `entity._expressions` | Pure immutable operation nodes parameterized by the Entity they address: Attribute Expressions, Relationship Paths including narrowing, Predicates, Assignments, and Sort Keys. Nodes receive the declaration's own member metadata and structured identities explicitly, reach no model, and perform no class lookup. |
 | `entity._query` | `FindQuery[E, S]`, its clause-oriented private authoring state, the class-local clause rules, fresh `LoweredFindQuery` construction, mutation-compatibility validation, and the private ephemeral Mutation Selection normalization. |
 | `entity._graph_construction` | The concrete callback-scoped Entity Graph Construction capability, opaque Node Handles, two-phase structural allocation/population, deferred opaque lifecycle-state creation, atomic publication, concrete class selection, Pydantic mechanics, recursive Value Object construction, broad relationship-slot installation, and raw relationship/lifecycle-state access for first-party collaborators. It owns no lifecycle-specific graph semantics. |
-| `entity._rows` | Entity-to-row translation, Edited Copy construction, Change Record merging, and effective-change calculation. |
+| `entity._rows` | The model-bound Entity Row Codec and its seam: canonical full, identity, and edited-row derivation, per-Entity member and key facts memoized by Entity Identity, and the provenance comparison that decides an effective change. It owns no authoring surface and no audit, planning, SQL, or Storage Layout concern. |
 | `entity._members` | Public `Attr`/`Rel` annotations, `attr`/`rel` declaration values, and the installed class/instance descriptors that turn bound members into operation nodes. It is the only runtime module in this cluster that touches owner classes. |
 | `entity._value_object` | The frozen Value Object frontend built on the shared `_declaration` metaclass engine. |
 | `entity._errors` | Entity declaration, model definition and lookup, query-scope, graph-construction, and edited-copy errors. It is a strict leaf within the Entity cluster and accepts only structured error data. |
@@ -2034,16 +2052,17 @@ entity._declaration --> entity._members + entity._errors + metamodel
 entity._value_object -> entity._declaration
 entity._model -------> entity._declaration
 entity._model -------> metamodel + _formation_profile
-entity._model -------> entity._graph_construction + entity._rows
 entity._entity ------> entity._declaration
-entity._entity ------> entity._query + entity._rows
+entity._entity ------> entity._query
 entity._members -----> entity._expressions + entity._errors
 entity._expressions -> metamodel + op_algebra
 entity._query -------> entity._expressions + entity._errors
 entity._graph_construction -> entity._entity
 entity._graph_construction -> entity._value_object
 entity._graph_construction -> entity._errors + metamodel
-entity._rows --------> metamodel
+entity._graph_construction -> entity._model
+entity._rows --------> entity._errors + metamodel
+entity._rows --------> entity._model
 snapshot._graph -----> snapshot._state + snapshot._errors
 snapshot._graph -----> entity._graph_construction + metamodel
 snapshot._state -----> snapshot._errors + entity._graph_construction + metamodel
@@ -2076,10 +2095,10 @@ snapshot.handle._database -> snapshot._errors + metamodel
   carry the declaration's own member metadata and structured identities into the
   operation nodes they seed, and reach no model to do it.
 - `_model` builds the Class Index during construction; nothing publishes it
-  process-globally and no module holds a return edge to the model. The model
-  also constructs the
-  Entity Graph Construction and Entity Row Codec capabilities it supplies to a
-  connection; neither implementation imports the model.
+  process-globally and no module holds a return edge to the model. It holds one
+  slot per model-bound capability and constructs neither: each capability module
+  imports the model, so only that module's seam function can build one, and the
+  model retains what the seam hands back.
 - `_expressions` is a class-free operation-node algebra whose enforcement scope
   grants `m-metamodel` and `m-op-algebra` alone. It imports no
   `_members`, `_entity`, `_query`, or `_model`, and it never resolves a Python
@@ -2159,16 +2178,22 @@ TemporalReadError, UndeclaredAxisError
 ```
 
 `parallax.core.entity` additionally exposes the advanced typing and first-party
-collaboration values `AttributeAssignment`, `LoweredFindQuery`, `EntityGraphConstruction`, `EntityGraphWriter`,
-`EntityGraphResolution`, `NodeHandle`, `ValueObjectRecord`,
+collaboration values `AttributeAssignment`, `EntityGraphConstruction`,
+`EntityGraphWriter`, `ResolutionView`, `NodeHandle`, `ValueObjectRecord`,
 `ValueObjectAttributeInput`, `ValueObjectOccurrenceInput`,
-`GraphConstructionError`, `UnloadedRelationshipError`, and `EntityRowCodec`, plus
-`lower_find_query`, `relationship_value_of`, and `lifecycle_state_of`. The
-lowered query has no public serialization contract. The graph writer, graph
-resolution view, and node handles are usable only inside a single
-`EntityGraphConstruction.construct(...)` callback. The two inspection
-operations are the only supported raw-state access for first-party lifecycle
-packages.
+`GraphConstructionError`, `UnloadedRelationshipError`, `EntityRowCodec`, and
+`EntityRowError`, plus the two capability seams `graph_construction_of` and
+`row_codec_of` and the two inspection operations `relationship_value_of` and
+`lifecycle_state_of`. Query lowering is private to this package and reached only
+by Snapshot's read preflight, so neither the lowered query nor its lowering
+function is exported. The graph writer, resolution view, and node handles are
+usable only inside a single `EntityGraphConstruction.construct(...)` callback.
+The two inspection operations are the only supported raw-state access for
+first-party lifecycle packages. No module-level row or provenance helper is
+exported: `full_row`, `primary_key_row`, `canonical_row`, `changed_fields`, and
+`effective_change_set` are deleted in favor of the model-bound codec, with no
+forwarding wrappers, and `ModelCopyError`, `ProvenanceError`, and
+`FrameworkOwnedAxisError` are deleted with them.
 
 `parallax.snapshot` exposes `is_view_loaded`, `view`, `pin_of`, and `edge_of` as
 Snapshot-node inspection functions and re-exports the Entity-defined
@@ -2177,7 +2202,7 @@ Snapshot-node inspection functions and re-exports the Entity-defined
 `SnapshotDecodingError` with stable code `snapshot-decoding-failed`,
 `SnapshotMaterializationError` with stable code
 `snapshot-materialization-failed`, and `SnapshotInspectionError` with stable
-codes `snapshot-node-required`, `snapshot-model-mismatch`,
+codes `snapshot-node-required`, `snapshot-view-owner-mismatch`,
 `snapshot-pin-unavailable`, and
 `snapshot-edge-unavailable`. It also exposes `SnapshotConnectionError` with
 stable code `snapshot-class-backed-model-required`,
@@ -2271,13 +2296,9 @@ the compiled facet protocols its behavioral consumers read are normative in
 Facet"), and `m-opt-lock` ("The Optimistic Lock Facet") — inheritance-aware
 member applicability is the Inheritance Facet's `applicable_*` contract.
 COR-47's exhaustive declaration and descriptor-input grammar is now normative
-in the Python spec (§2 "Declaration and descriptor-input grammar"). Before
-their respective tickets start, the following remain explicit blockers:
-COR-50 needs the recursive Value Object input algebra, Node Handle
-lifetime/factory order, and exact-hub Snapshot inspection keys; COR-51 needs
-the normative row-codec and closed edit-error contracts plus its
-temporary-symbol deletion ledger. None is silently assigned to COR-45 or
-COR-40.
+in the Python spec (§2 "Declaration and descriptor-input grammar"), as are the
+recursive Value Object input algebra and Node Handle lifetime/factory order
+(§3), and the closed edit-error and Entity Row Codec contracts (§3 and §5).
 
 ### COR-45 — Normalize the core Metamodel Interface and canonical descriptor
 
@@ -2950,10 +2971,9 @@ by COR-51. Program-level acceptance requires:
   transitional binding; a descriptor-backed hub or legacy bare Metamodel
   raises `SnapshotConnectionError(snapshot-class-backed-hub-required)` before
   adapter validation or work;
-- Entity Runtime remains atomic. COR-64 introduces no partial runtime; COR-50
-  later replaces only the transitional materialization dependency with the
-  complete runtime's `EntityGraphConstruction` and `EntityRowCodec` while
-  preserving the connected model and identity contract;
+- Snapshot reaches each model-bound capability through its own named seam and
+  holds a reference to each, replacing the transitional materialization
+  dependency while preserving the connected model contract;
 - Snapshot graph state is owned by the Snapshot slice and no generic
   `entity._graph_state` module exists; a future managed-object slice defines a
   separate lifecycle state model rather than extending Snapshot state;
@@ -2994,11 +3014,6 @@ by COR-51. Program-level acceptance requires:
   exact operation and no opaque-state disclosure; `is_view_loaded` never returns
   `False` for the wrong lifecycle, while valid-Snapshot operation-specific
   unloaded and temporal errors remain distinct;
-- exact-hub inspection tests prove a broad or narrowed path from another hub
-  raises `SnapshotInspectionError(snapshot-hub-mismatch)` after
-  `SnapshotNodeState` verification but before relationship-owner or loaded-state
-  validation, even when its structured Relationship View identity equals the
-  connected hub's, and exposes neither opaque sentinel;
 - valid Snapshot nodes without pin or edge state raise respectively
   `SnapshotInspectionError(snapshot-pin-unavailable)` and
   `SnapshotInspectionError(snapshot-edge-unavailable)` with operation and
@@ -3025,9 +3040,11 @@ by COR-51. Program-level acceptance requires:
 - the old registries, configuration objects, global metadata/export helpers,
   row and wire-name helpers, `Statement`, and authored `model_copy` path are
   deleted without forwarding wrappers;
-- `Entity.model_copy(...)` is actively overridden and every call raises
+- every inherited Pydantic copy path — `model_copy` with or without `update=`,
+  the deprecated `copy`, `__copy__`, and `__deepcopy__` — raises
   `EditError(edit-use-edit)` without creating a value, while `edit(...)` alone
-  creates an Edited Copy with a Change Record;
+  creates an Edited Copy with a Change Record, and an invalid edit reports every
+  violation in one canonically ordered aggregate;
 - the Python spec, usage guide, conformance models, public API snapshot,
   package artifacts, type checks, and focused lifecycle/error tests describe
   and prove only the new surface; and
