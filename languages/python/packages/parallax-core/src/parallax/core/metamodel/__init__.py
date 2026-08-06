@@ -170,6 +170,7 @@ from parallax.core.metamodel._values import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+    designate_framework_owned,
     inheritance_parent,
 )
 from parallax.core.metamodel._vo_document import VoDocumentViolation, vo_document_violation
@@ -299,6 +300,7 @@ __all__ = [
     "default_column_name",
     "derive_primary_key_index",
     "derive_temporal_structure",
+    "designate_framework_owned",
     "entity_by_name",
     "inheritance_parent",
     "is_candidate_metamodel",

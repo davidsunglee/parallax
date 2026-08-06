@@ -67,6 +67,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
     derive_primary_key_index,
+    designate_framework_owned,
 )
 from parallax.core.metamodel import Sequence as SequenceGeneration
 from parallax.descriptor import _records
@@ -165,8 +166,12 @@ def _declaration(entity: _records.Entity) -> UnresolvedEntityDeclaration:
     identity = EntityIdentity(entity.namespace, entity.name)
     where = f"entity {identity.canonical!r}"
     container = None if entity.table is None else Table(entity.table)
-    attributes = tuple(_attribute(identity, member, where) for member in entity.attributes)
     as_of_axes = tuple(_axis(identity, axis) for axis in entity.as_of_axes)
+    # The designation is derived, and both frontends derive it through the one
+    # shared rule so a declared member judges the same whichever built it.
+    attributes = designate_framework_owned(
+        (_attribute(identity, member, where) for member in entity.attributes), as_of_axes
+    )
     return _EntityDeclaration(
         identity=identity,
         container=container,

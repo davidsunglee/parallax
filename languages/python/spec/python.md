@@ -71,11 +71,12 @@ the ordinary snake_case→camelCase conversion every other member goes through:
 `tx_start` resolves to `txStart`, `valid_end` to `validEnd`, and so on. The
 Python spelling an author reads and queries through is unaffected.
 
-Read-only here means framework-stamped write semantics: a fresh instance that
-sets one of the supplied Attributes is rejected at construction/write time with
-the framework-owned-axis error, because the temporal write path derives every
-interval bound itself. It is not the record-level `readOnly` Attribute flag —
-the supplied Attributes compile with exactly the flags a hand-authored
+Read-only here means framework-stamped write semantics: each supplied Attribute
+carries the derived `framework_owned` designation (§3), so a fresh instance that
+sets one is refused at construction and an edit naming one is refused as
+`edit-framework-owned`, because the temporal write path derives every interval
+bound itself. It is not the record-level `readOnly` Attribute flag — the
+supplied Attributes compile with exactly the authored flags a hand-authored
 declaration carries, so the exported record stays byte-identical.
 
 The normalized Metamodel still exposes `AsOfAxisMetadata` through the core
@@ -2477,11 +2478,22 @@ or descriptor authoring form and performs no audit stamping.
     Materialization is safe by construction: it builds through Pydantic's
     validation-free path and never reaches the validating constructor.
 
+  A framework-owned member is therefore **never required at construction**,
+  whatever its declared nullability: a caller who cannot supply a value cannot
+  be asked for one, so the member reads as absent — outside `model_fields_set`
+  and valued `None` — until hydration supplies it. An `edit(...)` carries every
+  framework-owned member forward untouched rather than re-submitting it to the
+  constructor that refuses an authored one, which is also what preserves a
+  materialized current milestone's open-interval sentinel.
+
   The designation is derived rather than authored, so no declaration surface
   gains an option and the canonical descriptor is unchanged. It stays distinct
   from `optimistic_locking`, which names a role, and from `read_only`, which is
   the weaker "authored once, then immutable" claim, so a rejection can say
-  which of the three it is.
+  which of the three it is. Neutral write validation reads it too: the framework
+  supplies the value, so a write row omitting a framework-owned member is not a
+  caller omission to report — the version a versioned insert carries is derived
+  (`m-opt-lock`), and the interval bounds were never row members at all.
 
 ## 4. Result collections and materialization
 

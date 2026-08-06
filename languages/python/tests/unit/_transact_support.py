@@ -93,11 +93,19 @@ NEW_ROW: Row = {"id": 7, "owner": "Newton", "balance": Decimal("5.00"), "version
 
 
 def new_account() -> mm.Account:
-    return mm.Account(id=7, owner="Newton", balance=Decimal("5.00"), version=1)
+    # No `version=`: the version is framework-owned, so an insert derives the
+    # initial value and the constructor refuses a caller-supplied one.
+    return mm.Account(id=7, owner="Newton", balance=Decimal("5.00"))
+
+
+def read_account() -> mm.Account:
+    """``new_account()`` as a read hands it back — the same row carrying the
+    version the write derived, which only hydration can put on an instance."""
+    return mm.Account.model_construct(id=7, owner="Newton", balance=Decimal("5.00"), version=1)
 
 
 def grace() -> mm.Account:
-    return mm.Account(id=3, owner="Grace", balance=Decimal("10.00"), version=1)
+    return mm.Account.model_construct(id=3, owner="Grace", balance=Decimal("10.00"), version=1)
 
 
 # The m-unit-work-001 goldens, rendered to driver SQL as the port receives them.

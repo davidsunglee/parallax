@@ -65,7 +65,11 @@ _BALANCE = models.accepted_model(_MODELS["balance"])
 
 
 def _edited_account_row(*, version: int = 1) -> dict[str, object]:
-    fetched = mm.Account(id=1, owner="Ada", balance=Decimal("100.00"), version=version)
+    # Hydrated rather than constructed: the version is framework-owned, so it
+    # reaches an instance only through the read's validation-free path.
+    fetched = mm.Account.model_construct(
+        id=1, owner="Ada", balance=Decimal("100.00"), version=version
+    )
     copy = fetched.model_copy(update={"balance": Decimal("175.00")})
     row = primary_key_row(copy)
     row.update(canonical_row(copy, effective_change_set(copy)))
@@ -114,7 +118,7 @@ def test_copy_to_row_never_reaches_a_caller_authored_version() -> None:
     # §3's own frontend guard, ADR 0013). Proving that here keeps the two
     # defenses distinct and both accounted for, rather than assuming the
     # copy-to-row path free-rides on the row-level one.
-    fetched = mm.Account(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
+    fetched = mm.Account.model_construct(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
     with pytest.raises(ModelCopyError, match="framework-owned"):
         fetched.model_copy(update={"balance": Decimal("175.00"), "version": 99})
 
@@ -122,10 +126,10 @@ def test_copy_to_row_never_reaches_a_caller_authored_version() -> None:
 def _edited_balance_row() -> dict[str, object]:
     # tx_start/tx_end are framework/clock-derived on any temporal
     # write, never caller-authored (`m-unit-work`'s own axis-column exclusion)
-    # -- these two are placeholders Pydantic's constructor requires but the
-    # lowering seam never reads for an UPDATE's close (only `observed.tx_start`
-    # drives its gate, below).
-    fetched = mm.Balance(
+    # -- these two are what the read put on the hydrated instance, and the
+    # lowering seam never reads them for an UPDATE's close (only
+    # `observed.tx_start` drives its gate, below).
+    fetched = mm.Balance.model_construct(
         id=1,
         acct_num="A",
         value=Decimal("100.00"),

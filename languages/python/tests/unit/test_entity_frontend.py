@@ -13,6 +13,7 @@ from collections.abc import Callable
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from parallax.core import (
     MANY_TO_ONE,
@@ -51,7 +52,7 @@ from parallax.core.entity import (
 )
 from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
-from parallax.core.entity._errors import FrameworkOwnedAxisError, ModelCopyError, ProvenanceError
+from parallax.core.entity._errors import ModelCopyError, ProvenanceError
 from parallax.core.entity._query import lower_find_query
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -144,7 +145,6 @@ def _order() -> Order:
         qty=2,
         rating=4.5,
         amount=Decimal("1.50"),
-        version=1,
         customer_id=7,
     )
 
@@ -450,6 +450,39 @@ def test_the_remaining_attribute_options_reach_the_declaration() -> None:
     assert version.optimistic_locking is True
 
 
+def test_the_three_designations_stay_distinct_on_the_declaration() -> None:
+    # A rejection can say WHICH of the three it is only while the declaration
+    # keeps them apart: the version names a role AND is framework-owned, a
+    # read-only member is authored once by the caller, and neither implies the
+    # other.
+    version = next(m for m in Order.attributes if m.identity.name == "version")
+    assert (version.optimistic_locking, version.framework_owned, version.read_only) == (
+        True,
+        True,
+        False,
+    )
+    label = Ticket.attributes[1]
+    assert (label.optimistic_locking, label.framework_owned, label.read_only) == (
+        False,
+        False,
+        True,
+    )
+
+
+def test_a_temporal_endpoint_is_framework_owned_without_naming_a_role() -> None:
+    # The other designated category. The endpoint carries neither of the two
+    # authored flags — its designation comes from the Entity's As-Of Axis, which
+    # the shared derivation reads and an Attribute alone cannot.
+    tx_start = next(m for m in Reading.attributes if m.identity.name == "txStart")
+    assert tx_start.framework_owned is True
+    assert (tx_start.optimistic_locking, tx_start.read_only) == (False, False)
+
+
+def test_an_ordinary_attribute_carries_no_designation() -> None:
+    qty = next(m for m in Order.attributes if m.identity.name == "qty")
+    assert (qty.optimistic_locking, qty.framework_owned, qty.read_only) == (False, False, False)
+
+
 def test_relationship_facts_split_between_the_annotation_and_the_factory() -> None:
     reverse = Customer.relationships[0]
     assert reverse.order_by == (
@@ -631,12 +664,17 @@ def test_wire_names_expose_the_member_roles_the_write_path_needs() -> None:
     assert names.name_to_py["placedAt"] == "placed_at"
     assert names.column_to_py["BIN_NO" if "BIN_NO" in names.column_to_py else "id"] is not None
     assert names.pk_py == frozenset({"id"})
-    assert names.framework_owned_py == frozenset({"version"})
     assert names.relationship_py == {"customer": "customer", "coupon": "coupon"}
     # The member map carries the declared Metadata each name resolves to, which
     # is what decides assignability — there is no second name set restating it.
     assert set(names.members) == set(names.py_to_name)
     assert names.members["qty"] in Order.attributes
+    # The framework-owned names are that map projected, not a set recorded
+    # beside it: they move when the designation does.
+    assert names.framework_owned_py == frozenset({"version"})
+    assert wire_names_of(Episode).framework_owned_py == frozenset(
+        {"valid_start", "valid_end", "tx_start", "tx_end"}
+    )
 
 
 @pytest.mark.skipif(
@@ -675,10 +713,57 @@ def test_a_write_row_carries_only_the_members_the_caller_set() -> None:
     assert canonical_row(order, {"qty": 3}) == {"qty": 3}
 
 
-def test_setting_a_framework_stamped_axis_member_is_rejected_before_any_row_is_built() -> None:
-    fresh = Reading(id=1, celsius=1.0, tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
-    with pytest.raises(FrameworkOwnedAxisError, match="txStart"):
-        full_row(fresh)
+def test_authoring_a_temporal_endpoint_is_refused_at_construction() -> None:
+    # Refused where the mistake is, rather than several steps later when a row
+    # is derived from it — and as an ordinary construction rejection, because
+    # construction is not an edit.
+    with pytest.raises(ValidationError, match="tx_start"):
+        Reading(id=1, celsius=1.0, tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
+
+
+def test_authoring_the_version_column_is_refused_at_construction() -> None:
+    with pytest.raises(ValidationError, match="version"):
+        Order(
+            id=1,
+            placed_at=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+            qty=2,
+            rating=4.5,
+            amount=Decimal("1.50"),
+            customer_id=7,
+            version=1,
+        )
+
+
+def test_every_framework_owned_member_of_one_call_is_reported_together() -> None:
+    # The refusal rides Pydantic's own report, so it aggregates across fields
+    # for free and lands beside every other rejection of that call.
+    with pytest.raises(ValidationError) as caught:
+        Episode(
+            id=1,
+            valid_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+            tx_end=dt.datetime(2026, 1, 1, tzinfo=dt.UTC),
+        )
+    assert {error["loc"][0] for error in caught.value.errors()} == {"valid_start", "tx_end"}
+
+
+def test_a_framework_owned_member_is_omitted_rather_than_required() -> None:
+    # The caller never supplies the value, so requiring one would make the
+    # Entity unconstructible; it reads as absent until hydration supplies it.
+    fresh = Reading(id=1, celsius=1.0)
+    assert fresh.tx_start is None
+    assert "tx_start" not in fresh.model_fields_set
+    assert full_row(fresh) == {"id": 1, "celsius": 1.0}
+
+
+def test_a_hydrated_framework_owned_value_is_readable_and_survives_an_edit() -> None:
+    # Hydration builds through the validation-free path, so the stored value
+    # reaches the instance; an edit then carries it forward untouched rather
+    # than resubmitting it to the constructor that refuses authored ones.
+    hydrated = Reading.model_construct(
+        id=1, celsius=1.0, tx_start=dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    )
+    edited = hydrated.model_copy(update={"celsius": 2.0})
+    assert edited.tx_start == dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
 def test_an_edited_copy_records_its_earliest_original_and_drops_a_net_zero_change() -> None:

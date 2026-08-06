@@ -107,32 +107,6 @@ class WriteRejectedError(ValueError):
         self.rule = rule
 
 
-def _family_axis_members(
-    model: Metamodel, view: inheritance.InheritanceEntityView
-) -> frozenset[str]:
-    """The Attributes ``view``'s FAMILY-EFFECTIVE as-of axes govern (the milestone
-    interval bounds) — excluded from the required/type walk below, since they are
-    NEVER part of the neutral write input (`m-unit-work` "the instant surface is
-    dimension-explicit"; ADR 0010: the Transaction-Time instant is Clock-supplied
-    flush context, never an instruction field; the Valid-Time bounds are
-    instruction fields, ``validFrom`` / ``until``, never row members).
-
-    Resolved through the family root: temporal axes are root-owned metadata a
-    descendant MUST NOT redeclare (`m-inheritance` "Inherited members"), so the
-    root's axes are the whole family's, and an inherited bound reaches the walk
-    only because the applicable-member set carries the root's Attributes. A
-    standalone entity is its own root, so this reduces to its own declared axes.
-    """
-    root = model.entity(view.root)
-    if root is None:  # pragma: no cover - an accepted model contains every family root
-        return frozenset()
-    return frozenset(
-        name
-        for axis in root.declared_as_of_axes
-        for name in (axis.start_attribute.name, axis.end_attribute.name)
-    )
-
-
 def validate_write(
     entity: EntityMetadata,
     row: Mapping[str, object],
@@ -150,6 +124,17 @@ def validate_write(
     members"), so an inherited required member is required of a subtype write
     and an inherited Attribute's declared type is enforced — a standalone entity
     contributes only its own declarations.
+
+    A framework-owned Attribute is outside that walk entirely: the framework
+    supplies its value, so its absence from a write row is not a caller omission
+    to report. That covers the milestone interval bounds, which are never part of
+    the neutral write input at all (`m-unit-work` "the instant surface is
+    dimension-explicit"; ADR 0010: the Transaction-Time instant is Clock-supplied
+    flush context and the Valid-Time bounds are the instruction's own
+    ``validFrom`` / ``until``), and the optimistic-lock version, which a write
+    derives rather than reads off the row (ADR 0013). The designation reaches an
+    inherited bound because the applicable-member set carries the root's own
+    Attributes, and root-owned axis metadata is exactly what designated them.
     """
     try:
         inheritance.validate_subtype_write(model, entity, row)
@@ -159,10 +144,9 @@ def validate_write(
     if view is None:  # pragma: no cover - the facet covers every accepted Entity
         raise ValueError(f"{entity.identity.canonical}: the model declares no such entity")
     full_document = mutation in _FULL_DOCUMENT_MUTATIONS
-    axis_members = _family_axis_members(model, view)
     owner = entity.identity.name
     for attribute in view.applicable_attributes:
-        if attribute.identity.name in axis_members:
+        if attribute.framework_owned:
             continue
         _check_entity_attribute(row, attribute, required=full_document, owner=owner)
     for value_object in view.applicable_value_objects:

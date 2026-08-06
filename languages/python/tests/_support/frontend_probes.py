@@ -257,7 +257,7 @@ def define_canonical_name_collision() -> type:
 
 
 def define_class_var_reserved_name() -> type:
-    """A class variable taking one of the nine declaration member names."""
+    """A class variable taking one of the ten declaration member names."""
 
     class Bad(Entity, table="bad"):
         identity: ClassVar[str] = "shadow"  # pyright: ignore[reportIncompatibleVariableOverride] - probe shadows the reserved member name `identity` with a ClassVar
@@ -267,13 +267,35 @@ def define_class_var_reserved_name() -> type:
 
 
 def define_shadowed_declaration_member() -> type:
-    """A method taking one of the nine declaration member names."""
+    """A method taking one of the ten declaration member names."""
 
     class Bad(Entity, table="bad"):
         id: Attr[int] = attr(primary_key=True)
 
         def indices(self) -> tuple[()]:  # pyright: ignore[reportIncompatibleVariableOverride] - probe shadows the reserved member name `indices` with a method
             return ()
+
+    return Bad
+
+
+def define_reserved_edit_verb_name() -> type:
+    """A member taking the instance-level copy verb name ``edit``."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+        edit: Attr[str]
+
+    return Bad
+
+
+def define_shadowed_model_namespace_binding() -> type:
+    """An unannotated class-body binding in the ``model_*`` namespace."""
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+
+        def model_copy(self, *, update: object = None, deep: bool = False) -> "Bad":
+            return self
 
     return Bad
 

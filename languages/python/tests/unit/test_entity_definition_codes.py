@@ -57,6 +57,8 @@ _PROBES: dict[str, str] = {
     "define_reserved_temporal_name_by_rename": "entity-reserved-member-name",
     "define_class_var_reserved_name": "entity-reserved-member-name",
     "define_shadowed_declaration_member": "entity-reserved-member-name",
+    "define_reserved_edit_verb_name": "entity-reserved-member-name",
+    "define_shadowed_model_namespace_binding": "entity-reserved-member-name",
     "define_nullable_many_relationship": "entity-annotation-invalid",
     "define_wide_union_annotation": "entity-annotation-invalid",
     "define_wide_union_relationship_target": "entity-annotation-invalid",

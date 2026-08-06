@@ -12,6 +12,7 @@ from collections.abc import Iterator, Mapping
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
@@ -19,7 +20,6 @@ from _support import value_object_models as vm
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
     EntityDefinitionError,
-    FrameworkOwnedAxisError,
     ModelCopyError,
     ProvenanceError,
     canonical_row,
@@ -35,8 +35,14 @@ from parallax.core.entity._entity import (
 from parallax.core.metamodel import Column
 
 
-def _account(balance: str = "100.00", version: int = 1) -> mm.Account:
-    return mm.Account(id=1, owner="Ada", balance=Decimal(balance), version=version)
+def _account(balance: str = "100.00") -> mm.Account:
+    return mm.Account(id=1, owner="Ada", balance=Decimal(balance))
+
+
+def _fetched_account(balance: str = "100.00", version: int = 1) -> mm.Account:
+    """One versioned Account as a read hands it back: the framework-owned version
+    arrives through the validation-free path a caller cannot author through."""
+    return mm.Account.model_construct(id=1, owner="Ada", balance=Decimal(balance), version=version)
 
 
 # --------------------------------------------------------------------------- #
@@ -148,13 +154,8 @@ def test_an_invalid_scalar_value_raises_at_copy_time_not_at_the_database() -> No
 # Write-row builders (spec §5).                                              #
 # --------------------------------------------------------------------------- #
 def test_full_row_projects_every_field_the_caller_set() -> None:
-    account = _account(balance="5.00", version=1)
-    assert full_row(account) == {
-        "id": 1,
-        "owner": "Ada",
-        "balance": Decimal("5.00"),
-        "version": 1,
-    }
+    account = _account(balance="5.00")
+    assert full_row(account) == {"id": 1, "owner": "Ada", "balance": Decimal("5.00")}
 
 
 def test_primary_key_row_projects_only_the_declared_keys() -> None:
@@ -195,10 +196,9 @@ def test_wire_names_of_rejects_a_class_that_declares_nothing() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Axis-governed attributes                                                    #
-# are optional at construction, and a caller-supplied one on a fresh instance #
-# raises loudly at `full_row` (the `insert`/`insert_until` Create Payload     #
-# seam) rather than being silently discarded downstream.                     #
+# Framework-owned attributes are omitted at construction, and a caller who     #
+# supplies one is refused there — where the mistake is — rather than several   #
+# steps later when a row is derived from it.                                  #
 # --------------------------------------------------------------------------- #
 def test_an_audit_only_instance_constructs_cleanly_without_axis_values() -> None:
     balance = mm.Balance(id=1, acct_num="A", value=Decimal("100.00"))
@@ -216,27 +216,39 @@ def test_a_bitemporal_instance_constructs_cleanly_without_axis_values() -> None:
     assert full_row(branch) == {"id": 1, "name": "Central", "address": None}
 
 
-def test_supplying_a_transaction_time_value_at_construction_raises_on_full_row() -> None:
-    balance = mm.Balance(
-        id=1,
-        acct_num="A",
-        value=Decimal("100.00"),
-        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+def test_a_versioned_instance_constructs_cleanly_without_its_version() -> None:
+    # The version column is designated the same way an axis endpoint is, so it
+    # behaves the same way: omitted at construction, derived at the write.
+    assert _account().version is None
+
+
+def test_supplying_a_transaction_time_value_at_construction_is_refused() -> None:
+    with pytest.raises(ValidationError, match="tx_start"):
+        mm.Balance(
+            id=1,
+            acct_num="A",
+            value=Decimal("100.00"),
+            tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        )
+
+
+def test_supplying_a_valid_time_value_at_construction_is_refused() -> None:
+    with pytest.raises(ValidationError, match="valid_start"):
+        mm.Branch(
+            id=1, name="Central", address=None, valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+        )
+
+
+def test_supplying_the_version_at_construction_is_refused() -> None:
+    with pytest.raises(ValidationError, match="version"):
+        mm.Account(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
+
+
+def test_a_non_temporal_versioned_class_designates_only_its_version() -> None:
+    assert wire_names_of(mm.Account).framework_owned_py == frozenset({"version"})
+    assert wire_names_of(mm.Branch).framework_owned_py == frozenset(
+        {"valid_start", "valid_end", "tx_start", "tx_end"}
     )
-    with pytest.raises(FrameworkOwnedAxisError, match="txStart"):
-        full_row(balance)
-
-
-def test_supplying_a_valid_time_value_at_construction_raises_on_full_row() -> None:
-    branch = mm.Branch(
-        id=1, name="Central", address=None, valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
-    )
-    with pytest.raises(FrameworkOwnedAxisError, match="validStart"):
-        full_row(branch)
-
-
-def test_a_non_temporal_class_declares_no_axis_governed_fields() -> None:
-    assert wire_names_of(mm.Account).axis_governed_py == frozenset()
 
 
 def test_the_declaration_carries_no_default_for_an_axis_attribute() -> None:
@@ -255,8 +267,9 @@ def test_the_declaration_carries_no_default_for_an_axis_attribute() -> None:
 # exactly this, `parallax.postgres.adapter._InfinityTimestamptzLoader`),      #
 # which the WRAP construction that materializes it never validates           #
 # (`model_construct`) — so `model_copy`'s own untouched-field revalidation    #
-# must carry an axis-governed field's CURRENT value forward WITHOUT ever     #
-# passing it back through the validating constructor.                        #
+# must carry a framework-owned field's CURRENT value forward WITHOUT ever    #
+# passing it back through the validating constructor, which refuses an       #
+# authored one.                                                              #
 # --------------------------------------------------------------------------- #
 def test_model_copy_carries_forward_an_untouched_axis_fields_infinity_sentinel() -> None:
     balance = mm.Balance.model_construct(
@@ -271,7 +284,17 @@ def test_model_copy_carries_forward_an_untouched_axis_fields_infinity_sentinel()
     assert copy.tx_end is INFINITY  # carried forward, never re-validated
 
 
-def test_model_copy_still_validates_an_explicitly_touched_axis_field() -> None:
+def test_model_copy_carries_forward_a_hydrated_version_untouched() -> None:
+    # The version reaches the same carry-forward for the same reason: an edit
+    # never re-authors it, so it never faces the constructor that refuses one.
+    copy = _fetched_account(version=7).model_copy(update={"balance": Decimal("150.00")})
+    assert copy.balance == Decimal("150.00")
+    assert copy.version == 7
+
+
+def test_model_copy_refuses_an_explicitly_touched_axis_field() -> None:
+    # Not a re-validation of the authored value: the axis endpoint is
+    # framework-owned, so naming it at all is the refusal, whatever the value.
     balance = mm.Balance.model_construct(
         id=1,
         acct_num="A",
@@ -279,8 +302,8 @@ def test_model_copy_still_validates_an_explicitly_touched_axis_field() -> None:
         tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         tx_end=INFINITY,
     )
-    with pytest.raises(ModelCopyError, match="txEnd"):
-        balance.model_copy(update={"txEnd": "not-a-datetime"})
+    with pytest.raises(ModelCopyError, match="txEnd: framework-owned fields may not be assigned"):
+        balance.model_copy(update={"tx_end": dt.datetime(2024, 6, 1, tzinfo=dt.UTC)})
 
 
 # --------------------------------------------------------------------------- #

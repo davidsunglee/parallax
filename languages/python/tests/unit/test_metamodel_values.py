@@ -18,6 +18,7 @@ from parallax.core.metamodel import (
     AbstractRoot,
     AbstractSubtype,
     ApplicationAssigned,
+    AsOfAxisMetadata,
     AttributeIdentity,
     AttributeMetadata,
     AttributeReference,
@@ -49,6 +50,7 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
+    designate_framework_owned,
     resolve_entity_reference,
 )
 
@@ -436,3 +438,57 @@ def test_coerce_neutral_input_is_total_and_nonthrowing_on_a_huge_integer() -> No
     coerced = base.coerce_neutral_input(10**1000, base.FLOAT64)
     assert coerced == 10**1000
     assert base.matches_neutral_type(coerced, base.FLOAT64) is False
+
+
+# --------------------------------------------------------------------------- #
+# The derived `framework_owned` designation: one rule over two levels, so a    #
+# surface holding one declared member states the verdict a whole model would.  #
+# --------------------------------------------------------------------------- #
+_TX_START = AttributeIdentity(_ORDERS, "txStart")
+_TX_END = AttributeIdentity(_ORDERS, "txEnd")
+_TX_AXIS = AsOfAxisMetadata(
+    dimension=TemporalDimension.TRANSACTION_TIME,
+    start_attribute=_TX_START,
+    end_attribute=_TX_END,
+)
+
+
+def _timestamp(identity: AttributeIdentity) -> AttributeMetadata:
+    return AttributeMetadata(identity, base.TIMESTAMP, Column(identity.name))
+
+
+def test_the_two_designated_categories_are_derived_and_nothing_else_is() -> None:
+    version = AttributeMetadata(
+        AttributeIdentity(_ORDERS, "version"),
+        base.INT64,
+        Column("version"),
+        optimistic_locking=True,
+    )
+    plain = AttributeMetadata(AttributeIdentity(_ORDERS, "sku"), base.STRING, Column("sku"))
+    designated = designate_framework_owned(
+        (version, _timestamp(_TX_START), _timestamp(_TX_END), plain), (_TX_AXIS,)
+    )
+    assert [member.framework_owned for member in designated] == [True, True, True, False]
+
+
+def test_an_attribute_in_neither_category_is_returned_unchanged() -> None:
+    # Identity, not equality: the derivation rebuilds only what it changes.
+    plain = AttributeMetadata(AttributeIdentity(_ORDERS, "sku"), base.STRING, Column("sku"))
+    assert designate_framework_owned((plain,), ()) == (plain,)
+    assert designate_framework_owned((plain,), ())[0] is plain
+
+
+def test_the_designation_is_derived_rather_than_carried_in() -> None:
+    # Total, so a member arriving with the wrong designation leaves with the
+    # right one — the fact is a function of the arguments alone.
+    stray = AttributeMetadata(
+        AttributeIdentity(_ORDERS, "sku"), base.STRING, Column("sku"), framework_owned=True
+    )
+    assert designate_framework_owned((stray,), ())[0].framework_owned is False
+
+
+def test_an_endpoint_of_another_entitys_axis_is_not_designated() -> None:
+    # Membership is by Attribute Identity, so a same-named Attribute of a
+    # different Entity is a different member.
+    other = AttributeIdentity(EntityIdentity("parallax.test", "Shipment"), "txStart")
+    assert designate_framework_owned((_timestamp(other),), (_TX_AXIS,))[0].framework_owned is False

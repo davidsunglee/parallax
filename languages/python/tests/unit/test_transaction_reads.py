@@ -33,6 +33,7 @@ from _transact_support import (
     balance_row,
     db_for,
     new_account,
+    read_account,
 )
 
 from _support import inheritance_models as im
@@ -170,7 +171,7 @@ def test_find_force_flushes_pending_writes_first() -> None:
         tx.insert(new_account())
         return tx.find(mm.Account.where(mm.Account.id == 7)).results()
 
-    assert account_db(port).transact(fn) == [new_account()]
+    assert account_db(port).transact(fn) == [read_account()]
     assert port.ops == [
         ("begin",),
         ("write", INSERT_SQL, (7, "Newton", 5.00, 1)),
