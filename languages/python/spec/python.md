@@ -2407,8 +2407,10 @@ or descriptor authoring form and performs no audit stamping.
   `ModelLocation` is the accepted closed union `MetamodelIssue` already uses,
   and every violation carries one. A violation of a member the authored name
   resolved to locates **at that member** — `AttributeLocation`,
-  `RelationshipLocation`, or `ValueObjectAttributeLocation` — and carries the
-  member's name. A violation of a name that resolved to **no** member locates at
+  `RelationshipLocation`, `ValueObjectLocation` for a whole Value Object
+  occurrence, or `ValueObjectAttributeLocation` for a scalar inside one — and
+  carries the member's name. A violation of a name that resolved to **no**
+  member locates at
   the `EntityLocation` of the Entity whose declaration was searched, with
   `member_name` carrying the authored name; the location degrades to the Entity
   rather than becoming absent, because a member location would have to name a
@@ -2730,15 +2732,21 @@ or descriptor authoring form and performs no audit stamping.
   also declares is therefore **accepted**, because the emitted row is a function
   of the resolved identity's declared members alone.
 
-  **The candidate set is the model's; the emitted set is the value's.** Members
-  come from the model's family-effective metadata, which also supplies the
-  canonical keys, and `model_fields_set` decides which of those candidates are
-  emitted. Neither alone would do: metadata cannot know what the caller
-  populated, and the class cannot be the authority on which members the model
-  declares. A **populated** member the resolved identity does not declare raises
+  **The candidate set is the model's; the selection is the operation's.**
+  Members come from the model's family-effective metadata, which also supplies
+  the canonical keys, and each operation selects from those candidates by its
+  own rule: `full_row` selects what `model_fields_set` reports as populated,
+  `identity_row` selects the primary key, and `edited_row` selects the primary
+  key plus the members the Change Record names. Neither side alone would do:
+  metadata cannot know what the caller populated, and the class cannot be the
+  authority on which members the model declares. A member an operation selects
+  but the resolved identity does not declare raises
   `entity-row-member-missing` rather than being dropped — the codec can emit no
   canonical key for it, and silently discarding a value the caller authored
-  would signal nothing.
+  would signal nothing. The rule reaches an operation's own selection and
+  nothing else: `edited_row` carries no untouched member by contract, so a
+  populated undeclared member the edit never touched is outside its selection
+  and outside its judgement, while `full_row` on that same value still raises.
 
   **Rows are fresh, plain, caller-owned `dict[str, object]`**, keyed by
   canonical Attribute names and ordered by family-effective member declaration
@@ -2769,9 +2777,22 @@ or descriptor authoring form and performs no audit stamping.
   collapsing an unreadable carrier into "never edited" would name the wrong
   defect and leave the corruption unreported. A recorded name the resolved
   identity does not declare is not a provenance defect — it is the same
-  populated-member case `full_row` reports, so it raises
-  `entity-row-member-missing`, judged after the carrier's shape so that a
-  record which is not a Change Record is never read for member names.
+  undeclared-member case `full_row` reports, so it raises
+  `entity-row-member-missing`.
+
+  **Refusals are ordered, so one input has one code.** Every operation resolves
+  the value's Entity Identity first — `entity-row-not-an-entity`, then
+  `entity-row-target-not-in-model` — and judges members last. `edited_row`
+  admits provenance in between, and settles the carrier's presence and shape
+  before the Change Record is read for names: a value carrying no Change Record
+  raises `entity-row-no-change-record` and an unreadable carrier raises
+  `entity-row-malformed-provenance` whatever else that value populates, so
+  `entity-row-member-missing` from `edited_row` always reports a name a
+  readable record supplied. `full_row` and `identity_row` consult no provenance
+  at all and never raise either provenance code, so the same plain value whose
+  populated member the model does not declare raises
+  `entity-row-member-missing` from `full_row` and emits a row from
+  `identity_row`, whose selection is the declared primary key.
 
   Provenance comparison is stated rather than implied: a
   `one` value compares as a **mask over the keys the caller authored**, a `many`

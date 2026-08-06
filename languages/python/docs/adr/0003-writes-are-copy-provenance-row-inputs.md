@@ -93,8 +93,9 @@ application mapping a form into `edit(**payload)` needs every invalid field at
 once or it will reimplement the framework's rules to pre-validate. Each member
 contributes at most one violation — its own first verdict in the judgement's
 settled order — and every member is examined; violations carry structured
-locations and are canonically ordered by location then code, so a report never
-depends on caller keyword order. The framework's assignment rules never
+locations and are canonically ordered by location, then code, then member name
+— the third term because two names that reach no member share one location and
+one code — so a report never depends on caller keyword order. The framework's assignment rules never
 partially report: every violation of them is in the `EditError`, raised whole
 before construction begins. Those are not Pydantic's rules, though — the shared
 judgement decides conformance to the declared neutral type, while the validating
