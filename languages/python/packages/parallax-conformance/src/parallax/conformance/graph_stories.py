@@ -132,7 +132,7 @@ def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
 
 def mutation_has_no_writeback(db: Database) -> tuple[Any, Snapshot[Any]]:
     order = db.find(Order.where(Order.id == 1)).result()
-    mutated = order.model_copy(update={"name": "Mutant"})  # in-memory only, never DML
+    mutated = order.edit(name="Mutant")  # in-memory only, never DML
     reread = db.find(Order.where(Order.id == 1))  # still observes the ORIGINAL name
     return mutated, reread
 

@@ -159,7 +159,7 @@ def run_boundary_actions(tx: Transaction, actions: Sequence[str]) -> Account | N
         elif action == "update":
             if current is None:
                 raise AssertionError("an `update` action needs a prior `read` observation")
-            current = current.model_copy(update={"balance": current.balance + _BUMP})
+            current = current.edit(balance=current.balance + _BUMP)
             tx.update(current)
         elif action == "create":
             current = Account(id=90, owner="Boundary", balance=Decimal("0.00"))

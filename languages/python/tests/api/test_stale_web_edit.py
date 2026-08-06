@@ -104,7 +104,7 @@ def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode
 
     def fn(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == 1).as_of(tx_time=edge.tx_time)).result()
-        tx.update(current.model_copy(update={"value": Decimal("150.00")}))
+        tx.update(current.edit(value=Decimal("150.00")))
 
     with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
         db.transact(fn)  # locking is the default concurrency — never submit this way
@@ -150,7 +150,7 @@ def test_bitemporal_stale_web_edit_optimistic_conflict_surfaces(provisioner: Any
 
     def concurrent_write(tx: Transaction) -> None:
         current = tx.find(Branch.where(Branch.id == 1)).result()
-        tx.update(current.model_copy(update={"name": "Renamed By Someone Else"}), valid_from=_I2)
+        tx.update(current.edit(name="Renamed By Someone Else"), valid_from=_I2)
 
     peer_db.transact(concurrent_write)
 

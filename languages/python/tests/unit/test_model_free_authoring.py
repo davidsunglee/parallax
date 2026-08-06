@@ -22,8 +22,9 @@ from _transact_support import FIXED, NoIoPort, RecordingPort
 from parallax.core import (
     Attr,
     DomainModel,
+    EditError,
+    EditViolation,
     Entity,
-    ModelCopyError,
     TxTemporal,
     attr,
 )
@@ -183,12 +184,12 @@ def test_a_bare_metamodel_transaction_refuses_a_read_before_it_can_force_flush()
 # --------------------------------------------------------------------------- #
 # One judgement, three callers                                                 #
 # --------------------------------------------------------------------------- #
-def _typed_verdict(entity: type[Entity], member: str, value: object) -> str | None:
+def _typed_violation(entity: type[Entity], member: str, value: object) -> EditViolation | None:
     """What ``.set(...)`` says about ``value``, or absence — the member alone."""
     try:
         getattr(entity, member).set(value)
-    except ModelCopyError as error:
-        return str(error)
+    except EditError as error:
+        return _sole(error)
     return None
 
 
@@ -203,13 +204,19 @@ def _boundary_verdict(
     return None
 
 
-def _copy_verdict(instance: Entity, member: str, value: object) -> str | None:
-    """The same, through ``model_copy(update=...)``'s own name resolution."""
+def _edit_violation(instance: Entity, member: str, value: object) -> EditViolation | None:
+    """The same, through ``edit(**changes)``'s own name resolution."""
     try:
-        instance.model_copy(update={member: value})
-    except ModelCopyError as error:
-        return str(error)
+        instance.edit(**{member: value})
+    except EditError as error:
+        return _sole(error)
     return None
+
+
+def _sole(error: EditError) -> EditViolation:
+    """The one violation a single-target refusal reports."""
+    assert len(error.violations) == 1
+    return error.violations[0]
 
 
 @pytest.mark.parametrize(
@@ -228,12 +235,14 @@ def test_every_assignment_surface_reaches_one_verdict(member: str, value: object
     # Only the resolution in front of the judgement differs between the three
     # callers, so all of them reach the same verdict AND render it identically —
     # which is what "one validator" means once the model has disappeared from
-    # two of them. `model_copy` is in this comparison because an edited copy
+    # two of them. `edit(...)` is in this comparison because an edited value
     # becomes a write: a rule it does not apply is a rule the write path is
     # entered around.
     boundary = _boundary_verdict(WIDGETS, Widget, member, value)
-    assert _typed_verdict(Widget, member, value) == boundary
-    assert _copy_verdict(Widget(id=1, label="x"), member, value) == boundary
+    typed = _typed_violation(Widget, member, value)
+    edited = _edit_violation(Widget(id=1, label="x"), member, value)
+    assert typed == edited
+    assert (typed.message if typed is not None else None) == boundary
 
 
 def test_every_assignment_surface_refuses_a_temporal_endpoint_the_same_way() -> None:
@@ -244,8 +253,12 @@ def test_every_assignment_surface_refuses_a_temporal_endpoint_the_same_way() -> 
     # rather than at acceptance buys.
     boundary = _boundary_verdict(GADGETS, Gadget, "txStart", _INSTANT)
     assert boundary == "Gadget.txStart: framework-owned fields may not be assigned"
-    assert _typed_verdict(Gadget, "tx_start", _INSTANT) == boundary
-    assert _copy_verdict(Gadget(id=1, label="x"), "tx_start", _INSTANT) == boundary
+    typed = _typed_violation(Gadget, "tx_start", _INSTANT)
+    edited = _edit_violation(Gadget(id=1, label="x"), "tx_start", _INSTANT)
+    assert typed == edited
+    assert typed is not None
+    assert typed.message == boundary
+    assert typed.code == "edit-framework-owned"
 
 
 def test_a_rejection_still_says_which_of_the_three_designations_it_is() -> None:
@@ -265,10 +278,10 @@ def test_every_surface_classifies_a_read_only_member_the_same_way() -> None:
     # applied. It lands in the extracted judgement, so one edit gave it to all
     # three surfaces, including the edited copy that would otherwise carry a
     # changed read-only value into `tx.update`.
-    with pytest.raises(ModelCopyError, match="read-only fields may not be assigned"):
+    with pytest.raises(EditError, match="read-only fields may not be assigned"):
         Widget.computed.set("x")
-    with pytest.raises(ModelCopyError, match="read-only fields may not be assigned"):
-        Widget(id=1, label="x").model_copy(update={"computed": "x"})
+    with pytest.raises(EditError, match="read-only fields may not be assigned"):
+        Widget(id=1, label="x").edit(computed="x")
     with pytest.raises(WriteAssignmentError) as caught:
         validate_write_assignment(model_of(WIDGETS), WIDGETS.meta(Widget), "computed", "x")
     assert caught.value.rule == "read-only"

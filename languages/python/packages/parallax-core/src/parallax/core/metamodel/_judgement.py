@@ -8,7 +8,7 @@ the second half, so a caller holding a member — the descriptor that installed 
 or a facet walk that just found it — states the rule without reaching a model.
 
 That is what keeps ONE VALIDATOR true across the split. Three surfaces judge
-here — the typed ``.set(...)`` path, ``Entity.model_copy(update=...)``, and the
+here — the typed ``.set(...)`` path, ``Entity.edit(**changes)``, and the
 serialized write-instruction path — and only the resolution in front of them
 differs: an expression already holds its member, a Python name is resolved
 class-shaped, and a canonical ``Class.member`` reference is resolved

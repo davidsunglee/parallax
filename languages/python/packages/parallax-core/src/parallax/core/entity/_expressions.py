@@ -71,9 +71,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from parallax.core.entity._errors import ModelCopyError
+from parallax.core.entity._errors import EDIT_CODE_BY_RULE, EditError, EditViolation
 from parallax.core.metamodel import (
+    AttributeLocation,
     AttributeMetadata,
+    EntityIdentity,
+    EntityLocation,
+    ModelLocation,
+    ValueObjectAttributeIdentity,
+    ValueObjectAttributeLocation,
+    ValueObjectIdentity,
+    ValueObjectLocation,
     ValueObjectMetadata,
     WriteAssignmentError,
     judge_assignment,
@@ -126,6 +134,9 @@ __all__ = [
     "SortKey",
     "and_terms",
     "conjoin",
+    "judged_edit_violation",
+    "member_canonical_name",
+    "member_location",
     "serialize_member",
     "snake_to_camel",
 ]
@@ -580,28 +591,61 @@ class AttributeExpr[E, T]:
         and the parameter no longer admits.
         """
         if self._path:
-            raise ModelCopyError(
-                f"{self._dotted()}: only a top-level attribute or value-object member is "
-                "assignable via .set(...) — a value object binds its whole document, never "
-                "a nested path (m-value-object)"
-            )
+            raise EditError([self._nested_path_violation()]) from None
         serialized = serialize_member(value)
         self._reject_unassignable(serialized)
         return AttributeAssignment(attr=self.ref, value=serialized)
+
+    def _nested_path_violation(self) -> EditViolation:
+        """The refusal of an assignment below a Value Object boundary.
+
+        The location is the scalar the path names inside the occurrence the head
+        member declares, which is the one member position this surface can reach
+        that no other authoring surface can: a keyword edit cannot spell a path.
+        An expression built directly carries no member, so the Entity it names is
+        only the bare string it was constructed with, and the violation locates
+        at that ownerless Entity.
+        """
+        member = self._member
+        location: ModelLocation
+        if isinstance(member, AttributeMetadata):
+            location = AttributeLocation(member.identity)
+        elif member is not None:
+            location = ValueObjectAttributeLocation(
+                ValueObjectAttributeIdentity(
+                    ValueObjectIdentity(
+                        member.identity.entity, (*member.identity.path, *self._path[:-1])
+                    ),
+                    self._path[-1],
+                )
+            )
+        else:
+            location = EntityLocation(EntityIdentity(None, self._entity))
+        return EditViolation(
+            code="edit-nested-path",
+            location=location,
+            member_name=".".join((self._head, *self._path)),
+            message=(
+                f"{self._dotted()}: only a top-level attribute or value-object member is "
+                "assignable via .set(...) — a value object binds its whole document, never "
+                "a nested path (m-value-object)"
+            ),
+        )
 
     def _reject_unassignable(self, value: object) -> None:
         """Apply the shared assignment rule family to a rendered value (spec §5).
 
         The rules are one set, stated once in
         :func:`~parallax.core.metamodel.judge_assignment` and called from every
-        surface that assigns: here, ``Entity.model_copy(update=...)`` (spec §3),
-        and the serialized write boundary. A primary-key, read-only, or
-        framework-owned target is refused, a scalar value must match its declared
-        neutral type, and a Value Object value must be a well-formed document —
-        with ``None`` legal only where the member is nullable. Only the
-        resolution in front of the judgement differs between the three, so none
-        of them can drift. The rejection is spelled ``ModelCopyError`` because it
-        is that same family.
+        surface that assigns: here, ``Entity.edit(...)`` (spec §3), and the
+        serialized write boundary. A primary-key, read-only, or framework-owned
+        target is refused, a scalar value must match its declared neutral type,
+        and a Value Object value must be a well-formed document — with ``None``
+        legal only where the member is nullable. Only the resolution in front of
+        the judgement differs between the three, so none of them can drift. The
+        rejection is spelled :class:`EditError` because it is that same family;
+        one call names one target, so it carries exactly one violation and there
+        is nothing to aggregate.
 
         The member the descriptor installed is the whole input, so this states
         its rule with no model: which member a name resolves to was decided by
@@ -612,10 +656,9 @@ class AttributeExpr[E, T]:
         """
         if self._member is None:
             return
-        try:
-            judge_assignment(self._member, value)
-        except WriteAssignmentError as error:
-            raise ModelCopyError(f"{self._entity}.{error}") from error
+        violation = judged_edit_violation(self._member, value, owner=self._entity)
+        if violation is not None:
+            raise EditError([violation]) from None
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
@@ -642,6 +685,48 @@ def _as_scalar(value: object) -> Scalar:
             f"got {type(value).__name__}"
         ),
     )
+
+
+def member_location(member: AttributeMetadata | ValueObjectMetadata) -> ModelLocation:
+    """Where a resolved member's own refusal is located.
+
+    The member's accepted Metadata already carries the identity, so every
+    authoring surface locates one resolved member identically without holding a
+    model — which is what lets ``.set(...)`` and ``edit(...)`` report the same
+    violation for the same mistake.
+    """
+    if isinstance(member, AttributeMetadata):
+        return AttributeLocation(member.identity)
+    return ValueObjectLocation(member.identity)
+
+
+def member_canonical_name(member: AttributeMetadata | ValueObjectMetadata) -> str:
+    """A resolved member's canonical name, whichever kind of member it is."""
+    if isinstance(member, AttributeMetadata):
+        return member.identity.name
+    return member.identity.path[-1]
+
+
+def judged_edit_violation(
+    member: AttributeMetadata | ValueObjectMetadata, value: object, *, owner: str
+) -> EditViolation | None:
+    """The shared judgement's verdict on ``value``, as a located violation.
+
+    Every authoring surface translates the verdict here rather than re-deciding
+    it or re-wording it: the judgement owns the rule and its message, this owns
+    only the edit code the rule reports as and the owner prefix that says where
+    the member was addressed. ``None`` means the assignment is accepted.
+    """
+    try:
+        judge_assignment(member, value)
+    except WriteAssignmentError as error:
+        return EditViolation(
+            code=EDIT_CODE_BY_RULE[error.rule],
+            location=member_location(member),
+            member_name=member_canonical_name(member),
+            message=f"{owner}.{error}",
+        )
+    return None
 
 
 def serialize_member(value: object) -> object:

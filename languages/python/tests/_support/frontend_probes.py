@@ -283,7 +283,7 @@ def define_reserved_edit_verb_name() -> type:
 
     class Bad(Entity, table="bad"):
         id: Attr[int] = attr(primary_key=True)
-        edit: Attr[str]
+        edit: Attr[str]  # pyright: ignore[reportIncompatibleMethodOverride] - probe shadows the reserved member name `edit` with an attribute
 
     return Bad
 

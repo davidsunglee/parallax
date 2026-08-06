@@ -36,15 +36,17 @@ from parallax.core.entity._entity import (
     wire_names_of,
 )
 from parallax.core.entity._errors import (
+    EDIT_CODES,
     ENTITY_DEFINITION_CODES,
     GRAPH_CONSTRUCTION_CODES,
     METAMODEL_DEFINITION_CODES,
     METAMODEL_LOOKUP_CODES,
+    EditError,
+    EditViolation,
     EntityDefinitionError,
     GraphConstructionError,
     MetamodelDefinitionError,
     MetamodelLookupError,
-    ModelCopyError,
     ProvenanceError,
     UnloadedRelationshipError,
 )
@@ -117,6 +119,7 @@ from parallax.core.entity._query import FindQuery
 from parallax.core.entity._value_object import ValueObject, ValueObjectMeta, to_document
 
 __all__ = [
+    "EDIT_CODES",
     "ENTITY_DEFINITION_CODES",
     "GRAPH_CONSTRUCTION_CODES",
     "LOADED_NULL",
@@ -144,6 +147,8 @@ __all__ = [
     "DefiningRelSpec",
     "Document",
     "DomainModel",
+    "EditError",
+    "EditViolation",
     "ElementAttributeExpr",
     "Entity",
     "EntityAttributeInput",
@@ -163,7 +168,6 @@ __all__ = [
     "LoadedOne",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
-    "ModelCopyError",
     "NodeHandle",
     "OrderTerm",
     "Predicate",

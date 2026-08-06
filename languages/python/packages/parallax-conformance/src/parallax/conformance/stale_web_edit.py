@@ -15,7 +15,7 @@ transported edge** inside an **optimistic** ``db.transact`` (never
 locking-mode write over it raises ``HistoricalObservationError`` before any
 DML — the observed-``in_z`` gate optimistic mode adds is what actually
 detects a concurrent supersession), applies the caller's form fields via
-``model_copy``, and issues ``tx.update``. A concurrent writer who has since
+``edit``, and issues ``tx.update``. A concurrent writer who has since
 chained a replacement milestone leaves the observed row's ``in_z`` stale, so
 the gated close matches zero rows — ``OptimisticLockConflictError``; an
 untouched row's gate matches, and the edit lands.
@@ -26,7 +26,7 @@ milestone's ``IN_Z`` offline and the merge-back gate binds that carried
 coordinate; transport, never reconstruction). The idiom requires **no
 detached objects**: the ``Edge`` (two plain, JSON-serializable ``datetime``
 values) is everything a real form need transport, and the public verb
-surface (``db.find`` / ``edge_of`` / ``model_copy`` / ``tx.update``) is
+surface (``db.find`` / ``edge_of`` / ``edit`` / ``tx.update``) is
 everything it needs to replay.
 
 Two variants, one shape each — Transaction-Time-Only (a single Transaction-Time dimension,
@@ -72,14 +72,14 @@ def submit_balance_edit(db: Database, *, id: int, edge: Edge, fields: Mapping[st
     inside an OPTIMISTIC transaction (`python.md` §5: an edge-pinned
     observation is never latest-pinned, so a locking-mode write over it
     raises ``HistoricalObservationError`` before any DML), apply ``fields``
-    via ``model_copy``, and update. A concurrent chain since the render
+    via ``edit``, and update. A concurrent chain since the render
     leaves the observed row's ``in_z`` stale — the gated close matches zero
     rows, ``OptimisticLockConflictError``; an untouched row's gate matches,
     and the edit lands."""
 
     def fn(tx: Transaction) -> None:
         current = tx.find(Balance.where(Balance.id == id).as_of(tx_time=edge.tx_time)).result()
-        tx.update(current.model_copy(update=dict(fields)))
+        tx.update(current.edit(**fields))
 
     db.transact(fn, concurrency="optimistic")
 
@@ -98,7 +98,7 @@ def submit_branch_edit(
     """SUBMIT time (bitemporal): re-fetch with EVERY declared axis pinned at
     the transported edge (`as_of(tx_time=..., valid_time=...)` — the DISPLAY
     coordinate, licensing the optimistic re-fetch) inside an OPTIMISTIC
-    transaction, apply ``fields`` via ``model_copy``, and issue a PLAIN
+    transaction, apply ``fields`` via ``edit``, and issue a PLAIN
     (unbounded) bitemporal correction effective from ``valid_from`` (the
     mutation's OWN Valid-Time instant `B` — the everyday "this correction takes
     effect from B onward" idiom, `m-bitemp-write-006`; independent of the
@@ -115,6 +115,6 @@ def submit_branch_edit(
         current = tx.find(
             Branch.where(Branch.id == id).as_of(tx_time=edge.tx_time, valid_time=edge.valid_time)
         ).result()
-        tx.update(current.model_copy(update=dict(fields)), valid_from=valid_from)
+        tx.update(current.edit(**fields), valid_from=valid_from)
 
     db.transact(fn, concurrency="optimistic")

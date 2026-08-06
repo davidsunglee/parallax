@@ -386,7 +386,7 @@ def _row_payload(
 def source_pin(instance: object) -> Pin | None:
     """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
     or ``None`` for anything else — a fresh instance, or an edited copy
-    (``model_copy(update=...)`` builds a new validated instance, so the pin
+    (``edit(**changes)`` builds a new validated instance, so the pin
     stays with the materialized view it describes; that is what keeps the
     spec §3 stale-web-edit recipe's edge-pinned re-fetch -> edited-copy ->
     optimistic ``tx.update`` writable while the view itself stays

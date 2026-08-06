@@ -414,7 +414,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
 # --------------------------------------------------------------------------- #
 def _observe_and_update(tx: Transaction) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-    tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
+    tx.update(current.edit(balance=Decimal("20.00")))
 
 
 def test_optimistic_conflict_surfaces_after_one_attempt_without_the_opt_in() -> None:
@@ -517,7 +517,7 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
 
 
 def _rename_person(tx: Transaction) -> None:
-    tx.update(mm.Person(id=1, name="Ada").model_copy(update={"name": "Grace"}))
+    tx.update(mm.Person(id=1, name="Ada").edit(name="Grace"))
 
 
 def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
@@ -548,7 +548,7 @@ def test_cardinality_corruption_is_never_retried_even_with_the_opt_in() -> None:
 
 def _observe_update_then_force_flush(tx: Transaction) -> None:
     current = tx.find(mm.Account.where(mm.Account.id == 3)).result()
-    tx.update(current.model_copy(update={"balance": Decimal("20.00")}))
+    tx.update(current.edit(balance=Decimal("20.00")))
     tx.find(mm.Account.where(mm.Account.id == 3))  # forces the flush inside THIS (joined) scope
 
 

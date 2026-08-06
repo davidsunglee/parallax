@@ -1,14 +1,14 @@
-"""The validating ``model_copy`` override and its Change Record — ``changed_fields`` /
-``effective_change_set`` / ``full_row`` / ``primary_key_row`` /
-``canonical_row`` (spec §3/§5). The version column's own advance is
-framework-owned end to end at the write seam (`m-opt-lock`); see
+"""``Entity.edit(**changes)``, the refused copy doors, and the Change Record —
+``changed_fields`` / ``effective_change_set`` / ``full_row`` /
+``primary_key_row`` / ``canonical_row`` (spec §3/§5). The version column's own
+advance is framework-owned end to end at the write seam (`m-opt-lock`); see
 ``test_write_lowering.py`` / ``test_opt_lock.py``.
 """
 
 from __future__ import annotations
 
+import copy as copy_module
 import datetime as dt
-from collections.abc import Iterator, Mapping
 from decimal import Decimal
 
 import pytest
@@ -17,10 +17,13 @@ from pydantic import ValidationError
 from _support import mirrored_models as mm
 from _support import snapshot_models as sm
 from _support import value_object_models as vm
+from parallax.core import Attr, Entity, attr
 from parallax.core.base import INFINITY
 from parallax.core.entity import (
+    EDIT_CODES,
+    EditError,
+    EditViolation,
     EntityDefinitionError,
-    ModelCopyError,
     ProvenanceError,
     canonical_row,
     changed_fields,
@@ -32,7 +35,15 @@ from parallax.core.entity import (
 from parallax.core.entity._entity import (
     _assignment_matches_original,  # pyright: ignore[reportPrivateUsage]
 )
-from parallax.core.metamodel import Column
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    AttributeLocation,
+    Column,
+    EntityIdentity,
+    EntityLocation,
+    RelationshipIdentity,
+    RelationshipLocation,
+)
 
 
 def _account(balance: str = "100.00") -> mm.Account:
@@ -52,9 +63,9 @@ def test_a_fresh_instance_carries_no_change_record() -> None:
     assert changed_fields(_account()) is None
 
 
-def test_model_copy_records_the_earliest_original_value() -> None:
+def test_an_edit_records_the_earliest_original_value() -> None:
     original = _account(balance="100.00")
-    edited = original.model_copy(update={"balance": Decimal("175.00")})
+    edited = original.edit(balance=Decimal("175.00"))
     assert edited.balance == Decimal("175.00")
     changes = changed_fields(edited)
     assert changes is not None
@@ -63,8 +74,8 @@ def test_model_copy_records_the_earliest_original_value() -> None:
 
 def test_copies_of_copies_merge_records_keeping_the_earliest_original() -> None:
     original = _account(balance="100.00")
-    once = original.model_copy(update={"balance": Decimal("150.00")})
-    twice = once.model_copy(update={"balance": Decimal("200.00")})
+    once = original.edit(balance=Decimal("150.00"))
+    twice = once.edit(balance=Decimal("200.00"))
     changes = changed_fields(twice)
     assert changes is not None
     assert changes["balance"] == Decimal("100.00")  # earliest, not 150.00
@@ -73,9 +84,7 @@ def test_copies_of_copies_merge_records_keeping_the_earliest_original() -> None:
 
 def test_a_net_zero_chain_still_tracks_the_touch_but_drops_from_the_effective_set() -> None:
     original = _account(balance="100.00")
-    round_tripped = original.model_copy(update={"balance": Decimal("200.00")}).model_copy(
-        update={"balance": Decimal("100.00")}
-    )
+    round_tripped = original.edit(balance=Decimal("200.00")).edit(balance=Decimal("100.00"))
     changes = changed_fields(round_tripped)
     assert changes is not None
     assert "balance" in changes  # touched...
@@ -84,7 +93,7 @@ def test_a_net_zero_chain_still_tracks_the_touch_but_drops_from_the_effective_se
 
 def test_effective_change_set_includes_only_touched_and_different_fields() -> None:
     original = _account(balance="100.00")
-    edited = original.model_copy(update={"balance": Decimal("175.00")})
+    edited = original.edit(balance=Decimal("175.00"))
     assert effective_change_set(edited) == {"balance": Decimal("175.00")}
 
 
@@ -94,7 +103,7 @@ def test_effective_change_set_compares_only_authored_occurrence_members() -> Non
         address=mm.TravelerAddress(city="Oslo", geo=mm.TravelerGeo(country="Norway")),
         tags=(),
     )
-    edited = original.model_copy(update={"address": mm.TravelerAddress(city="Oslo")})
+    edited = original.edit(address=mm.TravelerAddress(city="Oslo"))
 
     assert effective_change_set(edited) == {}
 
@@ -109,11 +118,22 @@ def test_assignment_scoped_comparison_covers_nested_and_many_boundaries() -> Non
     assert not _assignment_matches_original("Oslo", "Bergen")
 
 
-def test_a_plain_copy_with_no_update_carries_forward_the_existing_record() -> None:
+def test_an_edit_with_no_changes_is_legal_and_carries_the_existing_record() -> None:
+    # Legal because "nothing to write" already has one representation: an empty
+    # effective change set. Nothing was authored, so nothing is validated.
     original = _account(balance="100.00")
-    edited = original.model_copy(update={"balance": Decimal("175.00")})
-    plain = edited.model_copy()
+    edited = original.edit(balance=Decimal("175.00"))
+    plain = edited.edit()
+    assert plain is not edited
+    assert plain.balance == Decimal("175.00")
+    assert plain.model_fields_set == edited.model_fields_set
     assert changed_fields(plain) == changed_fields(edited)
+
+
+def test_an_edit_with_no_changes_on_a_never_edited_value_records_nothing() -> None:
+    plain = _account().edit()
+    assert changed_fields(plain) == {}
+    assert effective_change_set(plain) == {}
 
 
 def test_effective_change_set_raises_provenance_error_for_a_fresh_instance() -> None:
@@ -122,32 +142,32 @@ def test_effective_change_set_raises_provenance_error_for_a_fresh_instance() -> 
 
 
 # --------------------------------------------------------------------------- #
-# model_copy validation: unknown / primary-key / framework-owned / relationship. #
+# Edit refusals: unknown / primary-key / framework-owned / relationship.      #
 # --------------------------------------------------------------------------- #
 def test_unknown_field_is_rejected() -> None:
-    with pytest.raises(ModelCopyError, match="unknown member name"):
-        _account().model_copy(update={"shoe_size": 9})
+    with pytest.raises(EditError, match="unknown member name"):
+        _account().edit(shoe_size=9)
 
 
 def test_primary_key_field_is_rejected() -> None:
-    with pytest.raises(ModelCopyError, match="primary-key"):
-        _account().model_copy(update={"id": 2})
+    with pytest.raises(EditError, match="primary-key"):
+        _account().edit(id=2)
 
 
 def test_framework_owned_field_is_rejected() -> None:
-    with pytest.raises(ModelCopyError, match="framework-owned"):
-        _account().model_copy(update={"version": 99})
+    with pytest.raises(EditError, match="framework-owned"):
+        _account().edit(version=99)
 
 
 def test_relationship_field_is_rejected() -> None:
     person = mm.Person(id=1, name="Ada")
-    with pytest.raises(ModelCopyError, match="relationship"):
-        person.model_copy(update={"passport": None})
+    with pytest.raises(EditError, match="relationship"):
+        person.edit(passport=None)
 
 
-def test_an_invalid_scalar_value_raises_at_copy_time_not_at_the_database() -> None:
-    with pytest.raises(Exception):  # noqa: B017 - Pydantic's own validation error type
-        _account().model_copy(update={"balance": "not-a-decimal"})
+def test_an_invalid_scalar_value_raises_at_edit_time_not_at_the_database() -> None:
+    with pytest.raises(EditError, match="does not match the declared type"):
+        _account().edit(balance="not-a-decimal")
 
 
 # --------------------------------------------------------------------------- #
@@ -266,12 +286,12 @@ def test_the_declaration_carries_no_default_for_an_axis_attribute() -> None:
 # (`TemporalBound.INFINITY` — every real Postgres current row decodes to      #
 # exactly this, `parallax.postgres.adapter._InfinityTimestamptzLoader`),      #
 # which the WRAP construction that materializes it never validates           #
-# (`model_construct`) — so `model_copy`'s own untouched-field revalidation    #
-# must carry a framework-owned field's CURRENT value forward WITHOUT ever    #
+# (`model_construct`) — so an edit's own untouched-field revalidation must    #
+# carry a framework-owned field's CURRENT value forward WITHOUT ever          #
 # passing it back through the validating constructor, which refuses an       #
 # authored one.                                                              #
 # --------------------------------------------------------------------------- #
-def test_model_copy_carries_forward_an_untouched_axis_fields_infinity_sentinel() -> None:
+def test_an_edit_carries_forward_an_untouched_axis_fields_infinity_sentinel() -> None:
     balance = mm.Balance.model_construct(
         id=1,
         acct_num="A",
@@ -279,20 +299,20 @@ def test_model_copy_carries_forward_an_untouched_axis_fields_infinity_sentinel()
         tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         tx_end=INFINITY,
     )
-    copy = balance.model_copy(update={"value": Decimal("150.00")})
+    copy = balance.edit(value=Decimal("150.00"))
     assert copy.value == Decimal("150.00")
     assert copy.tx_end is INFINITY  # carried forward, never re-validated
 
 
-def test_model_copy_carries_forward_a_hydrated_version_untouched() -> None:
+def test_an_edit_carries_forward_a_hydrated_version_untouched() -> None:
     # The version reaches the same carry-forward for the same reason: an edit
     # never re-authors it, so it never faces the constructor that refuses one.
-    copy = _fetched_account(version=7).model_copy(update={"balance": Decimal("150.00")})
+    copy = _fetched_account(version=7).edit(balance=Decimal("150.00"))
     assert copy.balance == Decimal("150.00")
     assert copy.version == 7
 
 
-def test_model_copy_refuses_an_explicitly_touched_axis_field() -> None:
+def test_an_edit_refuses_an_explicitly_touched_axis_field() -> None:
     # Not a re-validation of the authored value: the axis endpoint is
     # framework-owned, so naming it at all is the refusal, whatever the value.
     balance = mm.Balance.model_construct(
@@ -302,49 +322,148 @@ def test_model_copy_refuses_an_explicitly_touched_axis_field() -> None:
         tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
         tx_end=INFINITY,
     )
-    with pytest.raises(ModelCopyError, match="txEnd: framework-owned fields may not be assigned"):
-        balance.model_copy(update={"tx_end": dt.datetime(2024, 6, 1, tzinfo=dt.UTC)})
+    with pytest.raises(EditError, match="txEnd: framework-owned fields may not be assigned"):
+        balance.edit(tx_end=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 
 
 # --------------------------------------------------------------------------- #
-# `update=` is a caller-supplied `Mapping`, so nothing forbids it from        #
-# answering a different value each time it is read. The §2 scalar input       #
-# policy is stated of "every `model_copy(update=...)` value"                  #
-# (`spec/python.md`), which can only hold if the value that was JUDGED is the  #
-# value that is COPIED — so the mapping is read exactly once, into a snapshot  #
-# the judgement, the merge, the axis carry-forward, and the Change Record all  #
-# work from. The mapping below is legal on its first value read and forbidden  #
-# afterwards; a second read would silently copy the forbidden value, because   #
-# Pydantic's own constructor coerces the string a `Decimal` attribute rejects. #
+# Aggregation: every mistake in one report, canonically ordered.              #
 # --------------------------------------------------------------------------- #
-class _ShiftingUpdate(Mapping[str, object]):
-    def __init__(self) -> None:
-        self.value_reads = 0
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(("balance",))
-
-    def __len__(self) -> int:
-        return 1
-
-    def __getitem__(self, key: str) -> object:
-        self.value_reads += 1
-        return Decimal("175.00") if self.value_reads == 1 else "999.99"
+class _Reading(Entity, table="reading", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    celsius: Attr[float]
+    computed: Attr[str | None] = attr(max_length=8, read_only=True)
 
 
-def test_model_copy_judges_and_copies_one_snapshot_of_a_stateful_update_mapping() -> None:
-    shifting = _ShiftingUpdate()
-    copy = _account(balance="100.00").model_copy(update=shifting)
-    assert shifting.value_reads == 1
-    assert copy.balance == Decimal("175.00")
-    changes = changed_fields(copy)
-    assert changes is not None
-    assert changes["balance"] == Decimal("100.00")
+def _five_mistakes(person: mm.Person) -> EditError:
+    with pytest.raises(EditError) as caught:
+        person.edit(
+            name=42,
+            zip_code="0150",
+            passport=None,
+            id=2,
+            shoe_size=9,
+        )
+    return caught.value
 
 
-def test_a_string_is_never_an_accepted_decimal_edit() -> None:
-    # The oracle the case above depends on: the forbidden second value really is
-    # forbidden when it is authored directly, so a second read would have been
-    # an escape rather than a difference without a distinction.
-    with pytest.raises(ModelCopyError, match="does not match the declared type"):
-        _account().model_copy(update={"balance": "999.99"})
+def test_an_invalid_edit_reports_every_violation_once() -> None:
+    # Aggregated, not first-failure: a caller correcting five mistakes learns
+    # all five at once, each with a code from the closed set, a structured
+    # location, and a non-empty message.
+    error = _five_mistakes(mm.Person(id=1, name="Ada"))
+    assert [violation.code for violation in error.violations] == [
+        "edit-unknown-member",
+        "edit-unknown-member",
+        "edit-primary-key",
+        "edit-value-mismatch",
+        "edit-relationship-member",
+    ]
+    assert error.codes == {
+        "edit-unknown-member",
+        "edit-primary-key",
+        "edit-value-mismatch",
+        "edit-relationship-member",
+    }
+    assert all(violation.code in EDIT_CODES for violation in error.violations)
+    assert all(violation.message for violation in error.violations)
+
+
+def test_the_report_is_ordered_by_location_then_code_then_member_name() -> None:
+    # The two unresolved names share one Entity location AND one code, so only
+    # the third ordering term separates them — which is why it exists.
+    person = mm.Person(id=1, name="Ada")
+    entity = EntityIdentity("parallax.compatibility", "Person")
+    error = _five_mistakes(person)
+    assert [(v.location, v.member_name) for v in error.violations] == [
+        (EntityLocation(entity), "shoe_size"),
+        (EntityLocation(entity), "zip_code"),
+        (AttributeLocation(AttributeIdentity(entity, "id")), "id"),
+        (AttributeLocation(AttributeIdentity(entity, "name")), "name"),
+        (RelationshipLocation(RelationshipIdentity(entity, "passport")), "passport"),
+    ]
+
+
+def test_the_report_does_not_depend_on_caller_keyword_order() -> None:
+    person = mm.Person(id=1, name="Ada")
+    with pytest.raises(EditError) as caught:
+        person.edit(
+            shoe_size=9,
+            id=2,
+            passport=None,
+            zip_code="0150",
+            name=42,
+        )
+    assert caught.value.violations == _five_mistakes(person).violations
+
+
+def test_an_edit_error_retains_no_cause() -> None:
+    # The judgement's own rendered text travels in each violation's message, so
+    # chaining the carrier would add nothing and expose an internal class.
+    error = _five_mistakes(mm.Person(id=1, name="Ada"))
+    assert error.__cause__ is None
+    assert error.__context__ is None
+
+
+def test_a_violation_compares_by_its_position_and_code_rather_than_its_wording() -> None:
+    located = AttributeLocation(
+        AttributeIdentity(EntityIdentity("parallax.compatibility", "Person"), "id")
+    )
+    assert EditViolation("edit-primary-key", located, "id", "one wording") == EditViolation(
+        "edit-primary-key", located, "id", "another"
+    )
+
+
+def test_an_edit_error_reports_at_least_one_violation() -> None:
+    with pytest.raises(ValueError, match="at least one violation"):
+        EditError([])
+
+
+def test_every_edit_code_has_a_reachable_refusal() -> None:
+    # The closed set is closed from below as well: each of the eight is what
+    # some authored mistake actually raises, on the surface that can express it.
+    balance = mm.Balance.model_construct(id=1, acct_num="A", value=Decimal("1.00"))
+    observed: set[str] = set()
+    refusals = (
+        lambda: _account().model_copy(),
+        lambda: _account().edit(shoe_size=9),
+        lambda: mm.Person(id=1, name="Ada").edit(passport=None),
+        lambda: vm.Customer.address.city.set("Oslo"),
+        lambda: _account().edit(id=2),
+        lambda: _Reading(id=1, celsius=1.0).edit(computed="x"),
+        lambda: balance.edit(tx_end=dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
+        lambda: _account().edit(balance="not-a-decimal"),
+    )
+    for refusal in refusals:
+        with pytest.raises(EditError) as caught:
+            refusal()
+        observed |= caught.value.codes
+    assert observed == EDIT_CODES
+
+
+# --------------------------------------------------------------------------- #
+# `edit` is the only door: every inherited copy path creates nothing.         #
+# --------------------------------------------------------------------------- #
+def test_every_inherited_copy_path_is_refused() -> None:
+    # One reachable copy path would defeat the purpose: `__copy__` and
+    # `__deepcopy__` carry the Change Record living in the instance dictionary,
+    # and the deprecated v1 shim reaches neither name resolution nor judgement.
+    edited = _account().edit(balance=Decimal("175.00"))
+    doors = (
+        lambda: edited.model_copy(),
+        lambda: edited.model_copy(update={"balance": Decimal("1.00")}),
+        lambda: edited.model_copy(deep=True),
+        lambda: edited.copy(),
+        lambda: copy_module.copy(edited),
+        lambda: copy_module.deepcopy(edited),
+    )
+    for door in doors:
+        with pytest.raises(EditError) as caught:
+            door()
+        assert caught.value.codes == {"edit-use-edit"}
+        violation = caught.value.violations[0]
+        assert violation.member_name is None
+        assert violation.location == EntityLocation(
+            EntityIdentity("parallax.compatibility", "Account")
+        )
+        assert "edit(**changes)" in violation.message

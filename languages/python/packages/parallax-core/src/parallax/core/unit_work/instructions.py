@@ -478,9 +478,9 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     primary-key or framework-owned (version) target and any scalar value that
     does not conform to its declared neutral type
     (`python.md:667-676`/`m-case-format.md:700` -- the SAME classification a
-    `.set(...)`-built assignment and an `Entity.model_copy(update=...)` entry are
+    `.set(...)`-built assignment and an `Entity.edit(**changes)` entry are
     rejected with at build time (`entity._expressions.AttributeExpr.set`,
-    `entity._entity.Entity.model_copy`); one validator, three callers, which is
+    `entity._entity.Entity.edit`); one validator, three callers, which is
     the sharing neither scope could otherwise reach across the
     `core/spec/modules.md` section 7 DAG).
     """
