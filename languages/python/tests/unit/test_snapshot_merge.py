@@ -22,7 +22,7 @@ import pytest
 from _snapshot_graph_support import GraphBuilder
 
 from _support import snapshot_models as sm
-from parallax.conformance import read_models
+from parallax.conformance import read_models, vo_models
 from parallax.conformance.story_models import ORDERS_MODEL
 from parallax.conformance.story_models import Order as _soOrder
 from parallax.conformance.story_models import OrderItem as _soOrderItem
@@ -351,6 +351,32 @@ def test_entity_level_value_object_members_construct_into_their_declared_classes
         (sm.Detail(note="y"),),
     )
     assert (second.label, second.detail, second.details) == ("b", None, ())
+
+
+def test_a_materialized_value_object_names_exactly_what_storage_held() -> None:
+    # `Customer.address` mirrors models/customer.yaml: a top-level One holding a
+    # nested One (`geo`) and a nested Many (`phones`). Storage here omits `geo`
+    # entirely, and the one phone element it holds omits `type`. Both read back as
+    # their absence form AND stay unnamed, at both depths — which is what lets an
+    # edit that authors an explicit `geo` differ from what was read, and lets
+    # `phones` be carried through re-serialization without gaining a `type` key
+    # storage never held.
+    builder = GraphBuilder(vo_models.CUSTOMER_MODEL)
+    customer = builder.node(
+        "Customer",
+        {
+            "id": 1,
+            "name": "Ada",
+            "address": {"street": "Main St", "city": "Oslo", "phones": [{"number": "555-0100"}]},
+        },
+    )
+    (root,) = builder.materialize(customer)
+    address = cast("Any", root).address
+    assert address.geo is None
+    assert address.model_fields_set == {"street", "city", "phones"}
+    (phone,) = address.phones
+    assert phone.type is None
+    assert phone.model_fields_set == {"number"}
 
 
 def test_a_null_many_cardinality_document_column_constructs_an_empty_tuple() -> None:

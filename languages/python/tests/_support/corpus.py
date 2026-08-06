@@ -157,6 +157,38 @@ def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str,
 # recursive structural comparison over nested dicts/lists, sharing the same   #
 # exact-Decimal / wire-normalized scalar rules `compare_rows` uses.           #
 # --------------------------------------------------------------------------- #
+def value_object_projection(value: Any) -> dict[str, Any] | None:
+    """One materialized Value Object as the DECLARED projection a `then.graph`
+    leaf grades: EVERY declared member, canonically named, valued as the carrier
+    reads it, recursively. A member the stored document omitted collapses to
+    `None` / `()` exactly as one it stored as JSON null does — the absence
+    collapse `m-op-algebra` fixes and `m-value-object-023` states in its own
+    words ("every declared member is present").
+
+    Deliberately not `to_document`: canonical document serialization is
+    presence-filtered, so it omits a member storage never held. The carrier keeps
+    that distinction — it is what lets an edited copy author an explicit null
+    over an omission — and `then.graph` deliberately does not grade it. Values
+    stay MANAGED here, exactly as the wire-level engine's own graph rendering
+    leaves them, so both sides normalize through one wire rule.
+    """
+    from parallax.core.entity import ValueObject, shape_of
+
+    if value is None:
+        return None
+    declared = shape_of(cast("type[ValueObject]", type(value)))
+    projected: dict[str, Any] = {}
+    for py_name, canonical in declared.py_to_name.items():
+        member: Any = getattr(value, py_name)
+        if py_name in declared.many_py:
+            projected[canonical] = [value_object_projection(element) for element in member]
+        elif isinstance(member, ValueObject):
+            projected[canonical] = value_object_projection(member)
+        else:
+            projected[canonical] = member
+    return projected
+
+
 def wire_value_deep(value: object) -> object:
     from parallax.conformance import engine
 

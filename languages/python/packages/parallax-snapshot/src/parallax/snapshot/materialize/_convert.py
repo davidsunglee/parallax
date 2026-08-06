@@ -12,9 +12,10 @@ Conversion owns document-resident occurrences end to end: stored-document
 presence, container shape, and leaf decoding resolve here into
 :class:`~parallax.core.entity._graph_input.ValueObjectOccurrenceInput` /
 :class:`~parallax.core.entity._graph_input.ValueObjectAttributeInput` keyed by
-structured identity. An undeclared stored key never contributes; a missing member
-and a stored JSON null both read as ``None``; no raw document mapping continues
-past here.
+structured identity. An undeclared stored key never contributes; a member the
+stored document omits contributes no input at all, while one stored as JSON null
+contributes ``None`` — the presence distinction the carriers reconstruct; no raw
+document mapping continues past here.
 
 :func:`observable_columns` is the deliberate exception, and it is not below the
 seam: an observation is a physical record by contract (`m-unit-work`'s Predecessor
@@ -344,13 +345,23 @@ def _decode_document(raw: object, declared: _VoContainer, entity: EntityIdentity
 def _decode_element(
     raw: object, declared: _VoContainer, entity: EntityIdentity
 ) -> dict[str, object] | None:
-    """One ``one``-shaped document (or array element) reduced to its DECLARED
-    members: a non-mapping collapses to ``None`` — the whole composite absent —
-    never a partial mapping, and an absent or JSON-null leaf answers ``None``
-    while a present one decodes by its declared Neutral Type."""
+    """One ``one``-shaped document (or array element) reduced to the DECLARED
+    members the stored document holds: a non-mapping collapses to ``None`` — the
+    whole composite absent — never a partial mapping, and a JSON-null leaf answers
+    ``None`` while a present one decodes by its declared Neutral Type.
+
+    A member the stored document omits contributes no key, at every containment
+    depth, so what a read carries forward is the document's own presence rather
+    than the declared member list. That is what lets a materialized occurrence be
+    re-serialized without inventing a key storage never held. The presence option
+    is not the authored-member mask mutation comparison supplies: this source
+    answers for itself which members it holds, so no mask is passed."""
     try:
         reduced = reduce_declared_members(
-            occurrence_shape(declared), raw, collapse_invalid_occurrences=True
+            occurrence_shape(declared),
+            raw,
+            preserve_presence=True,
+            collapse_invalid_occurrences=True,
         )
     except LeafEncodingError as exc:
         raise _decoding_error(exc, declared, entity) from exc

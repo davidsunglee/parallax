@@ -545,6 +545,46 @@ def test_declared_member_reduction_is_recursive_and_assignment_scoped() -> None:
         reduce_declared_members(_SHAPE, {"entries": [{"kind": 7}]})
 
 
+def test_declared_member_reduction_can_take_its_presence_from_the_source_document() -> None:
+    # The two narrowing options answer different questions, so the same source
+    # reduces differently under each. `named_by` names what a caller authored;
+    # `preserve_presence` lets the document answer for itself, at every depth —
+    # `entries`' element omits `price`, and the preserved reduction omits it too
+    # rather than fabricating the null a re-serialization would then store.
+    stored: dict[str, object] = {
+        "flag": None,
+        "origin": {},
+        "entries": [{"kind": "home"}],
+        "unknown": 3,
+    }
+    assert reduce_declared_members(_SHAPE, stored, preserve_presence=True) == {
+        "flag": None,
+        "origin": {},
+        "entries": [{"kind": "home"}],
+    }
+    assert reduce_declared_members(_SHAPE, stored) == {
+        "flag": None,
+        "day": None,
+        "origin": {"city": None},
+        "entries": [{"kind": "home", "price": None}],
+    }
+    assert reduce_declared_members(
+        _SHAPE, stored, named_by={"day": "2026-01-15"}, preserve_presence=True
+    ) == {}
+
+
+def test_preserved_presence_and_occurrence_collapse_narrow_independently() -> None:
+    # A member stored in a kind its multiplicity does not admit is HELD by the
+    # document, so presence preservation keeps it and the collapse decides its
+    # value. Dropping it instead would let invalid storage read as an omission.
+    stored = {"origin": "Oslo", "entries": {"kind": "home"}}
+    assert reduce_declared_members(
+        _SHAPE, stored, preserve_presence=True, collapse_invalid_occurrences=True
+    ) == {"origin": None, "entries": []}
+    with pytest.raises(LeafEncodingError, match="expected object"):
+        reduce_declared_members(_SHAPE, stored, preserve_presence=True)
+
+
 def test_declared_member_reduction_refuses_wrong_occurrence_kinds() -> None:
     with pytest.raises(LeafEncodingError, match="expected object"):
         reduce_declared_members(_SHAPE, {"origin": "Oslo"})
