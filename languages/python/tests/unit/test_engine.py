@@ -1564,6 +1564,18 @@ def test_observe_group_find_keys_a_row_by_its_own_resolved_concrete() -> None:
     assert uow.observed == [(car, VersionObservation(observed_version=5))]
 
 
+def test_row_object_key_resolves_a_duplicate_local_name_by_its_namespace() -> None:
+    # Two entities sharing a bare name across namespaces resolve no bare
+    # spelling at all, so keying a row by its resolved identity has to reach the
+    # descriptor through the identity's CANONICAL spelling — a bare-name lookup
+    # would deny a legal model its own observations.
+    meta = engine.load_case_metamodel(_load_case("m-inheritance-120"))
+    archive = EntityIdentity("archive", "SharedVariant")
+    assert engine._row_object_key(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        meta, archive, {"id": 3}
+    ) == ObjectKey(archive, (("id", 3),))
+
+
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
     # Each writeSequence entry is its
     # OWN `db.transact` unit, never the whole sequence in one transaction.
