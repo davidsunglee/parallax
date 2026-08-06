@@ -41,17 +41,24 @@ from _support import mirrored_models as mm
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
-from parallax.core import TX_TIME, opt_lock
+from parallax.core import TX_TIME
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.metamodel import Metamodel
 from parallax.core.op_algebra import Operation
 from parallax.core.unit_work import (
+    Concurrency,
     FixedClock,
     OptimisticLockConflictError,
 )
 from parallax.snapshot import DeferredFeatureError, QueryTargetError
-from parallax.snapshot.handle import Database, FindResult, ObservationCollector, Transaction
+from parallax.snapshot.handle import (
+    Database,
+    FindResult,
+    ObservationCollector,
+    Transaction,
+    TransactionTimePinReadOnlyError,
+)
 from parallax.snapshot.handle import _database as database_module
 from parallax.snapshot.handle import _read as handle_read
 from parallax.snapshot.handle import _transaction as transaction_module
@@ -242,16 +249,18 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     assert edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
-def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_observation() -> None:
-    # An as-of (historical/edge-pinned) find is the ONLY transaction-scoped
-    # observation this unit of work has for Balance 1 — a locking-mode close
-    # would have nothing but the shared read lock protecting a milestone that
-    # is not the current one, so it raises before any DML (`m-opt-lock`
-    # "Locking mode additionally requires that the observation be of the
-    # current milestone"). The write goes through an EDITED COPY: the pinned
-    # view itself is read-only at the verb (`transaction-time-pin-read-only`),
-    # while the copy carries no pin — so it is the OBSERVATION-provenance
-    # license, not the verb-time pin refusal, this pin exercises.
+@pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
+def test_a_temporal_write_after_an_as_of_find_is_refused_in_either_mode(
+    concurrency: Concurrency,
+) -> None:
+    # The choreography an as-of read makes available at all: read a superseded
+    # milestone, derive a copy, update. It is refused in BOTH modes, at the verb,
+    # before any DML — the copy carries the pinned view's own read-only state
+    # (`transaction-time-pin-read-only`), and no concurrency mode is a way past
+    # that, because the Transaction-Time past is never rewritten. The mode
+    # therefore selects nothing here, which is the point of parametrizing it:
+    # optimistic mode once licensed this write and chained a replacement
+    # milestone over history.
     port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
     db = db_for(BALANCE, port)
 
@@ -263,34 +272,9 @@ def test_locking_mode_temporal_write_after_an_as_of_find_raises_historical_obser
         ).result()
         tx.update(fetched.edit(value=Decimal("9.00")))
 
-    with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
-        db.transact(fn)  # locking is the default concurrency
+    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+        db.transact(fn, concurrency=concurrency)
     assert not any(op[0] == "write" for op in port.ops)
-
-
-def test_optimistic_mode_temporal_write_after_an_as_of_find_gates_on_observed_in_z() -> None:
-    # The IDENTICAL choreography under optimistic mode is licensed — the
-    # observed-`in_z` gate detects staleness instead of relying on a lock.
-    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
-    db = db_for(BALANCE, port)
-
-    def fn(tx: Transaction) -> None:
-        fetched = tx.find(
-            mm.Balance.where(mm.Balance.id == 1).as_of(
-                tx_time=dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-            )
-        ).result()
-        tx.update(fetched.edit(value=Decimal("9.00")))
-
-    db.transact(fn, concurrency="optimistic")
-    write_ops = [op for op in port.ops if op[0] == "write"]
-    assert len(write_ops) == 2  # the gated close, then the chained replacement
-    sql = write_ops[0][1]
-    binds = cast("tuple[object, ...]", write_ops[0][2])
-    assert sql == POSTGRES.to_driver_sql(
-        "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
-    )
-    assert binds[-1] == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 
 
 def test_locking_mode_temporal_write_after_a_latest_find_is_licensed() -> None:

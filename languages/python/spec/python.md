@@ -2378,6 +2378,33 @@ or descriptor authoring form and performs no audit stamping.
   removed: its detached copy carries the milestone's `IN_Z` offline and the
   merge-back gate binds that carried coordinate — transport, never
   reconstruction. The idiom requires no detached objects.
+- **An edit preserves everything that is not a declared member.**
+  `edit(**changes)` replaces the declared member state the caller authored and
+  carries every other kind of instance state forward unchanged. An Edited Copy
+  of a materialized node therefore answers relationships exactly as that node
+  does — a loaded to-one or to-many is the *same* already-materialized objects
+  rather than a re-read, an unloaded one raises `UnloadedRelationshipError`
+  naming the path and the include fix — and `is_view_loaded`, `view`, `pin_of`,
+  and `edge_of` all answer for the copy as they answer for its source.
+  Preserving a view is sound precisely because a relationship member is never
+  assignable through `edit`: no edit can change what a view describes, so the
+  source's views describe the copy as accurately as they described the source.
+  Preservation is by **complement** — what an edit carries is defined as what it
+  does not replace — so a new kind of instance state travels without the edit
+  surface learning its name.
+
+  The copy carries the source's `Pin` too, which makes the read-only rule
+  indifferent to how the write was authored: an Edited Copy of a view pinned at
+  a **finite Transaction-Time instant** is read-only exactly as the view is, so
+  `tx.update(node.edit(...))` over such a view raises
+  `TransactionTimePinReadOnlyError(transaction-time-pin-read-only)` at the
+  verb, in either concurrency mode, before any DML. Deriving a copy is not a
+  route to rewriting the Transaction-Time past, and no concurrency mode is
+  either. A plainly constructed instance has no views and no lifecycle state to
+  carry, so an edited construction and an edited node stay distinguishable by
+  **provenance** rather than by editedness: the Snapshot inspection surface
+  answers for the second and refuses the first, whatever change record either
+  one carries.
 - **`edit` is the only door, and every inherited copy path is refused.**
   `model_copy` with or without `update=`, the deprecated Pydantic v1 `copy`,
   `__copy__`, and `__deepcopy__` each raise `EditError(edit-use-edit)` and

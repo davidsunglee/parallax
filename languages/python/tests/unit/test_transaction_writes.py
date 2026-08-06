@@ -791,7 +791,8 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
 # at the call, before any buffering, with the neutral                          #
 # `transaction-time-pin-read-only` error. A LATEST Transaction-Time pin and a  #
 # finite Valid-Time pin stay writable (the Valid-Time case is the retroactive  #
-# correction), and an EDITED COPY carries no pin at all.                       #
+# correction), and an EDITED COPY of a pinned node carries that node's pin, so #
+# it is refused exactly as the node itself is.                                 #
 # --------------------------------------------------------------------------- #
 _TX_PIN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _VALID_PIN = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
@@ -868,21 +869,24 @@ def test_a_finite_valid_time_pinned_source_stays_writable() -> None:
     assert len([op for op in port.ops if op[0] == "write"]) == 2  # close + head
 
 
-def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_stays_writable() -> None:
-    # The pin stays with the VIEW: `edit(**changes)` builds a fresh
-    # validated instance carrying no pin, so a pinned read -> edited copy ->
-    # `tx.update` lands (a concurrent supersession is detected by the
-    # observed-`in_z` gate at flush, never by this verb-time refusal).
+def test_an_edited_copy_of_a_finite_transaction_time_pinned_node_is_refused_too() -> None:
+    # An edit preserves everything outside the declared members, the lifecycle
+    # state carrying the pin among it, so the copy describes the same read-only
+    # view its source does. Deriving a copy is not how a historical milestone
+    # becomes writable — nothing is: the Transaction-Time past is never
+    # rewritten. Optimistic mode is the mode with no plan-time licensing check
+    # of its own, so this is the verb-time refusal answering on its own.
     port = RecordingPort(rows=[_position_row_dt()])
 
     def fn(tx: Transaction) -> None:
         node = _find_pinned_position(tx, tx_time=_TX_PIN)
         tx.update(node.edit(value=Decimal("200.00")), valid_from=_CORRECTION_FROM)
 
-    Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        fn, concurrency="optimistic"
-    )
-    assert len([op for op in port.ops if op[0] == "write"]) == 3  # close + head + new tail
+    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+        Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+    assert not any(op[0] == "write" for op in port.ops)  # refused before any buffering
 
 
 # --------------------------------------------------------------------------- #

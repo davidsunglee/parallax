@@ -372,7 +372,34 @@ def _edit_violations(
     return tuple(violations)
 
 
-def _restate[E: Entity](value: E, record: dict[str, object]) -> E:
+def _partition_declared(
+    value: Entity, names: WireNames
+) -> tuple[dict[str, object], dict[str, object]]:
+    """``value``'s declared member state and everything else, split.
+
+    An edit replaces the first half and preserves the second unchanged, which is
+    what keeps a materialized node's relationship views and lifecycle state
+    readable on the copy it derives. The split is by complement rather than by an
+    enumerated slot list, so a new kind of instance state travels correctly
+    without either caller learning its name.
+
+    Both branches of :meth:`Entity.edit` partition here, so neither can hold its
+    own opinion of the boundary. They have held opposite ones: an authored edit
+    kept the declared half alone and dropped every relationship slot and the
+    lifecycle slot, so a relationship access on that copy failed on a missing key
+    while a change-free edit answered it.
+    """
+    declared = set(names.py_to_name)
+    kept: dict[str, object] = {}
+    carried: dict[str, object] = {}
+    for key, member in value.__dict__.items():
+        (kept if key in declared else carried)[key] = member
+    return kept, carried
+
+
+def _restate[E: Entity](
+    value: E, declared: dict[str, object], carried: dict[str, object], record: dict[str, object]
+) -> E:
     """A fresh value holding exactly ``value``'s state under ``record``.
 
     An edit that authors nothing validates nothing, so it builds through the
@@ -381,7 +408,7 @@ def _restate[E: Entity](value: E, record: dict[str, object]) -> E:
     inherited copy door is refused.
     """
     restated = type(value).model_construct()
-    object.__setattr__(restated, "__dict__", dict(value.__dict__))
+    object.__setattr__(restated, "__dict__", declared | carried)
     object.__setattr__(restated, "__pydantic_fields_set__", set(value.__pydantic_fields_set__))
     object.__setattr__(restated, CHANGE_RECORD_SLOT, record)
     return restated
@@ -492,6 +519,17 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         value the judgement accepted and the annotation refused is a judgement
         coverage defect rather than a developer-input refusal.
 
+        An edit replaces declared member state and preserves everything else
+        (:func:`_partition_declared`), whichever branch builds the result. A
+        materialized node's relationship views and its lifecycle state therefore
+        reach the copy intact, so the copy answers a relationship and the
+        lifecycle's own inspection surface exactly as the node did — and carries
+        that node's as-of pin, which is what makes a view pinned in the
+        Transaction-Time past read-only through an edit as well as directly.
+        Preserving a view is sound precisely because a relationship keyword is
+        refused outright: an edit can never change one, so the source's views
+        describe the copy as accurately as they described the source.
+
         An edit with no changes is legal and builds nothing new to validate,
         because nothing was authored: the result is this value's own state and
         its own record, whose effective change set is empty either way.
@@ -505,15 +543,14 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         refuses it before any merge.
         """
         record = dict(_change_record(self) or {})
-        if not changes:
-            return _restate(self, record)
         names = wire_names_of(type(self))
+        merged, carried = _partition_declared(self, names)
+        if not changes:
+            return _restate(self, merged, carried, record)
         entity = declaration_of(type(self)).identity
         violations = _edit_violations(entity, type(self).__name__, names, changes)
         if violations:
             raise EditError(violations) from None
-        declared = set(names.py_to_name)
-        merged = {k: v for k, v in self.__dict__.items() if k in declared}
         merged.update(changes)
         carry_forward = {
             py_name: merged.pop(py_name)
@@ -523,6 +560,8 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         validated = type(self)(**merged)  # re-validates the whole instance (§2 input policies)
         for py_name, value in carry_forward.items():
             object.__setattr__(validated, py_name, value)
+        for py_name, member in carried.items():
+            object.__setattr__(validated, py_name, member)
         for py_name in changes:
             if py_name not in record:
                 record[py_name] = getattr(self, py_name)

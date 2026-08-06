@@ -334,8 +334,9 @@ class Transaction:
         accepted Metadata and its family's DECLARING entity (the entity that
         actually carries the temporal/versioned shape), refuse a source view
         pinned at a finite Transaction-Time instant
-        (:func:`validate_source_pin` — the Transaction-Time past is read-only;
-        an edited copy carries no pin), then validate +
+        (:func:`validate_source_pin` — the Transaction-Time past is read-only,
+        and an edited copy of such a view carries that view's own pin, so
+        deriving one is no route past this refusal), then validate +
         render ``valid_from`` against that declaring entity's own
         temporality (:func:`validate_valid_from`, spec §5). Returns the
         record (``_buffer``'s own entity-name argument), the declaring entity

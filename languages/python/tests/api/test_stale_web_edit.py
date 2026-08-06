@@ -3,9 +3,9 @@
 Every submit runs twice, once per concurrency mode: the recipe reads the
 current milestone and asserts currency by comparing edges in its own code, so
 it is legal under both. A separate closure written out by hand — never the
-recipe — pins a milestone in the Transaction-Time past instead, which is what
-still exercises the `HistoricalObservationError` locking-mode rule in
-`python.md` §5.
+recipe — replays the transported edge as a PIN instead, which is what proves
+the alternative the recipe rejects is not merely inferior but refused: a view
+pinned in the Transaction-Time past is read-only, in either mode.
 
 Neither variant maps to a single active corpus case one-to-one (every
 `m-opt-lock`/`m-bitemp-write` `conflict`-shape case that touches this same
@@ -46,11 +46,10 @@ from parallax.conformance.stale_web_edit import (
     submit_branch_edit,
 )
 from parallax.conformance.vo_models import Address, Branch, Geo
-from parallax.core import opt_lock
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, Transaction
+from parallax.snapshot.handle import Database, Transaction, TransactionTimePinReadOnlyError
 
 _BALANCE = MODELS["balance"]
 _BRANCH = MODELS["branch"]
@@ -139,13 +138,15 @@ def test_audit_only_stale_web_edit_refuses_a_superseded_milestone(
     assert current.value == Decimal("200.00")  # the stale edit never landed
 
 
-def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode(
-    provisioner: Any,
+@pytest.mark.parametrize("concurrency", _MODES)
+def test_a_submit_that_pins_the_transported_edge_is_read_only(
+    provisioner: Any, concurrency: Concurrency
 ) -> None:
-    # An edge-pinned observation is NEVER latest-pinned (`python.md` §5): a
-    # locking-mode write over it raises before any DML, even with no
-    # concurrent writer at all — the shared read lock would protect the
-    # WRONG milestone once one exists.
+    # Why the recipe compares rather than pins, written out by hand because no
+    # recipe does this: a submit that REPLAYS the transported edge as a pin reads
+    # a milestone whose Transaction-Time coordinate is finite, and that view is
+    # read-only in either mode. The copy derived from it carries the same pin, so
+    # the refusal lands at the verb, before any DML.
     provisioner.reset(model_of(_BALANCE), {})
     db = connect(provisioner.port, _BALANCE, clock=ScriptedClock([_I1, _I2]))
     _seed_balance(db)
@@ -155,8 +156,8 @@ def test_audit_only_stale_web_edit_raises_historical_observation_in_locking_mode
         current = tx.find(Balance.where(Balance.id == 1).as_of(tx_time=edge.tx_time)).result()
         tx.update(current.edit(value=Decimal("150.00")))
 
-    with pytest.raises(opt_lock.HistoricalObservationError, match="latest-pinned"):
-        db.transact(fn)  # locking is the default concurrency — never submit this way
+    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+        db.transact(fn, concurrency=concurrency)
     current = db.find(Balance.where(Balance.id == 1)).result()
     assert current.value == Decimal("100.00")  # nothing was written
 
