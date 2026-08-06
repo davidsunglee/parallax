@@ -134,7 +134,8 @@ def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str,
     ``then.rows`` / ``expectRows`` use (`m-case-format` "Triple equivalence":
     a case's expected row is asserted against the golden SQL's OWN projected
     column names, e.g. ``ordered_on``, never the canonical camelCase wire
-    name ``orderedOn`` ``canonical_row`` renders). ``family_variant=True``
+    name ``orderedOn`` an Entity Row Codec row is keyed by).
+    ``family_variant=True``
     additionally reports ``familyVariant`` as ``type(instance).__name__`` —
     the API-suite's own observation of polymorphism (`python.md` §4: "every
     materialized node is an instance of its concrete entity class, so the

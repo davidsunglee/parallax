@@ -2156,7 +2156,7 @@ EntityIdentity, EntityMetadata, MetamodelIssue
 ModelLocation
 EntityDefinitionError, MetamodelDefinitionError, FormationContractError,
 MetamodelValidationError
-MetamodelLookupError, QueryDefinitionError, EditError
+MetamodelLookupError, QueryDefinitionError, EditError, EditViolation
 LATEST, VALID_TIME, TX_TIME, Pin, Edge
 TemporalReadError, UndeclaredAxisError
 ```
@@ -2168,7 +2168,9 @@ collaboration values `AttributeAssignment`, `EntityGraphConstruction`,
 `GraphConstructionError`, `UnloadedRelationshipError`, `EntityRowCodec`, and
 `EntityRowError`, plus the two capability seams `graph_construction_of` and
 `row_codec_of` and the two inspection operations `relationship_value_of` and
-`lifecycle_state_of`. Query lowering is private to this package and reached only
+`lifecycle_state_of`. Each coded family exports its closed code set beside its
+class, so `EDIT_CODES` and `ENTITY_ROW_CODES` are exported here too, as
+`GRAPH_CONSTRUCTION_CODES` already was. Query lowering is private to this package and reached only
 by Snapshot's read preflight, so neither the lowered query nor its lowering
 function is exported. The graph writer, resolution view, and node handles are
 usable only inside a single `EntityGraphConstruction.construct(...)` callback.

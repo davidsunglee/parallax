@@ -16,7 +16,8 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
 1. **No-op-first.** An update whose effective change set is empty is dropped
    before any observation or locking concern — no observation read, no DML,
    zero round trips. Already enforced upstream of this scope, by construction:
-   ``Transaction.update`` returns before buffering an empty ``effective_change_set``
+   ``Transaction.update`` returns before buffering, on the ``None`` the Entity
+   Row Codec's ``edited_row`` answers for a net-zero edit
    (`parallax.snapshot.handle`), and the Write Planner's own no-op elimination
    stage (:class:`~parallax.core.unit_work.WritePlanner`) drops an empty keyed
    update before it is ever settled. This module has nothing to add to an
