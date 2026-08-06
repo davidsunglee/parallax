@@ -17,8 +17,8 @@ Depends on :mod:`parallax.snapshot.handle._preflight` (the shared read gate
 ``find`` passes before touching the unit of work),
 :mod:`parallax.snapshot.handle._read` (the shared find executor plus
 the pin / result-conversion helpers ``find`` needs),
-:mod:`parallax.snapshot.handle._write_inputs` (verb-input validation, the
-sparse-row build, and the observation machinery), and
+:mod:`parallax.snapshot.handle._write_inputs` (verb-input validation and the
+observation machinery), and
 :mod:`parallax.snapshot.handle._predicate_writes`. Demarcation — ``Database``,
 ``_Demarcation``, and ``TransactionOptionConflictError`` — lives in
 :mod:`parallax.snapshot.handle._database`, which imports this module, never the
@@ -37,9 +37,8 @@ from parallax.core.dialect import Dialect
 from parallax.core.entity import (
     AttributeAssignment,
     EntityGraphConstruction,
+    EntityRowCodec,
     FindQuery,
-    full_row,
-    primary_key_row,
 )
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
@@ -78,7 +77,6 @@ from parallax.snapshot.handle._write_inputs import (
     ReadObservations,
     metadata_of_instance,
     observation_key,
-    prepare_sparse_row,
     record_observations,
     source_pin,
     validate_source_pin,
@@ -111,7 +109,15 @@ class Transaction:
     delegates to the unit of work, which fences use-after-scope).
     """
 
-    __slots__ = ("_conn", "_dialect", "_inserted_keys", "_meta", "_runtime", "_uow")
+    __slots__ = (
+        "_codec",
+        "_conn",
+        "_construction",
+        "_dialect",
+        "_inserted_keys",
+        "_meta",
+        "_uow",
+    )
 
     def __init__(
         self,
@@ -119,13 +125,15 @@ class Transaction:
         conn: DbPort,
         meta: Metamodel,
         dialect: Dialect,
-        runtime: EntityGraphConstruction | None,
+        construction: EntityGraphConstruction | None,
+        codec: EntityRowCodec,
     ) -> None:
         self._uow = uow
         self._conn = conn
         self._meta = meta
         self._dialect = dialect
-        self._runtime = runtime
+        self._construction = construction
+        self._codec = codec
         # The object keys THIS transaction buffered an insert for — the
         # read-your-own-writes exemption from the §5 prior-observation license
         # (`_require_observed_milestone`): a same-transaction insert IS the
@@ -150,9 +158,12 @@ class Transaction:
             instance, "insert", valid_from
         )
         self._buffer(
-            "insert", record.identity.name, full_row(instance), valid_from=valid_from_literal
+            "insert",
+            record.identity.name,
+            self._codec.full_row(instance),
+            valid_from=valid_from_literal,
         )
-        self._inserted_keys.add(observation_key(record, declaring, instance))
+        self._inserted_keys.add(self._observation_key(record, declaring, instance))
 
     def insert_until(
         self, instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
@@ -176,11 +187,11 @@ class Transaction:
         self._buffer(
             "insertUntil",
             record.identity.name,
-            full_row(instance),
+            self._codec.full_row(instance),
             valid_from=valid_from_literal,
             until=until_literal,
         )
-        self._inserted_keys.add(observation_key(record, declaring, instance))
+        self._inserted_keys.add(self._observation_key(record, declaring, instance))
 
     def update(self, copy: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
@@ -189,8 +200,9 @@ class Transaction:
         issues no DML at all (zero round trips, the net-zero-chain no-op rule
         — the no-op-first ordering `m-opt-lock` fixes: dropped before any
         observation or locking concern). Raises
-        :class:`~parallax.core.entity.ProvenanceError` for a provenance-less
-        instance (never produced via ``edit(...)``). The version column, if
+        :class:`~parallax.core.entity.EntityRowError`
+        (``entity-row-no-change-record``) for a provenance-less instance (never
+        produced via ``edit(...)``). The version column, if
         any, is never authored here — it is framework-owned end to end
         (`m-opt-lock`; ADR 0013): the write seam derives its advance from this
         unit of work's own recorded observation at lowering
@@ -207,7 +219,7 @@ class Transaction:
         record, declaring, valid_from_literal = self._prepare_keyed_write(
             copy, "update", valid_from
         )
-        row = prepare_sparse_row(copy)
+        row = self._codec.edited_row(copy)
         if row is None:
             return
         self._require_observed_milestone(record, declaring, copy)
@@ -222,7 +234,7 @@ class Transaction:
         before any buffering, exactly as every other keyed verb does."""
         record = metadata_of_instance(self._meta, node_or_instance)
         validate_source_pin(record.identity.name, source_pin(node_or_instance))
-        self._buffer("delete", record.identity.name, primary_key_row(node_or_instance))
+        self._buffer("delete", record.identity.name, self._codec.identity_row(node_or_instance))
 
     # --- typed keyed temporal-window verbs (python.md §5). Every mutation   #
     # kind below is already a valid                                          #
@@ -249,7 +261,7 @@ class Transaction:
         self._buffer(
             "terminate",
             record.identity.name,
-            primary_key_row(node_or_instance),
+            self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
         )
 
@@ -274,7 +286,7 @@ class Transaction:
             copy, "updateUntil", valid_from
         )
         until_literal = validate_until(declaring, "updateUntil", valid_from, until)
-        row = prepare_sparse_row(copy)
+        row = self._codec.edited_row(copy)
         if row is None:
             return
         self._require_observed_milestone(record, declaring, copy)
@@ -305,7 +317,7 @@ class Transaction:
         self._buffer(
             "terminateUntil",
             record.identity.name,
-            primary_key_row(node_or_instance),
+            self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
             until=until_literal,
         )
@@ -336,6 +348,15 @@ class Transaction:
         valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
         return record, declaring, valid_from_literal
 
+    def _observation_key(
+        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
+    ) -> ObjectKey:
+        """``instance``'s verb-time license key, derived through the SAME codec
+        every row this transaction buffers comes from — so the key a verb looks
+        an observation up by and the row it writes can never read the primary
+        key two different ways."""
+        return observation_key(record, declaring, self._codec.identity_row(instance))
+
     def _require_observed_milestone(
         self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
     ) -> None:
@@ -357,7 +378,7 @@ class Transaction:
         window validation (the window rejects first)."""
         if not declaring.declared_as_of_axes:
             return
-        key = observation_key(record, declaring, instance)
+        key = self._observation_key(record, declaring, instance)
         if key in self._inserted_keys:
             return
         opt_lock.require_observed_milestone(record.identity.name, self._uow.observation_for(key))
@@ -390,7 +411,7 @@ class Transaction:
         """
         # Both refusals precede `uow.read` deliberately: that read force-flushes
         # pending buffered writes, so a refused read must be refused before it.
-        runtime = _materializing(self._runtime)
+        construction = _materializing(self._construction)
         lowered = preflight_find(query, model=self._meta)
         target, op = lowered.target.name, lowered.operation
         pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
@@ -399,7 +420,7 @@ class Transaction:
             history_result = self._uow.read(
                 lambda: find_history(op, self._meta, self._dialect, target, self._conn)
             )
-            return snapshot_from_history_result(history_result, self._meta, runtime)
+            return snapshot_from_history_result(history_result, self._meta, construction)
         observations = ReadObservations()
         find_result = self._uow.read(
             lambda: find(
@@ -413,7 +434,7 @@ class Transaction:
             )
         )
         record_observations(self._uow, self._meta, observations, pin)
-        return snapshot_from_find_result(find_result, self._meta, runtime)
+        return snapshot_from_find_result(find_result, self._meta, construction)
 
     def _buffer(
         self,
@@ -582,16 +603,18 @@ class Transaction:
         buffer_predicate_instruction(self._uow, self._meta, self._conn, self._dialect, instruction)
 
 
-def _materializing(runtime: EntityGraphConstruction | None) -> EntityGraphConstruction:
+def _materializing(
+    construction: EntityGraphConstruction | None,
+) -> EntityGraphConstruction:
     """The graph construction a modeled read needs, or refuse before ``uow.read``.
 
     Absent only for the first-party construction that connects a Database to a
     bare accepted Metamodel for neutral write work; ``Database.connect`` admits
     no such model, so an application never reaches this.
     """
-    if runtime is None:
+    if construction is None:
         raise SnapshotConnectionError(
             "this Transaction's Database was connected to a model that composed no Entity "
             "Class, so it cannot materialize a Snapshot (snapshot-class-backed-model-required)"
         )
-    return runtime
+    return construction

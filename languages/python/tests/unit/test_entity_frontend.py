@@ -43,16 +43,12 @@ from parallax.core.entity import (
     Predicate,
     RelationshipPath,
     UnloadedRelationshipError,
-    canonical_row,
-    changed_fields,
-    effective_change_set,
-    full_row,
-    primary_key_row,
     wire_names_of,
 )
 from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
-from parallax.core.entity._errors import EditError, ProvenanceError
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.entity._errors import EditError
 from parallax.core.entity._query import lower_find_query
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -703,16 +699,6 @@ def test_deferred_annotations_are_recovered_without_the_future_import() -> None:
     assert [member.identity.name for member in declaration.relationships] == ["customer"]
 
 
-def test_a_write_row_carries_only_the_members_the_caller_set() -> None:
-    order = _order()
-    row = full_row(order)
-    assert row["id"] == 1
-    assert row["qty"] == 2
-    assert "couponId" not in row
-    assert primary_key_row(order) == {"id": 1}
-    assert canonical_row(order, {"qty": 3}) == {"qty": 3}
-
-
 def test_authoring_a_temporal_endpoint_is_refused_at_construction() -> None:
     # Refused where the mistake is, rather than several steps later when a row
     # is derived from it — and as an ordinary construction rejection, because
@@ -752,7 +738,6 @@ def test_a_framework_owned_member_is_omitted_rather_than_required() -> None:
     fresh = Reading(id=1, celsius=1.0)
     assert fresh.tx_start is None
     assert "tx_start" not in fresh.model_fields_set
-    assert full_row(fresh) == {"id": 1, "celsius": 1.0}
 
 
 def test_a_hydrated_framework_owned_value_is_readable_and_survives_an_edit() -> None:
@@ -766,16 +751,18 @@ def test_a_hydrated_framework_owned_value_is_readable_and_survives_an_edit() -> 
     assert edited.tx_start == dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
 
 
-def test_an_edited_copy_records_its_earliest_original_and_drops_a_net_zero_change() -> None:
+def test_an_edited_copy_records_its_earliest_original() -> None:
+    # What that record then means to a write — the effective change set and the
+    # derived row — is the Entity Row Codec's, and is pinned in
+    # ``test_row_codec.py``.
     order = _order()
-    assert changed_fields(order) is None
-    with pytest.raises(ProvenanceError):
-        effective_change_set(order)
+    assert CHANGE_RECORD_SLOT not in order.__dict__
     once = order.edit(qty=5)
-    assert changed_fields(once) == {"qty": 2}
-    assert effective_change_set(once) == {"qty": 5}
-    back = once.edit(qty=2)
-    assert effective_change_set(back) == {}
+    assert once.__dict__[CHANGE_RECORD_SLOT] == {"qty": 2}
+    assert (
+        once.__dict__[CHANGE_RECORD_SLOT]
+        == order.edit(qty=5).edit(qty=2).__dict__[CHANGE_RECORD_SLOT]
+    )
 
 
 @pytest.mark.parametrize("member", ["id", "version", "customer", "nonesuch"])

@@ -686,18 +686,18 @@ def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -
 
 
 def snapshot_from_find_result(
-    result: FindResult, meta: Metamodel, runtime: EntityGraphConstruction
+    result: FindResult, meta: Metamodel, construction: EntityGraphConstruction
 ) -> Snapshot[Any]:
-    roots = _materialized(lambda: materialize_graph(result.graph, meta, runtime))
+    roots = _materialized(lambda: materialize_graph(result.graph, meta, construction))
     return Snapshot(roots, result.graph.pin, result.execution)
 
 
 def snapshot_from_history_result(
-    result: HistoryFindResult, meta: Metamodel, runtime: EntityGraphConstruction
+    result: HistoryFindResult, meta: Metamodel, construction: EntityGraphConstruction
 ) -> Snapshot[Any]:
     roots: list[Any] = []
     for graph in result.graphs:
-        roots.extend(_materialized(lambda: materialize_graph(graph, meta, runtime)))  # noqa: B023
+        roots.extend(_materialized(lambda: materialize_graph(graph, meta, construction)))  # noqa: B023
     return Snapshot(tuple(roots), Pin(), result.execution)
 
 

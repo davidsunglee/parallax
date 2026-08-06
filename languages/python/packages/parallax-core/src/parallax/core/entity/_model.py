@@ -93,15 +93,23 @@ class DomainModel:
     the identical compiler-owned accepted metadata.
     """
 
-    __slots__ = ("_classes", "_model", "_runtime")
+    __slots__ = ("_classes", "_graph_construction", "_model", "_row_codec")
 
     _model: Metamodel
     _classes: ClassIndex | None
-    _runtime: object | None
+    _graph_construction: object | None
     """The Entity Graph Construction collaboration this model reached, created on
     first reach. It is typed as opaque here because the construction seam depends
     on this module and never the reverse; what fills the slot is
-    ``parallax.core.entity._graph_construction.entity_runtime_of``."""
+    ``parallax.core.entity._graph_construction.graph_construction_of``."""
+    _row_codec: object | None
+    """The Entity Row Codec this model reached, created on first reach and typed
+    opaque for its sibling's reason; what fills the slot is
+    ``parallax.core.entity._row_codec.row_codec_of``.
+
+    One slot per capability rather than one composite or one keyed bag: read
+    materialization crosses graph construction alone and write preparation
+    crosses the codec alone, so nothing wants the pair as a value."""
 
     def __init__(self, *classes: UnresolvedEntityDeclaration) -> None:
         """Compose ``classes`` into one sealed model, or raise.
@@ -143,7 +151,8 @@ class DomainModel:
         """Complete the model's own state in one step."""
         self._model = model
         self._classes = classes
-        self._runtime = None
+        self._graph_construction = None
+        self._row_codec = None
 
     @property
     def entities(self) -> Sequence[EntityMetadata]:

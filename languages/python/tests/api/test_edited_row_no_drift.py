@@ -1,4 +1,4 @@
-"""Copy-to-row no-drift guard (m-api-conformance, `python.md` "API Conformance
+"""Edited-row no-drift guard (m-api-conformance, `python.md` "API Conformance
 Suite and Usage Guide" — the fourth no-drift guard).
 
 The other guards prove: an idiomatic statement's serialization equals the
@@ -7,18 +7,18 @@ equals its corpus model (`test_descriptor_no_drift.py`); a registered write
 story's wire DML equals its corpus golden byte-exact
 (`test_write_no_drift.py`). None of them isolates the ONE seam every keyed
 UPDATE driven by an edited copy shares regardless of which story exercises
-it: ``edit``'s Change Record feeds `parallax.core.entity.
-effective_change_set`, which `Transaction.update` narrows to a sparse
-(non-temporal) or observation-merged (temporal) row — and the row's own
-version/Transaction-Time columns are ALWAYS framework-owned, never the copy's
-own carried value (`m-opt-lock`; ADR 0003/0013).
+it: ``edit``'s Change Record feeds the Entity Row Codec's ``edited_row``, which
+`Transaction.update` buffers as a sparse (non-temporal) or observation-merged
+(temporal) row — and the row's own version/Transaction-Time columns are ALWAYS
+framework-owned, never the copy's own carried value (`m-opt-lock`;
+ADR 0003/0013).
 
 This guard drives that seam directly, Docker-free, scoped to
 the write shapes that actually pass through edited-copy lowering: a keyed
 non-temporal (versioned) update and a keyed temporal (audit-only) update. It
 builds a fixture instance, edits a copy through ``edit``, derives the
-row through the SAME helpers ``Transaction.update`` calls
-(``primary_key_row`` / ``canonical_row`` / ``effective_change_set``), and
+row through the SAME codec operation ``Transaction.update`` calls
+(``row_codec_of(model).edited_row``), and
 lowers it through the shipped seam with a SYNTHETIC observation — proving the
 lowered statement binds exactly that observation's value, and a companion
 assertion with a DIFFERENT observation proves the bound value tracks the
@@ -27,7 +27,7 @@ observation every time, never a value the copy itself happens to carry
 ``edit`` lowering at all, so they carry no analogous risk here). A
 third assertion proves the version guard itself: ``edit`` refuses a
 ``version`` reassignment at the entity frontend, before any row is ever
-derived — the copy-to-row seam never even reaches
+derived — the edited-row seam never even reaches
 ``reject_caller_authored_version``'s own row-level backstop (pinned
 separately, on the raw-document route, by
 ``test_write_lowering.test_versioned_update_carrying_a_literal_version_is_
@@ -46,12 +46,7 @@ from _support.clock_probes import instant_at
 from _support.lowering_probes import lower_instruction
 from parallax.conformance import models
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import (
-    EditError,
-    canonical_row,
-    effective_change_set,
-    primary_key_row,
-)
+from parallax.core.entity import EditError, row_codec_of
 from parallax.core.unit_work import (
     KeyedWrite,
     PredecessorRow,
@@ -70,13 +65,12 @@ def _edited_account_row(*, version: int = 1) -> dict[str, object]:
     fetched = mm.Account.model_construct(
         id=1, owner="Ada", balance=Decimal("100.00"), version=version
     )
-    copy = fetched.edit(balance=Decimal("175.00"))
-    row = primary_key_row(copy)
-    row.update(canonical_row(copy, effective_change_set(copy)))
+    row = row_codec_of(mm.ACCOUNT_MODEL).edited_row(fetched.edit(balance=Decimal("175.00")))
+    assert row is not None
     return row
 
 
-def test_copy_to_row_non_temporal_update_binds_the_observed_version() -> None:
+def test_edited_row_non_temporal_update_binds_the_observed_version() -> None:
     instruction = KeyedWrite("update", "Account", (_edited_account_row(),))
     statement = lower_instruction(
         instruction,
@@ -91,7 +85,7 @@ def test_copy_to_row_non_temporal_update_binds_the_observed_version() -> None:
     assert statement.binds == (175.00, 8, 1)
 
 
-def test_copy_to_row_non_temporal_update_tracks_a_different_observation() -> None:
+def test_edited_row_non_temporal_update_tracks_a_different_observation() -> None:
     # The companion pin: a DIFFERENT observation drives a DIFFERENT advance, off
     # the SAME edited copy (still carrying its own untouched `version=1`) --
     # proving the bound value tracks the observation, never anything the copy
@@ -107,17 +101,17 @@ def test_copy_to_row_non_temporal_update_tracks_a_different_observation() -> Non
     assert statement.binds == (175.00, 42, 1)
 
 
-def test_copy_to_row_never_reaches_a_caller_authored_version() -> None:
+def test_edited_row_never_reaches_a_caller_authored_version() -> None:
     # `reject_caller_authored_version` (`~parallax.core.opt_lock`) is a
     # row-level backstop for a version-carrying row reaching finalization
     # directly (the raw-document/rejected-write route, pinned by
     # `test_write_lowering.test_versioned_update_carrying_a_literal_version_
-    # is_refused`) -- but the copy-to-row seam THIS guard exercises cannot
+    # is_refused`) -- but the edited-row seam THIS guard exercises cannot
     # itself reach that backstop: `edit` refuses a `version` key
     # earlier, at the entity frontend, before any row is ever derived (spec
     # §3's own frontend guard, ADR 0013). Proving that here keeps the two
     # defenses distinct and both accounted for, rather than assuming the
-    # copy-to-row path free-rides on the row-level one.
+    # edited-row path free-rides on the row-level one.
     fetched = mm.Account.model_construct(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
     with pytest.raises(EditError, match="framework-owned"):
         fetched.edit(balance=Decimal("175.00"), version=99)
@@ -136,9 +130,8 @@ def _edited_balance_row() -> dict[str, object]:
         tx_start=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
         tx_end=dt.datetime(1970, 1, 1, tzinfo=dt.UTC),
     )
-    copy = fetched.edit(value=Decimal("150.00"))
-    row = primary_key_row(copy)
-    row.update(canonical_row(copy, effective_change_set(copy)))
+    row = row_codec_of(mm.BALANCE_MODEL).edited_row(fetched.edit(value=Decimal("150.00")))
+    assert row is not None
     return row
 
 
@@ -158,7 +151,7 @@ def _observed_balance(tx_start: str) -> TemporalObservation:
     )
 
 
-def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> None:
+def test_edited_row_temporal_update_gates_the_close_on_observed_tx_start() -> None:
     # The close (the milestone plan's FIRST statement, `txtime_write.plan`)
     # binds the OBSERVATION's own Transaction-Time start as its optimistic gate -- never a
     # value the edited copy carries (a temporal keyed write's row never even
@@ -184,7 +177,7 @@ def test_copy_to_row_temporal_update_gates_the_close_on_observed_tx_start() -> N
     )
 
 
-def test_copy_to_row_temporal_update_tracks_a_different_observed_tx_start() -> None:
+def test_edited_row_temporal_update_tracks_a_different_observed_tx_start() -> None:
     # The companion pin: off the SAME edited copy, a DIFFERENT observed Transaction-Time start
     # binds a DIFFERENT gate value -- the bound value tracks the observation,
     # never anything the copy or its row carries.

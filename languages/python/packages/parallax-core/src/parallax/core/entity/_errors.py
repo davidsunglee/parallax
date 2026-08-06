@@ -7,14 +7,16 @@ retains structured values rather than classes, models, or declarations.
 Rejections carry a stable code drawn from a closed per-family set, so a caller
 branches on the rule that fired rather than on a message substring.
 
-The five families are disjoint by the question they answer.
+The six families are disjoint by the question they answer.
 :class:`EntityDefinitionError` says a declaration is outside the grammar;
 :class:`MetamodelDefinitionError` says a Domain Model constructor call is
 malformed before any model exists; :class:`MetamodelLookupError` says a
 developer-facing ``models.meta(...)`` lookup found nothing;
 :class:`GraphConstructionError` says a caller drove the advanced Entity Graph
-Construction collaboration outside its contract; and :class:`EditError` says an
-authored assignment to a live value breaks the shared assignment rules.
+Construction collaboration outside its contract; :class:`EntityRowError` says a
+caller asked the Entity Row Codec for a row it cannot derive; and
+:class:`EditError` says an authored assignment to a live value breaks the shared
+assignment rules.
 """
 
 from __future__ import annotations
@@ -39,6 +41,12 @@ __all__ = [
     "EDIT_CODES",
     "EDIT_CODE_BY_RULE",
     "ENTITY_DEFINITION_CODES",
+    "ENTITY_ROW_CODES",
+    "ENTITY_ROW_MALFORMED_PROVENANCE",
+    "ENTITY_ROW_MEMBER_MISSING",
+    "ENTITY_ROW_NOT_AN_ENTITY",
+    "ENTITY_ROW_NO_CHANGE_RECORD",
+    "ENTITY_ROW_TARGET_NOT_IN_MODEL",
     "GRAPH_CONSTRUCTION_CODES",
     "METAMODEL_DEFINITION_CODES",
     "METAMODEL_DUPLICATE_ENTITY_CLASS",
@@ -50,10 +58,10 @@ __all__ = [
     "EditError",
     "EditViolation",
     "EntityDefinitionError",
+    "EntityRowError",
     "GraphConstructionError",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
-    "ProvenanceError",
     "UnloadedRelationshipError",
 ]
 
@@ -200,6 +208,55 @@ class GraphConstructionError(RuntimeError):
         self.cause = cause
 
 
+ENTITY_ROW_NOT_AN_ENTITY: Final = "entity-row-not-an-entity"
+"""A row was asked for a value that is no Entity at all."""
+ENTITY_ROW_TARGET_NOT_IN_MODEL: Final = "entity-row-target-not-in-model"
+"""The value's Entity Identity resolves to no Entity of the codec's model."""
+ENTITY_ROW_MEMBER_MISSING: Final = "entity-row-member-missing"
+"""An operation selected a member the resolved identity does not declare."""
+ENTITY_ROW_NO_CHANGE_RECORD: Final = "entity-row-no-change-record"
+"""An edited row was asked of a plain value that was never edited."""
+ENTITY_ROW_MALFORMED_PROVENANCE: Final = "entity-row-malformed-provenance"
+"""The private Change Record slot holds something that is not a Change Record."""
+
+ENTITY_ROW_CODES: Final[frozenset[str]] = frozenset(
+    {
+        ENTITY_ROW_NOT_AN_ENTITY,
+        ENTITY_ROW_TARGET_NOT_IN_MODEL,
+        ENTITY_ROW_MEMBER_MISSING,
+        ENTITY_ROW_NO_CHANGE_RECORD,
+        ENTITY_ROW_MALFORMED_PROVENANCE,
+    }
+)
+"""The complete Entity Row Codec refusal vocabulary. Every code names an input
+the codec's own contract rejects, so no misuse of it surfaces as an
+:class:`AttributeError`, a :class:`KeyError`, or a partially keyed row."""
+
+
+class EntityRowError(RuntimeError):
+    """The Entity Row Codec was asked for a row it cannot derive.
+
+    A ``RuntimeError`` for :class:`GraphConstructionError`'s reason: every code
+    describes first-party misuse or an implementation defect rather than rejected
+    developer input. The codec knows only that it received a value its operation
+    does not accept; the developer-facing steering for handing a persistence verb
+    an unedited value belongs to that verb, which knows what the developer
+    called.
+
+    ``identity`` is the resolved Entity Identity the refusal is about, absent
+    only when the value carried none to resolve. Neither the value, its class,
+    nor any partially built row is ever retained here.
+    """
+
+    def __init__(self, *, code: str, message: str, identity: EntityIdentity | None = None) -> None:
+        if code not in ENTITY_ROW_CODES:
+            raise ValueError(f"{code!r} is not an entity row code")
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+        self.identity = identity
+
+
 class UnloadedRelationshipError(AttributeError):
     """A closed-world relationship (or narrowed view) was not fetched by the read
     that produced this node (spec §3): access raises, naming the path and the
@@ -311,8 +368,3 @@ def _canonical_violation_key(violation: EditViolation) -> tuple[ModelLocationKey
         violation.member_name is not None,
         violation.member_name or "",
     )
-
-
-class ProvenanceError(ValueError):
-    """An instance carries no Change Record (never produced via ``edit(...)``)
-    and cannot drive a sparse ``tx.update`` (spec §5)."""

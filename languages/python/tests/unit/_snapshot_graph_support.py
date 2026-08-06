@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from parallax.core import DomainModel
-from parallax.core.entity import entity_runtime_of
+from parallax.core.entity import graph_construction_of
 from parallax.core.entity._model import class_index, model_of
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
@@ -112,5 +112,5 @@ class GraphBuilder:
     def materialize(self, *roots: SnapshotNodeRef, pin: Pin = _NO_PIN) -> tuple[object, ...]:
         """Merge and construct this graph's roots as frozen Entity instances."""
         return materialize_graph(
-            self.graph(*roots, pin=pin), self._model, entity_runtime_of(self._domain)
+            self.graph(*roots, pin=pin), self._model, graph_construction_of(self._domain)
         )
