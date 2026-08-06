@@ -787,7 +787,6 @@ only through Entity declarations and is not passed to the model separately.
   concrete `DomainModel` lifecycle, export, or construction surface. That
   transitional materialization dependency is replaced by the two model-bound
   capabilities described below, each reached through its own seam.
-  Descriptor-backed models have neither a class index nor either capability.
 
 ### Public error model
 
@@ -896,11 +895,10 @@ only through Entity declarations and is not passed to the model separately.
   a model-bound capability nor a class index.
 - `EditError(ValueError)` covers invalid `edit(...)` input, a predicate write's
   `Attr.set(...)` refusal, and active rejection of every inherited Pydantic copy
-  path. It carries a non-empty, canonically ordered tuple of structured
-  violations and the set of codes they draw — never one selected `code`, which
-  would misreport the rest. `model_copy`, `copy`, `__copy__`, and `__deepcopy__`
-  each contribute the single violation `edit-use-edit` and create no Entity
-  value, with or without an `update=` argument.
+  path. It exposes its structured violations and the set of codes they draw
+  rather than one selected `code`, which would misreport the rest; the violation
+  shape, the closed code set, and the ordering rule are normative in the Python
+  spec's edit surface (§3).
 - Registry-collision, copy, provenance, and query-scope exception classes are
   removed or become private implementation details. Database-provider
   capability is not a public query-execution classification.
@@ -1805,46 +1803,37 @@ refer to that contract and do not redefine it.
   callback-scoped writer. No descriptor record, column/wire name, Pydantic
   value, or private slot name crosses this seam.
 - `parallax.core.entity` also provides a separate first-party model-bound
-  `EntityRowCodec` with `full_row(value)`, `identity_row(value)`, and
-  `edited_row(value)`. `edited_row` returns the canonical sparse row of identity
-  plus effective changes, or `None` for a net-zero edit. The codec is an
-  authoring codec: it emits caller-authored identity and domain values in
-  canonical Attribute-keyed form and is never a provenance decorator or an Audit
-  Provenance extension point. The Python spec owns its exact operations,
-  ordering, value conventions, and `EntityRowError` codes.
-- Model-bound capabilities are reached one at a time, through two named seams
-  and no composite value:
-
-  ```text
-  graph_construction_of(model: DomainModel) -> EntityGraphConstruction
-  row_codec_of(model: DomainModel)          -> EntityRowCodec
-  ```
-
-  Each seam answers one capability and each is retained by the model on first
-  reach, so repeat calls for one class-backed model return the same value.
-  Neither is re-exported from top-level `parallax.core`. There is no
-  `EntityRuntime`: nothing wants the composite, because read materialization
-  crosses graph construction alone and write preparation crosses the codec
-  alone, and the one caller that holds both holds two references as cheaply as
-  one. Atomicity across the pair would have guaranteed nothing — each capability
-  derives on demand from the same accepted model, so no state exists in which
-  one is present and the other cannot be built. Both seams reference the one
-  accepted Metamodel the model already owns; neither copies a model fact and
-  neither exposes the Entity Identity/Class index. Laziness is a
+  `EntityRowCodec` that derives an Entity value's canonical rows. It exists as
+  an *authoring* codec rather than a provenance decorator, which is what keeps
+  it off the audit dependency: it is never an Audit Provenance extension point,
+  because ADR 0037 applies provenance to typed Planned Writes inside the Write
+  Planner. The Python spec owns its exact operations, ordering, value
+  conventions, and `EntityRowError` codes.
+- Model-bound capabilities are reached one at a time, through the two named
+  seams `graph_construction_of` and `row_codec_of` — whose exact signatures and
+  retention rule are the Python spec's — and through no composite value. There
+  is no `EntityRuntime`: nothing wants the composite, because read
+  materialization crosses graph construction alone and write preparation crosses
+  the codec alone, and the one caller that holds both holds two references as
+  cheaply as one. Atomicity across the pair would have guaranteed nothing — each
+  capability derives on demand from the same accepted model, so no state exists
+  in which one is present and the other cannot be built. Both seams reference
+  the one accepted Metamodel the model already owns; neither copies a model fact
+  and neither exposes the Entity Identity/Class index. Laziness is a
   dependency-direction consequence rather than a performance choice: each
   capability module sits above the Domain Model module in the import DAG, so the
   seam function is the only place that can construct one.
-- Codec binding resolves rather than owns. The codec resolves the Entity
-  Identity a value's class declares and fails when its model declares no such
-  Entity — the distinction `QueryTargetError` already draws. The class index is
-  never consulted to decide whether a value belongs; it answers which class a
-  row instantiates and is not an authorization structure. A value from another
-  model whose identity this model also declares is accepted, because the emitted
-  row is a function of the resolved identity's declared members alone.
-- Snapshot connection does not use `model_of(...)` as an executability test.
-  A descriptor-backed model remains readable by `model_of(...)`, but it composes
-  no Entity Class, so `class_index(...)` is absent and Snapshot refuses it. It
-  can supply neither capability and cannot construct Entity instances.
+- The class index is not the codec's authorization structure. It answers which
+  class a row instantiates; whether a value belongs is resolved from the Entity
+  Identity the value's class declares against the model's own declared metadata,
+  the same resolution-not-ownership distinction `QueryTargetError` already
+  draws. The Python spec owns what that resolution accepts and refuses.
+- Snapshot connection does not use `model_of(...)` as an executability test, and
+  neither seam is one either. A descriptor-backed model remains readable by
+  `model_of(...)`, but it composes no Entity Class, so `class_index(...)` is
+  absent and Snapshot refuses it. Both seams still answer for such a model: they
+  are total, and what it lacks surfaces where the missing classes are actually
+  needed rather than as an absent capability.
 - Read materialization crosses only Entity Graph Construction; transaction
   write preparation crosses only the Entity Row Codec. Snapshot imports the
   advanced Entity construction interface but no registry, concrete Entity
@@ -1853,8 +1842,7 @@ refer to that contract and do not redefine it.
 - The declaration compiler installs canonical names as Pydantic validation and
   serialization aliases, so resolved classes carry their own Python-to-
   canonical field mapping without an exported `WireNames` side table.
-- Descriptor-backed models cannot supply either capability and are rejected by
-  `Database.connect` as
+- Descriptor-backed models are rejected by `Database.connect` as
   `SnapshotConnectionError(snapshot-class-backed-model-required)` before any
   adapter validation or work.
 
@@ -1865,14 +1853,11 @@ refer to that contract and do not redefine it.
 - `edit` is the object-copy verb; `update` remains the transaction persistence
   verb.
 - Copies of copies retain the first-touched original value. Lowering emits only
-  effective changes, and a net-zero edit emits no DML. `edit()` with no changes
-  is legal and yields an Edited Copy whose `edited_row` is `None`, so "nothing
-  to write" has one representation.
-- Entity actively refuses every inherited Pydantic copy path — `model_copy`
-  with or without `update=`, the deprecated `copy`, `__copy__`, and
-  `__deepcopy__`. Each raises `EditError(edit-use-edit)` and creates no value,
-  so `edit(...)` is the sole authored copy-with-changes path and no
-  provenance-less Entity value or unearned Change Record exists.
+  effective changes, and a net-zero edit emits no DML.
+- Entity actively refuses every inherited Pydantic copy path, so `edit(...)` is
+  the sole authored copy-with-changes path and no provenance-less Entity value
+  or unearned Change Record exists. The Python spec enumerates the refused
+  paths.
 - One `EditError(ValueError)` covers `edit(...)` and a predicate write's
   `Attr.set(...)`, because the assignment rules are one set stated once in the
   shared judgement. It reports every violation rather than the first, as core
@@ -1881,9 +1866,8 @@ refer to that contract and do not redefine it.
   owns the closed code set, the violation shape, and the ordering rule.
 - Accepted Attribute metadata carries one derived `framework_owned` designation
   covering the version column and both temporal axis endpoints (core ADR 0054).
-  A caller-authored framework-owned value is refused at construction, a
-  caller-assigned one is refused by the shared judgement, and a hydrated one
-  stays readable and is omitted from every derived row.
+  Where such a value arrives from decides which surface refuses it, and the
+  Python spec owns those cases.
 
 ### Amendment (2026-08, COR-50): the Snapshot graph spellings that landed
 
@@ -2971,9 +2955,6 @@ by COR-51. Program-level acceptance requires:
   transitional binding; a descriptor-backed hub or legacy bare Metamodel
   raises `SnapshotConnectionError(snapshot-class-backed-hub-required)` before
   adapter validation or work;
-- Snapshot reaches each model-bound capability through its own named seam and
-  holds a reference to each, replacing the transitional materialization
-  dependency while preserving the connected model contract;
 - Snapshot graph state is owned by the Snapshot slice and no generic
   `entity._graph_state` module exists; a future managed-object slice defines a
   separate lifecycle state model rather than extending Snapshot state;
@@ -3040,11 +3021,6 @@ by COR-51. Program-level acceptance requires:
 - the old registries, configuration objects, global metadata/export helpers,
   row and wire-name helpers, `Statement`, and authored `model_copy` path are
   deleted without forwarding wrappers;
-- every inherited Pydantic copy path — `model_copy` with or without `update=`,
-  the deprecated `copy`, `__copy__`, and `__deepcopy__` — raises
-  `EditError(edit-use-edit)` without creating a value, while `edit(...)` alone
-  creates an Edited Copy with a Change Record, and an invalid edit reports every
-  violation in one canonically ordered aggregate;
 - the Python spec, usage guide, conformance models, public API snapshot,
   package artifacts, type checks, and focused lifecycle/error tests describe
   and prove only the new surface; and
