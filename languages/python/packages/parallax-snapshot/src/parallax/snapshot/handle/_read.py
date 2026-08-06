@@ -192,15 +192,16 @@ class ObservationCollector(Protocol):
     """
 
     def observe_row(
-        self, entity: str, columns: Mapping[str, object], document: object | None
+        self, entity: EntityIdentity, columns: Mapping[str, object], document: object | None
     ) -> None:
         """Take one materialized row's observable state.
 
-        ``entity`` is the row's OWN queried or attached target name (never
-        family-normalized), which is the name a subsequent keyed write on that
-        row carries (`m-unit-work` ``KeyedWrite.entity``). ``columns`` is every
-        value the row materialized, keyed by physical column. ``document`` is the
-        raw Structured Column the row arrived with under Relational Document
+        ``entity`` is the exact Entity that row's own compiled read resolved it
+        to — a per-row fact under table-per-hierarchy, never the position the
+        query targeted and never family-normalized — which is what a subsequent
+        keyed write on that row resolves to as well. ``columns`` is every value
+        the row materialized, keyed by physical column. ``document`` is the raw
+        Structured Column the row arrived with under Relational Document
         Layout — provenance the member fan-out drops, so a Temporal Observation
         can retain it without a second read (`m-unit-work`) — and ``None`` under
         `Columns` layout.
@@ -300,9 +301,7 @@ def find(
     root_compiled = compile_read(
         plan_.root_operation, meta, dialect, root_entity, result_form="instance", lock=lock
     )
-    root_refs = _convert_level(
-        scope, port, dialect, root_compiled, statements, target, observations
-    )
+    root_refs = _convert_level(scope, port, dialect, root_compiled, statements, observations)
 
     level_refs: list[tuple[SnapshotNodeRef, ...]] = []
     for level in plan_.levels:
@@ -329,9 +328,7 @@ def find(
         # A child level takes its narrow from `FetchLevel.narrow_to` (consumed
         # inside `child_operation`), never from the compiled read — only the ROOT
         # has no planner-supplied narrow to fall back on.
-        child_refs = _convert_level(
-            scope, port, dialect, child_compiled, statements, child_target, observations
-        )
+        child_refs = _convert_level(scope, port, dialect, child_compiled, statements, observations)
         _attach_children(scope, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
@@ -399,7 +396,6 @@ def _convert_level(
     dialect: Dialect,
     compiled: CompiledRead,
     statements: list[ExecutedStatement],
-    entity: str,
     observations: ObservationCollector | None,
 ) -> tuple[SnapshotNodeRef, ...]:
     """Execute one level and convert each of its rows as that row materializes.
@@ -409,13 +405,21 @@ def _convert_level(
     a Predecessor Row is column-keyed by contract, so the write side is served by
     its own explicitly physical extraction rather than by a converted node
     carrying columns it has no other use for.
+
+    Each row is observed under its OWN resolved concrete Entity — the identity
+    the conversion already builds its `LevelContext` from — rather than under
+    the level-wide position the query addressed. The root and every level run
+    through here, so that one rule reaches an abstract-target root's concrete,
+    a polymorphic level's concrete, and an included child alike.
     """
     refs: list[SnapshotNodeRef] = []
     for row in _execute_compiled(port, dialect, compiled, statements):
         context = LevelContext(row.resolved_entity, compiled.documents)
         refs.append(convert_row(row.values, context, scope))
         if observations is not None:
-            observations.observe_row(entity, observable_columns(row.values, context), row.document)
+            observations.observe_row(
+                row.resolved_entity, observable_columns(row.values, context), row.document
+            )
     return tuple(refs)
 
 

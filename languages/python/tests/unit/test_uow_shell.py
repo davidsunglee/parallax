@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping
 import pytest
 
 from _support.clock_probes import CountingClock
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
+from _support.planner_probes import TEST_SUBJECT_IDENTITY, corpus_object_key
 from parallax.conformance import models
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (
@@ -236,7 +236,7 @@ def test_observe_binds_the_recorded_observation_into_the_settled_step() -> None:
     observation = VersionObservation(observed_version=7)
 
     def body(tx: UnitOfWork) -> None:
-        tx.observe(("Account", (("id", 1),)), observation)
+        tx.observe(corpus_object_key("Account", ("id", 1)), observation)
         tx.buffer(KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},)))
 
     _run(body, executor=recorder)
@@ -371,7 +371,7 @@ def test_escaped_reference_raises_on_every_use() -> None:
     with pytest.raises(EscapedTransactionError):
         tx.buffer(_account_insert(1))
     with pytest.raises(EscapedTransactionError):
-        tx.observe(("Account", (("id", 1),)), VersionObservation(observed_version=1))
+        tx.observe(corpus_object_key("Account", ("id", 1)), VersionObservation(observed_version=1))
     with pytest.raises(EscapedTransactionError):
         tx.flush()
     with pytest.raises(EscapedTransactionError):

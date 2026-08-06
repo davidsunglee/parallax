@@ -36,6 +36,7 @@ from _transact_support import (
 
 from _support import inheritance_models as im
 from _support import mirrored_models as mm
+from _support import observation_models as om
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
@@ -582,3 +583,159 @@ def test_tx_find_preflight_rejects_before_a_pending_write_can_flush() -> None:
 
     Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert port.ops == [("begin",), ("write", INSERT_SQL, (7, "Newton", 5.00, 1)), ("commit",)]
+
+
+# --------------------------------------------------------------------------- #
+# An observation is keyed by the ROW's own resolved Entity Identity, so every  #
+# node a participating read materialized is reachable by the keyed write that  #
+# names it. One function decides all of these, so each shape gets one proof:   #
+# an included child, an included POLYMORPHIC level's concrete, and an          #
+# abstract-target root's concrete. Both licensing consumers — the temporal     #
+# milestone license at the verb and the versioned advance/gate at the planner  #
+# — are exercised across the first two.                                        #
+# --------------------------------------------------------------------------- #
+def _policy_row(from_z: dt.datetime) -> Row:
+    return {
+        "id": 1,
+        "name": "P-1",
+        "from_z": from_z,
+        "thru_z": INFINITY_INSTANT,
+        "in_z": from_z,
+        "out_z": INFINITY_INSTANT,
+    }
+
+
+def _coverage_row(from_z: dt.datetime) -> Row:
+    return {
+        "id": 10,
+        "policy_id": 1,
+        "amount": Decimal("250.00"),
+        "from_z": from_z,
+        "thru_z": INFINITY_INSTANT,
+        "in_z": from_z,
+        "out_z": INFINITY_INSTANT,
+    }
+
+
+def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -> None:
+    # The included level's observation is exactly what
+    # `require_observed_milestone` demands, so the close it licenses reaches
+    # DML: the level is observed under the row's own `Coverage`, which is what
+    # `tx.terminate(policy.coverages[0], ...)` looks up.
+    from_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = RecordingPort(row_queue=([_policy_row(from_z)], [_coverage_row(from_z)]))
+
+    def fn(tx: Transaction) -> None:
+        policy = tx.find(Policy.where(Policy.id == 1).include(Policy.coverages)).result()
+        tx.terminate(policy.coverages[0], valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
+
+    db_for(POLICY_MODEL, port).transact(fn)
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert cast("str", write_ops[0][1]).startswith(
+        POSTGRES.to_driver_sql("update coverage set out_z = ")
+    )
+    assert any(10 in cast("tuple[object, ...]", op[2]) for op in write_ops)
+
+
+def test_an_included_versioned_nodes_own_observation_licenses_its_keyed_update() -> None:
+    # The versioned licensing consumer, reached through the planner rather than
+    # the verb: the update's advance and its optimistic gate both come from the
+    # included level's own observation, so a lookup that missed it would raise
+    # `UnobservedVersionError` before any DML.
+    port = RecordingPort(
+        row_queue=(
+            [{"id": 1, "name": "V-1"}],
+            [{"id": 10, "vault_id": 1, "memo": "before", "version": 4}],
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        vault = tx.find(om.Vault.where(om.Vault.id == 1).include(om.Vault.slips)).result()
+        tx.update(vault.slips[0].model_copy(update={"memo": "after"}))
+
+    db_for(om.VAULT_MODEL, port).transact(fn, concurrency="optimistic")
+    (write_op,) = [op for op in port.ops if op[0] == "write"]
+    assert write_op[1] == POSTGRES.to_driver_sql(
+        "update obs_slip set memo = ?, version = ? where id = ? and version = ?"
+    )
+    assert write_op[2] == ("after", 5, 10, 4)
+
+
+def test_an_included_polymorphic_levels_concrete_is_reachable_by_a_keyed_write() -> None:
+    # A level spanning two concretes targets the relationship's own abstract
+    # position, and each row resolves to its own concrete through the shared
+    # table's tag column. The observation follows the ROW, so the close names
+    # `Tug` and still finds it.
+    in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = RecordingPort(
+        row_queue=(
+            [{"id": 1, "name": "F-1"}],
+            [
+                {
+                    "id": 10,
+                    "fleet_id": 1,
+                    "name": "T-1",
+                    "kind": "tug",
+                    "bollard_pull": 30,
+                    "deck_area": None,
+                    "in_z": in_z,
+                    "out_z": INFINITY_INSTANT,
+                },
+                {
+                    "id": 11,
+                    "fleet_id": 1,
+                    "name": "B-1",
+                    "kind": "barge",
+                    "bollard_pull": None,
+                    "deck_area": Decimal("120.00"),
+                    "in_z": in_z,
+                    "out_z": INFINITY_INSTANT,
+                },
+            ],
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        fleet = tx.find(om.Fleet.where(om.Fleet.id == 1).include(om.Fleet.vessels)).result()
+        tug = next(vessel for vessel in fleet.vessels if isinstance(vessel, om.Tug))
+        tx.terminate(tug)
+
+    db_for(om.FLEET_MODEL, port).transact(fn)
+    (write_op,) = [op for op in port.ops if op[0] == "write"]
+    assert write_op[1] == POSTGRES.to_driver_sql(
+        "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ?"
+    )
+    assert cast("tuple[object, ...]", write_op[2])[1:3] == (10, "tug")
+
+
+def test_an_abstract_target_roots_concrete_is_reachable_by_a_keyed_write() -> None:
+    # The same rule with no deep fetch involved at all: one root read over the
+    # abstract `Vessel` whose rows each resolve to their own concrete. Keying by
+    # the query's target would observe both under `Vessel`, which no keyed write
+    # ever names.
+    in_z = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    port = RecordingPort(
+        rows=[
+            {
+                "id": 11,
+                "fleet_id": 1,
+                "name": "B-1",
+                "kind": "barge",
+                "bollard_pull": None,
+                "deck_area": Decimal("120.00"),
+                "in_z": in_z,
+                "out_z": INFINITY_INSTANT,
+            }
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        barge = tx.find(om.Vessel.where(om.Vessel.id == 11)).result()
+        tx.terminate(barge)
+
+    db_for(om.FLEET_MODEL, port).transact(fn)
+    (write_op,) = [op for op in port.ops if op[0] == "write"]
+    assert write_op[1] == POSTGRES.to_driver_sql(
+        "update obs_vessel set out_z = ? where id = ? and kind = ? and out_z = ?"
+    )
+    assert cast("tuple[object, ...]", write_op[2])[1:3] == (11, "barge")

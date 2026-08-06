@@ -51,6 +51,7 @@ from parallax.core.unit_work import (
     KeyedMutation,
     KeyedWrite,
     NewLineage,
+    ObjectKey,
     PlannedClose,
     PlannedInsert,
     PredecessorRow,
@@ -832,13 +833,13 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     # sparse `tx.update(copy)` row over exactly that payload, so an observation
     # narrowed to the declaring root's members would silently NULL `symbol` on the
     # next milestone instead of carrying it forward.
-    model, _entity = _accepted("SpotQuote", QUOTE)
+    model, entity = _accepted("SpotQuote", QUOTE)
     observations = ReadObservations()
-    observations.observe_row("SpotQuote", _SPOT_QUOTE_COLUMNS, None)
+    observations.observe_row(entity.identity, _SPOT_QUOTE_COLUMNS, None)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
         record_observations(uow, model, observations, Pin(tx_time=LATEST))
-        return uow.observation_for(("SpotQuote", (("id", 1),)))
+        return uow.observation_for(ObjectKey(entity.identity, (("id", 1),)))
 
     observation = run_unit_of_work(
         observe,
@@ -873,14 +874,14 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
     # Row retains it beside — never among — the members it was decoded from, so a
     # key no member declares is still there when the successor is patched
     # (`m-unit-work`).
-    model, _entity = _accepted("SpotQuote", QUOTE)
+    model, entity = _accepted("SpotQuote", QUOTE)
     stored = {"price": "50.00", "symbol": "ACME", "charterCode": "NB-118"}
     observations = ReadObservations()
-    observations.observe_row("SpotQuote", _SPOT_QUOTE_COLUMNS, stored)
+    observations.observe_row(entity.identity, _SPOT_QUOTE_COLUMNS, stored)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
         record_observations(uow, model, observations, Pin(tx_time=LATEST))
-        return uow.observation_for(("SpotQuote", (("id", 1),)))
+        return uow.observation_for(ObjectKey(entity.identity, (("id", 1),)))
 
     observation = run_unit_of_work(
         observe,

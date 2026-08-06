@@ -27,6 +27,7 @@ from parallax.core import inheritance
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeMetadata,
+    EntityIdentity,
     EntityMetadata,
     Metamodel,
     Multiplicity,
@@ -46,9 +47,22 @@ __all__ = [
     "targets",
 ]
 
-# One object's identity: (entity, ordered (pk-attribute-name, value) pairs). The
-# coalescing scope and the observation binding are keyed by it.
-ObjectKey = tuple[str, tuple[tuple[str, object], ...]]
+
+@dataclass(frozen=True, slots=True)
+class ObjectKey:
+    """One object's identity: its Entity and its ordered
+    ``(pk-attribute-name, value)`` pairs. The coalescing scope and the
+    observation binding are keyed by it.
+
+    ``entity`` is the structured Entity Identity rather than a spelling of one,
+    so no producer stringifies an identity it already holds and two entities
+    sharing a bare name across namespaces cannot resolve one another's
+    observations.
+    """
+
+    entity: EntityIdentity
+    primary_key: tuple[tuple[str, object], ...]
+
 
 # One writable member's resolved semantic identity, keyed by the spelling a
 # write row names it with.
@@ -200,6 +214,10 @@ def resolve_object_key(instruction: WriteInstruction, resolved: Targets) -> Obje
     Entity's own declared Attributes are wrongly empty for a concrete subtype —
     every corpus family's own keyed writes — and the applicable member chain the
     Inheritance Facet precomputes is what carries the inherited key.
+
+    The key names the RESOLVED Entity Identity rather than the instruction's own
+    wire spelling: a write instruction is a serialized document, so its bare and
+    canonical spellings of one Entity must reach one key.
     """
     if not isinstance(instruction, KeyedWrite) or len(instruction.rows) != 1:
         return None
@@ -218,7 +236,7 @@ def resolve_object_key(instruction: WriteInstruction, resolved: Targets) -> Obje
         if isinstance(value, Mapping):
             return None
         pairs.append((name, value))
-    return (instruction.entity, tuple(pairs))
+    return ObjectKey(entity.identity, tuple(pairs))
 
 
 def primary_key_names(resolved: Targets, entity: EntityMetadata) -> list[str]:

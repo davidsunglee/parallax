@@ -23,7 +23,7 @@ import pytest
 from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import CountingClock, inert_instant, instant_at
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
+from _support.planner_probes import TEST_SUBJECT_IDENTITY, corpus_object_key
 from parallax.conformance import models
 from parallax.core import op_algebra, opt_lock
 from parallax.core._formation_profile import form_metamodel
@@ -523,7 +523,7 @@ def test_empty_plan_from_empty_buffer() -> None:
 # --------------------------------------------------------------------------- #
 def test_object_key_of_a_single_row_keyed_write() -> None:
     key_ = object_key(KeyedWrite("update", "Account", ({"id": 1, "balance": 0},)), _ACCOUNT)
-    assert key_ == ("Account", (("id", 1),))
+    assert key_ == corpus_object_key("Account", ("id", 1))
 
 
 def test_object_key_is_none_for_unidentifiable_writes() -> None:
@@ -537,13 +537,24 @@ def test_object_key_is_none_for_an_entity_the_model_does_not_declare() -> None:
     assert object_key(KeyedWrite("delete", "Blob", ({"data": "x"},)), _ACCOUNT) is None
 
 
+def test_object_key_names_the_resolved_identity_not_the_instructions_spelling() -> None:
+    # A write instruction is a serialized document, so it carries whichever
+    # spelling its author wrote. Both name one Entity, so both must reach the
+    # one key an observation was recorded under — the key names the RESOLVED
+    # Entity Identity rather than the spelling that reached it.
+    row = ({"id": 1, "balance": 0},)
+    bare = object_key(KeyedWrite("update", "Account", row), _ACCOUNT)
+    canonical = object_key(KeyedWrite("update", "parallax.compatibility.Account", row), _ACCOUNT)
+    assert bare == canonical == corpus_object_key("Account", ("id", 1))
+
+
 def test_object_key_resolves_the_family_effective_primary_key() -> None:
     # `CardPayment`'s own compiled record carries no `id` attribute at all (it
     # is declared on the family root `Payment` alone, m-inheritance "Inherited
     # members") -- a bare `Entity.primary_key` view would wrongly see no key,
     # making every inheritance-family keyed write unidentifiable.
     key_ = object_key(KeyedWrite("update", "CardPayment", ({"id": 1, "amount": 5.00},)), _PAYMENT)
-    assert key_ == ("CardPayment", (("id", 1),))
+    assert key_ == corpus_object_key("CardPayment", ("id", 1))
 
 
 def test_object_key_is_none_for_a_marker_shaped_primary_key_value() -> None:

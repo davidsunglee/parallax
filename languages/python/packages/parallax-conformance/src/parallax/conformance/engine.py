@@ -894,7 +894,11 @@ def _row_object_key(
     `parallax.snapshot.handle`'s own observation recording reads via
     ``node.fields[attr.column]``). ``None`` when the (family-effective)
     primary key is absent from ``row`` — never reachable for a well-formed
-    corpus find, but this seam takes no data on faith."""
+    corpus find, but this seam takes no data on faith.
+
+    ``entity_name`` is resolved to its Entity Identity rather than carried into
+    the key, so a case naming one entity bare and another canonically reaches
+    one key either way."""
     entity = meta.entity(entity_name)
     pk_attrs = _descriptor_family.family_primary_key(meta, entity)
     if not pk_attrs:  # pragma: no cover - defends a malformed model
@@ -905,7 +909,7 @@ def _row_object_key(
         if field not in row:  # pragma: no cover - defends a malformed row/projection
             return None
         pairs.append((attr.name, row[field]))
-    return (entity_name, tuple(pairs))
+    return ObjectKey(EntityIdentity(entity.namespace, entity.name), tuple(pairs))
 
 
 def _observe_group_find(
