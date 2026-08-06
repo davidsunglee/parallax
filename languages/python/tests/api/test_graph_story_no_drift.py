@@ -10,7 +10,10 @@ golden grading — real Postgres, each case's own oracle — stays in
 public surface (an empty root level legally short-circuits every child
 level), plus the two edit stories' in-memory semantics — that a mutation
 writes nothing back, and that an edited copy keeps its source node's view
-state — which need no database at all.
+state — which need no database at all. The two SUPPLEMENTAL story functions
+(not ``GRAPH_STORIES`` entries) get their own drivers here for the same
+reason: a read-only-pin refusal reached before any DML, and a milestone
+history run-through.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from parallax.conformance.story_models import Order
 from parallax.core.db_port import Bind, DbPort, Row
 from parallax.core.entity import UnloadedRelationshipError
 from parallax.snapshot import is_view_loaded
-from parallax.snapshot.handle import Database
+from parallax.snapshot.handle import Database, TransactionTimePinReadOnlyError
 
 _ORDER_ROW: Row = {
     "id": 1,
@@ -38,6 +41,16 @@ _ORDER_ROW: Row = {
     "price": Decimal("9.99"),
     "active": True,
     "ordered_on": dt.date(2024, 1, 2),
+}
+
+# Balance 1's SUPERSEDED milestone — the row a finite Transaction-Time pin at
+# 2024-03-01 selects, closed at 2024-06-01 by the milestone that replaced it.
+_BALANCE_MILESTONE_ROW: Row = {
+    "bal_id": 1,
+    "acct_num": "A",
+    "val": Decimal("100.00"),
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
 }
 
 
@@ -57,6 +70,15 @@ class _CannedPort:
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
         raise AssertionError("a graph story opens no transaction")
+
+
+class _TransactingCannedPort(_CannedPort):
+    """The read-only-pin proof is the one story here that opens a transaction —
+    its refusal is a write verb's. ``execute_write`` still refuses, which is the
+    guard that matters: the verb rejects the value before anything is buffered."""
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:
+        return body(self)
 
 
 def _db(story: graph_stories.GraphStory, responses: Sequence[list[Row]] = ()) -> Database:
@@ -106,6 +128,17 @@ def test_the_edited_copy_story_answers_the_source_nodes_unloaded_view() -> None:
     assert is_view_loaded(edited, Order.statuses) is False
     with pytest.raises(UnloadedRelationshipError, match="statuses"):
         edited.statuses  # noqa: B018 - the access itself is the assertion
+
+
+def test_the_supplemental_read_only_pin_story_refuses_at_the_verb() -> None:
+    # SUPPLEMENTAL, like the history proof below: `m-identity-map-010` cannot be
+    # a `GRAPH_STORIES` entry (see the story's own docstring), so its body needs
+    # this Docker-free driver exactly like a registered story does. The canned
+    # port's `execute_write` refuses outright, so reaching the raise at all is
+    # also the proof that the verb rejects the value before buffering any DML.
+    db = Database.connect(_TransactingCannedPort([[_BALANCE_MILESTONE_ROW]]), MODELS["balance"])
+    with pytest.raises(TransactionTimePinReadOnlyError, match="transaction-time-pin-read-only"):
+        graph_stories.a_finite_transaction_time_pinned_view_is_read_only(db)
 
 
 def test_the_supplemental_history_story_runs_through_the_shipped_surface() -> None:
