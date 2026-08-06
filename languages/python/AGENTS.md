@@ -37,18 +37,15 @@ database setup, current status, and blockers.
 
 ## Deferred-work ledger
 
-While the initial build (`slice-snapshot-1`) is in flight, the deferred-work
-ledger at `.humanlayer/tasks/cor-50-build-entity-snapshot-graph/07-deferred-ledger.md`
+The deferred-work ledger at [`docs/deferred-ledger.md`](../../docs/deferred-ledger.md)
 binds every session: read it at session start, add an entry in the same session
 any deferral happens, and sweep it at claim closure. It carries **only open
-entries** — closing or graduating one means removing it and recording where it
-went, so the ledger stays a work list rather than an archive.
+entries** — closing or graduating one means removing it and leaving a forwarding
+line, so the ledger stays a work list rather than an archive.
 
-It succeeds two closed ledgers that hold the history and take no new entries:
-`.humanlayer/tasks/cor-47-build-python-declarations/09-deferred-ledger.md`
-(D-36 … D-48, including every entry the successor does not carry) and
-`.humanlayer/tasks/cor-3-build-python-slice/05-deferred-ledger.md` (D-1 … D-37).
-Entry numbering is continuous across all three, so a D-number identifies one item.
+Entry numbering is continuous and never reused, so a D-number identifies one
+item. The ledger's own History section names the per-ticket files holding the
+full text of entries it no longer carries.
 
 ## Key commands
 
