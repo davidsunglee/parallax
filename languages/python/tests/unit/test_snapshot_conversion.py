@@ -217,12 +217,14 @@ def test_every_nested_leaf_decodes_by_its_declared_neutral_type() -> None:
 
 
 def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_collapses() -> None:
-    # The two halves of one boundary. A member the document does not supply is a
-    # presence state the model HAS — a missing key, a JSON null, an occurrence of the
-    # wrong kind — and collapses to null / () as the read predicates do (m-op-algebra).
-    # A leaf that IS supplied and decodes into no member of its declared value space is
-    # a state the model does not have: it is invalid stored data (m-document-codec), so
-    # it raises here instead of reaching a caller as the raw stored value.
+    # The two halves of one boundary. A member the document DOES supply in a state
+    # the model has — a JSON null, an occurrence of the wrong kind — collapses to
+    # null / () as the read predicates do (m-op-algebra), and a member it supplies
+    # not at all contributes no input, which is how the carrier keeps the document's
+    # own presence. A leaf that IS supplied and decodes into no member of its
+    # declared value space is a state the model does not have: it is invalid stored
+    # data (m-document-codec), so it raises here instead of reaching a caller as the
+    # raw stored value.
     node = _converted(
         DOCUMENT_CODEC,
         "Sample",
@@ -234,7 +236,7 @@ def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_coll
     )
     profile = cast("ValueObjectRecord", _occurrence(node, "profile"))
     assert _leaf(profile, "small") is None
-    assert _leaf(profile, "amount") is None
+    assert "amount" not in _names(profile)
     assert _nested(profile, "origin") is None
     assert _nested(profile, "entries") == ()
 
@@ -420,28 +422,37 @@ def test_a_null_top_level_document_collapses_to_an_absent_occurrence() -> None:
     assert _occurrence(node, "address") is None
 
 
-@pytest.mark.parametrize(
-    ("stored", "expected"),
-    [({"street": "x", "city": "y"}, None), ({"street": "x", "city": "y", "geo": "unknown"}, None)],
-    ids=["missing", "non-object"],
-)
-def test_a_missing_or_non_object_nested_one_collapses_to_none(
-    stored: dict[str, object], expected: object
-) -> None:
-    node = _converted(CUSTOMER, "Customer", {"id": 5, "name": "Kavi", "address": stored})
-    assert _nested(cast("ValueObjectRecord", _occurrence(node, "address")), "geo") is expected
+def test_a_nested_member_the_document_omits_contributes_no_input_at_all() -> None:
+    # Presence is the stored document's own fact, so a key it never held reaches
+    # the graph input as nothing rather than as an entry holding the collapse.
+    # That is what keeps the member outside the frozen carrier's
+    # `model_fields_set`, so re-serializing the occurrence cannot spell an
+    # omission as an explicit null. What a caller READS for such a member is
+    # still `None` / `()`; that collapse belongs to construction and is pinned
+    # where the frozen value is built.
+    node = _converted(
+        CUSTOMER, "Customer", {"id": 5, "name": "Kavi", "address": {"street": "x", "city": "y"}}
+    )
+    assert _names(cast("ValueObjectRecord", _occurrence(node, "address"))) == {"street", "city"}
 
 
-@pytest.mark.parametrize(
-    "stored",
-    [{"street": "x", "city": "y"}, {"street": "x", "city": "y", "phones": "not-an-array"}],
-    ids=["missing", "non-array"],
-)
-def test_a_missing_or_non_array_many_collapses_to_the_empty_tuple(
-    stored: dict[str, object],
-) -> None:
-    node = _converted(CUSTOMER, "Customer", {"id": 3, "name": "Grace", "address": stored})
-    assert _nested(cast("ValueObjectRecord", _occurrence(node, "address")), "phones") == ()
+def test_a_nested_occurrence_stored_in_a_kind_it_forbids_collapses_while_present() -> None:
+    # The complement: the document DOES hold these keys, in a kind their
+    # multiplicity does not admit. Absence collapse resolves the value — `None`
+    # for a One, `()` for a Many — and presence is unaffected, so invalid storage
+    # can never read back as an omission.
+    node = _converted(
+        CUSTOMER,
+        "Customer",
+        {
+            "id": 3,
+            "name": "Grace",
+            "address": {"street": "x", "city": "y", "geo": "unknown", "phones": "not-an-array"},
+        },
+    )
+    address = cast("ValueObjectRecord", _occurrence(node, "address"))
+    assert _nested(address, "geo") is None
+    assert _nested(address, "phones") == ()
 
 
 def test_a_top_level_many_cardinality_value_object_converts_to_a_record_tuple() -> None:

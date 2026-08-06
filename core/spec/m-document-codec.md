@@ -399,6 +399,20 @@ materialization and write comparison. It decodes leaves by declared Neutral Type
 reduces a `one` recursively and a `many` element-wise, and excludes every key the
 shape does not declare. Consumers MUST NOT implement another local reduction.
 
+The reduction takes two independent options that each narrow its result, and they
+are not interchangeable because they answer different questions. The
+**authored-member mask** asks which members a *caller* authored: it is supplied
+from outside the source document, and only the members it names contribute,
+recursively through `one` occurrences. **Presence preservation** asks which
+members *this document* holds, which the source answers by itself: a member the
+source omits contributes nothing, at every containment depth, including inside a
+`many` element, while a member stored as JSON null still contributes its null. A
+reduction that preserves presence therefore carries the missing-versus-explicitly-null
+distinction this module already keeps at the interface, instead of collapsing it
+onto the declared member list. A consumer materializing stored state into carriers
+that record presence preserves it; a consumer comparing an assignment against
+stored state masks by the assignment. Neither option is the other's default.
+
 Patches apply in the order given, left to right, each over the result of the
 last. `m-storage-layout` fixes that order for a Parallax write: canonical logical
 placement order. Top-level assignments name disjoint subtrees. Within a

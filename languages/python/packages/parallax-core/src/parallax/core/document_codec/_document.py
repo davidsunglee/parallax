@@ -417,18 +417,31 @@ def reduce_declared_members(
     document: object,
     *,
     named_by: object | None = None,
+    preserve_presence: bool = False,
     collapse_invalid_occurrences: bool = False,
 ) -> object:
     """Reduce stored content to one codec-owned view of the shape's declared members.
 
     A ``one`` is reduced recursively, a ``many`` element-wise in stored order, and
     absent or JSON-null members reduce to ``None``. Undeclared keys never contribute.
-    When ``named_by`` is a mapping, it is the authored-presence mask: only members
-    named there contribute, recursively through ``one`` occurrences.
+
+    ``named_by`` and ``preserve_presence`` both drop members from the result and
+    are not interchangeable, because they answer different questions. ``named_by``
+    asks which members the **caller** authored: when it is a mapping it is that
+    external authored-presence mask, and only members it names contribute,
+    recursively through ``one`` occurrences. ``preserve_presence`` asks which
+    members **this document** holds, which the source answers by itself: a member
+    the source omits contributes no key at all, at every containment depth,
+    including inside a ``many`` element. A member the source holds as JSON null
+    still contributes ``None``, so the omitted-versus-explicit-null distinction
+    survives the reduction rather than collapsing into it.
+
     ``collapse_invalid_occurrences`` is reserved for logical read materialization,
     where operation-algebra absence collapse treats a wrong-kind occurrence as
     not present. Mutation comparison leaves it false so invalid storage cannot
-    compare equal to a replacement value.
+    compare equal to a replacement value. A wrong-kind occurrence the source does
+    hold collapses to its empty form rather than vanishing, so the two options
+    stay independent.
     """
     if document is None:
         return None
@@ -439,6 +452,8 @@ def reduce_declared_members(
     reduced: dict[str, object] = {}
     for member in shape.members:
         if names is not None and member.name not in names:
+            continue
+        if preserve_presence and member.name not in source:
             continue
         raw = source.get(member.name)
         if isinstance(member, Leaf):
@@ -465,6 +480,7 @@ def reduce_declared_members(
                     reduce_declared_members(
                         member.shape,
                         value,
+                        preserve_presence=preserve_presence,
                         collapse_invalid_occurrences=collapse_invalid_occurrences,
                     )
                     for value in values
@@ -485,6 +501,7 @@ def reduce_declared_members(
                         member.shape,
                         cast("object", raw),
                         named_by=nested_names,
+                        preserve_presence=preserve_presence,
                         collapse_invalid_occurrences=collapse_invalid_occurrences,
                     )
             except LeafEncodingError as exc:

@@ -39,6 +39,7 @@ from _support.corpus import (
     compare_graph,
     compare_rows,
     instance_row,
+    value_object_projection,
 )
 from parallax.conformance import case_format, engine
 from parallax.conformance.animal_owner import Person as AnimalOwnerPerson
@@ -53,7 +54,7 @@ from parallax.conformance.stories import WRITE_STORIES, WriteStory
 from parallax.conformance.story_models import Order
 from parallax.core import LATEST, DomainModel
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import UnloadedRelationshipError, to_document
+from parallax.core.entity import UnloadedRelationshipError
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect, edge_of, is_view_loaded, pin_of, view
 
@@ -423,11 +424,16 @@ def test_a_guarded_root_continues_through_a_narrowed_hop(provisioner: Any) -> No
 
 def _vo_owner_row(instance: Any, vo_py_name: str = "address") -> dict[str, Any]:
     """A materialized VO-bearing owner's own row, PHYSICAL-column-keyed
-    (``instance_row``), with its value-object member serialized to its
-    canonical document (``to_document``) so ``compare_graph`` can recurse
-    into it exactly like the wire-level engine's own `then.graph` grading."""
+    (``instance_row``), with its value-object member rendered as the declared
+    projection (``value_object_projection``) so ``compare_graph`` can recurse
+    into it exactly like the wire-level engine's own `then.graph` grading.
+
+    The projection, not the canonical document: a read preserves the stored
+    document's own field presence, so serializing the carrier would omit a
+    member storage never held, while `then.graph` grades every declared member
+    with absence collapsed."""
     row = instance_row(instance)
-    row[vo_py_name] = to_document(getattr(instance, vo_py_name))
+    row[vo_py_name] = value_object_projection(getattr(instance, vo_py_name))
     return row
 
 

@@ -869,3 +869,23 @@ def test_an_omitted_value_object_leaf_reads_as_absent_rather_than_failing() -> N
     tag = cast("Any", root).primary_tag
     assert tag.label is None
     assert "label" not in tag.model_fields_set
+
+
+def test_an_omitted_leaf_inside_a_many_element_reads_as_absent_too() -> None:
+    # Absence is per element, not per occurrence: an element of a Many carries the
+    # same distinction its One sibling does, so a document that omits a leaf in one
+    # element and holds it in another builds two carriers that differ in exactly
+    # that. Without this, re-serializing the collection would spell an omission the
+    # element never held as an explicit null.
+    (root,) = _construct(
+        _status(
+            ValueObjectOccurrenceInput(
+                _TAGS, (ValueObjectRecord(), _tag("named", occurrence=_TAGS))
+            )
+        )
+    )
+    absent, named = cast("Any", root).tags
+    assert absent.label is None
+    assert "label" not in absent.model_fields_set
+    assert named.label == "named"
+    assert "label" in named.model_fields_set
