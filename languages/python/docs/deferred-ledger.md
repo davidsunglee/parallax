@@ -1,9 +1,15 @@
-# Deferred-work ledger
+# Deferred-work ledger — Python target
 
-Work deliberately deferred during implementation, kept in one place so it is not
-lost across sessions. It holds **only items that are actively open and owned by
-nothing else** — work surfaced during design or implementation that would
-otherwise have no home.
+Work deliberately deferred while building the Python target, kept in one place so
+it is not lost across sessions. It holds **only items that are actively open and
+owned by nothing else** — work surfaced during design or implementation that
+would otherwise have no home.
+
+Scope is this target. An entry whose repair lands outside `languages/python`
+still belongs here when Python work surfaced it and nothing else tracks it, but
+it must name its true owner so a second language target inheriting the same gap
+can find it. A neutral concern that outlives this target is promoted to a core
+specification, an issue, or a ledger of its own rather than left here.
 
 This is not a duplicate of the `languages/python/spec/python.md` §1 deferral
 list, which is canonical for deferred capabilities, and it does not restate work
@@ -152,7 +158,10 @@ Object frontends depend on, so it wants its own coverage rather than a rider.
 ### D-55 — The reference harness grades a scenario find's `expectRows` against the raw projected row, disagreeing with `m-case-format` for a family target
 
 *Low — narrows what a corpus case may assert, never produces a wrong pass.*
-Relates to `reference-harness` `case_runner._materialize_family_variant`.
+**Owned by the reference harness, not this target** — the only entry here whose
+repair lands outside `languages/python`, kept because Python work surfaced it and
+nothing else tracks it. Relates to `reference-harness`
+`case_runner._materialize_family_variant`.
 
 **What.** `m-case-format` (*Read result form*) states that a scenario observation
 find is **instance-form**, and the Python run sweep grades it that way. The

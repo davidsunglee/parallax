@@ -37,7 +37,7 @@ database setup, current status, and blockers.
 
 ## Deferred-work ledger
 
-The deferred-work ledger at [`docs/deferred-ledger.md`](../../docs/deferred-ledger.md)
+The deferred-work ledger at [`docs/deferred-ledger.md`](docs/deferred-ledger.md)
 binds every session: read it at session start, add an entry in the same session
 any deferral happens, and sweep it at claim closure. It carries **only open
 entries** — closing or graduating one means removing it and leaving a forwarding
