@@ -20,10 +20,11 @@ import datetime as dt
 from collections.abc import Sequence
 
 import pytest
+from _corpus_identity_support import corpus_object_key
 from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import CountingClock, inert_instant, instant_at
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, corpus_object_key
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import op_algebra, opt_lock
 from parallax.core._formation_profile import form_metamodel

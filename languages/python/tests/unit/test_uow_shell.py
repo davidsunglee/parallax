@@ -15,9 +15,10 @@ import datetime as dt
 from collections.abc import Callable, Mapping
 
 import pytest
+from _corpus_identity_support import corpus_object_key
 
 from _support.clock_probes import CountingClock
-from _support.planner_probes import TEST_SUBJECT_IDENTITY, corpus_object_key
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (

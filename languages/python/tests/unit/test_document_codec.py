@@ -568,9 +568,12 @@ def test_declared_member_reduction_can_take_its_presence_from_the_source_documen
         "origin": {"city": None},
         "entries": [{"kind": "home", "price": None}],
     }
-    assert reduce_declared_members(
-        _SHAPE, stored, named_by={"day": "2026-01-15"}, preserve_presence=True
-    ) == {}
+    assert (
+        reduce_declared_members(
+            _SHAPE, stored, named_by={"day": "2026-01-15"}, preserve_presence=True
+        )
+        == {}
+    )
 
 
 def test_preserved_presence_and_occurrence_collapse_narrow_independently() -> None:

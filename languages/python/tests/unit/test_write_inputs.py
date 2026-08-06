@@ -17,11 +17,9 @@ import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
 
-from _support.planner_probes import (
-    TEST_SUBJECT_IDENTITY,
-    corpus_entity,
-    corpus_object_key,
-)
+from _corpus_identity_support import corpus_entity, corpus_object_key
+
+from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import LATEST, Pin
