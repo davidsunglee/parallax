@@ -23,6 +23,7 @@ from reference_harness.case_runner import (
     CaseFailure,
     _assert_conflict_input,
     _assert_scenario_conflict_abort,
+    _assert_schema,
     _conflict_temporal_entity,
     _entry_pairs,
     _has_version_gate,
@@ -425,6 +426,7 @@ def test_observed_edge_entitlement_holds_for_every_authored_conflict_case() -> N
     for case in cases:
         # Must not raise: every authored conflict case either names no observed
         # milestone at all, or names one on a Bitemporal single-attempt close.
+        _assert_schema(case)
         _assert_conflict_input(case, "postgres")
 
 
@@ -432,10 +434,36 @@ def test_a_non_temporal_conflict_target_may_not_name_an_observed_milestone() -> 
     case = copy.deepcopy(_versioned_conflict_cases()[0])
     case.when["observedValidStart"] = "2024-01-01T00:00:00+00:00"
     # A versioned target holds one row per key and no milestone to observe, so
-    # the coordinate is read by nothing: the versioned cross-check below never
-    # looks at it, and the case would grade a claim it never made.
+    # the coordinate is read by nothing: the versioned cross-check never looks at
+    # it, and the case would grade a claim it never made.
     with pytest.raises(CaseFailure, match=re.escape("no milestone to observe")):
-        _assert_conflict_input(case, "postgres")
+        _assert_schema(case)
+
+
+def test_a_non_temporal_conflict_target_may_not_name_an_observed_gate_either() -> None:
+    case = copy.deepcopy(_versioned_conflict_cases()[0])
+    case.when["observedTxStart"] = "2024-01-01T00:00:00+00:00"
+    # The gate half is unentitled for the same reason as the Valid-Time half: a
+    # versioned close gates on `write.observedVersion`, so the milestone
+    # coordinate reaches nothing that could read it.
+    with pytest.raises(CaseFailure, match=re.escape("no milestone to observe")):
+        _assert_schema(case)
+
+
+def test_a_non_temporal_retry_attempt_may_not_name_an_observed_gate() -> None:
+    case = copy.deepcopy(_versioned_conflict_cases()[0])
+    case.when["attempts"] = [
+        {
+            "statements": case.when.get("statements", []),
+            "affectedRows": 1,
+            "write": {"id": 1, "observedVersion": 1},
+            "observedTxStart": "2024-01-01T00:00:00+00:00",
+        }
+    ]
+    # The entitlement is a property of the target, so it holds wherever the
+    # coordinate is spelled — the attempt's own fields included.
+    with pytest.raises(CaseFailure, match=re.escape("no milestone to observe")):
+        _assert_schema(case)
 
 
 def test_a_transaction_time_only_target_may_not_name_a_valid_time_start() -> None:
@@ -451,7 +479,7 @@ def test_a_transaction_time_only_target_may_not_name_a_valid_time_start() -> Non
     # Its milestones carry no Valid-Time start, so the coordinate names an axis
     # the target has no milestones on — the edge form is Bitemporal-only.
     with pytest.raises(CaseFailure, match=re.escape("declares no Valid-Time axis")):
-        _assert_conflict_input(case, "postgres")
+        _assert_schema(case)
 
 
 def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
@@ -471,4 +499,22 @@ def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
     # retry re-reads what the concurrent writer left behind. Nothing performs the
     # resolving read that would reconcile the two.
     with pytest.raises(CaseFailure, match=re.escape("names its observed milestone")):
-        _assert_conflict_input(case, "postgres")
+        _assert_schema(case)
+
+
+def test_a_temporal_retry_attempt_may_still_name_its_observed_gate() -> None:
+    case = _bitemporal_edge_named_case()
+    case.when.pop("observedValidStart")
+    case.when["attempts"] = [
+        {
+            "statements": case.when.get("statements", []),
+            "affectedRows": 1,
+            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
+            "at": case.when["at"],
+            "observedTxStart": case.when["observedTxStart"],
+        }
+    ]
+    # Must not raise: a retry states its address directly and gates on the
+    # Transaction-Time start it observed, which is the address form, not the
+    # observation form.
+    _assert_schema(case)
