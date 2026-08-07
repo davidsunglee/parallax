@@ -245,6 +245,20 @@ def test_multi_attribute_audit_update_chains_all_new_values() -> None:
     _assert_write_input_columns(case, "postgres")
 
 
+def test_plural_temporal_step_is_rejected() -> None:
+    # A temporal step settles ONE row: each row closes its own milestone and chains
+    # its own successors, and a temporal entity never collapses into a set-based
+    # statement. The shared `rows` array is a plural-admitting shape at every
+    # authoring location, and the temporal ① ↔ ② cross-check reads the step's first
+    # row, so a second row would be graded against nothing at all rather than
+    # against a golden statement it has no counterpart for.
+    case = copy.deepcopy(_write_case_by_id("m-txtime-write-005"))
+    step = case.write_sequence[0]
+    step["rows"].append({"id": 2, "acctNum": "B", "value": 999.00})
+    with pytest.raises(CaseFailure, match="carries ONE row"):
+        _assert_write_input_columns(case, "postgres")
+
+
 def test_fk_delete_ordering_deletes_child_before_parent() -> None:
     # m-unit-work-007: the non-cascade FK-delete direction — the child OrderItem is
     # deleted BEFORE the parent Order it references (the reverse of the insert order).

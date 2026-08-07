@@ -972,6 +972,38 @@ def _is_temporal_entity(meta: Metamodel, entity_name: str) -> bool:
 _TEMPORAL_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 
 
+def _temporal_entry_row(
+    entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
+) -> Mapping[str, object]:
+    """The ONE case-authored row a TEMPORAL write entry mutates.
+
+    A temporal write settles one row at a time: each row closes its own current
+    milestone and opens its own successors, and `m-batch-write` never collapses a
+    temporal entity into a set-based statement, so several rows under one entry
+    denote several independent milestone chains rather than one wider write. The
+    canonical planner refuses exactly that instruction
+    (:meth:`~parallax.core.unit_work.write_planner`'s temporal settlement), and
+    the entry is refused HERE instead — where the authoring diagnosis can name the
+    entry — rather than reduced to a first row the case did not single out. It is
+    the SAME rule :func:`_conflict_close_row` applies to a temporal conflict
+    attempt's multi-key ``write`` array; the shared case schema cannot express
+    either, because the row count it may admit depends on whether the target
+    entity is temporal, which only the model knows.
+
+    Refusing before :func:`_durable_row` is what makes "every case-authored row
+    reaches the seam" true rather than approximately true: a row this function
+    admits is the entry's only row, so none is left behind unrefused.
+    """
+    if len(raw_rows) != 1:
+        raise EngineError(
+            f"{entity_name!r} {mutation!r}: a temporal write entry carries ONE row "
+            f"({len(raw_rows)} authored) — each row closes its own milestone and chains its "
+            "own successors, and a temporal entity never collapses into a set-based statement "
+            "(m-txtime-write / m-bitemp-write; m-batch-write); author one entry per row"
+        )
+    return raw_rows[0]
+
+
 def _build_temporal_instruction(
     entry: Mapping[str, object],
     meta: Metamodel,
@@ -986,10 +1018,10 @@ def _build_temporal_instruction(
 
     The corpus and canonical instruction share the same ``validFrom`` / ``until``
     spelling. Bounds are instruction-level fields; temporal row payloads never
-    carry authoring aliases. Every temporal entry this increment reaches is
-    single-row.
+    carry authoring aliases. A temporal entry carries exactly ONE row, which
+    :func:`_temporal_entry_row` enforces rather than assumes.
 
-    Its row reaches the same :func:`_durable_row` seam every other producer's
+    That row reaches the same :func:`_durable_row` seam every other producer's
     does, which entitles a temporal row to no observation control key at all —
     the observation this entry consumes is the whole predecessor milestone
     ``shadow`` holds, never a cell the row carried.
@@ -1008,7 +1040,9 @@ def _build_temporal_instruction(
     mutation = cast("str", entry["mutation"])
     entity_name = cast("str", entry["entity"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    row, _authored_none = _durable_row(meta, entity_name, mutation, raw_rows[0])
+    row, _authored_none = _durable_row(
+        meta, entity_name, mutation, _temporal_entry_row(entity_name, mutation, raw_rows)
+    )
     valid_from = cast("str | None", entry.get("validFrom"))
     until = cast("str | None", entry.get("until"))
     doc: dict[str, object] = {"mutation": mutation, "entity": entity_name, "rows": [row]}
@@ -1290,7 +1324,13 @@ def _durable_row(
     entry, :func:`_build_temporal_instruction` for a temporal one,
     :func:`_resolve_conflict_writes` for a non-temporal conflict attempt's
     ``write``, and :func:`_run_conflict_close` for a temporal attempt's close
-    row. Refusal (:func:`_observation_refusal`) and stripping are one
+    row. EVERY row of each reaches it, not merely the first: the two non-temporal
+    producers resolve the whole authored sequence (:func:`_durable_rows`), and the
+    two temporal ones admit a single row and refuse a plural entry outright
+    (:func:`_temporal_entry_row`, :func:`_conflict_close_row`) rather than
+    settling one row and discarding the rest.
+
+    Refusal (:func:`_observation_refusal`) and stripping are one
     indivisible step here precisely because they were separable before: a
     producer that copied the row itself got a perfectly usable durable row while
     silently skipping the refusal, and each new write shape rediscovered the
@@ -1465,11 +1505,15 @@ def _build_instructions(
     write is never a legal writeSequence entry shape, `m-case-format`'s
     writeSequence vocabulary is keyed-only).
 
-    A TEMPORAL entity's entry dispatches to :func:`_build_temporal_instruction`:
-    its authored ``statements`` count is the DML
+    A TEMPORAL entity's entry dispatches to :func:`_build_temporal_instruction`,
+    which admits exactly ONE row: its authored ``statements`` count is the DML
     STATEMENT count (a close plus zero-to-three chained opens), a DIFFERENT
     accounting from the row-decomposition below, which assumes non-temporal
-    semantics and is never applied to a temporal entry's entry.
+    semantics and is never applied to a temporal entry's entry. Decomposition
+    would answer no question there either — a temporal entity never collapses
+    (`m-batch-write`), so there is no set-based statement for a decomposed row to
+    be re-merged into, and several rows under one entry are several independent
+    milestone chains the case must author as several entries.
 
     Otherwise, a write entry carries the instruction triple (``mutation`` /
     ``entity`` / ``rows``) beside case-authoring keys (``note`` / ``statements``
@@ -2115,8 +2159,11 @@ def _buffer_execution_instruction(
     interleaved group) shares.
 
     Every resolved instruction is SINGLE-row (:func:`_build_instructions`
-    buffers one per case row, collapse-eligible or not), so this buffers through
-    the neutral ``Transaction._buffer`` route exactly as that many separate
+    buffers one per case row, collapse-eligible or not, and a temporal entry
+    carries exactly one), and this refuses a plural one rather than buffering
+    its first row and dropping the rest — ``Transaction._buffer`` takes ONE row,
+    so a projection here would silently discard the others. It buffers through
+    that neutral route exactly as that many separate
     developer calls would — never the typed instance verbs, which this engine's
     case-driven metamodel has no compiled Python classes for. That developer
     verb is coercion-only (`~parallax.core.base.coerce_neutral_input`) and stays
@@ -2131,6 +2178,11 @@ def _buffer_execution_instruction(
     ORIGINAL authored instruction, never this decoded copy, so decoding here
     cannot drift a compile-time emission.
     """
+    if len(instruction.rows) != 1:  # pragma: no cover - every producer builds a single-row write
+        raise EngineError(
+            f"{instruction.entity!r} {instruction.mutation!r}: a buffered write carries one row "
+            f"({len(instruction.rows)} resolved) — the unit of work's own buffer seam takes one"
+        )
     entity_metadata = case_entity(model, meta.entity(instruction.entity))
     tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
         instruction.mutation,

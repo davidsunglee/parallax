@@ -3815,6 +3815,19 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
             for row in rows
         ]
+        # A temporal step's ① is ONE row: each row closes its own milestone and
+        # chains its own successors, and a temporal entity never collapses into a
+        # set-based statement (`m-txtime-write` / `m-bitemp-write`;
+        # `m-batch-write`), so several rows are several chains the case must
+        # author as several steps. The shared `rows` array admits a plural
+        # authoring the temporal cross-checks below read the first row of, so a
+        # later row would be graded against nothing.
+        if entity.is_temporal and len(rows) != 1:
+            raise CaseFailure(
+                f"{case.path.name}: a temporal writeSequence step's neutral write input (①) "
+                f"carries ONE row ({len(rows)} authored on {step['entity']}) — each row closes "
+                f"its own milestone and chains its own successors; author one step per row."
+            )
         step_statements = statements[stmt_index : stmt_index + count]
         step_binds = [case.statement_binds(stmt_index + offset, dialect) for offset in range(count)]
         # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
@@ -4225,7 +4238,9 @@ def _assert_temporal_input(
         **({valid_time["start_column"]: valid_from} if valid_time is not None else {}),
     }
     derived_ends = {temporal_axis["end_column"] for temporal_axis in entity.temporal_runtime_axes}
-    columns, pk, _set_cols, _observed = classified[0] if classified else ({}, None, {}, None)
+    # The step's only row: a temporal step carrying any other count is refused
+    # before this cross-check runs.
+    (columns, pk, _set_cols, _observed) = classified[0]
     # A TABLE-PER-HIERARCHY concrete subtype's milestone rows carry the framework-owned
     # tag column, DERIVED from its `tagValue` (m-inheritance) — the chained INSERT sets
     # it at its Discriminator-tier slot and the close GUARDS on it right after the pk, exactly
@@ -4363,7 +4378,8 @@ def _assert_until_input(
             f"`until` (the Valid-Time window end → thru_z), which is DERIVED, never read "
             f"from the golden."
         )
-    _columns, pk, _set_cols, _version = classified[0] if classified else ({}, None, {}, None)
+    # The step's only row, as above: a plural temporal step never reaches here.
+    (_columns, pk, _set_cols, _version) = classified[0]
     valid_from = step.get("validFrom")
     if valid_from is None:
         raise CaseFailure(

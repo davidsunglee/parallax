@@ -2822,6 +2822,66 @@ def test_a_temporal_write_sequence_row_authoring_an_observed_version_is_refused(
         engine.compile_write_sequence_case(case, "postgres")
 
 
+def test_a_multi_row_temporal_write_sequence_entry_is_refused() -> None:
+    # The row-count axis of the same seam. `rows` is a schema-valid array of one
+    # or more at every authoring location, and a temporal entity's row count is
+    # not something the shared definition can constrain (it depends on the
+    # model), so a plural temporal entry reaches this engine. It settles one
+    # milestone chain per row and never a set-based statement, so the second row
+    # is a second chain the case must author as its own entry — and translating
+    # only the first would discard it before the entitlement seam ever sees it,
+    # emitting the first row's statements and grading green.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/balance.yaml",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "update",
+                        "entity": "Balance",
+                        "statements": 2,
+                        "rows": [
+                            {"id": 1, "acctNum": "A", "value": 175.00},
+                            {"id": 2, "acctNum": "B", "value": 999.00, "observedVersion": 77},
+                        ],
+                        "at": "2024-09-01T00:00:00+00:00",
+                    }
+                ]
+            },
+        },
+    )
+    with pytest.raises(engine.EngineError, match=re.escape("a temporal write entry carries ONE")):
+        engine.compile_write_sequence_case(case, "postgres")
+
+
+def test_a_multi_row_temporal_scenario_write_entry_is_refused() -> None:
+    # The same refusal for the other shape that reaches the temporal producer: a
+    # buffered scenario write entry, whose rows a unit of work would hold rather
+    # than a writeSequence's ordered DML.
+    when = {
+        "scenario": [
+            {
+                "write": [
+                    {
+                        "mutation": "update",
+                        "entity": "Balance",
+                        "rows": [
+                            {"id": 1, "acctNum": "A", "value": 175.00},
+                            {"id": 2, "acctNum": "B", "value": 999.00},
+                        ],
+                        "at": "2024-09-01T00:00:00+00:00",
+                    }
+                ],
+                "roundTrips": 2,
+            }
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/balance.yaml", "when": when})
+    with pytest.raises(engine.EngineError, match=re.escape("a temporal write entry carries ONE")):
+        engine.compile_scenario_case(case, "postgres")
+
+
 def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None:
     # m-inheritance-105: `when.write` names no entity of its own; for an
     # inheritance-participant model `_conflict_target` resolves to the family's
