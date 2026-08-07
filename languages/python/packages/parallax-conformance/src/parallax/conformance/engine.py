@@ -4073,6 +4073,50 @@ def _conflict_close_row(
     return cast("Mapping[str, object]", raw)
 
 
+# The observed milestone's own edge, authored beside a temporal conflict write.
+_MILESTONE_EDGE_KEYS: Final[frozenset[str]] = frozenset({"observedTxStart", "observedValidStart"})
+
+
+def _refuse_unentitled_observed_edge(
+    case: case_format.Case, when: Mapping[str, object], *, is_temporal: bool
+) -> None:
+    """Refuse an observed-milestone edge the conflict target cannot consume.
+
+    Two entitlements, both decided here because both are properties of the CASE
+    rather than of any one attempt's arithmetic (`m-case-format`, *Naming the
+    observed milestone*):
+
+    * a NON-temporal target has no milestones and no edge to name one with, so
+      the coordinates would be read by nothing — the versioned conflict path
+      never looks at them;
+    * a RETRY attempt re-reads state the concurrent writer left behind, while an
+      edge selects among the milestones the case's own loaded fixtures hold. The
+      two cannot be reconciled without a resolving read no lane performs, so the
+      observation form is single-attempt only and a retry names its address
+      directly.
+
+    The Transaction-Time-Only arm of the first entitlement lives where the edge
+    is built (:func:`temporal_state.observed_edge`), which refuses a coordinate
+    on an axis the target does not declare.
+    """
+    if not is_temporal and any(key in when for key in _MILESTONE_EDGE_KEYS):
+        raise EngineError(
+            f"{case.path.name}: a NON-temporal conflict target has no milestone to observe, "
+            f"so it may author neither of {sorted(_MILESTONE_EDGE_KEYS)}"
+        )
+    raw_attempts = when.get("attempts")
+    if not isinstance(raw_attempts, list):
+        return
+    for index, attempt in enumerate(cast("list[Mapping[str, object]]", raw_attempts)):
+        if "observedValidStart" in attempt:
+            raise EngineError(
+                f"{case.path.name}: attempt {index} names its observed milestone's edge "
+                "(`observedValidStart`), which selects among the case's own fixtures — a "
+                "retry re-reads what the concurrent writer left, so a retry attempt names "
+                "its address (`write.validEnd`) directly"
+            )
+
+
 def run_conflict_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], int, dict[str, list[Row]] | None]:
@@ -4107,6 +4151,7 @@ def run_conflict_case(
     # can select. Seeded before `given.apply`, whose out-of-band writer is a
     # CONCURRENT transaction this one never observed.
     shadow = TemporalShadow()
+    _refuse_unentitled_observed_edge(case, when, is_temporal=is_temporal)
     if is_temporal:
         _seed_shadow_from_fixtures(case, meta, shadow)
     emissions: list[Emission] = []

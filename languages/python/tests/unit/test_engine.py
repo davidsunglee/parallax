@@ -2876,6 +2876,58 @@ def test_a_close_naming_both_an_observed_edge_and_an_authored_address_is_refused
         )
 
 
+def test_a_non_temporal_conflict_target_may_not_name_an_observed_milestone() -> None:
+    # A versioned target has one row per key and no milestone to observe, so the
+    # coordinates would be read by nothing: the versioned conflict path never
+    # looks at them, and a case authoring one would silently grade the shape it
+    # did not mean to.
+    with pytest.raises(engine.EngineError, match=re.escape("no milestone to observe")):
+        engine.run_conflict_case(
+            _synthetic_write(
+                "conflict",
+                {
+                    "model": "models/account.yaml",
+                    "when": {
+                        "uow": {"concurrency": "optimistic"},
+                        "write": {"id": 1, "name": "A", "observedVersion": 1},
+                        "observedTxStart": "2024-04-01T00:00:00+00:00",
+                    },
+                },
+            ),
+            "postgres",
+            FakeWritePort(),
+        )
+
+
+def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
+    # An edge selects among the milestones the case's own fixtures hold, while a
+    # retry re-reads what the concurrent `given.apply` writer left behind. No
+    # lane performs the resolving read that would reconcile the two, so the
+    # observation form is single-attempt only rather than resolving against
+    # state the retry has already superseded.
+    with pytest.raises(engine.EngineError, match=re.escape("names its observed milestone")):
+        engine.run_conflict_case(
+            _edge_named_close(
+                {
+                    "uow": {"concurrency": "optimistic"},
+                    "at": "2024-10-01T00:00:00+00:00",
+                    "attempts": [
+                        {
+                            "statements": [{"sql": {"postgres": "update position set out_z = ?"}}],
+                            "affectedRows": 1,
+                            "write": {"id": 1},
+                            "at": "2024-10-01T00:00:00+00:00",
+                            "observedTxStart": "2024-04-01T00:00:00+00:00",
+                            "observedValidStart": "2024-01-01T00:00:00+00:00",
+                        }
+                    ],
+                }
+            ),
+            "postgres",
+            FakeWritePort(),
+        )
+
+
 def test_a_close_naming_an_edge_no_current_milestone_carries_is_refused() -> None:
     # A named milestone that the case's own state does not hold is an authoring
     # defect, not a stale gate: falling back to whichever rectangle the key

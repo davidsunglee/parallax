@@ -691,12 +691,7 @@
                 "minLength": 1
               },
               "observedTxStart": {
-                "description": "This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. Absent in locking mode. Paired with `observedValidStart` it instead names the observed milestone's Transaction-Time coordinate, and the gate binds that milestone's own start.",
-                "type": "string",
-                "minLength": 1
-              },
-              "observedValidStart": {
-                "description": "This temporal-close attempt's observed Valid-Time start (`from_z`) — the second half of the observed milestone's own EDGE coordinate, whose first half is `observedTxStart`. Authoring it names the milestone the close observed instead of naming the close's ADDRESS directly: the address's Valid-Time end and the optimistic gate are then both derived from the one milestone the coordinate selects, so a write's address and gate come from a single observation. Mutually exclusive with the write row's own `validEnd` (a case names either the observation or the address, never both), and legal only on a Bitemporal target, whose key may hold several disjoint Valid-Time rectangles current at once.",
+                "description": "This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. Absent in locking mode. A retry attempt names its close's ADDRESS directly and never the observed milestone's edge: the edge form (`when.observedValidStart`) selects among the case's own loaded fixtures, while a retry re-reads the state the concurrent `given.apply` writer left behind, so it is single-attempt only (m-case-format).",
                 "type": "string",
                 "minLength": 1
               },
@@ -740,11 +735,26 @@
           "minLength": 1
         },
         "observedValidStart": {
-          "description": "The observed Valid-Time start (`from_z`) — the second half of the observed milestone's own EDGE coordinate, whose first half is `observedTxStart`. Authoring it names the milestone the close observed instead of naming the close's ADDRESS directly: the address's Valid-Time end and the optimistic gate are then both derived from the one milestone the coordinate selects, so a write's address and gate come from a single observation. Mutually exclusive with the write row's own `validEnd` (a case names either the observation or the address, never both), and legal only on a Bitemporal target, whose key may hold several disjoint Valid-Time rectangles current at once.",
+          "description": "The observed Valid-Time start (`from_z`) — the second half of the observed milestone's own EDGE coordinate, whose first half is `observedTxStart`. Authoring it names the milestone the close observed instead of naming the close's ADDRESS directly: the address's Valid-Time end and the optimistic gate are then both derived from the one milestone the coordinate selects, so a write's address and gate come from a single observation. An edge names every declared as-of axis, so `observedTxStart` is REQUIRED beside it (`dependentRequired` below); it is mutually exclusive with the write row's own `validEnd` (a case names either the observation or the address, never both, enforced below); and it is legal only on a Bitemporal target, whose key may hold several disjoint Valid-Time rectangles current at once — the target profile the schema cannot see, so the two implementations refuse it (m-case-format).",
           "type": "string",
           "minLength": 1
         }
-      }
+      },
+      "dependentRequired": {
+        "observedValidStart": ["observedTxStart"]
+      },
+      "allOf": [
+        {
+          "$comment": "A close names the observed milestone or its address, never both (m-case-format).",
+          "if": { "required": ["observedValidStart"] },
+          "then": {
+            "not": {
+              "required": ["write"],
+              "properties": { "write": { "required": ["validEnd"] } }
+            }
+          }
+        }
+      ]
     },
     "then": {
       "description": "Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the portable boundary `outcome`, and the numeric-comparison `tolerance`.",

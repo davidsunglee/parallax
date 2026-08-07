@@ -479,13 +479,14 @@ _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
 _PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-bitemp-write-015", "m-bitemp-write-016"}
 )
-# The per-milestone mutation witness (m-unit-work's observation keying): the same
-# api-conformance-lane mutate shape as `_PIN_CONTRAST_SCENARIOS`, staged over TWO
-# reads of ONE primary key at coordinates that resolve to DIFFERENT milestones, so
-# the verb answers per milestone in both directions — accepted on the
-# Valid-Time-pinned view, `transaction-time-pin-read-only` on the
-# Transaction-Time-pinned one, from one key.
-_OBSERVATION_KEYING_SCENARIOS: Final[frozenset[str]] = frozenset({"m-unit-work-015"})
+# The per-view mutation witness (m-identity-map's pinned views over one timeline):
+# the same api-conformance-lane mutate shape as `_PIN_CONTRAST_SCENARIOS`, staged over
+# TWO reads of ONE primary key at coordinates that resolve to DIFFERENT milestones, so
+# the verb answers per view in both directions — accepted on the Valid-Time-pinned view,
+# `transaction-time-pin-read-only` on the Transaction-Time-pinned one, from one key.
+# The mutate lane enrolls no view in a unit of work, so this grades the per-view pin
+# rule and nothing about write-observation keying.
+_PER_VIEW_PIN_SCENARIOS: Final[frozenset[str]] = frozenset({"m-unit-work-015"})
 WRITE_EXERCISED: Final[frozenset[str]] = (
     _WRITE_SCENARIOS
     | _WRITE_SEQUENCES
@@ -494,7 +495,7 @@ WRITE_EXERCISED: Final[frozenset[str]] = (
     | _TEMPORAL_COALESCING_SCENARIOS
     | _READLESS_PREDICATE_WRITE_SCENARIOS
     | _PIN_CONTRAST_SCENARIOS
-    | _OBSERVATION_KEYING_SCENARIOS
+    | _PER_VIEW_PIN_SCENARIOS
 )
 
 

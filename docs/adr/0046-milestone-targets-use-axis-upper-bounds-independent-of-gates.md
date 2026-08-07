@@ -41,3 +41,29 @@ addressing ambiguous. Reladomo's dated update predicates provide the prior-art
 rule adopted here: primary key and every As-Of `to` bound identify the row,
 operational writes constrain its `OUT_Z` upper bound to Infinity, and the
 observed `IN_Z` start value is an additional optimistic gate.
+
+## Amendment (2026-08): locking mode rejects no observation before planning
+
+The reasoning recorded above justifies the target/gate separation partly by a
+locking-mode refusal: "Locking mode rejects the same historical observation
+before planning because its read lock did not license the current row."
+
+**Superseding decision:** there is no such refusal. The pre-planning
+locking-license check is retired along with the Transaction-Time Basis it read
+(ADR 0042's amendment), and locking mode accepts exactly the observations
+optimistic mode does.
+
+What the separation now serves is the **stale** observation — one that named the
+current milestone when it was read and that another transaction has since
+superseded. Its target still selects `tx_end = Infinity` while its observed start
+rides the optimistic gate, so closed history is never mutated and the conflict is
+reported by the gate. A locking-mode close reaches that shape only in principle:
+its observing read holds a shared lock on the milestone the observation names,
+which is the milestone the close addresses. An observation of a milestone the
+Transaction-Time past holds never reaches planning in either mode, because
+mutating a view pinned at a finite Transaction-Time instant is refused at the
+verb.
+
+Everything else recorded above is unchanged: the Milestone Target is the primary
+key plus one write-required exclusive upper bound per As-Of Axis, identical in
+both concurrency modes, and the gate remains a separate optimistic-only addition.

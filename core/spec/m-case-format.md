@@ -743,14 +743,37 @@ observed edge alongside an authored `validEnd`: the two spell one fact from
 opposite ends, so agreeing they prove nothing the derivation does not and
 disagreeing one would have to silently win.
 
+The observation form is entitled by the target and by the attempt, and an
+implementation **MUST** refuse it rather than ignore it where it is not:
+
+- `observedValidStart` names a Valid-Time start, so it is legal **only on a
+  Bitemporal target**. A Transaction-Time-Only target's milestones have no
+  Valid-Time start to name, and a non-temporal target has no milestone at all.
+- The edge selects among the milestones the case's **own loaded fixtures** hold
+  current, so it is legal **only on the single-attempt `when`**. A retry attempt
+  re-reads the state the concurrent `given.apply` writer left behind, which no
+  fixture edge names and no lane performs a resolving read to discover, so a
+  retry attempt states its **address** directly.
+
+Because an edge selects exactly one milestone, a case whose own state holds two
+current milestones of one key carrying the **same** edge is unaddressable, and an
+implementation MUST refuse that state rather than pick one of them.
+
 The forms differ in what they can grade, not in what they emit. One key may hold
 several disjoint Valid-Time rectangles current on Transaction Time at once
 (`m-bitemp-write`), sharing the primary key, the open Transaction-Time bound,
 and possibly the gate; only their edges tell them apart. An address-form case
 therefore grades the rendering of an address it supplied, while an
-observation-form case grades the **resolution** — an implementation whose write
-observations are keyed by identity alone holds no single answer for such a key
+observation-form case grades the **derivation** — an implementation that resolves
+a close's address from the primary key alone has no single answer for such a key
 and cannot render both siblings of an edge-named pair.
+
+Neither form grades how an implementation **keys** the observations its own reads
+record. A case names the milestone its write observed, so the write consumes one
+observation resolved once from state the case supplies; no case has a write
+consume evidence one of the case's own read steps recorded. A rule about what a
+second read of one key does to the first read's evidence is therefore outside
+what this format can express today.
 
 ### Scenario cases (`m-unit-work`)
 
