@@ -9,12 +9,14 @@ structural constraint, so no cross-entry same-entity / same-primary-key equality
 imposed. Predicate-selected instructions inside a buffer stay EXCLUDED (keyed-only).
 
 The structural half (one-or-more keyed entries, no predicate entry) is the JSON
-Schema's; the per-entry member-name honesty JSON Schema cannot express is the
-harness validator's. These DB-free probes pin both halves: the general keyed shapes
-— a single write, a mixed multi-object flush, a buffer over different entities /
-different keys, and the three same-transaction coalescing witnesses — are ACCEPTED;
-a predicate-in-buffer entry is REJECTED (schema); and a row naming a non-member is
-REJECTED (harness).
+Schema's; the two model-aware per-entry rules JSON Schema cannot express —
+member-name honesty and the temporal singleton (`m-unit-work`: an entry on a
+temporal entity carries exactly one row) — are the harness validator's. These
+DB-free probes pin both halves: the general keyed shapes — a single write, a mixed
+multi-object flush, a buffer over different entities / different keys, and the
+three same-transaction coalescing witnesses — are ACCEPTED; a predicate-in-buffer
+entry is REJECTED (schema); and a row naming a non-member, or a plural temporal
+entry, is REJECTED (harness).
 """
 
 from __future__ import annotations
@@ -247,4 +249,53 @@ def test_whole_tree_validation_rejects_a_non_member_buffered_row_key(tmp_path: P
     errors = _corrupt_witness(tmp_path, mutate)
     assert any(
         "m-txtime-write-008" in error and "not" in error and "Balance" in error for error in errors
+    )
+
+
+# --- a temporal entry carries exactly one row (m-unit-work) ---------------------
+
+
+def test_a_plural_temporal_buffer_entry_is_rejected() -> None:
+    # Each row of a milestone chain closes its own milestone, consumes its own
+    # observation, and chains its own successors, so a temporal keyed instruction
+    # carries exactly one row. The shared `rows` array admits a plural authoring
+    # because the bound depends on whether the target is temporal, which only the
+    # model knows — so the rule is decided here, at the authoring boundary both
+    # implementations read, rather than separately inside each.
+    probe = [
+        {
+            "mutation": "update",
+            "entity": "Balance",
+            "rows": [{"id": 1, "value": 150.00}, {"id": 2, "value": 250.00}],
+            "at": "2024-06-01T00:00:00+00:00",
+        }
+    ]
+    assert next(_buffered_validator().iter_errors(probe), None) is None
+    errors: list[str] = []
+    _validate_buffered_write(probe, _BALANCE, _OP, "probe", errors)
+    assert any("exactly one" in error and "Balance" in error for error in errors)
+
+
+def test_a_plural_non_temporal_buffer_entry_is_accepted() -> None:
+    # The contrast: a non-temporal entry legitimately carries several rows — the
+    # set-based flush `m-batch-write` collapses. Only the temporal target's own
+    # milestone chain forbids it.
+    probe = [
+        {
+            "mutation": "update",
+            "entity": "Account",
+            "rows": [{"id": 1, "balance": 5.0}, {"id": 2, "balance": 5.0}],
+        }
+    ]
+    assert _accepted(probe, _ACCOUNT)
+
+
+def test_whole_tree_validation_rejects_a_plural_temporal_buffer_entry(tmp_path: Path) -> None:
+    def mutate(case: dict[str, Any]) -> None:
+        case["when"]["scenario"][0]["write"][0]["rows"].append({"id": 2, "value": 1.0})
+
+    errors = _corrupt_witness(tmp_path, mutate)
+    assert any(
+        "m-txtime-write-008" in error and "exactly one" in error and "Balance" in error
+        for error in errors
     )

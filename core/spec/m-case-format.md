@@ -667,7 +667,10 @@ temporal writes (`insert` / `update` / `terminate` and the bitemporal `*Until`
 trio), batched non-temporal writes, ordinary `delete`, and the minimal
 `cascadeDelete` witness over dependent relationships. The DML statement count MUST
 equal the sum of the `when.writeSequence` steps' declared statement counts and the
-case's `then.roundTrips`. The model descriptor's serde round-trip (layer 4b) still
+case's `then.roundTrips`. A step on a **temporal** entity carries **exactly one**
+neutral write input row (`m-unit-work`: each row closes its own milestone and
+chains its own successors, and a temporal entity never collapses into a set-based
+statement), so a chain per key is authored as a **step per key**. The model descriptor's serde round-trip (layer 4b) still
 runs; there is no `when.operation` to serde (layer 4a) and no normalization
 difference — the DML golden SQL is normalized to a fixed point exactly like read
 SQL (layer 3).
@@ -891,8 +894,12 @@ to **no** DML (`roundTrips: 0`, no `statements`). The two-keyed same-object
 insert-then-update / insert-then-delete pair is that rule's **single-object special
 case**, not a separate shape. The JSON Schema pins only the structural shape (one or
 more keyed entries); it imposes **no** cross-entry same-object equality, and the
-retained static check is per-entry **member-name honesty** (each keyed row key names
-a declared attribute / value object of its entity). Coalescing and
+retained static checks are per-entry **member-name honesty** (each keyed row key
+names a declared attribute / value object of its entity) and the **temporal
+singleton** (`m-unit-work`: an entry on a temporal entity carries exactly one row,
+since each row chains its own milestones — author several rows as several
+entries). Both are model-aware, which is why neither is expressible in the JSON
+Schema. Coalescing and
 foreign-key-ordering correctness are proven where they always were — the step's
 golden SQL executed verbatim, plus `tableState` / `expectRows`.
 

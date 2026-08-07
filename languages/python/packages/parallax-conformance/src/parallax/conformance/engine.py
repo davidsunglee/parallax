@@ -977,18 +977,17 @@ def _temporal_entry_row(
 ) -> Mapping[str, object]:
     """The ONE case-authored row a TEMPORAL write entry mutates.
 
-    A temporal write settles one row at a time: each row closes its own current
-    milestone and opens its own successors, and `m-batch-write` never collapses a
-    temporal entity into a set-based statement, so several rows under one entry
-    denote several independent milestone chains rather than one wider write. The
-    canonical planner refuses exactly that instruction
-    (:meth:`~parallax.core.unit_work.write_planner`'s temporal settlement), and
-    the entry is refused HERE instead — where the authoring diagnosis can name the
-    entry — rather than reduced to a first row the case did not single out. It is
-    the SAME rule :func:`_conflict_close_row` applies to a temporal conflict
-    attempt's multi-key ``write`` array; the shared case schema cannot express
-    either, because the row count it may admit depends on whether the target
-    entity is temporal, which only the model knows.
+    `m-unit-work` "A temporal keyed instruction carries exactly one row": each row
+    closes its own current milestone, consumes its own Temporal Observation, and
+    opens its own successors, and a temporal entity never collapses into a
+    set-based statement (`m-batch-write`), so several rows under one entry denote
+    several independent milestone chains rather than one wider write. That rule
+    forbids reducing the entry to a first row the case did not single out, so it
+    is refused HERE, where the authoring diagnosis can name the entry. It is the
+    SAME rule :func:`_conflict_close_row` applies to a temporal conflict attempt's
+    multi-key ``write`` array; the shared case schema cannot express either,
+    because the row count it may admit depends on whether the target entity is
+    temporal, which only the model knows.
 
     Refusing before :func:`_durable_row` is what makes "every case-authored row
     reaches the seam" true rather than approximately true: a row this function
@@ -999,7 +998,8 @@ def _temporal_entry_row(
             f"{entity_name!r} {mutation!r}: a temporal write entry carries ONE row "
             f"({len(raw_rows)} authored) — each row closes its own milestone and chains its "
             "own successors, and a temporal entity never collapses into a set-based statement "
-            "(m-txtime-write / m-bitemp-write; m-batch-write); author one entry per row"
+            "(m-unit-work 'A temporal keyed instruction carries exactly one row'); author one "
+            "entry per row"
         )
     return raw_rows[0]
 

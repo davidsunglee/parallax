@@ -221,6 +221,17 @@ def _keyed_member_names(entity_defs: list[dict[str, Any]], entity_name: str) -> 
     return names
 
 
+def _is_temporal_entity(entity_defs: list[dict[str, Any]], entity_name: str) -> bool:
+    """Whether *entity_name* declares an As-Of Axis (family-effective).
+
+    ``False`` for an undeclared entity; the caller reports that separately.
+    """
+    try:
+        return Entity(definition=resolve_effective_definition(entity_defs, entity_name)).is_temporal
+    except (KeyError, RejectionError):
+        return False
+
+
 def _validate_buffered_write(
     instructions: list[Any],
     entity_defs: list[dict[str, Any]],
@@ -231,12 +242,20 @@ def _validate_buffered_write(
     """Validate a buffered scenario write — the m-unit-work general keyed buffer.
 
     The schema pins the STRUCTURAL shape (an ordered buffer of one-or-more KEYED
-    instructions; predicate-selected entries are excluded). This adds the one
-    model-aware check JSON Schema cannot express and the wire harness would otherwise
+    instructions; predicate-selected entries are excluded). This adds the two
+    model-aware checks JSON Schema cannot express and the wire harness would otherwise
     skip (it executes the flushed golden SQL, never the buffered instructions):
 
     * **member honesty** — each keyed row's keys MUST name declared attributes / value
       objects of its entity, so a buffered write cannot silently name a non-member.
+    * **the temporal singleton** — an entry on a temporal entity carries exactly ONE
+      row (`m-unit-work` "A temporal keyed instruction carries exactly one row"),
+      since each row closes its own milestone, consumes its own observation, and
+      chains its own successors. The row count a keyed entry may carry depends on
+      whether its target is temporal, which only the model knows, so the schema
+      states the general one-or-more bound and the singleton is decided here — at
+      the authoring boundary both implementations read, rather than separately
+      inside each.
 
     Same-object coalescing is NOT a structural property of the buffer: a general buffer
     legitimately spans different entities and different primary-key identities (a mixed
@@ -263,7 +282,15 @@ def _validate_buffered_write(
         if members is None:
             errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
             continue
-        for row in instruction.get("rows", []):
+        rows = instruction.get("rows", [])
+        if len(rows) > 1 and _is_temporal_entity(entity_defs, entity_name):
+            errors.append(
+                f"{entry_label}: a keyed write on the temporal entity {entity_name!r} carries "
+                f"{len(rows)} rows — a temporal keyed instruction carries exactly one "
+                f"(m-unit-work), since each row closes its own milestone and chains its own "
+                f"successors; author one buffer entry per row"
+            )
+        for row in rows:
             if not isinstance(row, dict):
                 continue
             unknown = sorted(key for key in row if key not in members)
