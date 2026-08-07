@@ -91,6 +91,22 @@ class _StableTextLoader(Loader):
         return str(data)
 
 
+def _register_stable_loaders(conn: psycopg.Connection[Any]) -> None:
+    """Read instant and driver-native scalar columns as stable text on *conn*.
+
+    Every connection the harness reads a case row through registers the same
+    loaders: the autocommit one a provider owns and the manual-commit one a held
+    session runs on. A grouped scenario read runs on the session, so a connection
+    left with psycopg's defaults would raise on the open Transaction-Time bound
+    the autocommit connection reads as ``"infinity"`` — the two lanes would then
+    disagree about what a milestone row IS.
+    """
+    conn.adapters.register_loader("timestamptz", _IsoTimestamptzLoader)
+    conn.adapters.register_loader("timestamp", _IsoTimestamptzLoader)
+    conn.adapters.register_loader("time", _StableTextLoader)
+    conn.adapters.register_loader("uuid", _StableTextLoader)
+
+
 class PostgresProvider:
     """A clean, migrated, isolated Postgres database for one suite run."""
 
@@ -111,10 +127,7 @@ class PostgresProvider:
         self._conn = psycopg.connect(connection_url, autocommit=True, prepare_threshold=None)
         # Read instant columns as stable ISO-8601 / "infinity" text (see the
         # loader docstring): infinity-safe and deterministic for row comparison.
-        self._conn.adapters.register_loader("timestamptz", _IsoTimestamptzLoader)
-        self._conn.adapters.register_loader("timestamp", _IsoTimestamptzLoader)
-        self._conn.adapters.register_loader("time", _StableTextLoader)
-        self._conn.adapters.register_loader("uuid", _StableTextLoader)
+        _register_stable_loaders(self._conn)
 
     # --- DatabaseProvider seam ---------------------------------------------
 
@@ -198,6 +211,7 @@ class PostgresProvider:
         and ``lock_timeout`` bounds a plain lock wait.
         """
         conn = psycopg.connect(self._url, autocommit=False)
+        _register_stable_loaders(conn)
         try:
             with conn.cursor() as cur:
                 cur.execute(_trusted_query("set deadlock_timeout = '100ms'"))
