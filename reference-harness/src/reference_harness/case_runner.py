@@ -62,7 +62,11 @@ from .inheritance import (
     validate_family,
     validate_operation_inheritance,
 )
-from .keyed_write_validate import KEYED_WRITE_REJECTED_RULES, validate_keyed_write
+from .keyed_write_validate import (
+    KEYED_WRITE_REJECTED_RULES,
+    undeclared_row_members,
+    validate_keyed_write,
+)
 from .metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
 )
@@ -2914,7 +2918,11 @@ def _assert_rejected(case: Case) -> None:
     instruction, a ``rows`` array is a whole KEYED instruction judged by
     ``validate_keyed_write`` against the entity IT names, and anything else is
     the bare neutral write row, run through ``validate_write`` and Inheritance's
-    ``validate_subtype_write`` against the model's default write root. Inline
+    ``validate_subtype_write`` against the model's default write root. Both
+    discriminators are RESERVED from a bare row at this position
+    (`compatibility-case.schema.json` ``$defs/bareWriteRow``), so a domain member
+    can never be mistaken for one and this dispatch cannot re-read a row as an
+    instruction. Inline
     models run the foundational
     ``validate_index_identities`` before the semantic rule sets — Inheritance's
     ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
@@ -2983,6 +2991,13 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
     neutral write row beside it — nothing here falls back to the model's default
     write root; an undeclared handle is a case-authoring failure rather than a
     silent resolution against some other entity.
+
+    The PAYLOAD is judged before the instruction's shape
+    (:func:`~reference_harness.keyed_write_validate.undeclared_row_members`),
+    which is what `m-case-format` means by checking the payload against the entity
+    the instruction authored: a row naming no declared member fails the case
+    outright rather than being classified with an instruction rule it never
+    reached.
     """
     entity_name = write.get("entity")
     try:
@@ -2992,6 +3007,12 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
             f"{case.path.name}: keyed instruction names entity {entity_name!r}, which the "
             f"case's model does not declare"
         ) from exc
+    unknown = undeclared_row_members(entity, write)
+    if unknown:
+        raise CaseFailure(
+            f"{case.path.name}: keyed instruction's row(s) name {unknown}, which are not "
+            f"attributes or value objects of {entity.name}"
+        )
     validate_keyed_write(entity, write)
 
 
@@ -3950,20 +3971,20 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
             )
             for row in rows
         ]
-        # `m-unit-work`'s temporal singleton, restated for the writeSequence
-        # lane (`m-case-format`): each row closes its own milestone, consumes its
-        # own observation, and chains its own successors, so several rows are
-        # several chains the case must author as several steps. The shared `rows`
-        # array states the general one-or-more bound because the singleton is
-        # model-dependent, and the temporal cross-checks below read the first row
-        # alone — so a plural authoring would leave a later row graded against
-        # nothing.
-        if entity.is_temporal and len(rows) != 1:
+        # `m-unit-work`'s temporal singleton, asked of this lane through the SAME
+        # validator the rejected lane and the buffered scenario write reach: a
+        # writeSequence step carries the keyed instruction's own members
+        # (`mutation` / `entity` / `rows`), so it is judged as one rather than by a
+        # count restated here. The shared `rows` array states the general
+        # one-or-more bound because the singleton is model-dependent, and the
+        # temporal cross-checks below read the first row alone — so a plural
+        # authoring would leave a later row graded against nothing.
+        try:
+            validate_keyed_write(entity, step)
+        except RejectionError as exc:
             raise CaseFailure(
-                f"{case.path.name}: a temporal writeSequence step's neutral write input (①) "
-                f"carries ONE row ({len(rows)} authored on {step['entity']}) — each row closes "
-                f"its own milestone and chains its own successors; author one step per row."
-            )
+                f"{case.path.name}: writeSequence step on {step['entity']}: {exc.detail}"
+            ) from exc
         step_statements = statements[stmt_index : stmt_index + count]
         step_binds = [case.statement_binds(stmt_index + offset, dialect) for offset in range(count)]
         # A full-bitemporal step is a RECTANGLE SPLIT: the windowed `*Until` trio, or
@@ -5417,11 +5438,13 @@ def _assert_scenario_source_finds(case: Case) -> None:
     """Validate every write step's ``on`` — the find it settles against
     (`m-case-format` *Settling against a grouped find*).
 
-    The reference is legal only where both halves are meaningful: on a `uow`-
-    grouped step, naming ONE earlier step of the SAME group that is a find, and
-    for a TEMPORAL target. A versioned Non-Temporal target has one row per primary
-    key, so its grouped write already reaches its group's evidence by identity and
-    the reference names nothing the resolution does not have.
+    The reference is legal only where every part of it is meaningful: on a `uow`-
+    grouped step whose ``write`` is the BUFFERED KEYED form, naming ONE earlier
+    step of the SAME group that is a find, against a target declaring BOTH As-Of
+    Axes. A versioned Non-Temporal target has one row per primary key, and a
+    Transaction-Time-Only target one milestone current at any instant, so both
+    already reach their group's evidence by identity; only a Valid-Time axis puts
+    several current milestones under one key.
 
     Structural and dialect-free, so it holds on every run rather than only where
     the case carries a golden for the dialect under test — the same reason the
@@ -5454,14 +5477,23 @@ def _assert_scenario_source_finds(case: Case) -> None:
                 f"{case.path.name}: scenario[{index}] settles against step {source}, which is "
                 f"not a find step of its own `uow` group {label!r}."
             )
+        if not isinstance(step.get("write"), list):
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] settles against a find but its `write` is "
+                f"not the buffered keyed form — a legacy string label carries no instruction and "
+                f"a predicate-selected write consumes no single milestone, so neither has "
+                f"anything the named observation could reach."
+            )
         for entry in _scenario_write_entries(step):
             entity = case.model.entity(entry["entity"])
-            if not entity.is_temporal:
+            dimensions = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
+            if "valid-time" not in dimensions:
                 raise CaseFailure(
-                    f"{case.path.name}: scenario[{index}] settles {entity.name} against a "
-                    f"find, but {entity.name} is not temporal — a versioned Non-Temporal "
-                    f"target has one row per primary key, so its grouped write already "
-                    f"reaches its group's evidence by identity."
+                    f"{case.path.name}: scenario[{index}] settles {entity.name} against a find, "
+                    f"but {entity.name} declares no Valid-Time axis — a versioned Non-Temporal "
+                    f"target has one row per primary key and a Transaction-Time-Only target one "
+                    f"milestone current at any instant, so both already reach their group's "
+                    f"evidence by identity."
                 )
 
 
@@ -5486,7 +5518,7 @@ def _assert_scenario_settled_close(case: Case, dialect: str) -> None:
         binds = _entry_binds(step.get("statements"), 0)
         for entry in _scenario_write_entries(step):
             entity = case.model.entity(entry["entity"])
-            row = _sole_settled_row(case, index, entry)
+            row = _sole_settled_row(case, index, entity, entry)
             _, pk, _set_cols, _observed = _classify_write_row(
                 case, entity, row, mutation=entry["mutation"], opening=True
             )
@@ -5505,14 +5537,21 @@ def _assert_scenario_settled_close(case: Case, dialect: str) -> None:
             _assert_write_values(case, expected, binds, statements[0])
 
 
-def _sole_settled_row(case: Case, index: int, entry: dict[str, Any]) -> dict[str, Any]:
+def _sole_settled_row(
+    case: Case, index: int, entity: Entity, entry: dict[str, Any]
+) -> dict[str, Any]:
     """The ONE row a settled temporal write entry authors.
 
-    `m-unit-work`'s temporal singleton, restated for this lane: each row closes its
-    own milestone and consumes its own observation, so several rows under one entry
-    are several chains the case must author as several entries — and a settled
-    entry would have nothing to say about which of them the named find handed over.
+    The plural half is `m-unit-work`'s temporal singleton and is asked of the SAME
+    :func:`~reference_harness.keyed_write_validate.validate_keyed_write` every
+    other lane asks it of, so this lane cannot refuse a different set of entries;
+    what is local here is only the consequence — a settled entry must hand over
+    exactly one row, because the named find handed over exactly one value.
     """
+    try:
+        validate_keyed_write(entity, entry)
+    except RejectionError as exc:
+        raise CaseFailure(f"{case.path.name}: scenario[{index}]: {exc.detail}") from exc
     rows = entry.get("rows")
     if not isinstance(rows, list) or len(rows) != 1:
         raise CaseFailure(
@@ -5533,14 +5572,17 @@ def _settled_milestone(
     the tracked current state every other write shape resolves from. That is the
     whole point of the reference: a key with several current rectangles has no one
     "current" milestone, and only the read that returned one names it.
+
+    Whether the target may be settled against at all is decided once, structurally,
+    by :func:`_assert_scenario_source_finds`; the Valid-Time axis is this
+    derivation's own precondition rather than a second ruling on legality.
     """
     axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
     valid_axis, tx_axis = axes.get("valid-time"), axes["transaction-time"]
-    if valid_axis is None:
+    if valid_axis is None:  # pragma: no cover - _assert_scenario_source_finds refuses it first
         raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles a Transaction-Time-Only "
-            f"{entity.name} against a find — such a key has exactly one milestone current "
-            f"at a time, so a read names nothing its address does not already fix."
+            f"{case.path.name}: scenario[{index}] settles {entity.name} against a find but it "
+            f"declares no Valid-Time axis, so the observed rectangle has no address."
         )
     key_column = _pk_column(entity)
     observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []

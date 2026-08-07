@@ -247,10 +247,14 @@ def test_transaction_time_alias_is_rejected() -> None:
         )
 
 
-@pytest.mark.parametrize("forbidden", ["observedVersion", "observedTxStart"])
+@pytest.mark.parametrize("forbidden", ["observedVersion", "observedTxStart", "observedValidStart"])
 def test_forbidden_observation_control_key_is_rejected(forbidden: str) -> None:
     # The transaction observation is attached per row at flush, never authored on
-    # the durable instruction (ADR 0013).
+    # the durable instruction (ADR 0013). All THREE keys `write-instruction.schema.json`
+    # forbids on a durable row are refused here, including BOTH halves of the observed
+    # milestone's own edge coordinate — an accepted `observedValidStart` would let the
+    # canonical parser's language contradict the neutral schema and silently retain a
+    # control field the instruction cannot mean.
     with pytest.raises(wi.WriteInstructionError, match="forbidden observation control key"):
         wi.deserialize(
             {

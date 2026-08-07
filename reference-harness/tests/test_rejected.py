@@ -618,6 +618,25 @@ def test_runner_fails_when_a_keyed_instruction_names_an_undeclared_entity() -> N
         run_case(case, None)  # type: ignore[arg-type]
 
 
+def test_runner_fails_a_keyed_instruction_naming_an_undeclared_member() -> None:
+    # Payload honesty precedes the instruction's shape, so a plural instruction whose
+    # rows also name nothing real fails as an authoring defect instead of being
+    # classified with the singleton rule it never reached. That is the precedence the
+    # canonical `validate_instruction` applies (undeclared members refuse before the
+    # temporal singleton); without it the two implementations answer the SAME
+    # schema-valid input with different verdicts.
+    case = _rejected_keyed_doc(
+        {
+            "mutation": "update",
+            "entity": "Lease",
+            "rows": [{"id": 1, "notAMember": 7}, {"id": 2, "notAMember": 8}],
+        },
+        TEMPORAL_KEYED_WRITE_MULTI_ROW,
+    )
+    with pytest.raises(CaseFailure, match="are not attributes or value objects"):
+        run_case(case, None)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("case", _rejected_cases(), ids=[c.path.stem for c in _rejected_cases()])
 def test_rejected_case_is_refused_pre_sql_db_free(case: Case) -> None:
     # `None` is a safe stand-in for the provider: a rejected case is refused with NO

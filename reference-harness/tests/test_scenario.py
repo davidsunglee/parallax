@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from reference_harness.case import Case, discover_cases
+from reference_harness.case import Case, discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_action_on,
@@ -26,6 +26,8 @@ from reference_harness.case_runner import (
     _assert_scenario_count_consistency,
     _assert_scenario_normalization,
     _assert_scenario_reference_sql,
+    _assert_scenario_settled_close,
+    _assert_scenario_source_finds,
     _assert_scenario_sql_bookkeeping,
     _relationship_path_target,
     _reuse_prior_rows,
@@ -710,3 +712,120 @@ def _uncommitted_write_then_reference_sql_synthetic_case() -> Case:
     return Case(
         path=base.path.with_name("m-unit-work-998-synthetic.yaml"), raw=raw, model=base.model
     )
+
+
+# --- settling against a grouped find (m-case-format) ---------------------------
+#
+# The harness's own arm of the reference: `_assert_scenario_source_finds` decides
+# structurally whether a write step may settle against a find at all, and
+# `_assert_scenario_settled_close` cross-checks the golden close it emits against
+# the milestone that find's `expectRows` declare. The second is what makes the
+# corpus state the settled milestone in two independent places, so each degradation
+# below moves ONE of those places and requires the check to notice.
+#
+# Two degradations of the harness ITSELF discriminate these tests, and neither
+# failed anything before they existed. Emptying `_assert_scenario_settled_close`
+# fails the four close cross-checks below and nothing else. Resolving
+# `_settled_milestone` from the group's LAST find instead of the named one — the
+# identity-keying mistake the whole reference exists to catch — fails the authored
+# case's own cross-check AND makes the wrong-rectangle golden pass, which is the
+# pair that shows the check reads the find the write named.
+
+
+def _settled_case():
+    return copy.deepcopy(_scenario_by_id("m-unit-work-015"))
+
+
+def test_settled_close_cross_check_holds_for_the_authored_case() -> None:
+    # Must not raise: the golden close's address and gate agree with the milestone
+    # the named find's `expectRows` declare.
+    _assert_scenario_settled_close(_settled_case(), "postgres")
+
+
+def test_settled_close_binding_the_other_current_rectangle_is_rejected() -> None:
+    # The degradation the whole reference exists to catch: id 1 holds TWO current
+    # rectangles, and this close addresses the one the named find did NOT return
+    # (R3's Valid-Time end, `infinity`, instead of R2's 2024-06-01). An
+    # implementation keying observations by identity alone renders exactly this
+    # golden, so a cross-check that passed it would grade nothing.
+    case = _settled_case()
+    binds = case.when["scenario"][2]["statements"][0]["binds"]
+    binds[2] = "infinity"
+    with pytest.raises(CaseFailure):
+        _assert_scenario_settled_close(case, "postgres")
+
+
+def test_settled_close_binding_another_milestones_gate_is_rejected() -> None:
+    # The optimistic gate is derived from the SAME observed row as the address, so
+    # a gate taken from anywhere else fails even while the address still agrees.
+    case = _settled_case()
+    binds = case.when["scenario"][2]["statements"][0]["binds"]
+    binds[4] = "2024-01-01T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_scenario_settled_close(case, "postgres")
+
+
+def test_settled_close_moving_the_observed_milestone_is_rejected() -> None:
+    # The other independent place: move what the named find declares it observed,
+    # and the unchanged golden close no longer matches it. This is the half that
+    # proves the cross-check reads the find's own result rather than re-deriving
+    # the close from the golden it is comparing against.
+    case = _settled_case()
+    case.when["scenario"][0]["expectRows"][0]["thru_z"] = "2024-05-01T00:00:00+00:00"
+    with pytest.raises(CaseFailure):
+        _assert_scenario_settled_close(case, "postgres")
+
+
+def test_settled_close_against_a_find_that_observed_another_key_is_rejected() -> None:
+    # The named find MUST have observed a row of the write's own key; a reference
+    # to a find that observed none names evidence that does not exist.
+    case = _settled_case()
+    case.when["scenario"][0]["expectRows"][0]["pos_id"] = 2
+    with pytest.raises(CaseFailure, match="observed 0 row"):
+        _assert_scenario_settled_close(case, "postgres")
+
+
+def test_settled_write_source_finds_hold_for_authored_cases() -> None:
+    for case in _scenario_cases():
+        _assert_scenario_source_finds(case)  # must not raise
+
+
+def test_settled_write_must_declare_its_uow_group() -> None:
+    case = _settled_case()
+    del case.when["scenario"][2]["uow"]
+    with pytest.raises(CaseFailure, match="declares no `uow` group"):
+        _assert_scenario_source_finds(case)
+
+
+def test_settled_write_names_one_earlier_find_of_its_own_group() -> None:
+    case = _settled_case()
+    case.when["scenario"][2]["on"] = 1000
+    with pytest.raises(CaseFailure, match="not a real EARLIER step"):
+        _assert_scenario_source_finds(case)
+
+
+def test_settled_write_must_be_the_buffered_keyed_form() -> None:
+    # A legacy string label carries no instruction for the named observation to
+    # reach, so the reference would name evidence nothing consumes.
+    case = _settled_case()
+    case.when["scenario"][2]["write"] = "correct the position"
+    with pytest.raises(CaseFailure, match="not the buffered keyed form"):
+        _assert_scenario_source_finds(case)
+
+
+def test_settled_write_target_must_declare_a_valid_time_axis() -> None:
+    # A Transaction-Time-Only key holds ONE milestone current at any instant, so
+    # identity already addresses its evidence — exactly as a versioned Non-Temporal
+    # key's does, and the reference buys nothing. This is the arm an "is it
+    # temporal?" test cannot reach: Balance IS temporal and is still refused.
+    source = _settled_case()
+    raw = copy.deepcopy(source.raw)
+    raw["model"] = "models/balance.yaml"
+    raw["when"]["scenario"][2]["write"][0]["entity"] = "Balance"
+    case = Case(
+        path=source.path.with_name("m-unit-work-997-synthetic.yaml"),
+        raw=raw,
+        model=load_model(COMPATIBILITY_ROOT, "models/balance.yaml"),
+    )
+    with pytest.raises(CaseFailure, match="declares no Valid-Time axis"):
+        _assert_scenario_source_finds(case)

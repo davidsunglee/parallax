@@ -110,9 +110,15 @@ _BOUNDED_MUTATIONS: Final[frozenset[str]] = frozenset(
 # The assignment-bearing predicate verbs; the others name nothing to assign.
 _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 
-# The framework-owned transaction observation is NOT durable instruction state
-# these control keys are forbidden on a write row.
-_FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedTxStart"})
+# The framework-owned transaction observation is NOT durable instruction state, so
+# these control keys are forbidden on a write row. All THREE that
+# `write-instruction.schema.json`'s own `writeRow` forbids: the observed version,
+# and BOTH halves of the observed milestone's own edge coordinate. Omitting either
+# half would let a row carry a coordinate the instruction cannot mean — the
+# milestone a temporal write observes is resolved at flush, never authored.
+_FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset(
+    {"observedVersion", "observedTxStart", "observedValidStart"}
+)
 
 
 # The classification a plural keyed instruction on a temporal target is refused

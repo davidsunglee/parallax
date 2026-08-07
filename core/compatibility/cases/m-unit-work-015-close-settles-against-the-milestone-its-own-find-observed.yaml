@@ -24,15 +24,20 @@
 # neither is visible in a case whose write names its own milestone.
 #
 # The semantic distinction is that a read's evidence is about the ROW it read, not about
-# the key it read. Two coordinates that resolve to one milestone are one piece of
-# evidence and share a slot; two that resolve to different milestones are two, and the
-# later read takes nothing away from the earlier one. `on` is what lets a case say which
-# of them a write was handed, and an implementation that ignores it — resolving the
-# close from current state, as every other write shape must — cannot answer: id 1 holds
-# two current rectangles and no single one is "the" milestone of that key.
+# the key it read: two reads of one key that resolve to DIFFERENT milestones are two
+# pieces of evidence, and the later read takes nothing away from the earlier one. `on` is
+# what lets a case say which of them a write was handed, and an implementation that
+# ignores it — resolving the close from current state, as every other write shape must —
+# cannot answer: id 1 holds two current rectangles and no single one is "the" milestone
+# of that key.
 #
 # What this case does NOT grade, so that no reader takes it for more:
 #
+# - NOT the converse, that two coordinates resolving to the SAME milestone share one
+#   slot. Two such reads record identical evidence, so a store holding them as one entry
+#   and a store holding them as two answer every close identically, and no golden or
+#   tableState here can differ. That half of the keying rule is stated normatively in
+#   m-unit-work and has no compatibility-case witness.
 # - NOT where the gate came from. R2 and R3 are the two halves of one rectangle split,
 #   so they share the Transaction-Time start 2024-04-01 and the `and in_z = ?` gate binds
 #   2024-04-01 whichever of them a resolution picks. Telling a derived gate from a
