@@ -4,8 +4,7 @@ Drives :class:`ReadObservations` and :func:`record_observations` directly, off
 hand-written physical-column rows rather than through a `Transaction.find`: which
 of the two mutually exclusive branches a row takes (a versioned row's observed
 version, a temporal row's whole predecessor milestone), which rows record
-nothing, what the recorded key is keyed by, and the Transaction-Time Basis the
-observing read's own pin decides.
+nothing, and what the recorded key is keyed by.
 
 The whole-choreography proofs — a real find licensing or refusing a later write —
 stay in `test_transaction_reads.py`; what lives here is the seam itself.
@@ -23,12 +22,9 @@ from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core.base import INFINITY
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.temporal_read import LATEST, Edge, Pin
+from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
-    HISTORICAL_PINNED,
-    LATEST_PINNED,
     FixedClock,
-    MilestoneCoordinate,
     ObservationKey,
     TemporalObservation,
     TransactionSettings,
@@ -42,8 +38,6 @@ from parallax.snapshot.handle._write_inputs import ReadObservations, record_obse
 
 _MODELS = models.load_models()
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
-_HISTORICAL = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-_LATEST_PIN = Pin(tx_time=LATEST)
 
 # Interval values as the port returns them: an aware `datetime` for a finite
 # bound, the neutral open-bound sentinel for an open one. Nothing between the
@@ -56,7 +50,7 @@ _INFINITY = INFINITY
 
 
 def _slot(
-    entity_name: str, pk: tuple[str, object], milestone: MilestoneCoordinate | None = None
+    entity_name: str, pk: tuple[str, object], milestone: Edge | None = None
 ) -> ObservationKey:
     """The slot an observation of ``entity_name``'s ``pk`` at ``milestone`` fills.
 
@@ -93,16 +87,12 @@ def _balance_columns(*, id_: int = 1) -> Mapping[str, object]:
 
 
 def _recorded(
-    model: AcceptedMetamodel,
-    observations: ReadObservations,
-    key: ObservationKey,
-    *,
-    pin: Pin = _LATEST_PIN,
+    model: AcceptedMetamodel, observations: ReadObservations, key: ObservationKey
 ) -> WriteObservation | None:
-    """What ``key`` observed after ``observations`` is recorded under ``pin``."""
+    """What ``key`` observed after ``observations`` is recorded."""
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        record_observations(uow, model, observations, pin)
+        record_observations(uow, model, observations)
         return uow.observation_for(key)
 
     return run_unit_of_work(
@@ -188,7 +178,7 @@ def test_a_temporal_row_records_its_whole_predecessor_milestone() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# What the record is keyed by, and what the observing read's pin decides.     #
+# What the record is keyed by.                                                #
 # --------------------------------------------------------------------------- #
 def test_an_observation_is_keyed_by_the_rows_own_entity_never_its_family_root() -> None:
     # `DepositRate` is a concrete subtype of the bitemporal root `Rate`, whose own
@@ -217,44 +207,15 @@ def test_an_observation_is_keyed_by_the_rows_own_entity_never_its_family_root() 
     assert _recorded(model, observations_again, _slot("Rate", ("id", 1), milestone)) is None
 
 
-def test_a_latest_pin_records_a_latest_pinned_basis_and_a_finite_one_records_historical() -> None:
-    # The observing read's own Transaction-Time pin decides the Basis, which is
-    # what a later locking-mode write consults for its historical-observation
-    # license (`m-opt-lock`). An explicit `LATEST` and a finite instant are the
-    # two sides of that one decision.
-    model = _accepted("balance")
-    latest = ReadObservations()
-    latest.observe_row(corpus_entity("Balance"), _balance_columns(), None)
-    at_latest = _recorded(model, latest, _BALANCE_SLOT)
-    assert isinstance(at_latest, TemporalObservation)
-    assert at_latest.transaction_time_basis is LATEST_PINNED
-
-    historical = ReadObservations()
-    historical.observe_row(corpus_entity("Balance"), _balance_columns(), None)
-    at_instant = _recorded(model, historical, _BALANCE_SLOT, pin=Pin(tx_time=_HISTORICAL))
-    assert isinstance(at_instant, TemporalObservation)
-    assert at_instant.transaction_time_basis is HISTORICAL_PINNED
-
-
-def test_an_omitted_transaction_time_axis_is_latest_pinned_like_an_explicit_latest() -> None:
-    observations = ReadObservations()
-    observations.observe_row(corpus_entity("Balance"), _balance_columns(), None)
-    observation = _recorded(_accepted("balance"), observations, _BALANCE_SLOT, pin=Pin())
-    assert isinstance(observation, TemporalObservation)
-    assert observation.transaction_time_basis is LATEST_PINNED
-
-
 def test_two_reads_of_one_milestone_at_different_pins_share_one_observation_slot() -> None:
     # The property that makes an Edge usable as a key without an identity map:
     # an Edge is a VALUE, so two independent reads of one milestone — here a
     # latest read and a read pinned at a past instant that still resolves to it —
     # derive equal coordinates and therefore fill the SAME slot, the exact
     # converse of the identity triple's rule that distinct coordinates denote
-    # distinct pinned views. Sharing the slot is LOSSY, not idempotent: the two
-    # agree about the row and disagree about the Basis, which describes the read,
-    # so the historical read's own value is what the slot holds afterwards. That
-    # surviving Basis is what proves the second record landed in this slot rather
-    # than under some other key while the first sat here untouched.
+    # distinct pinned views. Sharing the slot is IDEMPOTENT: an observation
+    # records the milestone and nothing about the read that reached it, so the
+    # second record is equal to the first and the overwrite loses nothing.
     model = _accepted("balance")
     latest = ReadObservations()
     latest.observe_row(corpus_entity("Balance"), _balance_columns(), None)
@@ -262,9 +223,9 @@ def test_two_reads_of_one_milestone_at_different_pins_share_one_observation_slot
     historical.observe_row(corpus_entity("Balance"), _balance_columns(), None)
 
     def observe(uow: UnitOfWork) -> tuple[WriteObservation | None, WriteObservation | None]:
-        record_observations(uow, model, latest, _LATEST_PIN)
+        record_observations(uow, model, latest)
         first = uow.observation_for(_BALANCE_SLOT)
-        record_observations(uow, model, historical, Pin(tx_time=_HISTORICAL))
+        record_observations(uow, model, historical)
         return first, uow.observation_for(_BALANCE_SLOT)
 
     first, second = run_unit_of_work(
@@ -277,10 +238,7 @@ def test_two_reads_of_one_milestone_at_different_pins_share_one_observation_slot
         subject_identity=TEST_SUBJECT_IDENTITY,
     )
     assert isinstance(first, TemporalObservation)
-    assert isinstance(second, TemporalObservation)
-    assert first.transaction_time_basis is LATEST_PINNED
-    assert second.transaction_time_basis is HISTORICAL_PINNED
-    assert second.predecessor == first.predecessor
+    assert first == second
 
 
 def test_every_observed_row_records_under_its_own_key() -> None:
@@ -292,7 +250,7 @@ def test_every_observed_row_records_under_its_own_key() -> None:
     observations.observe_row(corpus_entity("Account"), _account_columns(id_=2, version=7), None)
 
     def observe(uow: UnitOfWork) -> tuple[WriteObservation | None, WriteObservation | None]:
-        record_observations(uow, model, observations, _LATEST_PIN)
+        record_observations(uow, model, observations)
         return (
             uow.observation_for(_slot("Account", ("id", 1))),
             uow.observation_for(_slot("Account", ("id", 2))),

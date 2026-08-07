@@ -147,21 +147,26 @@ Ungated
   version, so it is legal only on a single-key target. This is the same fact that
   forbids a versioned readless predicate template.
 
-### Locking license is validated before planning
+### What licenses a locking-mode write
 
 An observation is mandatory for a gated *and* an ungated observation-requiring
-write, but the two modes accept different observations. Locking mode's ungated
-write is licensed by the **shared read lock** the observing read took, so an
-observation that did not take that lock cannot license it: a locking-mode write
-whose temporal observation is historically pinned rather than latest-pinned
-(`m-temporal-read`) **MUST** be rejected **before** planning, not detected
-afterwards by an affected-row count. Optimistic mode MAY accept the same
-observation and let its gate detect that it is stale.
+write, and both modes accept the same observation. Locking mode's ungated write
+is licensed by the **shared read lock** the observing read took — and it holds
+that lock on exactly the row it closes, because the two derive from one value:
+the write's address is the milestone its own written value came from, and the
+observation the address comes from is the record of the read that locked that
+milestone (`m-unit-work`, Write Observation). There is no separate license to
+check. A write whose value names a milestone the unit of work never observed is
+already refused as an unobserved write, and a write over a view pinned at a
+finite Transaction-Time instant is already refused by the pin rule
+(`m-identity-map`), in **both** modes, before any planning.
 
-Validation therefore happens on the input side of planning, where refusing is
-still cheap and the diagnostic still names the read. By the time a write is a
-planned step its concurrency decision is already final and no further license
-check applies.
+The invariant is therefore a property of how the close is constructed rather
+than a precondition validated on the input side. Nothing about the *read* that
+produced an observation survives into it: two reads at different as-of
+coordinates that resolve to one milestone produce one indistinguishable piece
+of evidence, so no observation of a milestone can be less licensing than
+another observation of that same milestone.
 
 ### Version values are framework-owned
 

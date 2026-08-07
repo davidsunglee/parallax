@@ -39,7 +39,6 @@ from parallax.core.unit_work import (
     MilestoneTopology,
     PlannedClose,
     TransactionInstant,
-    TransactionTimeBasis,
     WriteObservation,
     WritePlanner,
 )
@@ -94,9 +93,6 @@ class _ConcurrencyAdapter:
 
     def reject_authored_version(self, entity: EntityIdentity, attribute: AttributeIdentity) -> None:
         opt_lock.reject_caller_authored_version(entity.name, attribute.name)
-
-    def check_locking_license(self, concurrency: Concurrency, basis: TransactionTimeBasis) -> None:
-        opt_lock.check_locking_license(concurrency, basis)
 
 
 @dataclass(frozen=True, slots=True)

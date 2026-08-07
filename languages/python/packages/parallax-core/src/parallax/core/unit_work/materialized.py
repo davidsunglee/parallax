@@ -13,8 +13,7 @@ planned from buffered data alone. Its resolving read happens before the pure
 planning call, in Unit Work's write-input preparation, and settles into
 exactly one compact private group per authored predicate: one shared
 primary-key shape, one immutable value column per key attribute, and either an
-aligned version column or complete Predecessor Columns under one group-wide
-Transaction-Time Basis.
+aligned version column or complete Predecessor Columns.
 
 A keyed write's evidence is resolved once, at the developer verb that holds the
 value being written, and rides beside the instruction from there.
@@ -31,7 +30,7 @@ from parallax.core.unit_work.instructions import (
     PredicateWrite,
     WriteInstruction,
 )
-from parallax.core.unit_work.observe import TransactionTimeBasis, WriteObservation
+from parallax.core.unit_work.observe import WriteObservation
 
 __all__ = [
     "GroupObservations",
@@ -52,20 +51,14 @@ class VersionColumns:
 
 @dataclass(frozen=True, slots=True)
 class TemporalColumns:
-    """Complete predecessor state per resolved row, under one group-wide basis.
-
-    The one Transaction-Time pin the resolving read used determines this basis
-    for every row; a resolving read can never mix latest- and historical-pinned
-    rows, so there is no per-row basis column.
-    """
+    """Complete predecessor state per resolved row."""
 
     predecessors: PredecessorColumns
-    transaction_time_basis: TransactionTimeBasis
 
 
 type GroupObservations = VersionColumns | TemporalColumns
 """One authored predicate's aligned observation evidence, one member per
-resolved row and one basis (if temporal) for the whole group."""
+resolved row."""
 
 
 @dataclass(frozen=True, slots=True)

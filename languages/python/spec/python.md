@@ -2760,12 +2760,28 @@ or descriptor authoring form and performs no audit stamping.
 - **Observations are a closed algebra with structural absence.** A read records
   either the optimistic-lock **version** a versioned non-temporal row was read
   at, or the whole **predecessor milestone** a temporal row was read as — its
-  complete persisted state plus whether the read was latest-pinned on
-  Transaction Time. Inserts and unversioned non-temporal writes record nothing
-  at all rather than an empty observation, so "a version and a predecessor" and
-  "neither" are both unrepresentable. Only a temporal observation can answer
-  anything but latest-pinned, which is why the locking-mode historical check
-  below concerns temporal writes alone.
+  complete persisted state, and nothing about the read that reached it. Inserts
+  and unversioned non-temporal writes record nothing at all rather than an empty
+  observation, so "a version and a predecessor" and "neither" are both
+  unrepresentable. Absence extends to the buffer: a keyed write with an
+  observation buffers paired with it and one without buffers bare, so no
+  no-observation value and no nullable observation field exists at any point,
+  and `PlanningRequest` carries no observation map for the planner to search.
+- **An observation is keyed by the milestone it observed.** A temporal read
+  files its evidence under the object's identity **plus that row's own `Edge`**
+  — the milestone's start instant on every declared axis, the same value
+  `edge_of(node)` answers for. A versioned non-temporal row has one row per
+  primary key, so its evidence is keyed by identity alone. Reading one key twice
+  at as-of coordinates that resolve to **different** milestones therefore
+  retains evidence about each, and a later write settles against the milestone
+  the value it was handed came from; reading one milestone twice at different
+  pins produces two equal observations in one slot. That second half is the
+  deliberate **converse** of `pin_of`'s rule that distinct coordinates denote
+  distinct pinned views (§3): a view is a way of looking, an observation is what
+  was seen. The coordinate is derived from the observation's own predecessor
+  payload, so no recording site can file evidence under a milestone other than
+  the one it is recording, and the write side reads its coordinate off the value
+  through the same derivation.
 - **An observation is keyed by the row's own resolved Entity Identity.** A read
   observes each row under the exact Entity that row's own compiled read
   resolved it to — a per-row fact under table-per-hierarchy — never under the
@@ -2993,22 +3009,20 @@ or descriptor authoring form and performs no audit stamping.
   observation-required rule above even runs: the version is framework-owned
   end to end (ADR 0013), so a row-carried value is never a legitimate
   alternative to the unit of work's own recorded observation, observed or
-  not. **Locking
-  mode additionally requires that the observation be of the current
-  milestone**: a temporal observation licenses a locking-mode write only when
-  its read was **latest-pinned on the written Transaction-Time dimension** — a
-  versioned non-temporal row satisfies this trivially, since its single row
-  is always the current one. Locking-mode closes are **ungated**, so the
-  shared read lock is the only protection, and a shared lock on a historical
-  or edge-pinned milestone locks the wrong row: a concurrent chain replaces
-  the current row without touching the locked one, and the ungated close
-  would then silently re-close the replacement — a lost update. A write whose
-  only transaction-scoped observation is historical or edge-pinned therefore
-  raises `HistoricalObservationError` in locking mode; the same observation
-  is legal in **optimistic** mode, where the observed-`in_z` gate detects the
-  staleness (a superseded milestone's gate matches zero rows — the conflict),
-  which is exactly why the §3 stale-web-edit recipe runs its edge-pinned
-  re-fetch inside an optimistic transaction. The lowered
+  not. **Both modes accept the same observation**, and there is no further
+  license to check. A locking-mode close is ungated, so the shared read lock
+  is its only protection — and it holds that lock on exactly the row it
+  closes, because the close's address is the milestone its own written value
+  came from and the observation supplying that address is the record of the
+  read that locked that milestone. Nothing about the read survives into the
+  observation, so no observation of a milestone is less licensing than another
+  observation of that same milestone: an audit read of a row already read at
+  latest revokes nothing. A write whose value came from a **historical**
+  milestone never reaches this rule at all — such a value carries a finite
+  Transaction-Time pin, which
+  `TransactionTimePinReadOnlyError(transaction-time-pin-read-only)` refuses at
+  the verb, in **both** concurrency modes, before buffering and before any
+  DML. The lowered
   `UPDATE` sets the effective
   changed fields plus the framework-computed advance (`observed + 1`) in
   both modes; the lowered `DELETE` is keyed on the primary key alone. Both
@@ -3043,11 +3057,43 @@ or descriptor authoring form and performs no audit stamping.
   never feeds the gate or the advance. The developer-experience consequence
   is stated plainly: an edited copy whose original node was fetched
   **outside** the writing transaction cannot be updated directly — the row
-  must be re-fetched inside the transaction before `tx.update` (a
-  latest-pinned observation under locking mode; under optimistic mode the
-  milestone whose gate should bind, the displayed edge in the §3
-  stale-web-edit recipe, which runs under optimistic mode for exactly this
-  reason).
+  must be re-fetched inside the transaction before `tx.update`, in either
+  mode, because a value carrying no milestone this unit of work observed
+  matches no evidence (the §3 stale-web-edit recipe re-fetches for exactly
+  this reason, and is legal under both modes).
+- **A finite Transaction-Time pin is read-only in both modes.** Every keyed
+  verb — `insert`, `update`, `delete`, `terminate`, and the `*_until` trio —
+  refuses a source value whose view is pinned at a finite Transaction-Time
+  instant, raising exported
+  `TransactionTimePinReadOnlyError(transaction-time-pin-read-only)` at the call,
+  before Unit of Work buffering, SQL, or adapter access, and emitting no DML.
+  The refusal is **mode-independent**: it is this target's instance of
+  `m-txtime-write`'s invariant that Parallax never rewrites the Transaction-Time
+  past *across the required parity surface* (`m-identity-map`), and that
+  invariant is a property of the write surface rather than of a concurrency
+  decision. Optimistic mode is emphatically **not** a way past it: the same DML
+  under optimistic concurrency addresses a superseded milestone, whose gate
+  matches zero rows, so it raises `OptimisticLockConflictError` instead of
+  silently rewriting history. An **Edited Copy** carries its source's `Pin`
+  (§3), so `tx.update(node.edit(...))` over such a view is refused exactly as
+  the node itself is — deriving a copy is not a route past the rule either. A
+  **finite Valid-Time** pin stays writable: mutating one is the retroactive
+  correction that lowers to the `m-bitemp-write` rectangle split. The
+  MAY-tier administrative mutations that would widen the invariant
+  (`insertForRecovery`, `purge`, `inactivateForArchiving`) sit outside the
+  required parity surface and are not offered.
+- **A keyed temporal close requires a value that names a milestone.** The
+  observation a temporal `update`/`terminate`/`*_until` settles against is
+  resolved at the verb from the **value being written** — its own `Edge` —
+  rather than from the primary key it carries. A fresh instance, an edited copy
+  of one, and a copy carried across transactions all name no milestone, so no
+  observation can match and the verb raises `UnobservedMilestoneError` before
+  any DML, in either mode. In practice this means a temporal close is spelled
+  "find it, then close what you found": `tx.terminate(Position(id=1, ...))` is
+  not a supported shape, while `tx.terminate(tx.find(...).result())` is. The
+  same-transaction exemption is unaffected — an inserted instance names no
+  milestone either, so the insert and a close derived from it resolve to one
+  slot and the pair still coalesces.
 - **Set-based write verbs.** Every mutation verb that targets existing rows
   has a predicate-selected `_where` flavor, so the keyed and set-based
   surfaces mirror each other completely (`insert` alone has no set-based
@@ -3354,7 +3400,7 @@ legalizes a forbidden edge.
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
-| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-op-algebra`, `m-db-port` | generated forbidden contracts |
+| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-op-algebra`, `m-db-port`, `m-temporal-read` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
 | `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |

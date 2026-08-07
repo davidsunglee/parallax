@@ -24,7 +24,6 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
-    LATEST_PINNED,
     BufferItem,
     Concurrency,
     KeyedWrite,
@@ -179,8 +178,7 @@ def test_a_temporal_close_and_chain_is_audit_neutral() -> None:
                 "txStart": "2024-01-01T00:00:00+00:00",
                 "txEnd": "infinity",
             }
-        ),
-        transaction_time_basis=LATEST_PINNED,
+        )
     )
     _assert_neutral(
         [update],

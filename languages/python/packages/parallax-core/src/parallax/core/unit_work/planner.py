@@ -20,7 +20,7 @@ module is a Pyright strict ``reportPrivateUsage`` error.
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from parallax.core import inheritance
@@ -34,17 +34,19 @@ from parallax.core.metamodel import (
     PrimaryKey,
     ValueObjectIdentity,
 )
+from parallax.core.temporal_read import Edge, milestone_edge_from_members
 from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
 from parallax.core.unit_work.materialized import MaterializedWriteGroup, ObservedKeyedWrite
+from parallax.core.unit_work.observe import TemporalObservation, WriteObservation
 
 __all__ = [
     "BufferItem",
-    "MilestoneCoordinate",
     "ObjectKey",
     "ObservationKey",
     "Targets",
     "buffered_instruction",
     "object_key",
+    "observation_key",
     "primary_key_names",
     "resolve_object_key",
     "targets",
@@ -67,18 +69,6 @@ class ObjectKey:
     primary_key: tuple[tuple[str, object], ...]
 
 
-type MilestoneCoordinate = Hashable
-"""The observed milestone's own coordinate — its Edge, the finite from-instant
-on every declared axis (`m-temporal-read`).
-
-Opaque here, and only here: this scope takes no dependency edge to
-``m-temporal-read``, and the coordinate participates in an
-:class:`ObservationKey` purely by equality and hash. The concrete value and its
-single derivation belong to ``m-opt-lock``, which reaches both scopes and owns
-the observation-licensing rules that consume the key.
-"""
-
-
 @dataclass(frozen=True, slots=True)
 class ObservationKey:
     """What one Write Observation is filed under: the object it observed AND the
@@ -92,18 +82,40 @@ class ObservationKey:
     about the row it actually saw.
 
     Two reads of ONE milestone at different pins share one coordinate and
-    therefore one slot, and the later read's observation replaces the earlier
-    one. What is preserved is the evidence about the ROW — both reads saw the
-    same persisted state — not everything the observation carries: a property of
-    the READ rather than of the milestone (a Temporal Observation's
-    Transaction-Time Basis) is the later read's.
+    therefore one slot, and the overwrite loses nothing: an observation records
+    the row that was read and nothing about the read that reached it, so the
+    two are equal.
 
     ``milestone`` is absent for a versioned Non-Temporal row, which has exactly
     one row per primary key and therefore needs no coordinate to be addressed.
     """
 
     object_key: ObjectKey
-    milestone: MilestoneCoordinate | None
+    milestone: Edge | None
+
+
+def observation_key(
+    object_key: ObjectKey, observation: WriteObservation, declaring_entity: EntityMetadata
+) -> ObservationKey:
+    """The slot ``observation`` is filed under: ``object_key`` qualified by the
+    milestone the observation is *of*.
+
+    The coordinate is derived from the observation's OWN Predecessor Row rather
+    than supplied beside it, so a recorder cannot file an observation under a
+    milestone other than the one it is recording — the two-sides-agree property
+    holds by construction rather than by every recording site being careful.
+    A Version Observation names no milestone: a versioned Non-Temporal row has
+    exactly one row per primary key, so identity alone already addresses it.
+
+    ``declaring_entity`` is the family root that declares the As-Of Axes, whose
+    start Attributes name the members the coordinate is read from.
+    """
+    if not isinstance(observation, TemporalObservation):
+        return ObservationKey(object_key, None)
+    return ObservationKey(
+        object_key,
+        milestone_edge_from_members(declaring_entity, observation.predecessor.members),
+    )
 
 
 # One writable member's resolved semantic identity, keyed by the spelling a

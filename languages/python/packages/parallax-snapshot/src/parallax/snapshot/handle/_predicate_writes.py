@@ -54,7 +54,6 @@ from parallax.core.op_algebra import QueryDefinitionError
 from parallax.core.sql_gen import Statement, compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.unit_work import (
-    LATEST_PINNED,
     ChunkedColumnBuilder,
     MaterializedWriteGroup,
     PredecessorColumns,
@@ -545,9 +544,7 @@ def _materialize_predicate_write(
             mutation=instruction,
             key_attributes=key_attributes,
             key_columns=tuple(whole(builder.build()) for builder in key_builders),
-            observations=TemporalColumns(
-                predecessors=predecessors, transaction_time_basis=LATEST_PINNED
-            ),
+            observations=TemporalColumns(predecessors=predecessors),
         )
     )
 

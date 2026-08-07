@@ -43,7 +43,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
-from parallax.core import opt_lock
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
@@ -59,19 +58,17 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.storage_layout import EntityLayoutView
-from parallax.core.temporal_read import LATEST, Edge, Latest, Pin
+from parallax.core.temporal_read import Edge, Latest, Pin
 from parallax.core.unit_work import (
-    HISTORICAL_PINNED,
-    LATEST_PINNED,
     KeyedMutation,
     ObjectKey,
     PredecessorRow,
     TemporalObservation,
-    TransactionTimeBasis,
     UnitOfWork,
     VersionObservation,
     WriteObservation,
     instant_literal,
+    observation_key,
 )
 from parallax.snapshot._inspection import snapshot_state_of
 from parallax.snapshot.handle._family import (
@@ -209,15 +206,13 @@ class ReadObservations:
         return self._rows
 
 
-def record_observations(
-    uow: UnitOfWork, meta: Metamodel, observations: ReadObservations, pin: Pin
-) -> None:
+def record_observations(uow: UnitOfWork, meta: Metamodel, observations: ReadObservations) -> None:
     """Record this unit of work's observed version/temporal-milestone for
     every VERSIONED or TEMPORAL row :func:`find` materialized (`m-opt-lock`;
     ADR 0013).
 
     Keyed by the object AND by the milestone the row observed
-    (:func:`~parallax.core.opt_lock.observation_key`), so a second read of one
+    (:func:`~parallax.core.unit_work.observation_key`), so a second read of one
     primary key that resolves to a DIFFERENT milestone records evidence about the
     row it actually saw rather than erasing the first read's; one that resolves
     to the SAME milestone shares its slot and overwrites it, which keeps one
@@ -236,14 +231,11 @@ def record_observations(
     temporal (`m-opt-lock`/`m-descriptor`: the two are mutually exclusive), so
     each row takes exactly one branch.
 
-    ``pin`` is the STATEMENT's OWN lowered as-of coordinates
-    (``Transaction.find``'s own ``deep_fetch_statement_pin`` call): the whole-graph pin
-    propagates per hop, matched by axis, to every temporal entity in the
-    include tree (spec §3), so this SAME root-level Transaction-Time pin
-    licenses every attached temporal node's own recorded observation — an
-    omitted axis or an explicit `LATEST` pin is latest-pinned; an explicit
-    as-of instant is not (`~parallax.core.opt_lock.check_locking_license`'s
-    own historical-observation rule).
+    The statement's own as-of coordinates are deliberately NOT recorded. What a
+    write settles against is the milestone its value came from, and that
+    milestone is what the key names; the pin that selected it is a property of
+    the read, so two pins selecting one milestone record one indistinguishable
+    piece of evidence.
 
     ``find`` is always INSTANCE-form, which projects every applicable Column, so
     an observed row's columns are the COMPLETE persisted row a Predecessor Row
@@ -253,7 +245,6 @@ def record_observations(
     row held rather than rebuilt from the members this model declares — at no
     extra query, because the predecessor read already materialized it.
     """
-    basis = LATEST_PINNED if pin.tx_time is None or pin.tx_time is LATEST else HISTORICAL_PINNED
     for observed in observations.rows:
         observed_fields = observed.columns
         entity = meta.entity(observed.entity)
@@ -302,7 +293,6 @@ def record_observations(
             _temporal_observation(
                 members(placed_members(meta, entity, layout)),
                 observed_fields,
-                basis,
                 observed.document,
             ),
         )
@@ -320,17 +310,16 @@ def _record(
     it, so this seam cannot record a row under one coordinate while claiming
     another.
     """
-    uow.observe(opt_lock.observation_key(object_key, observation, declaring_entity), observation)
+    uow.observe(observation_key(object_key, observation, declaring_entity), observation)
 
 
 def _temporal_observation(
     member_columns: Mapping[str, tuple[str, bool]],
     fields: Mapping[str, object],
-    basis: TransactionTimeBasis,
     document: object | None = None,
 ) -> TemporalObservation:
     """The :class:`TemporalObservation` a materialized TEMPORAL row licenses: its
-    complete Predecessor Row plus the observing read's Transaction-Time Basis.
+    complete Predecessor Row.
 
     The Predecessor Row retains EVERY applicable member ``fields`` carries —
     scalars, value-object documents, the primary key, and both axis intervals —
@@ -365,8 +354,7 @@ def _temporal_observation(
     return TemporalObservation(
         predecessor=PredecessorRow(
             _row_payload(member_columns, fields, include_value_objects=True), document=document
-        ),
-        transaction_time_basis=basis,
+        )
     )
 
 

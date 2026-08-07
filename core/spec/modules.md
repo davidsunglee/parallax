@@ -185,6 +185,7 @@ m-db-error --> m-db-port
 m-db-error --> m-dialect
 m-unit-work --> m-op-algebra
 m-unit-work --> m-db-port
+m-unit-work --> m-temporal-read
 m-read-lock --> m-unit-work
 m-read-lock --> m-dialect
 m-auto-retry --> m-unit-work
@@ -321,6 +322,16 @@ construction it may reference any behavioral module it harnesses.
   as-of value propagates per hop to every temporal entity in the path. As-of
   *reads* are algebra-level, so navigation references `m-temporal-read`, not the
   write modules.
+- **`m-unit-work --> m-temporal-read`.** A write-planning module depending on a
+  read module is the surprise, and it is load-bearing: a Write Observation is
+  filed under the object it observed **plus the observed milestone's own
+  coordinate**, and that coordinate is `m-temporal-read`'s Edge. A milestone
+  chain holds more than one row per primary key at a time, so identity alone
+  cannot address the evidence a close needs — the unit of work therefore states
+  its observation key in the as-of read model's vocabulary rather than inventing
+  an opaque parallel one. The edge is to the read *model* only: nothing here
+  reaches as-of lowering, and the direction stays one-way, since
+  `m-temporal-read` names no unit-of-work construct.
 - **`m-identity-map --> m-temporal-read`.** A temporal object's identity key
   includes its **lowered as-of coordinates** — a managed temporal object is a
   view pinned at a coordinate, so the identity module references the as-of read

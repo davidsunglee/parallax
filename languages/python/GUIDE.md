@@ -646,6 +646,26 @@ self-contained without a system `libpq`.
   public-surface renders); combined Docker lane
   (`conformance`/`provider_contract`/`adapter_smoke`/`api_conformance`) 555
   passed / 0 skipped (unchanged).
+- **Edge-qualified write observations; the locking license is gone.** A Write
+  Observation is now filed under the object it observed **plus that row's own
+  `Edge`**, and a keyed write's observation is resolved at the developer verb
+  from the value being written and buffered beside the instruction, so
+  `PlanningRequest` carries no observation map at all. Two consequences retire
+  entries above. `check_locking_license` / `HistoricalObservationError` /
+  `TransactionTimeBasis` (`LatestPinned` / `HistoricalPinned`) are **deleted**
+  from code, tests, the neutral specification, and ADRs 0041/0042 — the
+  increment-4 and mid-phase-review entries above record wiring that rule and
+  then making it fire, and both are superseded: the invariant is now a property
+  of how a close is constructed (address and lock derive from one value) rather
+  than a checked precondition, and a genuinely historical read is refused
+  earlier by `transaction-time-pin-read-only`, in both modes, at the verb. A
+  new module-DAG edge `m-unit-work --> m-temporal-read` makes the coordinate an
+  honest `Edge` rather than an opaque alias; four generated import-linter rows
+  drop `parallax.core.temporal_read`, and `observation_key` moved from
+  `parallax.core.opt_lock` into `parallax.core.unit_work`. Developer-visible
+  narrowing: a keyed temporal close requires a value that names a milestone, so
+  `terminate(fresh_instance)` is now spelled "find it, then terminate what you
+  found."
 
 ## Blockers
 

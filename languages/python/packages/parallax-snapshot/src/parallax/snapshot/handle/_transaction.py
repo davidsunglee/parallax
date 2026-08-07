@@ -68,8 +68,6 @@ from parallax.snapshot.handle._predicate_writes import (
 from parallax.snapshot.handle._preflight import preflight_find
 from parallax.snapshot.handle._read import (
     Snapshot,
-    declaring_metadata,
-    deep_fetch_statement_pin,
     find,
     find_history,
     snapshot_from_find_result,
@@ -470,20 +468,17 @@ class Transaction:
         under optimistic concurrency, its gate) from THIS observation, never
         from an implicit resolving read at write time. Every materialized node
         of a TEMPORAL entity likewise records its whole observed predecessor
-        milestone plus PIN PROVENANCE (its Transaction-Time Basis, derived from
-        this query's own Transaction-Time pin below): a later temporal
-        write's close/chain, or a locking-mode write's historical-observation
-        license (`~parallax.core.opt_lock.check_locking_license`), derives from
-        THIS observation, never a shadow lookup or an implicit resolving read
-        (a MILESTONE-SET read — `.history()` / `.as_of_range()` — records
-        nothing here; its own dispatch branch returns before this point).
+        milestone, filed under the milestone it observed: a later temporal
+        write's close/chain derives from THIS observation, never a shadow
+        lookup or an implicit resolving read (a MILESTONE-SET read —
+        `.history()` / `.as_of_range()` — records nothing here; its own
+        dispatch branch returns before this point).
         """
         # Both refusals precede `uow.read` deliberately: that read force-flushes
         # pending buffered writes, so a refused read must be refused before it.
         construction = _materializing(self._construction)
         lowered = preflight_find(query, model=self._meta)
         target, op = lowered.target.name, lowered.operation
-        pin = deep_fetch_statement_pin(op, declaring_metadata(self._meta, lowered.target))
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         if scans_an_axis(op):
             history_result = self._uow.read(
@@ -502,7 +497,7 @@ class Transaction:
                 observations=observations,
             )
         )
-        record_observations(self._uow, self._meta, observations, pin)
+        record_observations(self._uow, self._meta, observations)
         return snapshot_from_find_result(find_result, self._meta, construction)
 
     def _buffer(

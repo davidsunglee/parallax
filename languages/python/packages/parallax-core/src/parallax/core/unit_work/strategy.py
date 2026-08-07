@@ -32,7 +32,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
 )
 from parallax.core.unit_work.clock import TransactionInstant
-from parallax.core.unit_work.observe import TransactionTimeBasis, WriteObservation
+from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.planned import CloseCause, PlannedWrite
 
 __all__ = [
@@ -278,17 +278,15 @@ class BatchingStrategy(Protocol):
 @runtime_checkable
 class ConcurrencyStrategy(Protocol):
     """How one transaction's concurrency mode settles a versioned write's gate
-    and version arithmetic, and what a temporal observation's basis licenses
-    (`m-opt-lock`).
+    and version arithmetic (`m-opt-lock`).
 
     Every method mirrors one `m-opt-lock` policy question the planner cannot
     answer itself, because the module DAG runs `m-opt-lock --> m-unit-work`:
     which Attribute (if any) carries an entity's optimistic version, whether
     the mode renders a gate at all, the derived initial and advanced version
-    values, whether a required version was actually observed, whether a row
-    still authors an explicit version value, and whether a locking-mode write's
-    Transaction-Time Basis licenses it. Each raises the policy's own error on
-    refusal; the planner never inspects or re-raises a specific type.
+    values, whether a required version was actually observed, and whether a row
+    still authors an explicit version value. Each raises the policy's own error
+    on refusal; the planner never inspects or re-raises a specific type.
     """
 
     def version_attribute(self, entity: EntityMetadata) -> AttributeIdentity | None: ...
@@ -305,10 +303,6 @@ class ConcurrencyStrategy(Protocol):
 
     def reject_authored_version(
         self, entity: EntityIdentity, attribute: AttributeIdentity
-    ) -> None: ...
-
-    def check_locking_license(
-        self, concurrency: Concurrency, basis: TransactionTimeBasis
     ) -> None: ...
 
 

@@ -38,3 +38,39 @@ declared members it names; assigning null replaces the occurrence with JSON null
 and discards its descendants. A `many` assignment replaces its array whole.
 Retaining only decoded members would satisfy the current model's shape while
 silently destroying forward-version state during temporal chaining.
+
+## Amendment (2026-08): a Temporal Observation retains the predecessor alone
+
+The variant recorded above is
+`TemporalObservation(predecessor, transaction_time_basis)`, where the
+Transaction-Time Basis is `LatestPinned | HistoricalPinned` — "the information
+needed to license or reject an ungated locking-mode write."
+
+**Superseding decision:** the variant is `TemporalObservation(predecessor)`, and
+the Transaction-Time Basis is retired from the observation algebra, the neutral
+specification, and the locking-license rule it existed to serve.
+
+The Basis described the **read**, not the milestone, while the observation it
+rode on describes the milestone. Once an observation is filed under the
+milestone it observed and resolved from the value being written, that mismatch
+becomes a defect rather than a nuance: two reads at different as-of coordinates
+resolving to one milestone would produce two observations equal in their
+predecessor and unequal in their Basis, so an ordinary audit read of a row
+already read at latest could revoke the license of a write the shared read lock
+fully protected. There is nothing to license separately — a locking-mode close
+addresses the milestone its own written value came from, and the observation
+supplying that address is the record of the read that locked it. A read at a
+finite Transaction-Time coordinate is refused by the Transaction-Time pin rule,
+at the verb, in both concurrency modes, before any planning.
+
+The lock-scope statement this ADR makes is unchanged and still load-bearing: the
+resolving read locks the one selected current physical milestone row and not the
+whole edge, lineage, or every Valid-Time rectangle sharing the primary key, so a
+multi-rectangle mutation must still materialize and observe each affected
+rectangle. What the amendment removes is the claim that the observation carries a
+separate licensing classification beside that row.
+
+Everything else recorded above is unchanged: the complete immutable predecessor
+row, the authored close cause, the Write Target and gate remaining separate
+facts, the shared variant across Transaction-Time-only and Bitemporal writes, and
+the Relational Document Layout raw-document retention.
