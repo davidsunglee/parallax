@@ -1165,6 +1165,27 @@ def test_assert_schema_rejects_neither_operation_nor_write() -> None:
         _assert_schema(case)
 
 
+@pytest.mark.parametrize(
+    "write",
+    [
+        [{"id": 1, "name": "Acme", "address": {"city": "Oslo"}}],
+        [{"id": 1, "name": "Acme"}, {"id": 2, "name": "Zenith"}],
+    ],
+)
+def test_rejected_write_refuses_the_conflict_multi_key_array(write: list[Any]) -> None:
+    # The array is the conflict lane's multi-key form and carries no member for a
+    # rejected case's dispatch to read, so it is refused by SHAPE. Reading it
+    # through the single-row conflict accessor instead answers a one-element array
+    # with its row and a longer one with nothing — grading a bare row the case
+    # never authored, or an empty one, and in both directions reporting that
+    # validation ACCEPTED an input no rejected lane defines.
+    from reference_harness.case_runner import _assert_rejected
+
+    case = _rejected_case_with_when({"write": write})
+    with pytest.raises(CaseFailure, match="multi-key form"):
+        _assert_rejected(case)
+
+
 # --- regex-level negatives stay OPERATION-SCHEMA unit tests (resolved Q7) ----
 
 

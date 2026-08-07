@@ -902,19 +902,23 @@ declares `uow` (evidence is transaction-scoped, and an ungrouped write shares a
 unit of work with no find), whose `write` is the **buffered keyed** form (a legacy
 string label carries no instruction and a predicate-selected write consumes no
 single milestone, so neither has anything an observation could reach), naming an
-EARLIER step of the SAME group that is a find, against a target declaring **both**
-As-Of Axes.
+EARLIER step of the SAME group that is a find, against a **temporal** target.
 
-The target restriction is the whole of what the reference buys. A versioned
-Non-Temporal target has one row per primary key, so its grouped write already
-reaches its group's evidence by identity. A **Transaction-Time-Only** target has
-one milestone current at any instant, so identity addresses its evidence too: two
-finds of one such key that returned different milestones read at different as-of
-Transaction-Time coordinates, and at most one of those milestones is current — a
-close naming the other names a milestone it could not close in any case. Only a
-Valid-Time axis puts several *current* milestones under one key, which is the
-single situation in which identity does not already name the row a write was
-handed.
+The target restriction is the one `m-unit-work` already draws between evidence
+addressed by identity and evidence addressed by a milestone. A versioned
+Non-Temporal target has exactly one row per primary key, so its grouped write
+reaches its group's evidence by identity and the reference would name nothing the
+resolution does not already have. A milestone chain holds several rows per key on
+**either** temporal profile, so both are settled against by name. A Bitemporal key
+may hold several disjoint rectangles current at once, and a
+**Transaction-Time-Only** key, though only one of its milestones is ever current,
+is read at as-of Transaction-Time coordinates that resolve to milestones of any
+age: a group that reads such a key's current milestone and then reads the same key
+as of an earlier instant holds two pieces of evidence, and the later read takes
+nothing from the earlier. Naming the find is what says which of them the write was
+handed — an implementation keying by identity alone settles the write against the
+historical milestone while the current one its value came from is the one it can
+close.
 
 A write settling against a find's result is **query-result-dependent**: the
 milestone it addresses is read off a row no compile lane executes, so such a case
@@ -1234,6 +1238,14 @@ validator checks the payload against the entity the input authored, while a bare
 row names none at all and is resolved against the model's default write root
 (the inheritance-family root when the model declares one, else the model's own
 first entity).
+
+All three are **objects**, and a rejected `when.write` that is not one is
+**invalid**. The `when.write` vocabulary is shared with conflict cases, which also
+spell the multi-key form as an **array** of rows; that form states the aggregate
+affected-row count one collapsed statement owns, which a rejection asserted pre-SQL
+has nothing to say about. An array carries no member to dispatch on, so admitting
+one here would leave each implementation to invent an answer — the schema refuses
+it, and both graders refuse it by shape before asking for a member.
 
 `target` and `rows` are therefore **reserved** at this position: a bare write row
 authors neither, exactly as it authors neither half of an observed milestone's own

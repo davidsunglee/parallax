@@ -723,13 +723,13 @@ def _uncommitted_write_then_reference_sql_synthetic_case() -> Case:
 # corpus state the settled milestone in two independent places, so each degradation
 # below moves ONE of those places and requires the check to notice.
 #
-# Two degradations of the harness ITSELF discriminate these tests, and neither
-# failed anything before they existed. Emptying `_assert_scenario_settled_close`
-# fails the four close cross-checks below and nothing else. Resolving
-# `_settled_milestone` from the group's LAST find instead of the named one — the
-# identity-keying mistake the whole reference exists to catch — fails the authored
-# case's own cross-check AND makes the wrong-rectangle golden pass, which is the
-# pair that shows the check reads the find the write named.
+# Two degradations of the harness ITSELF discriminate the close cross-checks.
+# Emptying `_assert_scenario_settled_close` must fail every one of them and
+# nothing else. Resolving `_settled_milestone` from the group's LAST find instead
+# of the named one — the identity-keying mistake the whole reference exists to
+# catch — must fail the authored case's own cross-check while letting the
+# wrong-rectangle golden pass; that pair is what shows the check reads the find
+# the write named rather than any find.
 
 
 def _settled_case():
@@ -813,19 +813,111 @@ def test_settled_write_must_be_the_buffered_keyed_form() -> None:
         _assert_scenario_source_finds(case)
 
 
-def test_settled_write_target_must_declare_a_valid_time_axis() -> None:
-    # A Transaction-Time-Only key holds ONE milestone current at any instant, so
-    # identity already addresses its evidence — exactly as a versioned Non-Temporal
-    # key's does, and the reference buys nothing. This is the arm an "is it
-    # temporal?" test cannot reach: Balance IS temporal and is still refused.
+def test_settled_write_target_must_be_temporal() -> None:
+    # A versioned Non-Temporal key has one row, so its grouped write already
+    # reaches its group's evidence by identity and the reference buys nothing.
     source = _settled_case()
     raw = copy.deepcopy(source.raw)
-    raw["model"] = "models/balance.yaml"
-    raw["when"]["scenario"][2]["write"][0]["entity"] = "Balance"
+    raw["model"] = "models/account.yaml"
+    raw["when"]["scenario"][2]["write"][0]["entity"] = "Account"
     case = Case(
-        path=source.path.with_name("m-unit-work-997-synthetic.yaml"),
+        path=source.path.with_name("m-unit-work-996-synthetic.yaml"),
+        raw=raw,
+        model=load_model(COMPATIBILITY_ROOT, "models/account.yaml"),
+    )
+    with pytest.raises(CaseFailure, match="is NOT temporal"):
+        _assert_scenario_source_finds(case)
+
+
+def _transaction_time_only_settled_case(*, on: int) -> Case:
+    """A `uow` group that reads a Transaction-Time-Only key's CURRENT milestone,
+    reads the SAME key as of an earlier Transaction-Time instant, then closes the
+    milestone step *on* returned.
+
+    The Transaction-Time-Only shape of the reference: only one of Balance id 1's
+    milestones is current, but both reads are evidence, and the golden close's gate
+    binds the observed milestone's own ``in_z``. Its address carries no Valid-Time
+    half — a Transaction-Time-Only close addresses the key plus the invariant open
+    bound — so the gate is the whole of what states which milestone was settled
+    against.
+    """
+    raw = {
+        "model": "models/balance.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "when": {
+            "uow": {"concurrency": "optimistic"},
+            "scenario": [
+                _balance_find(1, "2024-04-01T00:00:00+00:00", "infinity", 100.00),
+                _balance_find(1, "2024-01-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00", 90.00),
+                {
+                    "uow": "observe-then-close",
+                    "on": on,
+                    "write": [
+                        {
+                            "mutation": "update",
+                            "entity": "Balance",
+                            "rows": [{"id": 1, "value": 150.00}],
+                            "at": "2024-10-01T00:00:00+00:00",
+                        }
+                    ],
+                    "roundTrips": 2,
+                    "statements": [
+                        {
+                            "sql": {
+                                "postgres": "update balance set out_z = ? where bal_id = ? "
+                                "and out_z = ? and in_z = ?"
+                            },
+                            "binds": [
+                                "2024-10-01T00:00:00+00:00",
+                                1,
+                                "infinity",
+                                "2024-04-01T00:00:00+00:00",
+                            ],
+                        }
+                    ],
+                },
+            ],
+        },
+        "then": {"roundTrips": 4},
+    }
+    return Case(
+        path=Path("m-unit-work-997-synthetic.yaml"),
         raw=raw,
         model=load_model(COMPATIBILITY_ROOT, "models/balance.yaml"),
     )
-    with pytest.raises(CaseFailure, match="declares no Valid-Time axis"):
-        _assert_scenario_source_finds(case)
+
+
+def _balance_find(pk: int, tx_start: str, tx_end: Any, value: float) -> dict[str, Any]:
+    return {
+        "uow": "observe-then-close",
+        "targetEntity": "Balance",
+        "find": {"eq": {"attr": "Balance.id", "value": pk}},
+        "roundTrips": 1,
+        "statements": [{"sql": {"postgres": "select ... where t0.bal_id = ?"}, "binds": [pk]}],
+        "expectRows": [
+            {
+                "bal_id": pk,
+                "acct_num": "A",
+                "val": value,
+                "in_z": tx_start,
+                "out_z": tx_end,
+            }
+        ],
+    }
+
+
+def test_settled_write_admits_a_transaction_time_only_target() -> None:
+    # The arm an "is it temporal?" test cannot reach and a Bitemporal-only
+    # restriction would deny. A Transaction-Time-Only key is read at as-of
+    # Transaction-Time coordinates resolving to milestones of any age, so this
+    # group holds two pieces of evidence about one key and the close settles
+    # against the one its named find returned. Naming the OTHER find — the
+    # historical milestone an identity-keyed store would leave in the single slot —
+    # leaves the same golden gate binding a milestone the write was not handed.
+    case = _transaction_time_only_settled_case(on=0)
+    _assert_scenario_source_finds(case)
+    _assert_scenario_settled_close(case, "postgres")
+
+    with pytest.raises(CaseFailure):
+        _assert_scenario_settled_close(_transaction_time_only_settled_case(on=1), "postgres")

@@ -838,12 +838,26 @@ def _keyed_write_with_a_stray_member() -> dict[str, Any]:
     The witness that the keyed branch DECIDES the document rather than being
     shadowed by the row branch: `$defs/keyedWrite` is closed, so a stray member
     fails it — and, with `target` / `rows` reserved from `$defs/bareWriteRow`, no
-    other branch admits the document either. Before the reservation every
-    instruction also validated as a row, so this document passed and the keyed
-    branch added no validity at all.
+    other branch admits the document either. Drop that reservation and every
+    instruction is also a row, so this document validates and the keyed branch
+    adds no validity at all.
     """
     doc = _rejected_keyed_write_case()
     doc["when"]["write"]["bogus"] = 1
+    return doc
+
+
+def _rejected_write_multi_key_array() -> dict[str, Any]:
+    """A rejected case whose `when.write` is the conflict lane's multi-key ARRAY.
+
+    All three rejected write forms are objects whose members say which one they
+    are; the shared `when.write` vocabulary also carries the array, whose meaning
+    is an aggregate affected-row count no rejected case emits SQL to produce. It
+    reaches every dispatcher with no member to dispatch on, so the rejected branch
+    requires an object.
+    """
+    doc = _rejected_write_case()
+    doc["when"]["write"] = [{"id": 1, "name": "Acme", "address": {"city": "Oslo"}}]
     return doc
 
 
@@ -1040,6 +1054,7 @@ REJECTED_CASES = {
     "rejected-neither-operation-nor-write": _rejected_neither_operation_nor_write,
     "conflict-keyed-write": _conflict_keyed_write,
     "keyed-write-stray-member": _keyed_write_with_a_stray_member,
+    "rejected-write-multi-key-array": _rejected_write_multi_key_array,
     "bare-write-row-naming-rows": _bare_write_row_naming_rows,
     "bare-write-row-naming-target": _bare_write_row_naming_target,
     "settled-write-ungrouped": _settled_write_ungrouped,

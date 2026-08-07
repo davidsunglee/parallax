@@ -41,17 +41,19 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.temporal_read import Edge
+from parallax.core.temporal_read import Edge, milestone_edge_from_members
 from parallax.core.unit_work import (
     Concurrency,
     MissingTargetError,
     ObjectKey,
     ObservationKey,
     OptimisticLockConflictError,
+    PredecessorRow,
     StaleWriteError,
     TemporalObservation,
     VersionObservation,
     WriteEffectError,
+    WriteObservation,
 )
 
 
@@ -1724,12 +1726,12 @@ def test_a_source_find_reference_names_a_find_of_its_own_group() -> None:
         )
 
 
-def test_a_settled_write_targets_an_entity_with_a_valid_time_axis() -> None:
+def test_a_settled_write_targets_a_temporal_entity() -> None:
     # A versioned Non-Temporal target has one row per primary key, so its grouped
     # write already reaches its group's evidence by identity; the reference would
     # name nothing the resolution does not already have.
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    with pytest.raises(engine.EngineError, match="a VALID-TIME axis"):
+    with pytest.raises(engine.EngineError, match="a TEMPORAL entity"):
         engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 5.00}]},
             meta,
@@ -1741,25 +1743,55 @@ def test_a_settled_write_targets_an_entity_with_a_valid_time_axis() -> None:
         )
 
 
-def test_a_settled_write_refuses_a_transaction_time_only_target() -> None:
-    # The temporal half of the same rule, and the one an "is it temporal?" test
-    # cannot reach: a Transaction-Time-Only key holds ONE milestone current at any
-    # instant, so identity already addresses its evidence exactly as a versioned
-    # Non-Temporal key's does. Two finds of such a key returning different
-    # milestones read at different as-of Transaction-Time coordinates, and at most
-    # one of those is current — a close naming the other names a milestone it
-    # could not close in any case.
+def _balance_milestone(tx_start: str, tx_end: str, value: str) -> dict[str, object]:
+    return {
+        "id": 1,
+        "acctNum": "A",
+        "value": decimal.Decimal(value),
+        "txStart": dt.datetime.fromisoformat(tx_start),
+        "txEnd": INFINITY if tx_end == "infinity" else dt.datetime.fromisoformat(tx_end),
+    }
+
+
+def test_a_settled_write_resolves_a_transaction_time_only_targets_named_milestone() -> None:
+    # The arm an "is it temporal?" test cannot reach, and the one a Bitemporal-only
+    # restriction would deny: a Transaction-Time-Only key holds one CURRENT
+    # milestone but is read at as-of Transaction-Time coordinates resolving to
+    # milestones of any age, so a group that reads the current milestone and then
+    # reads the same key as of an earlier instant holds two pieces of evidence
+    # about one key. The write settles against whichever find it names — which a
+    # store keyed by identity alone could not answer, because the second read would
+    # have erased the first.
     meta = engine.load_case_metamodel(_case("m-txtime-write-001"))
-    with pytest.raises(engine.EngineError, match="a VALID-TIME axis"):
-        engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    model = engine.case_model(meta)
+    declaring = engine.case_entity(model, meta.entity("Balance"))
+    key = ObjectKey(EntityIdentity("parallax.compatibility", "Balance"), (("id", 1),))
+    current = _balance_milestone("2024-04-01T00:00:00+00:00", "infinity", "100.00")
+    historical = _balance_milestone(
+        "2024-01-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00", "90.00"
+    )
+    observations: dict[ObservationKey, WriteObservation] = {
+        ObservationKey(key, milestone_edge_from_members(declaring, members)): TemporalObservation(
+            predecessor=PredecessorRow(members=members, document=None)
+        )
+        for members in (current, historical)
+    }
+
+    def settle(observed: dict[str, object]) -> object:
+        (_instruction, _key, observation) = engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"mutation": "update", "entity": "Balance", "rows": [{"id": 1, "value": 5.00}]},
             meta,
             TemporalShadow(),
             "2024-10-01T00:00:00+00:00",
             set(),
-            {},
-            (),
-        )
+            observations,
+            ((key, observed),),
+        )[0]
+        assert isinstance(observation, TemporalObservation)
+        return observation.predecessor.members["txStart"]
+
+    assert settle(current) == current["txStart"]
+    assert settle(historical) == historical["txStart"]
 
 
 def test_row_object_key_resolves_a_duplicate_local_name_by_its_namespace() -> None:
@@ -3544,6 +3576,23 @@ def test_run_rejected_case_raises_for_a_malformed_keyed_instruction() -> None:
     malformed: dict[str, object] = {"mutation": "update", "rows": [{"id": 1}]}
     with pytest.raises(engine.EngineError, match="missing required key"):
         engine.run_rejected_case(_synthetic_keyed_rejected(malformed, "models/position.yaml"))
+
+
+@pytest.mark.parametrize(
+    "write",
+    [[{"id": 1, "value": 150.00}], [{"id": 1, "value": 150.00}, {"id": 2, "value": 250.00}]],
+)
+def test_run_rejected_case_refuses_the_conflict_multi_key_array(
+    write: list[dict[str, object]],
+) -> None:
+    # The array is the conflict lane's multi-key form and carries no member for
+    # this dispatch to read. Asking it for one instead reaches the bare-row arm
+    # with a list, which decodes as a mapping of pairs and fails on the row's own
+    # data rather than on the form — a raw carrier error where the case's defect
+    # is that no rejected lane defines this input at all.
+    case = _synthetic_keyed_rejected(cast("dict[str, object]", write), "models/position.yaml")
+    with pytest.raises(engine.EngineError, match="multi-key form"):
+        engine.run_rejected_case(case)
 
 
 def test_a_default_target_over_a_multi_family_model_is_refused() -> None:
