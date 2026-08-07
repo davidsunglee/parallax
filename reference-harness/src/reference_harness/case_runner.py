@@ -329,6 +329,13 @@ def _assert_schema(case: Case) -> None:
     elif case.is_scenario:
         if not case.scenario:
             raise CaseFailure(f"{case.path.name}: scenario case has no steps")
+        # Whether a write step may settle against a find at all is a property of
+        # the document, not of a dialect, so it is decided HERE — the one layer
+        # every scenario reaches. The cross-check that consumes the reference
+        # (:func:`_assert_scenario_settled_close`) is skipped for a dialect the
+        # case carries no golden for, so a rule left there would hold on some
+        # runs and not others.
+        _assert_scenario_source_finds(case)
     elif case.is_conflict:
         if case.expected_affected_rows is None and not case.attempts:
             raise CaseFailure(f"{case.path.name}: conflict case missing affectedRows / attempts")
@@ -5360,6 +5367,165 @@ def _assert_scenario_count_consistency(case: Case, dialect: str) -> None:
         )
 
 
+def _scenario_write_entries(step: dict[str, Any]) -> list[dict[str, Any]]:
+    """One scenario write step's own buffered KEYED entries, or none.
+
+    A write step's ``write`` is a legacy string label, a single predicate-selected
+    instruction (a mapping), or the buffered keyed sequence (a list) — only the
+    last is a list of ``{mutation, entity, rows}`` entries.
+    """
+    write = step.get("write")
+    if not isinstance(write, list):
+        return []
+    return [entry for entry in write if isinstance(entry, dict)]
+
+
+def _assert_scenario_source_finds(case: Case) -> None:
+    """Validate every write step's ``on`` — the find it settles against
+    (`m-case-format` *Settling against a grouped find*).
+
+    The reference is legal only where both halves are meaningful: on a `uow`-
+    grouped step, naming ONE earlier step of the SAME group that is a find, and
+    for a TEMPORAL target. A versioned Non-Temporal target has one row per primary
+    key, so its grouped write already reaches its group's evidence by identity and
+    the reference names nothing the resolution does not have.
+
+    Structural and dialect-free, so it holds on every run rather than only where
+    the case carries a golden for the dialect under test — the same reason the
+    conflict lane decides observed-edge entitlement in :func:`_assert_schema`.
+    """
+    for index, step in enumerate(case.scenario):
+        if "write" not in step or "on" not in step:
+            continue
+        source, label = step["on"], step.get("uow")
+        if not isinstance(label, str):
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] settles against a find but declares no "
+                f"`uow` group — the evidence a write consumes is transaction-scoped, and an "
+                f"ungrouped write shares a unit of work with no find."
+            )
+        if not isinstance(source, int) or isinstance(source, bool):
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}].on is {source!r}; a write step settles "
+                f"against exactly ONE find, named by its index — a keyed write settles "
+                f"against the one milestone the value it was handed came from."
+            )
+        if not 0 <= source < index:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}].on references step {source!r}, which is "
+                f"not a real EARLIER step (0 <= source < {index})."
+            )
+        origin = case.scenario[source]
+        if "find" not in origin or origin.get("uow") != label:
+            raise CaseFailure(
+                f"{case.path.name}: scenario[{index}] settles against step {source}, which is "
+                f"not a find step of its own `uow` group {label!r}."
+            )
+        for entry in _scenario_write_entries(step):
+            entity = case.model.entity(entry["entity"])
+            if not entity.is_temporal:
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}] settles {entity.name} against a "
+                    f"find, but {entity.name} is not temporal — a versioned Non-Temporal "
+                    f"target has one row per primary key, so its grouped write already "
+                    f"reaches its group's evidence by identity."
+                )
+
+
+def _assert_scenario_settled_close(case: Case, dialect: str) -> None:
+    """Cross-check each settled write step's golden CLOSE against the milestone the
+    find it names observed (`m-case-format` *Settling against a grouped find*).
+
+    The observed milestone is resolved INDEPENDENTLY of the golden, from the named
+    find step's own ``expectRows`` — the rows that read returned, which is exactly
+    the evidence the store it filled holds. Both the close's address (its
+    Valid-Time exclusive upper bound) and, under optimistic concurrency, its gate
+    are then derived from that ONE row and compared against the step's first golden
+    statement, which a milestone split always leads with. A case whose close binds
+    the OTHER current rectangle of the same key therefore fails here as well as in
+    execution, so the corpus states which milestone the write settled against in
+    two independent places.
+    """
+    for index, step in enumerate(case.scenario):
+        if "write" not in step or "on" not in step:
+            continue
+        statements = _step_statements(step, dialect)
+        binds = _entry_binds(step.get("statements"), 0)
+        for entry in _scenario_write_entries(step):
+            entity = case.model.entity(entry["entity"])
+            row = _sole_settled_row(case, index, entry)
+            _, pk, _set_cols, _observed = _classify_write_row(
+                case, entity, row, mutation=entry["mutation"], opening=True
+            )
+            observed = _settled_milestone(case, entity, index, case.scenario[step["on"]], pk)
+            expected = [
+                entry.get("at"),
+                *_close_address_binds(case, entity, pk, observed.valid_end),
+            ]
+            if case.concurrency_mode == "optimistic":
+                expected.append(observed.tx_start)
+            if not statements:  # pragma: no cover - a settled write always emits its close
+                raise CaseFailure(
+                    f"{case.path.name}: scenario[{index}] settles against a find but emits no "
+                    f"golden statement for {dialect}."
+                )
+            _assert_write_values(case, expected, binds, statements[0])
+
+
+def _sole_settled_row(case: Case, index: int, entry: dict[str, Any]) -> dict[str, Any]:
+    """The ONE row a settled temporal write entry authors.
+
+    `m-unit-work`'s temporal singleton, restated for this lane: each row closes its
+    own milestone and consumes its own observation, so several rows under one entry
+    are several chains the case must author as several entries — and a settled
+    entry would have nothing to say about which of them the named find handed over.
+    """
+    rows = entry.get("rows")
+    if not isinstance(rows, list) or len(rows) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles a temporal write entry carrying "
+            f"{len(rows) if isinstance(rows, list) else 0} rows against a find — a temporal "
+            f"entry carries ONE row, which is the one value that find handed over."
+        )
+    return rows[0]
+
+
+def _settled_milestone(
+    case: Case, entity: Entity, index: int, origin: dict[str, Any], pk: Any
+) -> _Rectangle:
+    """The milestone a settled write's named find observed, of *pk*.
+
+    Read off that find step's own ``expectRows`` — the rows the case declares that
+    read returned — so this derivation consults the case's READ result rather than
+    the tracked current state every other write shape resolves from. That is the
+    whole point of the reference: a key with several current rectangles has no one
+    "current" milestone, and only the read that returned one names it.
+    """
+    axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
+    valid_axis, tx_axis = axes.get("valid-time"), axes["transaction-time"]
+    if valid_axis is None:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles a Transaction-Time-Only "
+            f"{entity.name} against a find — such a key has exactly one milestone current "
+            f"at a time, so a read names nothing its address does not already fix."
+        )
+    key_column = _pk_column(entity)
+    observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
+    matched = [row for row in observed_rows if _write_value_equal(row.get(key_column), pk)]
+    if len(matched) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: scenario[{index}] settles against a find that observed "
+            f"{len(matched)} row(s) of {entity.name} pk {pk!r} — a keyed write settles "
+            f"against the ONE milestone the value it was handed came from."
+        )
+    row = matched[0]
+    return _Rectangle(
+        row.get(valid_axis.start.column),
+        row.get(valid_axis.end.column),
+        row.get(tx_axis.start.column),
+    )
+
+
 def _pk_column(entity: Entity) -> str:
     for attribute in entity.attributes:
         if attribute.get("primaryKey"):
@@ -6661,6 +6827,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_serde(case)  # layer 4
         _assert_equivalent_encodings(case)  # layer 4c
         _assert_scenario_count_consistency(case, dialect)  # layer 5 (count)
+        _assert_scenario_settled_close(case, dialect)  # layer 5c (observed ↔ ② close)
         _provision(case, db)
         # Here the out-of-band setup puts state into a row no authored member could
         # produce — a Structured Column key the model declares nowhere included.

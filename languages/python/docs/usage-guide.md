@@ -999,6 +999,36 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
     return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).results())
 ```
 
+## A close settles against the milestone its own find observed
+
+Corpus case: `m-unit-work-015`
+
+```python
+def a_close_settles_against_the_milestone_its_own_find_observed(db: Database) -> None:
+    # m-unit-work-015: Position id 1 holds TWO rectangles current on Transaction
+    # Time, so reading it twice at different Valid-Time coordinates leaves two
+    # pieces of evidence about ONE primary key. The correction is written against
+    # the value the FIRST read handed back, and closes THAT rectangle — the
+    # second read observed another milestone and took nothing away from the first.
+    def fn(tx: Transaction) -> None:
+        head = tx.find(
+            Position.where(Position.id == 1).as_of(
+                valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+            )
+        ).result()  # the rectangle-split head, valid [2024-01-01, 2024-06-01)
+        tx.find(
+            Position.where(Position.id == 1).as_of(
+                valid_time=dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+            )
+        ).result()  # the corrected tail, also current — a DIFFERENT milestone
+        tx.update(
+            head.edit(value=Decimal("150.00")),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(fn, concurrency="optimistic")
+```
+
 ## A nested equality predicate through a value-object attribute
 
 Corpus case: `m-value-object-001`

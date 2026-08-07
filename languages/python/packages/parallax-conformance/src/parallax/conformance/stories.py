@@ -452,6 +452,31 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
     db.transact(split)
 
 
+def a_close_settles_against_the_milestone_its_own_find_observed(db: Database) -> None:
+    # m-unit-work-015: Position id 1 holds TWO rectangles current on Transaction
+    # Time, so reading it twice at different Valid-Time coordinates leaves two
+    # pieces of evidence about ONE primary key. The correction is written against
+    # the value the FIRST read handed back, and closes THAT rectangle — the
+    # second read observed another milestone and took nothing away from the first.
+    def fn(tx: Transaction) -> None:
+        head = tx.find(
+            Position.where(Position.id == 1).as_of(
+                valid_time=dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+            )
+        ).result()  # the rectangle-split head, valid [2024-01-01, 2024-06-01)
+        tx.find(
+            Position.where(Position.id == 1).as_of(
+                valid_time=dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
+            )
+        ).result()  # the corrected tail, also current — a DIFFERENT milestone
+        tx.update(
+            head.edit(value=Decimal("150.00")),
+            valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
+        )
+
+    db.transact(fn, concurrency="optimistic")
+
+
 # --------------------------------------------------------------------------- #
 # Supplier (Transaction-Time-Only) and Branch (Bitemporal) stories carry     #
 # Value Object documents through milestone chaining/splitting like scalar    #
@@ -658,6 +683,10 @@ def _bitemp_write_009_clock() -> Clock:
     return ScriptedClock([dt.datetime(2024, 1, 1, tzinfo=dt.UTC)])
 
 
+def _unit_work_015_clock() -> Clock:
+    return ScriptedClock([dt.datetime(2024, 10, 1, tzinfo=dt.UTC)])
+
+
 def _value_object_032_clock() -> Clock:
     return ScriptedClock(
         [dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC)]
@@ -826,6 +855,14 @@ WRITE_STORIES: Final[tuple[WriteStory, ...]] = (
         "position",
         bitemporal_plain_insert_opens_a_fully_current_rectangle,
         clock=_bitemp_write_009_clock,
+    ),
+    WriteStory(
+        "m-unit-work-015",
+        "A close settles against the milestone its own find observed",
+        "commit",
+        "position",
+        a_close_settles_against_the_milestone_its_own_find_observed,
+        clock=_unit_work_015_clock,
     ),
     WriteStory(
         "m-value-object-032",

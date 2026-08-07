@@ -22,8 +22,9 @@ import pytest
 from _metamodel_support import Declaration, key, source
 
 from parallax.conformance import case_format, engine, sweep
+from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
-from parallax.core.base import STRING, InstantError
+from parallax.core.base import INFINITY, STRING, InstantError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.metamodel import (
     AbstractRoot,
@@ -40,12 +41,15 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
+from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     Concurrency,
     MissingTargetError,
     ObjectKey,
+    ObservationKey,
     OptimisticLockConflictError,
     StaleWriteError,
+    TemporalObservation,
     VersionObservation,
     WriteEffectError,
 )
@@ -1503,15 +1507,110 @@ def _compiled_find(meta: Any, target: str) -> Any:
     )
 
 
-def test_observe_group_find_is_a_no_op_for_a_temporal_target() -> None:
-    # `_observe_group_find` returns before ever touching `tx` for a temporal
-    # (or unversioned) target, so passing no real transaction is safe here.
-    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
+def _observe(meta: Any, target: str, rows: list[Row]) -> tuple[Any, Any]:
+    """Record one grouped find's observations, answering the map and what it
+    reported as this step's own observed milestones."""
     observations: engine.ScenarioObservations = {}
-    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        observations, meta, _compiled_find(meta, "Policy"), [{"id": 1}]
+    observed = engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        observations, meta, engine.case_model(meta), _compiled_find(meta, target), rows
+    )
+    return observations, observed
+
+
+_JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_JUN = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+_APR = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+
+
+def _policy_row(valid_start: dt.datetime, valid_end: object, name: str) -> Row:
+    return {
+        "id": 1,
+        "name": name,
+        "from_z": valid_start,
+        "thru_z": valid_end,
+        "in_z": _APR,
+        "out_z": INFINITY,
+    }
+
+
+def test_observe_group_find_files_each_temporal_milestone_under_its_own_edge() -> None:
+    # A milestone chain holds more than one row per primary key, so one find may
+    # return several and each is evidence about the milestone it actually is.
+    # Filed by identity alone the second would erase the first; filed under the
+    # milestone it observed, both survive and each is addressable.
+    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
+    head = _policy_row(_JAN, _JUN, "head")
+    tail = _policy_row(_JUN, INFINITY, "tail")
+    observations, observed = _observe(meta, "Policy", [head, tail])
+    assert len(observations) == 2
+    key = ObjectKey(EntityIdentity("parallax.compatibility", "Policy"), (("id", 1),))
+    assert [entry_key for entry_key, _members in observed] == [key, key]
+    assert {entry.milestone for entry in observations} == {
+        Edge(valid_time=_JAN, tx_time=_APR),
+        Edge(valid_time=_JUN, tx_time=_APR),
+    }
+    stored = observations[ObservationKey(key, Edge(valid_time=_JAN, tx_time=_APR))]
+    assert isinstance(stored, TemporalObservation)
+    assert stored.predecessor.members["name"] == "head"
+
+
+def test_observe_group_find_skips_a_temporal_row_short_of_a_declared_member() -> None:
+    # A Predecessor Row retains the observed row's COMPLETE state, so a
+    # projection missing a declared member records nothing rather than an
+    # incomplete milestone — never reachable for a well-formed corpus find, but
+    # this seam takes no data on faith.
+    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
+    observations, observed = _observe(meta, "Policy", [{"id": 1}])
+    assert observations == {}
+    assert observed == ()
+
+
+def test_observe_group_find_records_nothing_for_an_unversioned_non_temporal_target() -> None:
+    # An unversioned Non-Temporal row is evidence about nothing: it carries no
+    # version to advance from and no milestone to address, so its find leaves the
+    # store untouched and reports no milestone a later write could settle against.
+    meta = engine.load_case_metamodel(_load_case("m-batch-write-005"))
+    observations, observed = _observe(
+        meta, "Wallet", [{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}]
     )
     assert observations == {}
+    assert observed == ()
+
+
+def test_observe_group_find_retains_a_value_object_occurrence_in_the_predecessor() -> None:
+    # A Predecessor Row retains every applicable member, occurrences included, so
+    # a successor is patched from what the observed row actually held rather than
+    # rebuilt from its scalars (`m-value-object`).
+    meta = engine.load_case_metamodel(_load_case("m-value-object-032"))
+    address: dict[str, object] = {
+        "street": "1 Old Street",
+        "city": "Oslo",
+        "geo": {"country": "NO"},
+        "phones": [],
+    }
+    observations, _observed = _observe(
+        meta,
+        "Supplier",
+        [
+            {
+                "sup_id": 1,
+                "name": "Nordic Foods",
+                "address": address,
+                "in_z": _JAN,
+                "out_z": INFINITY,
+            }
+        ],
+    )
+    (stored,) = observations.values()
+    assert isinstance(stored, TemporalObservation)
+    assert stored.predecessor.members["address"] == address
+    # ...and an occurrence the projection left out makes the row incomplete, just
+    # as a missing scalar does, so nothing is recorded rather than a milestone a
+    # successor would be rebuilt from instead of patched from.
+    partial, _ = _observe(
+        meta, "Supplier", [{"sup_id": 1, "name": "Nordic Foods", "in_z": _JAN, "out_z": INFINITY}]
+    )
+    assert partial == {}
 
 
 def test_observe_group_find_skips_a_row_missing_its_version_field() -> None:
@@ -1519,11 +1618,9 @@ def test_observe_group_find_skips_a_row_missing_its_version_field() -> None:
     # for a well-formed corpus find) is skipped, not a KeyError — this seam
     # takes no data on faith.
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    observations: engine.ScenarioObservations = {}
-    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        observations, meta, _compiled_find(meta, "Account"), [{"id": 1}]
-    )
+    observations, observed = _observe(meta, "Account", [{"id": 1}])
     assert observations == {}
+    assert observed == ()
 
 
 def test_observe_group_find_keys_a_row_by_its_own_resolved_concrete() -> None:
@@ -1532,17 +1629,115 @@ def test_observe_group_find_keys_a_row_by_its_own_resolved_concrete() -> None:
     # observation recorded under the find's own target would be unreachable by
     # the write it licenses, leaving a versioned concrete-subtype update
     # unlicensed (`m-unit-work`: a missing required observation is a planning
-    # error).
+    # error). A versioned row names no milestone, so its own slot carries none.
     meta = engine.load_case_metamodel(_load_case("m-inheritance-084"))
-    observations: engine.ScenarioObservations = {}
-    engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        observations,
+    observations, observed = _observe(
         meta,
-        _compiled_find(meta, "Vehicle"),
+        "Vehicle",
         [{"id": 1, "kind": "car", "name": "Sedan", "version": 5, "doors": 4, "axles": None}],
     )
     car = ObjectKey(EntityIdentity("parallax.compatibility", "Car"), (("id", 1),))
-    assert observations == {car: VersionObservation(observed_version=5)}
+    assert observations == {ObservationKey(car, None): VersionObservation(observed_version=5)}
+    assert observed == ()
+
+
+def _settled(meta: Any, source: Any, observations: Any) -> Any:
+    return engine._settled_against_source(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        meta,
+        engine.case_model(meta),
+        "Policy",
+        ObjectKey(EntityIdentity("parallax.compatibility", "Policy"), (("id", 1),)),
+        source,
+        observations,
+    )
+
+
+def test_a_settled_write_resolves_the_milestone_the_named_find_observed() -> None:
+    # The write derives the coordinate it looks the store up by from the row the
+    # named find handed over — the same milestone's own edge the recording side
+    # filed it under, reached by a SECOND derivation rather than by copying the
+    # recorded key. Two milestones of one key are held apart, and the write gets
+    # the one its own value came from.
+    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
+    head = _policy_row(_JAN, _JUN, "head")
+    tail = _policy_row(_JUN, INFINITY, "tail")
+    observations, observed = _observe(meta, "Policy", [head, tail])
+    for index, expected in ((0, "head"), (1, "tail")):
+        settled = _settled(meta, (observed[index],), observations)
+        assert isinstance(settled, TemporalObservation)
+        assert settled.predecessor.members["name"] == expected
+
+
+def test_a_settled_write_resolves_nothing_when_the_store_holds_no_such_milestone() -> None:
+    # A miss is not an error here: the close is refused where every unobserved
+    # close is, by the planner that needs the observation it cannot find.
+    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
+    head = _policy_row(_JAN, _JUN, "head")
+    _observations, observed = _observe(meta, "Policy", [head])
+    assert _settled(meta, observed, {}) is None
+
+
+def test_a_settled_write_refuses_a_find_that_observed_no_row_of_its_key() -> None:
+    # The reference names evidence that does not exist — an authoring defect,
+    # refused where the diagnosis can name it rather than silently unobserved.
+    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
+    with pytest.raises(engine.EngineError, match="settles against observed 0 rows"):
+        _settled(meta, (), {})
+
+
+def test_a_write_step_naming_no_find_settles_against_tracked_state() -> None:
+    assert (
+        engine._source_find_milestones(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"write": []}, 2, {}
+        )
+        is None
+    )
+
+
+def test_a_source_find_reference_names_one_index() -> None:
+    with pytest.raises(engine.EngineError, match="settles against ONE find step"):
+        engine._source_find_milestones(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"write": [], "on": [0, 1]}, 2, {}
+        )
+
+
+def test_a_source_find_reference_answers_what_that_find_observed() -> None:
+    # A find of the same group that observed nothing observable — an unversioned
+    # or non-temporal target — still answers, with an empty record: the reference
+    # resolved, and it is the WRITE's own resolution that then finds no milestone.
+    assert (
+        engine._source_find_milestones(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"write": [], "on": 1}, 2, {1: ()}
+        )
+        == ()
+    )
+
+
+def test_a_source_find_reference_names_a_find_of_its_own_group() -> None:
+    # A reference the group's own recorded finds cannot satisfy names a step
+    # outside the group, one that is not a find, or one that has not run yet —
+    # refused rather than resolved to "the find observed nothing".
+    with pytest.raises(engine.EngineError, match="not an EARLIER find step"):
+        engine._source_find_milestones(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"write": [], "on": 0}, 2, {}
+        )
+
+
+def test_a_settled_write_targets_a_temporal_entity() -> None:
+    # A versioned Non-Temporal target has one row per primary key, so its grouped
+    # write already reaches its group's evidence by identity; the reference would
+    # name nothing the resolution does not already have.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    with pytest.raises(engine.EngineError, match="targets a TEMPORAL entity"):
+        engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 5.00}]},
+            meta,
+            TemporalShadow(),
+            "2024-10-01T00:00:00+00:00",
+            set(),
+            {},
+            (),
+        )
 
 
 def test_row_object_key_resolves_a_duplicate_local_name_by_its_namespace() -> None:

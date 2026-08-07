@@ -175,10 +175,54 @@ _SEED_ROWS_BY_CASE: Final[dict[str, list[Row]]] = {
 }
 
 
+# A read SCRIPT: one row set per read, consumed in the order the story issues
+# them. The keyed seed sets above select by primary-key bind, which is exactly
+# what a story reading one key at two AS-OF coordinates cannot be served by — the
+# coordinate is what distinguishes the two answers, and resolving one needs a
+# temporal query engine this double is deliberately not. A story whose reads
+# differ only by coordinate therefore states its own answers here, in order.
+_READ_ROWS_BY_CASE: Final[dict[str, list[list[Row]]]] = {
+    # `m-unit-work-015`: Position id 1 holds two rectangles current on
+    # Transaction Time. The story's first find pins Valid Time 2024-03-01 and
+    # observes the split HEAD; its second pins 2024-09-01 and observes the
+    # corrected TAIL. Both are the fixture rows `fixtures/position.yaml` seeds.
+    "m-unit-work-015": [
+        [
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": Decimal("100.00"),
+                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "thru_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                "out_z": _INFINITY,
+            }
+        ],
+        [
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": Decimal("200.00"),
+                "from_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "thru_z": _INFINITY,
+                "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                "out_z": _INFINITY,
+            }
+        ],
+    ]
+}
+
+
 def _seed_rows_for(story: WriteStory) -> list[Row]:
     if story.case_id in _SEED_ROWS_BY_CASE:
         return _SEED_ROWS_BY_CASE[story.case_id]
     return _SEED_ROWS_BY_MODEL.get(story.model, [])
+
+
+def _port_for(story: WriteStory) -> _RecordingPort:
+    return _RecordingPort(
+        rows=_seed_rows_for(story), reads=_READ_ROWS_BY_CASE.get(story.case_id, [])
+    )
 
 
 class _RecordingPort:
@@ -200,14 +244,23 @@ class _RecordingPort:
     whose binds match no seeded row (an insert-then-find on a fresh id, or a
     non-id predicate) falls back to the FIRST seeded row — a type-correct
     stand-in whose own content the calling story never checks.
+
+    ``reads`` overrides that selection with a SCRIPT: one row set per read, in
+    issue order, for a story whose reads a keyed selection cannot tell apart —
+    two finds of one key at different as-of coordinates return different
+    milestones, and deciding which is a temporal query this double does not
+    answer. A read past the script's end falls back to the keyed selection.
     """
 
-    def __init__(self, *, rows: Sequence[Row] = ()) -> None:
+    def __init__(self, *, rows: Sequence[Row] = (), reads: Sequence[Sequence[Row]] = ()) -> None:
         self.ops: list[tuple[object, ...]] = []
         self._rows = [dict(row) for row in rows]
+        self._scripted = [[dict(row) for row in answer] for answer in reads]
 
     def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
         self.ops.append(("read", sql, tuple(binds)))
+        if self._scripted:
+            return [dict(row) for row in self._scripted.pop(0)]
         matched = [row for row in self._rows if next(iter(row.values())) in binds]
         return [dict(row) for row in (matched or self._rows[:1])]
 
@@ -353,7 +406,7 @@ _PLAIN_DISCARD_ABORT_IDS = sorted(set(_ABORT_IDS) - _FORCE_FLUSHED_ABORT_IDS)
 @pytest.mark.parametrize("case_id", _COMMIT_IDS, ids=_COMMIT_IDS)
 def test_commit_story_emits_the_golden_dml(case_id: str) -> None:
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=_seed_rows_for(story))
+    port = _port_for(story)
     story.run(_db(port, story))
     _assert_statements(port, _scenario_goldens(case_id), case_id)
     assert port.ops[0] == ("begin",)
@@ -368,7 +421,7 @@ def test_abort_story_discards_the_buffer_and_keeps_the_reads_golden(case_id: str
     # buffered write is discarded before it reaches the wire, so the guard here
     # is the abort CONTRACT: nothing written, the abort rolled back, reads golden.
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=_seed_rows_for(story))
+    port = _port_for(story)
     story.run(_db(port, story))
     assert not port.wrote, (case_id, port.ops)
     _assert_statements(port, _scenario_goldens(case_id, skip_rollback=True), case_id)
@@ -389,7 +442,7 @@ def test_force_flushed_abort_story_reaches_the_wire_then_rolls_back(case_id: str
     post-abort find still committed).
     """
     story = _STORIES[case_id]
-    port = _RecordingPort(rows=_seed_rows_for(story))
+    port = _port_for(story)
     story.run(_db(port, story))
     _assert_statements(port, _scenario_goldens(case_id, skip_rollback=False), case_id)
     assert ("rollback",) in port.ops
@@ -403,7 +456,7 @@ def test_boundary_story_withholds_the_callback_value() -> None:
     # closure throws. The abort discards even the force-flushed write (the
     # port rolls back) and `transact` raises instead of returning the value.
     story = _STORIES["m-unit-work-004"]
-    port = _RecordingPort(rows=_seed_rows_for(story))
+    port = _port_for(story)
     with pytest.raises(RuntimeError, match="abort"):
         story.run(_db(port, story))
     kinds = [op[0] for op in port.ops]
