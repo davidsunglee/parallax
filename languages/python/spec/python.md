@@ -2378,7 +2378,7 @@ or descriptor authoring form and performs no audit stamping.
   removed: its detached copy carries the milestone's `IN_Z` offline and the
   merge-back gate binds that carried coordinate — transport, never
   reconstruction. The idiom requires no detached objects.
-- **An edit preserves everything that is not a declared member.**
+- **An edit preserves everything it neither replaces nor invalidates.**
   `edit(**changes)` replaces the declared member state the caller authored and
   carries every other kind of instance state forward unchanged. An Edited Copy
   of a materialized node therefore answers relationships exactly as that node
@@ -2386,12 +2386,27 @@ or descriptor authoring form and performs no audit stamping.
   rather than a re-read, an unloaded one raises `UnloadedRelationshipError`
   naming the path and the include fix — and `is_view_loaded`, `view`, `pin_of`,
   and `edge_of` all answer for the copy as they answer for its source.
-  Preserving a view is sound precisely because a relationship member is never
-  assignable through `edit`: no edit can change what a view describes, so the
-  source's views describe the copy as accurately as they described the source.
-  Preservation is by **complement** — what an edit carries is defined as what it
-  does not replace — so a new kind of instance state travels without the edit
-  surface learning its name.
+
+  A carried view describes what the source's read observed, and that is all an
+  edit can leave it describing: a relationship member is never assignable
+  through `edit`, so no edit changes a relationship member, and a view can only
+  come from a read, so the framework never re-resolves one offline. A copy that
+  authors a relationship's **join endpoint** consequently carries a view
+  describing the **pre-edit** target — `copy.customer_id` is the authored value
+  while `copy.customer` is still the customer the read observed — and a view of
+  the new target is obtained by reading.
+
+  Preservation is by **complement**: what an edit carries is everything it
+  neither replaces nor invalidates, so a new kind of instance state travels
+  without the edit surface learning its name unless the class itself declares
+  that state derived. Exactly one kind is invalidated rather than carried. A
+  slot naming a `functools.cached_property` on the value's class holds an answer
+  computed from declared state the edit may have replaced, so the edit drops it
+  and the next access recomputes it: a derived cache is recomputed, never
+  carried. The rule reads the descriptor off the class, which is what lets it
+  need no registry and no lifecycle involvement — and also fixes its reach: a
+  cache a class writes into `self.__dict__` by hand declares nothing, so it is
+  carried like any other slot.
 
   The copy carries the source's `Pin` too, which makes the read-only rule
   indifferent to how the write was authored: an Edited Copy of a view pinned at

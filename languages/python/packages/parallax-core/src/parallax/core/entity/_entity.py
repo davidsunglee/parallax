@@ -14,6 +14,7 @@ no adapter and no mirrored record graph.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Self, cast
@@ -372,16 +373,43 @@ def _edit_violations(
     return tuple(violations)
 
 
+_UNBOUND: Final = object()
+"""Distinguishes a class that binds a name to ``None`` from one that binds it not
+at all."""
+
+
+def _is_derived_cache(cls: type, key: str) -> bool:
+    """Whether ``cls`` declares the instance slot ``key`` a derived cache.
+
+    A ``functools.cached_property`` memoizes an answer computed from the value it
+    was read through, so the class itself declares that slot derived and the rule
+    needs no registry. The first ancestor that binds the name decides, exactly as
+    attribute lookup would, so a subtype that rebinds the name to something else
+    is not taken to have inherited the declaration.
+    """
+    for ancestor in cls.__mro__:
+        attribute = ancestor.__dict__.get(key, _UNBOUND)
+        if attribute is not _UNBOUND:
+            return isinstance(attribute, functools.cached_property)
+    return False
+
+
 def _partition_declared(
     value: Entity, names: WireNames
 ) -> tuple[dict[str, object], dict[str, object]]:
-    """``value``'s declared member state and everything else, split.
+    """``value``'s declared member state and everything an edit carries, split.
 
     An edit replaces the first half and preserves the second unchanged, which is
     what keeps a materialized node's relationship views and lifecycle state
-    readable on the copy it derives. The split is by complement rather than by an
-    enumerated slot list, so a new kind of instance state travels correctly
+    readable on the copy it derives. The second half is a complement rather than
+    an enumerated slot list, so a new kind of instance state travels correctly
     without either caller learning its name.
+
+    A derived cache is the one thing that complement drops: a slot the class
+    declares a ``functools.cached_property`` (:func:`_is_derived_cache`) holds an
+    answer computed from declared state an edit may replace, so it is left out
+    and recomputed on next access rather than carried into a copy whose own
+    declared state contradicts it.
 
     Both branches of :meth:`Entity.edit` partition here, so neither can hold its
     own opinion of the boundary.
@@ -390,7 +418,10 @@ def _partition_declared(
     declared_state: dict[str, object] = {}
     carried: dict[str, object] = {}
     for key, member in value.__dict__.items():
-        (declared_state if key in declared_names else carried)[key] = member
+        if key in declared_names:
+            declared_state[key] = member
+        elif not _is_derived_cache(type(value), key):
+            carried[key] = member
     return declared_state, carried
 
 
@@ -519,16 +550,21 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         value the judgement accepted and the annotation refused is a judgement
         coverage defect rather than a developer-input refusal.
 
-        An edit replaces declared member state and preserves everything else
-        (:func:`_partition_declared`), whichever branch builds the result. A
-        materialized node's relationship views and its lifecycle state therefore
-        reach the copy intact, so the copy answers a relationship and the
-        lifecycle's own inspection surface exactly as the node did — and carries
-        that node's as-of pin, which is what makes a view pinned in the
-        Transaction-Time past read-only through an edit as well as directly.
-        Preserving a view is sound precisely because a relationship keyword is
-        refused outright: an edit can never change one, so the source's views
-        describe the copy as accurately as they described the source.
+        An edit replaces declared member state and preserves everything it
+        neither replaces nor invalidates (:func:`_partition_declared`), whichever
+        branch builds the result. A materialized node's relationship views and
+        its lifecycle state therefore reach the copy intact, so the copy answers
+        a relationship and the lifecycle's own inspection surface exactly as the
+        node did — and carries that node's as-of pin, which is what makes a view
+        pinned in the Transaction-Time past read-only through an edit as well as
+        directly.
+
+        A carried view keeps describing what the read observed, which is all an
+        edit can leave it describing: a relationship keyword is refused outright,
+        so no edit changes a relationship member, and a view can only come from a
+        read, so nothing here re-resolves one offline. A copy that authors a join
+        endpoint therefore carries a view describing the pre-edit target, and a
+        view of the new one is obtained by reading.
 
         An edit with no changes is legal and builds nothing new to validate,
         because nothing was authored: the result is this value's own state and
