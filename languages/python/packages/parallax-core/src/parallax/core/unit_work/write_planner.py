@@ -1,8 +1,10 @@
 """The Write Planner: the single finalization authority (m-unit-work).
 
 :class:`WritePlanner` turns one flush's boundary-captured Subject Identity,
-lazy Transaction Instant, concurrency mode, buffered writes, and observations
-into a :class:`~parallax.core.unit_work.plan.WritePlan`. It is model-scoped,
+lazy Transaction Instant, concurrency mode, and buffered writes into a
+:class:`~parallax.core.unit_work.plan.WritePlan`. A write that settles against
+existing state arrives carrying the observation its verb resolved for it, so the
+planner resolves no evidence of its own. It is model-scoped,
 constructed once per accepted Metamodel with its batching, concurrency,
 temporal, and audit strategies already wired, and it exposes exactly one
 planning operation, :meth:`WritePlanner.plan`.
@@ -68,6 +70,7 @@ from parallax.core.unit_work.instructions import (
 )
 from parallax.core.unit_work.materialized import (
     MaterializedWriteGroup,
+    ObservedKeyedWrite,
     TemporalColumns,
     VersionColumns,
 )
@@ -115,6 +118,7 @@ from parallax.core.unit_work.planner import (
     BufferItem,
     ObjectKey,
     Targets,
+    buffered_instruction,
     resolve_object_key,
     targets,
 )
@@ -138,7 +142,6 @@ from parallax.core.unit_work.write_validate import WriteRejectedError
 __all__ = ["PlanningRequest", "SubjectIdentity", "WritePlanner", "plan_temporal_close"]
 
 type BufferedWrites = Sequence[BufferItem]
-type Observations = Mapping[ObjectKey, WriteObservation]
 
 # The keyed mutation verbs finalized directly into a row write — the
 # non-temporal write triad. The milestone verbs open, split, or close a
@@ -184,7 +187,6 @@ class PlanningRequest:
     transaction_instant: TransactionInstant
     concurrency: Concurrency
     buffered_writes: BufferedWrites
-    observations: Observations
 
 
 class WritePlanner:
@@ -193,7 +195,7 @@ class WritePlanner:
     Constructed once per accepted Metamodel with its strategy adapters already
     wired; :meth:`plan` is its entire caller-visible surface. No caller
     sequences coalescing, batching, ordering, temporal expansion, observation
-    binding, instant acquisition, or provenance decoration by hand.
+    validation, instant acquisition, or provenance decoration by hand.
     """
 
     __slots__ = ("_audit", "_batching", "_concurrency", "_model", "_temporal")
@@ -244,11 +246,10 @@ class WritePlanner:
         survivors = [
             item
             for item in coalesced
-            if isinstance(item, MaterializedWriteGroup)
-            or not _is_empty_keyed_update(item, resolved)
+            if not _is_empty_keyed_update(buffered_instruction(item), resolved)
         ]
         canonical = [_canonical_item(item, resolved) for item in survivors]
-        batched = self._form_batches(canonical, resolved, request.observations)
+        batched = self._form_batches(canonical, resolved)
         ordered = self._order(batched, resolved)
         segments: list[StepSegment] = []
         pending: list[PlannedStep] = []
@@ -267,10 +268,15 @@ class WritePlanner:
                     )
                 )
                 continue
+            instruction, observation = (
+                (item.instruction, item.observation)
+                if isinstance(item, ObservedKeyedWrite)
+                else (item, None)
+            )
             for step in self._settle(
-                item,
+                instruction,
                 resolved,
-                request.observations,
+                observation,
                 request.concurrency,
                 request.transaction_instant,
             ):
@@ -296,24 +302,27 @@ class WritePlanner:
             if isinstance(item, MaterializedWriteGroup):
                 result.append(item)
                 continue
-            instruction = item
+            instruction = buffered_instruction(item)
             key = resolve_object_key(instruction, resolved)
             if not isinstance(instruction, KeyedWrite) or key is None:
-                result.append(instruction)
+                result.append(item)
                 continue
             verb = instruction.mutation
             if verb in _INSERT_VERBS:
-                result.append(instruction)
+                result.append(item)
                 pending_insert[key] = len(result) - 1
             elif verb in _UPDATE_VERBS and key in pending_insert:
                 index = pending_insert[key]
                 base = result[index]
-                assert isinstance(base, KeyedWrite)  # a pending-insert slot is always KeyedWrite
+                # An insert carries no observation, so a pending-insert slot is
+                # always a bare instruction — and folding an update into it
+                # yields an insert, which is why the merged item stays bare.
+                assert isinstance(base, KeyedWrite)
                 result[index] = _merge_update_into_insert(base, instruction, resolved)
             elif verb in _DELETE_VERBS and key in pending_insert:
                 result[pending_insert.pop(key)] = None
             else:
-                result.append(instruction)
+                result.append(item)
         return [item for item in result if item is not None]
 
     # ----------------------------------------------------------------- #
@@ -321,9 +330,7 @@ class WritePlanner:
     # ADJACENT single-row keyed writes merge when the injected batching   #
     # strategy says the run collapses.                                    #
     # ----------------------------------------------------------------- #
-    def _form_batches(
-        self, buffer: Sequence[BufferItem], resolved: Targets, observations: Observations
-    ) -> list[BufferItem]:
+    def _form_batches(self, buffer: Sequence[BufferItem], resolved: Targets) -> list[BufferItem]:
         result: list[BufferItem] = []
         run: list[KeyedWrite] = []
         run_group: object = None
@@ -347,12 +354,13 @@ class WritePlanner:
                 result.extend(run)
             run.clear()
 
-        def observed(item: KeyedWrite) -> bool:
-            key = resolve_object_key(item, resolved)
-            return key is not None and key in observations
-
+        # A write carrying an observation is never merged into a multi-row run:
+        # a multi-row statement has no way to carry a per-row gate. It reaches
+        # the `else` branch below as its own singleton, because carrying an
+        # observation IS being wrapped — no map and no key recomputation decides
+        # it, for versioned and temporal alike.
         for item in buffer:
-            if isinstance(item, KeyedWrite) and len(item.rows) == 1 and not observed(item):
+            if isinstance(item, KeyedWrite) and len(item.rows) == 1:
                 item_group = group_key(item)
                 if (
                     run
@@ -381,15 +389,12 @@ class WritePlanner:
     def _order(self, items: Sequence[BufferItem], resolved: Targets) -> list[BufferItem]:
         ranks = _fk_ranks(self._model)
 
-        def representative(item: BufferItem) -> WriteInstruction:
-            return item.mutation if isinstance(item, MaterializedWriteGroup) else item
-
         def rank(item: BufferItem) -> int:
-            entity = resolved.entity(_instruction_entity(representative(item)))
+            entity = resolved.entity(_instruction_entity(buffered_instruction(item)))
             return 0 if entity is None else ranks.get(entity.identity, 0)
 
         def mutation(item: BufferItem) -> str:
-            return representative(item).mutation
+            return buffered_instruction(item).mutation
 
         def order_region(region: Sequence[BufferItem]) -> list[BufferItem]:
             inserts = [i for i in region if mutation(i) in _INSERT_VERBS]
@@ -417,14 +422,15 @@ class WritePlanner:
     # batching and ordering, so a no-op instruction never occupies a     #
     # batch run or a dependency-ordered position and is never settled.   #
     #                                                                     #
-    # Stages 3, 6, 7: bind and validate observations, resolve the         #
-    # Transaction Instant lazily, and expand temporal topology in place.  #
+    # Stages 3, 6, 7: validate the observation the item arrived carrying, #
+    # resolve the Transaction Instant lazily, and expand temporal          #
+    # topology in place.                                                   #
     # ----------------------------------------------------------------- #
     def _settle(
         self,
         instruction: WriteInstruction,
         resolved: Targets,
-        observations: Observations,
+        observation: WriteObservation | None,
         concurrency: Concurrency,
         tx_instant: TransactionInstant,
     ) -> tuple[PlannedStep, ...]:
@@ -433,8 +439,6 @@ class WritePlanner:
         entity = _require_entity(resolved, instruction.entity)
         declaring_entity = resolved.declaring(entity)
         if declaring_entity.declared_as_of_axes:
-            key = resolve_object_key(instruction, resolved)
-            observation = observations.get(key) if key is not None else None
             return self._settle_temporal(
                 entity,
                 declaring_entity,
@@ -454,8 +458,6 @@ class WritePlanner:
         members = resolved.applicable_members(entity)
         if instruction.mutation == "insert":
             return (self._settle_insert(entity, members, instruction, version_attr),)
-        key = resolve_object_key(instruction, resolved)
-        observation = observations.get(key) if key is not None else None
         observed_version = self._observed_version(entity, instruction, version_attr, observation)
         settled = _non_temporal_concurrency(
             version_attr, observed_version, self._concurrency.gates(concurrency)

@@ -407,7 +407,6 @@ def test_a_materialized_groups_steps_are_equal_but_not_identity_stable_on_repeat
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[group],
-            observations={},
         )
     )
     assert len(plan.steps) == 3
@@ -475,7 +474,6 @@ def test_a_temporal_materialized_groups_close_and_chain_are_equal_but_not_identi
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[group],
-            observations={},
         )
     )
     # A plain terminate over Balance (Transaction-Time-Only) closes with no
@@ -559,7 +557,6 @@ def test_a_materialized_plans_segments_retain_no_group_instant_or_planner() -> N
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[_temporal_group("Balance", "id", rows)],
-            observations={},
         )
     )
     for segment in plan.steps.segments:
@@ -594,7 +591,6 @@ def test_a_materialized_temporal_groups_instant_resolves_during_plan_not_on_step
             transaction_instant=TransactionInstant(clock),
             concurrency="optimistic",
             buffered_writes=[_temporal_group("Balance", "id", rows)],
-            observations={},
         )
     )
     assert clock.calls == 1
@@ -645,7 +641,6 @@ def test_a_materialized_temporal_groups_expansion_resolves_during_plan_not_on_st
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[_temporal_group("Balance", "id", rows)],
-            observations={},
         )
     )
     assert len(calls) == 1
@@ -666,7 +661,6 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[_version_group("Account", "id", [(1, 1)], assigned=9.0)],
-            observations={},
         )
     )
     rows = [
@@ -687,7 +681,6 @@ def test_no_materialized_segments_mapping_field_is_a_plain_mutable_dict() -> Non
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[_temporal_group("Balance", "id", rows)],
-            observations={},
         )
     )
     for plan in (versioned_plan, temporal_plan):
@@ -742,7 +735,6 @@ def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected()
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[group],
-            observations={},
         )
     )
     before = plan.steps[1]
@@ -803,7 +795,6 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[group],
-            observations={},
         )
     )
     changed = cast("PlannedInsert", plan.steps[2])
@@ -874,7 +865,6 @@ def test_a_materialized_groups_planned_writes_are_constructed_only_on_step_acces
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[group],
-            observations={},
         )
     )
     assert len(constructed) == 0  # `plan()` alone constructs none
@@ -891,7 +881,6 @@ def test_repeated_planning_of_an_equal_materialized_group_yields_equal_plans() -
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
-            observations={},
         )
     )
     second_plan = build_write_planner(_ACCOUNT).plan(
@@ -900,7 +889,6 @@ def test_repeated_planning_of_an_equal_materialized_group_yields_equal_plans() -
             transaction_instant=inert_instant(),
             concurrency="optimistic",
             buffered_writes=[_version_group("Account", "id", [(1, 1), (2, 1)], assigned=5.00)],
-            observations={},
         )
     )
     assert first_plan == second_plan

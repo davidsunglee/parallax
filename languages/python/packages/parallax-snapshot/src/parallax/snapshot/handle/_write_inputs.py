@@ -9,7 +9,7 @@ plus the observation machinery a read leaves behind for it:
   instance (:class:`TransactionTimePinReadOnlyError`,
   :func:`validate_source_pin`, :func:`source_pin`);
 * instance -> accepted-Metadata resolution (:func:`metadata_of_instance`) and the
-  verb-time license key (:func:`observation_key`);
+  identity half of its observation key (:func:`written_object_key`);
 * the observation record a read leaves behind (:class:`ReadObservations`) and its
   recording into the unit of work (:func:`record_observations`), plus the per-row
   column contributions a materializing predicate-write resolve streams into its
@@ -43,6 +43,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
+from parallax.core import opt_lock
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
@@ -58,7 +59,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.storage_layout import EntityLayoutView
-from parallax.core.temporal_read import LATEST, Latest, Pin
+from parallax.core.temporal_read import LATEST, Edge, Latest, Pin
 from parallax.core.unit_work import (
     HISTORICAL_PINNED,
     LATEST_PINNED,
@@ -69,6 +70,7 @@ from parallax.core.unit_work import (
     TransactionTimeBasis,
     UnitOfWork,
     VersionObservation,
+    WriteObservation,
     instant_literal,
 )
 from parallax.snapshot._inspection import snapshot_state_of
@@ -89,13 +91,14 @@ __all__ = [
     "is_no_op_assignment",
     "key_column_values",
     "metadata_of_instance",
-    "observation_key",
     "predecessor_payload",
     "record_observations",
+    "source_edge",
     "source_pin",
     "validate_source_pin",
     "validate_until",
     "validate_valid_from",
+    "written_object_key",
 ]
 
 
@@ -133,15 +136,16 @@ def _is_bitemporal(declaring_entity: EntityMetadata) -> bool:
     return declaring_entity.as_of_axis(TemporalDimension.VALID_TIME) is not None
 
 
-def observation_key(
+def written_object_key(
     record: EntityMetadata, declaring_entity: EntityMetadata, row: Mapping[str, object]
 ) -> ObjectKey:
-    """The observation key for a WRITTEN instance — the same key
+    """The identity half of a WRITTEN instance's observation key — the same
+    :class:`~parallax.core.unit_work.ObjectKey`
     :func:`record_observations` records under (the instance's OWN Entity
     Identity, never family-normalized; pk pairs by canonical attribute name, in
     the declaring entity's primary-key order) and `unit_work.object_key`
-    computes at flush, so a verb-time license lookup and the flush-time attach
-    can never diverge.
+    computes at flush, so a verb-time observation lookup and the flush-time
+    settle can never diverge.
 
     ``row`` is that instance's identity row as the Entity Row Codec derived it,
     passed in rather than derived here: this module owns the semantic family
@@ -212,11 +216,17 @@ def record_observations(
     every VERSIONED or TEMPORAL row :func:`find` materialized (`m-opt-lock`;
     ADR 0013).
 
-    Keyed by the SAME :class:`~parallax.core.unit_work.ObjectKey` a subsequent
+    Keyed by the object AND by the milestone the row observed
+    (:func:`~parallax.core.opt_lock.observation_key`), so a second read of one
+    primary key at another as-of coordinate records evidence about the row it
+    actually saw rather than erasing the first read's. The identity half is the
+    SAME :class:`~parallax.core.unit_work.ObjectKey` a subsequent
     keyed write's own :func:`~parallax.core.unit_work.object_key` computes —
     the Entity here is the row's OWN resolved concrete Entity (never
     family-normalized to the root), which is what a developer's later
-    ``tx.update(copy)`` resolves its instance's own class to. A row whose
+    ``tx.update(copy)`` resolves its instance's own class to; the milestone half
+    is derived from the observation's own Predecessor Row, which is the same
+    axis-start state the read installed as the materialized node's Edge. A row whose
     (family-effective) primary key, version column, or Transaction-Time
     interval is absent from its own observed columns is defensively skipped —
     never reachable for a well-formed corpus model, but this seam takes no data
@@ -257,7 +267,7 @@ def record_observations(
             column not in observed_fields for column in pk_columns
         ):
             continue
-        key = ObjectKey(
+        object_key = ObjectKey(
             observed.entity,
             tuple(
                 (attr.identity.name, observed_fields[column])
@@ -268,8 +278,10 @@ def record_observations(
         if version_attr is not None:
             version_column = slot_column(layout, version_attr.identity)
             if version_column in observed_fields:
-                uow.observe(
-                    key,
+                _record(
+                    uow,
+                    object_key,
+                    declaring_entity,
                     VersionObservation(
                         observed_version=cast("int", observed_fields[version_column])
                     ),
@@ -281,8 +293,10 @@ def record_observations(
         tx_start_column, _tx_end_column = axis_columns(layout, tx_axis)
         if tx_start_column not in observed_fields:  # pragma: no cover - malformed model/projection
             continue
-        uow.observe(
-            key,
+        _record(
+            uow,
+            object_key,
+            declaring_entity,
             _temporal_observation(
                 members(placed_members(meta, entity, layout)),
                 observed_fields,
@@ -290,6 +304,21 @@ def record_observations(
                 observed.document,
             ),
         )
+
+
+def _record(
+    uow: UnitOfWork,
+    object_key: ObjectKey,
+    declaring_entity: EntityMetadata,
+    observation: WriteObservation,
+) -> None:
+    """File one observation under the milestone it is an observation OF.
+
+    The key is derived from the observation itself rather than assembled beside
+    it, so this seam cannot record a row under one coordinate while claiming
+    another.
+    """
+    uow.observe(opt_lock.observation_key(object_key, observation, declaring_entity), observation)
 
 
 def _temporal_observation(
@@ -395,6 +424,26 @@ def source_pin(instance: object) -> Pin | None:
     here is therefore its provenance, not its editedness."""
     state = snapshot_state_of(instance)
     return None if state is None else state.pin
+
+
+def source_edge(instance: object) -> Edge | None:
+    """The milestone :class:`~parallax.core.temporal_read.Edge` the value handed
+    to a write verb came from, or ``None`` when it names none.
+
+    ``None`` covers both a value that could not name one — a non-temporal
+    entity's node — and one that does not: a fresh instance, an edited copy of
+    one, or a copy carried in from another transaction. The distinction between
+    those is not this function's to draw, and it does not need to be: an
+    observation is filed under the milestone it observed, so a value naming no
+    milestone matches no observation and the write is refused for want of one.
+
+    Like :func:`source_pin`, an edited copy of a node answers the node's own
+    edge, because an edit preserves lifecycle state (``Entity.edit``) — which is
+    what lets a developer read a milestone, edit what they read, and write the
+    milestone they read.
+    """
+    state = snapshot_state_of(instance)
+    return None if state is None else state.edge
 
 
 def validate_source_pin(entity_name: str, pin: Pin | None) -> None:

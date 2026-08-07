@@ -27,8 +27,6 @@ import datetime as dt
 from decimal import Decimal
 from typing import Any
 
-import pytest
-
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.story_models import Position
@@ -59,13 +57,6 @@ _CURRENT_ROWS = (
 _CLOSED_ROWS = "select from_z from position where out_z <> 'infinity' order by from_z"
 
 
-@pytest.mark.xfail(
-    reason=(
-        "a Write Observation is keyed by primary key alone, so the retroactive read "
-        "erases the current read's evidence: the close addresses and gates on the "
-        "retroactive rectangle, matches it, and reports one affected row"
-    )
-)
 def test_an_optimistic_close_settles_against_the_rectangle_it_read(provisioner: Any) -> None:
     # A key carrying a retroactive rectangle beside its current one — what an
     # earlier correction leaves behind — is read latest, read again at a

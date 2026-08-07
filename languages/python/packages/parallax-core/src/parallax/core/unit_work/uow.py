@@ -30,10 +30,10 @@ from dataclasses import dataclass
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.clock import Clock, TransactionInstant
 from parallax.core.unit_work.instructions import WriteInstruction
-from parallax.core.unit_work.materialized import MaterializedWriteGroup
+from parallax.core.unit_work.materialized import MaterializedWriteGroup, ObservedKeyedWrite
 from parallax.core.unit_work.observe import WriteObservation
 from parallax.core.unit_work.plan import WritePlan
-from parallax.core.unit_work.planner import BufferItem, ObjectKey
+from parallax.core.unit_work.planner import BufferItem, ObservationKey
 from parallax.core.unit_work.strategy import Concurrency
 from parallax.core.unit_work.write_planner import PlanningRequest, SubjectIdentity, WritePlanner
 
@@ -137,7 +137,7 @@ class UnitOfWork:
         # active binding, which `run_outermost` already clears on every exit.
         self.companion: object | None = None
         self._buffer: list[BufferItem] = []
-        self._observations: dict[ObjectKey, WriteObservation] = {}
+        self._observations: dict[ObservationKey, WriteObservation] = {}
         self._frame_depth = 0
         self._rollback_only = False
         self._rollback_cause: BaseException | None = None
@@ -149,23 +149,34 @@ class UnitOfWork:
         self._closed = False
 
     # --- caller surface --------------------------------------------------- #
-    def buffer(self, instruction: WriteInstruction | MaterializedWriteGroup) -> None:
-        """Buffer a write instruction (or a materializing predicate write's
-        :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup`)
+    def buffer(
+        self, instruction: WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
+    ) -> None:
+        """Buffer a write instruction — bare, travelling with the observation its
+        verb resolved for it
+        (:class:`~parallax.core.unit_work.materialized.ObservedKeyedWrite`), or as
+        a materializing predicate write's
+        :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup` —
         for flush at the unit-of-work boundary."""
         self._ensure_open()
         self._buffer.append(instruction)
 
-    def observe(self, key: ObjectKey, observation: WriteObservation) -> None:
-        """Record the transaction observation for one object (attached at flush)."""
+    def observe(self, key: ObservationKey, observation: WriteObservation) -> None:
+        """Record the transaction observation for one observed milestone
+        (resolved at the verb that writes it).
+
+        Re-observing one slot overwrites it, which is idempotent rather than
+        lossy: the key names the milestone the observation is *of*, so a second
+        observation under it restates the same row read at another pin.
+        """
         self._ensure_open()
         self._observations[key] = observation
 
-    def observation_for(self, key: ObjectKey) -> WriteObservation | None:
-        """The transaction observation recorded for one object, if any — the
-        read side of :meth:`observe`. `Transaction`'s keyed temporal verbs
-        consult it for the `python.md` §5 prior-observation license
-        (`opt_lock.require_observed_milestone`) before buffering a close."""
+    def observation_for(self, key: ObservationKey) -> WriteObservation | None:
+        """The transaction observation recorded for one observed milestone, if
+        any — the read side of :meth:`observe`. The keyed developer verbs resolve
+        it once from the value being written, before buffering, and the resolved
+        observation rides to planning on the buffered write itself."""
         self._ensure_open()
         return self._observations.get(key)
 
@@ -192,7 +203,6 @@ class UnitOfWork:
             transaction_instant=self._transaction_instant,
             concurrency=self.settings.concurrency,
             buffered_writes=tuple(self._buffer),
-            observations=self._observations,
         )
         plan = self._planner.plan(request)
         self._buffer.clear()

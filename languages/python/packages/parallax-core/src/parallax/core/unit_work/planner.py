@@ -20,7 +20,7 @@ module is a Pyright strict ``reportPrivateUsage`` error.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
 
 from parallax.core import inheritance
@@ -35,12 +35,15 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.unit_work.instructions import KeyedWrite, WriteInstruction
-from parallax.core.unit_work.materialized import MaterializedWriteGroup
+from parallax.core.unit_work.materialized import MaterializedWriteGroup, ObservedKeyedWrite
 
 __all__ = [
     "BufferItem",
+    "MilestoneCoordinate",
     "ObjectKey",
+    "ObservationKey",
     "Targets",
+    "buffered_instruction",
     "object_key",
     "primary_key_names",
     "resolve_object_key",
@@ -51,8 +54,8 @@ __all__ = [
 @dataclass(frozen=True, slots=True)
 class ObjectKey:
     """One object's identity: its Entity and its ordered
-    ``(pk-attribute-name, value)`` pairs. The coalescing scope and the
-    observation binding are keyed by it.
+    ``(pk-attribute-name, value)`` pairs. The coalescing scope is keyed by it,
+    and it is the identity half of an :class:`ObservationKey`.
 
     ``entity`` is the structured Entity Identity rather than a spelling of one,
     so no producer stringifies an identity it already holds and two entities
@@ -62,6 +65,40 @@ class ObjectKey:
 
     entity: EntityIdentity
     primary_key: tuple[tuple[str, object], ...]
+
+
+type MilestoneCoordinate = Hashable
+"""The observed milestone's own coordinate — its Edge, the finite from-instant
+on every declared axis (`m-temporal-read`).
+
+Opaque here, and only here: this scope takes no dependency edge to
+``m-temporal-read``, and the coordinate participates in an
+:class:`ObservationKey` purely by equality and hash. The concrete value and its
+single derivation belong to ``m-opt-lock``, which reaches both scopes and owns
+the observation-licensing rules that consume the key.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationKey:
+    """What one Write Observation is filed under: the object it observed AND the
+    milestone it observed of that object.
+
+    A milestone chain holds more than one row per primary key at a time, so
+    identity alone cannot address the evidence a write needs: two reads of one
+    key at different as-of coordinates observe two different rows, and a slot
+    keyed by identity alone would let the second erase the first. Qualifying the
+    slot by the observed milestone's own coordinate makes each read evidence
+    about the row it actually saw, and makes two reads of ONE milestone at
+    different pins land in one slot — the same coordinate, so the second
+    observation is a restatement of the first rather than a loss.
+
+    ``milestone`` is absent for a versioned Non-Temporal row, which has exactly
+    one row per primary key and therefore needs no coordinate to be addressed.
+    """
+
+    object_key: ObjectKey
+    milestone: MilestoneCoordinate | None
 
 
 # One writable member's resolved semantic identity, keyed by the spelling a
@@ -178,18 +215,34 @@ def targets(model: Metamodel) -> Targets:
     return Targets(model=model, by_spelling=by_spelling, families=inheritance.view(model))
 
 
-# One buffer item: an ordinary write instruction, or a materializing predicate
-# write's compact Materialized Write Group (`m-unit-work` "Materialized Write
-# Groups", ADR 0014). A group is buffered as ONE opaque item at the call
+# One buffer item: an ordinary write instruction, a keyed write travelling with
+# the observation its verb resolved for it, or a materializing predicate write's
+# compact Materialized Write Group (`m-unit-work` "Materialized Write Groups",
+# ADR 0014). A group is buffered as ONE opaque item at the call
 # position (never split, never reordered internally) — EXEMPT from same-object
 # coalescing (a materializing resolve only ever matches EXISTING rows, which
 # read-your-own-writes has already flushed past any pending same-key insert,
 # so no coalescing candidate can structurally arise) and from cross-unit
 # reordering (dependency ordering moves it as ONE block, ranked by its own
-# target entity, never reordering its rows internally). It settles directly
-# into Planned Steps at finalization; a frozen Write Plan never carries this
-# type at all.
-BufferItem = WriteInstruction | MaterializedWriteGroup
+# target entity, never reordering its rows internally). An observed keyed write
+# coalesces and orders exactly as its bare instruction would, and — like an
+# observed write today — never merges into a multi-row batch, because a
+# multi-row statement carries no per-row gate. Both settle directly into Planned
+# Steps at finalization; a frozen Write Plan never carries either type at all.
+BufferItem = WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
+
+
+def buffered_instruction(item: BufferItem) -> WriteInstruction:
+    """The write instruction ``item`` carries, unwrapped from any envelope.
+
+    A Materialized Write Group answers the predicate write it materialized,
+    which is what dependency ordering ranks it by.
+    """
+    if isinstance(item, MaterializedWriteGroup):
+        return item.mutation
+    if isinstance(item, ObservedKeyedWrite):
+        return item.instruction
+    return item
 
 
 def object_key(instruction: WriteInstruction, model: Metamodel) -> ObjectKey | None:

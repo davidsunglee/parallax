@@ -61,6 +61,7 @@ from parallax.core.unit_work.instructions import (
 from parallax.core.unit_work.materialized import (
     GroupObservations,
     MaterializedWriteGroup,
+    ObservedKeyedWrite,
     TemporalColumns,
     VersionColumns,
 )
@@ -137,7 +138,13 @@ from parallax.core.unit_work.planned import (
     WriteTarget,
     shortfall_for,
 )
-from parallax.core.unit_work.planner import BufferItem, ObjectKey, object_key
+from parallax.core.unit_work.planner import (
+    BufferItem,
+    MilestoneCoordinate,
+    ObjectKey,
+    ObservationKey,
+    object_key,
+)
 from parallax.core.unit_work.strategy import (
     AUTHORED_FROM,
     AUTHORED_STATE,
@@ -253,6 +260,7 @@ __all__ = [
     "MaterializedWriteGroup",
     "MaxPlusOne",
     "MilestoneClosure",
+    "MilestoneCoordinate",
     "MilestoneSuccessor",
     "MilestoneTarget",
     "MilestoneTopology",
@@ -261,6 +269,8 @@ __all__ = [
     "NewLineage",
     "NonTemporalConcurrency",
     "ObjectKey",
+    "ObservationKey",
+    "ObservedKeyedWrite",
     "OpenEnd",
     "OptimisticConflict",
     "OptimisticLockConflictError",

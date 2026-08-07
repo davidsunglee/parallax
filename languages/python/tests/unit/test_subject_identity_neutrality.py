@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from _support.clock_probes import inert_instant, instant_at
+from _support.planner_probes import observed_buffer
 from parallax.conformance import models
 from parallax.core import op_algebra
 from parallax.core.dialect import POSTGRES
@@ -79,8 +80,7 @@ def _plan_under(
             subject_identity=subject,
             transaction_instant=tx_instant if tx_instant is not None else inert_instant(),
             concurrency=concurrency,
-            buffered_writes=buffer,
-            observations=observations or {},
+            buffered_writes=observed_buffer(buffer, model, observations),
         )
     )
 
