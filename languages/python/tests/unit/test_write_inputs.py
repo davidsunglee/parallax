@@ -248,10 +248,13 @@ def test_two_reads_of_one_milestone_at_different_pins_share_one_observation_slot
     # The property that makes an Edge usable as a key without an identity map:
     # an Edge is a VALUE, so two independent reads of one milestone — here a
     # latest read and a read pinned at a past instant that still resolves to it —
-    # derive equal coordinates and therefore fill the SAME slot. The second read
-    # restates what the first recorded rather than displacing it, which is the
-    # exact converse of the identity triple's rule that distinct coordinates
-    # denote distinct pinned views.
+    # derive equal coordinates and therefore fill the SAME slot, the exact
+    # converse of the identity triple's rule that distinct coordinates denote
+    # distinct pinned views. Sharing the slot is LOSSY, not idempotent: the two
+    # agree about the row and disagree about the Basis, which describes the read,
+    # so the historical read's own value is what the slot holds afterwards. That
+    # surviving Basis is what proves the second record landed in this slot rather
+    # than under some other key while the first sat here untouched.
     model = _accepted("balance")
     latest = ReadObservations()
     latest.observe_row(corpus_entity("Balance"), _balance_columns(), None)
@@ -275,6 +278,8 @@ def test_two_reads_of_one_milestone_at_different_pins_share_one_observation_slot
     )
     assert isinstance(first, TemporalObservation)
     assert isinstance(second, TemporalObservation)
+    assert first.transaction_time_basis is LATEST_PINNED
+    assert second.transaction_time_basis is HISTORICAL_PINNED
     assert second.predecessor == first.predecessor
 
 

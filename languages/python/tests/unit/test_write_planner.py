@@ -2,8 +2,10 @@
 
 ``WritePlanner.plan(PlanningRequest) -> WritePlan`` is the entire
 caller-visible planning surface: no caller sequences coalescing, batching,
-ordering, temporal expansion, observation binding, instant acquisition, or
-provenance decoration by hand. These tests drive it directly — through the
+ordering, temporal expansion, observation validation, instant acquisition, or
+provenance decoration by hand. A caller does resolve the observation a write
+settles against, at the verb that holds the value, and buffers it on the write.
+These tests drive it directly — through the
 SAME production wiring ``parallax.snapshot.handle.build_write_planner``
 builds — asserting complete ``PlannedWrite`` shapes and plan-wide ordering,
 never a private stage function: same-transaction coalescing (insert-then-update

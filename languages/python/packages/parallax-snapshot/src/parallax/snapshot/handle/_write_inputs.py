@@ -218,8 +218,10 @@ def record_observations(
 
     Keyed by the object AND by the milestone the row observed
     (:func:`~parallax.core.opt_lock.observation_key`), so a second read of one
-    primary key at another as-of coordinate records evidence about the row it
-    actually saw rather than erasing the first read's. The identity half is the
+    primary key that resolves to a DIFFERENT milestone records evidence about the
+    row it actually saw rather than erasing the first read's; one that resolves
+    to the SAME milestone shares its slot and overwrites it, which keeps one
+    record per observed row. The identity half is the
     SAME :class:`~parallax.core.unit_work.ObjectKey` a subsequent
     keyed write's own :func:`~parallax.core.unit_work.object_key` computes —
     the Entity here is the row's OWN resolved concrete Entity (never
@@ -414,8 +416,8 @@ def _row_payload(
 # --------------------------------------------------------------------------- #
 def source_pin(instance: object) -> Pin | None:
     """The whole-graph as-of :class:`Pin` a materialized snapshot node carries,
-    or ``None`` for anything else — a plainly constructed instance, or an edited
-    copy of one.
+    or ``None`` for anything else — a plainly constructed instance, or an edit
+    of one.
 
     An edited copy of a NODE answers the node's own pin: an edit preserves every
     kind of instance state outside the declared members, lifecycle state among
@@ -431,8 +433,9 @@ def source_edge(instance: object) -> Edge | None:
     to a write verb came from, or ``None`` when it names none.
 
     ``None`` covers both a value that could not name one — a non-temporal
-    entity's node — and one that does not: a fresh instance, an edited copy of
-    one, or a copy carried in from another transaction. The distinction between
+    entity's node — and one that does not: a fresh instance, an edit of a fresh
+    instance, or a copy carried in from another transaction. The distinction
+    between
     those is not this function's to draw, and it does not need to be: an
     observation is filed under the milestone it observed, so a value naming no
     milestone matches no observation and the write is refused for want of one.

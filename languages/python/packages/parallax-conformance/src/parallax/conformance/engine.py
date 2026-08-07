@@ -66,6 +66,7 @@ from parallax.core.temporal_read import (
     statement_pin,
 )
 from parallax.core.unit_work import (
+    INSERT_MUTATIONS,
     CardinalityCorruptionError,
     Concurrency,
     FixedClock,
@@ -85,6 +86,7 @@ from parallax.core.unit_work import (
     WriteObservation,
     WritePlanningError,
     WriteRejectedError,
+    buffered_write,
     enforce_affected_rows,
     instructions,
     object_key,
@@ -1418,15 +1420,29 @@ def _build_instructions(
     binds_observations = _binds_row_observations(meta, entity_name, mutation, raw_rows)
     model = case_model(meta)
     out: list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]] = []
+    # An insert opens a row rather than writing against one, so it observes
+    # nothing (`m-unit-work`: "inserts have no observation"). The case schema's
+    # `writeRow` reserves `observedVersion` for a write against an EXISTING row
+    # but cannot express that per mutation, so an insert row authoring one is an
+    # authoring error refused here, and a `uow` group's find-derived map is never
+    # consulted for one — either would hand the planner evidence about a
+    # milestone that does not yet exist.
+    opens_a_row = mutation in INSERT_MUTATIONS
     for raw_row in raw_rows:
         clean_row, observation = _strip_observation(raw_row)
+        if opens_a_row and observation is not None:
+            raise EngineError(
+                f"{entity_name!r} {mutation!r}: an insert row authors no `observedVersion` "
+                "(m-unit-work: inserts have no observation — the reserved control key names "
+                "the version a write against an EXISTING row observed)"
+            )
         clean_row = _seed_insert_version(meta, entity_name, mutation, clean_row)
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
         instructions.validate_instruction(instruction, model)
         key: ObjectKey | None = None
-        if binds_observations:
+        if binds_observations and not opens_a_row:
             key = object_key(instruction, model)
             if observation is None and key is not None:
                 observation = scenario_observations.get(key)
@@ -1482,10 +1498,7 @@ def _buffered(
     write does not carry, or to carry one under an identity the write does not
     name.
     """
-    if observation is None:
-        return instruction
-    assert isinstance(instruction, KeyedWrite)  # only a keyed write carries an observation
-    return ObservedKeyedWrite(instruction=instruction, observation=observation)
+    return buffered_write(instruction, observation)
 
 
 def _lower_resolved(

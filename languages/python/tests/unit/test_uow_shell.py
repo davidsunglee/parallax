@@ -20,6 +20,7 @@ from _corpus_identity_support import corpus_object_key
 from _support.clock_probes import CountingClock
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
+from parallax.core import op_algebra
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (
     Clock,
@@ -31,6 +32,8 @@ from parallax.core.unit_work import (
     ObservedKeyedWrite,
     PlannedInsert,
     PlannedUpdate,
+    PredicateSelection,
+    PredicateWrite,
     RollbackOnlyError,
     SystemClock,
     TransactionSettings,
@@ -38,6 +41,7 @@ from parallax.core.unit_work import (
     VersionObservation,
     WritePlan,
     active_unit_of_work,
+    buffered_write,
     run_unit_of_work,
 )
 from parallax.snapshot.handle import build_write_planner
@@ -257,6 +261,33 @@ def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -
     (step,) = recorder.plans[0].steps
     assert isinstance(step, PlannedUpdate)
     assert _member_value(step.assignments.attributes, "version") == 8
+
+
+def test_an_insert_refuses_to_carry_a_write_observation() -> None:
+    # `m-unit-work` makes absence structural in both directions: an opening row
+    # observes nothing, so the carrier around one is what cannot exist rather
+    # than a null field flowing downstream. Three planner stages read that as a
+    # guarantee — coalescing folds an update into a pending insert without
+    # unwrapping it, opening-row canonicalization treats every carrier as a
+    # revising write, and insert batching excludes carriers — so an insert that
+    # reached planning wearing evidence would corrupt each in turn.
+    with pytest.raises(ValueError, match="an insert carries no Write Observation"):
+        ObservedKeyedWrite(
+            instruction=KeyedWrite("insert", "Account", ({"id": 1, "version": 1},)),
+            observation=VersionObservation(observed_version=1),
+        )
+
+
+def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:
+    # A predicate-selected write settles per RESOLVED row, against a Materialized
+    # Write Group's own aligned observation columns. There is no single
+    # observation for the set it selects, so offering this seam one is a caller
+    # wiring defect rather than a shape it should quietly wrap.
+    predicate = PredicateWrite(
+        "delete", PredicateSelection("Account", op_algebra.Comparison("eq", "Account.id", 1))
+    )
+    with pytest.raises(TypeError, match="only a keyed write carries"):
+        buffered_write(predicate, VersionObservation(observed_version=1))
 
 
 def test_a_fully_empty_transaction_never_touches_the_clock() -> None:

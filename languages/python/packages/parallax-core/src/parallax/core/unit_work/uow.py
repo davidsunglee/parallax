@@ -165,9 +165,12 @@ class UnitOfWork:
         """Record the transaction observation for one observed milestone
         (resolved at the verb that writes it).
 
-        Re-observing one slot overwrites it, which is idempotent rather than
-        lossy: the key names the milestone the observation is *of*, so a second
-        observation under it restates the same row read at another pin.
+        The key names the milestone the observation is *of*, so a second read of
+        that milestone at another pin lands in this same slot and overwrites it.
+        The two agree about the row — same persisted state — but not about
+        everything the observation carries: a Temporal Observation's
+        Transaction-Time Basis describes the READ, so what survives is the later
+        read's.
         """
         self._ensure_open()
         self._observations[key] = observation

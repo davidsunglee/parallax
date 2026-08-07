@@ -1578,11 +1578,11 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
     }
 
 
-def test_run_write_sequence_case_records_the_temporal_observation_on_the_unit_of_work() -> None:
-    # m-txtime-write-002: the update entry's shadow-resolved observation is
-    # recorded on THIS unit's own `UnitOfWork` via the documented neutral seam
-    # (`Transaction._buffer` route + `uow.observe`, `_execute_write_unit`) —
-    # exactly what a real caller's own prior find would have recorded.
+def test_run_write_sequence_case_carries_the_temporal_observation_on_the_buffered_write() -> None:
+    # m-txtime-write-002: the update entry's shadow-resolved observation rides to
+    # planning on the buffered write itself, through the documented neutral seam
+    # (`Transaction._buffer`'s `observation=` route, `_execute_write_unit`) —
+    # exactly what a real caller's own prior find would have resolved for it.
     port = FakeWritePort()
     emissions, table_state, round_trips = engine.run_write_sequence_case(
         _load_case("m-txtime-write-002"), "postgres", port
@@ -1698,6 +1698,32 @@ def test_versioned_delete_decomposes_per_row() -> None:
         ("delete from account where id = ?", (1,)),
         ("delete from account where id = ?", (2,)),
     ]
+
+
+def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
+    # `m-unit-work`: inserts have no observation. The case schema's `writeRow`
+    # says so in prose but shares one definition across every mutation, so an
+    # insert row can author the control key; this engine refuses it rather than
+    # handing planning evidence about a milestone that does not yet exist. The
+    # refusal is an authoring diagnosis, not the structural guarantee — the
+    # carrier itself refuses an insert too.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "insert",
+                        "entity": "Account",
+                        "statements": 1,
+                        "rows": [{"id": 1, "version": 1, "observedVersion": 1}],
+                    }
+                ]
+            }
+        },
+    )
+    with pytest.raises(engine.EngineError, match="an insert row authors no `observedVersion`"):
+        engine.compile_write_sequence_case(case, "postgres")
 
 
 def test_rows_carrying_observation_keys_decompose_per_row_even_when_unversioned() -> None:
