@@ -485,13 +485,14 @@ def test_a_transaction_time_only_target_may_not_name_a_valid_time_start() -> Non
 def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
     case = _bitemporal_edge_named_case()
     edge = case.when.pop("observedValidStart")
+    tx_start = case.when.pop("observedTxStart")
     case.when["attempts"] = [
         {
             "statements": case.when.get("statements", []),
             "affectedRows": 1,
             "write": {"id": 1},
             "at": case.when["at"],
-            "observedTxStart": case.when["observedTxStart"],
+            "observedTxStart": tx_start,
             "observedValidStart": edge,
         }
     ]
@@ -505,6 +506,26 @@ def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
 def test_a_temporal_retry_attempt_may_still_name_its_observed_gate() -> None:
     case = _bitemporal_edge_named_case()
     case.when.pop("observedValidStart")
+    tx_start = case.when.pop("observedTxStart")
+    case.when["attempts"] = [
+        {
+            "statements": case.when.get("statements", []),
+            "affectedRows": 1,
+            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
+            "at": case.when["at"],
+            "observedTxStart": tx_start,
+        }
+    ]
+    # Must not raise: a retry states its address directly and gates on the
+    # Transaction-Time start it observed, which is the address form, not the
+    # observation form. The root coordinates move INTO the attempt rather than
+    # being left behind, which is what the next test pins.
+    _assert_schema(case)
+
+
+def test_a_retry_sequence_may_not_leave_an_observation_coordinate_on_the_root() -> None:
+    case = _bitemporal_edge_named_case()
+    case.when.pop("observedValidStart")
     case.when["attempts"] = [
         {
             "statements": case.when.get("statements", []),
@@ -514,7 +535,49 @@ def test_a_temporal_retry_attempt_may_still_name_its_observed_gate() -> None:
             "observedTxStart": case.when["observedTxStart"],
         }
     ]
-    # Must not raise: a retry states its address directly and gates on the
-    # Transaction-Time start it observed, which is the address form, not the
-    # observation form.
+    # The root `observedTxStart` survives here. Every attempt reads its own, so
+    # the root one gates nothing and grades nothing — the two authoring
+    # locations are alternatives, not a default and an override.
+    with pytest.raises(CaseFailure, match=re.escape("consumed by no attempt")):
+        _assert_schema(case)
+
+
+def test_a_locking_close_may_not_author_a_lone_observed_gate() -> None:
+    case = _bitemporal_edge_named_case()
+    case.when.pop("observedValidStart")
+    case.when["write"]["validEnd"] = "2024-06-01T00:00:00+00:00"
+    case.when["uow"] = {**case.when.get("uow", {}), "concurrency": "locking"}
+    # The address form under `locking`: every bind the close renders is already
+    # spelled, and locking renders no gate, so the coordinate reaches nothing.
+    with pytest.raises(CaseFailure, match=re.escape("renders no gate")):
+        _assert_schema(case)
+
+
+def test_a_locking_retry_attempt_may_not_author_an_observed_gate() -> None:
+    case = _bitemporal_edge_named_case()
+    case.when.pop("observedValidStart")
+    tx_start = case.when.pop("observedTxStart")
+    case.when["uow"] = {**case.when.get("uow", {}), "concurrency": "locking"}
+    case.when["attempts"] = [
+        {
+            "statements": case.when.get("statements", []),
+            "affectedRows": 1,
+            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
+            "at": case.when["at"],
+            "observedTxStart": tx_start,
+        }
+    ]
+    # A retry attempt never names an edge, so its coordinate is always the gate
+    # candidate — and locking mode has no gate to bind it into.
+    with pytest.raises(CaseFailure, match=re.escape("renders no gate")):
+        _assert_schema(case)
+
+
+def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
+    case = _bitemporal_edge_named_case()
+    case.when["uow"] = {**case.when.get("uow", {}), "concurrency": "locking"}
+    # Must not raise: beside `observedValidStart` the Transaction-Time
+    # coordinate is the edge's own half, which SELECTS the milestone whose
+    # Valid-Time end the address binds. That happens in either mode; only the
+    # gate is optimistic-only.
     _assert_schema(case)

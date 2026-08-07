@@ -4081,10 +4081,10 @@ _MILESTONE_EDGE_KEYS: Final[frozenset[str]] = frozenset({"observedTxStart", "obs
 def _refuse_unentitled_observed_edge(
     case: case_format.Case, when: Mapping[str, object], *, is_temporal: bool
 ) -> None:
-    """Refuse an observation coordinate the conflict target or attempt cannot
-    consume.
+    """Refuse an observation coordinate the conflict target, mode, or attempt
+    form cannot consume.
 
-    Two entitlements, both decided here because both are properties of the CASE
+    Four entitlements, all decided here because all are properties of the CASE
     rather than of any one attempt's arithmetic (`m-case-format`, *Naming the
     observed milestone*):
 
@@ -4096,8 +4096,16 @@ def _refuse_unentitled_observed_edge(
       edge selects among the milestones the case's own loaded fixtures hold. The
       two cannot be reconciled without a resolving read no lane performs, so the
       OBSERVATION form is single-attempt only and a retry names its address
-      directly. A temporal attempt's own ``observedTxStart`` is the address
-      form's gate candidate and stays legal.
+      directly;
+    * a retry sequence reads each attempt's own coordinates and never the root
+      ``when``'s, so a root coordinate beside ``attempts`` is consumed by nothing.
+      The two authoring locations are alternatives, not a default and an
+      override;
+    * ``observedTxStart`` standing ALONE is the address form's gate candidate,
+      and a ``locking`` close renders no gate, so it is entitled only under
+      ``optimistic``. Beside ``observedValidStart`` it is instead the edge's
+      Transaction-Time half, which selects the milestone in either mode. Locking
+      is the default, so an unstated mode is refused with an explicit one.
 
     The Transaction-Time-Only arm of the first entitlement lives where the edge
     is built (:func:`temporal_state.observed_edge`), which refuses a coordinate
@@ -4125,6 +4133,27 @@ def _refuse_unentitled_observed_edge(
                 "(`observedValidStart`), which selects among the case's own fixtures — a "
                 "retry re-reads what the concurrent writer left, so a retry attempt names "
                 "its address (`write.validEnd`) directly"
+            )
+    if raw_attempts is not None:
+        for key in sorted(_MILESTONE_EDGE_KEYS):
+            if key in when:
+                raise EngineError(
+                    f"{case.path.name}: the root `when` authors {key!r} beside `attempts` — "
+                    "a retry sequence reads each attempt's own coordinates, so a root one is "
+                    "consumed by no attempt"
+                )
+    if _concurrency(case) == "optimistic":
+        return
+    for pointer, source in [
+        ("`when`", when),
+        *((f"attempt {index}", attempt) for index, attempt in enumerate(attempts)),
+    ]:
+        if "observedTxStart" in source and "observedValidStart" not in source:
+            raise EngineError(
+                f"{case.path.name}: `locking` mode renders no gate, so a lone "
+                f"`observedTxStart` is consumed by nothing ({pointer}) — it is entitled "
+                "under `optimistic`, or beside `observedValidStart` as the observed "
+                "milestone's edge"
             )
 
 

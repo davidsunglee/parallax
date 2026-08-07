@@ -759,6 +759,16 @@ an implementation **MUST** refuse one rather than ignore it where it is not:
   behind, which no fixture edge names and no lane performs a resolving read to
   discover, so a retry attempt states its **address** directly and gates on its
   own `observedTxStart`.
+- A retry sequence's attempts each carry their own close, so a case authoring
+  `when.attempts` may author **neither** coordinate on the root `when`: every
+  attempt reads its own, and a root coordinate is consumed by no attempt. The two
+  authoring locations are alternatives, never a default and an override.
+- A **locking**-mode close renders no gate, so `observedTxStart` is entitled there
+  only as the **edge**'s Transaction-Time half — that is, with `observedValidStart`
+  beside it, where it selects the milestone whose Valid-Time end the address binds.
+  An address-form locking close, which names its `validEnd` directly, may not
+  author it: the close's every bind is then already spelled, and the coordinate
+  would gate nothing.
 
 Because an edge selects exactly one milestone, a case whose own state holds two
 current milestones of one key carrying the **same** edge is unaddressable, and an
@@ -782,6 +792,19 @@ already addresses that without a coordinate. No case has a write consume a
 MILESTONE one of its own read steps observed, so a rule about what a second read
 of one key does to the first read's evidence is outside what this format can
 express today.
+
+The same boundary puts the **gate**'s provenance outside it. The requirement that
+address and gate both derive from the one observed milestone is normative above,
+but no case can witness the gate half: an observed edge's Transaction-Time
+coordinate IS the milestone's Transaction-Time start, which is exactly what the
+optimistic gate binds, so in any case that names an edge the coordinate the case
+authored and the coordinate a derivation reads off the resolution are the same
+instant. An implementation that binds the gate straight from `observedTxStart`
+renders every conforming golden. Only a write consuming an observation one of the
+case's own reads produced could tell the two apart, which is the same missing
+vocabulary. An observation-form case therefore grades the **address**'s
+derivation, and a header that claims more than that is claiming what no
+degradation of a conforming implementation can falsify.
 
 ### Scenario cases (`m-unit-work`)
 

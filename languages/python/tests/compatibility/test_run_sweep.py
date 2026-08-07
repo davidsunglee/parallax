@@ -572,6 +572,12 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 # distinguishes an address that binds the observed rectangle's own `thru_z`    #
 # from one that would match both current rectangles of the key, and the        #
 # distinguishing observable is the affected-row count.                         #
+# `m-bitemp-write-021`/`-022` are the EDGE-NAMED pair over one key holding     #
+# two current rectangles: each derives its `thru_z` from the milestone its     #
+# edge selects, and only the pair rules out resolving by primary key and       #
+# always picking the same rectangle. Neither grades where the gate came from   #
+# — both rectangles share `in_z`, and that `in_z` is the authored edge's own   #
+# Transaction-Time half — which each header states as a bare negative.         #
 # `m-unit-work-013`/`-014` are the first UNVERSIONED keyed shortfalls: the     #
 # target of a keyed UPDATE and of a keyed DELETE is simply gone, and since     #
 # the model declares no version, no gate could have failed and no shared read  #
@@ -610,7 +616,7 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-bitemp-write-017",
         "m-bitemp-write-018",
         "m-bitemp-write-021",
-        "m-opt-lock-021",
+        "m-bitemp-write-022",
         "m-inheritance-105",
         "m-value-object-046",
     }

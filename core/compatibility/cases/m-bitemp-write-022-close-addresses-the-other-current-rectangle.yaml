@@ -1,0 +1,83 @@
+# The close addresses the OTHER of the two rectangles one primary key holds current —
+# the half of the edge-named pair that catches an implementation resolving by primary
+# key and always picking the same rectangle (m-bitemp-write "The close addresses a
+# Milestone Target").
+#
+# The sibling of m-bitemp-write-021: same fixtures, same close instant, same optimistic
+# mode, and the OTHER of Position id 1's two current rectangles. This case names R3 by
+# its own edge (`observedValidStart` 2024-06-01 with `observedTxStart` 2024-04-01)
+# where -021 names R2's (2024-01-01 with the same 2024-04-01), so the two goldens
+# differ by exactly one bind: `thru_z` infinity here, 2024-06-01 there.
+#
+# The PAIR is the semantic distinction, and neither half carries it alone. An
+# implementation that ignores the edge and resolves from the primary key still has to
+# choose one of the key's two current rectangles, and whichever it always chooses, one
+# of these two cases binds the other one's `thru_z`. Degradation, re-runnable: make
+# `TemporalShadow.resolve` drop the edge it is handed and return the candidate with the
+# EARLIEST edge — this case fails and m-bitemp-write-021 passes; returning the LATEST
+# inverts it exactly; and in each direction no other case in the 348-case run sweep
+# notices. That is why the pair exists rather than one case.
+#
+# What this case does NOT grade, so that no reader takes it for more:
+#
+# - NOT where the gate came from, despite the gate being the one bind these two cases
+#   agree on. The optimistic gate binds `in_z`, and the observed edge's own
+#   Transaction-Time half IS that milestone's `in_z`, so the coordinate the case authors
+#   and the coordinate a derivation reads off the resolved observation are the same
+#   instant by construction — here and in any case that can name an edge. Measured:
+#   binding the gate from the authored `when.observedTxStart` instead of from the
+#   resolved observation leaves all 348 run-sweep cases green. `m-case-format` requires
+#   that derivation; nothing in the corpus can witness it, and the format would have to
+#   gain a write that consumes its own read's evidence first.
+# - NOT how an implementation keys the observations its own reads record: the same limit
+#   m-bitemp-write-021 states. The observed milestone is named by the case and resolved
+#   once, from state the case supplies.
+#
+# The close inactivates exactly 1 row: `then.tableState` shows R3 closed at 2024-10-01
+# with R1 and R2 untouched. As in -021 a conflict case runs only that single close, not
+# the replacement INSERTs a full rectangle split would chain, so nothing re-opens the
+# Valid-Time window R3 covered.
+model: models/position.yaml
+tags: [m-bitemp-write, m-opt-lock, m-unit-work, m-sql, bitemporal, temporal, conflict, slice-snapshot-1, slice-managed-1]
+shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (shape:conflict)"
+when:
+  uow:
+    concurrency: optimistic
+  write: { id: 1 }
+  at: "2024-10-01T00:00:00+00:00"
+  observedTxStart: "2024-04-01T00:00:00+00:00"
+  observedValidStart: "2024-06-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+        mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+      binds: ["2024-10-01T00:00:00+00:00", 1, infinity, infinity, "2024-04-01T00:00:00+00:00"]
+  affectedRows: 1
+  tableState:
+    position:
+      - pos_id: 1
+        acct_num: A
+        val: 90.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-04-01T00:00:00+00:00"
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: infinity
+      - pos_id: 1
+        acct_num: A
+        val: 200.00
+        from_z: "2024-06-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: "2024-10-01T00:00:00+00:00"

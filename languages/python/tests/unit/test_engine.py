@@ -2810,13 +2810,19 @@ def _edge_named_close(document_when: dict[str, object]) -> case_format.Case:
     )
 
 
-def test_an_edge_named_close_derives_its_address_and_gate_from_the_named_milestone() -> None:
+def test_an_edge_named_close_derives_its_address_from_the_named_milestone() -> None:
     # Key 1 has TWO rectangles current on Transaction Time, sharing every
     # coordinate a close renders except `thru_z`. Naming the head's own edge
     # binds the head's `thru_z` (finite) and the tail's binds infinity, so the
     # discriminator is the observation rather than an authored address. A close
     # that resolved its observation by primary key alone has no way to render
     # both.
+    #
+    # The GATE is not under test and cannot be: the edge's Transaction-Time half
+    # IS the milestone's `in_z`, so both rectangles gate on the same instant and
+    # a gate copied straight from the authored coordinate renders the same bind.
+    # `temporal_state.observed_close_coordinates` is where that derivation is
+    # pinned, by construction rather than by observation.
     heads: list[list[object]] = []
     for valid_start in ("2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"):
         port = FakeWritePort()
@@ -2956,6 +2962,109 @@ def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
             "postgres",
             FakeWritePort(),
         )
+
+
+def test_a_retry_sequence_may_not_leave_an_observation_coordinate_on_the_root() -> None:
+    # The retry lane reads each attempt's own `at` / `observedTxStart` and never
+    # the root `when`'s, so a root coordinate beside `attempts` is consumed by no
+    # attempt and would sit in the document grading nothing. The two authoring
+    # locations are alternatives, not a default and an override.
+    with pytest.raises(engine.EngineError, match=re.escape("consumed by no attempt")):
+        engine.run_conflict_case(
+            _edge_named_close(
+                {
+                    "uow": {"concurrency": "optimistic"},
+                    "at": "2024-10-01T00:00:00+00:00",
+                    "observedTxStart": "2024-04-01T00:00:00+00:00",
+                    "attempts": [
+                        {
+                            "statements": [{"sql": {"postgres": "update position set out_z = ?"}}],
+                            "affectedRows": 1,
+                            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
+                            "at": "2024-10-01T00:00:00+00:00",
+                            "observedTxStart": "2024-04-01T00:00:00+00:00",
+                        }
+                    ],
+                }
+            ),
+            "postgres",
+            FakeWritePort(),
+        )
+
+
+def test_a_locking_close_may_not_author_a_lone_observed_gate() -> None:
+    # Locking mode renders no gate at all, so the address form's gate candidate
+    # reaches nothing: `plan_temporal_close` takes the coordinate and drops it,
+    # and the case would claim a gate its own golden cannot carry.
+    with pytest.raises(engine.EngineError, match=re.escape("renders no gate")):
+        engine.run_conflict_case(
+            _edge_named_close(
+                {
+                    "uow": {"concurrency": "locking"},
+                    "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
+                    "at": "2024-10-01T00:00:00+00:00",
+                    "observedTxStart": "2024-04-01T00:00:00+00:00",
+                }
+            ),
+            "postgres",
+            FakeWritePort(),
+        )
+
+
+def test_a_locking_retry_attempt_may_not_author_an_observed_gate() -> None:
+    # A retry attempt never names an edge, so its `observedTxStart` is always the
+    # gate candidate — checking only the root would let the same unentitled
+    # coordinate through per attempt.
+    with pytest.raises(engine.EngineError, match=re.escape("renders no gate")):
+        engine.run_conflict_case(
+            _edge_named_close(
+                {
+                    "uow": {"concurrency": "locking"},
+                    "at": "2024-10-01T00:00:00+00:00",
+                    "attempts": [
+                        {
+                            "statements": [{"sql": {"postgres": "update position set out_z = ?"}}],
+                            "affectedRows": 1,
+                            "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
+                            "at": "2024-10-01T00:00:00+00:00",
+                            "observedTxStart": "2024-04-01T00:00:00+00:00",
+                        }
+                    ],
+                }
+            ),
+            "postgres",
+            FakeWritePort(),
+        )
+
+
+def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
+    # Beside `observedValidStart` the Transaction-Time coordinate is the edge's
+    # own half, which SELECTS the milestone whose `thru_z` the address binds.
+    # That selection happens in either mode; only the gate is optimistic-only,
+    # so the locking golden carries the derived address and no `in_z` predicate.
+    emissions, affected, _table_state = engine.run_conflict_case(
+        _edge_named_close(
+            {
+                "uow": {"concurrency": "locking"},
+                "write": {"id": 1},
+                "at": "2024-10-01T00:00:00+00:00",
+                "observedTxStart": "2024-04-01T00:00:00+00:00",
+                "observedValidStart": "2024-01-01T00:00:00+00:00",
+            }
+        ),
+        "postgres",
+        FakeWritePort(),
+    )
+    assert affected == 1
+    assert emissions[0].sql == (
+        "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
+    )
+    assert list(emissions[0].binds) == [
+        "2024-10-01T00:00:00+00:00",
+        1,
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+    ]
 
 
 def test_a_close_naming_an_edge_no_current_milestone_carries_is_refused() -> None:

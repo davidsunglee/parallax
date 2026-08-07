@@ -4948,17 +4948,23 @@ def _conflict_set_binds(
 
 
 def _assert_observed_edge_entitlement(case: Case, entity: Entity | None) -> None:
-    """Refuse an observation coordinate the conflict target or attempt cannot consume.
+    """Refuse an observation coordinate the conflict target, mode, or attempt form
+    cannot consume.
 
-    Three entitlements, all properties of the CASE rather than of any attempt's
+    Five entitlements, all properties of the CASE rather than of any attempt's
     arithmetic (`m-case-format`, *Naming the observed milestone*): a NON-temporal
     target has no milestone at all, so it may author NEITHER coordinate, wherever
     it is spelled; a target declaring no Valid-Time axis has no
-    ``observedValidStart`` to supply, so the edge form is Bitemporal-only; and a
+    ``observedValidStart`` to supply, so the edge form is Bitemporal-only; a
     RETRY attempt re-reads what the concurrent writer left behind, while an edge
     selects among the milestones the case's own fixtures hold, so the observation
-    form is single-attempt only (a temporal attempt's own ``observedTxStart`` is
-    the address form's gate candidate and stays legal).
+    form is single-attempt only; a retry sequence reads each attempt's own
+    coordinates and never the root ``when``'s, so a root coordinate beside
+    ``attempts`` is consumed by nothing; and ``observedTxStart`` standing ALONE is
+    the address form's gate candidate, which a ``locking`` close never renders, so
+    it needs an explicit ``optimistic`` mode — beside ``observedValidStart`` it is
+    the edge's Transaction-Time half instead and selects the milestone in either
+    mode.
 
     Refusing here rather than at the point of use is what turns each into a named
     authoring diagnosis: the edge-named rectangle scan would otherwise look up an
@@ -4966,9 +4972,10 @@ def _assert_observed_edge_entitlement(case: Case, entity: Entity | None) -> None
     conflict's own execution path reads neither coordinate at all, so an
     unentitled one would sit in the document grading nothing.
     """
+    attempts = case.attempts
     sources = [
         ("write", case.when),
-        *((f"attempts[{i}]", a) for i, a in enumerate(case.attempts or [])),
+        *((f"attempts[{i}]", a) for i, a in enumerate(attempts)),
     ]
     observing = [
         pointer
@@ -4983,6 +4990,27 @@ def _assert_observed_edge_entitlement(case: Case, entity: Entity | None) -> None
             f"so it may author neither of {sorted(_MILESTONE_COORDINATE_KEYS)} "
             f"({', '.join(observing)})."
         )
+    if attempts:
+        stranded = sorted(key for key in _MILESTONE_COORDINATE_KEYS if key in case.when)
+        if stranded:
+            raise CaseFailure(
+                f"{case.path.name}: the root `when` authors {stranded} beside `attempts` — a "
+                f"retry sequence reads each attempt's own coordinates, so a root one is "
+                f"consumed by no attempt."
+            )
+    if case.concurrency_mode != "optimistic":
+        ungated = [
+            pointer
+            for pointer, source in sources
+            if "observedTxStart" in source and "observedValidStart" not in source
+        ]
+        if ungated:
+            raise CaseFailure(
+                f"{case.path.name}: `locking` mode renders no gate, so a lone "
+                f"`observedTxStart` is consumed by nothing ({', '.join(ungated)}) — it is "
+                f"entitled under `optimistic`, or beside `observedValidStart` as the observed "
+                f"milestone's edge."
+            )
     named = [pointer for pointer, source in sources if "observedValidStart" in source]
     if not named:
         return
