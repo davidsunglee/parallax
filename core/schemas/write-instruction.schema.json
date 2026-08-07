@@ -17,7 +17,7 @@
         "mutation": { "$ref": "#/$defs/keyedMutation" },
         "entity": { "$ref": "#/$defs/entityName" },
         "rows": {
-          "description": "The neutral write input: one or more flat attribute-named rows the mutation operates on (`$defs/writeRow`). A generating implementation classifies each field by metamodel role and derives the emitted column list and ORDER by filtering the target's Entity Layout slots.",
+          "description": "The neutral write input: one or more flat attribute-named rows the mutation operates on (`$defs/writeRow`). A generating implementation classifies each field by metamodel role and derives the emitted column list and ORDER by filtering the target's Entity Layout slots. A keyed instruction on a TEMPORAL target (one declaring an As-Of Axis) carries EXACTLY ONE row (`m-unit-work` \"A temporal keyed instruction carries exactly one row\"): each row closes its own milestone, consumes its own Temporal Observation, and chains its own successors, and a temporal entity never collapses into a set-based statement (`m-batch-write`), so several rows are several chains that must be authored as several instructions. That bound is MODEL-dependent — whether the target is temporal is not visible here — so this array states the general one-or-more shape and the temporal singleton is enforced against the metamodel.",
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/writeRow" }
