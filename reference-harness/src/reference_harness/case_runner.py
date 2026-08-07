@@ -3038,6 +3038,18 @@ _OPENING_MUTATIONS = ("insert", "insertUntil")
 # for the window itself.
 _TERMINATE_MUTATIONS = ("terminate", "terminateUntil")
 
+# The ONE reserved observation control key a case write row may spell
+# (`compatibility-case.schema.json` `$defs/writeRow`). Which (target, mutation)
+# pair is entitled to spell it is :func:`_observation_refusal`'s answer — one
+# shared `writeRow` definition spans every authoring location, so the schema
+# cannot express it.
+_VERSION_OBSERVATION_KEY = "observedVersion"
+
+# The milestone close a temporal conflict case writes. Not a `writeSequence`
+# verb: a conflict close is shaped by `when.mutation`-less close authoring, and
+# this names it for the entitlement diagnosis alone.
+_CLOSE_MUTATION = "close"
+
 
 def _is_bitemporal(entity: Entity) -> bool:
     """Whether an entity carries BOTH as-of axes (Valid Time + Transaction Time) — the
@@ -3130,13 +3142,64 @@ def _is_self_increment(statement: str, column: str) -> bool:
     return re.search(pattern, statement, re.IGNORECASE) is not None
 
 
+def _observation_refusal(entity: Entity, mutation: str) -> str | None:
+    """Why a write row against *entity* under *mutation* may not spell the reserved
+    ``observedVersion`` control key — ``None`` when that pair is the ONE the case
+    vocabulary entitles to spell it.
+
+    This is the whole licensing rule `m-unit-work`'s "Absence is structural"
+    states, restated by the case schema's own ``observedVersion`` prose ("absent
+    on a versioned insert and on a non-versioned write"), and it is TOTAL over
+    every (target, mutation) pair a case can author. A VERSIONED, NON-TEMPORAL
+    update or delete may spell the key; nothing else may:
+
+    - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
+      flat row cell can name, and a close's Transaction-Time gate is authored
+      beside the write (``when.observedTxStart`` or the attempt's own field,
+      `m-case-format`) rather than inside the row;
+    - an INSERT opens a row rather than writing against one, so an observed
+      version names a milestone that does not yet exist;
+    - an UNVERSIONED non-temporal target has no version to observe, so an
+      observed version on it is evidence about nothing.
+
+    Deciding it HERE, at the one seam every ① row is classified through, is what
+    keeps the neutral grader's table the same table the conformance engine
+    enforces: a consumer that merely ignores the value it was handed accepts a
+    case the engine refuses, and the two implementations then disagree about
+    which cases the corpus even admits.
+    """
+    if entity.is_temporal:
+        return (
+            f"a temporal row spells no {_VERSION_OBSERVATION_KEY!r} (m-unit-work: a temporal "
+            f"write observes a whole predecessor milestone, which no flat row cell can name, "
+            f"and a close's observed `in_z` gate rides beside the write)"
+        )
+    if mutation in _OPENING_MUTATIONS:
+        return (
+            f"an insert row spells no {_VERSION_OBSERVATION_KEY!r} (m-unit-work: inserts have "
+            f"no observation — an observed version names the milestone a write against an "
+            f"EXISTING row observed)"
+        )
+    if _version_column(entity) is None:
+        return (
+            f"an unversioned row spells no {_VERSION_OBSERVATION_KEY!r} (m-unit-work: "
+            f"unversioned Non-Temporal writes have no observation — there is no observed "
+            f"version for it to name)"
+        )
+    return None
+
+
 def _classify_write_row(
-    case: Case, entity: Entity, row: dict[str, Any], *, opening: bool
+    case: Case, entity: Entity, row: dict[str, Any], *, mutation: str, opening: bool
 ) -> tuple[dict[str, Any], Any, dict[str, Any], Any]:
     """Classify a flat attribute-named ① row against *entity*'s metamodel.
 
     Mirrors the fixture loader's attribute→column resolution. Every key is either
-    the reserved control key ``observedVersion``, an ENTITY ATTRIBUTE name, or a
+    the reserved control key ``observedVersion`` — admitted only where
+    :func:`_observation_refusal` entitles this (*entity*, *mutation*) pair to
+    spell it, so an unobservable row is refused HERE rather than accepted and
+    discarded by whichever consumer has no use for it — an ENTITY ATTRIBUTE name,
+    or a
     top-level VALUE-OBJECT name (a bad key raises :class:`CaseFailure`, so the
     neutral input can't silently name a non-member); the primary-key attribute's
     value is split into the pk, every other attribute AND every value object into
@@ -3175,7 +3238,10 @@ def _classify_write_row(
     pk_value: Any = None
     observed_version: Any = None
     for key, value in row.items():
-        if key == "observedVersion":
+        if key == _VERSION_OBSERVATION_KEY:
+            refusal = _observation_refusal(entity, mutation)
+            if refusal is not None:
+                raise CaseFailure(f"{case.path.name}: {entity.name} {mutation!r}: {refusal}")
             observed_version = value
             continue
         try:
@@ -3811,17 +3877,22 @@ def _assert_write_input_columns(case: Case, dialect: str) -> None:
         # row even under `update` / `terminate`.
         classified = [
             _classify_write_row(
-                case, entity, row, opening=mutation in _OPENING_MUTATIONS or entity.is_temporal
+                case,
+                entity,
+                row,
+                mutation=mutation,
+                opening=mutation in _OPENING_MUTATIONS or entity.is_temporal,
             )
             for row in rows
         ]
-        # A temporal step's ① is ONE row: each row closes its own milestone and
-        # chains its own successors, and a temporal entity never collapses into a
-        # set-based statement (`m-txtime-write` / `m-bitemp-write`;
-        # `m-batch-write`), so several rows are several chains the case must
-        # author as several steps. The shared `rows` array admits a plural
-        # authoring the temporal cross-checks below read the first row of, so a
-        # later row would be graded against nothing.
+        # `m-unit-work`'s temporal singleton, restated for the writeSequence
+        # lane (`m-case-format`): each row closes its own milestone, consumes its
+        # own observation, and chains its own successors, so several rows are
+        # several chains the case must author as several steps. The shared `rows`
+        # array states the general one-or-more bound because the singleton is
+        # model-dependent, and the temporal cross-checks below read the first row
+        # alone — so a plural authoring would leave a later row graded against
+        # nothing.
         if entity.is_temporal and len(rows) != 1:
             raise CaseFailure(
                 f"{case.path.name}: a temporal writeSequence step's neutral write input (①) "
@@ -4132,11 +4203,39 @@ def _assert_update_input(
             expected = expected_values(set_cols, patches)
             _assert_write_values(case, expected, binds[: len(expected)], statement)
         return
+    _assert_uniform_assignments(case, entity, classified, assignments)
     first_set = classified[0][2] if classified else {}
     expected = expected_values(first_set, assignments[0] if assignments else ())
     binds = step_binds[0] if step_binds else []
     statement = step_statements[0] if step_statements else ""
     _assert_write_values(case, expected, binds[: len(expected)], statement)
+
+
+def _assert_uniform_assignments(
+    case: Case,
+    entity: Entity,
+    classified: list[tuple[dict[str, Any], Any, dict[str, Any], Any]],
+    assignments: list[tuple[_DocumentAssignment, ...]],
+) -> None:
+    """Every row of a COLLAPSED update assigns the identical non-key values.
+
+    One statement addressing several keys carries ONE assignment shape, so
+    `m-batch-write` collapses a run only when the values are uniform across the
+    keys and keeps incompatible writes in separate steps. That is what licenses
+    the first row to stand for the step: without it, a later row's changed value
+    would ride a golden derived from the first and the case would pass on a
+    statement that never writes it.
+    """
+    for position, (_columns, pk, set_cols, _observed) in enumerate(classified[1:], start=1):
+        patches = assignments[position] if assignments else ()
+        if set_cols == classified[0][2] and patches == (assignments[0] if assignments else ()):
+            continue
+        raise CaseFailure(
+            f"{case.path.name}: a collapsed {entity.name} UPDATE is ONE statement over several "
+            f"keys, so every ① row assigns the identical non-key values (m-batch-write) — row "
+            f"{position} (pk {pk!r}) assigns {sorted(set_cols.items())!r} against row 0's "
+            f"{sorted(classified[0][2].items())!r}; incompatible values stay separate steps."
+        )
 
 
 def _assert_delete_input(
@@ -4534,7 +4633,8 @@ def _current_rectangles(
         if prior["entity"] != current_step["entity"]:
             continue
         prior_keys = [
-            _classify_write_row(case, entity, row, opening=True)[1] for row in prior.get("rows", [])
+            _classify_write_row(case, entity, row, mutation=prior["mutation"], opening=True)[1]
+            for row in prior.get("rows", [])
         ]
         if not any(_write_value_equal(prior_pk, pk) for prior_pk in prior_keys):
             continue
@@ -4706,7 +4806,9 @@ def _assert_versioned_conflict_input(
             f"statement, but {len(statements)} were listed."
         )
     statement = statements[0]
-    _, pk, set_cols, observed = _classify_write_row(case, entity, write, opening=False)
+    _, pk, set_cols, observed = _classify_write_row(
+        case, entity, write, mutation=mutation, opening=False
+    )
     if observed is None:
         raise CaseFailure(
             f"{case.path.name}: a versioned conflict's neutral write input ({pointer}) MUST "
@@ -4864,7 +4966,9 @@ def _assert_temporal_conflict_close(
     valid_time = next(
         (a for a in entity.temporal_runtime_axes if a["dimension"] == "valid-time"), None
     )
-    _, pk, set_cols, _ = _classify_write_row(case, entity, write, opening=False)
+    _, pk, set_cols, _ = _classify_write_row(
+        case, entity, write, mutation=_CLOSE_MUTATION, opening=False
+    )
     addressed: set[str] = set() if valid_time is None else {valid_time["end_column"]}
     if set(set_cols) != addressed:
         raise CaseFailure(

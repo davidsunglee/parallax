@@ -24,6 +24,7 @@ from reference_harness.case_runner import (
     _assert_scenario_count_consistency,
     _assert_write_input_columns,
     _assert_write_step_count,
+    _classify_write_row,
     _increment_marker,
     _is_computed_marker,
     _parse_insert_columns,
@@ -256,6 +257,56 @@ def test_plural_temporal_step_is_rejected() -> None:
     step = case.write_sequence[0]
     step["rows"].append({"id": 2, "acctNum": "B", "value": 999.00})
     with pytest.raises(CaseFailure, match="carries ONE row"):
+        _assert_write_input_columns(case, "postgres")
+
+
+@pytest.mark.parametrize(
+    ("case_id", "entity_name", "mutation", "expected"),
+    [
+        ("m-batch-write-001", "Wallet", "update", "unversioned row"),
+        ("m-opt-lock-002", "Account", "insert", "insert row"),
+        ("m-txtime-write-001", "Balance", "update", "temporal row"),
+    ],
+)
+def test_an_unentitled_write_row_observation_is_refused(
+    case_id: str, entity_name: str, mutation: str, expected: str
+) -> None:
+    # `m-unit-work`'s "Absence is structural" is a licensing rule over the whole
+    # (target, mutation) space, not a fact one consumer may ignore: an insert, an
+    # unversioned target, and a temporal target each have no observed version for a
+    # row cell to name. Classification is the one seam every ① row passes, so an
+    # unobservable row is refused there — a consumer that merely discards the value
+    # it was handed would accept a case the conformance engine refuses, and the two
+    # implementations would then disagree on which cases the corpus admits.
+    case = _write_case_by_id(case_id)
+    entity = case.model.entity(entity_name)
+    row = {"id": 1, "observedVersion": 3}
+    with pytest.raises(CaseFailure, match=expected):
+        _classify_write_row(case, entity, row, mutation=mutation, opening=False)
+
+
+def test_a_versioned_update_row_observation_is_entitled() -> None:
+    # The one entitled pair: a versioned, non-temporal update against an existing
+    # row requires the prior observation in either concurrency mode, so its
+    # `observedVersion` is classified rather than refused.
+    case = _write_case_by_id("m-opt-lock-002")
+    entity = case.model.entity("Account")
+    *_, observed = _classify_write_row(
+        case, entity, {"id": 1, "observedVersion": 3}, mutation="update", opening=False
+    )
+    assert observed == 3
+
+
+def test_a_collapsed_update_requires_uniform_assigned_values() -> None:
+    # m-batch-write-001's update entry: ONE statement over two keys. A shared step
+    # carries ONE assignment shape, so `m-batch-write` collapses only a uniform run
+    # and keeps incompatible values in separate steps. Grading the first row alone
+    # would let a later row's changed value ride the first row's golden — the case
+    # would pass on a statement that never writes it.
+    case = copy.deepcopy(_write_case_by_id("m-batch-write-001"))
+    _assert_write_input_columns(case, "postgres")
+    case.write_sequence[1]["rows"][1]["balance"] = 999.00
+    with pytest.raises(CaseFailure, match="identical non-key values"):
         _assert_write_input_columns(case, "postgres")
 
 
