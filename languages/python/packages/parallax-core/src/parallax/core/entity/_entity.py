@@ -409,7 +409,10 @@ def _partition_declared(
     declares a ``functools.cached_property`` (:func:`_is_derived_cache`) holds an
     answer computed from declared state an edit may replace, so it is left out
     and recomputed on next access rather than carried into a copy whose own
-    declared state contradicts it.
+    declared state contradicts it. That reads a declaration, so it reaches only
+    names a declaration may author: the framework's own ``__parallax_`` prefix is
+    reserved from every class body, which is what keeps a lifecycle's state and a
+    Change Record outside anything a class can declare derived.
 
     Both branches of :meth:`Entity.edit` partition here, so neither can hold its
     own opinion of the boundary.

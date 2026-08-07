@@ -15,6 +15,7 @@ accepted declaration must compile to the same facts.
 from __future__ import annotations
 
 from decimal import Decimal
+from functools import cached_property
 from typing import ClassVar, Optional
 
 from parallax.core import MANY_TO_ONE, Attr, Entity, Rel, ValueObject, attr, index, rel
@@ -297,6 +298,23 @@ def define_shadowed_model_namespace_binding() -> type:
 
         def model_copy(self, *, update: object = None, deep: bool = False) -> "Bad":
             return self
+
+    return Bad
+
+
+def define_framework_slot_binding() -> type:
+    """A class-body binding taking a private instance slot the framework owns.
+
+    Spelled as the ``cached_property`` that makes the collision destructive rather
+    than merely shadowing: the edit surface reads a derived cache off the class.
+    """
+
+    class Bad(Entity, table="bad"):
+        id: Attr[int] = attr(primary_key=True)
+
+        @cached_property
+        def __parallax_lifecycle__(self) -> str:
+            return "shadow"
 
     return Bad
 

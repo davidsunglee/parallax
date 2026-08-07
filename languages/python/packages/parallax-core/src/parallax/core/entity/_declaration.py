@@ -102,6 +102,7 @@ from parallax.core.metamodel._temporal_structure import TEMPORAL_MEMBERS
 __all__ = [
     "DECLARATION_MEMBER_NAMES",
     "FRAMEWORK_MINT",
+    "FRAMEWORK_NAME_PREFIX",
     "LIFECYCLE_STATE_SLOT",
     "RESERVED_MEMBER_NAMES",
     "STANDARD_TEMPORAL_NAMES",
@@ -137,6 +138,19 @@ rather than against a determined caller: anyone willing to import a private
 module can obtain it, and the result is an inert class that declares nothing and
 is never a Domain Model candidate.
 """
+
+FRAMEWORK_NAME_PREFIX: Final = "__parallax_"
+"""The prefix every name the framework binds on a class or an instance carries,
+and which no class body may author.
+
+Reserving the prefix rather than enumerating the names keeps the reservation
+correct as markers and slots are added. What it protects is that the framework's
+own state cannot be shadowed by a declaration: a class-body binding under one of
+these names answers every ordinary read the framework's own value would answer,
+and a ``functools.cached_property`` spelled under one is worse than a shadow —
+the edit surface reads a derived cache off the class, so such a binding would
+have an edited copy recompute the author's answer in place of the state it
+carried."""
 
 _KIND: Final = "__parallax_kind__"
 _AXES: Final = "__parallax_framework_axes__"
@@ -1346,10 +1360,10 @@ def _member_spec(value: object, where: str, *, expect: str) -> AttrSpec | RelSpe
 
 
 def _reject_reserved(where: str, py_name: str) -> None:
-    if _is_reserved_member_name(py_name):
+    reason = _reserved_name_reason(py_name)
+    if reason is not None:
         raise EntityDefinitionError(
-            code="entity-reserved-member-name",
-            message=f"{where}: reuses a reserved query-root or introspection name",
+            code="entity-reserved-member-name", message=f"{where}: {reason}"
         )
 
 
@@ -1365,18 +1379,33 @@ def _reject_shadowed_class_names(cls_name: str, ns: dict[str, object]) -> None:
     there: an unannotated ``def model_copy`` is a binding rather than a declared
     member, and admitting it would reinstate a copy door the edit surface
     refuses. This runs against the body as authored, before the engine installs
-    its own configuration under one of those names.
+    its own configuration under one of those names — which is also what lets the
+    framework's own prefix be reserved against the body while the engine keeps
+    binding markers under it.
     """
-    taken = sorted(name for name in ns if _is_reserved_member_name(name))
-    if taken:
-        raise EntityDefinitionError(
-            code="entity-reserved-member-name",
-            message=f"{cls_name}.{taken[0]}: reuses a reserved query-root or introspection name",
+    for name in sorted(ns):
+        reason = _reserved_name_reason(name)
+        if reason is not None:
+            raise EntityDefinitionError(
+                code="entity-reserved-member-name", message=f"{cls_name}.{name}: {reason}"
+            )
+
+
+def _reserved_name_reason(py_name: str) -> str | None:
+    """Why a class body may not author ``py_name``, or ``None`` when it may.
+
+    The framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`) is answered first
+    and separately, because what a binding under it takes is not a member surface
+    but the framework's own class markers and instance slots.
+    """
+    if py_name.startswith(FRAMEWORK_NAME_PREFIX):
+        return (
+            f"the `{FRAMEWORK_NAME_PREFIX}` prefix names the framework's own class markers and "
+            "instance slots, which a declaration may not bind"
         )
-
-
-def _is_reserved_member_name(py_name: str) -> bool:
-    return py_name in RESERVED_MEMBER_NAMES or py_name.startswith("model_")
+    if py_name in RESERVED_MEMBER_NAMES or py_name.startswith("model_"):
+        return "reuses a reserved query-root or introspection name"
+    return None
 
 
 def _reject_temporal_redeclaration(
