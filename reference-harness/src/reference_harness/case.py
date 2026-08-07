@@ -725,6 +725,13 @@ class Case:
         ``None`` when the case authors no ``when.write``, and also for the
         multi-key array form, which no single-row reader can answer for — those
         read :attr:`write_rows` instead.
+
+        A CONFLICT-lane accessor only. It normalizes the two authored conflict
+        forms and so cannot say which of the three `rejected` write forms a
+        document is: a one-element array would answer with its row and a longer
+        one with ``None``, in both directions naming an input the rejected lane
+        does not define. That lane reads ``when.write`` itself and refuses
+        anything but an object.
         """
         rows = self.write_rows
         return rows[0] if len(rows) == 1 else None

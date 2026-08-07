@@ -1074,18 +1074,6 @@ def _is_temporal_entity(meta: Metamodel, entity_name: str) -> bool:
     return declaring_entity(meta, meta.entity(entity_name)).is_temporal
 
 
-def _declares_valid_time_axis(meta: Metamodel, entity_name: str) -> bool:
-    """Whether ``entity_name``'s family declares a VALID-TIME As-Of Axis.
-
-    The axis that decides whether one primary key can hold several CURRENT
-    milestones, and so whether naming the find a write settles against buys
-    anything: without it, identity already addresses a key's evidence
-    (`m-case-format` *Settling against a grouped find*).
-    """
-    declaring = declaring_entity(meta, meta.entity(entity_name))
-    return any(axis.dimension == "valid-time" for axis in declaring.as_of_axes)
-
-
 _TEMPORAL_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 
 
@@ -1723,9 +1711,9 @@ def _build_instructions(
     step(s) (:func:`_observe_group_find`, via :func:`_run_uow_group`) — under the
     coordinate-free :class:`~parallax.core.unit_work.ObservationKey` a versioned
     row's own evidence is filed by, since one row per primary key needs no
-    milestone to address it. That is why such a write names no source find: only a
-    Valid-Time axis puts several current milestones under one key, so ``source``
-    is refused above for every other target and reaches the temporal branch alone.
+    milestone to address it. That is why such a write names no source find:
+    identity already addresses its evidence, so ``source`` is refused above for a
+    NON-temporal target and reaches the temporal branch alone.
 
     An entry's authored ``statements`` count is graded later, once
     :func:`_lower_resolved` has actually planned and lowered the buffer these
@@ -1746,14 +1734,12 @@ def _build_instructions(
             "entry vocabulary is keyed-only)"
         )
     entity_name = cast("str", entry["entity"])
-    if source is not None and not _declares_valid_time_axis(meta, entity_name):
+    if source is not None and not _is_temporal_entity(meta, entity_name):
         raise EngineError(
-            f"{entity_name!r}: a write step naming the find it settles against targets an "
-            "entity declaring a VALID-TIME axis — a versioned Non-Temporal target has one row "
-            "per primary key and a Transaction-Time-Only target one milestone current at any "
-            "instant, so both already reach their group's evidence by identity and the "
-            "reference names nothing the resolution does not have (m-case-format 'Settling "
-            "against a grouped find')"
+            f"{entity_name!r}: a write step naming the find it settles against targets a "
+            "TEMPORAL entity — a versioned Non-Temporal target has one row per primary key, so "
+            "identity already reaches its group's evidence and the reference names nothing the "
+            "resolution does not have (m-case-format 'Settling against a grouped find')"
         )
     if _is_temporal_entity(meta, entity_name):
         return [
@@ -4647,7 +4633,10 @@ def run_rejected_case(case: case_format.Case) -> str:
     Membership can decide the form only because `target` and `rows` are RESERVED
     from a bare row at this position (`compatibility-case.schema.json`
     `$defs/bareWriteRow`): neither is a domain member name here, so no row can be
-    re-read as an instruction and no instruction as a row.
+    re-read as an instruction and no instruction as a row. It can decide it only
+    for an OBJECT at all, so the multi-key ARRAY the shared `when.write`
+    vocabulary carries for the conflict lane is refused here by shape, before any
+    member is asked for.
 
     Raises :class:`EngineError` if the input is unexpectedly accepted (no rule
     violation detected) — the caller compares the returned rule against the
@@ -4697,7 +4686,16 @@ def run_rejected_case(case: case_format.Case) -> str:
             f"{case.path.name}: the model-aware validator accepted an inline model the case "
             "expects rejected pre-SQL"
         )
-    row = cast("Mapping[str, object]", when["write"])
+    raw_write = when["write"]
+    if not isinstance(raw_write, Mapping):
+        raise EngineError(
+            f"{case.path.name}: a rejected `when.write` is a predicate-selected instruction, a "
+            f"keyed instruction, or a bare neutral write row — all objects, and the members "
+            f"decide which. {type(raw_write).__name__} is the conflict lane's multi-key form, "
+            f"which asserts an aggregate affected-row count no rejected case emits SQL to "
+            f"produce (m-case-format Rejected cases)"
+        )
+    row = cast("Mapping[str, object]", raw_write)
     model = case_model(meta)
     if "target" in row:
         try:

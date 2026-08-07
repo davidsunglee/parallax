@@ -2922,7 +2922,8 @@ def _assert_rejected(case: Case) -> None:
     discriminators are RESERVED from a bare row at this position
     (`compatibility-case.schema.json` ``$defs/bareWriteRow``), so a domain member
     can never be mistaken for one and this dispatch cannot re-read a row as an
-    instruction. Inline
+    instruction. Membership can decide the form only for an OBJECT, so
+    :func:`_rejected_write_input` refuses anything else before dispatch. Inline
     models run the foundational
     ``validate_index_identities`` before the semantic rule sets — Inheritance's
     ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
@@ -2942,7 +2943,7 @@ def _assert_rejected(case: Case) -> None:
             # the value-object validation without disturbing the existing cases.
             validate_operation_inheritance(case.model.entity_defs, case.when["operation"])
         elif "write" in case.when:
-            write = case.write or {}
+            write = _rejected_write_input(case)
             if "target" in write:
                 _validate_rejected_predicate_write(case, write)
                 raise CaseFailure(
@@ -2957,7 +2958,7 @@ def _assert_rejected(case: Case) -> None:
             # Concrete-subtype write validation is a no-op on a non-inheritance
             # model, so it runs after
             # the value-object write validation without disturbing the existing cases.
-            validate_subtype_write(entity, case.model.entity_defs, case.write or {})
+            validate_subtype_write(entity, case.model.entity_defs, write)
         elif "model" in case.when:
             inline_model = derive_temporal_structure(case.when["model"])
             inline_entities = inline_model.get("entities")
@@ -2982,6 +2983,30 @@ def _assert_rejected(case: Case) -> None:
         f"{case.path.name}: expected a pre-SQL rejection ({expected!r}) but model-aware "
         f"validation ACCEPTED the input."
     )
+
+
+def _rejected_write_input(case: Case) -> dict[str, Any]:
+    """The ONE ``when.write`` document a rejected case puts under test.
+
+    Each of the three rejected write forms is an object whose members name it, so
+    a document that is not one reaches :func:`_assert_rejected`'s dispatch with
+    nothing to dispatch ON. The multi-key ARRAY the shared ``when.write``
+    vocabulary also admits is the conflict lane's form alone
+    (`compatibility-case.schema.json`): it states a collapsed statement's
+    aggregate affected-row count, which a pre-SQL rejection asserts nothing about.
+    Refused here rather than read through :attr:`Case.write`, whose single-row
+    conflict accessor answers a one-element array with its row and a longer one
+    with nothing — either way grading a document no rejected lane defines.
+    """
+    write = case.when.get("write")
+    if not isinstance(write, dict):
+        raise CaseFailure(
+            f"{case.path.name}: a rejected `when.write` is a predicate-selected instruction, a "
+            f"keyed instruction, or a bare neutral write row — all objects, and the members "
+            f"decide which. {type(write).__name__} is the conflict lane's multi-key form, which "
+            f"asserts an aggregate affected-row count no rejected case emits SQL to produce."
+        )
+    return write
 
 
 def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
@@ -5440,11 +5465,9 @@ def _assert_scenario_source_finds(case: Case) -> None:
 
     The reference is legal only where every part of it is meaningful: on a `uow`-
     grouped step whose ``write`` is the BUFFERED KEYED form, naming ONE earlier
-    step of the SAME group that is a find, against a target declaring BOTH As-Of
-    Axes. A versioned Non-Temporal target has one row per primary key, and a
-    Transaction-Time-Only target one milestone current at any instant, so both
-    already reach their group's evidence by identity; only a Valid-Time axis puts
-    several current milestones under one key.
+    step of the SAME group that is a find, against a TEMPORAL target. A versioned
+    Non-Temporal target has one row per primary key, so identity already reaches
+    its group's evidence; a milestone chain does not, on either temporal profile.
 
     Structural and dialect-free, so it holds on every run rather than only where
     the case carries a golden for the dialect under test — the same reason the
@@ -5486,14 +5509,11 @@ def _assert_scenario_source_finds(case: Case) -> None:
             )
         for entry in _scenario_write_entries(step):
             entity = case.model.entity(entry["entity"])
-            dimensions = {axis.dimension for axis in temporal_axes(entity.runtime_facts)}
-            if "valid-time" not in dimensions:
+            if not temporal_axes(entity.runtime_facts):
                 raise CaseFailure(
                     f"{case.path.name}: scenario[{index}] settles {entity.name} against a find, "
-                    f"but {entity.name} declares no Valid-Time axis — a versioned Non-Temporal "
-                    f"target has one row per primary key and a Transaction-Time-Only target one "
-                    f"milestone current at any instant, so both already reach their group's "
-                    f"evidence by identity."
+                    f"but {entity.name} is NOT temporal — a versioned Non-Temporal target has "
+                    f"one row per primary key, so identity already reaches its group's evidence."
                 )
 
 
@@ -5570,20 +5590,17 @@ def _settled_milestone(
     Read off that find step's own ``expectRows`` — the rows the case declares that
     read returned — so this derivation consults the case's READ result rather than
     the tracked current state every other write shape resolves from. That is the
-    whole point of the reference: a key with several current rectangles has no one
-    "current" milestone, and only the read that returned one names it.
+    whole point of the reference: a milestone chain holds several rows per key, so
+    tracked state answers for at most one of them and only the read that returned
+    a milestone names it.
 
-    Whether the target may be settled against at all is decided once, structurally,
-    by :func:`_assert_scenario_source_finds`; the Valid-Time axis is this
-    derivation's own precondition rather than a second ruling on legality.
+    A Transaction-Time-Only target has no Valid-Time half to read, and its close
+    addresses the key plus the invariant open Transaction-Time bound, so there the
+    milestone the find observed reaches the golden through the optimistic gate
+    alone.
     """
     axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
     valid_axis, tx_axis = axes.get("valid-time"), axes["transaction-time"]
-    if valid_axis is None:  # pragma: no cover - _assert_scenario_source_finds refuses it first
-        raise CaseFailure(
-            f"{case.path.name}: scenario[{index}] settles {entity.name} against a find but it "
-            f"declares no Valid-Time axis, so the observed rectangle has no address."
-        )
     key_column = _pk_column(entity)
     observed_rows: list[dict[str, Any]] = origin.get("expectRows") or []
     matched = [row for row in observed_rows if _write_value_equal(row.get(key_column), pk)]
@@ -5595,8 +5612,8 @@ def _settled_milestone(
         )
     row = matched[0]
     return _Rectangle(
-        row.get(valid_axis.start.column),
-        row.get(valid_axis.end.column),
+        row.get(valid_axis.start.column) if valid_axis is not None else None,
+        row.get(valid_axis.end.column) if valid_axis is not None else None,
         row.get(tx_axis.start.column),
     )
 
