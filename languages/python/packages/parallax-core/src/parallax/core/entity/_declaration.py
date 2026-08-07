@@ -163,10 +163,12 @@ value would answer, and a ``functools.cached_property`` spelled under one is
 worse than a shadow — the edit surface reads a derived cache off the class, so
 such a binding would have an edited copy recompute the author's answer in place
 of the state it carried. The rule reads the class body as authored, which makes
-it an authoring rule and not a barrier: a name put on the class object after its
-namespace is scanned — by a descriptor's ``__set_name__``, or by a plain
-assignment once the class exists — is outside this rule, as it is outside
-anything class creation could check."""
+it an authoring rule and not a barrier: a name a descriptor's ``__set_name__``
+installs is outside the pre-creation namespace scan this rule performs, and a
+name assigned once the class exists is outside class-creation checks altogether.
+Auditing the constructed class would catch the descriptor and still not prevent
+the later assignment, which is why the rule stays where the collision is
+written."""
 
 _KIND: Final = "__parallax_kind__"
 _AXES: Final = "__parallax_framework_axes__"

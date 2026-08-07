@@ -1203,12 +1203,14 @@ a declared member, and admitting it would reinstate a copy door §3 refuses.
 
 Every family is checked against the class body as authored, which makes the
 reservation an authoring rule rather than a barrier. A name that reaches the
-class object some other way is outside it — one a class-body descriptor's
-`__set_name__` installs while the class is being created, or one assigned onto
-the class once it exists — and outside anything class creation could check, since
-a plain assignment reaches the same binding whatever the class body was permitted
-to say. What the reservation owes an author is a rejection where the collision is
-written.
+class object some other way is outside it: one a class-body descriptor's
+`__set_name__` installs falls outside the pre-creation namespace scan, and one
+assigned onto the class once it exists falls outside class-creation checks
+altogether. That difference does not change the rule. Auditing the constructed
+class would catch the descriptor, but a plain assignment still reaches the same
+binding whatever the class body was permitted to say, so the audit would widen
+the check without turning it into a barrier. What the reservation owes an author
+is a rejection where the collision is written.
 
 #### Relationships — `Rel[T]` and `rel(...)`
 
