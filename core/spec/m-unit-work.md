@@ -128,8 +128,11 @@ structural rules keep the instruction framework-honest:
   as instruction state — the structural guarantee that versions stay framework-owned
   (ADR 0013). They are flush-time context on the case format's materialization row.
 - **A temporal keyed instruction carries exactly one row.** A keyed instruction on a
-  target declaring an As-Of Axis **MUST** carry a single row. Each row of a milestone
-  chain closes its own current milestone, consumes its own Temporal Observation, and
+  **temporal** target — one whose inheritance family derives an As-Of Axis, which for a
+  descendant is the root's declaration it inherits unchanged (`m-inheritance`:
+  temporality is family-level metadata only the root may declare) — **MUST** carry a
+  single row. Each row of a milestone chain closes its own current milestone,
+  consumes its own Temporal Observation, and
   opens its own successors, and a temporal entity never collapses into a set-based
   statement (`m-batch-write`), so several rows under one instruction denote several
   independent chains rather than one wider write. An implementation **MUST** refuse

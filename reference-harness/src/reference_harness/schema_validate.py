@@ -222,7 +222,12 @@ def _keyed_member_names(entity_defs: list[dict[str, Any]], entity_name: str) -> 
 
 
 def _is_temporal_entity(entity_defs: list[dict[str, Any]], entity_name: str) -> bool:
-    """Whether *entity_name* declares an As-Of Axis (family-effective).
+    """Whether *entity_name* is temporal, resolved over its inheritance family.
+
+    A descendant declares no temporality of its own and inherits the root's
+    profile unchanged (`m-inheritance`), so the answer comes from the effective
+    definition rather than the entity's own declaration — a concrete temporal
+    subtype is temporal here even though it declares no axis.
 
     ``False`` for an undeclared entity; the caller reports that separately.
     """
