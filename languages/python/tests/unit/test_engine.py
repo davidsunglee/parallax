@@ -1482,8 +1482,9 @@ def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> N
 
 
 def test_versioned_non_temporal_version_attribute_is_none_for_a_temporal_entity() -> None:
-    # A temporal entity's observation flows through `TemporalShadow`, never
-    # this map — `m-opt-lock`'s version column is a non-temporal-only concept.
+    # A temporal entity observes a whole milestone rather than a version, so it has
+    # no version attribute to resolve — `m-opt-lock`'s version column is a
+    # non-temporal-only concept.
     meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
     assert (
         engine._versioned_non_temporal_version_attribute(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
@@ -1723,14 +1724,35 @@ def test_a_source_find_reference_names_a_find_of_its_own_group() -> None:
         )
 
 
-def test_a_settled_write_targets_a_temporal_entity() -> None:
+def test_a_settled_write_targets_an_entity_with_a_valid_time_axis() -> None:
     # A versioned Non-Temporal target has one row per primary key, so its grouped
     # write already reaches its group's evidence by identity; the reference would
     # name nothing the resolution does not already have.
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    with pytest.raises(engine.EngineError, match="targets a TEMPORAL entity"):
+    with pytest.raises(engine.EngineError, match="a VALID-TIME axis"):
         engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 5.00}]},
+            meta,
+            TemporalShadow(),
+            "2024-10-01T00:00:00+00:00",
+            set(),
+            {},
+            (),
+        )
+
+
+def test_a_settled_write_refuses_a_transaction_time_only_target() -> None:
+    # The temporal half of the same rule, and the one an "is it temporal?" test
+    # cannot reach: a Transaction-Time-Only key holds ONE milestone current at any
+    # instant, so identity already addresses its evidence exactly as a versioned
+    # Non-Temporal key's does. Two finds of such a key returning different
+    # milestones read at different as-of Transaction-Time coordinates, and at most
+    # one of those is current — a close naming the other names a milestone it
+    # could not close in any case.
+    meta = engine.load_case_metamodel(_case("m-txtime-write-001"))
+    with pytest.raises(engine.EngineError, match="a VALID-TIME axis"):
+        engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"mutation": "update", "entity": "Balance", "rows": [{"id": 1, "value": 5.00}]},
             meta,
             TemporalShadow(),
             "2024-10-01T00:00:00+00:00",

@@ -29,7 +29,7 @@ from referencing import Registry
 
 from .case import Entity
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
-from .keyed_write_validate import validate_keyed_write
+from .keyed_write_validate import undeclared_row_members, validate_keyed_write
 from .metamodel import validate_index_identities
 from .operation_references import collect_reference_classes
 from .predicate_write_validate import (
@@ -198,30 +198,6 @@ def _validate_predicate_write(
     return entity
 
 
-def _keyed_member_names(entity_defs: list[dict[str, Any]], entity_name: str) -> set[str] | None:
-    """The attribute + value-object names a keyed write row of *entity_name* may name.
-
-    Returns ``None`` when the entity is undeclared (the caller reports that). The
-    framework-owned observation is already forbidden on the durable row by the
-    canonical schema, so it is not a member name here.
-    """
-    try:
-        definition = resolve_effective_definition(entity_defs, entity_name)
-    except (KeyError, RejectionError):
-        return None
-    names = {
-        attribute["name"]
-        for attribute in definition.get("attributes", [])
-        if isinstance(attribute, dict) and isinstance(attribute.get("name"), str)
-    }
-    names |= {
-        value_object["name"]
-        for value_object in definition.get("valueObjects", [])
-        if isinstance(value_object, dict) and isinstance(value_object.get("name"), str)
-    }
-    return names
-
-
 def _effective_entity(entity_defs: list[dict[str, Any]], entity_name: str) -> Entity | None:
     """*entity_name*'s effective definition, or ``None`` when it is undeclared.
 
@@ -252,7 +228,11 @@ def _validate_buffered_write(
     skip (it executes the flushed golden SQL, never the buffered instructions):
 
     * **member honesty** — each keyed row's keys MUST name declared attributes / value
-      objects of its entity, so a buffered write cannot silently name a non-member.
+      objects of its entity, so a buffered write cannot silently name a non-member
+      (:func:`~reference_harness.keyed_write_validate.undeclared_row_members`). Asked
+      FIRST, and the entry stops there when it fails: a row naming nothing real has no
+      payload for an instruction rule to be about, which is the same precedence every
+      other lane applies.
     * **the temporal singleton** — an entry on a temporal entity carries exactly ONE
       row (`m-unit-work` "A temporal keyed instruction carries exactly one row"),
       since each row closes its own milestone, consumes its own observation, and
@@ -284,25 +264,21 @@ def _validate_buffered_write(
         entity_name = instruction.get("entity")
         if not isinstance(entity_name, str):
             continue  # the case schema owns the missing/malformed entity error
-        members = _keyed_member_names(entity_defs, entity_name)
         entity = _effective_entity(entity_defs, entity_name)
-        if members is None or entity is None:
+        if entity is None:
             errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
+            continue
+        unknown = undeclared_row_members(entity, instruction)
+        if unknown:
+            errors.append(
+                f"{entry_label}: keyed write row names {unknown} which are not "
+                f"attributes or value objects of {entity_name}"
+            )
             continue
         try:
             validate_keyed_write(entity, instruction)
         except RejectionError as exc:
             errors.append(f"{entry_label}: {exc.detail}")
-        rows = instruction.get("rows", [])
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            unknown = sorted(key for key in row if key not in members)
-            if unknown:
-                errors.append(
-                    f"{entry_label}: keyed write row names {unknown} which are not "
-                    f"attributes or value objects of {entity_name}"
-                )
 
 
 # --- compile-eligibility backstop (m-case-format / m-conformance-adapter) -----

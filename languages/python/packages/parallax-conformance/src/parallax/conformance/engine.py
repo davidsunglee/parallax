@@ -889,10 +889,11 @@ def _versioned_non_temporal_version_attribute(
     meta: Metamodel, entity_name: str
 ) -> Attribute | None:
     """``entity_name``'s own optimistic-lock version ATTRIBUTE, when it is a
-    VERSIONED, NON-TEMPORAL entity (`m-opt-lock`) — ``None`` otherwise (a
-    temporal entity's observation flows through :class:`TemporalShadow`
-    instead, never this map; `_build_temporal_instruction`). Resolved through
-    the FAMILY-declaring entity (`declaring_entity`): the version
+    VERSIONED, NON-TEMPORAL entity (`m-opt-lock`) — ``None`` otherwise, because a
+    temporal entity observes a whole MILESTONE rather than a version, which is a
+    different observation shape and not this attribute's
+    (:func:`_observe_group_milestones`; `_build_temporal_instruction`). Resolved
+    through the FAMILY-declaring entity (`declaring_entity`): the version
     column is family-wide metadata declared only on the root
     (`m-opt-lock` "The version column")."""
     declaring = declaring_entity(meta, meta.entity(entity_name))
@@ -1071,6 +1072,18 @@ def _entry_instant(entry: Mapping[str, object]) -> str:
 
 def _is_temporal_entity(meta: Metamodel, entity_name: str) -> bool:
     return declaring_entity(meta, meta.entity(entity_name)).is_temporal
+
+
+def _declares_valid_time_axis(meta: Metamodel, entity_name: str) -> bool:
+    """Whether ``entity_name``'s family declares a VALID-TIME As-Of Axis.
+
+    The axis that decides whether one primary key can hold several CURRENT
+    milestones, and so whether naming the find a write settles against buys
+    anything: without it, identity already addresses a key's evidence
+    (`m-case-format` *Settling against a grouped find*).
+    """
+    declaring = declaring_entity(meta, meta.entity(entity_name))
+    return any(axis.dimension == "valid-time" for axis in declaring.as_of_axes)
 
 
 _TEMPORAL_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
@@ -1429,9 +1442,12 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
       past it — would silently discard the very coordinate the author meant to
       observe.
     - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
-      flat row cell can name. It resolves through
-      :class:`~parallax.conformance.temporal_state.TemporalShadow`, and a
-      standalone close's gate is authored beside the write.
+      flat row cell can name. It resolves either from tracked case state
+      (:class:`~parallax.conformance.temporal_state.TemporalShadow`) or, where the
+      write's own step named the find it settles against, from the observations
+      that `uow` group's reads filled (:func:`_settled_against_source`); a
+      standalone close's gate is authored beside the write. Which of the two
+      supplies it changes nothing here: neither is a cell the row may carry.
     - an INSERT opens a row rather than writing against one, so an observed
       version names a milestone that does not yet exist.
     - an UNVERSIONED non-temporal target has no version to observe, so an
@@ -1459,7 +1475,8 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
         return (
             f"a temporal row authors no `{key}` (m-unit-work: a temporal write observes a whole "
             "predecessor milestone, which no flat row cell can name — the engine resolves one "
-            "from tracked case state, and a standalone close's gate rides beside the write)"
+            "from tracked case state or from the find its own step settles against, and a "
+            "standalone close's gate rides beside the write)"
         )
     if mutation in INSERT_MUTATIONS:
         return (
@@ -1481,7 +1498,9 @@ def _durable_row(
     Version Observation that row described (``None`` when it described none — an
     unobserved write, one whose observation instead comes from this SAME `uow`
     group's own prior find step via :data:`ScenarioObservations`, or a temporal
-    write, whose observation is a milestone :class:`TemporalShadow` holds).
+    write, whose observation is a whole milestone — held by
+    :class:`TemporalShadow`, or, where the step named the find it settles against,
+    by that same group's observations).
 
     THE seam a case row becomes a durable row through — the only one. Every
     producer of a case-authored row goes through it, whatever the row's shape or
@@ -1704,8 +1723,9 @@ def _build_instructions(
     step(s) (:func:`_observe_group_find`, via :func:`_run_uow_group`) — under the
     coordinate-free :class:`~parallax.core.unit_work.ObservationKey` a versioned
     row's own evidence is filed by, since one row per primary key needs no
-    milestone to address it. That is why such a write names no source find and
-    ``source`` reaches only the temporal branch above.
+    milestone to address it. That is why such a write names no source find: only a
+    Valid-Time axis puts several current milestones under one key, so ``source``
+    is refused above for every other target and reaches the temporal branch alone.
 
     An entry's authored ``statements`` count is graded later, once
     :func:`_lower_resolved` has actually planned and lowered the buffer these
@@ -1726,20 +1746,21 @@ def _build_instructions(
             "entry vocabulary is keyed-only)"
         )
     entity_name = cast("str", entry["entity"])
+    if source is not None and not _declares_valid_time_axis(meta, entity_name):
+        raise EngineError(
+            f"{entity_name!r}: a write step naming the find it settles against targets an "
+            "entity declaring a VALID-TIME axis — a versioned Non-Temporal target has one row "
+            "per primary key and a Transaction-Time-Only target one milestone current at any "
+            "instant, so both already reach their group's evidence by identity and the "
+            "reference names nothing the resolution does not have (m-case-format 'Settling "
+            "against a grouped find')"
+        )
     if _is_temporal_entity(meta, entity_name):
         return [
             _build_temporal_instruction(
                 entry, meta, shadow, tx_instant, unit_inserted, scenario_observations, source
             )
         ]
-    if source is not None:
-        raise EngineError(
-            f"{entity_name!r}: a write step naming the find it settles against targets a "
-            "TEMPORAL entity — a versioned Non-Temporal target has one row per primary key, "
-            "so its grouped write already reaches its group's evidence by identity and the "
-            "reference names nothing the resolution does not have (m-case-format 'Settling "
-            "against a grouped find')"
-        )
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     durable = _durable_rows(meta, entity_name, mutation, raw_rows)
@@ -4622,6 +4643,11 @@ def run_rejected_case(case: case_format.Case) -> str:
     concrete-subtype write protocol) — the SAME validator the developer
     transaction verbs call at buffer time (`Transaction._buffer`), so the two
     paths cannot drift.
+
+    Membership can decide the form only because `target` and `rows` are RESERVED
+    from a bare row at this position (`compatibility-case.schema.json`
+    `$defs/bareWriteRow`): neither is a domain member name here, so no row can be
+    re-read as an instruction and no instruction as a row.
 
     Raises :class:`EngineError` if the input is unexpectedly accepted (no rule
     violation detected) — the caller compares the returned rule against the

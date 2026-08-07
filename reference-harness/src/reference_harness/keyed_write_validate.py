@@ -18,13 +18,19 @@ predicate-selected instruction's target and assignments. This one judges the
 
 The bound is model-dependent — it exists only for a temporal target — so the
 shared case schema states the general one-or-more `rows` bound and leaves this to
-a validator that can see the model. Two callers reach it: a `scenario` step's own
-buffered write (:mod:`reference_harness.schema_validate`), and the `rejected`
-lane's keyed `when.write` (:mod:`reference_harness.case_runner`), where the
-instruction is itself the input under test. One rule, one wording, so those two
-lanes cannot be read as saying different things. A `when.writeSequence` entry is
-NOT among them — this harness grades a write sequence by executing its golden
-DML rather than by translating its entries, so it inspects no instruction there.
+a validator that can see the model. Every authoring location a keyed instruction
+reaches this harness through asks it here, so no lane can be read as saying
+something different:
+
+* a `scenario` step's own buffered write (:mod:`reference_harness.schema_validate`);
+* the `rejected` lane's keyed `when.write`, where the instruction is itself the
+  input under test (:func:`~reference_harness.case_runner._validate_rejected_keyed_write`);
+* a `when.writeSequence` step, whose `mutation` / `entity` / `rows` ARE a keyed
+  instruction's own members even though this harness grades the sequence by
+  executing its golden DML
+  (:func:`~reference_harness.case_runner._assert_write_input_columns`); and
+* a settled scenario write's entry, on the way to the one row the find it names
+  handed over (:func:`~reference_harness.case_runner._sole_settled_row`).
 """
 
 from __future__ import annotations
@@ -40,12 +46,47 @@ TEMPORAL_KEYED_WRITE_MULTI_ROW = "temporal-keyed-write-multi-row"
 KEYED_WRITE_REJECTED_RULES: frozenset[str] = frozenset({TEMPORAL_KEYED_WRITE_MULTI_ROW})
 
 
+def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> list[str]:
+    """The row keys *instruction* names that *entity* does not declare, sorted.
+
+    Member honesty is a payload judgement, not an instruction-shape rule, and it
+    is asked FIRST wherever both are asked: a row naming nothing real is a
+    case-authoring defect rather than a violated normative MUST, so classifying
+    such an input as a rejection rule would report a rule the case does not
+    exercise. That is the precedence the developer-facing validator applies too
+    (`instructions.validate_instruction` refuses undeclared members before the
+    temporal singleton), so one instruction cannot be judged two ways.
+
+    Names are read from *entity*'s ancestry-effective declarations, so a concrete
+    subtype's row may name an inherited member (`m-inheritance`). The framework's
+    observation control keys are forbidden on a durable row by the canonical
+    write-instruction schema and so are not member names here.
+    """
+    facts = entity.runtime_facts
+    declared = {
+        member["name"]
+        for kind in ("attributes", "valueObjects")
+        for member in facts.get(kind, []) or []
+        if isinstance(member, dict) and isinstance(member.get("name"), str)
+    }
+    rows = instruction.get("rows")
+    unknown: set[str] = set()
+    for row in rows if isinstance(rows, list) else ():
+        if isinstance(row, Mapping):
+            unknown |= {key for key in row if key not in declared}
+    return sorted(unknown)
+
+
 def validate_keyed_write(entity: Entity, instruction: Mapping[str, Any]) -> None:
     """Reject *instruction* pre-SQL if its shape is inadmissible for *entity*.
 
     *entity* is the effective definition of the instruction's own ``entity``
     handle, so a concrete subtype inherits the root's temporality unchanged
     (`m-inheritance`). Raises :class:`RejectionError` naming the violated rule.
+
+    This judges the instruction's SHAPE alone. A caller that also judges the
+    payload asks :func:`undeclared_row_members` first, for the precedence stated
+    there.
     """
     rows = instruction.get("rows")
     if not isinstance(rows, list) or len(rows) <= 1:

@@ -198,13 +198,15 @@
       }
     },
     {
-      "description": "A `when.write` that is a whole KEYED INSTRUCTION (`$defs/keyedWrite`, recognized by its `rows` array) belongs to the `rejected` shape alone. Every executing shape reaches its keyed instructions through `when.writeSequence` or a `when.scenario` step's own buffer, whose golden SQL is what grades them; the rejected lane emits no SQL, so it is the one lane where the instruction ITSELF — rather than a row's contents or a statement it produced — is the input under test.",
+      "description": "A `when.write` that is a whole KEYED INSTRUCTION (`$defs/keyedWrite`, recognized by the `mutation` + `entity` + `rows` it carries together) belongs to the `rejected` shape alone. Every executing shape reaches its keyed instructions through `when.writeSequence` or a `when.scenario` step's own buffer, whose golden SQL is what grades them; the rejected lane emits no SQL, so it is the one lane where the instruction ITSELF — rather than a row's contents or a statement it produced — is the input under test. This tests the keyed instruction's WHOLE member set rather than `rows` alone: `rows` is reserved from `$defs/bareWriteRow` and so already cannot appear on a row, and keying this restriction on the same members that pick the branch keeps a malformed input reported as the branch mismatch it is instead of as a shape violation.",
       "if": {
         "required": ["when"],
         "properties": {
           "when": {
             "required": ["write"],
-            "properties": { "write": { "type": "object", "required": ["rows"] } }
+            "properties": {
+              "write": { "type": "object", "required": ["mutation", "entity", "rows"] }
+            }
           }
         }
       },
@@ -482,13 +484,13 @@
                 "then": { "not": { "required": ["uow"] } }
               },
               {
-                "description": "A WRITE step's `on` names the find step whose result the write settles against (m-case-format *Settling against a grouped find*). The evidence a write consumes is transaction-scoped, so the reference is legal only on a step that declares `uow` — an ungrouped write shares no unit of work with any find and has nothing to settle against. It names ONE find, never an array: a keyed write settles against the one milestone the value it was handed came from, and a set of sources would name no single one.",
+                "description": "A WRITE step's `on` names the find step whose result the write settles against (m-case-format *Settling against a grouped find*). The evidence a write consumes is transaction-scoped, so the reference is legal only on a step that declares `uow` — an ungrouped write shares no unit of work with any find and has nothing to settle against. It names ONE find, never an array: a keyed write settles against the one milestone the value it was handed came from, and a set of sources would name no single one. It is legal only on the BUFFERED KEYED form (`write` as an array): a legacy string label carries no instruction for an observation to reach, and a predicate-selected write selects its own rows by predicate rather than consuming one milestone a find handed over — an `on` on either would name evidence nothing consumes.",
                 "if": {
                   "allOf": [{ "required": ["write"] }, { "required": ["on"] }]
                 },
                 "then": {
                   "required": ["uow"],
-                  "properties": { "on": { "type": "integer" } }
+                  "properties": { "on": { "type": "integer" }, "write": { "type": "array" } }
                 }
               }
             ],
@@ -734,11 +736,11 @@
           }
         },
         "write": {
-          "description": "conflict cases, single-attempt form. The neutral write input (①) for this conflict's keyed UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+, on a Bitemporal target, `validEnd` — the address's Valid-Time exclusive upper bound, which the close binds in BOTH concurrency modes and which may be finite or infinity); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. An ORDERED ARRAY of rows is the MULTI-KEY form: one unit of work buffers every row and the batching rule collapses them into a single set-based statement whose one Key Target holds every key, so `then.affectedRows` is the AGGREGATE that complete target owns (m-batch-write; m-unit-work affected-row attribution). The array form is keyed and non-temporal — a versioned or temporal target materializes to per-row writes instead of collapsing. The `$defs/keyedWrite` branch is the `rejected` shape's alone (restricted below): a rejected case may pin a rule about the INSTRUCTION rather than about a row's contents, and only a whole keyed instruction — its `mutation`, its own `entity` handle, and its `rows` — can carry one. A reader dispatches the four branches on the members the input itself carries: `target` is the predicate-selected instruction, `rows` the keyed one, an array the multi-key conflict form, anything else the bare neutral write row (①), which names no entity handle and is therefore resolved against the model's default write root.",
+          "description": "conflict cases, single-attempt form. The neutral write input (①) for this conflict's keyed UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+, on a Bitemporal target, `validEnd` — the address's Valid-Time exclusive upper bound, which the close binds in BOTH concurrency modes and which may be finite or infinity); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. An ORDERED ARRAY of rows is the MULTI-KEY form: one unit of work buffers every row and the batching rule collapses them into a single set-based statement whose one Key Target holds every key, so `then.affectedRows` is the AGGREGATE that complete target owns (m-batch-write; m-unit-work affected-row attribution). The array form is keyed and non-temporal — a versioned or temporal target materializes to per-row writes instead of collapsing. The `$defs/keyedWrite` branch is the `rejected` shape's alone (restricted below): a rejected case may pin a rule about the INSTRUCTION rather than about a row's contents, and only a whole keyed instruction — its `mutation`, its own `entity` handle, and its `rows` — can carry one. A reader dispatches the four branches on the members the input itself carries: `target` is the predicate-selected instruction, `rows` the keyed one, an array the multi-key conflict form, anything else the bare neutral write row (①), which names no entity handle and is therefore resolved against the model's default write root. The branches are DISJOINT because `$defs/bareWriteRow` — the single-row branch here — reserves `target` and `rows` from the row's own open vocabulary; each instruction branch is therefore load-bearing rather than shadowed by a row that would also admit it.",
           "anyOf": [
             { "$ref": "#/$defs/predicateWrite" },
             { "$ref": "#/$defs/keyedWrite" },
-            { "$ref": "#/$defs/writeRow" },
+            { "$ref": "#/$defs/bareWriteRow" },
             {
               "type": "array",
               "minItems": 1,
@@ -1175,6 +1177,17 @@
           { "properties": { "sql": { "type": "string" } } }
         ]
       }
+    },
+    "bareWriteRow": {
+      "description": "The BARE neutral write row (①) at the one location an instruction may stand in its place — `when.write`, whose four forms a reader dispatches on the members the input itself carries (`target` the predicate-selected instruction, `rows` the keyed one, an array the multi-key conflict form, anything else this). That dispatch is only sound if the two discriminators are RESERVED from the row's own open vocabulary, so this is `$defs/writeRow` with `target` and `rows` forbidden. Without the reservation the row branch swallows both instruction forms — every instruction is also a row, since an instruction's members are all admissible `writeRowValue`s — so the instruction branches would add no validity and a legitimate row naming a `many` value object `rows` would be silently re-read as a keyed instruction by every dispatcher. The reservation is POSITIONAL, exactly like the `observedTxStart` / `observedValidStart` refusal one `$defs` below: it holds where the ambiguity is, so a row inside the multi-key ARRAY form — unambiguous by JSON type — keeps the full vocabulary. A model whose entity really does declare a member named `target` or `rows` therefore cannot author a bare `when.write` for it; the row is REFUSED here rather than reclassified, because a silent reclassification is what turns an authoring mistake into a case that grades the wrong rule.",
+      "allOf": [
+        { "$ref": "#/$defs/writeRow" },
+        {
+          "not": {
+            "anyOf": [{ "required": ["target"] }, { "required": ["rows"] }]
+          }
+        }
+      ]
     },
     "writeRow": {
       "description": "A flat attribute-named write row at a FLUSH / MATERIALIZATION location (an m-opt-lock conflict / retry write, a writeSequence step) — the neutral write input (①), same vocabulary as a fixture row, PLUS the reserved framework-owned `observedVersion` control key. It is the canonical durable instruction row (`write-instruction.schema.json#/$defs/writeRow`) with ONE difference: `observedVersion` is legitimate FLUSH-TIME context here (the version the unit of work observed, whether the write goes on to gate on it, advance from it, or merely be licensed by the read that recorded it), whereas the canonical durable instruction FORBIDS it. Every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`), and its value is the shared canonical `writeRowValue` — a scalar literal / explicit `null`, a one-key DB-COMPUTED marker (`{ computed: \"maxPlusOne\" }` / `{ increment: <n> }`), or the WHOLE embedded value-object document — REFERENCED from `write-instruction.schema.json` rather than redefined. The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from the target's Entity Layout view — never from JSON/YAML key order — so a marker-SHAPED value is a DB-computed marker vs a value-object document by MODEL ROLE, not by the value's SHAPE. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`. The observed MILESTONE coordinates are the exception a row may never spell: a temporal write observes a whole predecessor milestone, which no flat row cell can name, so `observedTxStart` / `observedValidStart` ride beside the write (`when.observedTxStart` / `when.observedValidStart` — and, on a retry attempt, `observedTxStart` alone, since the edge form is single-attempt only) and a row authoring one is refused rather than stripped — stripping would silently discard the very coordinate the author meant to observe.",

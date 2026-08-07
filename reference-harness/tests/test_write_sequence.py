@@ -256,7 +256,7 @@ def test_plural_temporal_step_is_rejected() -> None:
     case = copy.deepcopy(_write_case_by_id("m-txtime-write-005"))
     step = case.write_sequence[0]
     step["rows"].append({"id": 2, "acctNum": "B", "value": 999.00})
-    with pytest.raises(CaseFailure, match="carries ONE row"):
+    with pytest.raises(CaseFailure, match="carries 2 rows"):
         _assert_write_input_columns(case, "postgres")
 
 

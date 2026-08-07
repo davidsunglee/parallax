@@ -897,13 +897,24 @@ a milestone derived from case state. Two obligations follow:
   milestone; an implementation keying by identity alone holds one slot, and a
   write naming the earlier find then settles against the later find's row.
 
-The reference is legal only where both halves are meaningful: on a step that
+The reference is legal only where every part of it is meaningful: on a step that
 declares `uow` (evidence is transaction-scoped, and an ungrouped write shares a
-unit of work with no find), naming an EARLIER step of the SAME group that is a
-find, against a **temporal** target. A versioned Non-Temporal target has one row
-per primary key, so its grouped write already reaches its group's evidence
-by identity and the reference would name nothing the resolution does not already
-have.
+unit of work with no find), whose `write` is the **buffered keyed** form (a legacy
+string label carries no instruction and a predicate-selected write consumes no
+single milestone, so neither has anything an observation could reach), naming an
+EARLIER step of the SAME group that is a find, against a target declaring **both**
+As-Of Axes.
+
+The target restriction is the whole of what the reference buys. A versioned
+Non-Temporal target has one row per primary key, so its grouped write already
+reaches its group's evidence by identity. A **Transaction-Time-Only** target has
+one milestone current at any instant, so identity addresses its evidence too: two
+finds of one such key that returned different milestones read at different as-of
+Transaction-Time coordinates, and at most one of those milestones is current — a
+close naming the other names a milestone it could not close in any case. Only a
+Valid-Time axis puts several *current* milestones under one key, which is the
+single situation in which identity does not already name the row a write was
+handed.
 
 A write settling against a find's result is **query-result-dependent**: the
 milestone it addresses is read off a row no compile lane executes, so such a case
@@ -1222,7 +1233,23 @@ load-bearing rather than cosmetic: the first two name their own target, so a
 validator checks the payload against the entity the input authored, while a bare
 row names none at all and is resolved against the model's default write root
 (the inheritance-family root when the model declares one, else the model's own
-first entity). A keyed instruction is admissible **only** here: everywhere else
+first entity).
+
+`target` and `rows` are therefore **reserved** at this position: a bare write row
+authors neither, exactly as it authors neither half of an observed milestone's own
+edge coordinate. A row is a row only because nothing on it names an instruction,
+so without the reservation the row form would admit every instruction, the two
+instruction forms would decide nothing, and a legitimate row for an entity whose
+model declares a `many` value object named `rows` would be re-read by every
+dispatcher as a keyed instruction. Such a row is **refused** rather than
+reclassified — a silent reclassification turns an authoring mistake into a case
+that grades a rule it never meant to reach — and its entity is written through the
+keyed form, which names its own handle. The reservation is positional: it holds
+where a row and an instruction can stand in the same place, so the rows nested
+inside a keyed instruction, a `writeSequence` step, or the multi-key array form
+keep the full member vocabulary.
+
+A keyed instruction is admissible **only** here: everywhere else
 a keyed instruction reaches an implementation through `when.writeSequence` or a
 `when.scenario` step's own buffer, where the golden SQL it lowers to is what
 grades it. The rejected lane emits no SQL, so it is the one lane in which the

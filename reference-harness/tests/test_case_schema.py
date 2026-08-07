@@ -98,6 +98,55 @@ def _scenario_case() -> dict[str, Any]:
     }
 
 
+def _settled_write_scenario_case() -> dict[str, Any]:
+    """A scenario whose grouped BUFFERED KEYED write names the find it settles against.
+
+    The `on` reference is legal on this form alone: a `uow`-grouped step, a single
+    index, and a buffered keyed `write` — the only form carrying an instruction an
+    observation can reach.
+    """
+    return {
+        "model": "models/position.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "scenario",
+        "compileEligibility": {"mode": "run-only", "reason": "query-result-dependent"},
+        "when": {
+            "scenario": [
+                {
+                    "uow": "g",
+                    "targetEntity": "Position",
+                    "find": {"eq": {"attr": "Position.id", "value": 1}},
+                    "roundTrips": 1,
+                    "statements": [
+                        {
+                            "sql": {"postgres": "select t0.pos_id from position t0"},
+                            "binds": [1],
+                        }
+                    ],
+                    "expectRows": [{"pos_id": 1}],
+                },
+                {
+                    "uow": "g",
+                    "on": 0,
+                    "write": [
+                        {
+                            "mutation": "update",
+                            "entity": "Position",
+                            "rows": [{"id": 1, "value": 150.00}],
+                            "validFrom": "2024-03-01T00:00:00+00:00",
+                        }
+                    ],
+                    "roundTrips": 1,
+                    "statements": [
+                        {"sql": {"postgres": "update position set out_z = ?"}, "binds": ["x"]}
+                    ],
+                },
+            ]
+        },
+        "then": {"roundTrips": 2},
+    }
+
+
 def _action_scenario_case() -> dict[str, Any]:
     """A scenario with lifecycle ACTION steps.
 
@@ -533,6 +582,7 @@ VALID_CASES = {
     "read": _read_case,
     "writeSequence": _write_sequence_case,
     "scenario": _scenario_case,
+    "scenario-settled-write": _settled_write_scenario_case,
     "scenario-action": _action_scenario_case,
     "scenario-action-identity-error": _action_identity_error_case,
     "scenario-action-boundary-no-on": _action_boundary_no_on_case,
@@ -782,6 +832,96 @@ def _conflict_keyed_write() -> dict[str, Any]:
     return doc
 
 
+def _keyed_write_with_a_stray_member() -> dict[str, Any]:
+    """A keyed instruction carrying a member its own definition does not declare.
+
+    The witness that the keyed branch DECIDES the document rather than being
+    shadowed by the row branch: `$defs/keyedWrite` is closed, so a stray member
+    fails it — and, with `target` / `rows` reserved from `$defs/bareWriteRow`, no
+    other branch admits the document either. Before the reservation every
+    instruction also validated as a row, so this document passed and the keyed
+    branch added no validity at all.
+    """
+    doc = _rejected_keyed_write_case()
+    doc["when"]["write"]["bogus"] = 1
+    return doc
+
+
+def _bare_write_row_naming_rows() -> dict[str, Any]:
+    """A bare neutral write row whose entity declares a `many` value object `rows`.
+
+    `rows` is reserved at `when.write`, so the row is refused outright instead of
+    being silently re-read as a keyed instruction by every dispatcher.
+    """
+    doc = _conflict_case()
+    doc["when"]["write"] = {"id": 2, "rows": [{"line": 1}], "observedVersion": 1}
+    return doc
+
+
+def _bare_write_row_naming_target() -> dict[str, Any]:
+    """A bare neutral write row whose entity declares a value object `target`.
+
+    The other reserved discriminator: `target` names the predicate-selected
+    instruction, so a row may not author one either.
+    """
+    doc = _conflict_case()
+    doc["when"]["write"] = {"id": 2, "target": {"kind": "x"}, "observedVersion": 1}
+    return doc
+
+
+def _settled_write_ungrouped() -> dict[str, Any]:
+    """A write step naming a source find without declaring a `uow` group.
+
+    Evidence is transaction-scoped: an ungrouped write shares a unit of work with
+    no find, so there is no observation for the reference to reach.
+    """
+    doc = _settled_write_scenario_case()
+    del doc["when"]["scenario"][1]["uow"]
+    return doc
+
+
+def _settled_write_on_array() -> dict[str, Any]:
+    """A write step naming a SET of source finds.
+
+    A keyed write settles against the one milestone the value it was handed came
+    from, so a set of sources names no single one — the array `on` stays the
+    action step's spelling alone.
+    """
+    doc = _settled_write_scenario_case()
+    doc["when"]["scenario"][1]["on"] = [0]
+    return doc
+
+
+def _settled_write_legacy_string() -> dict[str, Any]:
+    """A LEGACY STRING write step naming a source find.
+
+    The label carries no instruction, so nothing in that step can consume the
+    observation the reference names.
+    """
+    doc = _settled_write_scenario_case()
+    doc["when"]["scenario"][1]["write"] = "correct the position"
+    return doc
+
+
+def _settled_write_predicate_selected() -> dict[str, Any]:
+    """A PREDICATE-SELECTED write step naming a source find.
+
+    A predicate-selected write selects its own rows by predicate; it consumes no
+    single milestone a find handed over, so the reference names evidence nothing
+    reads.
+    """
+    doc = _settled_write_scenario_case()
+    doc["when"]["scenario"][1]["write"] = {
+        "mutation": "update",
+        "target": {
+            "entity": "Position",
+            "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+        },
+        "assignments": [{"attr": "Position.value", "value": 150.00}],
+    }
+    return doc
+
+
 def _action_unknown_verb() -> dict[str, Any]:
     """An action step naming a verb outside the closed enum."""
     doc = _action_scenario_case()
@@ -899,6 +1039,13 @@ REJECTED_CASES = {
     "rejected-both-operation-and-write": _rejected_both_operation_and_write,
     "rejected-neither-operation-nor-write": _rejected_neither_operation_nor_write,
     "conflict-keyed-write": _conflict_keyed_write,
+    "keyed-write-stray-member": _keyed_write_with_a_stray_member,
+    "bare-write-row-naming-rows": _bare_write_row_naming_rows,
+    "bare-write-row-naming-target": _bare_write_row_naming_target,
+    "settled-write-ungrouped": _settled_write_ungrouped,
+    "settled-write-on-array": _settled_write_on_array,
+    "settled-write-legacy-string": _settled_write_legacy_string,
+    "settled-write-predicate-selected": _settled_write_predicate_selected,
     "action-unknown-verb": _action_unknown_verb,
     "action-stray-key": _action_stray_key,
     "action-unknown-expect-error": _action_unknown_expect_error,
