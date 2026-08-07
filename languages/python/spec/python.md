@@ -1149,7 +1149,7 @@ supported import path.
 
 **Reserved member names.** A member name may not collide with a name the class
 object already carries, because class-level access is where the typed expression
-surface lives and the class-level name would win. Four families are reserved,
+surface lives and the class-level name would win. Five families are reserved,
 and a collision fails at class creation (`entity-reserved-member-name`):
 
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
@@ -1162,6 +1162,15 @@ and a collision fails at class creation (`entity-reserved-member-name`):
   canonical names `validStart`, `validEnd`, `txStart`, and `txEnd`, so one rule
   covers the Python spellings `valid_start`/`valid_end`/`tx_start`/`tx_end`, a
   literal canonical spelling, and an explicit `name=` that renames onto one;
+- the `__parallax_` prefix, which names every marker the framework binds on a
+  class and every private slot it binds on an instance — the lifecycle state of a
+  materialized node and an Edited Copy's Change Record among them. The whole
+  prefix is reserved rather than the current names, so a slot added later needs no
+  second reservation. A body binding under it is not a shadowed member surface but
+  a shadowed framework value: ordinary reads would answer the class's binding, and
+  a `functools.cached_property` spelled under one would additionally recompute
+  that binding on an Edited Copy, because §3's invalidation rule reads a derived
+  cache off the class;
 - the ten declaration members `identity`, `container`, `persistence`, `layout`,
   `attributes`, `relationships`, `value_objects`, `as_of_axes`, `inheritance`,
   and `indices`. An Entity Class *is* its own `UnresolvedEntityDeclaration`: the
@@ -1354,7 +1363,7 @@ set is:
 | `entity-member-value-invalid` | class creation | the assignment slot holds a bare value, an `attr(...)` under `Rel[...]`, or a `rel(...)` under `Attr[...]` |
 | `entity-option-invalid-value` | factory call | an intrinsically invalid argument value: an ill-typed or out-of-range `attr(...)`, `rel(...)`, `index(...)`, or `Sequence(...)` argument |
 | `entity-option-context-invalid` | factory call / class creation | an option illegal in context: mixed defining/reverse `rel(...)` forms, Entity-only options on a Value Object member, an empty `index(...)` member list, a `MAX`/`Sequence(...)` generation on a non-integer member |
-| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, a `model_*` name, a framework-temporal member name, or one of the ten declaration member names |
+| `entity-reserved-member-name` | class creation | a reserved query-root, introspection, or edit-verb name, a `model_*` name, a `__parallax_` framework name, a framework-temporal member name, or one of the ten declaration member names |
 | `entity-canonical-name-collision` | class creation | two members converting to one canonical name |
 | `entity-relationship-annotation-mismatch` | Domain Model construction (realization) | a `Rel` annotation shape — multiplicity or optionality — disagreeing with the accepted model; all mismatches reported together in canonical order |
 
@@ -2380,7 +2389,8 @@ or descriptor authoring form and performs no audit stamping.
   reconstruction. The idiom requires no detached objects.
 - **An edit preserves everything it neither replaces nor invalidates.**
   `edit(**changes)` replaces the declared member state the caller authored and
-  carries every other kind of instance state forward unchanged. An Edited Copy
+  carries every other kind of instance state forward unchanged, apart from the
+  single derived kind it invalidates below. An Edited Copy
   of a materialized node therefore answers relationships exactly as that node
   does — a loaded to-one or to-many is the *same* already-materialized objects
   rather than a re-read, an unloaded one raises `UnloadedRelationshipError`
@@ -2406,7 +2416,10 @@ or descriptor authoring form and performs no audit stamping.
   carried. The rule reads the descriptor off the class, which is what lets it
   need no registry and no lifecycle involvement — and also fixes its reach: a
   cache a class writes into `self.__dict__` by hand declares nothing, so it is
-  carried like any other slot.
+  carried like any other slot. Reading the descriptor off the class also confines
+  the rule to names a class may declare: the framework's own `__parallax_` prefix
+  is reserved from every class body (§2), so no declaration can present a
+  lifecycle's state or a Change Record as derived.
 
   The copy carries the source's `Pin` too, which makes the read-only rule
   indifferent to how the write was authored: an Edited Copy of a view pinned at

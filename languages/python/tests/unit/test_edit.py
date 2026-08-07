@@ -49,6 +49,7 @@ from parallax.core.entity import (
     relationship_value_of,
     wire_names_of,
 )
+from parallax.core.entity._declaration import FRAMEWORK_NAME_PREFIX, LIFECYCLE_STATE_SLOT
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -617,6 +618,31 @@ def test_a_derived_cache_recomputes_after_an_edit_replaces_what_it_derives_from(
     tag = _Tag(id=1, label="a")
     assert tag.shouted == "A"
     assert tag.edit(label="b").shouted == "B"
+
+
+def test_no_class_may_declare_a_framework_slot_a_derived_cache() -> None:
+    # The invalidation rule reads the descriptor off the class, so a class binding
+    # a framework slot name would have the edited copy recompute the author's own
+    # answer in place of the state the edit dropped — a materialized node's
+    # lifecycle state among them, taking snapshot inspection and pin provenance
+    # with it. The collision is refused where it is authored instead.
+    with pytest.raises(EntityDefinitionError) as caught:
+
+        class _Colliding(Entity, table="colliding", namespace="parallax.compatibility"):  # pyright: ignore[reportUnusedClass] - class creation itself is the rejection, so nothing binds
+            id: Attr[int] = attr(primary_key=True)
+
+            @cached_property
+            def __parallax_lifecycle__(self) -> str:
+                return "shadow"
+
+    assert caught.value.code == "entity-reserved-member-name"
+
+
+def test_every_slot_the_edit_surface_owns_falls_under_the_reserved_prefix() -> None:
+    # The reservation above is by prefix, so a framework slot spelled outside it
+    # would be bindable — and therefore droppable — again.
+    assert LIFECYCLE_STATE_SLOT.startswith(FRAMEWORK_NAME_PREFIX)
+    assert CHANGE_RECORD_SLOT.startswith(FRAMEWORK_NAME_PREFIX)
 
 
 def test_the_freshly_merged_change_record_replaces_the_carried_one() -> None:
