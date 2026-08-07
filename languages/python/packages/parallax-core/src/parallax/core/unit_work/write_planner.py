@@ -9,8 +9,9 @@ constructed once per accepted Metamodel with its batching, concurrency,
 temporal, and audit strategies already wired, and it exposes exactly one
 planning operation, :meth:`WritePlanner.plan`.
 
-**It emits no SQL.** The module DAG pins ``m-unit-work -> m-op-algebra`` and
-``m-unit-work -> m-db-port`` only — there is deliberately **no** edge to
+**It emits no SQL.** The module DAG pins ``m-unit-work -> m-op-algebra``,
+``m-unit-work -> m-db-port``, and ``m-unit-work -> m-temporal-read`` (the Edge a
+Write Observation is filed under) — there is deliberately **no** edge to
 ``m-sql``, ``m-dialect``, or any optional policy module (``m-batch-write``,
 ``m-opt-lock``, ``m-txtime-write``, ``m-bitemp-write``, ``m-read-lock``). This
 module reaches those policies only through the strategy ports
@@ -77,7 +78,6 @@ from parallax.core.unit_work.materialized import (
     VersionColumns,
 )
 from parallax.core.unit_work.observe import (
-    LATEST_PINNED,
     PredecessorRow,
     TemporalObservation,
     WriteObservation,
@@ -597,12 +597,6 @@ class WritePlanner:
                 "current milestone, and every close requires the Temporal Observation it "
                 "addresses, gates on, and carries state forward from (m-unit-work; m-opt-lock)"
             )
-        if observed is not None:
-            # The REAL licensing check: an engine-supplied observation is
-            # latest-pinned by construction, but a developer's own historical
-            # or edge-pinned `Transaction.find` took its read lock on a row a
-            # locking-mode close would never reach.
-            self._concurrency.check_locking_license(concurrency, observed.transaction_time_basis)
         valid_axis = declaring_entity.as_of_axis(TemporalDimension.VALID_TIME)
         tx_axis = _tx_time_axis(declaring_entity)
         axes = TemporalAxes(
@@ -842,18 +836,15 @@ class WritePlanner:
     ) -> StepSegment:
         """A temporal Materialized Write Group's segment.
 
-        The temporal topology, the locking license, the gate decision, the
-        successor expansion shape, and (because every temporal mutation needs
-        one) the concrete Transaction Instant are all decided once, here —
-        the only clock consultation this group's whole flush makes, however
-        many rows it resolved. Only a row's own predecessor and key values
-        remain for :meth:`_MaterializedTemporalSegment.step` to bind.
+        The temporal topology, the gate decision, the successor expansion
+        shape, and (because every temporal mutation needs one) the concrete
+        Transaction Instant are all decided once, here — the only clock
+        consultation this group's whole flush makes, however many rows it
+        resolved. Only a row's own predecessor and key values remain for
+        :meth:`_MaterializedTemporalSegment.step` to bind.
         """
         assert isinstance(group.observations, TemporalColumns)
         topology = self._temporal.topology(declaring_entity, group.mutation.mutation)
-        self._concurrency.check_locking_license(
-            concurrency, group.observations.transaction_time_basis
-        )
         gated = self._concurrency.gates(concurrency)
         steps_per_row = (1 if topology.closure is not None else 0) + len(topology.successors)
         # Reaching a temporal group is what makes the attempt capture its
@@ -1204,13 +1195,11 @@ def plan_temporal_close(
     key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
     _refuse_unaddressing_identity(entity, key_attributes, identity)
     gate: TemporalConcurrency = UNGATED
-    if observed_tx_start is not None:
-        concurrency_strategy.check_locking_license(concurrency, LATEST_PINNED)
-        if concurrency_strategy.gates(concurrency):
-            gate = TemporalGate(
-                start_attribute=_tx_time_axis(declaring_entity).start_attribute,
-                observed_start=observed_tx_start,
-            )
+    if observed_tx_start is not None and concurrency_strategy.gates(concurrency):
+        gate = TemporalGate(
+            start_attribute=_tx_time_axis(declaring_entity).start_attribute,
+            observed_start=observed_tx_start,
+        )
     return _close(
         entity,
         declaring_entity,

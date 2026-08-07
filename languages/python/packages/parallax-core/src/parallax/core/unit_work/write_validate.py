@@ -8,7 +8,8 @@ established (`parallax.core.op_algebra.validate`): the SAME rule classification
 and check order runs on both paths, so they cannot drift.
 
 Placement (`core/spec/modules.md` §7 DAG): ``m-unit-work`` depends on
-``m-op-algebra`` and ``m-db-port`` only, and its import-linter contract forbids
+``m-op-algebra``, ``m-db-port``, and ``m-temporal-read`` only, and its
+import-linter contract forbids
 ``parallax.core.value_object`` outright (no module outside that scope's own DAG
 edge may reach it) -- but does NOT forbid ``parallax.core.inheritance``
 (transitively reachable through the ``m-op-algebra --> m-inheritance`` edge).

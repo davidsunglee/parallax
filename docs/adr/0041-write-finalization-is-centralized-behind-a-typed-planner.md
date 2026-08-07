@@ -123,3 +123,52 @@ decoration, composition, and lowering share orchestration. Centralizing the
 pipeline creates a deeper contract and prevents semantic decisions from
 leaking into SQL generation, while injected ports preserve the behavioral
 module DAG and keep the planner from owning those modules' rules.
+
+## Amendment (2026-08): a Planning Request carries no observation map
+
+The request shape recorded above carries "buffered writes, and observations" as
+two independent fields, and the planner's stage list includes "target and
+observation binding" — the planner resolving each surviving write's observation
+out of a transaction-wide store keyed by the object the write addresses.
+
+**Superseding decision:** the request carries **buffered writes only**, and a
+buffered write against existing state travels **paired** with the one
+observation resolved for it. The planner is handed evidence rather than a store
+to search, and binding is no longer a planning stage. What remains at the same
+position in the pipeline is *validation*: a required observation that is missing
+is still a planning error raised there, before any gate is rendered.
+
+The reason is that an observation cannot be resolved from what a Planning
+Request holds. Evidence about a temporal row is evidence about **one milestone**,
+and a milestone chain holds more than one row per primary key at a time, so
+resolution needs the milestone the written value came from — which only the
+caller holding that value knows. A store keyed by the object alone could not
+express the distinction, and a keyed close resolved from it settled against
+whichever milestone was read most recently.
+
+Absence stays structural, as this ADR requires: a write with no observation is
+buffered bare, so no no-observation value and no nullable observation field
+exists at any point. A Materialized Write Group is unaffected — it already
+carried its own aligned per-row evidence, which is the shape the keyed pairing
+now mirrors.
+
+Everything else recorded above is unchanged: the planner is still the sole
+finalization authority, still stateless and pure, still resolves the Transaction
+Instant lazily, and still emits one immutable `WritePlan`. Subject Identity
+remains the first required field of the keyword-only request.
+
+## Amendment (2026-08): a Materialized Write Group carries no Transaction-Time Basis
+
+The Materialized Write Group shape recorded above stores
+`TemporalColumns(predecessors: PredecessorColumns, transaction_time_basis)`,
+with the accompanying reasoning that a predicate materialization uses one
+Transaction-Time pin so its Basis is group-wide and cannot vary by selected row.
+
+**Superseding decision:** the variant is `TemporalColumns(predecessors)`. The
+Transaction-Time Basis is retired outright (ADR 0042's amendment), so the
+group-wide-versus-per-row question it raised no longer arises.
+
+Everything else about the group is unchanged: the authored mutation, the shared
+primary-key shape, one immutable value column per key attribute, the closed
+observation-column variant, equal positive row counts, no observation-free
+variant, and the compactness invariants that follow.

@@ -204,11 +204,10 @@ def db_for(meta: DomainModel, port: RecordingPort) -> Database:
 
 
 # --------------------------------------------------------------------------- #
-# `Transaction.find` records                                                  #
-# a TEMPORAL observation (not just a versioned one) so a locking-mode write's #
-# historical-observation license (`m-opt-lock`) is REAL, not a permanent      #
-# no-op — exercised through the typed `tx.terminate` verb, the SAME `_buffer` #
-# neutral seam the conformance engine uses.                                   #
+# A current milestone of the `Balance` fixture, as the port returns it — the  #
+# row every temporal keyed-write suite reads before it writes, exercised      #
+# through the typed verbs and so through the SAME `_buffer` neutral seam the  #
+# conformance engine uses.                                                    #
 # --------------------------------------------------------------------------- #
 INFINITY_INSTANT: Final[dt.datetime] = dt.datetime(9999, 12, 31, tzinfo=dt.UTC)
 

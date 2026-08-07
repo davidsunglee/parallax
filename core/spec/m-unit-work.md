@@ -3,9 +3,11 @@
 `m-unit-work` is the transaction scope: the unit of work that **buffers,
 finalizes, and flushes** writes, and the automatic read-correctness rules that
 make in-transaction reads safe. It is expressed entirely in terms of **operations
-and object state** (`m-op-algebra`): it depends on `m-op-algebra` and on the
-execution port `m-db-port`, but **not** on `m-sql`. The dialect-specific SQL the
-unit of work executes (the read-lock suffix, the set-based forms) is produced by
+and object state** (`m-op-algebra`): it depends on `m-op-algebra`, on the
+execution port `m-db-port`, and on `m-temporal-read` — whose Edge is the
+coordinate a Write Observation is filed under — but **not** on `m-sql`. The
+dialect-specific SQL the unit of work executes (the read-lock suffix, the
+set-based forms) is produced by
 `m-sql` and run through the `m-db-port` execution seam at the composition root,
 so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list` and
 `m-navigate` in turn depend on `m-unit-work`, because a list is an
@@ -168,16 +170,22 @@ plan(
         transaction_instant:  TransactionInstant,
         concurrency:          Concurrency,
         buffered_writes:      BufferedWrites,
-        observations:         Observations,
     )
 ) -> WritePlan
 ```
 
 A caller **MUST NOT** be required — or able — to sequence coalescing,
-cancellation, no-op elimination, observation binding, batching, dependency
-ordering, Transaction Instant acquisition, temporal expansion, or provenance
-decoration itself. Those are private stages, and no second public finalized or
-decorated plan exists beside the Write Plan.
+cancellation, no-op elimination, batching, dependency ordering, Transaction
+Instant acquisition, temporal expansion, or provenance decoration itself. Those
+are private stages, and no second public finalized or decorated plan exists
+beside the Write Plan.
+
+Resolving *which* observation a write settles against is the caller's, because
+only the caller holds the value the write was authored from and therefore the
+milestone that value came from. A buffered write against existing state
+**carries** the observation resolved for it (below); the planner is handed
+evidence, never a store to search. Validating that a required observation is
+present remains the planner's, at stage 3.
 
 The planner is **stateless across calls**: it retains neither request nor result.
 The operation is **pure** with respect to its inputs — it performs no database
@@ -194,7 +202,7 @@ The Write Planner privately owns this stage order:
 ```text
 1. resolve identities and coalesce buffered intent
 2. eliminate known cancellation and no-op work
-3. bind and validate required observations
+3. validate the observation each surviving write carries
 4. form compatible batches
 5. dependency-order private units within barrier regions
 6. resolve the Transaction Instant only if surviving work needs it
@@ -207,9 +215,11 @@ Four of those orderings are load-bearing and therefore normative:
 
 - **Coalescing and no-op elimination precede time.** Stages 1–2 run before stage
   6, so work that cancels or nets to zero never consults the Clock Strategy.
-- **Observation binding precedes gate rendering.** A required observation that is
-  missing is a planning error raised at stage 3, never a value that reaches
-  lowering.
+- **Observation validation precedes gate rendering.** A required observation
+  that is missing is a planning error raised at stage 3, never a value that
+  reaches lowering. The write it belongs to carries it rather than being matched
+  to it, so nothing downstream of stage 3 can bind a gate from evidence about a
+  different row.
 - **Temporal expansion follows ordering.** A surviving temporal mutation stays
   one indivisible unit through stages 4–5 and expands at its already-decided
   position in stage 7 (ADR 0045), so its close and successors are adjacent and no
@@ -393,9 +403,7 @@ TemporalUpperBound = Finite(Instant) | Infinity
 ```text
 WriteObservation =
     VersionObservation(observed_version)
-  | TemporalObservation(predecessor, transaction_time_basis)
-
-TransactionTimeBasis = LatestPinned | HistoricalPinned
+  | TemporalObservation(predecessor)
 ```
 
 A **Write Observation** is the database evidence a surviving write against
@@ -403,6 +411,31 @@ existing state retains. Transaction-Time-Only and Bitemporal entities have
 **identical** observation requirements; the accepted Temporal Facet — not a
 separate observation variant per temporal flavor — decides which topology
 applies.
+
+An observation is filed under the object it observed **and the milestone it
+observed of that object** — the object's identity plus the observed milestone's
+own coordinate, its start instant on every declared As-Of Axis
+(`m-temporal-read`). A versioned Non-Temporal row names no milestone: it has
+exactly one row per primary key, so identity alone already addresses its
+evidence. A milestone chain does not, so an implementation **MUST NOT** key
+observations by identity alone: two reads of one primary key at as-of
+coordinates resolving to different milestones observe different rows, and a
+slot keyed by identity alone would let the second erase the first — after which
+a write settles against a milestone its own value never came from. The
+coordinate **MUST** be derived from the observation's own Predecessor Row, so a
+recorder cannot file an observation under a milestone other than the one it is
+recording.
+
+This is deliberately the **converse** of the identity key
+(`m-identity-map`), and a reader who knows that key will assume it is the same
+one unless told otherwise. The identity triple carries the *query's* lowered
+as-of coordinate and makes **distinct** coordinates denote **distinct pinned
+views**, even when both currently resolve to one milestone row, because each
+view drives its own relationship dereferencing. The observation key carries the
+*observed milestone's own* coordinate, so two **distinct** pins that resolve to
+**one** milestone deliberately share **one** observation: an observation
+records what was read, not the reading, and a milestone read twice is one piece
+of evidence.
 
 Absence is **structural**:
 
@@ -415,6 +448,14 @@ A required observation that is missing is a **planning error**. An implementatio
 **MUST NOT** define a `NoObservation` value, a nullable observation that flows
 downstream, or a mode in which an observation-requiring write proceeds unobserved
 — the requirement holds in **both** concurrency modes (`m-opt-lock`).
+
+Structural absence extends to the buffer. A buffered write that has an
+observation is buffered **paired** with it — one keyed instruction and the one
+observation resolved for it, the keyed counterpart of a Materialized Write
+Group's own aligned evidence (below) — and a write with none is buffered bare.
+Absence is therefore the absence of the pairing rather than a field carrying
+it, which is what lets planning read a write's address, gate, and carried state
+off one object.
 
 A **Predecessor Row** is the complete, immutable persisted state a Temporal
 Observation retains: every applicable scalar Attribute value, every complete
@@ -440,8 +481,8 @@ members can never surface the raw document as a result field or an Entity
 member.
 
 Retention costs no additional query. A temporal write already materializes its
-predecessor to obtain the key, milestone bounds, complete state, and concurrency
-basis; the resolving read projects the Structured Column for that observation
+predecessor to obtain the key, milestone bounds, and complete state; the
+resolving read projects the Structured Column for that observation
 anyway, and this rule says only that the observation path carries the value
 forward instead of discarding it once known members are decoded.
 
@@ -454,9 +495,6 @@ patches only the declared members its authored document names. An omitted
 nullable member remains stored, an explicitly null occurrence stores JSON null,
 and a key no member declares is untouched. A `many` assignment replaces its
 ordered array whole because its elements have no identity by which to merge.
-
-The **Transaction-Time Basis** records only whether the read licenses an ungated
-locking-mode write. It is not a claim about lock scope (`m-read-lock`).
 
 ### Comparing an assigned member with its persisted value
 
@@ -637,8 +675,7 @@ derivable from buffered data alone remains the planner's.
 One authored predicate becomes exactly one **Materialized Write Group**: the
 authored mutation, one shared primary-key shape, one immutable value column per
 key attribute, and either an aligned version column or complete Predecessor
-Columns with **one group-wide** Transaction-Time Basis. Every key and observation
-column has the same positive row count.
+Columns. Every key and observation column has the same positive row count.
 
 - The group is **private**. It is an input to planning, never a member of a Write
   Plan, and it disappears during finalization.
@@ -651,8 +688,8 @@ column has the same positive row count.
   candidate can structurally arise against it.
 - It contains no managed Entity object, no composite-key object per selected row,
   no eager Predecessor Row object per selected row, no generic per-row planning
-  wrapper, no mixed Transaction-Time Basis, and no observation-free variant. An
-  empty resolution produces no group.
+  wrapper, and no observation-free variant. An empty resolution produces no
+  group.
 - A zero-row shortfall encountered while flushing the group aborts the **whole**
   unit of work (`m-opt-lock`); a later row is never silently continued past it.
 

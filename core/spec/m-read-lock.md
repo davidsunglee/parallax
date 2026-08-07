@@ -44,14 +44,18 @@ on both:
 - A mutation that can change **several** current rectangles of one key must
   resolve and observe **every** rectangle it can change, materializing per row
   (`m-opt-lock`). Observing one rectangle licenses closing that rectangle alone.
-- The Transaction-Time Basis a temporal observation carries
-  (`LatestPinned | HistoricalPinned`) is **licensing metadata, not a description
-  of lock scope**. It records only whether the read that produced the observation
-  can license an ungated locking-mode write. A finite **Valid-Time** pin may
-  still select a current Transaction-Time row and so remains compatible with
-  locking; a **historical Transaction-Time** pin is not, because that read locked
-  no current row, and locking mode therefore rejects it before planning
-  (`m-opt-lock`).
+- A temporal observation names **one milestone** and records nothing about the
+  read that produced it, so what it says about lock scope is exactly what this
+  section says: the read locked that one row. A locking-mode write is licensed
+  by that lock because it closes that same milestone — the observation it
+  settles against is the one filed under the milestone its own written value
+  came from (`m-unit-work`, Write Observation). A read at a **historical**
+  Transaction-Time coordinate locks a historical row and observes the milestone
+  it actually selected, which no current-milestone close addresses; a write over
+  a view so pinned is refused by the Transaction-Time pin rule
+  (`m-identity-map`) rather than by any lock-scope claim. A finite
+  **Valid-Time** pin may still select a current Transaction-Time row and so
+  remains writable.
 
 The canonical Postgres golden SQL for an object find appends the suffix to the
 otherwise-ordinary read (`m-sql`), as a `then.statements` entry:

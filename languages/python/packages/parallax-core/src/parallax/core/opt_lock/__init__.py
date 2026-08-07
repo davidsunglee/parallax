@@ -2,21 +2,16 @@
 
 The optimistic-locking POLICY scope: this module never renders SQL (`m-sql` /
 `parallax.snapshot.handle` is the one seam that does) — it owns the
-version arithmetic, the observation-licensing rules, the derivation of the key a
-Write Observation is filed under, and the conflict/historical
-error vocabulary the write seam consumes. The key derivation lives here because
-it spans two scopes neither of which may reach the other: the identity half is
-``m-unit-work``'s Object Key and the milestone half is ``m-temporal-read``'s
-Edge, and this module is the one that depends on both.
-It also owns the formation half of the
+version arithmetic, the observation-licensing rules, and the conflict error
+vocabulary the write seam consumes. It also owns the formation half of the
 same concern: the Rule Set that keeps a family's version source unambiguous, and
 the Optimistic Lock Facet naming that source once per formation so no write path
 rediscovers a version column. Consumers reach the facet through :func:`view`, so
 generic facet retrieval stays an internal formation seam.
 ``m-opt-lock`` depends on ``m-unit-work``, ``m-temporal-read``, ``m-metamodel``,
 ``m-model-formation``, and ``m-inheritance``.
-Five normative pieces (`core/spec/
-m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
+Four normative pieces (`core/spec/
+m-opt-lock.md`; `python.md` §5; ADR 0013):
 
 1. **No-op-first.** An update whose effective change set is empty is dropped
    before any observation or locking concern — no observation read, no DML,
@@ -37,20 +32,7 @@ m-opt-lock.md`; `python.md` §5 L584-641; ADR 0013):
    optimistic mode additionally gates ``and <version> = ?`` binding the
    observed value LAST. INSERT derives the initial version unconditionally
    (never a row-carried value).
-4. **Historical-observation licensing** (:func:`check_locking_license`,
-   :class:`HistoricalObservationError`): a temporal observation licenses a
-   locking-mode write only when its read was latest-pinned on the Transaction-Time
-   axis; a versioned non-temporal row satisfies this trivially. Every
-   engine-supplied temporal observation is latest-pinned by construction (the
-   conformance engine's case-local shadow tracker only ever tracks the
-   CURRENT milestone), so this stays a no-op there — but a REAL
-   `Transaction.find` observation of a temporal entity threads the read's own
-   Transaction-Time pin through :data:`~parallax.core.unit_work.
-   TransactionTimeBasis`, so a locking-mode
-   write whose only transaction-scoped observation is historical or
-   edge-pinned genuinely raises here. Typed temporal verbs reach this check
-   through their transaction-scoped observations.
-5. **Conflict classification policy**: this module decides only which shortfall
+4. **Conflict classification policy**: this module decides only which shortfall
    tag a write's settled gate earns — a GATED write's shortfall is the
    retriable-when-opted-in optimistic conflict, an UNGATED
    observation-requiring one the distinct non-retriable stale write, because a
@@ -71,7 +53,6 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.metamodel import EntityMetadata
 from parallax.core.opt_lock._compile import (
     MODEL_COMPILER,
     OptimisticLockModelCompiler,
@@ -96,14 +77,9 @@ from parallax.core.opt_lock._rules import (
     OptimisticLockRuleSet,
     validate_optimistic_locking,
 )
-from parallax.core.temporal_read import milestone_edge_from_members
 from parallax.core.unit_work import (
     Concurrency,
-    HistoricalPinned,
-    ObjectKey,
-    ObservationKey,
     TemporalObservation,
-    TransactionTimeBasis,
     VersionObservation,
     WriteObservation,
 )
@@ -120,7 +96,6 @@ __all__ = [
     "UNVERSIONED",
     "CallerAuthoredVersionError",
     "ExplicitVersion",
-    "HistoricalObservationError",
     "OptimisticKey",
     "OptimisticLockFacet",
     "OptimisticLockModelCompiler",
@@ -130,10 +105,8 @@ __all__ = [
     "UnobservedVersionError",
     "Unversioned",
     "advance",
-    "check_locking_license",
     "compile_facet",
     "gates",
-    "observation_key",
     "reject_caller_authored_version",
     "require_observed",
     "require_observed_milestone",
@@ -187,44 +160,6 @@ class UnobservedMilestoneError(RuntimeError):
     unaffected — a case document authors its observation control keys
     explicitly, and its choreography is graded against its own goldens.)
     """
-
-
-class HistoricalObservationError(RuntimeError):
-    """A locking-mode write's only transaction-scoped observation is historical
-    or edge-pinned (not latest-pinned on the written Transaction-Time dimension).
-
-    Locking-mode closes are ungated, so the shared read lock is the only
-    protection; a shared lock on a historical or edge-pinned milestone locks
-    the wrong row — a concurrent chain replaces the current row without
-    touching the locked one, and the ungated close would then silently re-close
-    the replacement (a lost update). The same observation is legal in
-    optimistic mode, where the observed gate detects the staleness instead
-    (`python.md` §5 L596-611).
-    """
-
-
-def observation_key(
-    object_key: ObjectKey, observation: WriteObservation, declaring_entity: EntityMetadata
-) -> ObservationKey:
-    """The slot ``observation`` is filed under: ``object_key`` qualified by the
-    milestone the observation is *of*.
-
-    The coordinate is derived from the observation's OWN Predecessor Row rather
-    than supplied beside it, so a recorder cannot file an observation under a
-    milestone other than the one it is recording — the two-sides-agree property
-    holds by construction rather than by every recording site being careful.
-    A Version Observation names no milestone: a versioned Non-Temporal row has
-    exactly one row per primary key, so identity alone already addresses it.
-
-    ``declaring_entity`` is the family root that declares the As-Of Axes, whose
-    start Attributes name the members the coordinate is read from.
-    """
-    if not isinstance(observation, TemporalObservation):
-        return ObservationKey(object_key, None)
-    return ObservationKey(
-        object_key,
-        milestone_edge_from_members(declaring_entity, observation.predecessor.members),
-    )
 
 
 def require_observed(entity: str, observation: WriteObservation | None) -> int:
@@ -289,28 +224,6 @@ def gates(concurrency: Concurrency) -> bool:
     is what makes an ungated write correct.
     """
     return concurrency == "optimistic"
-
-
-def check_locking_license(concurrency: Concurrency, basis: TransactionTimeBasis) -> None:
-    """Raise :class:`HistoricalObservationError` when a locking-mode write's
-    observation was not read latest-pinned on the written Transaction-Time axis.
-
-    Only a Temporal Observation can answer anything but latest-pinned: a
-    versioned non-temporal row is always the current one, which is why its
-    observation carries no basis to check at all. A no-op in optimistic mode (the
-    observed gate detects staleness instead) and for an engine-supplied temporal
-    observation, which is latest-pinned by construction — the conformance
-    engine's case-local temporal tracker only ever tracks the CURRENT milestone.
-    A genuinely historical or edge-pinned developer read reaching a locking-mode
-    write is the case this check exists to catch.
-    """
-    if concurrency == "locking" and isinstance(basis, HistoricalPinned):
-        raise HistoricalObservationError(
-            "a locking-mode write's only transaction-scoped observation is historical or "
-            "edge-pinned (not latest-pinned on the written Transaction-Time dimension) — "
-            "the shared read lock would protect the wrong row; re-fetch the current "
-            "milestone inside the transaction, or run this write under optimistic concurrency"
-        )
 
 
 def reject_caller_authored_version(entity: str, version_attr: str) -> None:

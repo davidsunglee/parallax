@@ -43,7 +43,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.unit_work import (
     ANY_COUNT,
-    LATEST_PINNED,
     MAX_PLUS_ONE,
     MISSING_TARGET,
     OPTIMISTIC_CONFLICT,
@@ -1047,6 +1046,5 @@ def _bitemporal_observation() -> WriteObservation:
                 "txStart": "2024-01-01T00:00:00+00:00",
                 "txEnd": "infinity",
             }
-        ),
-        transaction_time_basis=LATEST_PINNED,
+        )
     )

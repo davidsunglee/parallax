@@ -699,7 +699,7 @@ def _resolve_graph_pointer(
 # The lowering failures the write lanes convert to a neutral :class:`EngineError`,
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
 # exception type across the conformance seam. `opt_lock.UnobservedVersionError` /
-# `.HistoricalObservationError` / `.CallerAuthoredVersionError` are m-opt-lock's own
+# `.CallerAuthoredVersionError` are m-opt-lock's own
 # forward-error posture; `temporal_state.AmbiguousObservationError` /
 # `.MilestoneEdgeError` are this engine's own (shapes no reachable case
 # exercises). A deferred witness (the
@@ -713,7 +713,6 @@ _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     WritePlanningError,
     inheritance.InheritanceError,
     opt_lock.UnobservedVersionError,
-    opt_lock.HistoricalObservationError,
     opt_lock.CallerAuthoredVersionError,
     temporal_state.AmbiguousObservationError,
     temporal_state.MilestoneEdgeError,

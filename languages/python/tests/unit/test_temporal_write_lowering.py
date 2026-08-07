@@ -49,7 +49,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import Statement
-from parallax.core.temporal_read import LATEST, Edge, Pin
+from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     INFINITY,
     OPTIMISTIC_CONFLICT,
@@ -977,7 +977,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
     observations.observe_row(entity.identity, _SPOT_QUOTE_COLUMNS, None)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        record_observations(uow, model, observations, Pin(tx_time=LATEST))
+        record_observations(uow, model, observations)
         return uow.observation_for(
             ObservationKey(ObjectKey(entity.identity, (("id", 1),)), _SPOT_QUOTE_EDGE)
         )
@@ -1021,7 +1021,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
     observations.observe_row(entity.identity, _SPOT_QUOTE_COLUMNS, stored)
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
-        record_observations(uow, model, observations, Pin(tx_time=LATEST))
+        record_observations(uow, model, observations)
         return uow.observation_for(
             ObservationKey(ObjectKey(entity.identity, (("id", 1),)), _SPOT_QUOTE_EDGE)
         )

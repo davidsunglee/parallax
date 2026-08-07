@@ -641,11 +641,14 @@ _Avoid_: nullable instant, database max timestamp, raw infinity string
 **Write Observation**:
 The database evidence retained for a surviving write against existing state: an
 observed positive version for a versioned Non-Temporal Entity, or one Temporal
-Observation containing a complete immutable Predecessor Row and its
-Transaction-Time Basis. The Temporal Facet, not a separate observation variant,
-distinguishes Transaction-Time-only from Bitemporal expansion. Inserts and
-unversioned Non-Temporal writes have no Write Observation by construction.
-_Avoid_: optional row bag, no-observation value, write target
+Observation containing a complete immutable Predecessor Row. It is filed under
+the object it observed plus the observed milestone's own coordinate, so two
+reads at coordinates resolving to different milestones retain evidence about
+each, and two resolving to one milestone share one piece of evidence. The
+Temporal Facet, not a separate observation variant, distinguishes
+Transaction-Time-only from Bitemporal expansion. Inserts and unversioned
+Non-Temporal writes have no Write Observation by construction.
+_Avoid_: optional row bag, no-observation value, write target, read pin
 
 **Predecessor Row**:
 The complete, immutable, concrete persisted state retained by a Temporal
@@ -665,23 +668,15 @@ positive row count. It can expose a logical Predecessor Row view without eagerly
 allocating a row wrapper for every selected predecessor.
 _Avoid_: predecessor object array, sparse observation columns, managed objects
 
-**Transaction-Time Basis**:
-The closed classification on a Temporal Observation:
-`LatestPinned | HistoricalPinned`. It records only whether the read can license
-an ungated locking-mode write; it does not claim that an entire temporal edge,
-lineage, or set of Valid-Time rectangles was locked.
-_Avoid_: full Pin, lock scope, Valid-Time pin
-
 **Materialized Write Group**:
 The private compact result of resolving one observation-requiring predicate
 write before pure planning. It retains the authored mutation, one shared
 primary-key shape, one immutable value column per key attribute, and either
-an aligned version column or complete Predecessor Columns with one group-wide
-Transaction-Time Basis. Every value column has the same positive row count. It
-contains no managed Entity objects, composite-key object per selected row,
-eager Predecessor Row object per selected row, per-row planning wrapper, mixed
-Transaction-Time Basis, or observation-free variant. An empty resolution
-produces no group. For an assignment-bearing mutation, input materialization
+an aligned version column or complete Predecessor Columns. Every value column
+has the same positive row count. It contains no managed Entity objects,
+composite-key object per selected row, eager Predecessor Row object per
+selected row, per-row planning wrapper, or observation-free variant. An empty
+resolution produces no group. For an assignment-bearing mutation, input materialization
 uses Unit Work's equality rules while streaming and retains only rows with an
 effective change; delete and terminate mutations retain every resolved row.
 _Avoid_: list of observed writes, result collection, public plan group, Atomic Unit, atomic planned unit

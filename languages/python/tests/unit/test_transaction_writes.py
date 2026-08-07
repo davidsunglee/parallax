@@ -792,24 +792,7 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
 _AUDIT_INSTANT = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
 
 
-@pytest.mark.parametrize(
-    "concurrency",
-    [
-        pytest.param(
-            "locking",
-            marks=pytest.mark.xfail(
-                reason=(
-                    "both reads now fill the one slot their shared milestone names, but a "
-                    "Temporal Observation still carries the Transaction-Time Basis of the "
-                    "read that produced it, so the audit read's basis is what the slot "
-                    "holds and the flush-time locking license refuses a write the shared "
-                    "read lock already protects"
-                )
-            ),
-        ),
-        "optimistic",
-    ],
-)
+@pytest.mark.parametrize("concurrency", ["locking", "optimistic"])
 def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
     concurrency: str,
 ) -> None:

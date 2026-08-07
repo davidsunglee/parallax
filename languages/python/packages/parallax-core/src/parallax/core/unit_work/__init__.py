@@ -7,8 +7,9 @@ single pure finalization authority — and the finalized **Planned Write** algeb
 its writes settle into — one closed semantic step per execution, delivered as an
 immutable, execution-ordered :class:`WritePlan`.
 
-The module DAG pins ``m-unit-work -> m-op-algebra`` and ``m-unit-work -> m-db-port``
-**only** — there is deliberately **no** edge to ``m-sql``, ``m-dialect``, or any
+The module DAG pins ``m-unit-work -> m-op-algebra``, ``m-unit-work -> m-db-port``,
+and ``m-unit-work -> m-temporal-read`` (the Edge a Write Observation is filed
+under) — there is deliberately **no** edge to ``m-sql``, ``m-dialect``, or any
 optional policy module (``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,
 ``m-bitemp-write``, ``m-read-lock``). So this scope holds no SQL generation and
 reaches those optional policies only through the strategy ports it declares: the
@@ -68,13 +69,8 @@ from parallax.core.unit_work.materialized import (
     buffered_write,
 )
 from parallax.core.unit_work.observe import (
-    HISTORICAL_PINNED,
-    LATEST_PINNED,
-    HistoricalPinned,
-    LatestPinned,
     PredecessorRow,
     TemporalObservation,
-    TransactionTimeBasis,
     VersionObservation,
     WriteObservation,
 )
@@ -142,10 +138,10 @@ from parallax.core.unit_work.planned import (
 )
 from parallax.core.unit_work.planner import (
     BufferItem,
-    MilestoneCoordinate,
     ObjectKey,
     ObservationKey,
     object_key,
+    observation_key,
 )
 from parallax.core.unit_work.strategy import (
     AUTHORED_FROM,
@@ -206,10 +202,8 @@ __all__ = [
     "AUTHORED_UNTIL",
     "CARRIED_STATE",
     "CHANGED_STATE",
-    "HISTORICAL_PINNED",
     "INFINITY",
     "INSERT_MUTATIONS",
-    "LATEST_PINNED",
     "MAX_PLUS_ONE",
     "MISSING_TARGET",
     "NEW_LINEAGE",
@@ -252,18 +246,15 @@ __all__ = [
     "FlushExecutor",
     "GeneratedValueExpression",
     "GroupObservations",
-    "HistoricalPinned",
     "Infinity",
     "InsertEntry",
     "InsertOrigin",
     "KeyTarget",
     "KeyedMutation",
     "KeyedWrite",
-    "LatestPinned",
     "MaterializedWriteGroup",
     "MaxPlusOne",
     "MilestoneClosure",
-    "MilestoneCoordinate",
     "MilestoneSuccessor",
     "MilestoneTarget",
     "MilestoneTopology",
@@ -317,7 +308,6 @@ __all__ = [
     "Terminated",
     "TransactionInstant",
     "TransactionSettings",
-    "TransactionTimeBasis",
     "UndecoratedAudit",
     "Ungated",
     "UnitOfWork",
@@ -348,6 +338,7 @@ __all__ = [
     "expand_milestone",
     "instant_literal",
     "object_key",
+    "observation_key",
     "plan_temporal_close",
     "planned_steps",
     "run_unit_of_work",

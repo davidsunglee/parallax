@@ -14,57 +14,20 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final
 
 from parallax.core.base import detach_json_container
 
 __all__ = [
-    "HISTORICAL_PINNED",
-    "LATEST_PINNED",
-    "HistoricalPinned",
-    "LatestPinned",
     "PredecessorRow",
     "TemporalObservation",
-    "TransactionTimeBasis",
     "VersionObservation",
     "WriteObservation",
 ]
 
 
 @dataclass(frozen=True, slots=True)
-class LatestPinned:
-    """The observing read was pinned to the current milestone on Transaction Time."""
-
-
-LATEST_PINNED: Final[LatestPinned] = LatestPinned()
-
-
-@dataclass(frozen=True, slots=True)
-class HistoricalPinned:
-    """The observing read was pinned at a finite Transaction-Time instant.
-
-    Locking mode refuses such an observation before planning: its shared read
-    lock is taken on a row that is not the one an ungated write would reach.
-    """
-
-
-HISTORICAL_PINNED: Final[HistoricalPinned] = HistoricalPinned()
-
-type TransactionTimeBasis = LatestPinned | HistoricalPinned
-"""Whether an observing read licenses an ungated locking-mode write.
-
-It records only that licensing fact and makes no claim about lock scope
-(`m-read-lock`).
-"""
-
-
-@dataclass(frozen=True, slots=True)
 class VersionObservation:
-    """The optimistic-lock version a versioned Non-Temporal row was read at.
-
-    A versioned row is always current, so its Transaction-Time Basis is not a
-    question this variant can ask.
-    """
+    """The optimistic-lock version a versioned Non-Temporal row was read at."""
 
     observed_version: int
 
@@ -119,7 +82,6 @@ class TemporalObservation:
     """
 
     predecessor: PredecessorRow
-    transaction_time_basis: TransactionTimeBasis = LATEST_PINNED
 
 
 type WriteObservation = VersionObservation | TemporalObservation

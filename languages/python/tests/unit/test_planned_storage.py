@@ -3,8 +3,8 @@
 Covers the compact private storage constructs beneath the finalized Planned
 Write algebra: bounded chunk construction and Column Slice sharing
 (:mod:`parallax.core.unit_work.columns`), Predecessor Columns' aligned member
-lengths, Materialized Write Group's own aligned key/observation columns and
-one group-wide Transaction-Time Basis, Planned Steps' segmented backing —
+lengths, Materialized Write Group's own aligned key/observation columns,
+Planned Steps' segmented backing —
 stable view equality with no object-identity promise, and no mutable
 flyweight reused across iterations — and structural sharing carried all the
 way through temporal expansion and lowering. Bounded wrapper allocation is a
@@ -37,7 +37,6 @@ from parallax.core import op_algebra
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
-    LATEST_PINNED,
     ChangedFrom,
     ChunkedColumn,
     ChunkedColumnBuilder,
@@ -273,8 +272,8 @@ def test_predecessor_columns_refuses_zero_length_member_columns() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Materialized Write Group: aligned key/observation columns, one group-wide   #
-# Transaction-Time Basis, and indivisibility.                                 #
+# Materialized Write Group: aligned key/observation columns and              #
+# indivisibility.                                                             #
 # --------------------------------------------------------------------------- #
 def _predicate(entity: str, mutation: PredicateMutation) -> PredicateWrite:
     return PredicateWrite(
@@ -353,25 +352,6 @@ def test_a_materialized_write_group_refuses_zero_rows() -> None:
         )
 
 
-def test_a_materialized_write_group_carries_one_group_wide_temporal_basis() -> None:
-    predecessors = _predecessor_columns(
-        [{"id": 1, "acctNum": "A", "value": 1.00, "txStart": "t0", "txEnd": "infinity"}]
-    )
-    keys: ChunkedColumnBuilder[object] = ChunkedColumnBuilder()
-    keys.append(1)
-    group = MaterializedWriteGroup(
-        mutation=_predicate("Balance", "terminate"),
-        key_attributes=("id",),
-        key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(
-            predecessors=predecessors, transaction_time_basis=LATEST_PINNED
-        ),
-    )
-    assert isinstance(group.observations, TemporalColumns)
-    assert group.observations.transaction_time_basis is LATEST_PINNED
-    assert len(group) == 1
-
-
 # --------------------------------------------------------------------------- #
 # Planned Steps: a Materialized Write Group settles into a lazily            #
 # materialized segment — stable, structurally-equal, non-flyweight views.     #
@@ -447,9 +427,7 @@ def _temporal_group(
         mutation=predicate,
         key_attributes=(key_name,),
         key_columns=(whole(keys.build()),),
-        observations=TemporalColumns(
-            predecessors=predecessors, transaction_time_basis=LATEST_PINNED
-        ),
+        observations=TemporalColumns(predecessors=predecessors),
     )
 
 
@@ -725,8 +703,7 @@ def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected()
         key_attributes=("id",),
         key_columns=(whole(keys.build()),),
         observations=TemporalColumns(
-            predecessors=_predecessor_columns([members for _key, members in rows]),
-            transaction_time_basis=LATEST_PINNED,
+            predecessors=_predecessor_columns([members for _key, members in rows])
         ),
     )
     plan = build_write_planner(_BALANCE).plan(
@@ -785,8 +762,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
         key_attributes=("id",),
         key_columns=(whole(keys.build()),),
         observations=TemporalColumns(
-            predecessors=_predecessor_columns(rows, value_objects=("address",)),
-            transaction_time_basis=LATEST_PINNED,
+            predecessors=_predecessor_columns(rows, value_objects=("address",))
         ),
     )
     plan = build_write_planner(_BRANCH).plan(
