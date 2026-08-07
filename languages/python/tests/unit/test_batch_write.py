@@ -51,7 +51,6 @@ def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[Stateme
             transaction_instant=instant,
             concurrency="locking",
             buffered_writes=buffer,
-            observations={},
         )
     )
     return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]

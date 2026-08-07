@@ -27,6 +27,8 @@ from parallax.core.unit_work import (
     FixedClock,
     FlushExecutor,
     KeyedWrite,
+    ObservationKey,
+    ObservedKeyedWrite,
     PlannedInsert,
     PlannedUpdate,
     RollbackOnlyError,
@@ -230,15 +232,26 @@ def test_system_clock_reads_an_aware_utc_instant() -> None:
     assert instant.utcoffset() == dt.timedelta(0)
 
 
-def test_observe_binds_the_recorded_observation_into_the_settled_step() -> None:
-    # `PlannedUpdate` carries no raw observation either — the recorded version
-    # survives only as the settled step's own advanced assignment.
+def test_an_observation_a_buffered_write_carries_binds_into_its_settled_step() -> None:
+    # The whole round trip through the shell: an observation is recorded under
+    # the slot its read filled, resolved back out of that slot before the write
+    # is buffered, and travels to planning ON the write. `PlannedUpdate` carries
+    # no raw observation — the recorded version survives only as the settled
+    # step's own advanced assignment.
     recorder = _Recorder()
     observation = VersionObservation(observed_version=7)
+    slot = ObservationKey(corpus_object_key("Account", ("id", 1)), None)
 
     def body(tx: UnitOfWork) -> None:
-        tx.observe(corpus_object_key("Account", ("id", 1)), observation)
-        tx.buffer(KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},)))
+        tx.observe(slot, observation)
+        resolved = tx.observation_for(slot)
+        assert resolved is not None
+        tx.buffer(
+            ObservedKeyedWrite(
+                instruction=KeyedWrite("update", "Account", ({"id": 1, "balance": 0.00},)),
+                observation=resolved,
+            )
+        )
 
     _run(body, executor=recorder)
     (step,) = recorder.plans[0].steps
@@ -372,7 +385,10 @@ def test_escaped_reference_raises_on_every_use() -> None:
     with pytest.raises(EscapedTransactionError):
         tx.buffer(_account_insert(1))
     with pytest.raises(EscapedTransactionError):
-        tx.observe(corpus_object_key("Account", ("id", 1)), VersionObservation(observed_version=1))
+        tx.observe(
+            ObservationKey(corpus_object_key("Account", ("id", 1)), None),
+            VersionObservation(observed_version=1),
+        )
     with pytest.raises(EscapedTransactionError):
         tx.flush()
     with pytest.raises(EscapedTransactionError):

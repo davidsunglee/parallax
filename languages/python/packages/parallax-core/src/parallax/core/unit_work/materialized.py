@@ -1,4 +1,12 @@
-"""The Materialized Write Group (`m-unit-work` "Materialized Write Groups").
+"""The buffered writes that carry their own observation evidence (`m-unit-work`).
+
+A write against existing state settles against the database evidence a prior
+read retained. Both shapes here pair one buffered mutation with the evidence
+resolved for it, so the address a write takes, the gate it binds, and the
+license it holds are all read off one object rather than looked up separately.
+Each is an input to planning, never a member of a Write Plan; each stays
+indivisible through batching and dependency ordering and disappears during
+finalization.
 
 A predicate-selected write whose target requires per-row observation cannot be
 planned from buffered data alone. Its resolving read happens before the pure
@@ -6,9 +14,10 @@ planning call, in Unit Work's write-input preparation, and settles into
 exactly one compact private group per authored predicate: one shared
 primary-key shape, one immutable value column per key attribute, and either an
 aligned version column or complete Predecessor Columns under one group-wide
-Transaction-Time Basis. The group is an input to planning, never a member of a
-Write Plan; it stays indivisible through batching and dependency ordering and
-disappears during finalization.
+Transaction-Time Basis.
+
+A keyed write's evidence is resolved once, at the developer verb that holds the
+value being written, and rides beside the instruction from there.
 """
 
 from __future__ import annotations
@@ -16,10 +25,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core.unit_work.columns import ColumnSlice, PredecessorColumns
-from parallax.core.unit_work.instructions import PredicateWrite
-from parallax.core.unit_work.observe import TransactionTimeBasis
+from parallax.core.unit_work.instructions import KeyedWrite, PredicateWrite
+from parallax.core.unit_work.observe import TransactionTimeBasis, WriteObservation
 
-__all__ = ["GroupObservations", "MaterializedWriteGroup", "TemporalColumns", "VersionColumns"]
+__all__ = [
+    "GroupObservations",
+    "MaterializedWriteGroup",
+    "ObservedKeyedWrite",
+    "TemporalColumns",
+    "VersionColumns",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +102,27 @@ class MaterializedWriteGroup:
 
     def __len__(self) -> int:
         return len(self.key_columns[0])
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedKeyedWrite:
+    """One keyed write and the Write Observation resolved for it.
+
+    Resolution happens at the developer verb, which alone holds the value being
+    written and therefore alone knows which milestone that value came from; the
+    planner reads the observation off this envelope rather than resolving one of
+    its own from a transaction-wide map. That is what makes a close's address,
+    its gate, and its license derive from a single object.
+
+    The observation is always present. A write that has none — every insert, and
+    every unversioned Non-Temporal write — buffers as a bare ``KeyedWrite``, so
+    absence stays structural (`m-unit-work`) rather than becoming a null field
+    that flows downstream. A write that REQUIRES one and arrives bare is refused
+    while it is settled, exactly where it is today.
+    """
+
+    instruction: KeyedWrite
+    observation: WriteObservation
 
 
 def _observation_length(observations: GroupObservations) -> int:

@@ -99,6 +99,7 @@ __all__ = [
     "conjunction_terms",
     "inject_as_of",
     "milestone_edge",
+    "milestone_edge_from_members",
     "milestone_edge_of",
     "resolve_pinned_instants",
     "scans_an_axis",
@@ -329,6 +330,25 @@ def milestone_edge_of(entity: EntityMetadata, values: Mapping[AttributeIdentity,
     already fixes, in a layer that otherwise never needs to know one.
     """
     return _edge(entity, values)
+
+
+def milestone_edge_from_members(entity: EntityMetadata, members: Mapping[str, object]) -> Edge:
+    """The same edge-pin rule, read off values keyed by **declared member name**.
+
+    The form a retained row payload answers in — a Write Observation's
+    Predecessor Row holds the observed milestone's complete state by declared
+    name, with neither the physical column nor the Attribute Identity that
+    carried it. Deriving the edge from that payload rather than beside it is
+    what keeps a recorder structurally unable to file an observation under a
+    milestone other than the one it is recording.
+    """
+    return _edge(
+        entity,
+        {
+            axis.start_attribute: members.get(axis.start_attribute.name)
+            for axis in entity.declared_as_of_axes
+        },
+    )
 
 
 def _edge(entity: EntityMetadata, values: Mapping[AttributeIdentity, object]) -> Edge:

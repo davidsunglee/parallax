@@ -18,12 +18,12 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import Statement
 from parallax.core.unit_work import (
     Concurrency,
-    ObjectKey,
+    KeyedWrite,
+    ObservedKeyedWrite,
     PlanningRequest,
     TransactionInstant,
     WriteInstruction,
     WriteObservation,
-    object_key,
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.snapshot.handle import build_write_planner, stream_lowered
@@ -71,18 +71,16 @@ def _stream(
     observation: WriteObservation | None,
 ) -> list[tuple[PlannedStep, Statement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
-    observations: dict[ObjectKey, WriteObservation] = {}
+    buffered: WriteInstruction | ObservedKeyedWrite = instruction
     if observation is not None:
-        key = object_key(instruction, model)
-        assert key is not None  # every probed observation names an identifiable object
-        observations[key] = observation
+        assert isinstance(instruction, KeyedWrite)  # only a keyed write carries an observation
+        buffered = ObservedKeyedWrite(instruction=instruction, observation=observation)
     plan = build_write_planner(model).plan(
         PlanningRequest(
             subject_identity=TEST_SUBJECT_IDENTITY,
             transaction_instant=instant,
             concurrency=concurrency,
-            buffered_writes=[instruction],
-            observations=observations,
+            buffered_writes=[buffered],
         )
     )
     return list(stream_lowered(plan, model, dialect))

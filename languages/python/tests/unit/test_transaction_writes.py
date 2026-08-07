@@ -47,6 +47,7 @@ from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
     StaleWriteError,
+    VersionObservation,
     WriteInstructionError,
     WriteRejectedError,
     validate_write,
@@ -445,16 +446,18 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     # The no-drift guard for CURRENTLY-LEGAL writes: a sparse keyed update (an id +
     # balance row omitting the required `owner`) must NOT be rejected — an absent
     # top-level member is untouched, never a violation, on any mutation but
-    # `insert`. The version advances from this unit of work's own recorded
-    # observation (`tx.find`), never a row-carried value (`m-opt-lock`).
-    port = RecordingPort(
-        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
-    )
+    # `insert`. The row is authored straight at the buffer seam, which is what
+    # puts it in front of `validate_write` without an edited copy deriving it.
+    # The version advances from the observation the write carries, never a
+    # row-carried value (`m-opt-lock`).
+    port = RecordingPort()
 
     def fn(tx: Transaction) -> None:
-        tx.find(mm.Account.where(mm.Account.id == 1)).result()
         tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-            "update", "Account", {"id": 1, "balance": Decimal("175.00")}
+            "update",
+            "Account",
+            {"id": 1, "balance": Decimal("175.00")},
+            observation=VersionObservation(observed_version=1),
         )
 
     account_db(port).transact(fn)
@@ -796,9 +799,11 @@ _AUDIT_INSTANT = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
             "locking",
             marks=pytest.mark.xfail(
                 reason=(
-                    "the audit read overwrites the latest read's evidence under the same "
-                    "primary key, so the flush-time locking license refuses a write the "
-                    "shared read lock already protects"
+                    "both reads now fill the one slot their shared milestone names, but a "
+                    "Temporal Observation still carries the Transaction-Time Basis of the "
+                    "read that produced it, so the audit read's basis is what the slot "
+                    "holds and the flush-time locking license refuses a write the shared "
+                    "read lock already protects"
                 )
             ),
         ),

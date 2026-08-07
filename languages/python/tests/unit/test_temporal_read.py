@@ -20,13 +20,15 @@ from parallax.conformance import models
 from parallax.core import Edge, Pin, UndeclaredAxisError
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata
+from parallax.core.metamodel import EntityMetadata, TemporalDimension
 from parallax.core.sql_gen import compile_read
 from parallax.core.temporal_read import (
     LATEST,
     TemporalReadError,
     inject_as_of,
     milestone_edge,
+    milestone_edge_from_members,
+    milestone_edge_of,
     scans_an_axis,
     statement_pin,
 )
@@ -274,6 +276,55 @@ def test_milestone_edge_on_non_temporal_entity_raises() -> None:
 def test_milestone_edge_rejects_a_non_instant_from_column() -> None:
     with pytest.raises(TemporalReadError, match="not a timestamp instant"):
         milestone_edge(BALANCE, {"in_z": "not-a-datetime"})
+
+
+def test_the_three_keying_schemes_derive_one_milestones_edge_identically() -> None:
+    # One milestone reaches three keying schemes on its way through the system:
+    # physical columns as a driver returns them, declared member names as a
+    # retained row payload holds them, and Attribute Identities as a materialized
+    # node answers in. All three name the SAME milestone, so all three must
+    # produce an EQUAL Edge — otherwise a write's evidence could be filed under
+    # one coordinate and looked up under another. Equality holds by shared
+    # derivation rather than by coincidence: every scheme resolves the axis start
+    # values and hands them to one computation.
+    valid_start = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+    tx_start = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
+    axes = {axis.dimension: axis for axis in POSITION.declared_as_of_axes}
+    starts = {
+        axes[TemporalDimension.VALID_TIME].start_attribute: valid_start,
+        axes[TemporalDimension.TRANSACTION_TIME].start_attribute: tx_start,
+    }
+
+    by_column = milestone_edge(POSITION, {"from_z": valid_start, "in_z": tx_start})
+    by_member = milestone_edge_from_members(
+        POSITION, {"validStart": valid_start, "txStart": tx_start, "value": "carried"}
+    )
+    by_identity = milestone_edge_of(POSITION, starts)
+
+    assert by_member == by_column == by_identity
+
+
+def test_a_member_keyed_edge_normalizes_an_offset_instant_to_utc() -> None:
+    # The member-keyed payload carries what the driver returned, which need not be
+    # spelled in UTC. Two spellings of one instant name one milestone, so the
+    # derived edges are equal and the observation lands in one slot.
+    offset = dt.timezone(dt.timedelta(hours=-4))
+    shifted = milestone_edge_from_members(
+        BALANCE, {"txStart": dt.datetime(2024, 3, 31, 20, tzinfo=offset)}
+    )
+    assert shifted == milestone_edge_from_members(
+        BALANCE, {"txStart": dt.datetime(2024, 4, 1, tzinfo=dt.UTC)}
+    )
+
+
+def test_member_keyed_edge_on_non_temporal_entity_raises() -> None:
+    with pytest.raises(TemporalReadError, match="not a temporal entity"):
+        milestone_edge_from_members(ORDERS, {"id": 1})
+
+
+def test_member_keyed_edge_rejects_a_non_instant_member() -> None:
+    with pytest.raises(TemporalReadError, match="not a timestamp instant"):
+        milestone_edge_from_members(BALANCE, {"txStart": "not-a-datetime"})
 
 
 def test_directive_distinct_survives_injection() -> None:

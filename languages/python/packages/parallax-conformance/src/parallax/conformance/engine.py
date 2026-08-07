@@ -72,6 +72,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     MissingTargetError,
     ObjectKey,
+    ObservedKeyedWrite,
     OptimisticLockConflictError,
     PlanningRequest,
     PredicateWrite,
@@ -845,9 +846,14 @@ def _strip_observation(
     return clean, VersionObservation(observed_version=cast("int", version))
 
 
-# An object-key -> Write Observation map (m-opt-lock; ADR 0013) — the same neutral
-# shape a REAL `Transaction.find` populates on the production path
-# (`parallax.snapshot.handle` records observations into `uow.observe`).
+# An object-key -> Write Observation map (m-opt-lock; ADR 0013) — this engine's
+# own case-local record of what a `uow` group's find steps observed, the
+# analogue of what a REAL `Transaction.find` records on the production path
+# (`parallax.snapshot.handle` records observations into `uow.observe`). Only a
+# VERSIONED NON-TEMPORAL row reaches it — a versioned row has exactly one row
+# per primary key, so object identity alone addresses it and no milestone
+# coordinate qualifies the key; a temporal entry resolves through
+# `TemporalShadow` instead.
 # `_write_sequence_lowered` / `run_write_sequence_case` pass a permanently
 # EMPTY instance (a writeSequence carries no find steps at all): every keyed
 # write's observation there comes solely from its own row's reserved
@@ -912,7 +918,6 @@ def _row_object_key(
 
 
 def _observe_group_find(
-    tx: handle.Transaction,
     observations: ScenarioObservations,
     meta: Metamodel,
     compiled: CompiledRead,
@@ -920,16 +925,15 @@ def _observe_group_find(
 ) -> None:
     """Record a `uow` GROUP's own OBSERVED version for every row a grouped
     find step returns, when its target is a VERSIONED NON-TEMPORAL entity —
-    into BOTH the group-local :data:`ScenarioObservations` map (this SAME
-    group's own pure re-lowering oracle, :func:`_lower_resolved` via
-    :func:`_run_uow_group`) and the REAL transaction's own unit of work
-    (``tx._uow.observe`` — the same neutral seam :func:`_execute_write_unit`
-    pokes at, mirroring the production path a real ``Transaction.find``
-    builds, where `parallax.snapshot.handle` records observations into
-    `uow.observe`), so a later
+    into the group-local :data:`ScenarioObservations` map, which both this SAME
+    group's pure re-lowering oracle (:func:`_lower_resolved`) and its real
+    buffered writes (:func:`_buffer_execution_instruction`) resolve from, so a
+    later
     keyed write of the SAME object in this SAME group derives its version
     bind from a genuine transaction-scoped observation — never an oracle,
-    never a scenario-wide map. Rows are always COLUMN-named here (the real
+    never a scenario-wide map. One map serves both, so the statement the oracle
+    predicts and the statement the transaction emits cannot bind different
+    observed versions. Rows are always COLUMN-named here (the real
     ``port.execute`` row shape — the SAME convention
     `parallax.snapshot.handle`'s own observation recording reads via
     ``node.fields[attr.column]``); the scenario compile lane never calls this
@@ -952,9 +956,9 @@ def _observe_group_find(
         key = _row_object_key(meta, compiled.materialize_row(row).resolved_entity, row)
         if key is None or version_attr.column not in row:
             continue
-        observation = VersionObservation(observed_version=cast("int", row[version_attr.column]))
-        observations[key] = observation
-        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+        observations[key] = VersionObservation(
+            observed_version=cast("int", row[version_attr.column])
+        )
 
 
 def _entry_instant(entry: Mapping[str, object]) -> str:
@@ -1466,6 +1470,24 @@ def _resolve_entries(
     return resolved
 
 
+def _buffered(
+    instruction: WriteInstruction, observation: WriteObservation | None
+) -> WriteInstruction | ObservedKeyedWrite:
+    """One resolved entry as the buffer item a unit of work would hold for it.
+
+    An entry whose case document (or this group's own prior find) supplied an
+    observation travels with it, exactly as a developer verb's own resolution
+    does; an unobserved entry stays bare, so absence is the absence of the
+    wrapper here too. This engine is therefore unable to author an observation a
+    write does not carry, or to carry one under an identity the write does not
+    name.
+    """
+    if observation is None:
+        return instruction
+    assert isinstance(instruction, KeyedWrite)  # only a keyed write carries an observation
+    return ObservedKeyedWrite(instruction=instruction, observation=observation)
+
+
 def _lower_resolved(
     resolved: Sequence[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]],
     entries: Sequence[Mapping[str, object]],
@@ -1487,12 +1509,7 @@ def _lower_resolved(
     this ONE plan actually emits (:func:`_check_statement_count_consistency`) —
     the count is never derived from a second, reconstructed plan.
     """
-    buffer = [instruction for instruction, _key, _observation in resolved]
-    observations: dict[ObjectKey, WriteObservation] = {
-        key: observation
-        for _instruction, key, observation in resolved
-        if key is not None and observation is not None
-    }
+    buffer = [_buffered(instruction, observation) for instruction, _key, observation in resolved]
     model = case_model(meta)
     instant = _pinned_instant(tx_instant)
     plan = build_write_planner(model).plan(
@@ -1501,7 +1518,6 @@ def _lower_resolved(
             transaction_instant=instant,
             concurrency=concurrency,
             buffered_writes=buffer,
-            observations=observations,
         )
     )
     statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
@@ -1564,7 +1580,6 @@ def _lower_predicate_write_step(
             transaction_instant=instant,
             concurrency=concurrency,
             buffered_writes=[instruction],
-            observations={},
         )
     )
     statements = [statement for _step, statement in stream_lowered(plan, model, dialect)]
@@ -1989,9 +2004,11 @@ def _buffer_execution_instruction(
     meta: Metamodel,
     model: AcceptedMetamodel,
     instruction: KeyedWrite,
+    observation: WriteObservation | None,
 ) -> None:
-    """Buffer one resolved keyed-write instruction for REAL execution, its row
-    decoded to native carriers first — the ONE entity-lookup/decode/buffer seam
+    """Buffer one resolved keyed-write instruction, and the observation resolved
+    for it, for REAL execution, its row decoded to native carriers first — the
+    ONE entity-lookup/decode/buffer seam
     every real-execution write path (an ungrouped unit, a `uow` group, an
     interleaved group) shares.
 
@@ -2019,6 +2036,7 @@ def _buffer_execution_instruction(
         decode_write_row(entity_metadata, instruction.rows[0], model),
         valid_from=instruction.valid_from,
         until=instruction.until,
+        observation=observation,
     )
 
 
@@ -2049,14 +2067,11 @@ def _execute_write_unit(
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
 
     def body(tx: handle.Transaction) -> None:
-        for instruction, key, observation in resolved:
+        for instruction, _key, observation in resolved:
             assert isinstance(
                 instruction, KeyedWrite
             )  # every resolved entry this lane buffers is keyed
-            if key is not None and observation is not None:
-                # The documented neutral seam (Transaction._buffer route + uow.observe).
-                tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-            _buffer_execution_instruction(tx, meta, model, instruction)
+            _buffer_execution_instruction(tx, meta, model, instruction, observation)
         if rollback:
             # Force the buffered DML to execute (and count its round trips)
             # INSIDE the still-open atomic scope before the intentional abort —
@@ -2389,11 +2404,12 @@ def _run_uow_group(
     reads THROUGH the
     transaction's own connection (``tx._conn`` — force-flushing any pending
     buffered write first, ``tx._uow.read``, exactly as a real
-    ``Transaction.find`` does) and records its own observation on the
-    transaction's unit of work (:func:`_observe_group_find`); a grouped WRITE
+    ``Transaction.find`` does) and records its own observation
+    (:func:`_observe_group_find`); a grouped WRITE
     resolves against this SAME group's own observations (never a scenario-
-    wide map) and buffers via ``tx._buffer``, so the eventual ``flush()``
-    derives every version bind from ``self._observations`` alone — the SAME
+    wide map) and buffers via ``tx._buffer`` carrying the one it resolved, so
+    every version bind the eventual ``flush()`` derives comes from the write's
+    own evidence — the SAME
     neutral seam :func:`_execute_write_unit` uses for one step, generalized
     here to a whole group. Emissions/round-trips still come from the SAME
     pure re-lowering every other write path uses (:func:`_lower_resolved`),
@@ -2430,13 +2446,11 @@ def _run_uow_group(
                 statements = _lower_resolved(
                     resolved, entries, meta, dialect, concurrency, tx_instant
                 )
-                for instruction, key, observation in resolved:
+                for instruction, _key, observation in resolved:
                     assert isinstance(
                         instruction, KeyedWrite
                     )  # every resolved entry this lane buffers is keyed
-                    if key is not None and observation is not None:
-                        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-                    _buffer_execution_instruction(tx, meta, model, instruction)
+                    _buffer_execution_instruction(tx, meta, model, instruction, observation)
                 lowered.append(
                     _LoweredStep(
                         f"/scenario/{index}/write", statements, True, step.get("rollback") is True
@@ -2449,7 +2463,7 @@ def _run_uow_group(
                 rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
-                _observe_group_find(tx, group_observations, meta, compiled, rows)
+                _observe_group_find(group_observations, meta, compiled, rows)
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
         if doomed:
             # Force any still-buffered DML onto the wire (and count its round
@@ -2633,13 +2647,11 @@ def _run_interleaved_group(
                 statements = _lower_resolved(
                     resolved, entries, meta, dialect, concurrency, _INERT_CLOCK_INSTANT
                 )
-                for instruction, key, observation in resolved:
+                for instruction, _key, observation in resolved:
                     assert isinstance(
                         instruction, KeyedWrite
                     )  # every resolved entry this lane buffers is keyed
-                    if key is not None and observation is not None:
-                        tx._uow.observe(key, observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-                    _buffer_execution_instruction(tx, meta, model, instruction)
+                    _buffer_execution_instruction(tx, meta, model, instruction, observation)
                 lowered[index] = _LoweredStep(
                     f"/scenario/{index}/write", statements, True, step.get("rollback") is True
                 )
@@ -2652,7 +2664,7 @@ def _run_interleaved_group(
                 rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
-                _observe_group_find(tx, group_observations, meta, compiled, rows)
+                _observe_group_find(group_observations, meta, compiled, rows)
                 result.rows[index] = rows
                 lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
             if not is_last:
@@ -3578,17 +3590,6 @@ def _resolve_conflict_writes(
     return tuple(resolved)
 
 
-def _conflict_write_observations(
-    resolved: Sequence[_ConflictWrite],
-) -> dict[ObjectKey, WriteObservation]:
-    """The observations an attempt's resolved rows bind, keyed by object identity."""
-    return {
-        write.key: write.observation
-        for write in resolved
-        if write.key is not None and write.observation is not None
-    }
-
-
 def _landed_conflict_rows(resolved: Sequence[_ConflictWrite]) -> int:
     """The aggregate row count a conflict attempt affects when its write LANDS:
     one per DISTINCT addressed key, since same-key rows coalesce into a single
@@ -3618,8 +3619,7 @@ def _lower_conflict_write(
             subject_identity=_PLANNING_SUBJECT,
             transaction_instant=instant,
             concurrency=concurrency,
-            buffered_writes=[write.instruction for write in resolved],
-            observations=_conflict_write_observations(resolved),
+            buffered_writes=[_buffered(write.instruction, write.observation) for write in resolved],
         )
     )
     return tuple(statement for _step, statement in stream_lowered(plan, model, dialect))
@@ -3688,8 +3688,9 @@ def _run_conflict_write(
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE
     transaction, an inert Clock (never consumed by a non-temporal write).
-    Buffers EVERY row through the neutral ``Transaction._buffer`` route +
-    ``UnitOfWork.observe``, so a MULTI-KEY attempt reaches the flush the same way
+    Buffers EVERY row through the neutral ``Transaction._buffer`` route, each
+    carrying the observation its own row authored, so a MULTI-KEY attempt
+    reaches the flush the same way
     a unit of work's own buffered writes do and the batching rule — not this
     function — decides how many statements they become; the PRODUCTION flush
     executor's OWN affected-row enforcer raises on a violation, and this lane
@@ -3719,11 +3720,11 @@ def _run_conflict_write(
 
     def body(tx: handle.Transaction) -> int:
         for write in resolved:
-            if write.observation is not None and write.key is not None:
-                # The documented neutral seam (Transaction._buffer route + uow.observe).
-                tx._uow.observe(write.key, write.observation)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
             tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-                mutation, target, decode_write_row(target_metadata, write.row, model)
+                mutation,
+                target,
+                decode_write_row(target_metadata, write.row, model),
+                observation=write.observation,
             )
         return landed  # the expectation machinery already verified this on success
 

@@ -27,6 +27,7 @@ import dataclasses
 import datetime as dt
 from collections.abc import Mapping
 from decimal import Decimal
+from typing import Final
 
 import pytest
 from _transact_support import (
@@ -42,12 +43,13 @@ from _support.lowering_probes import lower_instruction, lower_instruction_steps
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import bitemp_write, storage_layout, txtime_write
+from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import Statement
-from parallax.core.temporal_read import LATEST, Pin
+from parallax.core.temporal_read import LATEST, Edge, Pin
 from parallax.core.unit_work import (
     INFINITY,
     OPTIMISTIC_CONFLICT,
@@ -65,6 +67,7 @@ from parallax.core.unit_work import (
     KeyedWrite,
     NewLineage,
     ObjectKey,
+    ObservationKey,
     PlannedClose,
     PlannedInsert,
     PredecessorRow,
@@ -737,13 +740,6 @@ _RETROACTIVE_RECTANGLE: Row = {
 }
 
 
-@pytest.mark.xfail(
-    reason=(
-        "a Write Observation is keyed by primary key alone, so the retroactive read "
-        "erases the current read's evidence and the close settles against the rectangle "
-        "the written value did not come from"
-    )
-)
 @pytest.mark.parametrize(
     ("concurrency", "gate_sql", "gate_binds"),
     [
@@ -931,14 +927,22 @@ def test_milestone_insert_cells_follow_semantic_tier_order_not_declaration_order
 
 # One materialized SpotQuote row as the read executor hands it to a collector:
 # physical-column keyed, complete (instance-form projects every applicable
-# Column), and carrying no node of its own.
+# Column), and carrying no node of its own. Interval values are driver-native —
+# an aware `datetime` for a finite bound, the neutral open-bound sentinel for an
+# open one — which is what the port returns and what the observation retains
+# unchanged.
 _SPOT_QUOTE_COLUMNS: Mapping[str, object] = {
     "id": 1,
     "price": 50.00,
     "symbol": "ACME",
-    "in_z": "2024-01-01T00:00:00+00:00",
-    "out_z": "infinity",
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": OPEN_BOUND,
 }
+
+# The milestone that row stands on — its finite from-instant on every declared
+# axis. An observation of it is filed under this, not under the primary key
+# alone, so reading one back names the milestone it is evidence about.
+_SPOT_QUOTE_EDGE: Final[Edge] = Edge(tx_time=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
 
 
 def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -> None:
@@ -954,7 +958,9 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
         record_observations(uow, model, observations, Pin(tx_time=LATEST))
-        return uow.observation_for(ObjectKey(entity.identity, (("id", 1),)))
+        return uow.observation_for(
+            ObservationKey(ObjectKey(entity.identity, (("id", 1),)), _SPOT_QUOTE_EDGE)
+        )
 
     observation = run_unit_of_work(
         observe,
@@ -970,8 +976,8 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         "id": 1,
         "price": 50.00,
         "symbol": "ACME",
-        "txStart": "2024-01-01T00:00:00+00:00",
-        "txEnd": "infinity",
+        "txStart": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "txEnd": OPEN_BOUND,
     }
 
     update = KeyedWrite("update", "SpotQuote", ({"id": 1, "price": 60.00},))
@@ -996,7 +1002,9 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
 
     def observe(uow: UnitOfWork) -> WriteObservation | None:
         record_observations(uow, model, observations, Pin(tx_time=LATEST))
-        return uow.observation_for(ObjectKey(entity.identity, (("id", 1),)))
+        return uow.observation_for(
+            ObservationKey(ObjectKey(entity.identity, (("id", 1),)), _SPOT_QUOTE_EDGE)
+        )
 
     observation = run_unit_of_work(
         observe,

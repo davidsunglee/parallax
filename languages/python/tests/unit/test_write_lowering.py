@@ -42,7 +42,7 @@ from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import inert_instant
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
+from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
@@ -144,8 +144,7 @@ def _flush_and_lower(
             subject_identity=TEST_SUBJECT_IDENTITY,
             transaction_instant=instant,
             concurrency=concurrency,
-            buffered_writes=buffer,
-            observations=observations or {},
+            buffered_writes=observed_buffer(buffer, model, observations),
         )
     )
     return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]

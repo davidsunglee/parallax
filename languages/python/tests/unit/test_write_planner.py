@@ -24,7 +24,7 @@ from _corpus_identity_support import corpus_object_key
 from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import CountingClock, inert_instant, instant_at
-from _support.planner_probes import TEST_SUBJECT_IDENTITY
+from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.conformance import models
 from parallax.core import op_algebra, opt_lock
 from parallax.core._formation_profile import form_metamodel
@@ -114,8 +114,7 @@ def _plan(
             subject_identity=TEST_SUBJECT_IDENTITY,
             transaction_instant=tx_instant if tx_instant is not None else _INSTANT,
             concurrency=concurrency,
-            buffered_writes=buffer,
-            observations=observations or {},
+            buffered_writes=observed_buffer(buffer, model, observations),
         )
     )
 

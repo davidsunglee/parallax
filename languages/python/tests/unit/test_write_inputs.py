@@ -21,13 +21,15 @@ from _corpus_identity_support import corpus_entity, corpus_object_key
 
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
+from parallax.core.base import INFINITY
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.temporal_read import LATEST, Pin
+from parallax.core.temporal_read import LATEST, Edge, Pin
 from parallax.core.unit_work import (
     HISTORICAL_PINNED,
     LATEST_PINNED,
     FixedClock,
-    ObjectKey,
+    MilestoneCoordinate,
+    ObservationKey,
     TemporalObservation,
     TransactionSettings,
     UnitOfWork,
@@ -41,8 +43,27 @@ from parallax.snapshot.handle._write_inputs import ReadObservations, record_obse
 _MODELS = models.load_models()
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 _HISTORICAL = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
-_INFINITY = "infinity"
 _LATEST_PIN = Pin(tx_time=LATEST)
+
+# Interval values as the port returns them: an aware `datetime` for a finite
+# bound, the neutral open-bound sentinel for an open one. Nothing between the
+# driver and a Predecessor Row re-renders either, so a fixture that spelled them
+# on the wire would be describing a row this seam never sees.
+_TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_VALID_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+_RATE_TX_START = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
+_INFINITY = INFINITY
+
+
+def _slot(
+    entity_name: str, pk: tuple[str, object], milestone: MilestoneCoordinate | None = None
+) -> ObservationKey:
+    """The slot an observation of ``entity_name``'s ``pk`` at ``milestone`` fills.
+
+    A versioned Non-Temporal row names no milestone: it has exactly one row per
+    primary key, so identity alone addresses its evidence.
+    """
+    return ObservationKey(corpus_object_key(entity_name, pk), milestone)
 
 
 def _accepted(model_name: str) -> AcceptedMetamodel:
@@ -56,12 +77,17 @@ def _account_columns(*, id_: int = 1, version: int | None = 4) -> Mapping[str, o
     return columns
 
 
+# The milestone every `_balance_columns` row stands on: `Balance` is
+# Transaction-Time-only, so its edge is that one axis's from-instant.
+_BALANCE_SLOT = ObservationKey(corpus_object_key("Balance", ("id", 1)), Edge(tx_time=_TX_START))
+
+
 def _balance_columns(*, id_: int = 1) -> Mapping[str, object]:
     return {
         "bal_id": id_,
         "acct_num": "A-1",
         "val": Decimal("5.00"),
-        "in_z": "2024-01-01T00:00:00+00:00",
+        "in_z": _TX_START,
         "out_z": _INFINITY,
     }
 
@@ -69,7 +95,7 @@ def _balance_columns(*, id_: int = 1) -> Mapping[str, object]:
 def _recorded(
     model: AcceptedMetamodel,
     observations: ReadObservations,
-    key: ObjectKey,
+    key: ObservationKey,
     *,
     pin: Pin = _LATEST_PIN,
 ) -> WriteObservation | None:
@@ -125,9 +151,7 @@ def test_rows_accumulate_in_the_order_they_are_observed() -> None:
 def test_a_versioned_row_records_its_observed_version() -> None:
     observations = ReadObservations()
     observations.observe_row(corpus_entity("Account"), _account_columns(), None)
-    observation = _recorded(
-        _accepted("account"), observations, corpus_object_key("Account", ("id", 1))
-    )
+    observation = _recorded(_accepted("account"), observations, _slot("Account", ("id", 1)))
     assert observation == VersionObservation(observed_version=4)
 
 
@@ -136,18 +160,13 @@ def test_a_versioned_row_whose_version_column_the_projection_omitted_records_not
     # column it would gate on records nothing rather than observing a guess.
     observations = ReadObservations()
     observations.observe_row(corpus_entity("Account"), _account_columns(version=None), None)
-    assert (
-        _recorded(_accepted("account"), observations, corpus_object_key("Account", ("id", 1)))
-        is None
-    )
+    assert _recorded(_accepted("account"), observations, _slot("Account", ("id", 1))) is None
 
 
 def test_a_row_that_is_neither_versioned_nor_temporal_records_nothing() -> None:
     observations = ReadObservations()
     observations.observe_row(corpus_entity("Order"), {"id": 1, "customer_id": 2}, None)
-    assert (
-        _recorded(_accepted("orders"), observations, corpus_object_key("Order", ("id", 1))) is None
-    )
+    assert _recorded(_accepted("orders"), observations, _slot("Order", ("id", 1))) is None
 
 
 def test_a_temporal_row_records_its_whole_predecessor_milestone() -> None:
@@ -156,15 +175,13 @@ def test_a_temporal_row_records_its_whole_predecessor_milestone() -> None:
     # mutation never mentioned.
     observations = ReadObservations()
     observations.observe_row(corpus_entity("Balance"), _balance_columns(), None)
-    observation = _recorded(
-        _accepted("balance"), observations, corpus_object_key("Balance", ("id", 1))
-    )
+    observation = _recorded(_accepted("balance"), observations, _BALANCE_SLOT)
     assert isinstance(observation, TemporalObservation)
     assert dict(observation.predecessor.members) == {
         "id": 1,
         "acctNum": "A-1",
         "value": Decimal("5.00"),
-        "txStart": "2024-01-01T00:00:00+00:00",
+        "txStart": _TX_START,
         "txEnd": _INFINITY,
     }
     assert observation.predecessor.document is None
@@ -183,20 +200,21 @@ def test_an_observation_is_keyed_by_the_rows_own_entity_never_its_family_root() 
         "id": 1,
         "amount": Decimal("2.50"),
         "grade": "A",
-        "from_z": "2024-01-01T00:00:00+00:00",
+        "from_z": _VALID_START,
         "thru_z": _INFINITY,
-        "in_z": "2024-02-01T00:00:00+00:00",
+        "in_z": _RATE_TX_START,
         "out_z": _INFINITY,
     }
+    milestone = Edge(tx_time=_RATE_TX_START, valid_time=_VALID_START)
     observations = ReadObservations()
     observations.observe_row(corpus_entity("DepositRate"), columns, None)
     assert isinstance(
-        _recorded(model, observations, corpus_object_key("DepositRate", ("id", 1))),
+        _recorded(model, observations, _slot("DepositRate", ("id", 1), milestone)),
         TemporalObservation,
     )
     observations_again = ReadObservations()
     observations_again.observe_row(corpus_entity("DepositRate"), columns, None)
-    assert _recorded(model, observations_again, corpus_object_key("Rate", ("id", 1))) is None
+    assert _recorded(model, observations_again, _slot("Rate", ("id", 1), milestone)) is None
 
 
 def test_a_latest_pin_records_a_latest_pinned_basis_and_a_finite_one_records_historical() -> None:
@@ -207,15 +225,13 @@ def test_a_latest_pin_records_a_latest_pinned_basis_and_a_finite_one_records_his
     model = _accepted("balance")
     latest = ReadObservations()
     latest.observe_row(corpus_entity("Balance"), _balance_columns(), None)
-    at_latest = _recorded(model, latest, corpus_object_key("Balance", ("id", 1)))
+    at_latest = _recorded(model, latest, _BALANCE_SLOT)
     assert isinstance(at_latest, TemporalObservation)
     assert at_latest.transaction_time_basis is LATEST_PINNED
 
     historical = ReadObservations()
     historical.observe_row(corpus_entity("Balance"), _balance_columns(), None)
-    at_instant = _recorded(
-        model, historical, corpus_object_key("Balance", ("id", 1)), pin=Pin(tx_time=_HISTORICAL)
-    )
+    at_instant = _recorded(model, historical, _BALANCE_SLOT, pin=Pin(tx_time=_HISTORICAL))
     assert isinstance(at_instant, TemporalObservation)
     assert at_instant.transaction_time_basis is HISTORICAL_PINNED
 
@@ -223,11 +239,43 @@ def test_a_latest_pin_records_a_latest_pinned_basis_and_a_finite_one_records_his
 def test_an_omitted_transaction_time_axis_is_latest_pinned_like_an_explicit_latest() -> None:
     observations = ReadObservations()
     observations.observe_row(corpus_entity("Balance"), _balance_columns(), None)
-    observation = _recorded(
-        _accepted("balance"), observations, corpus_object_key("Balance", ("id", 1)), pin=Pin()
-    )
+    observation = _recorded(_accepted("balance"), observations, _BALANCE_SLOT, pin=Pin())
     assert isinstance(observation, TemporalObservation)
     assert observation.transaction_time_basis is LATEST_PINNED
+
+
+def test_two_reads_of_one_milestone_at_different_pins_share_one_observation_slot() -> None:
+    # The property that makes an Edge usable as a key without an identity map:
+    # an Edge is a VALUE, so two independent reads of one milestone — here a
+    # latest read and a read pinned at a past instant that still resolves to it —
+    # derive equal coordinates and therefore fill the SAME slot. The second read
+    # restates what the first recorded rather than displacing it, which is the
+    # exact converse of the identity triple's rule that distinct coordinates
+    # denote distinct pinned views.
+    model = _accepted("balance")
+    latest = ReadObservations()
+    latest.observe_row(corpus_entity("Balance"), _balance_columns(), None)
+    historical = ReadObservations()
+    historical.observe_row(corpus_entity("Balance"), _balance_columns(), None)
+
+    def observe(uow: UnitOfWork) -> tuple[WriteObservation | None, WriteObservation | None]:
+        record_observations(uow, model, latest, _LATEST_PIN)
+        first = uow.observation_for(_BALANCE_SLOT)
+        record_observations(uow, model, historical, Pin(tx_time=_HISTORICAL))
+        return first, uow.observation_for(_BALANCE_SLOT)
+
+    first, second = run_unit_of_work(
+        observe,
+        settings=TransactionSettings(),
+        clock=FixedClock(_FIXED),
+        meta=model,
+        flush_executor=lambda _plan: None,
+        planner=build_write_planner(model),
+        subject_identity=TEST_SUBJECT_IDENTITY,
+    )
+    assert isinstance(first, TemporalObservation)
+    assert isinstance(second, TemporalObservation)
+    assert second.predecessor == first.predecessor
 
 
 def test_every_observed_row_records_under_its_own_key() -> None:
@@ -241,8 +289,8 @@ def test_every_observed_row_records_under_its_own_key() -> None:
     def observe(uow: UnitOfWork) -> tuple[WriteObservation | None, WriteObservation | None]:
         record_observations(uow, model, observations, _LATEST_PIN)
         return (
-            uow.observation_for(corpus_object_key("Account", ("id", 1))),
-            uow.observation_for(corpus_object_key("Account", ("id", 2))),
+            uow.observation_for(_slot("Account", ("id", 1))),
+            uow.observation_for(_slot("Account", ("id", 2))),
         )
 
     first, second = run_unit_of_work(

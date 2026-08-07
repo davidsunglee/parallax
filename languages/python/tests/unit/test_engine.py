@@ -47,7 +47,6 @@ from parallax.core.unit_work import (
     StaleWriteError,
     VersionObservation,
     WriteEffectError,
-    WriteObservation,
 )
 
 
@@ -1489,22 +1488,6 @@ def test_versioned_non_temporal_version_attribute_is_none_for_a_temporal_entity(
     )
 
 
-class _RecordingUnitOfWork:
-    def __init__(self) -> None:
-        self.observed: list[tuple[ObjectKey, WriteObservation]] = []
-
-    def observe(self, key: ObjectKey, observation: WriteObservation) -> None:
-        self.observed.append((key, observation))
-
-
-class _RecordingTransaction:
-    """A transaction stand-in exposing only the unit-of-work seam a grouped
-    find's observation recording reaches."""
-
-    def __init__(self, uow: _RecordingUnitOfWork) -> None:
-        self._uow = uow
-
-
 def _compiled_find(meta: Any, target: str) -> Any:
     """The compiled read a bare scenario find of ``target`` produces — the same
     object a `uow` group hands its observation recording."""
@@ -1525,7 +1508,7 @@ def test_observe_group_find_is_a_no_op_for_a_temporal_target() -> None:
     meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
     observations: engine.ScenarioObservations = {}
     engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        cast("Any", None), observations, meta, _compiled_find(meta, "Policy"), [{"id": 1}]
+        observations, meta, _compiled_find(meta, "Policy"), [{"id": 1}]
     )
     assert observations == {}
 
@@ -1537,7 +1520,7 @@ def test_observe_group_find_skips_a_row_missing_its_version_field() -> None:
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
     observations: engine.ScenarioObservations = {}
     engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        cast("Any", None), observations, meta, _compiled_find(meta, "Account"), [{"id": 1}]
+        observations, meta, _compiled_find(meta, "Account"), [{"id": 1}]
     )
     assert observations == {}
 
@@ -1551,9 +1534,7 @@ def test_observe_group_find_keys_a_row_by_its_own_resolved_concrete() -> None:
     # error).
     meta = engine.load_case_metamodel(_load_case("m-inheritance-084"))
     observations: engine.ScenarioObservations = {}
-    uow = _RecordingUnitOfWork()
     engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        cast("Any", _RecordingTransaction(uow)),
         observations,
         meta,
         _compiled_find(meta, "Vehicle"),
@@ -1561,7 +1542,6 @@ def test_observe_group_find_keys_a_row_by_its_own_resolved_concrete() -> None:
     )
     car = ObjectKey(EntityIdentity("parallax.compatibility", "Car"), (("id", 1),))
     assert observations == {car: VersionObservation(observed_version=5)}
-    assert uow.observed == [(car, VersionObservation(observed_version=5))]
 
 
 def test_row_object_key_resolves_a_duplicate_local_name_by_its_namespace() -> None:

@@ -2,8 +2,13 @@
 
 The optimistic-locking POLICY scope: this module never renders SQL (`m-sql` /
 `parallax.snapshot.handle` is the one seam that does) — it owns the
-version arithmetic, the observation-licensing rules, and the conflict/historical
-error vocabulary the write seam consumes. It also owns the formation half of the
+version arithmetic, the observation-licensing rules, the derivation of the key a
+Write Observation is filed under, and the conflict/historical
+error vocabulary the write seam consumes. The key derivation lives here because
+it spans two scopes neither of which may reach the other: the identity half is
+``m-unit-work``'s Object Key and the milestone half is ``m-temporal-read``'s
+Edge, and this module is the one that depends on both.
+It also owns the formation half of the
 same concern: the Rule Set that keeps a family's version source unambiguous, and
 the Optimistic Lock Facet naming that source once per formation so no write path
 rediscovers a version column. Consumers reach the facet through :func:`view`, so
@@ -66,6 +71,7 @@ from __future__ import annotations
 
 from typing import Final
 
+from parallax.core.metamodel import EntityMetadata
 from parallax.core.opt_lock._compile import (
     MODEL_COMPILER,
     OptimisticLockModelCompiler,
@@ -90,9 +96,12 @@ from parallax.core.opt_lock._rules import (
     OptimisticLockRuleSet,
     validate_optimistic_locking,
 )
+from parallax.core.temporal_read import milestone_edge_from_members
 from parallax.core.unit_work import (
     Concurrency,
     HistoricalPinned,
+    ObjectKey,
+    ObservationKey,
     TemporalObservation,
     TransactionTimeBasis,
     VersionObservation,
@@ -124,6 +133,7 @@ __all__ = [
     "check_locking_license",
     "compile_facet",
     "gates",
+    "observation_key",
     "reject_caller_authored_version",
     "require_observed",
     "require_observed_milestone",
@@ -191,6 +201,30 @@ class HistoricalObservationError(RuntimeError):
     optimistic mode, where the observed gate detects the staleness instead
     (`python.md` §5 L596-611).
     """
+
+
+def observation_key(
+    object_key: ObjectKey, observation: WriteObservation, declaring_entity: EntityMetadata
+) -> ObservationKey:
+    """The slot ``observation`` is filed under: ``object_key`` qualified by the
+    milestone the observation is *of*.
+
+    The coordinate is derived from the observation's OWN Predecessor Row rather
+    than supplied beside it, so a recorder cannot file an observation under a
+    milestone other than the one it is recording — the two-sides-agree property
+    holds by construction rather than by every recording site being careful.
+    A Version Observation names no milestone: a versioned Non-Temporal row has
+    exactly one row per primary key, so identity alone already addresses it.
+
+    ``declaring_entity`` is the family root that declares the As-Of Axes, whose
+    start Attributes name the members the coordinate is read from.
+    """
+    if not isinstance(observation, TemporalObservation):
+        return ObservationKey(object_key, None)
+    return ObservationKey(
+        object_key,
+        milestone_edge_from_members(declaring_entity, observation.predecessor.members),
+    )
 
 
 def require_observed(entity: str, observation: WriteObservation | None) -> int:
