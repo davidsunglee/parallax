@@ -78,6 +78,14 @@ class MaterializedWriteGroup:
     order. Every key and observation column shares the same positive row count.
     The group holds no managed Entity object, no per-row keyed-write wrapper,
     and no per-row Predecessor Row object.
+
+    ``observations`` is not optional, so a group exists only for a target
+    entitled to evidence: a predicate write against an unversioned Non-Temporal
+    target stays readless and never materializes at all. Which targets those are
+    needs the model, so — exactly as for :class:`ObservedKeyedWrite` — the
+    model-aware settlement refuses a group whose target turns out to be neither
+    versioned nor temporal rather than settling it Unversioned with its
+    observation columns dropped.
     """
 
     mutation: PredicateWrite
@@ -132,8 +140,10 @@ class ObservedKeyedWrite:
     coalescing fold an update into a pending insert without unwrapping, and lets
     opening-row canonicalization treat every carrier as a revising write. The
     other half of the rule — an unversioned Non-Temporal write observes nothing
-    either — is not decidable from an instruction alone (it needs the model), and
-    is settled where the observation is resolved.
+    either — is not decidable from an instruction alone (it needs the model), so
+    it is enforced at the model-aware settlement every carrier reaches, which
+    REFUSES a carrier whose target is neither versioned nor temporal rather than
+    planning it with the observation dropped.
 
     One observation is evidence about ONE row, so the wrapped instruction carries
     exactly one: the milestone it names, the version it advances from, and the

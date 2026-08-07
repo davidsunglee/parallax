@@ -694,8 +694,16 @@ class WritePlanner:
         singleton Key Target). The alternative — one row's observed version
         licensing every key a merged statement addresses — is unconstructable
         rather than merely unreached.
+
+        An unversioned target has no version to advance from AND is entitled to
+        no observation at all, so an observation arriving for one is refused
+        rather than dropped: this is the model-aware half of the rule
+        :class:`~parallax.core.unit_work.materialized.ObservedKeyedWrite`
+        delegates here, and discarding the evidence instead would be the
+        silently-unobserved mode `m-unit-work` forbids.
         """
         if version_attr is None:
+            _require_unobserved(entity, instruction.mutation, observation)
             return None
         if instruction.mutation == "update" and version_attr.name in instruction.rows[0]:
             self._concurrency.reject_authored_version(entity.identity, version_attr)
@@ -780,13 +788,17 @@ class WritePlanner:
         assignment overlay (`m-batch-write`'s set-based semantics extended to
         the materializing case); only the observed and advanced version
         differ per row, which is why those alone stay per-row columns rather
-        than a per-row object. An entity this group's own Concurrency Strategy
-        does not recognize as versioned settles Unversioned regardless of the
-        group's recorded observation, mirroring an ordinary keyed write.
+        than a per-row object. A group's observation columns are not optional,
+        so an entity this group's own Concurrency Strategy does not recognize
+        as versioned is refused here rather than settled Unversioned with its
+        columns dropped — the same entitlement rule an ordinary keyed write
+        meets in :meth:`_observed_version`.
         """
         assert isinstance(group.observations, VersionColumns)
         declaring_entity = resolved.declaring(entity)
         version_attr = self._concurrency.version_attribute(declaring_entity)
+        if version_attr is None:
+            _require_unobserved(entity, group.mutation.mutation, group.observations)
         key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
         gated = self._concurrency.gates(concurrency)
         versions = group.observations.versions
@@ -1512,6 +1524,32 @@ def _decomposed_updates(buffer: Sequence[BufferItem], resolved: Targets) -> list
             for row in item.rows
         )
     return decomposed
+
+
+def _require_unobserved(entity: EntityMetadata, mutation: str, observation: object | None) -> None:
+    """Refuse ``observation`` when the target it arrived for is entitled to none.
+
+    Reached only once the caller has established that the target is neither
+    temporal nor versioned, which is the one shape `m-unit-work` declares
+    observationless ("unversioned Non-Temporal writes have no observation",
+    absence structural). Whether a write may hold evidence at all needs the
+    model, so the buffered carriers — a keyed
+    :class:`~parallax.core.unit_work.materialized.ObservedKeyedWrite` and a
+    :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup`'s
+    observation columns — can only refuse the instruction-local half and
+    delegate this half to the model-aware settlement both of them reach. This is
+    that delegation: every buffered item crosses it whatever produced it, so a
+    producer that resolves evidence a target cannot carry is told rather than
+    quietly stripped.
+    """
+    if observation is None:
+        return
+    raise WritePlanningError(
+        f"{entity.identity.name!r}: an unversioned Non-Temporal {mutation!r} carries no Write "
+        "Observation, yet one was resolved for it — absence is structural (m-unit-work "
+        "'unversioned Non-Temporal writes have no observation'), and settling this write "
+        "would discard the evidence rather than gate or advance anything with it"
+    )
 
 
 def _splits_into_rows(item: KeyedWrite, resolved: Targets) -> bool:

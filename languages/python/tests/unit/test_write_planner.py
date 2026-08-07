@@ -597,6 +597,38 @@ def test_recorded_observations_bind_to_their_own_planned_update() -> None:
     assert advanced == {1: 4, 2: 11}  # each advances from its OWN recorded observation
 
 
+def test_an_observation_on_an_unversioned_non_temporal_update_is_refused() -> None:
+    # `m-unit-work`: "unversioned Non-Temporal writes have no observation", and
+    # that absence is structural. The carrier can only refuse the half it can
+    # see without the model (an insert, a plural instruction); the planner is
+    # the model-aware boundary every carrier crosses, so it refuses the other
+    # half rather than settling the write with the evidence discarded.
+    update = KeyedWrite("update", "Wallet", ({"id": 1, "balance": 7.00},))
+    key_ = object_key(update, _WALLET)
+    assert key_ is not None
+    with pytest.raises(WritePlanningError, match="unversioned Non-Temporal 'update'"):
+        _plan([update], _WALLET, observations={key_: VersionObservation(observed_version=3)})
+
+
+def test_an_observation_on_an_unversioned_non_temporal_delete_is_refused() -> None:
+    delete = KeyedWrite("delete", "Wallet", ({"id": 1},))
+    key_ = object_key(delete, _WALLET)
+    assert key_ is not None
+    with pytest.raises(WritePlanningError, match="unversioned Non-Temporal 'delete'"):
+        _plan([delete], _WALLET, observations={key_: VersionObservation(observed_version=3)})
+
+
+def test_a_materialized_group_on_an_unversioned_non_temporal_target_is_refused() -> None:
+    # The same rule one call deeper: a group's observation columns are not
+    # optional either, so a group whose target turns out unversioned is refused
+    # rather than settled Unversioned with every row's observed version dropped.
+    group = _version_group(
+        "Wallet", "update", "id", [(1, 7), (2, 8)], [WriteAssignment("Wallet.balance", 5.00)]
+    )
+    with pytest.raises(WritePlanningError, match="unversioned Non-Temporal 'update'"):
+        _plan([group], _WALLET, concurrency="optimistic")
+
+
 def _row_values_from_assignments(step: PlannedUpdate) -> dict[str, object]:
     values: dict[str, object] = {
         ident.name: value for ident, value in step.assignments.attributes.items()
@@ -732,17 +764,26 @@ def test_batching_never_regroups_across_an_intervening_different_entity() -> Non
 
 
 def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
-    # A row explicitly signalled as separately-observed (e.g. an engine
-    # `observedVersion` control key, or a real transaction-scoped
-    # `uow.observe`) is never a merge candidate: a multi-row instruction has
-    # no way to carry a per-row observation forward.
-    row1 = KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},))
-    row2 = KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},))
-    key1 = object_key(row1, _WALLET)
+    # Two adjacent updates of one versioned entity assigning the SAME value are
+    # exactly what the collapse decision admits — and they still settle as two
+    # steps, because each arrives wrapped in its own observation carrier and a
+    # multi-row instruction has no way to carry a per-row observation forward.
+    # Both rows are observed because only an observed write of a versioned row
+    # can be planned at all; the exclusion is therefore proven on the shape
+    # production actually produces, not on an unversioned stand-in.
+    row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": 5.00},))
+    row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": 5.00},))
+    key1, key2 = object_key(row1, _ACCOUNT), object_key(row2, _ACCOUNT)
     assert key1 is not None
-    # Wallet is unversioned, so this key carries no meaningful observation
-    # value — its mere presence in the map is what forces separation.
-    plan = _plan([row1, row2], _WALLET, observations={key1: VersionObservation(observed_version=1)})
+    assert key2 is not None
+    plan = _plan(
+        [row1, row2],
+        _ACCOUNT,
+        observations={
+            key1: VersionObservation(observed_version=1),
+            key2: VersionObservation(observed_version=1),
+        },
+    )
     assert len(plan.steps) == 2
 
 
@@ -752,14 +793,22 @@ def test_batching_never_merges_across_an_intervening_materialized_write_group() 
     # batch-eligible, but merging them would emit the caller's second update
     # BEFORE the group the caller buffered between them.
     group = _version_group(
-        "Wallet", "update", "id", [(9, 1)], [WriteAssignment("Wallet.balance", 5.00)]
+        "Account", "update", "id", [(9, 1)], [WriteAssignment("Account.balance", 5.00)]
     )
-    buffer: list[BufferItem] = [
-        KeyedWrite("update", "Wallet", ({"id": 1, "balance": 5.00},)),
-        group,
-        KeyedWrite("update", "Wallet", ({"id": 2, "balance": 5.00},)),
-    ]
-    plan = _plan(buffer, _WALLET)
+    row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": 5.00},))
+    row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": 5.00},))
+    buffer: list[BufferItem] = [row1, group, row2]
+    key1, key2 = object_key(row1, _ACCOUNT), object_key(row2, _ACCOUNT)
+    assert key1 is not None
+    assert key2 is not None
+    plan = _plan(
+        buffer,
+        _ACCOUNT,
+        observations={
+            key1: VersionObservation(observed_version=1),
+            key2: VersionObservation(observed_version=1),
+        },
+    )
     ids: list[object] = []
     for step in plan.steps:
         assert isinstance(step, PlannedUpdate)
@@ -827,35 +876,35 @@ def test_materialized_group_is_exempt_from_batching() -> None:
     # mutation, uniform values) — each per-row gated write stays its own step
     # (`m-batch-write`).
     group = _version_group(
-        "Wallet", "update", "id", [(1, 1), (2, 1)], [WriteAssignment("Wallet.balance", 5.00)]
+        "Account", "update", "id", [(1, 1), (2, 1)], [WriteAssignment("Account.balance", 5.00)]
     )
-    plan = _plan([group], _WALLET)
+    plan = _plan([group], _ACCOUNT)
     assert len(plan.steps) == 2
 
 
 def test_materialized_group_moves_as_one_block_under_dependency_ordering() -> None:
-    # The group's own rows (Order, an FK-referenced parent) stay ADJACENT and
-    # in their OWN resolved-row order, moved as a whole relative to the OTHER
-    # buffered instruction (an OrderItem insert, a child) — ordering alone
-    # would otherwise put child-then-parent writes in a DIFFERENT relative
-    # position than the group's own internal order. Order is unversioned, so
-    # a plain delete carries no assignment to keep uniform across rows.
-    group = _version_group("Order", "delete", "id", [(2, 1), (1, 1)])
-    other = KeyedWrite(
-        "insert", "OrderItem", ({"id": 10, "orderId": 1, "sku": "A", "quantity": 1},)
-    )
-    plan = _plan([group, other], _ORDERS)
-    shapes: list[tuple[str, str, object]] = []
+    # The group is ONE ordering unit: its rows stay ADJACENT and in their OWN
+    # resolved-row order, and the whole block moves relative to the OTHER
+    # buffered instruction, which the caller buffered FIRST yet which settles
+    # first only because ordering partitions by mutation. A delete group needs
+    # no uniform assignment across its rows, so it isolates the ordering
+    # property from the collapse decision. The target is versioned because a
+    # group carries observation columns, which only an observation-entitled
+    # target may hold; FK-rank ordering is proven on its own above.
+    group = _version_group("Account", "delete", "id", [(2, 1), (1, 1)])
+    other = KeyedWrite("insert", "Account", ({"id": 10, "owner": "Ada", "balance": 1.00},))
+    plan = _plan([group, other], _ACCOUNT)
+    shapes: list[tuple[str, object]] = []
     for step in plan.steps:
         if isinstance(step, PlannedInsert):
-            shapes.append(("insert", "OrderItem", _insert_rows(step)[0]["id"]))
+            shapes.append(("insert", _insert_rows(step)[0]["id"]))
         else:
             assert isinstance(step, PlannedDelete)
-            shapes.append(("delete", "Order", _single_key(step)))
+            shapes.append(("delete", _single_key(step)))
     # inserts before updates/deletes — the canonical INSERT -> UPDATE -> DELETE
     # order; the group's OWN two rows stay adjacent and in their OWN resolved
     # order (2 then 1), never re-sorted by id.
-    assert shapes == [("insert", "OrderItem", 10), ("delete", "Order", 2), ("delete", "Order", 1)]
+    assert shapes == [("insert", 10), ("delete", 2), ("delete", 1)]
 
 
 # --------------------------------------------------------------------------- #
