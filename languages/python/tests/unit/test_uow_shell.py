@@ -278,6 +278,22 @@ def test_an_insert_refuses_to_carry_a_write_observation() -> None:
         )
 
 
+def test_a_multi_row_keyed_write_refuses_to_carry_one_write_observation() -> None:
+    # `m-unit-work`: each observed version belongs to exactly one row, and
+    # `m-opt-lock` binds the version the unit of work observed FOR THAT ROW.
+    # Accepted, one observation would license every row the instruction
+    # addresses: the planner unwraps it once, builds a multi-key target, and
+    # advances every key from `observed + 1`, so a version observed for `id 1`
+    # would carry `id 2` to the same new version and expect two affected rows.
+    with pytest.raises(ValueError, match="evidence about one row"):
+        buffered_write(
+            KeyedWrite(
+                "update", "Account", ({"id": 1, "balance": 0.00}, {"id": 2, "balance": 0.00})
+            ),
+            VersionObservation(observed_version=7),
+        )
+
+
 def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:
     # A predicate-selected write settles per RESOLVED row, against a Materialized
     # Write Group's own aligned observation columns. There is no single

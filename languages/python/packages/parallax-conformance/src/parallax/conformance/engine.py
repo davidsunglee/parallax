@@ -833,12 +833,14 @@ def _strip_observation(
     `uow` group's own prior find step, consulted separately via
     :data:`ScenarioObservations`).
 
-    Only a VERSIONED target's row reaches here: a temporal entry resolves through
-    :class:`~parallax.conformance.temporal_state.TemporalShadow`, which holds the
-    whole predecessor milestone a temporal observation needs, and a temporal
-    conflict close names its own gate through ``when.observedTxStart`` rather
-    than a write row. ``observedTxStart`` is nevertheless stripped here, because
-    the durable instruction forbids it on any row.
+    Only a VERSIONED, non-insert target's row reaches here CARRYING one:
+    :func:`_refuse_unobservable_rows` has already refused an authored control key
+    on an insert row and on an unversioned target, and a temporal entry resolves
+    through :class:`~parallax.conformance.temporal_state.TemporalShadow` instead
+    — it holds the whole predecessor milestone a temporal observation needs, and
+    a temporal conflict close names its own gate through ``when.observedTxStart``
+    rather than a write row. ``observedTxStart`` is nevertheless stripped here,
+    because the durable instruction forbids it on any row.
     """
     clean = dict(row)
     version = clean.pop("observedVersion", None)
@@ -1217,8 +1219,48 @@ def _is_versioned_entity(meta: Metamodel, entity_name: str) -> bool:
     return any(attr.optimistic_locking for attr in declaring.attributes)
 
 
-def _rows_carry_observation_keys(raw_rows: Sequence[Mapping[str, object]]) -> bool:
-    return any(_OBSERVATION_CONTROL_KEYS & row.keys() for row in raw_rows)
+def _refuse_unobservable_rows(
+    meta: Metamodel, entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
+) -> None:
+    """Refuse a non-temporal write entry whose rows author a reserved
+    ``observedVersion`` / ``observedTxStart`` control key for a write that
+    structurally has no observation (`m-unit-work` "Absence is structural").
+
+    Two shapes qualify, and `compatibility-case.schema.json`'s own
+    ``observedVersion`` prose already names both — "absent on a versioned insert
+    and on a non-versioned write" — while its single shared ``writeRow``
+    definition cannot express either, so authoring one is caught here:
+
+    - an INSERT opens a row rather than writing against one, so a control key on
+      it names a milestone that does not yet exist;
+    - an UNVERSIONED non-temporal target has no version to observe, so a control
+      key on it is evidence about nothing. Wrapping such a row would still
+      exclude it from batching, splitting a collapsible run into one statement
+      per key on the strength of an observation the planner then ignores.
+
+    Refusing both is what makes the carrier's own guarantee complete: the carrier
+    can decide "is this an insert?" from the instruction alone, but "is this
+    target versioned?" needs the model, which only this translation holds.
+    Temporal entries never reach here (:func:`_build_instructions` dispatches
+    them to :func:`_build_temporal_instruction` first), so a temporal close's own
+    ``observedTxStart`` gate is untouched.
+    """
+    authored = sorted({key for row in raw_rows for key in _OBSERVATION_CONTROL_KEYS & row.keys()})
+    if not authored:
+        return
+    named = " / ".join(f"`{key}`" for key in authored)
+    if mutation in INSERT_MUTATIONS:
+        raise EngineError(
+            f"{entity_name!r} {mutation!r}: an insert row authors no {named} "
+            "(m-unit-work: inserts have no observation — a reserved observation control key "
+            "names the milestone a write against an EXISTING row observed)"
+        )
+    if _versioned_non_temporal_version_attribute(meta, entity_name) is None:
+        raise EngineError(
+            f"{entity_name!r} {mutation!r}: an unversioned row authors no {named} "
+            "(m-unit-work: unversioned Non-Temporal writes have no observation — there is no "
+            "observed version for a reserved observation control key to name)"
+        )
 
 
 def _binds_row_observations(
@@ -1242,8 +1284,8 @@ def _binds_row_observations(
     answer.
 
     Derived SEMANTICALLY from the instruction and model — mutation kind,
-    versioned-ness, presence of per-row observations, and computed/allocated
-    primary keys — never from the case's own authored ``statements`` count,
+    versioned-ness, computed/allocated primary keys, and (for update) per-key
+    value uniformity — never from the case's own authored ``statements`` count,
     which is a count-consistency ASSERTION only (`compatibility-case.schema.
     json`) verified separately by
     :func:`_check_statement_count_consistency`, never a semantics
@@ -1251,11 +1293,6 @@ def _binds_row_observations(
 
     - a single row always binds its own observation (nothing to merge it with,
       so nothing is given up);
-    - any row authoring a reserved ``observedVersion``/``observedTxStart`` control
-      key is an explicit per-row-observation signal (`m-opt-lock`; ADR 0013) —
-      an ENGINE-specific pre-check `batch_write.collapses` itself does not
-      make (it has no case-authoring concept), covering insert/delete too
-      (`batch_write.update_collapses` already makes the SAME check for update);
     - `batch_write.insert_collapses` — an INSERT decomposes only when the
       target's primary key is pk-gen MANAGED (`m-pk-gen`'s `sequence`/`max`
       strategies, ``m-pk-gen-001``..`-012``); a VERSIONED insert still
@@ -1271,8 +1308,6 @@ def _binds_row_observations(
       materialize); an unversioned one collapses to one `IN`-list statement.
     """
     if len(raw_rows) == 1:
-        return True
-    if _rows_carry_observation_keys(raw_rows):
         return True
     model = case_model(meta)
     entity = case_entity(model, meta.entity(entity_name))
@@ -1383,6 +1418,11 @@ def _build_instructions(
     would. Nothing is ever pre-merged here: whether buffered rows share one
     statement is the planner's own collapse stage to decide.
 
+    :func:`_refuse_unobservable_rows` runs first, so a row still carrying a
+    reserved observation control key by the time it is stripped belongs to a
+    versioned non-temporal write against an existing row — the only write shape
+    `m-unit-work` gives an observation at all.
+
     What :func:`_binds_row_observations` derives SEMANTICALLY is whether each row
     binds its OWN object key and Version Observation (its reserved observation
     control keys stripped into one — `m-opt-lock`; ADR 0013), which in turn
@@ -1417,25 +1457,13 @@ def _build_instructions(
         return [_build_temporal_instruction(entry, meta, shadow, tx_instant, unit_inserted)]
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
+    _refuse_unobservable_rows(meta, entity_name, mutation, raw_rows)
     binds_observations = _binds_row_observations(meta, entity_name, mutation, raw_rows)
     model = case_model(meta)
     out: list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]] = []
-    # An insert opens a row rather than writing against one, so it observes
-    # nothing (`m-unit-work`: "inserts have no observation"). The case schema's
-    # `writeRow` reserves `observedVersion` for a write against an EXISTING row
-    # but cannot express that per mutation, so an insert row authoring one is an
-    # authoring error refused here, and a `uow` group's find-derived map is never
-    # consulted for one — either would hand the planner evidence about a
-    # milestone that does not yet exist.
     opens_a_row = mutation in INSERT_MUTATIONS
     for raw_row in raw_rows:
         clean_row, observation = _strip_observation(raw_row)
-        if opens_a_row and observation is not None:
-            raise EngineError(
-                f"{entity_name!r} {mutation!r}: an insert row authors no `observedVersion` "
-                "(m-unit-work: inserts have no observation — the reserved control key names "
-                "the version a write against an EXISTING row observed)"
-            )
         clean_row = _seed_insert_version(meta, entity_name, mutation, clean_row)
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
