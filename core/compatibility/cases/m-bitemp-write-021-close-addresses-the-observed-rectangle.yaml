@@ -17,11 +17,8 @@
 # the one milestone the edge selects, so an implementation that resolves a close's
 # address from the primary key alone cannot produce it: a key holding several current
 # rectangles has no single answer, and whichever rectangle such an implementation
-# picked, one of these two cases binds the other one's `thru_z`. Degradation,
-# re-runnable: make `TemporalShadow.resolve` drop the edge it is handed and return the
-# candidate with the LATEST edge — this case fails and m-bitemp-write-022 passes;
-# returning the EARLIEST inverts it exactly; and in each direction no other case in the
-# 348-case run sweep notices.
+# picked — the earliest, the latest, any fixed choice — one of these two cases binds
+# the other one's `thru_z`.
 #
 # What this case does NOT grade, so that no reader takes it for more:
 #
@@ -29,9 +26,9 @@
 #   edge's own Transaction-Time half IS that milestone's `in_z`, so the coordinate the
 #   case authors and the coordinate a derivation reads off the resolved observation are
 #   the same instant by construction — here and in any case that can name an edge.
-#   Measured: binding the gate from the authored `when.observedTxStart` instead of from
-#   the resolved observation leaves all 348 run-sweep cases green. `m-case-format`
-#   requires that derivation; nothing in the corpus can witness it.
+#   Binding the gate from the authored `when.observedTxStart` is therefore
+#   indistinguishable from deriving it. `m-case-format` requires the derivation;
+#   nothing in the corpus can witness it.
 # - NOT how an implementation keys the observations its own reads record. The observed
 #   milestone is NAMED by the case, so it is one observation resolved once, from state
 #   the case supplies. Nothing here observes what happens when one transaction reads a

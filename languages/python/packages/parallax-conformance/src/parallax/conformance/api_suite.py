@@ -1301,8 +1301,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-bitemp-write: the finite-pin mutation contrast pair ---------------- #
     "m-bitemp-write-015": _BITEMP_PIN_CONTRAST_REASON,
     "m-bitemp-write-016": _BITEMP_PIN_CONTRAST_REASON,
-    # -- m-unit-work: the per-milestone mutation witness ---------------------- #
-    "m-unit-work-015": _PER_VIEW_PIN_REASON,
+    # -- m-bitemp-write: the per-view half of that contrast ------------------- #
+    "m-bitemp-write-023": _PER_VIEW_PIN_REASON,
 }
 
 
