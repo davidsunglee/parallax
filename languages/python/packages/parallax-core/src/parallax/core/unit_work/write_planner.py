@@ -365,7 +365,9 @@ class WritePlanner:
         # advance, and the attribution are at stake. It reaches the `else`
         # branch below as its own singleton, because carrying an observation IS
         # being wrapped — no map and no key recomputation decides it, for
-        # versioned and temporal alike.
+        # versioned and temporal alike. A carrier is single-row by
+        # construction, so the run this skips is the only way its row could
+        # have joined a multi-row statement.
         for item in buffer:
             if isinstance(item, KeyedWrite) and len(item.rows) == 1:
                 item_group = group_key(item)
@@ -681,6 +683,14 @@ class WritePlanner:
         alternative source, observed or not. The observation itself is
         required in both concurrency modes, because the framework never
         issues a resolving read on behalf of a keyed write.
+
+        A returned version therefore came off an observation carrier, which
+        wraps exactly one row — so the Key Target the caller builds from
+        ``instruction.rows`` is a singleton whenever this returns a version to
+        advance from or gate on (`m-unit-work`: a Version Gate requires a
+        singleton Key Target). The alternative — one row's observed version
+        licensing every key a merged statement addresses — is unconstructable
+        rather than merely unreached.
         """
         if version_attr is None:
             return None

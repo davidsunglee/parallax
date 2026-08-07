@@ -1661,8 +1661,8 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
 
 # --------------------------------------------------------------------------- #
 # The observation-binding discriminator (`engine._binds_row_observations`) is #
-# derived SEMANTICALLY — mutation kind, versioned-ness, per-row observation   #
-# control keys, pk-gen management, and (for update) per-key value uniformity  #
+# derived SEMANTICALLY — mutation kind, versioned-ness, pk-gen management,    #
+# and (for update) per-key value uniformity                                   #
 # — never from the case's own authored `statements` count, which is a         #
 # count-consistency ASSERTION the real plan verifies independently            #
 # (`_check_statement_count_consistency`). A structured predicate-write        #
@@ -1670,10 +1670,11 @@ def test_write_sequence_compile_wraps_a_lowering_failure_as_engine_error() -> No
 # --------------------------------------------------------------------------- #
 def test_versioned_delete_decomposes_per_row() -> None:
     # m-batch-write-004's own shape: a versioned entity's multi-row delete
-    # decomposes per row — each row's own `observedVersion` keeps it separately
-    # identifiable — regardless of the authored `statements` count matching
-    # `len(rows)` (which it does here too — the discriminator does not consult
-    # it either way). The default locking mode renders each key ungated.
+    # decomposes per row — each row is removed under its own prior observation,
+    # so `batch_write.delete_collapses` refuses to collapse it — regardless of
+    # the authored `statements` count matching `len(rows)` (which it does here
+    # too — the discriminator does not consult it either way). The default
+    # locking mode renders each key ungated.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -1700,13 +1701,17 @@ def test_versioned_delete_decomposes_per_row() -> None:
     ]
 
 
-def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
+@pytest.mark.parametrize("control_key", ["observedVersion", "observedTxStart"])
+def test_an_insert_row_authoring_an_observation_control_key_is_refused(control_key: str) -> None:
     # `m-unit-work`: inserts have no observation. The case schema's `writeRow`
-    # says so in prose but shares one definition across every mutation, so an
-    # insert row can author the control key; this engine refuses it rather than
-    # handing planning evidence about a milestone that does not yet exist. The
-    # refusal is an authoring diagnosis, not the structural guarantee — the
-    # carrier itself refuses an insert too.
+    # says so in prose ("absent on a versioned insert") but shares one definition
+    # across every mutation, so an insert row can author EITHER reserved control
+    # key; this engine refuses both rather than handing planning evidence about a
+    # milestone that does not yet exist. `observedTxStart` matters on its own:
+    # stripping it yields no Version Observation, so a refusal keyed off the
+    # RESULTING observation would let it through silently. The refusal is an
+    # authoring diagnosis, not the structural guarantee — the carrier itself
+    # refuses an insert too.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -1716,25 +1721,24 @@ def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
                         "mutation": "insert",
                         "entity": "Account",
                         "statements": 1,
-                        "rows": [{"id": 1, "version": 1, "observedVersion": 1}],
+                        "rows": [{"id": 1, "version": 1, control_key: 1}],
                     }
                 ]
             }
         },
     )
-    with pytest.raises(engine.EngineError, match="an insert row authors no `observedVersion`"):
+    with pytest.raises(engine.EngineError, match=f"an insert row authors no `{control_key}`"):
         engine.compile_write_sequence_case(case, "postgres")
 
 
-def test_rows_carrying_observation_keys_decompose_per_row_even_when_unversioned() -> None:
-    # A per-row `observedVersion`/`observedTxStart` control key is an explicit
-    # per-row-observation signal REGARDLESS of the target's own versioned-ness
-    # — pinning the discriminator's own independent criterion. Uses UNIFORM
-    # values (which would otherwise collapse per the update-uniformity rule)
-    # to prove the observation-key check fires FIRST. No reachable corpus
-    # witness combines an unversioned entity with authored `observedVersion`
-    # rows today (`m-batch-write-004`'s versioned witness reaches the SAME
-    # decomposition through the versioned-ness check instead).
+def test_an_unversioned_row_authoring_an_observation_control_key_is_refused() -> None:
+    # `m-unit-work`: unversioned Non-Temporal writes have no observation, and the
+    # case schema's `writeRow` says the same ("absent on ... a non-versioned
+    # write") without being able to express it. Accepted, the key would wrap an
+    # unversioned Wallet update in an observation carrier: the planner ignores it
+    # (there is no version attribute to advance) but batching still excludes the
+    # carrier, so these UNIFORM rows would emit two statements where the same
+    # rows without the key collapse to one `IN`-list statement.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -1754,12 +1758,8 @@ def test_rows_carrying_observation_keys_decompose_per_row_even_when_unversioned(
             },
         },
     )
-    emissions, round_trips = engine.compile_write_sequence_case(case, "postgres")
-    assert round_trips == 2
-    assert [e.sql for e in emissions] == [
-        "update wallet set balance = ? where id = ?",
-        "update wallet set balance = ? where id = ?",
-    ]
+    with pytest.raises(engine.EngineError, match="an unversioned row authors no `observedVersion`"):
+        engine.compile_write_sequence_case(case, "postgres")
 
 
 def test_uniform_multi_row_update_collapses_to_one_in_list_statement() -> None:
@@ -2058,9 +2058,9 @@ def test_an_entry_whose_every_row_elides_emits_no_statement() -> None:
 def test_authored_statement_count_mismatch_is_rejected() -> None:
     # `statements` is a count-consistency ASSERTION
     # (`compatibility-case.schema.json`), verified independently of the
-    # derived instruction count — never the discriminator itself. Two rows,
-    # each carrying its own `observedVersion` (a per-row-observation signal
-    # that decomposes regardless), authored with a WRONG `statements: 1`.
+    # derived instruction count — never the discriminator itself. Two rows of a
+    # versioned delete (which decomposes regardless), each carrying its own
+    # `observedVersion`, authored with a WRONG `statements: 1`.
     case = _synthetic_write(
         "writeSequence",
         {

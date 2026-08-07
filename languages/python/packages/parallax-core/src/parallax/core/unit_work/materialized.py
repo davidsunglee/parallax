@@ -134,6 +134,17 @@ class ObservedKeyedWrite:
     other half of the rule — an unversioned Non-Temporal write observes nothing
     either — is not decidable from an instruction alone (it needs the model), and
     is settled where the observation is resolved.
+
+    One observation is evidence about ONE row, so the wrapped instruction carries
+    exactly one: the milestone it names, the version it advances from, and the
+    gate it binds all address a single primary key (`m-unit-work` "each observed
+    version belongs to exactly one row"; `m-opt-lock` "the version the unit of
+    work observed *for that row*"). A multi-row instruction paired with one
+    observation would let one row's evidence license another — a multi-key
+    target advancing every row from the one version observed for one of them —
+    so it is refused here rather than at the far end of planning. Batching never
+    reaches this state either: a run of carriers is excluded from merging, and
+    the merged instruction a collapsing run produces is always bare.
     """
 
     instruction: KeyedWrite
@@ -144,6 +155,13 @@ class ObservedKeyedWrite:
             raise ValueError(
                 f"an insert carries no Write Observation: `{self.instruction.mutation}` on "
                 f"{self.instruction.entity!r} buffers bare (m-unit-work: absence is structural)"
+            )
+        if len(self.instruction.rows) != 1:
+            raise ValueError(
+                "a Write Observation is evidence about one row: "
+                f"`{self.instruction.mutation}` on {self.instruction.entity!r} addresses "
+                f"{len(self.instruction.rows)} rows (m-unit-work: each observed version "
+                "belongs to exactly one row)"
             )
 
 
@@ -157,7 +175,8 @@ def buffered_write(
     The one place the optional-observation-to-carrier decision is made, so every
     producer — the developer verbs, the conformance engine's case translation,
     and the test probes that stand in for both — spells absence the same way and
-    inherits the carrier's own refusals.
+    inherits the carrier's own refusals: an insert and a multi-row instruction
+    are both refused here, whatever produced the observation.
     """
     if observation is None:
         return instruction
