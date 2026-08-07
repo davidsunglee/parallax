@@ -479,7 +479,8 @@ _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
 _PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-bitemp-write-015", "m-bitemp-write-016"}
 )
-# The per-view mutation witness (m-identity-map's pinned views over one timeline):
+# The per-view mutation witness (m-snapshot-read's closed world: no node is interned
+# beyond its own graph, so each find's result is its own pinned view):
 # the same api-conformance-lane mutate shape as `_PIN_CONTRAST_SCENARIOS`, staged over
 # TWO reads of ONE primary key at coordinates that resolve to DIFFERENT milestones, so
 # the verb answers per view in both directions — accepted on the Valid-Time-pinned view,

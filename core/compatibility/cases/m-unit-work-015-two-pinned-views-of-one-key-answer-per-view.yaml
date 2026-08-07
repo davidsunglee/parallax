@@ -1,6 +1,11 @@
 # Reading one key at two as-of coordinates leaves TWO independently pinned views, and
 # whether a view may be mutated is a property of THAT view rather than of the primary
-# key the two share (m-identity-map "Pinned views over one timeline").
+# key the two share (m-snapshot-read "Closed world": no node is interned beyond its own
+# graph, so each find's result is its own pinned view; m-bitemp-write's finite-pin
+# contrast then answers per view. m-identity-map states the same invariant for the
+# MANAGED lifecycle, where the views are interned objects rather than graphs — that
+# slice's own witnesses are m-identity-map-010 / -011, and this case makes no claim
+# about them.)
 #
 # Both steps read Position id 1. Step 0 pins it at the finite Valid-Time instant
 # 2024-03-01 with Transaction Time defaulted Latest, materializing the rectangle-split
@@ -31,7 +36,7 @@
 # corpus grades the keying itself.
 model: models/position.yaml
 lane: api-conformance
-tags: [m-unit-work, m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, scenario, slice-snapshot-1]
+tags: [m-unit-work, m-snapshot-read, m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, scenario, slice-snapshot-1]
 shape: scenario
 when:
   scenario:
