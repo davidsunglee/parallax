@@ -140,17 +140,25 @@ is never a Domain Model candidate.
 """
 
 FRAMEWORK_NAME_PREFIX: Final = "__parallax_"
-"""The prefix every name the framework binds on a class or an instance carries,
-and which no class body may author.
+"""The prefix carried by the private class markers and instance slots the
+framework binds, and which no declaration of any kind may author.
 
-Reserving the prefix rather than enumerating the names keeps the reservation
-correct as markers and slots are added. What it protects is that the framework's
-own state cannot be shadowed by a declaration: a class-body binding under one of
-these names answers every ordinary read the framework's own value would answer,
-and a ``functools.cached_property`` spelled under one is worse than a shadow —
-the edit surface reads a derived cache off the class, so such a binding would
-have an edited copy recompute the author's answer in place of the state it
-carried."""
+The framework also binds names outside this prefix — Pydantic's
+``model_config``, the copy verb ``edit``, the injected temporal members — but
+those are part of the surface a declaration reads and calls, so they are
+reserved by name (:data:`RESERVED_MEMBER_NAMES`) rather than by prefix. What the
+prefix covers is only what a declaration never names, which is why reserving the
+whole prefix rather than enumerating it stays correct as markers and slots are
+added, and why the reservation can be total: it applies to every Entity and
+Value Object class body alike, and only a framework root — the framework
+declaring itself — binds under it.
+
+What it protects is that the framework's own state cannot be shadowed by a
+declaration: a class-body binding under one of these names answers every
+ordinary read the framework's own value would answer, and a
+``functools.cached_property`` spelled under one is worse than a shadow — the edit
+surface reads a derived cache off the class, so such a binding would have an
+edited copy recompute the author's answer in place of the state it carried."""
 
 _KIND: Final = "__parallax_kind__"
 _AXES: Final = "__parallax_framework_axes__"
@@ -199,6 +207,8 @@ the class object itself."""
 # the metaclass declaration at class level or wins over the frontend's own
 # binding — a declared `edit` installs its descriptor over the copy verb and
 # silently disables editing — so the collision is rejected where it is authored.
+# Every name here is part of the Entity surface; a Value Object Class carries no
+# query root, no declaration, and no copy verb, so the family is Entity-only.
 RESERVED_MEMBER_NAMES: Final[frozenset[str]] = frozenset(
     {
         "all",
@@ -426,10 +436,12 @@ def build_class(
     rejection whole rather than inheriting a blanket exemption for a type it
     never binds.
     """
-    if mint is None and kind is DeclarationKind.ENTITY:
-        # Before the configuration below, which itself binds a reserved
-        # ``model_*`` name: the rejection is about what the class body authored.
-        _reject_shadowed_class_names(cls_name, ns)
+    if mint is None:
+        # Every declared kind, and before the configuration below, which itself
+        # binds a reserved ``model_*`` name: the rejection is about what the
+        # class body authored. Only a framework root is exempt, because the
+        # framework's own markers and slots are what the reservation protects.
+        _reject_shadowed_class_names(cls_name, ns, kind)
     ns["model_config"] = ConfigDict(
         frozen=True, ignored_types=ignored_types if mint is not None else ()
     )
@@ -807,11 +819,7 @@ def _build_value_object(
 
     for py_name, annotation in list(annotations.items()):
         where = f"{cls_name}.{py_name}"
-        if py_name.startswith("model_"):
-            raise EntityDefinitionError(
-                code="entity-reserved-member-name",
-                message=f"{where}: the `model_*` namespace is reserved by Pydantic",
-            )
+        _reject_reserved(where, py_name, DeclarationKind.VALUE_OBJECT)
         classified = _classify(annotation, globalns, ns)
         if classified is not None and classified[0] == "class_var":
             continue
@@ -932,7 +940,7 @@ def _build_entity(
 
     for py_name, annotation in list(annotations.items()):
         where = f"{cls_name}.{py_name}"
-        _reject_reserved(where, py_name)
+        _reject_reserved(where, py_name, DeclarationKind.ENTITY)
         classified = _classify(annotation, globalns, ns)
         if classified is None:
             raise EntityDefinitionError(
@@ -1359,21 +1367,24 @@ def _member_spec(value: object, where: str, *, expect: str) -> AttrSpec | RelSpe
     )
 
 
-def _reject_reserved(where: str, py_name: str) -> None:
-    reason = _reserved_name_reason(py_name)
+def _reject_reserved(where: str, py_name: str, kind: DeclarationKind) -> None:
+    reason = _reserved_name_reason(py_name, kind)
     if reason is not None:
         raise EntityDefinitionError(
             code="entity-reserved-member-name", message=f"{where}: {reason}"
         )
 
 
-def _reject_shadowed_class_names(cls_name: str, ns: dict[str, object]) -> None:
+def _reject_shadowed_class_names(
+    cls_name: str, ns: dict[str, object], kind: DeclarationKind
+) -> None:
     """Reject a class-body name that would take a reserved class-level name.
 
     The declaration surface answers only names the class object does not already
     carry, so a body binding — a member's declaration value, a method, or a class
     variable — reusing one makes the declaration unreachable rather than merely
-    shadowing it. An annotation-only member is caught by the member walk instead.
+    shadowing it. An annotation-only member is caught by the member walk instead,
+    which is why both frontends run both checks.
 
     The ``model_*`` prefix is checked here for the same reason it is checked
     there: an unannotated ``def model_copy`` is a binding rather than a declared
@@ -1384,26 +1395,30 @@ def _reject_shadowed_class_names(cls_name: str, ns: dict[str, object]) -> None:
     binding markers under it.
     """
     for name in sorted(ns):
-        reason = _reserved_name_reason(name)
+        reason = _reserved_name_reason(name, kind)
         if reason is not None:
             raise EntityDefinitionError(
                 code="entity-reserved-member-name", message=f"{cls_name}.{name}: {reason}"
             )
 
 
-def _reserved_name_reason(py_name: str) -> str | None:
-    """Why a class body may not author ``py_name``, or ``None`` when it may.
+def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
+    """Why a class body of ``kind`` may not author ``py_name``, or ``None``.
 
     The framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`) is answered first
     and separately, because what a binding under it takes is not a member surface
-    but the framework's own class markers and instance slots.
+    but the framework's own class markers and instance slots — which both kinds
+    carry, so the two reservations that hold whatever a declaration is come
+    first, and only the Entity surface names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
             f"the `{FRAMEWORK_NAME_PREFIX}` prefix names the framework's own class markers and "
             "instance slots, which a declaration may not bind"
         )
-    if py_name in RESERVED_MEMBER_NAMES or py_name.startswith("model_"):
+    if py_name.startswith("model_"):
+        return "the `model_*` namespace is reserved by Pydantic"
+    if kind is DeclarationKind.ENTITY and py_name in RESERVED_MEMBER_NAMES:
         return "reuses a reserved query-root or introspection name"
     return None
 
