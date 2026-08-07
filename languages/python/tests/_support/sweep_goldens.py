@@ -484,11 +484,13 @@ _PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
 # mutate shape, staged over TWO reads of ONE primary key at coordinates that resolve to
 # DIFFERENT milestones, so the verb answers per view in both directions — accepted on
 # the Valid-Time-pinned view, `transaction-time-pin-read-only` on the
-# Transaction-Time-pinned one, from one key. Substituting the transaction's most recent
-# pin for the view's own fails this case alone; breaking the finite-pin contrast itself
-# fails all three. It observes no node identity, so it says nothing about whether the
-# two reads share a node; and the mutate lane enrolls no view in a unit of work, so it
-# says nothing about write-observation keying.
+# Transaction-Time-pinned one, from one key. Substituting the most recent read's pin for
+# the view's own fails this case alone; breaking the finite-pin contrast itself fails all
+# three. Both mutations stay in memory, which is the m-snapshot-read rule it also
+# exercises (writing the accepted one back fails it together with m-snapshot-read-010).
+# It observes no node identity, so it says nothing about whether the two reads share a
+# node; and the mutate lane enrolls no view in a unit of work, so it says nothing about
+# write-observation keying.
 _PER_VIEW_PIN_SCENARIOS: Final[frozenset[str]] = frozenset({"m-bitemp-write-023"})
 WRITE_EXERCISED: Final[frozenset[str]] = (
     _WRITE_SCENARIOS
