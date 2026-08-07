@@ -11,12 +11,9 @@
 #
 # The PAIR is the semantic distinction, and neither half carries it alone. An
 # implementation that ignores the edge and resolves from the primary key still has to
-# choose one of the key's two current rectangles, and whichever it always chooses, one
-# of these two cases binds the other one's `thru_z`. Degradation, re-runnable: make
-# `TemporalShadow.resolve` drop the edge it is handed and return the candidate with the
-# EARLIEST edge — this case fails and m-bitemp-write-021 passes; returning the LATEST
-# inverts it exactly; and in each direction no other case in the 348-case run sweep
-# notices. That is why the pair exists rather than one case.
+# choose one of the key's two current rectangles, and whichever it always chooses — the
+# earliest, the latest, any fixed choice — one of these two cases binds the other one's
+# `thru_z`. That is why the pair exists rather than one case.
 #
 # What this case does NOT grade, so that no reader takes it for more:
 #
@@ -24,11 +21,11 @@
 #   agree on. The optimistic gate binds `in_z`, and the observed edge's own
 #   Transaction-Time half IS that milestone's `in_z`, so the coordinate the case authors
 #   and the coordinate a derivation reads off the resolved observation are the same
-#   instant by construction — here and in any case that can name an edge. Measured:
-#   binding the gate from the authored `when.observedTxStart` instead of from the
-#   resolved observation leaves all 348 run-sweep cases green. `m-case-format` requires
-#   that derivation; nothing in the corpus can witness it, and the format would have to
-#   gain a write that consumes its own read's evidence first.
+#   instant by construction — here and in any case that can name an edge. Binding the
+#   gate from the authored `when.observedTxStart` is therefore indistinguishable from
+#   deriving it. `m-case-format` requires the derivation; nothing in the corpus can
+#   witness it, and the format would have to gain a write that consumes its own read's
+#   evidence first.
 # - NOT how an implementation keys the observations its own reads record: the same limit
 #   m-bitemp-write-021 states. The observed milestone is named by the case and resolved
 #   once, from state the case supplies.

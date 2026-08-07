@@ -479,18 +479,17 @@ _TEMPORAL_COALESCING_SCENARIOS: Final[frozenset[str]] = frozenset(
 _PIN_CONTRAST_SCENARIOS: Final[frozenset[str]] = frozenset(
     {"m-bitemp-write-015", "m-bitemp-write-016"}
 )
-# The per-view mutation witness (m-snapshot-read's whole-graph pin: a materialization
-# carries its own root operation's as-of coordinates, so the pin belongs to the read
-# that made the view): the same api-conformance-lane mutate shape as
-# `_PIN_CONTRAST_SCENARIOS`, staged over TWO reads of ONE primary key at coordinates
-# that resolve to DIFFERENT milestones, so the verb answers per view in both directions
-# — accepted on the Valid-Time-pinned view, `transaction-time-pin-read-only` on the
-# Transaction-Time-pinned one, from one key. What it discriminates is that the verb is
-# graded against the pin of the step its `on` names rather than the transaction's most
-# recent pin. It observes no node identity, so it says nothing about whether the two
-# reads share a node; and the mutate lane enrolls no view in a unit of work, so it says
-# nothing about write-observation keying.
-_PER_VIEW_PIN_SCENARIOS: Final[frozenset[str]] = frozenset({"m-unit-work-015"})
+# The third witness of the same finite-pin mutation rule `_PIN_CONTRAST_SCENARIOS`
+# grades, and the one that pins down the rule's SUBJECT: the same api-conformance-lane
+# mutate shape, staged over TWO reads of ONE primary key at coordinates that resolve to
+# DIFFERENT milestones, so the verb answers per view in both directions — accepted on
+# the Valid-Time-pinned view, `transaction-time-pin-read-only` on the
+# Transaction-Time-pinned one, from one key. Substituting the transaction's most recent
+# pin for the view's own fails this case alone; breaking the finite-pin contrast itself
+# fails all three. It observes no node identity, so it says nothing about whether the
+# two reads share a node; and the mutate lane enrolls no view in a unit of work, so it
+# says nothing about write-observation keying.
+_PER_VIEW_PIN_SCENARIOS: Final[frozenset[str]] = frozenset({"m-bitemp-write-023"})
 WRITE_EXERCISED: Final[frozenset[str]] = (
     _WRITE_SCENARIOS
     | _WRITE_SEQUENCES
