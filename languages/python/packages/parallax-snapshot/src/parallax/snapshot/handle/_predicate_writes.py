@@ -278,10 +278,11 @@ def buffer_predicate_instruction(
     That call establishes the CALLER ORDERING — one classification whichever
     ingress an instruction arrives through.
 
-    The inheritance refusal repeated here is this seam's OWN contract, not a
-    duplicate of that rule. This entry point is reachable directly, with an
-    instruction no caller validated, so it takes nothing on faith: without its
-    own refusal a family instruction whose target MATERIALIZES reaches
+    The two refusals repeated here — an inheritance-family target, and a
+    milestone verb the target's temporal profile does not admit — are this
+    seam's OWN contract, not duplicates of those rules. This entry point is
+    reachable directly, with an instruction no caller validated, so it takes
+    nothing on faith: without its own refusal such an instruction reaches
     :func:`_materialize_predicate_write`'s resolving read — real SQL on the
     caller's connection — and, when that read matches no row, buffers nothing
     for the flush-time
@@ -299,7 +300,14 @@ def buffer_predicate_instruction(
     inheritance.reject_predicate_write(entity)
     declaring_entity = declaring(meta, entity)
     version_attr = version_attribute(meta, declaring_entity)
-    if not declaring_entity.declared_as_of_axes and version_attr is None:
+    is_temporal = bool(declaring_entity.declared_as_of_axes)
+    if not is_temporal:
+        refusal = instructions.non_temporal_milestone_refusal(
+            entity.identity.name, instruction.mutation
+        )
+        if refusal is not None:
+            raise instructions.WriteInstructionError(refusal)
+    if not is_temporal and version_attr is None:
         # Readless (`m-batch-write.md` "Predicate-selected readless forms"):
         # one statement, no materialization, no equality-elimination pass.
         _reject_readless_document_many(meta, entity, instruction)

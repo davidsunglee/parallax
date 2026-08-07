@@ -68,6 +68,7 @@ from parallax.core.unit_work.instructions import (
     KeyedWrite,
     PredicateWrite,
     WriteInstruction,
+    non_temporal_milestone_refusal,
 )
 from parallax.core.unit_work.materialized import (
     MaterializedWriteGroup,
@@ -143,12 +144,6 @@ from parallax.core.unit_work.write_validate import WriteRejectedError
 __all__ = ["PlanningRequest", "SubjectIdentity", "WritePlanner", "plan_temporal_close"]
 
 type BufferedWrites = Sequence[BufferItem]
-
-# The keyed mutation verbs finalized directly into a row write — the
-# non-temporal write triad. The milestone verbs open, split, or close a
-# milestone rather than write a row outright, and a temporal entity's own
-# `insert` opens one too, so neither is this shape.
-_FINALIZED_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete"})
 
 # The predicate-selected verbs a readless template exists for. A `terminate`
 # or `*Until` predicate write names a milestone, so its only legal targets
@@ -461,12 +456,7 @@ class WritePlanner:
                 concurrency,
                 tx_instant,
             )
-        if instruction.mutation not in _FINALIZED_VERBS:
-            raise WritePlanningError(
-                f"{instruction.mutation!r} is a temporal milestone verb, and "
-                f"{entity.identity.name!r} declares no temporal dimension — a milestone verb "
-                "never applies to a non-temporal entity (m-txtime-write / m-bitemp-write)"
-            )
+        _reject_milestone_verb(entity, instruction.mutation)
         version_attr = self._concurrency.version_attribute(declaring_entity)
         members = resolved.applicable_members(entity)
         if instruction.mutation == "insert":
@@ -794,8 +784,17 @@ class WritePlanner:
         as versioned is refused here rather than settled Unversioned with its
         columns dropped — the same entitlement rule an ordinary keyed write
         meets in :meth:`_observed_version`.
+
+        The verb is measured against the target for the same reason and by the
+        same rule an addressed keyed write meets in :meth:`_settle`
+        (:func:`_reject_milestone_verb`): reaching here means the resolve
+        matched rows on a target with no As-Of Axis, so a milestone verb has
+        nothing to close and every mutation but ``delete`` would otherwise
+        settle as an ordinary versioned update — the caller's bounded window
+        silently discarded while its version is consumed.
         """
         assert isinstance(group.observations, VersionColumns)
+        _reject_milestone_verb(entity, group.mutation.mutation)
         declaring_entity = resolved.declaring(entity)
         version_attr = self._concurrency.version_attribute(declaring_entity)
         if version_attr is None:
@@ -1531,6 +1530,29 @@ def _decomposed_updates(buffer: Sequence[BufferItem], resolved: Targets) -> list
     return decomposed
 
 
+def _reject_milestone_verb(entity: EntityMetadata, mutation: str) -> None:
+    """Refuse ``mutation`` when ``entity``'s family has no milestone for it to
+    open, split, or close.
+
+    Reached only once the caller has established that the target derives no
+    As-Of Axis, which is where the two settlement paths a milestone verb can
+    arrive through meet: an addressed keyed write, and a Materialized Write
+    Group whose predicate resolved against a versioned (non-temporal) target.
+    Both must refuse rather than settle, because settling keeps the verb's row
+    effect and drops its temporal meaning — a bounded `updateUntil` consuming
+    the row's version as an ordinary overwrite of the window it named.
+
+    The wording comes from
+    :func:`~parallax.core.unit_work.instructions.non_temporal_milestone_refusal`,
+    which the build-time validator and the buffering seam raise their own errors
+    from, so an instruction refused before SQL and one refused at flush describe
+    the same mismatch.
+    """
+    refusal = non_temporal_milestone_refusal(entity.identity.name, mutation)
+    if refusal is not None:
+        raise WritePlanningError(refusal)
+
+
 def _require_unobserved(entity: EntityMetadata, mutation: str, observation: object | None) -> None:
     """Refuse ``observation`` when the target it arrived for is entitled to none.
 
@@ -1542,10 +1564,17 @@ def _require_unobserved(entity: EntityMetadata, mutation: str, observation: obje
     :class:`~parallax.core.unit_work.materialized.ObservedKeyedWrite` and a
     :class:`~parallax.core.unit_work.materialized.MaterializedWriteGroup`'s
     observation columns — can only refuse the instruction-local half and
-    delegate this half to the model-aware settlement both of them reach. This is
-    that delegation: every buffered item crosses it whatever produced it, so a
+    delegate this half to the model-aware settlement. This is that delegation:
+    every carrier that IS settled crosses it, whatever produced it, so a
     producer that resolves evidence a target cannot carry is told rather than
     quietly stripped.
+
+    Settled is the whole reach of that guarantee. Coalescing and no-op
+    elimination run first, in the stage order `m-unit-work` fixes, and a carrier
+    they retire — folded into a pending insert, cancelled against one, or
+    eliminated as a key-only no-op — is never settled at all. Nothing is
+    stripped there either: the write itself is gone, so its observation gates,
+    advances, and attributes nothing.
     """
     if observation is None:
         return
@@ -1648,11 +1677,16 @@ def _without_noop_rows(item: BufferItem, resolved: Targets) -> BufferItem | None
     elimination at stage 2, ahead of batching and of the Transaction Instant,
     where the normative stage order puts it.
 
-    A temporal instruction is narrowed only to nothing, never to fewer rows:
-    dropping one row of an authored multi-row temporal instruction would
-    silently discard a milestone chain the author wrote, which is precisely the
-    reduction :meth:`WritePlanner._settle_temporal` refuses outright
+    A PLURAL temporal instruction is passed through whole and unexamined, so
+    that :meth:`WritePlanner._settle_temporal` refuses it as the shape it is
     (`m-unit-work` "A temporal keyed instruction carries exactly one row").
+    That singleton contract admits no exception, which rules out BOTH reductions
+    stage 2 could otherwise reach for: narrowing it to its assigning rows would
+    silently discard a milestone chain the author wrote, and eliminating it
+    whole — the shape every one of its rows is key-only — would silently
+    discard all of them and return a plan that says nothing was wrong. Only a
+    SINGLE-row temporal instruction is measured, and then only for the
+    all-or-nothing outcome a single row can have.
     An observation carrier is single-row by construction, so it is either
     eliminated whole or passed through untouched, and is never rebuilt around a
     narrower instruction.
@@ -1663,11 +1697,13 @@ def _without_noop_rows(item: BufferItem, resolved: Targets) -> BufferItem | None
     entity = resolved.entity(instruction.entity)
     if entity is None:
         return item
+    if len(instruction.rows) > 1 and resolved.declaring(entity).declared_as_of_axes:
+        return item
     pk_names = {a.identity.name for a in resolved.family_primary_key(entity)}
     kept = tuple(row for row in instruction.rows if not all(name in pk_names for name in row))
     if not kept:
         return None
-    if len(kept) == len(instruction.rows) or resolved.declaring(entity).declared_as_of_axes:
+    if len(kept) == len(instruction.rows):
         return item
     return KeyedWrite(
         mutation=instruction.mutation,

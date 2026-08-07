@@ -48,6 +48,7 @@ from parallax.core.op_algebra import Operation
 
 __all__ = [
     "INSERT_MUTATIONS",
+    "MILESTONE_MUTATIONS",
     "KeyedMutation",
     "KeyedWrite",
     "PredicateMutation",
@@ -57,6 +58,7 @@ __all__ = [
     "WriteInstruction",
     "WriteInstructionError",
     "deserialize",
+    "non_temporal_milestone_refusal",
     "serialize",
     "validate_instruction",
 ]
@@ -76,6 +78,15 @@ one, which is what makes them the mutations that carry no Write Observation
 (`m-unit-work` "Absence is structural"). Shared so the buffered carrier's own
 refusal and the planner's coalescing both answer "is this an insert?" from one
 definition."""
+
+MILESTONE_MUTATIONS: Final[frozenset[str]] = frozenset(
+    {"insertUntil", "terminate", "terminateUntil", "updateUntil"}
+)
+"""The mutations that OPEN, SPLIT, or CLOSE a milestone rather than writing a row
+outright, keyed and predicate-selected alike. Their complement — `insert`,
+`update`, `delete` — is the non-temporal write triad every target admits, which
+is what makes membership here exactly the applicability question a non-temporal
+target answers (`m-txtime-write` / `m-bitemp-write`)."""
 
 _KEYED_MUTATIONS: Final[frozenset[str]] = INSERT_MUTATIONS | frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
@@ -429,6 +440,52 @@ def _emit_bounds(body: dict[str, object], valid_from: str | None, until: str | N
 
 
 # --------------------------------------------------------------------------- #
+# Target/mutation applicability (metamodel-aware, shared across the layers).   #
+# --------------------------------------------------------------------------- #
+def non_temporal_milestone_refusal(entity_name: str, mutation: str) -> str | None:
+    """Why a NON-TEMPORAL target refuses ``mutation``, or ``None`` when it admits
+    it.
+
+    Reached only once the caller has established that ``entity_name``'s
+    inheritance family derives no As-Of Axis, because temporality is the whole
+    question: a milestone verb names a milestone to open, split, or close, and a
+    non-temporal target has no axis to hold one. Settling one anyway would keep
+    the verb's row effect and silently drop its temporal meaning — a bounded
+    ``updateUntil`` becoming an ordinary overwrite of the row it addressed.
+
+    A MESSAGE rather than a refusal, because the same rule is owed by layers
+    that classify differently: the build-time validator raises
+    :class:`WriteInstructionError`, the buffering seam refuses before it can
+    resolve a materializing target against a real connection, and
+    :mod:`parallax.core.unit_work.write_planner` raises its own planning error as
+    the last structural refusal before SQL. One wording, so an ingress cannot
+    describe the mismatch differently from the flush that would otherwise settle
+    it.
+    """
+    if mutation not in MILESTONE_MUTATIONS:
+        return None
+    return (
+        f"{mutation!r} is a temporal milestone verb, and {entity_name!r} declares no "
+        "temporal dimension — a milestone verb never applies to a non-temporal entity "
+        "(m-txtime-write / m-bitemp-write)"
+    )
+
+
+def _derives_as_of_axes(model: AcceptedMetamodel, entity: EntityMetadata) -> bool:
+    """Whether ``entity``'s inheritance FAMILY derives an As-Of Axis.
+
+    Temporality is family-level metadata only the root may declare
+    (`m-inheritance`), so a descendant's own accepted Metadata carries no axis
+    even when every one of its rows is milestoned.
+    """
+    position = inheritance.view(model).entity(entity.identity)
+    if position is None:  # pragma: no cover - the facet covers every accepted Entity
+        return bool(entity.declared_as_of_axes)
+    root = model.entity(position.root)
+    return bool((entity if root is None else root).declared_as_of_axes)
+
+
+# --------------------------------------------------------------------------- #
 # Member-name honesty (metamodel-aware build-time validator).                  #
 # --------------------------------------------------------------------------- #
 def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel) -> None:
@@ -491,6 +548,15 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     `entity._entity.Entity.edit`); one validator, three callers, which is
     the sharing neither scope could otherwise reach across the
     `core/spec/modules.md` section 7 DAG).
+
+    Last, for BOTH shapes, the target's temporal profile must admit the mutation
+    (:func:`non_temporal_milestone_refusal`; `m-case-format` "requires only the
+    temporal coordinates the target profile uses"). This is a rule about the
+    target rather than about the instruction, so it is asked here rather than in
+    :func:`deserialize`, and it is asked of the whole write surface: without it a
+    milestone verb aimed at a versioned non-temporal target reaches the
+    materializing resolve and settles as an ordinary row write, keeping the row
+    effect and dropping the bounded-temporal meaning the verb was chosen for.
     """
     if isinstance(instruction, KeyedWrite):
         entity = _entity(model, instruction.entity)
@@ -525,6 +591,10 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
                 inheritance.validate_write_assignment(model, entity, member, assignment.value)
             except inheritance.WriteAssignmentError as exc:
                 raise WriteInstructionError(str(exc)) from exc
+    if not _derives_as_of_axes(model, entity):
+        refusal = non_temporal_milestone_refusal(entity.identity.name, instruction.mutation)
+        if refusal is not None:
+            raise WriteInstructionError(refusal)
 
 
 def _reject_non_bare_predicate(entity_name: str, predicate: Operation) -> None:

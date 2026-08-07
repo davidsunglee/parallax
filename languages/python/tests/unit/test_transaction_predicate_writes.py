@@ -1560,6 +1560,41 @@ def test_the_frozen_buffering_seam_refuses_an_unvalidated_inheritance_family_ins
         Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
 
 
+# The seam's second own-contract rule, driven the same way: a milestone verb
+# the target's temporal profile does not admit. `Account` is versioned and
+# non-temporal, so the instruction MATERIALIZES — without this refusal it
+# reaches the resolving read (real SQL, which `port.ops` would show) and then
+# settles as an ordinary versioned update that consumes each matched row's
+# version while dropping the window the caller bounded. A zero-match resolve
+# would not even reach that: it buffers no group, so the flush would refuse
+# nothing at all.
+@pytest.mark.parametrize("mutation", ["updateUntil", "terminate", "terminateUntil"])
+def test_the_frozen_buffering_seam_refuses_a_milestone_verb_on_a_non_temporal_target(
+    mutation: str,
+) -> None:
+    document: dict[str, object] = {
+        "mutation": mutation,
+        "target": {"entity": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 1}}},
+    }
+    if mutation == "updateUntil":
+        document["assignments"] = [{"attr": "Account.balance", "value": 5.00}]
+    if mutation != "terminate":
+        document["validFrom"] = "2024-01-01T00:00:00+00:00"
+        document["until"] = "2024-06-01T00:00:00+00:00"
+    instruction = instructions.deserialize(document)
+    assert isinstance(instruction, PredicateWrite)
+    port = RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(instructions.WriteInstructionError, match="temporal milestone verb"):
+            tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own route into the frozen seam
+        assert port.ops == [("begin",)]
+        raise _Abandon
+
+    with pytest.raises(_Abandon):
+        Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+
+
 def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
     # The ordering established for reads holds for a predicate write
     # too: the resolving read a materializing verb performs force-flushes

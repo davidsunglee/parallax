@@ -141,9 +141,12 @@ class ObservedKeyedWrite:
     opening-row canonicalization treat every carrier as a revising write. The
     other half of the rule — an unversioned Non-Temporal write observes nothing
     either — is not decidable from an instruction alone (it needs the model), so
-    it is enforced at the model-aware settlement every carrier reaches, which
-    REFUSES a carrier whose target is neither versioned nor temporal rather than
-    planning it with the observation dropped.
+    it is enforced where a carrier is SETTLED, which REFUSES a carrier whose
+    target is neither versioned nor temporal rather than planning it with the
+    observation dropped. A carrier the earlier stages retire — coalesced into a
+    pending insert, cancelled against one, or eliminated as a no-op — is never
+    settled and never planned, so it reaches no write for a dropped observation
+    to mislead.
 
     One observation is evidence about ONE row, so the wrapped instruction carries
     exactly one: the milestone it names, the version it advances from, and the
