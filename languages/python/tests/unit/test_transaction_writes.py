@@ -784,6 +784,54 @@ def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
     assert Decimal("2.00") in cast("tuple[object, ...]", write_ops[0][2])
 
 
+# The Transaction-Time instant the audit read pins: inside the current
+# milestone's own interval, so both reads observe THAT milestone.
+_AUDIT_INSTANT = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)
+
+
+@pytest.mark.parametrize(
+    "concurrency",
+    [
+        pytest.param(
+            "locking",
+            marks=pytest.mark.xfail(
+                reason=(
+                    "the audit read overwrites the latest read's evidence under the same "
+                    "primary key, so the flush-time locking license refuses a write the "
+                    "shared read lock already protects"
+                )
+            ),
+        ),
+        "optimistic",
+    ],
+)
+def test_a_temporal_update_after_an_audit_read_of_the_same_milestone_commits(
+    concurrency: str,
+) -> None:
+    # The row is read normally, then read again at a past Transaction-Time
+    # instant that falls inside the very milestone the first read returned — the
+    # ordinary "show me what this looked like then" display or audit step — and
+    # the value the FIRST read handed back is then updated. Both reads observed
+    # one milestone, so the write commits: the close reaches DML and chains its
+    # successor, in either mode. The distinction is that two pins resolving to
+    # one milestone are one piece of evidence, not two competing ones — the
+    # locking-mode close is licensed by the shared read lock the latest read took
+    # on the row it closes, and a second read of that same row cannot revoke it.
+    port = RecordingPort(rows=[balance_row(in_z=dt.datetime(2024, 1, 1, tzinfo=dt.UTC))])
+    db = db_for(BALANCE, port)
+
+    def fn(tx: Transaction) -> None:
+        current = tx.find(mm.Balance.where(mm.Balance.id == 1)).result()
+        tx.find(mm.Balance.where(mm.Balance.id == 1).as_of(tx_time=_AUDIT_INSTANT)).result()
+        tx.update(current.edit(value=Decimal("150.00")))
+
+    db.transact(fn, concurrency=cast("Any", concurrency))
+    close, chained = [op for op in port.ops if op[0] == "write"]
+    assert cast("tuple[object, ...]", close[2])[:3] == ("2024-06-01T00:00:00+00:00", 1, "infinity")
+    assert Decimal("150.00") in cast("tuple[object, ...]", chained[2])
+    assert port.ops[-1] == ("commit",)
+
+
 # --------------------------------------------------------------------------- #
 # The finite-Transaction-Time-pin refusal (`m-temporal-read`'s finite-pin      #
 # mutation row; `_write_inputs.validate_source_pin`): a view pinned at a       #

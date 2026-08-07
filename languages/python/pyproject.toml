@@ -60,6 +60,11 @@ minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["tools", "tests"]
 addopts = "-ra --strict-markers --strict-config"
+# An expected failure reproduces a known defect ahead of its fix, so the run
+# fails once it starts passing: the reproduction cannot outlive the defect it
+# describes, and removing the marker is part of the fix. Set here rather than per
+# marker so a non-strict expected failure is unrepresentable.
+xfail_strict = true
 # The first two are the scheduling partition and are never authored onto a test:
 # the collection hook in tests/conftest.py derives exactly one of them per item
 # from that item's fixture closure, so zero and both are unrepresentable. The

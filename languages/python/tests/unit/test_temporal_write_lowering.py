@@ -14,6 +14,11 @@ concurrency mode decides, each successor's Insert Origin, each close's Close
 Cause, and the two zero-row-close shortfall tags
 (:class:`~parallax.core.unit_work.OptimisticConflict` for a gated mismatch,
 :class:`~parallax.core.unit_work.StaleWrite` for an ungated one).
+
+Most cases here hand the planner one instruction and one observation directly.
+Where the question is *which* milestone a write settles against, that shape
+cannot ask it — the answer is decided before planning — so those cases drive the
+developer verbs over a recording port instead and pin the same emitted DML.
 """
 
 from __future__ import annotations
@@ -21,15 +26,23 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 from collections.abc import Mapping
+from decimal import Decimal
 
 import pytest
+from _transact_support import (
+    INFINITY_INSTANT,
+    WHERE_POSITION_META,
+    RecordingPort,
+    WherePosition,
+    db_for,
+)
 
 from _support.clock_probes import instant_at
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
 from parallax.core import bitemp_write, storage_layout, txtime_write
-from parallax.core.db_port import JsonDocument
+from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
@@ -66,6 +79,7 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import (
+    Transaction,
     WriteLoweringError,
     build_write_planner,
     lower_step,
@@ -695,6 +709,107 @@ def test_bitemporal_close_addresses_a_finite_observed_valid_end(
         "2024-04-01T00:00:00+00:00",
     )
     assert tail[1][3:5] == ("2024-04-01T00:00:00+00:00", addressed_valid_end)
+
+
+# The two rectangles one key holds current at one Transaction Time, as the
+# driver hands each back: real `datetime` values on both axes, `INFINITY_INSTANT`
+# for an open bound. They share nothing a close addresses or gates on — distinct
+# Valid-Time windows and distinct `in_z` — so every bind below names exactly one
+# of them.
+_CURRENT_RECTANGLE: Row = {
+    "id": 1,
+    "acct_num": "A",
+    "value": Decimal("100.00"),
+    "from_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+    "thru_z": INFINITY_INSTANT,
+    "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY_INSTANT,
+}
+
+_RETROACTIVE_RECTANGLE: Row = {
+    "id": 1,
+    "acct_num": "A",
+    "value": Decimal("50.00"),
+    "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "thru_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+    "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    "out_z": INFINITY_INSTANT,
+}
+
+
+@pytest.mark.xfail(
+    reason=(
+        "a Write Observation is keyed by primary key alone, so the retroactive read "
+        "erases the current read's evidence and the close settles against the rectangle "
+        "the written value did not come from"
+    )
+)
+@pytest.mark.parametrize(
+    ("concurrency", "gate_sql", "gate_binds"),
+    [
+        ("locking", "", ()),
+        ("optimistic", " and in_z = ?", (dt.datetime(2024, 2, 1, tzinfo=dt.UTC),)),
+    ],
+    ids=["locking", "optimistic"],
+)
+def test_a_close_addresses_the_rectangle_the_written_value_came_from(
+    concurrency: Concurrency, gate_sql: str, gate_binds: tuple[dt.datetime, ...]
+) -> None:
+    # One key holding TWO rectangles current at one Transaction Time — what a
+    # retroactive correction leaves behind — read twice in one transaction: once
+    # latest, then once at a Valid-Time instant inside the earlier rectangle, then
+    # updated from the value the FIRST read handed back. The close must address
+    # the rectangle THAT value came from: `thru_z` binds its own exclusive
+    # Valid-Time end, head and tail reconstruct its own window split at the
+    # correction, and the optimistic gate binds its own `in_z`. The distinction is
+    # which read a write settles against — an as-of read is evidence about the
+    # milestone IT observed, never about whichever milestone the same primary key
+    # happened to be read at last, so reading one row at a second coordinate
+    # leaves the first read's evidence intact. Driven through the developer verbs
+    # rather than a hand-supplied observation because the misresolution is in how
+    # the observation is resolved, which a lowering-only probe cannot see.
+    port = RecordingPort(row_queue=[[_CURRENT_RECTANGLE], [_RETROACTIVE_RECTANGLE]])
+
+    def fn(tx: Transaction) -> None:
+        current = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(
+                valid_time=dt.datetime(2024, 2, 15, tzinfo=dt.UTC)
+            )
+        ).result()
+        tx.update(
+            current.edit(value=Decimal("150.00")),
+            valid_from=dt.datetime(2024, 8, 1, tzinfo=dt.UTC),
+        )
+
+    db_for(WHERE_POSITION_META, port).transact(fn, concurrency=concurrency)
+
+    close, head, tail = (op for op in port.ops if op[0] == "write")
+    assert close[1:] == (
+        POSTGRES.to_driver_sql(
+            "update where_position set out_z = ? "
+            f"where id = ? and thru_z = ? and out_z = ?{gate_sql}"
+        ),
+        ("2024-06-01T00:00:00+00:00", 1, INFINITY_INSTANT, "infinity", *gate_binds),
+    )
+    assert head[2] == (
+        1,
+        "A",
+        Decimal("100.00"),
+        dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+        "2024-08-01T00:00:00+00:00",
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+    )
+    assert tail[2] == (
+        1,
+        "A",
+        Decimal("150.00"),
+        "2024-08-01T00:00:00+00:00",
+        INFINITY_INSTANT,
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+    )
 
 
 def _probe(

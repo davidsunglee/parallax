@@ -99,6 +99,20 @@ Two further markers exist and classify nothing — `compile_sweep` and
 `adapter_smoke` are focused selectors for iteration, authored where they apply.
 They are the whole catalog beside `dbfree` and `db`.
 
+## Expected failures
+
+`xfail` is for one shape only: a defect reproduced ahead of its fix. The test
+asserts the **correct** behavior and carries `@pytest.mark.xfail(reason=...)`
+naming the defect, so the tree stays green while the reproduction stands on its
+own as the specification of what the fix must produce. Any other use — a flaky
+test, an unfinished feature, an environment gap — belongs to `skip` or to not
+being committed.
+
+`xfail_strict = true` (`pyproject.toml`) makes every expected failure strict, so
+a reproduction that starts passing reports `XPASS(strict)` and fails the run.
+Removing the marker is therefore part of the fix, in the same change, not a
+follow-up. Read the `-ra` summary to see each expected failure and its reason.
+
 ## Commands
 
 Run from the repository root through `just`, or from `languages/python` through
