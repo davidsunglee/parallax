@@ -1701,17 +1701,13 @@ def test_versioned_delete_decomposes_per_row() -> None:
     ]
 
 
-@pytest.mark.parametrize("control_key", ["observedVersion", "observedTxStart"])
-def test_an_insert_row_authoring_an_observation_control_key_is_refused(control_key: str) -> None:
+def test_an_insert_row_authoring_an_observed_version_is_refused() -> None:
     # `m-unit-work`: inserts have no observation. The case schema's `writeRow`
     # says so in prose ("absent on a versioned insert") but shares one definition
-    # across every mutation, so an insert row can author EITHER reserved control
-    # key; this engine refuses both rather than handing planning evidence about a
-    # milestone that does not yet exist. `observedTxStart` matters on its own:
-    # stripping it yields no Version Observation, so a refusal keyed off the
-    # RESULTING observation would let it through silently. The refusal is an
-    # authoring diagnosis, not the structural guarantee — the carrier itself
-    # refuses an insert too.
+    # across every mutation, so an insert row can author the reserved key anyway;
+    # this engine refuses it rather than handing planning evidence about a
+    # milestone that does not yet exist. The refusal is an authoring diagnosis,
+    # not the structural guarantee — the carrier itself refuses an insert too.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -1721,13 +1717,48 @@ def test_an_insert_row_authoring_an_observation_control_key_is_refused(control_k
                         "mutation": "insert",
                         "entity": "Account",
                         "statements": 1,
-                        "rows": [{"id": 1, "version": 1, control_key: 1}],
+                        "rows": [{"id": 1, "version": 1, "observedVersion": 1}],
                     }
                 ]
             }
         },
     )
-    with pytest.raises(engine.EngineError, match=f"an insert row authors no `{control_key}`"):
+    with pytest.raises(engine.EngineError, match="an insert row authors no `observedVersion`"):
+        engine.compile_write_sequence_case(case, "postgres")
+
+
+def test_a_write_row_authoring_an_observed_tx_start_is_refused_even_when_versioned() -> None:
+    # `observedTxStart` is not a write-row key in any shape: the case schema's
+    # `writeRow` reserves `observedVersion` alone, and a temporal close's observed
+    # `txStart` gate is authored beside the write (`when.observedTxStart`, or a
+    # retry attempt's own field — `m-case-format`). A versioned target is the case
+    # that hides the defect: it HAS an observation, so a refusal that only asks
+    # whether the target is observable at all admits the token and then discards
+    # it, letting the write advance its version while the Transaction-Time gate
+    # the author wrote is silently ignored.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "update",
+                        "entity": "Account",
+                        "statements": 1,
+                        "rows": [
+                            {
+                                "id": 1,
+                                "balance": 10.00,
+                                "observedVersion": 7,
+                                "observedTxStart": "2024-01-01T00:00:00+00:00",
+                            }
+                        ],
+                    }
+                ]
+            }
+        },
+    )
+    with pytest.raises(engine.EngineError, match="a write row authors no `observedTxStart`"):
         engine.compile_write_sequence_case(case, "postgres")
 
 
@@ -2517,6 +2548,45 @@ def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() 
         _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
     )
     assert affected == 0
+
+
+def _unversioned_conflict_case(rows: list[dict[str, object]]) -> case_format.Case:
+    return _synthetic_write(
+        "conflict",
+        {
+            "model": "models/wallet.yaml",
+            "when": {"uow": {"concurrency": "optimistic"}, "mutation": "update", "write": rows},
+        },
+    )
+
+
+def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_refused() -> None:
+    # A conflict attempt authors its `write` rows in the same `writeRow`
+    # vocabulary a writeSequence entry does, and unversioned conflict targets are
+    # a supported surface (m-unit-work-013/-014, m-batch-write-008). Accepted, the
+    # key wraps each row in an observation carrier the planner ignores (there is
+    # no version to advance) but batching still excludes, so the multi-key attempt
+    # emits one statement per key instead of the collapsed `IN`-list statement the
+    # next test pins — the collapse this lane exists to exercise.
+    case = _unversioned_conflict_case(
+        [
+            {"id": 1, "balance": 500.00, "observedVersion": 1},
+            {"id": 2, "balance": 500.00, "observedVersion": 1},
+        ]
+    )
+    with pytest.raises(engine.EngineError, match="an unversioned row authors no `observedVersion`"):
+        engine.run_conflict_case(case, "postgres", FakeWritePort())
+
+
+def test_a_multi_key_unversioned_conflict_attempt_collapses_to_one_statement() -> None:
+    emissions, _affected, _table_state = engine.run_conflict_case(
+        _unversioned_conflict_case([{"id": 1, "balance": 500.00}, {"id": 2, "balance": 500.00}]),
+        "postgres",
+        FakeWritePort(),
+    )
+    assert [(e.sql, e.binds) for e in emissions] == [
+        ("update wallet set balance = ? where id in (?, ?)", (500.00, 1, 2))
+    ]
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:

@@ -103,13 +103,13 @@ __all__ = [
 _INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 _UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 
-# The observation control keys a case-authored row may carry (`m-opt-lock`; ADR
-# 0013) — never legitimate batch-collapse input: a row explicitly carrying its
-# own observed version/`in_z` is an explicit per-row-observation signal, so a
-# run containing one never collapses (mirrors the conformance engine's own
-# pre-existing `_rows_carry_observation_keys` guard, restated here as this
-# module's own single source of truth for the rule).
-_OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedTxStart"})
+# The ONE reserved observation control key a flush-time authored row may carry
+# (`m-opt-lock`; ADR 0013) — never legitimate batch-collapse input: a row
+# explicitly carrying its own observed version is an explicit
+# per-row-observation signal, so a run containing one never collapses. A
+# Transaction-Time gate is authored beside the write rather than in a row, so no
+# row key names one.
+_OBSERVATION_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion"})
 
 
 def _family_members(model: Metamodel, entity: EntityMetadata) -> Sequence[AttributeMetadata]:
