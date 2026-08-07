@@ -499,6 +499,90 @@ def test_member_name_honesty_rejects_unknown_entity() -> None:
         wi.validate_instruction(keyed, _ACCOUNT)
 
 
+# --------------------------------------------------------------------------- #
+# Target/mutation applicability (m-case-format "requires only the temporal      #
+# coordinates the target profile uses").                                        #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        {
+            "mutation": "updateUntil",
+            "entity": "Account",
+            "rows": [{"id": 1, "balance": 5.00}],
+            "validFrom": _B1,
+            "until": _B2,
+        },
+        {"mutation": "terminate", "entity": "Account", "rows": [{"id": 1}]},
+        {
+            "mutation": "updateUntil",
+            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "assignments": [{"attr": "Account.balance", "value": 0}],
+            "validFrom": _B1,
+            "until": _B2,
+        },
+        {
+            "mutation": "terminateUntil",
+            "target": {"entity": "Account", "predicate": {"all": {}}},
+            "validFrom": _B1,
+            "until": _B2,
+        },
+    ],
+    ids=[
+        "keyed-updateUntil",
+        "keyed-terminate",
+        "predicate-updateUntil",
+        "predicate-terminateUntil",
+    ],
+)
+def test_a_milestone_verb_is_rejected_on_a_non_temporal_target(
+    instruction: dict[str, Any],
+) -> None:
+    # `Account` is versioned and non-temporal, so it has no milestone for a
+    # bounded or closing verb to address. The validator owns this because it is
+    # the one model-aware gate every ingress crosses: a predicate-selected
+    # milestone verb reaching the buffering seam instead resolves against a real
+    # connection first, and settles as an ordinary versioned write that consumes
+    # the row's version while dropping the bounds the caller wrote.
+    with pytest.raises(wi.WriteInstructionError, match="temporal milestone verb"):
+        wi.validate_instruction(wi.deserialize(instruction), _ACCOUNT)
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    [
+        {
+            "mutation": "updateUntil",
+            "entity": "Position",
+            "rows": [{"id": 1, "value": 5.00}],
+            "validFrom": _B1,
+            "until": _B2,
+        },
+        {"mutation": "terminate", "entity": "Balance", "rows": [{"id": 1}]},
+    ],
+    ids=["bitemporal-updateUntil", "audit-only-terminate"],
+)
+def test_a_milestone_verb_is_accepted_on_a_temporal_target(instruction: dict[str, Any]) -> None:
+    model = _POSITION if instruction["entity"] == "Position" else _BALANCE
+    wi.validate_instruction(wi.deserialize(instruction), model)
+
+
+def test_a_milestone_verb_is_accepted_on_a_temporal_family_descendant() -> None:
+    # Temporality is family-level metadata only the root declares
+    # (`m-inheritance`), so a descendant whose OWN accepted Metadata carries no
+    # axis still admits every milestone verb its family derives one for.
+    rate = models.accepted_model(_MODELS["rate"])
+    keyed = wi.deserialize(
+        {
+            "mutation": "terminate",
+            "entity": "DepositRate",
+            "rows": [{"id": 1}],
+            "validFrom": _B1,
+        }
+    )
+    wi.validate_instruction(keyed, rate)
+
+
 def test_member_name_honesty_covers_value_object_members() -> None:
     # A top-level value-object name is a legal write-row key (m-value-object); the
     # honesty check accepts it alongside scalar attributes.

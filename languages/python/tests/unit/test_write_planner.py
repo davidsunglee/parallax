@@ -543,6 +543,26 @@ def test_a_plural_temporal_update_is_refused_rather_than_narrowed_by_no_op_elimi
         _plan([update], _BALANCE)
 
 
+def test_a_plural_temporal_update_of_key_only_rows_is_refused_rather_than_eliminated() -> None:
+    # The same contract when elimination would take the WHOLE instruction: a
+    # plural temporal update every row of which is key-only must still be
+    # refused, because `m-unit-work`'s singleton rule admits no exception and an
+    # empty plan would report that two authored milestone chains were fine. The
+    # mixed-row shape above cannot pin this: there, a surviving row keeps the
+    # instruction alive on its way to the refusal.
+    update = KeyedWrite("update", "Balance", ({"id": 1}, {"id": 2}))
+    with pytest.raises(WritePlanningError, match="multi-row temporal"):
+        _plan([update], _BALANCE)
+
+
+def test_a_single_row_temporal_update_naming_only_its_key_is_still_eliminated() -> None:
+    # Elimination is unchanged for the row count the singleton rule admits: one
+    # temporal row assigning nothing opens no successor worth chaining, so
+    # stage 2 removes it exactly as it removes a non-temporal one.
+    update = KeyedWrite("update", "Balance", ({"id": 1},))
+    assert len(_plan([update], _BALANCE).steps) == 0
+
+
 def test_empty_plan_from_empty_buffer() -> None:
     plan = _plan([], _ACCOUNT)
     assert plan == WritePlan()
@@ -817,32 +837,25 @@ def test_batching_never_merges_a_row_carrying_a_recorded_observation() -> None:
 
 
 def test_batching_never_merges_across_an_intervening_materialized_write_group() -> None:
-    # A Materialized Write Group is opaque to batching AND a hard run
-    # boundary: the two surrounding uniform updates are individually
-    # batch-eligible, but merging them would emit the caller's second update
-    # BEFORE the group the caller buffered between them.
+    # A Materialized Write Group is opaque to batching AND a hard run boundary.
+    # The candidates around it are INSERTS, the one merge-eligible shape that
+    # carries no observation of its own (an opening row observes nothing), so
+    # nothing but the group's run boundary keeps them apart: adjacent, same
+    # entity, same mutation, same member set, they are precisely what the
+    # collapse decision admits, and they would settle as ONE two-entry insert
+    # if the group did not close the run it interrupted.
     group = _version_group(
         "Account", "update", "id", [(9, 1)], [WriteAssignment("Account.balance", 5.00)]
     )
-    row1 = KeyedWrite("update", "Account", ({"id": 1, "balance": 5.00},))
-    row2 = KeyedWrite("update", "Account", ({"id": 2, "balance": 5.00},))
-    buffer: list[BufferItem] = [row1, group, row2]
-    key1, key2 = object_key(row1, _ACCOUNT), object_key(row2, _ACCOUNT)
-    assert key1 is not None
-    assert key2 is not None
-    plan = _plan(
-        buffer,
-        _ACCOUNT,
-        observations={
-            key1: VersionObservation(observed_version=1),
-            key2: VersionObservation(observed_version=1),
-        },
-    )
-    ids: list[object] = []
-    for step in plan.steps:
-        assert isinstance(step, PlannedUpdate)
-        ids.extend(v for (v,) in _key_values(step))
-    assert ids == [1, 9, 2]
+    buffer: list[BufferItem] = [
+        KeyedWrite("insert", "Account", ({"id": 1, "owner": "Ada", "balance": 5.00},)),
+        group,
+        KeyedWrite("insert", "Account", ({"id": 2, "owner": "Bo", "balance": 5.00},)),
+    ]
+    plan = _plan(buffer, _ACCOUNT)
+    inserts = [step for step in plan.steps if isinstance(step, PlannedInsert)]
+    assert [_insert_rows(step)[0]["id"] for step in inserts] == [1, 2]
+    assert all(len(step.entries) == 1 for step in inserts)
 
 
 def test_batching_never_touches_a_predicate_write() -> None:
@@ -874,6 +887,22 @@ def test_materialized_group_settles_to_one_step_per_resolved_row_in_order() -> N
         assert isinstance(step, PlannedUpdate)
         ids.append(_single_key(step))
     assert ids == [1, 2]
+
+
+@pytest.mark.parametrize("mutation", ["updateUntil", "terminate", "terminateUntil"])
+def test_materialized_group_refuses_a_milestone_verb_on_a_non_temporal_target(
+    mutation: PredicateMutation,
+) -> None:
+    # A group reaches settlement already resolved, so the verb it carries is
+    # measured against the target here or nowhere: `Account` is versioned and
+    # NON-temporal, so a bounded `updateUntil` has no Valid-Time window to
+    # write and nothing to close. Settled as an ordinary versioned update it
+    # would consume each row's observed version while silently discarding the
+    # bounds — the same mismatch an addressed keyed write is refused for.
+    assignments = [WriteAssignment("Account.balance", 5.00)] if mutation == "updateUntil" else []
+    group = _version_group("Account", mutation, "id", [(1, 1)], assignments)
+    with pytest.raises(WritePlanningError, match="temporal milestone verb"):
+        _plan([group], _ACCOUNT)
 
 
 def test_materialized_group_rejects_an_authored_version_assignment() -> None:
