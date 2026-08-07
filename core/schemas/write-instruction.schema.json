@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/write-instruction.schema.json",
   "title": "Parallax Write Instruction (m-unit-work)",
-  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `operation.schema.json`. A write from any frontend lowers into exactly one keyed or predicate instruction. Valid-Time input is spelled `validFrom`; a bounded `*Until` operation additionally carries `until`, so its window is `[validFrom, until)`. The finite Transaction-Time instant is Clock context supplied at flush and is not an instruction member. The framework-owned optimistic observation is likewise flush-time context: `observedVersion` and `observedTxStart` are forbidden on durable rows. There are no business/processing aliases. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML).",
+  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `operation.schema.json`. A write from any frontend lowers into exactly one keyed or predicate instruction. Valid-Time input is spelled `validFrom`; a bounded `*Until` operation additionally carries `until`, so its window is `[validFrom, until)`. The finite Transaction-Time instant is Clock context supplied at flush and is not an instruction member. The framework-owned optimistic observation is likewise flush-time context: `observedVersion`, `observedTxStart` and `observedValidStart` are forbidden on durable rows. There are no business/processing aliases. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML).",
   "oneOf": [
     { "$ref": "#/$defs/keyedWriteInstruction" },
     { "$ref": "#/$defs/predicateWriteInstruction" }
@@ -110,13 +110,14 @@
       }
     },
     "writeRow": {
-      "description": "A flat attribute-named durable write row. Every key is an Entity Attribute or top-level Value Object name, never a physical column. The framework-owned optimistic observations `observedVersion` and `observedTxStart` are attached only at flush and are forbidden here. Scalar fields carry neutral literals or DB-computed markers; Value Object fields carry their complete ordered document value.",
+      "description": "A flat attribute-named durable write row. Every key is an Entity Attribute or top-level Value Object name, never a physical column. The framework-owned optimistic observations `observedVersion`, `observedTxStart` and `observedValidStart` are attached only at flush and are forbidden here. Scalar fields carry neutral literals or DB-computed markers; Value Object fields carry their complete ordered document value.",
       "type": "object",
       "not": {
-        "description": "The framework-owned optimistic observation is not durable instruction state: neither `observedVersion` nor the observed Transaction-Time start (`observedTxStart`) may ride on a durable row.",
+        "description": "The framework-owned optimistic observation is not durable instruction state: neither `observedVersion` nor either half of the observed milestone's own coordinate (`observedTxStart` / `observedValidStart`) may ride on a durable row.",
         "anyOf": [
           { "required": ["observedVersion"] },
-          { "required": ["observedTxStart"] }
+          { "required": ["observedTxStart"] },
+          { "required": ["observedValidStart"] }
         ]
       },
       "additionalProperties": { "$ref": "#/$defs/writeRowValue" }

@@ -1,0 +1,92 @@
+# A locking-mode milestone close after an AUDIT read of the same key commits
+# (m-opt-lock + m-read-lock: a locking-mode ungated write is licensed by the shared
+# read lock the observing read took).
+#
+# One unit of work reads Balance id 1 at Latest (the current milestone, value 150),
+# then reads the SAME key at the past Transaction-Time instant 2024-04-01 — a
+# historical milestone, value 100, superseded on the Transaction-Time axis — and then
+# writes the value it read first. The write is accepted and commits: it closes the
+# current milestone and chains its successor, ungated, exactly as if the audit read had
+# never happened.
+#
+# The semantic distinction is what the audit read may NOT do. The two reads observe two
+# DIFFERENT milestones of one key, so an implementation whose observations are keyed by
+# identity alone holds only one of them and the second read displaces the first. The
+# write is then licensed — or refused — by evidence about a milestone it never touched.
+# Neither outcome is conforming: an observation is keyed by the milestone it observed,
+# so the two reads occupy two slots and the write settles against the one its own value
+# came from. Reading history is an observation, never a demotion of what a transaction
+# may write.
+#
+# The close is ungated in both readings, so the DML alone cannot separate them — what
+# this case grades is that the write is ACCEPTED at all, and that the milestone it
+# closes is the current one the first read observed. `then.tableState` shows the
+# superseded milestone the audit read returned untouched.
+model: models/balance.yaml
+tags: [m-opt-lock, m-unit-work, m-txtime-write, m-read-lock, m-temporal-read, temporal, audit-only, as-of, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the close's address is the milestone this unit of work's own observing find returned — a framework-owned in_z/thru_z bind (m-opt-lock)"
+when:
+  uow:
+    concurrency: locking
+  scenario:
+    - uow: audit-then-close
+      targetEntity: Balance
+      find:
+        eq:
+          attr: Balance.id
+          value: 1
+      roundTrips: 1
+      note: observe the CURRENT milestone of id 1 (value 150, known from 2024-06-01) inside the unit of work that goes on to write
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ? for share of t0
+          binds: [1, infinity]
+      expectRows:
+        - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
+    - uow: audit-then-close
+      targetEntity: Balance
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Balance.id
+              value: 1
+          dimension: transaction-time
+          coordinate: "2024-04-01T00:00:00+00:00"
+      roundTrips: 1
+      note: audit the SAME key at the past Transaction-Time instant 2024-04-01 — the superseded milestone (value 100), a DIFFERENT milestone of the same primary key
+      statements:
+        - sql:
+            postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.in_z <= ? and t0.out_z > ? for share of t0
+          binds: [1, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
+      expectRows:
+        - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+    - uow: audit-then-close
+      write:
+        - mutation: update
+          entity: Balance
+          rows:
+            - { id: 1, acctNum: A, value: 175.00 }
+          at: "2024-10-01T00:00:00+00:00"
+      roundTrips: 2
+      note: the close is ACCEPTED and commits — ungated, licensed by the shared read lock the first find took, and addressing the CURRENT milestone that find observed rather than the historical one the audit read returned
+      statements:
+        - sql:
+            postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, infinity]
+        - sql:
+            postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
+          binds: [1, A, 175.00, "2024-10-01T00:00:00+00:00", infinity]
+then:
+  roundTrips: 4
+  tableState:
+    balance:
+      - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: "2024-10-01T00:00:00+00:00" }
+      - { bal_id: 1, acct_num: A, val: 175.00, in_z: "2024-10-01T00:00:00+00:00", out_z: infinity }
+      - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
+      - { bal_id: 3, acct_num: C, val: 50.00, in_z: "2024-03-01T00:00:00+00:00", out_z: "2024-08-01T00:00:00+00:00" }

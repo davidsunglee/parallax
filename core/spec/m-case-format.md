@@ -54,9 +54,9 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   **action** member per shape (`operation` | `writeSequence` | `scenario` |
   `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt
   conflict's `write`); the **context** members (`uow`, `mutation`, `at`,
-  `observedTxStart`, `equivalentEncodings`) describe the unit-of-work mode, the
-  written verb, transaction instant, observed version, and alternate surface
-  encodings.
+  `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the
+  unit-of-work mode, the written verb, transaction instant, observed milestone
+  coordinate, and alternate surface encodings.
 - **`then`** — everything the case asserts: the golden `statements`, the naive
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
@@ -262,6 +262,7 @@ keeps the assertion honest across engines.
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
+| `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
 | `when.equivalentEncodings` | `when` | no | alternate surface encodings of `when.operation`; each MUST canonicalize to it |
 | `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on a boundary case |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
@@ -721,6 +722,35 @@ harness applies each attempt in order and asserts its affected-row count: the fi
 re-reads the now-fresh version and re-applies affects `1`. The final
 `then.tableState` confirms the retried write — not the concurrent writer's —
 landed. (Golden SQL lives per attempt, so there is no top-level `then.statements`.)
+
+#### Naming the observed milestone
+
+A temporal close names its coordinates one of two ways, and never both.
+
+The **address** form states them directly: the write row's `validEnd` is the
+address's Valid-Time exclusive upper bound on a Bitemporal target, and
+`when.observedTxStart` is the gate candidate. This is how a case tests a KNOWN
+stale-or-fresh gate — a deliberately stale token names no current milestone at
+all, so it can only be authored, never resolved.
+
+The **observation** form states the milestone instead:
+`when.observedValidStart` with `when.observedTxStart` is that milestone's own
+**edge** — its guaranteed-selecting start instant per declared as-of axis
+(`m-temporal-read`). The close's Valid-Time address bound and its gate are then
+both **derived** from the one milestone the edge selects among those the case's
+own state holds current. An implementation MUST refuse a close that carries an
+observed edge alongside an authored `validEnd`: the two spell one fact from
+opposite ends, so agreeing they prove nothing the derivation does not and
+disagreeing one would have to silently win.
+
+The forms differ in what they can grade, not in what they emit. One key may hold
+several disjoint Valid-Time rectangles current on Transaction Time at once
+(`m-bitemp-write`), sharing the primary key, the open Transaction-Time bound,
+and possibly the gate; only their edges tell them apart. An address-form case
+therefore grades the rendering of an address it supplied, while an
+observation-form case grades the **resolution** — an implementation whose write
+observations are keyed by identity alone holds no single answer for such a key
+and cannot render both siblings of an edge-named pair.
 
 ### Scenario cases (`m-unit-work`)
 

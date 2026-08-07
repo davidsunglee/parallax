@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `mutation` / `at` / `observedTxStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-op-algebra negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags", "shape"],
@@ -58,7 +58,15 @@
         "shape": { "const": "conflict" },
         "when": {
           "propertyNames": {
-            "enum": ["uow", "write", "mutation", "at", "observedTxStart", "attempts"]
+            "enum": [
+              "uow",
+              "write",
+              "mutation",
+              "at",
+              "observedTxStart",
+              "observedValidStart",
+              "attempts"
+            ]
           }
         }
       },
@@ -268,7 +276,7 @@
       }
     },
     "when": {
-      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedTxStart`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed version, and alternate surface encodings.",
+      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed milestone coordinate, and alternate surface encodings.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -336,6 +344,18 @@
                   "properties": { "mutation": { "const": "terminate" } }
                 },
                 "then": { "anyOf": [{ "required": ["at"] }, { "required": ["validFrom"] }] }
+              },
+              {
+                "description": "An INSERT step's rows author no `observedVersion`: an insert opens a row rather than writing against one, so an observed version would name a milestone that does not yet exist (`m-unit-work` \"Absence is structural\" — the same rule `$defs/writeRow`'s own prose states as \"absent on a versioned insert\"). The shared `writeRow` definition cannot express it, because whether a row may carry the key depends on the mutation that owns it. This is the ONE arm of that rule the schema can decide: the other — a NON-VERSIONED target's row carries none either — needs the model. A `conflict` case's `when.write` and `when.attempts[].write` are the other two locations a case-format `writeRow` is authored, and neither needs this conditional: their verb is `when.mutation`, whose vocabulary is the keyed UPDATE and DELETE alone, so an insert is unrepresentable there.",
+                "if": {
+                  "required": ["mutation"],
+                  "properties": { "mutation": { "enum": ["insert", "insertUntil"] } }
+                },
+                "then": {
+                  "properties": {
+                    "rows": { "items": { "not": { "required": ["observedVersion"] } } }
+                  }
+                }
               }
             ],
             "properties": {
@@ -671,7 +691,12 @@
                 "minLength": 1
               },
               "observedTxStart": {
-                "description": "This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. Absent in locking mode.",
+                "description": "This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. Absent in locking mode. Paired with `observedValidStart` it instead names the observed milestone's Transaction-Time coordinate, and the gate binds that milestone's own start.",
+                "type": "string",
+                "minLength": 1
+              },
+              "observedValidStart": {
+                "description": "This temporal-close attempt's observed Valid-Time start (`from_z`) — the second half of the observed milestone's own EDGE coordinate, whose first half is `observedTxStart`. Authoring it names the milestone the close observed instead of naming the close's ADDRESS directly: the address's Valid-Time end and the optimistic gate are then both derived from the one milestone the coordinate selects, so a write's address and gate come from a single observation. Mutually exclusive with the write row's own `validEnd` (a case names either the observation or the address, never both), and legal only on a Bitemporal target, whose key may hold several disjoint Valid-Time rectangles current at once.",
                 "type": "string",
                 "minLength": 1
               },
@@ -710,7 +735,12 @@
           "minLength": 1
         },
         "observedTxStart": {
-          "description": "The observed Transaction-Time start (`in_z`) used as a temporal optimistic-lock token. Absent in locking mode.",
+          "description": "The observed Transaction-Time start (`in_z`) used as a temporal optimistic-lock token. Absent in locking mode. Paired with `observedValidStart` it instead names the observed milestone's Transaction-Time coordinate, and the gate binds that milestone's own start.",
+          "type": "string",
+          "minLength": 1
+        },
+        "observedValidStart": {
+          "description": "The observed Valid-Time start (`from_z`) — the second half of the observed milestone's own EDGE coordinate, whose first half is `observedTxStart`. Authoring it names the milestone the close observed instead of naming the close's ADDRESS directly: the address's Valid-Time end and the optimistic gate are then both derived from the one milestone the coordinate selects, so a write's address and gate come from a single observation. Mutually exclusive with the write row's own `validEnd` (a case names either the observation or the address, never both), and legal only on a Bitemporal target, whose key may hold several disjoint Valid-Time rectangles current at once.",
           "type": "string",
           "minLength": 1
         }
@@ -1061,8 +1091,15 @@
       }
     },
     "writeRow": {
-      "description": "A flat attribute-named write row at a FLUSH / MATERIALIZATION location (an m-opt-lock conflict / retry write, a writeSequence step) — the neutral write input (①), same vocabulary as a fixture row, PLUS the reserved framework-owned `observedVersion` control key. It is the canonical durable instruction row (`write-instruction.schema.json#/$defs/writeRow`) with ONE difference: `observedVersion` is legitimate FLUSH-TIME context here (the version the unit of work observed, whether the write goes on to gate on it, advance from it, or merely be licensed by the read that recorded it), whereas the canonical durable instruction FORBIDS it. Every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`), and its value is the shared canonical `writeRowValue` — a scalar literal / explicit `null`, a one-key DB-COMPUTED marker (`{ computed: \"maxPlusOne\" }` / `{ increment: <n> }`), or the WHOLE embedded value-object document — REFERENCED from `write-instruction.schema.json` rather than redefined. The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from the target's Entity Layout view — never from JSON/YAML key order — so a marker-SHAPED value is a DB-computed marker vs a value-object document by MODEL ROLE, not by the value's SHAPE. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`.",
+      "description": "A flat attribute-named write row at a FLUSH / MATERIALIZATION location (an m-opt-lock conflict / retry write, a writeSequence step) — the neutral write input (①), same vocabulary as a fixture row, PLUS the reserved framework-owned `observedVersion` control key. It is the canonical durable instruction row (`write-instruction.schema.json#/$defs/writeRow`) with ONE difference: `observedVersion` is legitimate FLUSH-TIME context here (the version the unit of work observed, whether the write goes on to gate on it, advance from it, or merely be licensed by the read that recorded it), whereas the canonical durable instruction FORBIDS it. Every OTHER key is an ENTITY ATTRIBUTE name OR a top-level VALUE-OBJECT name (a business/developer name like `id` / `orderedOn` / `address`, NOT a physical column like `ordered_on`), and its value is the shared canonical `writeRowValue` — a scalar literal / explicit `null`, a one-key DB-COMPUTED marker (`{ computed: \"maxPlusOne\" }` / `{ increment: <n> }`), or the WHOLE embedded value-object document — REFERENCED from `write-instruction.schema.json` rather than redefined. The adapter classifies each field by its metamodel role and derives the emitted column list + ORDER from the target's Entity Layout view — never from JSON/YAML key order — so a marker-SHAPED value is a DB-computed marker vs a value-object document by MODEL ROLE, not by the value's SHAPE. A row object therefore CANNOT be `additionalProperties: false`: it names `observedVersion` and admits attribute / value-object keys via `additionalProperties`. The observed MILESTONE coordinates are the exception a row may never spell: a temporal write observes a whole predecessor milestone, which no flat row cell can name, so `observedTxStart` / `observedValidStart` ride beside the write (`when.observedTxStart` / `when.observedValidStart`, or a retry attempt's own fields) and a row authoring one is refused rather than stripped — stripping would silently discard the very coordinate the author meant to observe.",
       "type": "object",
+      "not": {
+        "description": "The observed milestone's own coordinate is never a row cell: it names the whole predecessor a temporal write observed, and it is authored beside the write.",
+        "anyOf": [
+          { "required": ["observedTxStart"] },
+          { "required": ["observedValidStart"] }
+        ]
+      },
       "properties": {
         "observedVersion": {
           "description": "The optimistic-lock version the unit of work read (m-opt-lock). A reserved control key, NOT an attribute/column: everything taken from it is DERIVED, never authored — an UPDATE's advance (`observedVersion + 1`), and, under `optimistic` mode alone, the `and version = ?` gate; under `locking` mode the read that recorded it is instead what licenses the ungated write. Present on every versioned write against an EXISTING row — an update or a delete, in either concurrency mode, since both require the prior observation; absent on a versioned insert and on a non-versioned write. This is FLUSH-TIME / materialization context — the durable instruction row (`write-instruction.schema.json#/$defs/writeRow`) forbids it, since the observation is never carried on the durable instruction (ADR 0013).",

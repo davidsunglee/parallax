@@ -1,0 +1,81 @@
+# Reading one key at two as-of coordinates leaves TWO observations, one per milestone
+# observed — not one slot the later read overwrites (m-unit-work "an observation is
+# keyed by the milestone it observed").
+#
+# Both steps read Position id 1. Step 0 pins it at the finite Valid-Time instant
+# 2024-03-01 with Transaction Time defaulted Latest, observing the rectangle-split head
+# (value 100) — a WRITABLE Valid-Time-past view. Step 1 pins the SAME primary key at
+# the finite Transaction-Time instant 2024-02-01, observing the superseded belief
+# (value 90) — a READ-ONLY view, because the Transaction-Time past is never rewritten.
+# The two coordinates resolve to two DIFFERENT milestones of one key.
+#
+# The mutation verb then answers per milestone, in both directions: step 2 mutates the
+# view step 0 observed and is ACCEPTED, and step 3 mutates the view step 1 observed and
+# raises `transaction-time-pin-read-only`. Neither observation displaced the other.
+#
+# That is the semantic distinction. An implementation whose per-object write evidence is
+# keyed by identity alone holds ONE slot for id 1, so step 1's read overwrites step 0's
+# and step 2 is refused on the strength of a milestone its own value never came from —
+# the same slot collision the other way round would license step 3. The verbs disagree
+# about one primary key precisely because they agree about two milestones.
+#
+# This is an api-conformance-lane case, and what it grades is verb-time acceptance and
+# resolution: a `mutate` step is an in-memory change that emits no DML at all
+# (roundTrips 0, as every mutate step in the corpus does), so which row a later flush
+# would close is NOT observable here. The wire-lane conflict pair
+# (m-bitemp-write-021 / m-opt-lock-021) owns that half of the claim.
+model: models/position.yaml
+lane: api-conformance
+tags: [m-unit-work, m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - targetEntity: Position
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Position.id
+              value: 1
+          dimension: valid-time
+          coordinate: "2024-03-01T00:00:00+00:00"
+      roundTrips: 1
+      note: pin id 1 at the finite Valid-Time instant 2024-03-01 (Transaction Time defaulted Latest) — the rectangle-split head (100.00), a WRITABLE view
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [1, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+      expectRows:
+        - { pos_id: 1, acct_num: A, val: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-06-01T00:00:00+00:00", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+    - targetEntity: Position
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Position.id
+              value: 1
+          dimension: transaction-time
+          coordinate: "2024-02-01T00:00:00+00:00"
+      roundTrips: 1
+      note: pin the SAME primary key at the finite Transaction-Time instant 2024-02-01 — the superseded belief (90.00), a DIFFERENT milestone and a READ-ONLY view
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?
+          binds: [1, infinity, "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
+      expectRows:
+        - { pos_id: 1, acct_num: A, val: 90.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
+    - action: mutate
+      "on": 0
+      set:
+        value: 250.00
+      roundTrips: 0
+      note: the Valid-Time-pinned view stays WRITABLE — step 1's read of the same primary key observed another milestone and took nothing away from this one
+    - action: mutate
+      "on": 1
+      set:
+        value: 999.00
+      roundTrips: 0
+      expectError: transaction-time-pin-read-only
+      note: the Transaction-Time-pinned view stays READ-ONLY — step 0's read of the same primary key licensed nothing here either
+then:
+  roundTrips: 2

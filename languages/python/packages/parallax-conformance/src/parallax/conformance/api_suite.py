@@ -1027,6 +1027,18 @@ _BITEMP_PIN_CONTRAST_REASON: Final[str] = (
     "(`m-bitemp-write-006`)"
 )
 
+_OBSERVATION_KEYING_REASON: Final[str] = (
+    "the per-milestone mutation witness (two reads of ONE primary key at coordinates "
+    "resolving to DIFFERENT milestones leave two observations, so the mutation verb "
+    "answers per milestone rather than per key): graded end-to-end by the run sweep's "
+    "`expectError` grading through the adapter's `errors` observation "
+    "(`m-conformance-adapter`) — accepted on the Valid-Time-pinned view, "
+    "`transaction-time-pin-read-only` on the Transaction-Time-pinned one — and the "
+    "developer-facing resolution itself is unit-pinned where the verb resolves it "
+    "(test_write_inputs.py, test_transaction_writes.py); the idiomatic spelling is the "
+    "ordinary find-then-mutate every managed story already shows, twice"
+)
+
 _VO_SCENARIO_COMBO_REASON: Final[str] = (
     "a scenario combining a managed (instance-form) find, a MATERIALIZING "
     "predicate-write resolving read (row-form, widened to project the VO document "
@@ -1289,6 +1301,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     # -- m-bitemp-write: the finite-pin mutation contrast pair ---------------- #
     "m-bitemp-write-015": _BITEMP_PIN_CONTRAST_REASON,
     "m-bitemp-write-016": _BITEMP_PIN_CONTRAST_REASON,
+    # -- m-unit-work: the per-milestone mutation witness ---------------------- #
+    "m-unit-work-015": _OBSERVATION_KEYING_REASON,
 }
 
 

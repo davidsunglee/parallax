@@ -2764,6 +2764,11 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
             "2020-01-01T00:00:00+00:00",
             "a write row authors no `observedTxStart`",
         ),
+        (
+            "observedValidStart",
+            "2020-01-01T00:00:00+00:00",
+            "a write row authors no `observedValidStart`",
+        ),
         ("observedVersion", 99, "a temporal row authors no `observedVersion`"),
     ],
 )
@@ -2794,6 +2799,101 @@ def test_a_temporal_close_row_authoring_an_observation_control_key_is_refused(
     )
     with pytest.raises(engine.EngineError, match=re.escape(refusal)):
         engine.run_conflict_case(case, "postgres", FakeWritePort())
+
+
+def _edge_named_close(document_when: dict[str, object]) -> case_format.Case:
+    """A Bitemporal conflict close over the `position` fixtures, whose two current
+    rectangles of key 1 differ only in their Valid-Time start."""
+    return _synthetic_write(
+        "conflict",
+        {"model": "models/position.yaml", "when": document_when},
+    )
+
+
+def test_an_edge_named_close_derives_its_address_and_gate_from_the_named_milestone() -> None:
+    # Key 1 has TWO rectangles current on Transaction Time, sharing every
+    # coordinate a close renders except `thru_z`. Naming the head's own edge
+    # binds the head's `thru_z` (finite) and the tail's binds infinity, so the
+    # discriminator is the observation rather than an authored address. A close
+    # that resolved its observation by primary key alone has no way to render
+    # both.
+    heads: list[list[object]] = []
+    for valid_start in ("2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"):
+        port = FakeWritePort()
+        emissions, affected, _table_state = engine.run_conflict_case(
+            _edge_named_close(
+                {
+                    "uow": {"concurrency": "optimistic"},
+                    "write": {"id": 1},
+                    "at": "2024-10-01T00:00:00+00:00",
+                    "observedTxStart": "2024-04-01T00:00:00+00:00",
+                    "observedValidStart": valid_start,
+                }
+            ),
+            "postgres",
+            port,
+        )
+        assert affected == 1
+        assert emissions[0].sql == (
+            "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? "
+            "and in_z = ?"
+        )
+        heads.append(list(emissions[0].binds))
+    assert heads[0] == [
+        "2024-10-01T00:00:00+00:00",
+        1,
+        "2024-06-01T00:00:00+00:00",
+        "infinity",
+        "2024-04-01T00:00:00+00:00",
+    ]
+    assert heads[1] == [
+        "2024-10-01T00:00:00+00:00",
+        1,
+        "infinity",
+        "infinity",
+        "2024-04-01T00:00:00+00:00",
+    ]
+
+
+def test_a_close_naming_both_an_observed_edge_and_an_authored_address_is_refused() -> None:
+    # The two spell the same fact from opposite ends. Agreeing, the authored
+    # address proves nothing the derivation does not; disagreeing, one of them
+    # would silently win — and whichever won, the case would be asserting the
+    # other one's claim.
+    with pytest.raises(engine.EngineError, match=re.escape("never both")):
+        engine.run_conflict_case(
+            _edge_named_close(
+                {
+                    "uow": {"concurrency": "optimistic"},
+                    "write": {"id": 1, "validEnd": "2024-06-01T00:00:00+00:00"},
+                    "at": "2024-10-01T00:00:00+00:00",
+                    "observedTxStart": "2024-04-01T00:00:00+00:00",
+                    "observedValidStart": "2024-01-01T00:00:00+00:00",
+                }
+            ),
+            "postgres",
+            FakeWritePort(),
+        )
+
+
+def test_a_close_naming_an_edge_no_current_milestone_carries_is_refused() -> None:
+    # A named milestone that the case's own state does not hold is an authoring
+    # defect, not a stale gate: falling back to whichever rectangle the key
+    # happens to hold is the misresolution the naming exists to remove.
+    with pytest.raises(engine.EngineError, match=re.escape("no current milestone of this key")):
+        engine.run_conflict_case(
+            _edge_named_close(
+                {
+                    "uow": {"concurrency": "optimistic"},
+                    "write": {"id": 1},
+                    "at": "2024-10-01T00:00:00+00:00",
+                    "observedTxStart": "2024-04-01T00:00:00+00:00",
+                    "observedValidStart": "2023-01-01T00:00:00+00:00",
+                }
+            ),
+            "postgres",
+            FakeWritePort(),
+        )
 
 
 def test_a_temporal_write_sequence_row_authoring_an_observed_version_is_refused() -> None:
