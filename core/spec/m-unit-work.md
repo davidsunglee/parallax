@@ -123,10 +123,13 @@ structural rules keep the instruction framework-honest:
 - **The transaction observation is not an instruction field.** The framework-owned
   optimistic version / observed `in_z` a gated write binds (`m-opt-lock`) is attached
   **per materialized row at flush**, never carried on the durable instruction: the
-  reserved `observedVersion` / `observedTxStart` control keys are explicitly **forbidden**
+  reserved `observedVersion` control key and both halves of an observed milestone's own
+  coordinate (`observedTxStart` / `observedValidStart`) are explicitly **forbidden**
   on a `write-instruction.schema.json` write row, so an observation cannot round-trip
   as instruction state — the structural guarantee that versions stay framework-owned
-  (ADR 0013). They are flush-time context on the case format's materialization row.
+  (ADR 0013). They are flush-time context beside the case format's materialization
+  row, never cells inside it: a temporal write observes a whole predecessor milestone,
+  which no flat row cell can name.
 - **A temporal keyed instruction carries exactly one row.** A keyed instruction on a
   **temporal** target — one whose inheritance family derives an As-Of Axis, which for a
   descendant is the root's declaration it inherits unchanged (`m-inheritance`:

@@ -578,7 +578,7 @@ class Case:
         Holds exactly one action member per shape (``operation`` | ``writeSequence``
         | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``attempts``
         | ``write``) plus the context members ``uow`` / ``at`` / ``observedTxStart`` /
-        ``equivalentEncodings``.
+        ``observedValidStart`` / ``equivalentEncodings``.
         """
         return self.raw.get("when", {})
 
@@ -748,6 +748,16 @@ class Case:
     def observed_tx_start(self) -> Any:
         """A temporal conflict close's observed Transaction-Time start."""
         return self.when.get("observedTxStart")
+
+    @property
+    def observed_valid_start(self) -> Any:
+        """A temporal conflict close's observed Valid-Time start.
+
+        Paired with ``observedTxStart`` it is the observed milestone's own EDGE
+        coordinate, which names the milestone the close observed instead of
+        naming the close's address directly.
+        """
+        return self.when.get("observedValidStart")
 
     @property
     def expected_affected_rows(self) -> int | None:

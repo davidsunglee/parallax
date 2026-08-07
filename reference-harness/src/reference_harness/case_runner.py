@@ -93,7 +93,7 @@ from .storage_layout import (
     position_view,
     validate_storage_layout,
 )
-from .temporality import TEMPORAL_DIMENSION_RANK, derive_temporal_structure
+from .temporality import TEMPORAL_DIMENSION_RANK, derive_temporal_structure, temporal_axes
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import validate_subtype_write, validate_write
 
@@ -3045,6 +3045,14 @@ _TERMINATE_MUTATIONS = ("terminate", "terminateUntil")
 # cannot express it.
 _VERSION_OBSERVATION_KEY = "observedVersion"
 
+# The two halves of an observed milestone's own EDGE coordinate. Neither is a
+# write-row key in any authoring location: a temporal write observes a whole
+# predecessor milestone, which no flat row cell can name, so both ride beside the
+# write (`when.observedTxStart` / `when.observedValidStart`, or a retry attempt's
+# own fields — `m-case-format`). Named here so a row that spells one is refused
+# by the rule rather than by the generic "not a member" diagnosis.
+_MILESTONE_COORDINATE_KEYS = ("observedTxStart", "observedValidStart")
+
 # The milestone close a temporal conflict case writes. Not a `writeSequence`
 # verb: a conflict close is shaped by `when.mutation`-less close authoring, and
 # this names it for the entitlement diagnosis alone.
@@ -3238,6 +3246,14 @@ def _classify_write_row(
     pk_value: Any = None
     observed_version: Any = None
     for key, value in row.items():
+        if key in _MILESTONE_COORDINATE_KEYS:
+            raise CaseFailure(
+                f"{case.path.name}: {entity.name} {mutation!r}: a write row spells no {key!r} "
+                f"(m-case-format: an observed milestone's own edge coordinate rides beside the "
+                f"write, at `when.observedTxStart` / `when.observedValidStart` or the "
+                f"attempt's own fields; a writeRow reserves {_VERSION_OBSERVATION_KEY!r} alone "
+                f"and every other key names an entity member)"
+            )
         if key == _VERSION_OBSERVATION_KEY:
             refusal = _observation_refusal(entity, mutation)
             if refusal is not None:
@@ -4589,6 +4605,50 @@ def _split_successors(
     return (head, *changed, *tail)
 
 
+def _edge_named_rectangle(
+    case: Case, entity: Entity, pk: Any, valid_start: Any, tx_start: Any, pointer: str
+) -> _Rectangle:
+    """The ONE fixture milestone of *pk* whose own EDGE is (*valid_start*,
+    *tx_start*) — the milestone a close named the edge of observed.
+
+    A conflict case starts from its model's fixtures, so the milestones its
+    address may select are exactly the fixture rows still current on Transaction
+    Time. A milestone's edge is its guaranteed-selecting start instant per axis
+    (`m-temporal-read`), which is what makes it a NAME for the milestone rather
+    than a restatement of the close's address: several disjoint rectangles of one
+    key may be current at once, and each carries a distinct edge while sharing
+    the key, the open Transaction-Time bound, and possibly the gate.
+
+    Both the address's Valid-Time end and the gate's Transaction-Time start are
+    then read off this one row, so a close's address and its gate cannot come
+    from two different milestones.
+    """
+    axes = {axis.dimension: axis for axis in temporal_axes(entity.runtime_facts)}
+    valid_axis, tx_axis = axes["valid-time"], axes["transaction-time"]
+    key_member = next(
+        attribute["name"] for attribute in entity.attributes if attribute.get("primaryKey")
+    )
+    open_bound = "infinity"
+    matched = [
+        row
+        for row in entity.rows
+        if _write_value_equal(row.get(key_member), pk)
+        and _write_value_equal(row.get(tx_axis.end.name), open_bound)
+        and _write_value_equal(row.get(valid_axis.start.name), valid_start)
+        and _write_value_equal(row.get(tx_axis.start.name), tx_start)
+    ]
+    if len(matched) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: a close naming the observed edge "
+            f"({valid_axis.start.name} {valid_start!r}, {tx_axis.start.name} {tx_start!r}) of "
+            f"{entity.name} pk {pk!r} ({pointer}) selects {len(matched)} current fixture "
+            f"milestone(s) — an edge names exactly one, and a close derives its address and "
+            f"its gate from the one it named."
+        )
+    row = matched[0]
+    return _Rectangle(valid_start, row.get(valid_axis.end.name), tx_start)
+
+
 def _observed_rectangle(case: Case, entity: Entity, step: dict[str, Any], pk: Any) -> _Rectangle:
     """The one current rectangle *step*'s close addresses, reconstructed from ①.
 
@@ -4887,6 +4947,11 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
     metamodel cannot know), which a conflict case authors explicitly rather than
     reconstructing from a history it does not have. The single form reads root
     ``write`` / ``at`` / ``observedTxStart``; the retry form reads them per attempt.
+
+    A Bitemporal close may name the observed MILESTONE instead of the address:
+    ``observedValidStart`` with ``observedTxStart`` is that milestone's own edge,
+    and both the address's Valid-Time end and the gate are then derived from the
+    one fixture milestone the edge selects (:func:`_edge_named_rectangle`).
     """
     entity = _conflict_temporal_entity(case)
     if entity is None:
@@ -4901,6 +4966,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
                 _sole_conflict_write(case, attempt, pointer),
                 attempt.get("at"),
                 attempt.get("observedTxStart"),
+                attempt.get("observedValidStart"),
                 gated,
                 _attempt_statements(attempt, dialect),
                 _entry_binds(attempt.get("statements"), 0),
@@ -4913,6 +4979,7 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
         _sole_conflict_write(case, case.when, "write"),
         case.at,
         case.observed_tx_start,
+        case.observed_valid_start,
         gated,
         case.golden_statements(dialect),
         case.statement_binds(0),
@@ -4926,6 +4993,7 @@ def _assert_temporal_conflict_close(
     write: dict[str, Any] | None,
     at: Any,
     observed_tx_start: Any,
+    observed_valid_start: Any,
     gated: bool,
     statements: list[str],
     binds: list[Any],
@@ -4946,6 +5014,13 @@ def _assert_temporal_conflict_close(
     upper bounds it can supply: nothing for a Transaction-Time-Only target, whose only
     bound is the invariant infinity, and the Valid-Time end alone for a Bitemporal one.
     A close writes no domain value, so any other ① coordinate is a defect.
+
+    An EDGE-NAMED close (``observedValidStart``) supplies neither: it names the
+    milestone it observed, and both the Valid-Time end and the gate are derived
+    from that milestone's own fixture row. ① then carries the pk alone, and an
+    authored ``validEnd`` beside the edge is refused rather than cross-checked —
+    the two spell the same fact, so a case that agrees with itself proves nothing
+    the derivation does not, and one that disagrees would have to pick a winner.
     """
     if write is None:
         raise CaseFailure(
@@ -4969,7 +5044,8 @@ def _assert_temporal_conflict_close(
     _, pk, set_cols, _ = _classify_write_row(
         case, entity, write, mutation=_CLOSE_MUTATION, opening=False
     )
-    addressed: set[str] = set() if valid_time is None else {valid_time["end_column"]}
+    edge_named = observed_valid_start is not None
+    addressed: set[str] = set() if valid_time is None or edge_named else {valid_time["end_column"]}
     if set(set_cols) != addressed:
         raise CaseFailure(
             f"{case.path.name}: a temporal conflict close's neutral write input "
@@ -4977,7 +5053,15 @@ def _assert_temporal_conflict_close(
             f"writes no domain value and names exactly the address bound(s) it can "
             f"supply: {sorted(addressed)}."
         )
-    valid_end = None if valid_time is None else set_cols[valid_time["end_column"]]
+    if edge_named:
+        observed = _edge_named_rectangle(
+            case, entity, pk, observed_valid_start, observed_tx_start, pointer
+        )
+        valid_end, observed_tx_start = observed.valid_end, observed.tx_start
+    elif valid_time is None:
+        valid_end = None
+    else:
+        valid_end = set_cols[valid_time["end_column"]]
     expected = [at, *_close_address_binds(case, entity, pk, valid_end)]
     gate_rendered = _has_temporal_gate(
         statements[0],

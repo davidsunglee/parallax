@@ -700,8 +700,9 @@ def _resolve_graph_pointer(
 # so the adapter reports a ``*-failed`` diagnostic rather than leaking a lower-layer
 # exception type across the conformance seam. `opt_lock.UnobservedVersionError` /
 # `.HistoricalObservationError` / `.CallerAuthoredVersionError` are m-opt-lock's own
-# forward-error posture; `temporal_state.AmbiguousObservationError` is this
-# engine's own (a shape no reachable case exercises). A deferred witness (the
+# forward-error posture; `temporal_state.AmbiguousObservationError` /
+# `.MilestoneEdgeError` are this engine's own (shapes no reachable case
+# exercises). A deferred witness (the
 # materializing / auto-retry-
 # boundary forms) that reaches this engine-local write path without
 # a recorded observation must degrade to a reasoned `EngineError`, never an
@@ -715,6 +716,7 @@ _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     opt_lock.HistoricalObservationError,
     opt_lock.CallerAuthoredVersionError,
     temporal_state.AmbiguousObservationError,
+    temporal_state.MilestoneEdgeError,
     OperationError,
     SqlGenError,
     TemporalReadError,
@@ -829,16 +831,22 @@ def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel)
 # schema's — one shared `writeRow` definition spans every shape.
 _VERSION_OBSERVATION_KEY: Final[str] = "observedVersion"
 
-# A temporal close's observed Transaction-Time gate. NOT a write-row key in any
-# shape: it is authored beside the write (`when.observedTxStart`, or a retry
-# attempt's own field — `m-case-format`), so a row carrying it is refused rather
-# than stripped.
+# The two halves of an observed milestone's own EDGE coordinate. NEITHER is a
+# write-row key in any shape: they are authored beside the write
+# (`when.observedTxStart` / `when.observedValidStart`, or a retry attempt's own
+# fields — `m-case-format`), so a row carrying one is refused rather than
+# stripped.
 _TEMPORAL_GATE_KEY: Final[str] = "observedTxStart"
+_TEMPORAL_VALID_START_KEY: Final[str] = "observedValidStart"
 
 # Every reserved observation control key a case can spell on a write row. The
 # durable instruction forbids all of them (ADR 0013); which one a given write is
 # entitled to author BEFORE stripping is :func:`_observation_refusal`'s answer.
-_ROW_OBSERVATION_KEYS: Final[tuple[str, ...]] = (_VERSION_OBSERVATION_KEY, _TEMPORAL_GATE_KEY)
+_ROW_OBSERVATION_KEYS: Final[tuple[str, ...]] = (
+    _VERSION_OBSERVATION_KEY,
+    _TEMPORAL_GATE_KEY,
+    _TEMPORAL_VALID_START_KEY,
+)
 
 
 # An object-key -> Write Observation map (m-opt-lock; ADR 0013) — this engine's
@@ -1256,13 +1264,15 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
     producer decides any part of it locally. A VERSIONED, NON-TEMPORAL update or
     delete may author ``observedVersion``; nothing else may author anything:
 
-    - ``observedTxStart`` is entitled NOWHERE. It is not a write-row control key
-      in any shape: `compatibility-case.schema.json`'s ``writeRow`` reserves
-      ``observedVersion`` alone and every other key names an entity member, while
-      a temporal close's observed Transaction-Time gate rides beside the write,
-      at ``when.observedTxStart`` (`m-case-format`) or the retry attempt's own
-      field. Stripping it from a row — or projecting the row past it — would
-      silently discard the very token the author meant to gate on.
+    - neither half of an observed milestone's own EDGE coordinate
+      (``observedTxStart`` / ``observedValidStart``) is entitled ANYWHERE. Neither
+      is a write-row control key in any shape:
+      `compatibility-case.schema.json`'s ``writeRow`` reserves ``observedVersion``
+      alone and every other key names an entity member, while a temporal close's
+      observed coordinate rides beside the write, at ``when.observedTxStart`` /
+      ``when.observedValidStart`` (`m-case-format`) or the retry attempt's own
+      fields. Stripping one from a row — or projecting the row past it — would
+      silently discard the very coordinate the author meant to observe.
     - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
       flat row cell can name. It resolves through
       :class:`~parallax.conformance.temporal_state.TemporalShadow`, and a
@@ -1283,12 +1293,12 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
     versioned?" and "is it temporal?" need the model, which only this translation
     holds.
     """
-    if key == _TEMPORAL_GATE_KEY:
+    if key in {_TEMPORAL_GATE_KEY, _TEMPORAL_VALID_START_KEY}:
         return (
-            f"a write row authors no `{key}` (m-case-format: a temporal close's observed "
-            "`txStart` gate rides beside the write, at `when.observedTxStart` or the attempt's "
-            "own field; a writeRow reserves `observedVersion` alone and every other key names "
-            "an entity member)"
+            f"a write row authors no `{key}` (m-case-format: an observed milestone's own edge "
+            "coordinate rides beside the write, at `when.observedTxStart` / "
+            "`when.observedValidStart` or the attempt's own fields; a writeRow reserves "
+            "`observedVersion` alone and every other key names an entity member)"
         )
     if _is_temporal_entity(meta, entity_name):
         return (
@@ -3909,6 +3919,8 @@ def _run_conflict_close(
     write_row: Mapping[str, object],
     at: str,
     observed_tx_start: str | None,
+    observed_valid_start: str | None,
+    shadow: TemporalShadow,
 ) -> tuple[tuple[Statement, ...], int]:
     """Lower and execute one TEMPORAL conflict attempt's close through
     ``db.transact`` — ONE
@@ -3918,18 +3930,31 @@ def _run_conflict_close(
     for a conflict case's own close-only probe, never a REAL chaining mutation,
     and executes it on the transaction's own connection; a standalone close has
     nothing to coalesce or FK-order with, so it bypasses the buffer/flush
-    pipeline entirely. The write row's own ``validEnd`` completes a bitemporal
-    close's ADDRESS and ``observed_tx_start`` supplies its gate candidate; both
-    are the case's EXPLICIT authored fields (`when.write.validEnd` /
-    `when.observedTxStart`) — never a shadow-tracker lookup, a conflict case
-    tests a KNOWN stale-or-fresh value.
+    pipeline entirely.
+
+    A case names its close's coordinates one of two ways, and never both:
+
+    * the ADDRESS directly — the write row's own ``validEnd`` completes a
+      bitemporal close's address and ``observed_tx_start`` supplies its gate
+      candidate, both the case's EXPLICIT authored fields
+      (`when.write.validEnd` / `when.observedTxStart`). This is how a case tests
+      a KNOWN stale-or-fresh gate, whose whole point is that it matches no
+      milestone;
+    * the OBSERVED MILESTONE — ``observed_valid_start`` with
+      ``observed_tx_start`` is that milestone's own edge coordinate
+      (`when.observedValidStart` / `when.observedTxStart`), which resolves
+      against the case's tracked state and supplies BOTH the address's
+      Valid-Time end and the gate from the ONE milestone it names. A key holding
+      several disjoint current rectangles is then addressable, and the address
+      and the gate provably come from one observation rather than from two
+      independently authored coordinates.
 
     Its ``write_row`` is a case-authored row like any other, so it becomes a
     durable row through :func:`_durable_row`, which entitles a temporal row to no
-    observation control key: the gate this close binds is the SEPARATE
-    ``observed_tx_start`` argument, and a row that spelled its own would
-    otherwise be projected away to the address's primary-key cells and the
-    author's gate silently replaced by the one beside the write.
+    observation control key: the coordinates this close binds are the SEPARATE
+    arguments, and a row that spelled its own would otherwise be projected away
+    to the address's primary-key cells and the author's coordinate silently
+    replaced by the one beside the write.
 
     A zero-row close is caught only as the class the case's own mode implies
     (:func:`_implied_shortfall_error`); every other class propagates, so the
@@ -3938,6 +3963,10 @@ def _run_conflict_close(
     row, _authored_none = _durable_row(meta, target, _CLOSE_MUTATION, write_row)
     observed_valid_end = cast("str | None", row.pop("validEnd", None))
     model = case_model(meta)
+    if observed_valid_start is not None:
+        observed_valid_end, observed_tx_start = _observed_milestone_coordinates(
+            meta, target, row, observed_valid_end, observed_valid_start, observed_tx_start, shadow
+        )
     # The standalone close is settled outside any unit of work, so it is handed
     # its own Transaction Instant over the SAME clock the transaction below runs
     # on — the two can never derive different instants from one `at`.
@@ -3967,6 +3996,52 @@ def _run_conflict_close(
 
     implied = _implied_shortfall_error(True, concurrency)
     return (statement,), _conflict_attempt_affected(database, concurrency, implied, body)
+
+
+def _observed_milestone_coordinates(
+    meta: Metamodel,
+    target: str,
+    row: Mapping[str, object],
+    authored_valid_end: str | None,
+    observed_valid_start: str,
+    observed_tx_start: str | None,
+    shadow: TemporalShadow,
+) -> tuple[str | None, str | None]:
+    """The close coordinates the ONE milestone a case named the edge of supplies:
+    that milestone's own Valid-Time end (the address's exclusive upper bound) and
+    its own Transaction-Time start (the gate candidate).
+
+    Both come from one resolved observation, so an implementation that resolved
+    the observation by primary key alone — picking whichever of a key's current
+    rectangles it happened to hold — cannot render the address this returns.
+    That is the whole reason a case names an edge instead of an address.
+
+    An authored ``validEnd`` alongside is refused rather than cross-checked: the
+    two spellings answer the same question, and a case that agrees with itself
+    proves nothing the derivation does not already, while a case that disagrees
+    would have to pick a winner.
+    """
+    if authored_valid_end is not None:
+        raise EngineError(
+            f"{target!r} {_CLOSE_MUTATION!r}: a close names its observed milestone's edge "
+            "(`observedValidStart`) or its address (`write.validEnd`), never both — the "
+            "address of an edge-named close is DERIVED from the milestone the edge selects"
+        )
+    model = case_model(meta)
+    entity_metadata = case_entity(model, meta.entity(target))
+    edge = temporal_state.observed_edge(
+        model, entity_metadata, valid_start=observed_valid_start, tx_start=observed_tx_start
+    )
+    observation = shadow.resolve(model, entity_metadata, row, edge)
+    if observation is None:
+        raise EngineError(
+            f"{target!r} {_CLOSE_MUTATION!r}: no current milestone of this key carries the "
+            f"observed edge {edge!r} — a close observes a milestone the case's own state holds"
+        )
+    valid_end, tx_start = temporal_state.observed_close_coordinates(
+        model, entity_metadata, observation
+    )
+    return cast("str | None", valid_end), cast("str | None", tx_start)
 
 
 def _conflict_write_rows(attempt: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
@@ -4028,6 +4103,13 @@ def run_conflict_case(
     target = _conflict_target(meta)
     mutation = _conflict_mutation(when)
     is_temporal = _is_temporal_entity(meta, target)
+    # The state an edge-named close resolves its observed milestone against — the
+    # case's own loaded fixtures, which are exactly the milestones its address
+    # can select. Seeded before `given.apply`, whose out-of-band writer is a
+    # CONCURRENT transaction this one never observed.
+    shadow = TemporalShadow()
+    if is_temporal:
+        _seed_shadow_from_fixtures(case, meta, shadow)
     emissions: list[Emission] = []
     affected = 0
     try:
@@ -4052,6 +4134,8 @@ def run_conflict_case(
                     _conflict_close_row(case, attempt),
                     cast("str", attempt["at"]),
                     cast("str | None", attempt.get("observedTxStart")),
+                    cast("str | None", attempt.get("observedValidStart")),
+                    shadow,
                 )
             else:
                 statements, affected = _run_conflict_write(

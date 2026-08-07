@@ -1,0 +1,74 @@
+# The close addresses the rectangle its OBSERVATION names, not one its primary key
+# happens to hold (m-bitemp-write + m-unit-work "an observation is keyed by the
+# milestone it observed").
+#
+# Position id 1 has TWO rectangles current on Transaction Time — R2 (value 100, valid
+# [2024-01-01, 2024-06-01)) and R3 (value 200, valid [2024-06-01, infinity)) — and
+# they share in_z 2024-04-01, so primary key, `out_z = infinity`, and the gate are
+# identical for the two. This case names R2 by its OWN EDGE (`observedValidStart`
+# 2024-01-01 with `observedTxStart` 2024-04-01, its guaranteed-selecting from-instant
+# per axis); m-opt-lock-021 names R3's edge from the same fixtures at the same instant
+# under the same mode, and the two goldens differ by exactly one bind: `thru_z`
+# 2024-06-01 here, infinity there.
+#
+# That is the semantic distinction, and it is a strictly stronger claim than
+# m-bitemp-write-017's. There the discriminating `thru_z` is AUTHORED — the case
+# states the close's address directly — so an implementation that resolves a write's
+# observation by primary key alone still renders the right statement. Here the address
+# is DERIVED from the one milestone the edge selects, so keying an observation by
+# identity alone cannot produce it: a key holding several current rectangles has no
+# single answer, and whichever rectangle such an implementation picked, one of these
+# two cases binds the other one's `thru_z`.
+#
+# The gate binds that same milestone's own in_z, so a close's address and its gate
+# provably come from ONE observation rather than from two independently authored
+# coordinates.
+#
+# The close inactivates exactly 1 row: `then.tableState` shows R2 closed at 2024-10-01
+# with R1 and R3 untouched. As in -017 a conflict case runs only that single close, not
+# the replacement INSERTs a full rectangle split would chain, so nothing re-opens the
+# Valid-Time window R2 covered.
+model: models/position.yaml
+tags: [m-bitemp-write, m-unit-work, m-opt-lock, m-sql, bitemporal, temporal, conflict, slice-snapshot-1, slice-managed-1]
+shape: conflict
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection concurrency/locking intent (shape:conflict)"
+when:
+  uow:
+    concurrency: optimistic
+  write: { id: 1 }
+  at: "2024-10-01T00:00:00+00:00"
+  observedTxStart: "2024-04-01T00:00:00+00:00"
+  observedValidStart: "2024-01-01T00:00:00+00:00"
+then:
+  statements:
+    - sql:
+        postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+        mariadb: update `position` set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+      binds: ["2024-10-01T00:00:00+00:00", 1, "2024-06-01T00:00:00+00:00", infinity, "2024-04-01T00:00:00+00:00"]
+  affectedRows: 1
+  tableState:
+    position:
+      - pos_id: 1
+        acct_num: A
+        val: 90.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-04-01T00:00:00+00:00"
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: "2024-10-01T00:00:00+00:00"
+      - pos_id: 1
+        acct_num: A
+        val: 200.00
+        from_z: "2024-06-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: infinity

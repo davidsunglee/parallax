@@ -609,6 +609,8 @@ _CONFLICT_CASES_EXERCISED: Final[frozenset[str]] = frozenset(
         "m-bitemp-write-005",
         "m-bitemp-write-017",
         "m-bitemp-write-018",
+        "m-bitemp-write-021",
+        "m-opt-lock-021",
         "m-inheritance-105",
         "m-value-object-046",
     }
