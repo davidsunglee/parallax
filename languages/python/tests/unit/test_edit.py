@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy as copy_module
 import datetime as dt
 from decimal import Decimal
+from functools import cached_property
 from typing import cast
 
 import pytest
@@ -553,9 +554,9 @@ def _materialized_status() -> sm.SnapOrderStatus:
 def test_an_edit_preserves_a_loaded_relationship_view(changes: dict[str, object]) -> None:
     node = _materialized_order()
     copy = node.edit(**changes)
-    # The SAME materialized children, not a re-read and not a lookalike: an edit
-    # can never change a relationship, so the source's views describe the copy
-    # exactly as they described the source.
+    # The SAME materialized children, not a re-read and not a lookalike: a
+    # relationship keyword is refused, so the copy's views keep describing what
+    # this read observed.
     assert copy.items[0] is node.items[0]
     assert copy.items[0].order is node
 
@@ -587,6 +588,35 @@ def test_an_edit_carries_a_slot_no_declaration_and_no_lifecycle_names(
     marker = object()
     object.__setattr__(node, "__parallax_unnamed__", marker)
     assert node.edit(**changes).__dict__["__parallax_unnamed__"] is marker
+
+
+class _Tag(Entity, table="tag", namespace="parallax.compatibility"):
+    """One derived cache, spelled the way the language spells one: the memoized
+    answer is computed from a declared member, so it lives in the instance
+    dictionary and an edit that replaces that member contradicts it."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str] = attr(max_length=16)
+
+    @cached_property
+    def shouted(self) -> str:
+        return self.label.upper()
+
+
+@pytest.mark.parametrize("changes", [{"label": "b"}, {}], ids=list(_BRANCHES))
+def test_an_edit_never_carries_a_derived_cache(changes: dict[str, object]) -> None:
+    # The one named exception to the complement, and the reason the guarantee is
+    # "everything the edit neither replaces nor invalidates": the class itself
+    # declares this slot derived, so no edit may carry it.
+    tag = _Tag(id=1, label="a")
+    assert tag.shouted == "A"
+    assert "shouted" not in tag.edit(**changes).__dict__
+
+
+def test_a_derived_cache_recomputes_after_an_edit_replaces_what_it_derives_from() -> None:
+    tag = _Tag(id=1, label="a")
+    assert tag.shouted == "A"
+    assert tag.edit(label="b").shouted == "B"
 
 
 def test_the_freshly_merged_change_record_replaces_the_carried_one() -> None:
