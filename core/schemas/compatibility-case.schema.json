@@ -424,7 +424,7 @@
                 "required": ["find", "roundTrips", "targetEntity"]
               },
               {
-                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK — UNGROUPED, that step's own unit of work; grouped (`uow`), the whole group's (see the sibling `uow` property). A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`.",
+                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK — UNGROUPED, that step's own unit of work; grouped (`uow`), the whole group's (see the sibling `uow` property). A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`. A GROUPED write MAY name the find step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then consumes the observation that find recorded, rather than one resolved from case state.",
                 "required": ["write", "roundTrips"]
               },
               {
@@ -464,6 +464,16 @@
                 "description": "`uow` step-grouping is legal on a read or write step ONLY. An ACTION step (m-case-format lifecycle vocabulary, COR-30) executes through the lifecycle-object engine path, which does not observe grouping, so `uow` on an action step is invalid.",
                 "if": { "required": ["action"] },
                 "then": { "not": { "required": ["uow"] } }
+              },
+              {
+                "description": "A WRITE step's `on` names the find step whose result the write settles against (m-case-format *Settling against a grouped find*). The evidence a write consumes is transaction-scoped, so the reference is legal only on a step that declares `uow` — an ungrouped write shares no unit of work with any find and has nothing to settle against. It names ONE find, never an array: a keyed write settles against the one milestone the value it was handed came from, and a set of sources would name no single one.",
+                "if": {
+                  "allOf": [{ "required": ["write"] }, { "required": ["on"] }]
+                },
+                "then": {
+                  "required": ["uow"],
+                  "properties": { "on": { "type": "integer" } }
+                }
               }
             ],
             "properties": {
@@ -525,7 +535,7 @@
                 "enum": ["mutate", "detachCopy", "load", "access", "flush", "mergeBack", "commit", "abort"]
               },
               "on": {
-                "description": "The earlier scenario step(s) whose result this action targets — the source object(s) the verb operates on. A single zero-based index, or an array of indices when the action spans sources at DIFFERENT lowered coordinates (a coordinate-grouped `load`, m-deep-fetch / m-identity-map). Every index MUST name an EARLIER step (the harness asserts `0 <= index < the current step's index`); the array form's indices MUST be UNIQUE (`uniqueItems`) — a source is referenced at most once. REQUIRED for object-targeting verbs and optional for boundary verbs (see the sibling `allOf`).",
+                "description": "The earlier scenario step(s) whose result this step operates on. A single zero-based index, or an array of indices when an ACTION spans sources at DIFFERENT lowered coordinates (a coordinate-grouped `load`, m-deep-fetch / m-identity-map). Every index MUST name an EARLIER step (the harness asserts `0 <= index < the current step's index`); the array form's indices MUST be UNIQUE (`uniqueItems`) — a source is referenced at most once. On an ACTION step it names the source object(s) the verb acts on: REQUIRED for object-targeting verbs and optional for boundary verbs (see the sibling `allOf`). On a GROUPED WRITE step it instead names the SOURCE FIND — the read whose result the write settles against, so the write consumes the observation that find recorded rather than one resolved from case state (m-case-format *Settling against a grouped find*); there the single-index form is the only legal one and the step MUST declare `uow`.",
                 "oneOf": [
                   { "type": "integer", "minimum": 0 },
                   {

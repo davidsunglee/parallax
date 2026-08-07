@@ -252,7 +252,7 @@ keeps the assertion honest across engines.
 | `when.operation` | `when` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
 | `when.targetEntity` | `when` | read | the entity the read TARGETS — the queried position `when.operation` starts from (see *Read targeting*, below); REQUIRED on every read case and every scenario / coherence read step |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements` |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements`; a `uow`-grouped write step MAY additionally carry `on`, naming the find it settles against (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) operation sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`) |
@@ -784,27 +784,28 @@ a close's address from the primary key alone has no single answer for such a key
 and cannot render both siblings of an edge-named pair.
 
 Neither form grades how an implementation **keys** the observations its own reads
-record. A case names the milestone its write observed, so the write consumes one
-observation resolved once from state the case supplies. A scenario `uow` group
-does have a write consume evidence its own find steps recorded — but only the
-**version** a non-temporal target's find observed, and one row per primary key
-already addresses that without a coordinate. No case has a write consume a
-MILESTONE one of its own read steps observed, so a rule about what a second read
-of one key does to the first read's evidence is outside what this format can
-express today.
+record. A conflict case names the milestone its write observed, so the write
+consumes one observation resolved once from state the case supplies, and nothing
+here observes what a second read of one key does to the first read's evidence.
+That is a limit of this shape, not of the format: a scenario `uow` group's write
+MAY name the find step it settles against (*Settling against a grouped find*,
+below), and that reference is where the corpus grades the keying.
 
-The same boundary puts the **gate**'s provenance outside it. The requirement that
-address and gate both derive from the one observed milestone is normative above,
-but no case can witness the gate half: an observed edge's Transaction-Time
-coordinate IS the milestone's Transaction-Time start, which is exactly what the
-optimistic gate binds, so in any case that names an edge the coordinate the case
-authored and the coordinate a derivation reads off the resolution are the same
-instant. An implementation that binds the gate straight from `observedTxStart`
-renders every conforming golden. Only a write consuming an observation one of the
-case's own reads produced could tell the two apart, which is the same missing
-vocabulary. An observation-form case therefore grades the **address**'s
-derivation, and a header that claims more than that is claiming what no
-degradation of a conforming implementation can falsify.
+The **gate**'s provenance stays outside both shapes, for two different reasons.
+The requirement that address and gate both derive from the one observed milestone
+is normative above; no conflict case can witness the gate half, because an
+observed edge's Transaction-Time coordinate IS the milestone's Transaction-Time
+start, which is exactly what the optimistic gate binds — so in any case that names
+an edge the coordinate the case authored and the coordinate a derivation reads off
+the resolution are the same instant, and an implementation that binds the gate
+straight from `observedTxStart` renders every conforming golden. A grouped write
+naming its source find authors no coordinate at all, so there its gate cannot come
+from the case document — but address and gate are then read off one resolved
+milestone, and a key's current rectangles are disjoint on Valid Time, so no case
+can hold two whose addresses agree while their gates differ. A misresolution moves
+both binds together, and the address is what fails. Either shape therefore grades
+the **address**'s derivation, and a header that claims the gate's is claiming what
+no degradation of a conforming implementation can falsify.
 
 ### Scenario cases (`m-unit-work`)
 
@@ -867,6 +868,46 @@ pre-transaction rows. A **read step inside a group** reads THROUGH the group's
 own transaction (read-your-own-writes): its `expectRows` are what THAT
 connection observes mid-transaction, never the post-commit / post-rollback
 state a later, ungrouped find would see.
+
+#### Settling against a grouped find
+
+A `uow`-grouped write step MAY carry **`on: <index>`**, naming the earlier find
+step of its OWN group whose result it settles against. The reference spells one
+thing the write row cannot: which of the group's reads handed over the value being
+written. It reuses the action step's own `on` spelling, and takes only the single
+index form — a keyed write settles against the one milestone its value came from,
+so a set of sources would name none.
+
+Everywhere else, a keyed write's observed row comes from **case state**: a
+writeSequence entry and a conflict close alike consume a milestone the case's own
+fixtures and earlier entries left current, because those shapes carry no read to
+have observed one (*Naming the observed milestone*, above). This reference is the
+one place that rule is displaced. Where it appears, an implementation **MUST**
+resolve the write's observation from the **observation store this unit of work's
+own reads filled** — the evidence the named find recorded when it ran, addressed
+by the object and by the milestone that read observed — and **MUST NOT** substitute
+a milestone derived from case state. Two obligations follow:
+
+- The named find MUST have observed a row of the write's own key, and the write
+  MUST settle against **that** row's milestone. A write whose named find observed
+  no such row is refused; it names evidence that does not exist.
+- The write MUST reach the store by the coordinate the value it was handed came
+  from, never by primary key alone. A group whose finds read one key at as-of
+  coordinates resolving to different milestones fills a distinct slot per
+  milestone; an implementation keying by identity alone holds one slot, and a
+  write naming the earlier find then settles against the later find's row.
+
+The reference is legal only where both halves are meaningful: on a step that
+declares `uow` (evidence is transaction-scoped, and an ungrouped write shares a
+unit of work with no find), naming an EARLIER step of the SAME group that is a
+find, against a **temporal** target. A versioned Non-Temporal target has one row
+per primary key, so its grouped write already reaches its group's evidence
+by identity and the reference would name nothing the resolution does not already
+have.
+
+A write settling against a find's result is **query-result-dependent**: the
+milestone it addresses is read off a row no compile lane executes, so such a case
+declares `compileEligibility: run-only` (see *Compile eligibility*).
 
 #### Predicate-selected write instruction
 
@@ -1422,8 +1463,10 @@ of `when` + `given`, so only `run` grades it. Two criteria make a case run-only:
 - **`query-result-dependent`** — the emissions depend on a **query result**:
   deep-fetch fan-out binds, materialized predicate writes, `sequence`-strategy PK
   allocations (whose following `INSERT` binds registry-read values — a `max`-strategy
-  insert folds the computation into its own SQL and stays eligible), or
-  framework-owned observed-version / `in_z` binds. `given` fixtures are legitimate
+  insert folds the computation into its own SQL and stays eligible),
+  framework-owned observed-version / `in_z` binds, or a close whose address is read
+  off the milestone a find of its own unit of work observed (*Settling against a
+  grouped find*, above). `given` fixtures are legitimate
   inputs; `then` expectations are never fed back.
 
 Eligibility is an **authored, reviewed** declaration — intent is a human judgment.

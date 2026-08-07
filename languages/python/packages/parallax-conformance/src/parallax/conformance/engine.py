@@ -62,6 +62,7 @@ from parallax.core.temporal_read import (
     Pin,
     TemporalReadError,
     inject_as_of,
+    milestone_edge_from_members,
     resolve_pinned_instants,
     statement_pin,
 )
@@ -73,12 +74,15 @@ from parallax.core.unit_work import (
     KeyedWrite,
     MissingTargetError,
     ObjectKey,
+    ObservationKey,
     ObservedKeyedWrite,
     OptimisticLockConflictError,
     PlanningRequest,
+    PredecessorRow,
     PredicateWrite,
     StaleWriteError,
     SubjectIdentity,
+    TemporalObservation,
     TransactionInstant,
     VersionObservation,
     WriteAssignment,
@@ -90,6 +94,7 @@ from parallax.core.unit_work import (
     enforce_affected_rows,
     instructions,
     object_key,
+    observation_key,
     validate_write,
 )
 from parallax.core.unit_work.instructions import WriteInstruction
@@ -848,14 +853,14 @@ _ROW_OBSERVATION_KEYS: Final[tuple[str, ...]] = (
 )
 
 
-# An object-key -> Write Observation map (m-opt-lock; ADR 0013) — this engine's
-# own case-local record of what a `uow` group's find steps observed, the
+# An observation-key -> Write Observation map (m-opt-lock; ADR 0013) — this
+# engine's own case-local record of what a `uow` group's find steps observed, the
 # analogue of what a REAL `Transaction.find` records on the production path
-# (`parallax.snapshot.handle` records observations into `uow.observe`). Only a
-# VERSIONED NON-TEMPORAL row reaches it — a versioned row has exactly one row
-# per primary key, so object identity alone addresses it and no milestone
-# coordinate qualifies the key; a temporal entry resolves through
-# `TemporalShadow` instead.
+# (`parallax.snapshot.handle` records observations into `uow.observe`). It is
+# keyed exactly as production keys the same evidence: the object observed AND the
+# milestone observed of it (`~parallax.core.unit_work.observation_key`), so a
+# VERSIONED NON-TEMPORAL row — one row per primary key — files under a coordinate-
+# free key, while each milestone a TEMPORAL find returns files under its own.
 # `_write_sequence_lowered` / `run_write_sequence_case` pass a permanently
 # EMPTY instance (a writeSequence carries no find steps at all): every keyed
 # write's observation there comes solely from its own row's reserved
@@ -868,7 +873,16 @@ _ROW_OBSERVATION_KEYS: Final[tuple[str, ...]] = (
 # transaction records the version at read time ("the shadow value read
 # earlier") and threads it into the UPDATE bind
 # (`docs/research/reladomo/09-transactions-locking.md:55-59`).
-ScenarioObservations = dict[ObjectKey, WriteObservation]
+ScenarioObservations = dict[ObservationKey, WriteObservation]
+
+# What ONE grouped find step observed, in returned-row order: each milestone's
+# object key beside its own Predecessor Row. A later write step of the same group
+# names that step with `on` and settles against the milestone of its OWN key
+# (`m-case-format` "Settling against a grouped find"), so this carries the rows
+# themselves rather than the entries they were filed under — the write derives the
+# coordinate it looks up by, and copying the recorded key would make the two sides
+# agree by construction instead of by both naming the milestone's own edge.
+ObservedMilestones = tuple[tuple[ObjectKey, Mapping[str, object]], ...]
 
 
 def _versioned_non_temporal_version_attribute(
@@ -922,45 +936,128 @@ def _row_object_key(
 def _observe_group_find(
     observations: ScenarioObservations,
     meta: Metamodel,
+    model: AcceptedMetamodel,
     compiled: CompiledRead,
     rows: Sequence[Mapping[str, object]],
-) -> None:
-    """Record a `uow` GROUP's own OBSERVED version for every row a grouped
-    find step returns, when its target is a VERSIONED NON-TEMPORAL entity —
-    into the group-local :data:`ScenarioObservations` map, which both this SAME
-    group's pure re-lowering oracle (:func:`_lower_resolved`) and its real
-    buffered writes (:func:`_buffer_execution_instruction`) resolve from, so a
-    later
-    keyed write of the SAME object in this SAME group derives its version
-    bind from a genuine transaction-scoped observation — never an oracle,
-    never a scenario-wide map. One map serves both, so the statement the oracle
-    predicts and the statement the transaction emits cannot bind different
-    observed versions. Rows are always COLUMN-named here (the real
-    ``port.execute`` row shape — the SAME convention
-    `parallax.snapshot.handle`'s own observation recording reads via
-    ``node.fields[attr.column]``); the scenario compile lane never calls this
-    at all. A no-op for a temporal or unversioned target
-    (:func:`_versioned_non_temporal_version_attribute` returns ``None``) and
-    for any row missing its primary key or version field — never reachable
-    for a well-formed corpus find, but this seam takes no data on faith.
+) -> ObservedMilestones:
+    """Record what a `uow` GROUP's own find step observed, for every row it
+    returns — into the group-local :data:`ScenarioObservations` map, which both
+    this SAME group's pure re-lowering oracle (:func:`_lower_resolved`) and its
+    real buffered writes (:func:`_buffer_execution_instruction`) resolve from, so
+    a later keyed write of the SAME object in this SAME group derives its bind
+    from a genuine transaction-scoped observation — never an oracle, never a
+    scenario-wide map. One map serves both, so the statement the oracle predicts
+    and the statement the transaction emits cannot bind different evidence.
+
+    A VERSIONED NON-TEMPORAL target records its observed version, and a TEMPORAL
+    one the whole milestone each returned row is — the two observation shapes
+    `m-unit-work` gives a read. Every entry files under the SAME
+    :func:`~parallax.core.unit_work.observation_key` production files its own
+    under: the object observed, qualified by the milestone observed of it. That
+    is what lets two finds of one primary key at coordinates resolving to
+    different milestones leave two entries rather than one, which is the whole
+    point of the milestone half. An UNVERSIONED non-temporal target observes
+    nothing and records nothing.
+
+    Returns the (object key, Predecessor Row) pairs it recorded for a TEMPORAL
+    target, in row order — the evidence a later write step of this same group may
+    settle against by naming this find (`m-case-format` *Settling against a
+    grouped find*). Every other target returns none: a versioned row has one row
+    per primary key, so a write reaches its evidence by identity and names no
+    find.
+
+    Rows are always COLUMN-named here (the real ``port.execute`` row shape — the
+    SAME convention `parallax.snapshot.handle`'s own observation recording reads
+    via ``node.fields[attr.column]``); the scenario compile lane never calls this
+    at all. A row missing its primary key, its version field, or a member of its
+    own Predecessor Row is skipped — never reachable for a well-formed corpus
+    find, but this seam takes no data on faith.
 
     Each row is keyed by the Entity ``compiled`` resolves that ROW to, never by
     the position the find targeted: an abstract table-per-hierarchy target
     returns rows of several concretes, and each one's observation must be
-    reachable by the keyed write that names that concrete. The version column
-    itself is family-wide metadata declared on the root (`m-opt-lock`), so
-    whether the family is observed at all is a property of the target and is
-    decided once."""
+    reachable by the keyed write that names that concrete. The version column and
+    the As-Of Axes are both family-wide metadata declared on the root
+    (`m-opt-lock` / `m-temporal-read`), so which shape the family observes is a
+    property of the target and is decided once."""
+    declaring = declaring_entity(meta, meta.entity(compiled.target.canonical))
+    if declaring.is_temporal:
+        return _observe_group_milestones(observations, meta, model, declaring, compiled, rows)
     version_attr = _versioned_non_temporal_version_attribute(meta, compiled.target.canonical)
     if version_attr is None:
-        return
+        return ()
+    declaring_metadata = case_entity(model, declaring)
     for row in rows:
         key = _row_object_key(meta, compiled.materialize_row(row).resolved_entity, row)
         if key is None or version_attr.column not in row:
             continue
-        observations[key] = VersionObservation(
-            observed_version=cast("int", row[version_attr.column])
+        observation = VersionObservation(observed_version=cast("int", row[version_attr.column]))
+        observations[observation_key(key, observation, declaring_metadata)] = observation
+    return ()
+
+
+def _observe_group_milestones(
+    observations: ScenarioObservations,
+    meta: Metamodel,
+    model: AcceptedMetamodel,
+    declaring: Entity,
+    compiled: CompiledRead,
+    rows: Sequence[Mapping[str, object]],
+) -> ObservedMilestones:
+    """:func:`_observe_group_find`'s TEMPORAL arm: one Temporal Observation per
+    returned row, each retaining that row's whole milestone.
+
+    A milestone chain holds more than one row per primary key, so a find may
+    return several rows of one key and each is evidence about the milestone it
+    actually is. Both the retained Predecessor Row and the coordinate the entry
+    files under come from that ONE row, so this seam cannot record a milestone
+    under another milestone's coordinate.
+    """
+    declaring_metadata = case_entity(model, declaring)
+    observed: list[tuple[ObjectKey, Mapping[str, object]]] = []
+    for row in rows:
+        materialized = compiled.materialize_row(row)
+        key = _row_object_key(meta, materialized.resolved_entity, row)
+        entity = model.entity(materialized.resolved_entity)
+        if key is None or entity is None:  # pragma: no cover - defends a malformed row/model
+            continue
+        members = _predecessor_members(model, entity, materialized.values)
+        if members is None:
+            continue
+        observation = TemporalObservation(
+            predecessor=PredecessorRow(members=members, document=materialized.document)
         )
+        observations[observation_key(key, observation, declaring_metadata)] = observation
+        observed.append((key, members))
+    return tuple(observed)
+
+
+def _predecessor_members(
+    model: AcceptedMetamodel, entity: EntityMetadata, values: Mapping[str, object]
+) -> dict[str, object] | None:
+    """One materialized row's complete member state, by declared member name —
+    the Predecessor Row a Temporal Observation retains (`m-unit-work`).
+
+    ``values`` is the compiled read's own materialized row: still keyed by the
+    physical name each member occupies, with a Relational Document Layout row's
+    Structured Column already fanned back out under those same names, exactly as
+    the production observation recorder reads it. ``None`` when the projection is
+    missing a member the model declares, which a complete Predecessor Row cannot
+    tolerate.
+    """
+    view = inheritance.view(model).entity(entity.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return None
+    members: dict[str, object] = {}
+    for attribute in view.applicable_attributes:
+        if attribute.storage.name not in values:
+            return None
+        members[attribute.identity.name] = values[attribute.storage.name]
+    for occurrence in view.applicable_value_objects:
+        if occurrence.storage.name not in values:
+            return None
+        members[occurrence.identity.path[-1]] = values[occurrence.storage.name]
+    return members
 
 
 def _entry_instant(entry: Mapping[str, object]) -> str:
@@ -1017,11 +1114,20 @@ def _build_temporal_instruction(
     shadow: TemporalShadow,
     tx_instant: str,
     unit_inserted: set[ObjectKey],
+    observations: ScenarioObservations,
+    source: ObservedMilestones | None,
 ) -> tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]:
     """One TEMPORAL writeSequence/scenario entry -> its canonical keyed
-    instruction plus the shadow-tracked observation its close/chain consumes
-    (`m-txtime-write` / `m-bitemp-write` "the engine supplies observed rows
-    from case state" — never an implicit resolving read).
+    instruction plus the observation its close/chain consumes.
+
+    Where the observation comes from is what ``source`` decides. Absent one, it is
+    the milestone ``shadow`` tracks for this key (`m-txtime-write` /
+    `m-bitemp-write` "the engine supplies observed rows from case state" — never
+    an implicit resolving read), which is how every writeSequence entry and every
+    ungrouped scenario write resolves. Given one, the entry's own step named a
+    find of its `uow` group with ``on``, and the observation is resolved out of
+    ``observations`` — the store that group's reads filled — by the milestone the
+    named find's row for this key came from (:func:`_settled_against_source`).
 
     The corpus and canonical instruction share the same ``validFrom`` / ``until``
     spelling. Bounds are instruction-level fields; temporal row payloads never
@@ -1030,8 +1136,8 @@ def _build_temporal_instruction(
 
     That row reaches the same :func:`_durable_row` seam every other producer's
     does, which entitles a temporal row to no observation control key at all —
-    the observation this entry consumes is the whole predecessor milestone
-    ``shadow`` holds, never a cell the row carried.
+    the observation this entry consumes is a whole predecessor milestone, never a
+    cell the row carried.
 
     ``unit_inserted`` is the SAME choreography unit's own running set of
     (entity, pk) pairs a PRIOR entry in this SAME buffer already inserted
@@ -1067,13 +1173,62 @@ def _build_temporal_instruction(
     is_coalescing_candidate = not is_insert and pk_key is not None and pk_key in unit_inserted
     observation: WriteObservation | None = None
     if not is_insert and not is_coalescing_candidate:
-        observation = shadow.resolve(model, entity_metadata, row)
+        observation = (
+            shadow.resolve(model, entity_metadata, row)
+            if source is None
+            else _settled_against_source(meta, model, entity_name, pk_key, source, observations)
+        )
     key = pk_key if observation is not None else None
     if is_insert or (observation is not None and not is_coalescing_candidate):
         shadow.advance(model, entity_metadata, instruction, tx_instant, observation)
     if is_insert and pk_key is not None:
         unit_inserted.add(pk_key)
     return instruction, key, observation
+
+
+def _settled_against_source(
+    meta: Metamodel,
+    model: AcceptedMetamodel,
+    entity_name: str,
+    pk_key: ObjectKey | None,
+    source: ObservedMilestones,
+    observations: ScenarioObservations,
+) -> TemporalObservation | None:
+    """The observation a write settles against when its step named the find it
+    came from (`m-case-format` *Settling against a grouped find*).
+
+    The named find's own row for this key is the value the write was handed, so
+    its milestone is the coordinate the write reaches the store by — derived here
+    from that row's own axis starts, exactly as a developer verb derives it from
+    the Edge the read installed on the value
+    (`~parallax.snapshot.handle.Transaction._observation_key`), and never copied
+    off the entry the recording side filed. The two derivations agree because both
+    read the milestone's own coordinate, which is what makes a store keyed by
+    identity alone observably wrong here: the write resolves the wrong milestone,
+    or none.
+
+    A miss returns ``None`` and the close is refused where every unobserved close
+    is. A named find that returned no row of this key — or several, which no
+    single value could have come from — is an authoring defect, refused here where
+    the diagnosis can name the step.
+    """
+    matched = [members for key, members in source if key == pk_key]
+    if len(matched) != 1:
+        raise EngineError(
+            f"{entity_name!r}: the find step this write settles against observed "
+            f"{len(matched)} rows of {pk_key!r} — a keyed write settles against the ONE "
+            "milestone the value it was handed came from (m-case-format 'Settling against "
+            "a grouped find')"
+        )
+    assert pk_key is not None  # a matched row means the write resolved its own key
+    declaring = case_entity(model, declaring_entity(meta, meta.entity(entity_name)))
+    observation = observations.get(
+        ObservationKey(pk_key, milestone_edge_from_members(declaring, matched[0]))
+    )
+    # A milestone coordinate files only a Temporal Observation; a versioned row's
+    # evidence has none and can never answer this lookup.
+    assert observation is None or isinstance(observation, TemporalObservation)
+    return observation
 
 
 def _is_predicate_write_step(raw_write: object) -> bool:
@@ -1503,6 +1658,7 @@ def _build_instructions(
     tx_instant: str,
     unit_inserted: set[ObjectKey],
     scenario_observations: ScenarioObservations,
+    source: ObservedMilestones | None,
 ) -> list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]]:
     """One case write entry -> one or more canonical keyed write instructions.
 
@@ -1545,9 +1701,11 @@ def _build_instructions(
     merging it. A row that authors no observed version falls back to
     ``scenario_observations`` — a writeSequence's own permanently-empty
     instance, or (the scenario RUN lane only) a `uow` GROUP's own prior find
-    step(s) (:func:`_observe_group_find`, via :func:`_run_uow_group`), keyed
-    consistently with :func:`~parallax.core.unit_work.object_key` — mirroring
-    how a temporal entry falls back to :meth:`TemporalShadow.resolve` above.
+    step(s) (:func:`_observe_group_find`, via :func:`_run_uow_group`) — under the
+    coordinate-free :class:`~parallax.core.unit_work.ObservationKey` a versioned
+    row's own evidence is filed by, since one row per primary key needs no
+    milestone to address it. That is why such a write names no source find and
+    ``source`` reaches only the temporal branch above.
 
     An entry's authored ``statements`` count is graded later, once
     :func:`_lower_resolved` has actually planned and lowered the buffer these
@@ -1569,7 +1727,19 @@ def _build_instructions(
         )
     entity_name = cast("str", entry["entity"])
     if _is_temporal_entity(meta, entity_name):
-        return [_build_temporal_instruction(entry, meta, shadow, tx_instant, unit_inserted)]
+        return [
+            _build_temporal_instruction(
+                entry, meta, shadow, tx_instant, unit_inserted, scenario_observations, source
+            )
+        ]
+    if source is not None:
+        raise EngineError(
+            f"{entity_name!r}: a write step naming the find it settles against targets a "
+            "TEMPORAL entity — a versioned Non-Temporal target has one row per primary key, "
+            "so its grouped write already reaches its group's evidence by identity and the "
+            "reference names nothing the resolution does not have (m-case-format 'Settling "
+            "against a grouped find')"
+        )
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     durable = _durable_rows(meta, entity_name, mutation, raw_rows)
@@ -1588,7 +1758,7 @@ def _build_instructions(
         if binds_observations and not opens_a_row:
             key = object_key(instruction, model)
             if observation is None and key is not None:
-                observation = scenario_observations.get(key)
+                observation = scenario_observations.get(ObservationKey(key, None))
             if observation is None:
                 key = None
         else:
@@ -1603,6 +1773,7 @@ def _resolve_entries(
     shadow: TemporalShadow,
     tx_instant: str,
     scenario_observations: ScenarioObservations,
+    source: ObservedMilestones | None = None,
 ) -> list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]]:
     """Every entry in one choreography unit's buffer -> its resolved
     instructions (advancing ``shadow`` exactly once per temporal instruction) —
@@ -1617,13 +1788,19 @@ def _resolve_entries(
     consults a find-derived observation), or (the scenario RUN lane only) a
     `uow` GROUP's own find-derived map (:func:`_run_uow_group`), populated by
     that SAME group's find steps that ran before this unit — never one
-    spanning the whole scenario."""
+    spanning the whole scenario.
+
+    ``source`` is what the step's own ``on`` named (`m-case-format` *Settling
+    against a grouped find*): the milestones ONE earlier find of this same group
+    observed, which every temporal entry of this step settles against instead of
+    against tracked case state. It defaults to absence, which is every lane but a
+    grouped scenario write step naming a find."""
     resolved: list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]] = []
     unit_inserted: set[ObjectKey] = set()
     for entry in entries:
         resolved.extend(
             _build_instructions(
-                entry, meta, shadow, tx_instant, unit_inserted, scenario_observations
+                entry, meta, shadow, tx_instant, unit_inserted, scenario_observations, source
             )
         )
     return resolved
@@ -2553,6 +2730,38 @@ def _group_is_doomed(steps: Sequence[Mapping[str, object]], start: int, end: int
     )
 
 
+def _source_find_milestones(
+    step: Mapping[str, object], index: int, group_milestones: Mapping[int, ObservedMilestones]
+) -> ObservedMilestones | None:
+    """What the find step this WRITE step names with ``on`` observed
+    (`m-case-format` *Settling against a grouped find*) — ``None`` when it names
+    no source, which is every write step but one settling against its group's own
+    read.
+
+    ``group_milestones`` holds one entry per find step of THIS group that has
+    already run, so a reference it cannot satisfy names a step outside the group,
+    a step that is not a find, or one that has not run yet. All three are the same
+    authoring defect and all three are refused here, rather than resolved to an
+    empty tuple that would read as "the find observed nothing".
+    """
+    source = step.get("on")
+    if source is None:
+        return None
+    if not isinstance(source, int) or isinstance(source, bool):
+        raise EngineError(
+            f"scenario[{index}]: a write step settles against ONE find step, named by its "
+            f"index — {source!r} is not one (m-case-format 'Settling against a grouped find')"
+        )
+    milestones = group_milestones.get(source)
+    if milestones is None:
+        raise EngineError(
+            f"scenario[{index}]: settles against step {source}, which is not an EARLIER find "
+            "step of its own `uow` group — the evidence a write consumes is transaction-scoped "
+            "(m-case-format 'Settling against a grouped find')"
+        )
+    return milestones
+
+
 def _run_uow_group(
     port: DbPort,
     meta: Metamodel,
@@ -2596,6 +2805,7 @@ def _run_uow_group(
     tx_instant = _group_tx_instant(steps, start, end)
     doomed = _group_is_doomed(steps, start, end)
     group_observations: ScenarioObservations = {}
+    group_milestones: dict[int, ObservedMilestones] = {}
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(port, case_model(meta), dialect=dialect, clock=FixedClock(instant))
     model = case_model(meta)
@@ -2606,7 +2816,10 @@ def _run_uow_group(
             step = steps[index]
             if "write" in step:
                 entries = _write_entries(step["write"])
-                resolved = _resolve_entries(entries, meta, shadow, tx_instant, group_observations)
+                source = _source_find_milestones(step, index, group_milestones)
+                resolved = _resolve_entries(
+                    entries, meta, shadow, tx_instant, group_observations, source
+                )
                 statements = _lower_resolved(
                     resolved, entries, meta, dialect, concurrency, tx_instant
                 )
@@ -2627,7 +2840,9 @@ def _run_uow_group(
                 rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
-                _observe_group_find(group_observations, meta, compiled, rows)
+                group_milestones[index] = _observe_group_find(
+                    group_observations, meta, model, compiled, rows
+                )
                 lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
         if doomed:
             # Force any still-buffered DML onto the wire (and count its round
@@ -2796,6 +3011,7 @@ def _run_interleaved_group(
     """
     lowered: dict[int, _LoweredStep] = {}
     group_observations: ScenarioObservations = {}
+    group_milestones: dict[int, ObservedMilestones] = {}
     model = case_model(meta)
 
     def body(tx: handle.Transaction) -> None:
@@ -2806,7 +3022,12 @@ def _run_interleaved_group(
             if "write" in step:
                 entries = _write_entries(step["write"])
                 resolved = _resolve_entries(
-                    entries, meta, shadow, _INERT_CLOCK_INSTANT, group_observations
+                    entries,
+                    meta,
+                    shadow,
+                    _INERT_CLOCK_INSTANT,
+                    group_observations,
+                    _source_find_milestones(step, index, group_milestones),
                 )
                 statements = _lower_resolved(
                     resolved, entries, meta, dialect, concurrency, _INERT_CLOCK_INSTANT
@@ -2828,7 +3049,9 @@ def _run_interleaved_group(
                 rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                     lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
                 )
-                _observe_group_find(group_observations, meta, compiled, rows)
+                group_milestones[index] = _observe_group_find(
+                    group_observations, meta, model, compiled, rows
+                )
                 result.rows[index] = rows
                 lowered[index] = _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
             if not is_last:

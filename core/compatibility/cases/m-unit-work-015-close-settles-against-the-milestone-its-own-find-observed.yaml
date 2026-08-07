@@ -1,0 +1,150 @@
+# A unit of work that reads one key twice keeps BOTH reads as evidence, and the close
+# that follows settles against the milestone the read it names observed — not against
+# whichever read of that key ran last (m-unit-work "An observation is filed under the
+# object it observed AND the milestone it observed of that object").
+#
+# Position id 1 has TWO rectangles current on Transaction Time — R2 (value 100, valid
+# [2024-01-01, 2024-06-01)) and R3 (value 200, valid [2024-06-01, infinity)). One `uow`
+# group reads id 1 at the Valid-Time instant 2024-03-01, observing R2, then reads the
+# SAME key at 2024-09-01, observing R3, and then writes, naming step 0 with `on` as the
+# read its value came from. The close addresses R2: `thru_z` binds 2024-06-01, R2's own
+# Valid-Time end, and the split re-opens R2's window alone. `then.tableState` shows R3
+# untouched.
+#
+# This is the case that grades the KEYING of write evidence, which nothing else in the
+# corpus reaches. Everywhere else a keyed temporal write consumes a milestone resolved
+# once from case state — a writeSequence entry from what its earlier entries left
+# current, a conflict close from the edge it names — so no second read of one key ever
+# competes for the same slot. Here both reads happen, in one unit of work, and each is
+# evidence about a DIFFERENT milestone of one primary key. An implementation filing that
+# evidence under identity alone holds one slot: the second read erases the first, and
+# the write either settles against R3 — closing the wrong rectangle, splitting the wrong
+# window, and leaving R2 open — or finds nothing under the coordinate its value came from
+# and refuses a close that is fully evidenced. Both failures are visible here, and
+# neither is visible in a case whose write names its own milestone.
+#
+# The semantic distinction is that a read's evidence is about the ROW it read, not about
+# the key it read. Two coordinates that resolve to one milestone are one piece of
+# evidence and share a slot; two that resolve to different milestones are two, and the
+# later read takes nothing away from the earlier one. `on` is what lets a case say which
+# of them a write was handed, and an implementation that ignores it — resolving the
+# close from current state, as every other write shape must — cannot answer: id 1 holds
+# two current rectangles and no single one is "the" milestone of that key.
+#
+# What this case does NOT grade, so that no reader takes it for more:
+#
+# - NOT where the gate came from. R2 and R3 are the two halves of one rectangle split,
+#   so they share the Transaction-Time start 2024-04-01 and the `and in_z = ?` gate binds
+#   2024-04-01 whichever of them a resolution picks. Telling a derived gate from a
+#   misderived one would need two current milestones of one key whose Transaction-Time
+#   starts differ, and no fixture holds such a pair; a misresolution is caught by the
+#   address alone.
+# - NOT read-lock behavior. The unit runs `optimistic`, so its finds take no shared row
+#   lock; m-opt-lock-022 is the locking-mode witness.
+model: models/position.yaml
+tags: [m-unit-work, m-bitemp-write, m-temporal-read, m-opt-lock, m-sql, bitemporal, temporal, as-of, scenario, slice-snapshot-1, slice-managed-1]
+shape: scenario
+compileEligibility:
+  mode: run-only
+  reason: query-result-dependent
+  note: "the close settles against the milestone a find step of its own unit of work observed, so its address is read off a row no compile lane executes (m-case-format 'Settling against a grouped find')"
+when:
+  uow:
+    concurrency: optimistic
+  scenario:
+    - uow: observe-then-close
+      targetEntity: Position
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Position.id
+              value: 1
+          dimension: valid-time
+          coordinate: "2024-03-01T00:00:00+00:00"
+      roundTrips: 1
+      note: observe R2 — id 1 pinned at Valid Time 2024-03-01, the rectangle-split head (100.00), valid [2024-01-01, 2024-06-01)
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [1, "2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", infinity]
+      expectRows:
+        - { pos_id: 1, acct_num: A, val: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-06-01T00:00:00+00:00", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+    - uow: observe-then-close
+      targetEntity: Position
+      find:
+        asOf:
+          operand:
+            eq:
+              attr: Position.id
+              value: 1
+          dimension: valid-time
+          coordinate: "2024-09-01T00:00:00+00:00"
+      roundTrips: 1
+      note: observe R3 — the SAME primary key at Valid Time 2024-09-01, the corrected tail (200.00), a DIFFERENT milestone also current on Transaction Time
+      statements:
+        - sql:
+            postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
+          binds: [1, "2024-09-01T00:00:00+00:00", "2024-09-01T00:00:00+00:00", infinity]
+      expectRows:
+        - { pos_id: 1, acct_num: A, val: 200.00, from_z: "2024-06-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
+    - uow: observe-then-close
+      "on": 0
+      write:
+        - mutation: update
+          entity: Position
+          rows:
+            - { id: 1, value: 150.00 }
+          validFrom: "2024-03-01T00:00:00+00:00"
+          at: "2024-10-01T00:00:00+00:00"
+      roundTrips: 3
+      note: correct the value the step-0 read returned — the close addresses R2 (thru_z 2024-06-01) and re-opens R2's own window, leaving R3 alone
+      statements:
+        - sql:
+            postgres: update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?
+          binds: ["2024-10-01T00:00:00+00:00", 1, "2024-06-01T00:00:00+00:00", infinity, "2024-04-01T00:00:00+00:00"]
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [1, A, 100.00, "2024-01-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-10-01T00:00:00+00:00", infinity]
+        - sql:
+            postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [1, A, 150.00, "2024-03-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00", "2024-10-01T00:00:00+00:00", infinity]
+then:
+  roundTrips: 5
+  tableState:
+    position:
+      - pos_id: 1
+        acct_num: A
+        val: 90.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-01-01T00:00:00+00:00"
+        out_z: "2024-04-01T00:00:00+00:00"
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: "2024-10-01T00:00:00+00:00"
+      - pos_id: 1
+        acct_num: A
+        val: 200.00
+        from_z: "2024-06-01T00:00:00+00:00"
+        thru_z: infinity
+        in_z: "2024-04-01T00:00:00+00:00"
+        out_z: infinity
+      - pos_id: 1
+        acct_num: A
+        val: 100.00
+        from_z: "2024-01-01T00:00:00+00:00"
+        thru_z: "2024-03-01T00:00:00+00:00"
+        in_z: "2024-10-01T00:00:00+00:00"
+        out_z: infinity
+      - pos_id: 1
+        acct_num: A
+        val: 150.00
+        from_z: "2024-03-01T00:00:00+00:00"
+        thru_z: "2024-06-01T00:00:00+00:00"
+        in_z: "2024-10-01T00:00:00+00:00"
+        out_z: infinity
