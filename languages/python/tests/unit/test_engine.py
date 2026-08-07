@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import decimal
+import re
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -2566,8 +2567,9 @@ def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_re
     # a supported surface (m-unit-work-013/-014, m-batch-write-008). Accepted, the
     # key wraps each row in an observation carrier the planner ignores (there is
     # no version to advance) but batching still excludes, so the multi-key attempt
-    # emits one statement per key instead of the collapsed `IN`-list statement the
-    # next test pins — the collapse this lane exists to exercise.
+    # emits one statement per key instead of the single `IN`-list statement
+    # `m-batch-write`'s uniform-value update collapse yields for these same rows
+    # without the key — the collapse this lane exists to exercise.
     case = _unversioned_conflict_case(
         [
             {"id": 1, "balance": 500.00, "observedVersion": 1},
@@ -2752,6 +2754,72 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
     assert affected == 1
     assert len(port.writes) == 1
     assert table_state is not None and "balance" in table_state
+
+
+@pytest.mark.parametrize(
+    ("control_key", "value", "refusal"),
+    [
+        (
+            "observedTxStart",
+            "2020-01-01T00:00:00+00:00",
+            "a write row authors no `observedTxStart`",
+        ),
+        ("observedVersion", 99, "a temporal row authors no `observedVersion`"),
+    ],
+)
+def test_a_temporal_close_row_authoring_an_observation_control_key_is_refused(
+    control_key: str, value: object, refusal: str
+) -> None:
+    # A temporal conflict's close row is the write-row shape furthest from the
+    # keyed non-temporal one: it never reaches `instructions.deserialize`, whose
+    # durable-row schema forbids every control key, because a standalone close
+    # settles straight through `handle.plan_temporal_close`, which addresses the
+    # milestone by primary key alone. Accepted, the row's own token is projected
+    # away and the close still gates on the SEPARATE `when.observedTxStart` — so
+    # a case meaning to gate on the row's stale value emits the fresh gate's SQL
+    # and passes. A temporal write is entitled to neither key: its observation is
+    # a whole predecessor milestone `TemporalShadow` holds, and a close's gate
+    # rides beside the write.
+    case = _synthetic_write(
+        "conflict",
+        {
+            "model": "models/balance.yaml",
+            "when": {
+                "uow": {"concurrency": "optimistic"},
+                "write": {"id": 2, control_key: value},
+                "at": "2024-10-01T00:00:00+00:00",
+                "observedTxStart": "2024-02-01T00:00:00+00:00",
+            },
+        },
+    )
+    with pytest.raises(engine.EngineError, match=re.escape(refusal)):
+        engine.run_conflict_case(case, "postgres", FakeWritePort())
+
+
+def test_a_temporal_write_sequence_row_authoring_an_observed_version_is_refused() -> None:
+    # The same entitlement, decided at the same seam, for the OTHER temporal
+    # producer — whose rows do reach the durable-row schema. The refusal must
+    # still be this engine's own authoring diagnosis, naming the milestone a
+    # temporal observation resolves from, rather than the downstream complaint
+    # that a durable instruction cannot carry a control key.
+    case = _synthetic_write(
+        "writeSequence",
+        {
+            "model": "models/balance.yaml",
+            "when": {
+                "writeSequence": [
+                    {
+                        "mutation": "update",
+                        "entity": "Balance",
+                        "statements": 2,
+                        "rows": [{"id": 2, "value": 100.00, "observedVersion": 7}],
+                    }
+                ]
+            },
+        },
+    )
+    with pytest.raises(engine.EngineError, match=re.escape("a temporal row authors no")):
+        engine.compile_write_sequence_case(case, "postgres")
 
 
 def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None:
