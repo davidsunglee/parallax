@@ -514,6 +514,35 @@ def test_nonempty_change_set_update_survives_elision() -> None:
     assert len(plan.steps) == 1
 
 
+def test_a_key_only_row_of_a_preformed_multi_row_update_is_eliminated() -> None:
+    # Stage 2 eliminates known no-op work per ROW, not only per instruction: a
+    # preformed update mixing a key-only row with an assigning one is not empty
+    # as a whole, so an instruction-level test would pass it to batching, which
+    # splits it into its rows and hands the key-only child an update with no
+    # member to write. Eliminating the row here also keeps the elimination
+    # ahead of batching, where the normative stage order puts it.
+    update = KeyedWrite("update", "Wallet", ({"id": 1}, {"id": 2, "balance": 9.00}))
+    plan = _plan([update], _WALLET)
+    (step,) = plan.steps
+    assert isinstance(step, PlannedUpdate)
+    assert _key_values(step) == ((2,),)
+
+
+def test_a_preformed_update_whose_rows_are_all_key_only_is_eliminated_whole() -> None:
+    update = KeyedWrite("update", "Wallet", ({"id": 1}, {"id": 2}))
+    assert len(_plan([update], _WALLET).steps) == 0
+
+
+def test_a_plural_temporal_update_is_refused_rather_than_narrowed_by_no_op_elimination() -> None:
+    # Row-level elimination never rescues a plural temporal instruction into a
+    # legal singleton: dropping the key-only row would silently discard one of
+    # the two milestone chains the author wrote, which is exactly the reduction
+    # `m-unit-work` requires an implementation to refuse.
+    update = KeyedWrite("update", "Balance", ({"id": 1}, {"id": 2, "value": 9.00}))
+    with pytest.raises(WritePlanningError, match="multi-row temporal"):
+        _plan([update], _BALANCE)
+
+
 def test_empty_plan_from_empty_buffer() -> None:
     plan = _plan([], _ACCOUNT)
     assert plan == WritePlan()

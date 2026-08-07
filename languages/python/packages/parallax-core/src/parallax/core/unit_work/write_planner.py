@@ -245,8 +245,8 @@ class WritePlanner:
         coalesced = self._coalesce(request.buffered_writes, resolved)
         survivors = [
             item
-            for item in coalesced
-            if not _is_empty_keyed_update(buffered_instruction(item), resolved)
+            for item in (_without_noop_rows(item, resolved) for item in coalesced)
+            if item is not None
         ]
         canonical = [_canonical_item(item, resolved) for item in survivors]
         batched = self._form_batches(canonical, resolved)
@@ -430,9 +430,10 @@ class WritePlanner:
 
     # ----------------------------------------------------------------- #
     # Stage 2 (known cancellation and no-op work) is filtered in         #
-    # `plan`'s own comprehension via `_is_empty_keyed_update`, BEFORE    #
-    # batching and ordering, so a no-op instruction never occupies a     #
-    # batch run or a dependency-ordered position and is never settled.   #
+    # `plan`'s own comprehension via `_without_noop_rows`, BEFORE        #
+    # batching and ordering, so neither a no-op instruction nor a no-op  #
+    # ROW of one ever occupies a batch run or a dependency-ordered       #
+    # position, and neither is ever settled.                             #
     #                                                                     #
     # Stages 3, 6, 7: validate the observation the item arrived carrying, #
     # resolve the Transaction Instant lazily, and expand temporal          #
@@ -1501,6 +1502,10 @@ def _decomposed_updates(buffer: Sequence[BufferItem], resolved: Targets) -> list
     rows re-merge through :func:`_merge_rows` into the identical instruction,
     and incompatible ones stay separate steps that each write their own values.
 
+    Every child names at least one member to write, because stage 2's
+    :func:`_without_noop_rows` already removed the key-only rows: splitting is a
+    regrouping of surviving work, never the thing that mints an empty update.
+
     Inserts and deletes are left whole. A multi-row insert's entries are checked
     for a shared canonical member set downstream, and a delete's rows contribute
     keys rather than assignments, so neither projects one row onto the others.
@@ -1627,14 +1632,50 @@ def _instruction_entity(instruction: WriteInstruction) -> str:
     return instruction.target.entity
 
 
-def _is_empty_keyed_update(instruction: WriteInstruction, resolved: Targets) -> bool:
+def _without_noop_rows(item: BufferItem, resolved: Targets) -> BufferItem | None:
+    """``item`` with its known no-op rows gone, or ``None`` when none survive.
+
+    An update row naming only key members changes nothing: a key ADDRESSES the
+    row rather than assigns to it, so such a row is known no-op work and stage 2
+    removes it (`m-unit-work` "eliminate known cancellation and no-op work").
+
+    Elimination is per ROW, not per instruction, because a preformed multi-row
+    update mixing a key-only row with an assigning one is not empty as a whole
+    and would therefore survive an instruction-level test — only to be split
+    into its rows during batching and hand the key-only child to
+    :meth:`WritePlanner._update_assignments`, which has no member to write.
+    Removing the row HERE keeps that child from ever existing and keeps the
+    elimination at stage 2, ahead of batching and of the Transaction Instant,
+    where the normative stage order puts it.
+
+    A temporal instruction is narrowed only to nothing, never to fewer rows:
+    dropping one row of an authored multi-row temporal instruction would
+    silently discard a milestone chain the author wrote, which is precisely the
+    reduction :meth:`WritePlanner._settle_temporal` refuses outright
+    (`m-unit-work` "A temporal keyed instruction carries exactly one row").
+    An observation carrier is single-row by construction, so it is either
+    eliminated whole or passed through untouched, and is never rebuilt around a
+    narrower instruction.
+    """
+    instruction = buffered_instruction(item)
     if not isinstance(instruction, KeyedWrite) or instruction.mutation not in _UPDATE_VERBS:
-        return False
+        return item
     entity = resolved.entity(instruction.entity)
     if entity is None:
-        return False
+        return item
     pk_names = {a.identity.name for a in resolved.family_primary_key(entity)}
-    return all(all(key in pk_names for key in row) for row in instruction.rows)
+    kept = tuple(row for row in instruction.rows if not all(name in pk_names for name in row))
+    if not kept:
+        return None
+    if len(kept) == len(instruction.rows) or resolved.declaring(entity).declared_as_of_axes:
+        return item
+    return KeyedWrite(
+        mutation=instruction.mutation,
+        entity=instruction.entity,
+        rows=kept,
+        valid_from=instruction.valid_from,
+        until=instruction.until,
+    )
 
 
 def _canonical_item(item: BufferItem, resolved: Targets) -> BufferItem:
