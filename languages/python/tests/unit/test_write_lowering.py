@@ -844,6 +844,26 @@ def test_batched_update_collapses_to_one_in_list_statement() -> None:
     assert statement.binds == (500.00, 10, 11)
 
 
+def test_a_preformed_multi_row_update_still_faces_the_collapse_decision() -> None:
+    # The counterpart to the uniform collapse above. A run buffered one row at a
+    # time is asked whether it collapses; an instruction that ARRIVED carrying
+    # several rows must be asked the same question, because a shared step carries
+    # ONE assignment shape and `m-batch-write` keeps incompatible writes in
+    # separate steps. Otherwise the first row's values would be applied to every
+    # key the statement addresses and the later rows' values would never be
+    # written at all.
+    update = KeyedWrite(
+        "update",
+        "Wallet",
+        ({"id": 10, "balance": 111.00}, {"id": 11, "balance": 222.00}),
+    )
+    first, second = _lower(update, WALLET)
+    assert first.sql == "update wallet set balance = ? where id = ?"
+    assert first.binds == (111.00, 10)
+    assert second.sql == "update wallet set balance = ? where id = ?"
+    assert second.binds == (222.00, 11)
+
+
 def test_multi_row_delete_collapses_to_one_in_list_statement() -> None:
     # m-batch-write-003: a non-versioned target's multi-row DELETE collapses
     # to one `delete ... where id in (...)` statement.

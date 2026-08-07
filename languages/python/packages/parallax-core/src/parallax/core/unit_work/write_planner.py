@@ -329,7 +329,10 @@ class WritePlanner:
     # ----------------------------------------------------------------- #
     # Stage 4: form compatible batches. Same-entity, same-mutation,       #
     # ADJACENT single-row keyed writes merge when the injected batching   #
-    # strategy says the run collapses.                                    #
+    # strategy says the run collapses. A preformed multi-row update is    #
+    # split into its rows first (`_decomposed_updates`), so no addressed  #
+    # update reaches settlement sharing a step the strategy never         #
+    # admitted.                                                           #
     # ----------------------------------------------------------------- #
     def _form_batches(self, buffer: Sequence[BufferItem], resolved: Targets) -> list[BufferItem]:
         result: list[BufferItem] = []
@@ -368,7 +371,7 @@ class WritePlanner:
         # versioned and temporal alike. A carrier is single-row by
         # construction, so the run this skips is the only way its row could
         # have joined a multi-row statement.
-        for item in buffer:
+        for item in _decomposed_updates(buffer, resolved):
             if isinstance(item, KeyedWrite) and len(item.rows) == 1:
                 item_group = group_key(item)
                 if (
@@ -584,16 +587,16 @@ class WritePlanner:
         """One temporal mutation as its close and its successors, in that order.
 
         Each row of a milestone chain opens its own successors, so a temporal
-        write settles one row at a time: `m-batch-write` never collapses a
-        temporal entity, and reaching here with several rows is a caller
-        wiring defect.
+        keyed instruction carries exactly one row (`m-unit-work`) and reaching
+        here with several is a caller wiring defect.
         """
         if len(instruction.rows) != 1:
             raise WritePlanningError(
                 f"multi-row temporal {instruction.mutation!r} on {entity.identity.name!r} "
-                f"({len(instruction.rows)} rows): a temporal keyed write settles one row at a "
-                "time (m-txtime-write / m-bitemp-write) — the set-based batch collapse never "
-                "applies to a temporal entity's own milestone chain (m-batch-write)"
+                f"({len(instruction.rows)} rows): a temporal keyed instruction carries exactly "
+                "one row (m-unit-work) — each row closes its own milestone and chains its own "
+                "successors, and the set-based batch collapse never applies to a temporal "
+                "entity (m-batch-write)"
             )
         topology = self._temporal.topology(declaring_entity, instruction.mutation)
         observed = observation if isinstance(observation, TemporalObservation) else None
@@ -710,11 +713,15 @@ class WritePlanner:
         """The replacement values an addressed update writes.
 
         Key members address the write rather than change it, so they never
-        appear among the assignments. A collapsed multi-row update assigns
-        identical values to every key it addresses (`m-batch-write` refuses to
-        collapse anything else), so the first row settles the whole step's
-        assignments. A versioned target advances the version in BOTH modes,
-        which is why the advance is an assignment rather than a gate member.
+        appear among the assignments. A multi-row update reaching here is one
+        the batching strategy collapsed, and it collapses only a run assigning
+        identical values to every key (`m-batch-write` keeps incompatible
+        writes in separate steps), so the first row settles the whole step's
+        assignments. That holds for a PREFORMED multi-row instruction too:
+        :func:`_decomposed_updates` splits one into its rows before the
+        collapse decision, so no update arrives here having skipped it. A
+        versioned target advances the version in BOTH modes, which is why the
+        advance is an assignment rather than a gate member.
         """
         key_names = frozenset(attribute.name for attribute in key_attributes)
         row = instruction.rows[0]
@@ -1465,6 +1472,53 @@ def _merge_update_into_insert(
         valid_from=insert.valid_from,
         until=insert.until,
     )
+
+
+def _decomposed_updates(buffer: Sequence[BufferItem], resolved: Targets) -> list[BufferItem]:
+    """``buffer`` with every PREFORMED multi-row non-temporal keyed update split
+    back into one single-row instruction per row.
+
+    An addressed update's assignments are the shape one statement carries, and a
+    step shared across several keys therefore requires them to be uniform
+    (`m-batch-write`: incompatible writes remain separate logical steps). Only
+    the collapse decision knows whether a given run is uniform, and it is asked
+    of single-row runs alone — so an instruction that arrived already carrying
+    several rows would otherwise skip it entirely and have its FIRST row's values
+    applied to every key it addresses. Splitting it here submits those rows to
+    the same decision a caller that buffered them one at a time gets: uniform
+    rows re-merge through :func:`_merge_rows` into the identical instruction,
+    and incompatible ones stay separate steps that each write their own values.
+
+    Inserts and deletes are left whole. A multi-row insert's entries are checked
+    for a shared canonical member set downstream, and a delete's rows contribute
+    keys rather than assignments, so neither projects one row onto the others.
+    A TEMPORAL entry is left whole too, so :meth:`WritePlanner._settle_temporal`
+    still refuses it as the multi-row milestone chain it is rather than silently
+    settling it as several chains the caller never authored.
+    """
+    decomposed: list[BufferItem] = []
+    for item in buffer:
+        if not isinstance(item, KeyedWrite) or not _splits_into_rows(item, resolved):
+            decomposed.append(item)
+            continue
+        decomposed.extend(
+            KeyedWrite(
+                mutation=item.mutation,
+                entity=item.entity,
+                rows=(row,),
+                valid_from=item.valid_from,
+                until=item.until,
+            )
+            for row in item.rows
+        )
+    return decomposed
+
+
+def _splits_into_rows(item: KeyedWrite, resolved: Targets) -> bool:
+    if len(item.rows) < 2 or item.mutation not in _UPDATE_VERBS:
+        return False
+    entity = resolved.entity(item.entity)
+    return entity is not None and not resolved.declaring(entity).declared_as_of_axes
 
 
 def _merge_rows(run: Sequence[KeyedWrite]) -> KeyedWrite:
