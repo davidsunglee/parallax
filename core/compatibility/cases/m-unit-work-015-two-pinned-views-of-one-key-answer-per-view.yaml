@@ -1,11 +1,12 @@
 # Reading one key at two as-of coordinates leaves TWO independently pinned views, and
-# whether a view may be mutated is a property of THAT view rather than of the primary
-# key the two share (m-snapshot-read "Closed world": no node is interned beyond its own
-# graph, so each find's result is its own pinned view; m-bitemp-write's finite-pin
-# contrast then answers per view. m-identity-map states the same invariant for the
-# MANAGED lifecycle, where the views are interned objects rather than graphs — that
-# slice's own witnesses are m-identity-map-010 / -011, and this case makes no claim
-# about them.)
+# whether a view may be mutated is decided by the pin of the find that PRODUCED the
+# view rather than by the most recent read of the primary key the two share
+# (m-snapshot-read "The whole-graph pin": a materialization carries its own root
+# operation's lowered as-of coordinates, so the pin belongs to the read that made the
+# view; m-bitemp-write's finite-pin contrast then answers per view. m-identity-map
+# states the analogous rule for the MANAGED lifecycle, where the views are interned
+# objects rather than graphs — that slice's own witnesses are m-identity-map-010 /
+# -011, and this case makes no claim about them.)
 #
 # Both steps read Position id 1. Step 0 pins it at the finite Valid-Time instant
 # 2024-03-01 with Transaction Time defaulted Latest, materializing the rectangle-split
@@ -24,16 +25,26 @@
 # implementation holding a single view per primary key whose mutability the most recent
 # read decides. Here both views are live at once and disagree, so such an implementation
 # fails in one direction or the other — the second read would demote the first view, or
-# the first would license the second.
+# the first would license the second. Degradation, re-runnable: grade the `mutate` verb
+# against the transaction's most recent pin instead of the pin of the step its `on`
+# names — this case fails and m-bitemp-write-015 / -016 both still pass.
 #
-# What this case does NOT grade, so that no reader takes it for more: a `mutate` step is
-# an in-memory change over a snapshot-read view that emits no DML at all (roundTrips 0,
-# as every mutate step in the corpus does) and enrolls the view in no unit of work. No
-# write evidence is recorded and none is consumed, so nothing here observes how an
-# implementation KEYS the observations its reads record, nor which row a later flush
-# would close. The wire-lane pair m-bitemp-write-021 / m-opt-lock-021 grades that a
-# close's address is derived from the milestone its write observed; no case in the
-# corpus grades the keying itself.
+# What this case does NOT grade, so that no reader takes it for more:
+#
+# - NOT whether the two reads share a node. The case observes pins and mutability, and
+#   has no identity observable at all, so an implementation that materializes one node
+#   for both reads while keeping a pin per find step passes. m-snapshot-read's
+#   graph-local resolution ("no node is ever interned beyond its own graph") is a
+#   stronger rule than anything measured here, and this case is not its witness.
+# - NOT write-observation keying. A `mutate` step is an in-memory change over a
+#   snapshot-read view that emits no DML at all (roundTrips 0, as every mutate step in
+#   the corpus does) and enrolls the view in no unit of work. No write evidence is
+#   recorded and none is consumed, so nothing here observes how an implementation KEYS
+#   the observations its reads record, nor which row a later flush would close.
+#   Measured: degrading the write-observation key to identity alone on both the
+#   recording and the resolving side leaves this case green. The wire-lane pair
+#   m-bitemp-write-021 / -022 grades that a close's address is derived from the
+#   milestone its write observed; no case in the corpus grades the keying itself.
 model: models/position.yaml
 lane: api-conformance
 tags: [m-unit-work, m-snapshot-read, m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, scenario, slice-snapshot-1]

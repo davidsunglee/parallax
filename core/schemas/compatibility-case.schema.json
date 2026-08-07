@@ -178,7 +178,7 @@
   ],
   "allOf": [
     {
-      "description": "A temporal optimistic close records `when.at` as the finite Transaction-Time close instant and requires `when.observedTxStart`, the observed Transaction-Time start (`in_z`) the optimistic gate binds. Every close is observation-backed in both modes; a locking-mode close omits only the GATE, so it needs no authored `observedTxStart`.",
+      "description": "A temporal optimistic close records `when.at` as the finite Transaction-Time close instant and requires `when.observedTxStart`, the observed Transaction-Time start (`in_z`) the optimistic gate binds. Every close is observation-backed in both modes; a locking-mode close omits only the GATE, so an `observedTxStart` standing alone is not merely unnecessary there but refused, while the `observedValidStart` + `observedTxStart` EDGE pair stays legal in both modes because it selects the milestone rather than gating on it.",
       "if": {
         "required": ["when"],
         "properties": {
@@ -691,7 +691,7 @@
                 "minLength": 1
               },
               "observedTxStart": {
-                "description": "This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. Absent in locking mode. A retry attempt names its close's ADDRESS directly and never the observed milestone's edge: the edge form (`when.observedValidStart`) selects among the case's own loaded fixtures, while a retry re-reads the state the concurrent `given.apply` writer left behind, so it is single-attempt only (m-case-format).",
+                "description": "This temporal-close attempt's observed Transaction-Time start (`in_z`), bound by the optimistic gate. A retry attempt names its close's ADDRESS directly and never the observed milestone's edge: the edge form (`when.observedValidStart`) selects among the case's own loaded fixtures, while a retry re-reads the state the concurrent `given.apply` writer left behind, so it is single-attempt only (m-case-format). This coordinate is therefore always the gate candidate, and a locking-mode close renders no gate, so authoring it requires `when.uow.concurrency: optimistic` — refused structurally above rather than ignored.",
                 "type": "string",
                 "minLength": 1
               },
@@ -730,7 +730,7 @@
           "minLength": 1
         },
         "observedTxStart": {
-          "description": "The observed Transaction-Time start (`in_z`) used as a temporal optimistic-lock token. Absent in locking mode. Paired with `observedValidStart` it instead names the observed milestone's Transaction-Time coordinate, and the gate binds that milestone's own start.",
+          "description": "The observed Transaction-Time start (`in_z`) used as a temporal optimistic-lock token. Alone, it is the ADDRESS form's gate candidate, so it requires `when.uow.concurrency: optimistic` — a locking-mode close renders no gate and would consume it nowhere, which is refused structurally above rather than ignored. Paired with `observedValidStart` it is instead the observed milestone's EDGE coordinate on the Transaction-Time axis, which selects the milestone in either mode, so the pair is legal under `locking` too. Never authored on the root `when` of a retry sequence: each attempt carries its own.",
           "type": "string",
           "minLength": 1
         },
@@ -751,6 +751,54 @@
             "not": {
               "required": ["write"],
               "properties": { "write": { "required": ["validEnd"] } }
+            }
+          }
+        },
+        {
+          "$comment": "A retry sequence's attempts each carry their own close and read their own coordinates, so an observation coordinate on the root `when` is consumed by no attempt. The two authoring locations are alternatives, never a default and an override (m-case-format).",
+          "if": { "required": ["attempts"] },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["observedTxStart"] },
+                { "required": ["observedValidStart"] }
+              ]
+            }
+          }
+        },
+        {
+          "$comment": "A locking-mode close renders no gate, so a root `observedTxStart` without `observedValidStart` beside it is the address form's gate candidate and requires optimistic mode explicitly — `locking` is the default, so an omitted `uow.concurrency` is refused here too (m-case-format).",
+          "if": {
+            "allOf": [
+              { "required": ["observedTxStart"] },
+              { "not": { "required": ["observedValidStart"] } }
+            ]
+          },
+          "then": {
+            "required": ["uow"],
+            "properties": {
+              "uow": {
+                "required": ["concurrency"],
+                "properties": { "concurrency": { "const": "optimistic" } }
+              }
+            }
+          }
+        },
+        {
+          "$comment": "A retry attempt never names an edge, so its `observedTxStart` is always the gate candidate and needs the mode that renders a gate (m-case-format).",
+          "if": {
+            "required": ["attempts"],
+            "properties": {
+              "attempts": { "contains": { "required": ["observedTxStart"] } }
+            }
+          },
+          "then": {
+            "required": ["uow"],
+            "properties": {
+              "uow": {
+                "required": ["concurrency"],
+                "properties": { "concurrency": { "const": "optimistic" } }
+              }
             }
           }
         }

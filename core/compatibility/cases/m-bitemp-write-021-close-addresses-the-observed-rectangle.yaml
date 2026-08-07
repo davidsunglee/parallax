@@ -6,8 +6,8 @@
 # they share in_z 2024-04-01, so primary key, `out_z = infinity`, and the gate are
 # identical for the two. This case names R2 by its OWN EDGE (`observedValidStart`
 # 2024-01-01 with `observedTxStart` 2024-04-01, its guaranteed-selecting from-instant
-# per axis); m-opt-lock-021 names R3's edge from the same fixtures at the same instant
-# under the same mode, and the two goldens differ by exactly one bind: `thru_z`
+# per axis); m-bitemp-write-022 names R3's edge from the same fixtures at the same
+# instant under the same mode, and the two goldens differ by exactly one bind: `thru_z`
 # 2024-06-01 here, infinity there.
 #
 # That is the semantic distinction, and it is a strictly stronger claim than
@@ -17,16 +17,25 @@
 # the one milestone the edge selects, so an implementation that resolves a close's
 # address from the primary key alone cannot produce it: a key holding several current
 # rectangles has no single answer, and whichever rectangle such an implementation
-# picked, one of these two cases binds the other one's `thru_z`.
+# picked, one of these two cases binds the other one's `thru_z`. Degradation,
+# re-runnable: make `TemporalShadow.resolve` drop the edge it is handed and return the
+# candidate with the LATEST edge — this case fails and m-bitemp-write-022 passes;
+# returning the EARLIEST inverts it exactly; and in each direction no other case in the
+# 348-case run sweep notices.
 #
-# The gate binds that same milestone's own in_z, so a close's address and its gate
-# provably come from ONE observation rather than from two independently authored
-# coordinates.
+# What this case does NOT grade, so that no reader takes it for more:
 #
-# What this case does NOT grade, so that no reader takes it for more: the observed
-# milestone is NAMED by the case, so it is one observation resolved once, from state
-# the case supplies. Nothing here observes how an implementation keys the observations
-# its own reads record, or what happens when one transaction reads a key twice.
+# - NOT where the gate came from. The optimistic gate binds `in_z`, and the observed
+#   edge's own Transaction-Time half IS that milestone's `in_z`, so the coordinate the
+#   case authors and the coordinate a derivation reads off the resolved observation are
+#   the same instant by construction — here and in any case that can name an edge.
+#   Measured: binding the gate from the authored `when.observedTxStart` instead of from
+#   the resolved observation leaves all 348 run-sweep cases green. `m-case-format`
+#   requires that derivation; nothing in the corpus can witness it.
+# - NOT how an implementation keys the observations its own reads record. The observed
+#   milestone is NAMED by the case, so it is one observation resolved once, from state
+#   the case supplies. Nothing here observes what happens when one transaction reads a
+#   key twice.
 #
 # The close inactivates exactly 1 row: `then.tableState` shows R2 closed at 2024-10-01
 # with R1 and R3 untouched. As in -017 a conflict case runs only that single close, not
