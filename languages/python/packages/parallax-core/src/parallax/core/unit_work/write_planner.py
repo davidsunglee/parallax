@@ -1182,6 +1182,8 @@ def plan_temporal_close(
     resolved = targets(model)
     entity = _require_entity(resolved, entity_name)
     declaring_entity = resolved.declaring(entity)
+    key_attributes = tuple(a.identity for a in resolved.family_primary_key(entity))
+    _refuse_unaddressing_identity(entity, key_attributes, identity)
     gate: TemporalConcurrency = UNGATED
     if observed_tx_start is not None:
         concurrency_strategy.check_locking_license(concurrency, LATEST_PINNED)
@@ -1193,13 +1195,39 @@ def plan_temporal_close(
     return _close(
         entity,
         declaring_entity,
-        key_attributes=tuple(a.identity for a in resolved.family_primary_key(entity)),
+        key_attributes=key_attributes,
         identity=identity,
         observed_valid_end=observed_valid_end,
         cause=SUPERSEDED,
         gate=gate,
         instant=tx_instant.value(),
     )
+
+
+def _refuse_unaddressing_identity(
+    entity: EntityMetadata,
+    key_attributes: tuple[AttributeIdentity, ...],
+    identity: Mapping[str, object],
+) -> None:
+    """Refuse a standalone close's ``identity`` cell that addresses nothing.
+
+    Here ``identity`` IS the address, unlike the pipeline's own close, whose
+    ``identity`` is the full durable row the surrounding mutation revises and out
+    of which the address is projected. A close ends a milestone's currency and
+    revises no represented value, so a cell naming anything but a primary-key
+    member is a value its caller believes this close binds and it does not.
+    Projecting the key and dropping the rest silently would let a caller's own
+    mistranslation reach the database as a well-formed statement.
+    """
+    addressing = {attribute.name for attribute in key_attributes}
+    unaddressing = sorted(name for name in identity if name not in addressing)
+    if unaddressing:
+        named = ", ".join(repr(name) for name in unaddressing)
+        raise WritePlanningError(
+            f"{entity.identity.name!r}: a standalone temporal close is addressed by its "
+            f"primary key alone, and this one's identity row also names {named} — a close "
+            "revises no represented value, so nothing else the row carries would be bound"
+        )
 
 
 def _close(

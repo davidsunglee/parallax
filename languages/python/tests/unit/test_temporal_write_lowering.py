@@ -853,6 +853,26 @@ def test_bitemporal_close_addresses_both_axis_ends_then_gates_on_in_z_last() -> 
     assert isinstance(step.concurrency, TemporalGate)
 
 
+def test_a_probe_identity_naming_more_than_the_address_is_refused() -> None:
+    # The probe's `identity` IS the address, unlike the pipeline's own close,
+    # whose `identity` is the full durable row the surrounding mutation revises.
+    # A close revises no represented value, so it binds the primary key and
+    # nothing else: projecting the key and dropping the rest silently would let a
+    # caller's mistranslation — a control key it meant as a gate, or a member it
+    # meant the close to carry — reach the database as a well-formed statement
+    # that answers a different question than the caller asked.
+    with pytest.raises(WritePlanningError, match="addressed by its primary key alone"):
+        plan_temporal_close(
+            {"id": 1, "quantity": 5},
+            "Position",
+            models.accepted_model(POSITION),
+            "optimistic",
+            instant_at("2024-10-01T00:00:00+00:00"),
+            "2024-04-01T00:00:00+00:00",
+            "infinity",
+        )
+
+
 def test_bitemporal_close_keeps_its_whole_address_under_locking() -> None:
     # m-bitemp-write-001/006/007's own locking-mode closes: the address is
     # unchanged — only the `in_z` gate disappears (ADR 0046).

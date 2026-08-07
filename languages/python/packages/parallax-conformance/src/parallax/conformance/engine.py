@@ -821,43 +821,24 @@ def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel)
     return False
 
 
-# The ONE reserved observation control key a case writeRow may author
+# The ONE reserved observation control key a case writeRow can author
 # (`compatibility-case.schema.json` `$defs/writeRow`): the version the unit of
 # work observed, stripped into a Version Observation before the durable
-# instruction is built (the durable row forbids it, ADR 0013).
+# instruction is built (the durable row forbids it, ADR 0013). Which write
+# shapes are entitled to author it is `_observation_refusal`'s answer, not the
+# schema's — one shared `writeRow` definition spans every shape.
 _VERSION_OBSERVATION_KEY: Final[str] = "observedVersion"
 
-# A temporal close's observed Transaction-Time gate. NOT a write-row key: it is
-# authored beside the write (`when.observedTxStart`, or a retry attempt's own
-# field — `m-case-format`), so a row carrying it is refused rather than stripped.
+# A temporal close's observed Transaction-Time gate. NOT a write-row key in any
+# shape: it is authored beside the write (`when.observedTxStart`, or a retry
+# attempt's own field — `m-case-format`), so a row carrying it is refused rather
+# than stripped.
 _TEMPORAL_GATE_KEY: Final[str] = "observedTxStart"
 
-
-def _strip_observation(
-    row: Mapping[str, object],
-) -> tuple[dict[str, object], VersionObservation | None]:
-    """Strip a case writeRow's reserved ``observedVersion`` control key
-    (`m-opt-lock`; ADR 0013), returning the DURABLE row (never carrying it — the
-    write-instruction schema forbids it, `instructions.deserialize` enforces
-    that) and the Version Observation it describes (``None`` when the row authors
-    none — an unobserved write, or one whose observation instead comes from this
-    SAME `uow` group's own prior find step, consulted separately via
-    :data:`ScenarioObservations`).
-
-    Only a VERSIONED, non-insert target's row reaches here CARRYING one. Every
-    caller runs :func:`_refuse_unobservable_rows` first, which has already
-    refused an observed version on an insert row and on an unversioned target,
-    and refused ``observedTxStart`` on any row at all — a temporal close's gate
-    is authored beside the write, never in it, so nothing here silently discards
-    one. A temporal entry resolves through
-    :class:`~parallax.conformance.temporal_state.TemporalShadow` instead: it
-    holds the whole predecessor milestone a temporal observation needs.
-    """
-    clean = dict(row)
-    version = clean.pop(_VERSION_OBSERVATION_KEY, None)
-    if version is None:
-        return clean, None
-    return clean, VersionObservation(observed_version=cast("int", version))
+# Every reserved observation control key a case can spell on a write row. The
+# durable instruction forbids all of them (ADR 0013); which one a given write is
+# entitled to author BEFORE stripping is :func:`_observation_refusal`'s answer.
+_ROW_OBSERVATION_KEYS: Final[tuple[str, ...]] = (_VERSION_OBSERVATION_KEY, _TEMPORAL_GATE_KEY)
 
 
 # An object-key -> Write Observation map (m-opt-lock; ADR 0013) — this engine's
@@ -1008,6 +989,11 @@ def _build_temporal_instruction(
     carry authoring aliases. Every temporal entry this increment reaches is
     single-row.
 
+    Its row reaches the same :func:`_durable_row` seam every other producer's
+    does, which entitles a temporal row to no observation control key at all —
+    the observation this entry consumes is the whole predecessor milestone
+    ``shadow`` holds, never a cell the row carried.
+
     ``unit_inserted`` is the SAME choreography unit's own running set of
     (entity, pk) pairs a PRIOR entry in this SAME buffer already inserted
     (`m-unit-work` same-transaction coalescing, `m-txtime-write-008` /
@@ -1022,7 +1008,7 @@ def _build_temporal_instruction(
     mutation = cast("str", entry["mutation"])
     entity_name = cast("str", entry["entity"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    row = dict(raw_rows[0])
+    row, _authored_none = _durable_row(meta, entity_name, mutation, raw_rows[0])
     valid_from = cast("str | None", entry.get("validFrom"))
     until = cast("str | None", entry.get("until"))
     doc: dict[str, object] = {"mutation": mutation, "entity": entity_name, "rows": [row]}
@@ -1226,66 +1212,117 @@ def _is_versioned_entity(meta: Metamodel, entity_name: str) -> bool:
     return any(attr.optimistic_locking for attr in declaring.attributes)
 
 
-def _refuse_unobservable_rows(
-    meta: Metamodel, entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
-) -> None:
-    """Refuse a non-temporal write entry whose rows author a reserved observation
-    control key the write they describe cannot carry (`m-unit-work` "Absence is
-    structural"). Every non-temporal producer of a case row runs this before
-    :func:`_strip_observation`: :func:`_build_instructions` for a
-    writeSequence/scenario entry, :func:`_resolve_conflict_writes` for a conflict
-    attempt's ``write``.
+def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: str) -> str | None:
+    """Why a write row against ``entity_name`` under ``mutation`` may not author
+    the reserved observation control key ``key`` — ``None`` when that pair is the
+    ONE the corpus vocabulary entitles to author it.
 
-    ``observedTxStart`` is refused OUTRIGHT, on any row. It is not a write-row
-    control key at all: `compatibility-case.schema.json`'s ``writeRow`` reserves
-    ``observedVersion`` alone and every other key names an entity member, while a
-    temporal close's observed Transaction-Time gate rides beside the write, at
-    ``when.observedTxStart`` (`m-case-format`) or the retry attempt's own field.
-    Stripping it from a row would silently discard the very token the author
-    meant to gate on.
+    This is the whole licensing rule `m-unit-work`'s "Absence is structural"
+    states, total over every (target, mutation) pair a case can write, so no
+    producer decides any part of it locally. A VERSIONED, NON-TEMPORAL update or
+    delete may author ``observedVersion``; nothing else may author anything:
 
-    ``observedVersion`` is refused on the two shapes with no Version Observation
-    to name, both of which `compatibility-case.schema.json`'s own prose already
-    states — "absent on a versioned insert and on a non-versioned write" — and
-    neither of which its single shared ``writeRow`` definition can express:
-
+    - ``observedTxStart`` is entitled NOWHERE. It is not a write-row control key
+      in any shape: `compatibility-case.schema.json`'s ``writeRow`` reserves
+      ``observedVersion`` alone and every other key names an entity member, while
+      a temporal close's observed Transaction-Time gate rides beside the write,
+      at ``when.observedTxStart`` (`m-case-format`) or the retry attempt's own
+      field. Stripping it from a row — or projecting the row past it — would
+      silently discard the very token the author meant to gate on.
+    - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
+      flat row cell can name. It resolves through
+      :class:`~parallax.conformance.temporal_state.TemporalShadow`, and a
+      standalone close's gate is authored beside the write.
     - an INSERT opens a row rather than writing against one, so an observed
-      version names a milestone that does not yet exist;
+      version names a milestone that does not yet exist.
     - an UNVERSIONED non-temporal target has no version to observe, so an
       observed version on it is evidence about nothing. Wrapping such a row would
       still exclude it from batching, splitting a collapsible run into one
       statement per key on the strength of an observation the planner then
       ignores.
 
-    Refusing the pair here is what makes the carrier's own guarantee complete:
-    the carrier can decide "is this an insert?" from the instruction alone, but
-    "is this target versioned?" needs the model, which only this translation
-    holds. Temporal entries never reach here — :func:`_build_instructions`
-    dispatches them to :func:`_build_temporal_instruction` and the conflict lane
-    routes a temporal target to :func:`_run_conflict_close` — so a temporal
-    close's own ``when``-level gate is untouched.
+    The last two restate what `compatibility-case.schema.json`'s own prose
+    already says — "absent on a versioned insert and on a non-versioned write" —
+    and which its single shared ``writeRow`` definition cannot express. Deciding
+    them here is what makes the carrier's own guarantee complete: the carrier can
+    decide "is this an insert?" from the instruction alone, but "is this target
+    versioned?" and "is it temporal?" need the model, which only this translation
+    holds.
     """
-    if any(_TEMPORAL_GATE_KEY in row for row in raw_rows):
-        raise EngineError(
-            f"{entity_name!r} {mutation!r}: a write row authors no `{_TEMPORAL_GATE_KEY}` "
-            "(m-case-format: a temporal close's observed `txStart` gate rides beside the "
-            "write, at `when.observedTxStart` or the attempt's own field; a writeRow "
-            "reserves `observedVersion` alone and every other key names an entity member)"
+    if key == _TEMPORAL_GATE_KEY:
+        return (
+            f"a write row authors no `{key}` (m-case-format: a temporal close's observed "
+            "`txStart` gate rides beside the write, at `when.observedTxStart` or the attempt's "
+            "own field; a writeRow reserves `observedVersion` alone and every other key names "
+            "an entity member)"
         )
-    if not any(_VERSION_OBSERVATION_KEY in row for row in raw_rows):
-        return
+    if _is_temporal_entity(meta, entity_name):
+        return (
+            f"a temporal row authors no `{key}` (m-unit-work: a temporal write observes a whole "
+            "predecessor milestone, which no flat row cell can name — the engine resolves one "
+            "from tracked case state, and a standalone close's gate rides beside the write)"
+        )
     if mutation in INSERT_MUTATIONS:
-        raise EngineError(
-            f"{entity_name!r} {mutation!r}: an insert row authors no "
-            f"`{_VERSION_OBSERVATION_KEY}` (m-unit-work: inserts have no observation — an "
+        return (
+            f"an insert row authors no `{key}` (m-unit-work: inserts have no observation — an "
             "observed version names the milestone a write against an EXISTING row observed)"
         )
     if _versioned_non_temporal_version_attribute(meta, entity_name) is None:
-        raise EngineError(
-            f"{entity_name!r} {mutation!r}: an unversioned row authors no "
-            f"`{_VERSION_OBSERVATION_KEY}` (m-unit-work: unversioned Non-Temporal writes have "
-            "no observation — there is no observed version for it to name)"
+        return (
+            f"an unversioned row authors no `{key}` (m-unit-work: unversioned Non-Temporal "
+            "writes have no observation — there is no observed version for it to name)"
         )
+    return None
+
+
+def _durable_row(
+    meta: Metamodel, entity_name: str, mutation: str, row: Mapping[str, object]
+) -> tuple[dict[str, object], VersionObservation | None]:
+    """One case-authored write row as the DURABLE row a write carries, plus the
+    Version Observation that row described (``None`` when it described none — an
+    unobserved write, one whose observation instead comes from this SAME `uow`
+    group's own prior find step via :data:`ScenarioObservations`, or a temporal
+    write, whose observation is a milestone :class:`TemporalShadow` holds).
+
+    THE seam a case row becomes a durable row through — the only one. Every
+    producer of a case-authored row goes through it, whatever the row's shape or
+    lane: :func:`_build_instructions` for a non-temporal writeSequence/scenario
+    entry, :func:`_build_temporal_instruction` for a temporal one,
+    :func:`_resolve_conflict_writes` for a non-temporal conflict attempt's
+    ``write``, and :func:`_run_conflict_close` for a temporal attempt's close
+    row. Refusal (:func:`_observation_refusal`) and stripping are one
+    indivisible step here precisely because they were separable before: a
+    producer that copied the row itself got a perfectly usable durable row while
+    silently skipping the refusal, and each new write shape rediscovered the
+    hole. There is now no way to obtain a durable row without being refused.
+
+    The durable row never carries a control key: the write-instruction schema
+    forbids every one of them (ADR 0013), which `instructions.deserialize`
+    enforces for the lanes that reach it and which the lanes that bypass it — a
+    standalone close settles straight through
+    :func:`~parallax.snapshot.handle.plan_temporal_close` — depend on this seam
+    for.
+    """
+    for key in _ROW_OBSERVATION_KEYS:
+        if key not in row:
+            continue
+        refusal = _observation_refusal(meta, entity_name, mutation, key)
+        if refusal is not None:
+            raise EngineError(f"{entity_name!r} {mutation!r}: {refusal}")
+    durable = dict(row)
+    version = durable.pop(_VERSION_OBSERVATION_KEY, None)
+    if version is None:
+        return durable, None
+    return durable, VersionObservation(observed_version=cast("int", version))
+
+
+def _durable_rows(
+    meta: Metamodel, entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
+) -> list[tuple[dict[str, object], VersionObservation | None]]:
+    """Every row of one multi-row write entry through :func:`_durable_row`,
+    resolved EAGERLY so an entry is refused on any row it authors before its
+    first row is planned — a partially translated entry is never observable."""
+    return [_durable_row(meta, entity_name, mutation, row) for row in raw_rows]
 
 
 def _binds_row_observations(
@@ -1443,10 +1480,9 @@ def _build_instructions(
     would. Nothing is ever pre-merged here: whether buffered rows share one
     statement is the planner's own collapse stage to decide.
 
-    :func:`_refuse_unobservable_rows` runs first, so a row still carrying a
-    reserved ``observedVersion`` by the time it is stripped belongs to a
-    versioned non-temporal write against an existing row — the only write shape
-    `m-unit-work` gives an observation at all.
+    :func:`_durable_rows` resolves every row first, so an observation surviving
+    from a row belongs to a versioned non-temporal write against an existing row
+    — the only write shape `m-unit-work` gives an observation at all.
 
     What :func:`_binds_row_observations` derives SEMANTICALLY is whether each row
     binds its OWN object key and Version Observation (its reserved
@@ -1482,13 +1518,13 @@ def _build_instructions(
         return [_build_temporal_instruction(entry, meta, shadow, tx_instant, unit_inserted)]
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    _refuse_unobservable_rows(meta, entity_name, mutation, raw_rows)
+    durable = _durable_rows(meta, entity_name, mutation, raw_rows)
     binds_observations = _binds_row_observations(meta, entity_name, mutation, raw_rows)
     model = case_model(meta)
     out: list[tuple[WriteInstruction, ObjectKey | None, WriteObservation | None]] = []
     opens_a_row = mutation in INSERT_MUTATIONS
-    for raw_row in raw_rows:
-        clean_row, observation = _strip_observation(raw_row)
+    for clean_row, row_observation in durable:
+        observation: WriteObservation | None = row_observation
         clean_row = _seed_insert_version(meta, entity_name, mutation, clean_row)
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
@@ -1548,9 +1584,9 @@ def _buffered(
     observation travels with it, exactly as a developer verb's own resolution
     does; an unobserved entry stays bare, so absence is the absence of the
     wrapper here too. Whether an observation may exist at all is decided BEFORE
-    this point, by :func:`_refuse_unobservable_rows` on every producer's rows and
-    by the carrier's own structural refusals — this function only forwards what
-    they left.
+    this point, by :func:`_durable_row` — the one seam every producer's rows pass
+    through — and by the carrier's own structural refusals; this function only
+    forwards what they left.
     """
     return buffered_write(instruction, observation)
 
@@ -1742,7 +1778,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     (`adapter.compile_case`). :data:`ScenarioObservations` stays permanently
     empty here — every keyed write this lane reaches resolves its observation
     from its OWN row's reserved ``observedVersion`` control key only
-    (:func:`_strip_observation`), exactly as a writeSequence entry does.
+    (:func:`_durable_row`), exactly as a writeSequence entry does.
     """
     meta = load_case_metamodel(case)
     model = case_model(meta)
@@ -3638,23 +3674,20 @@ def _resolve_conflict_writes(
     distinct shape.
 
     A conflict attempt authors its rows in the SAME ``writeRow`` vocabulary a
-    writeSequence entry does, so it reaches the SAME model-aware refusal
-    (:func:`_refuse_unobservable_rows`) before any row is stripped: an
-    unversioned conflict target — a supported surface (``m-unit-work-013`` /
-    ``-014``, ``m-batch-write-008``) — has no version to observe, and wrapping
-    its rows anyway would exclude them from the collapse this lane exists to
-    exercise.
+    writeSequence entry does, so they become durable rows through the SAME
+    :func:`_durable_row` seam: an unversioned conflict target — a supported
+    surface (``m-unit-work-013`` / ``-014``, ``m-batch-write-008``) — has no
+    version to observe, and wrapping its rows anyway would exclude them from the
+    collapse this lane exists to exercise.
 
     Every row becomes its OWN single-row instruction, exactly as a unit of work
     buffers it. Which of them end up sharing a statement is the planner's
     decision alone, so the MULTI-KEY ``write`` array reaches the collapse rule
     rather than a pre-merged instruction this function invented.
     """
-    _refuse_unobservable_rows(meta, target, mutation, write_rows)
     model = case_model(meta)
     resolved: list[_ConflictWrite] = []
-    for raw_row in write_rows:
-        clean_row, observation = _strip_observation(raw_row)
+    for clean_row, observation in _durable_rows(meta, target, mutation, write_rows):
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": target, "rows": [clean_row]}
         )
@@ -3808,6 +3841,13 @@ def _run_conflict_write(
     return statements, _conflict_attempt_affected(database, concurrency, implied, body)
 
 
+# A temporal conflict attempt's verb. The case names none (`when.mutation` is
+# the NON-temporal lane's keyed UPDATE/DELETE) because a temporal target's
+# conflict write is always the milestone close — so the close names itself, for
+# the row diagnostics that report which write refused an authored key.
+_CLOSE_MUTATION: Final[str] = "close"
+
+
 def _run_conflict_close(
     port: DbPort,
     dialect: Dialect,
@@ -3832,11 +3872,18 @@ def _run_conflict_close(
     `when.observedTxStart`) — never a shadow-tracker lookup, a conflict case
     tests a KNOWN stale-or-fresh value.
 
+    Its ``write_row`` is a case-authored row like any other, so it becomes a
+    durable row through :func:`_durable_row`, which entitles a temporal row to no
+    observation control key: the gate this close binds is the SEPARATE
+    ``observed_tx_start`` argument, and a row that spelled its own would
+    otherwise be projected away to the address's primary-key cells and the
+    author's gate silently replaced by the one beside the write.
+
     A zero-row close is caught only as the class the case's own mode implies
     (:func:`_implied_shortfall_error`); every other class propagates, so the
     ``affectedRows`` observation can never absorb a misclassified failure.
     """
-    row = dict(write_row)
+    row, _authored_none = _durable_row(meta, target, _CLOSE_MUTATION, write_row)
     observed_valid_end = cast("str | None", row.pop("validEnd", None))
     model = case_model(meta)
     # The standalone close is settled outside any unit of work, so it is handed
