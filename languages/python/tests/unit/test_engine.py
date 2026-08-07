@@ -3430,7 +3430,7 @@ def test_write_sequence_case_without_a_sequence_list_is_rejected() -> None:
 
 # --------------------------------------------------------------------------- #
 # Rejected — the pre-SQL model-aware validation lane.                          #
-# Three-way `when` dispatch.                                                   #
+# Three-way `when` dispatch, and a three-form `when.write` inside it.          #
 # --------------------------------------------------------------------------- #
 def _rejected_case(case_id: str) -> case_format.Case:
     (case,) = [c for c in case_format.load_cases() if c.case_id == case_id]
@@ -3473,6 +3473,55 @@ def test_run_rejected_case_write_dispatch_classifies_the_rule() -> None:
 def test_run_rejected_case_write_dispatch_over_an_inheritance_model() -> None:
     case = _rejected_case("m-inheritance-088")
     assert engine.run_rejected_case(case) == "abstract-write-target"
+
+
+def _synthetic_keyed_rejected(write: dict[str, object], model: str) -> case_format.Case:
+    from pathlib import Path
+
+    return case_format.Case(
+        path=Path("m-unit-work-997-synthetic-rejected.yaml"),
+        case_id="m-unit-work-997",
+        shape="rejected",
+        tags=("m-unit-work", "rejected", "slice-snapshot-1"),
+        model=model,
+        document={"model": model, "when": {"write": write}, "then": {"rejectedRule": "x"}},
+    )
+
+
+def test_run_rejected_case_keyed_write_dispatch_classifies_the_rule() -> None:
+    case = _rejected_case("m-unit-work-016")
+    assert engine.run_rejected_case(case) == "temporal-keyed-write-multi-row"
+
+
+def test_run_rejected_case_keyed_write_names_its_own_entity_not_the_default_target() -> None:
+    # A keyed instruction brings its own handle, so the rule is judged against the
+    # entity the instruction names rather than the model's default write root —
+    # which here is `Tenant`, neither of the two entities written below. The same
+    # plural rows are refused on the temporal entity and accepted on the
+    # non-temporal one, so the handle, not the model, is what decided it.
+    plural_temporal: dict[str, object] = {
+        "mutation": "update",
+        "entity": "Lease",
+        "rows": [{"id": 1, "term": "annual"}, {"id": 2, "term": "monthly"}],
+    }
+    plural_non_temporal: dict[str, object] = {
+        "mutation": "update",
+        "entity": "LeaseNote",
+        "rows": [{"id": 1, "text": "first"}, {"id": 2, "text": "second"}],
+    }
+    model = "models/lease.yaml"
+    assert (
+        engine.run_rejected_case(_synthetic_keyed_rejected(plural_temporal, model))
+        == "temporal-keyed-write-multi-row"
+    )
+    with pytest.raises(engine.EngineError, match="accepted a keyed write instruction"):
+        engine.run_rejected_case(_synthetic_keyed_rejected(plural_non_temporal, model))
+
+
+def test_run_rejected_case_raises_for_a_malformed_keyed_instruction() -> None:
+    malformed: dict[str, object] = {"mutation": "update", "rows": [{"id": 1}]}
+    with pytest.raises(engine.EngineError, match="missing required key"):
+        engine.run_rejected_case(_synthetic_keyed_rejected(malformed, "models/position.yaml"))
 
 
 def test_a_default_target_over_a_multi_family_model_is_refused() -> None:

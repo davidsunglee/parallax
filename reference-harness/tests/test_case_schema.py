@@ -380,6 +380,27 @@ def _rejected_write_case() -> dict[str, Any]:
     }
 
 
+def _rejected_keyed_write_case() -> dict[str, Any]:
+    """A rejected case whose `when.write` is a whole KEYED INSTRUCTION.
+
+    The third `when.write` form: `rows` names it, and the entity handle rides on
+    the instruction rather than being resolved from the model.
+    """
+    return {
+        "model": "models/position.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "rejected",
+        "when": {
+            "write": {
+                "mutation": "update",
+                "entity": "Position",
+                "rows": [{"id": 1, "value": 150.00}, {"id": 2, "value": 250.00}],
+            }
+        },
+        "then": {"rejectedRule": "temporal-keyed-write-multi-row"},
+    }
+
+
 def _action_boundary_no_on_case() -> dict[str, Any]:
     """A scenario whose BOUNDARY action verbs (`flush` / `commit`) omit `on`.
 
@@ -525,6 +546,7 @@ VALID_CASES = {
     "read-identity-checks": _identity_checks_read_case,
     "rejected-operation": _rejected_operation_case,
     "rejected-write": _rejected_write_case,
+    "rejected-keyed-write": _rejected_keyed_write_case,
 }
 
 
@@ -743,6 +765,23 @@ def _rejected_neither_operation_nor_write() -> dict[str, Any]:
     return doc
 
 
+def _conflict_keyed_write() -> dict[str, Any]:
+    """A CONFLICT case whose `when.write` is a keyed instruction.
+
+    The keyed form belongs to the `rejected` shape alone: every executing shape
+    reaches its keyed instructions through `writeSequence` or a scenario step's own
+    buffer, where the golden SQL grades them. Admitting one here would let a
+    conflict case author an instruction nothing lowers.
+    """
+    doc = _conflict_case()
+    doc["when"]["write"] = {
+        "mutation": "update",
+        "entity": "Balance",
+        "rows": [{"id": 1, "value": 150.00}],
+    }
+    return doc
+
+
 def _action_unknown_verb() -> dict[str, Any]:
     """An action step naming a verb outside the closed enum."""
     doc = _action_scenario_case()
@@ -859,6 +898,7 @@ REJECTED_CASES = {
     "rejected-cross-shape-when-member": _rejected_cross_shape_when_member,
     "rejected-both-operation-and-write": _rejected_both_operation_and_write,
     "rejected-neither-operation-nor-write": _rejected_neither_operation_nor_write,
+    "conflict-keyed-write": _conflict_keyed_write,
     "action-unknown-verb": _action_unknown_verb,
     "action-stray-key": _action_stray_key,
     "action-unknown-expect-error": _action_unknown_expect_error,

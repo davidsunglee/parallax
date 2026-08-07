@@ -100,8 +100,8 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
 - **`rejected`** — a schema-valid `when.operation`, a `when.write`, **or** an
   inline `when.model` a model-aware validator MUST refuse **before any SQL**,
   naming the violated normative rule in `then.rejectedRule` (`m-value-object` /
-  `m-op-algebra` / `m-inheritance` / `m-storage-layout` negative validation,
-  carrying no golden SQL —
+  `m-op-algebra` / `m-inheritance` / `m-storage-layout` / `m-unit-work` negative
+  validation, carrying no golden SQL —
   see *Rejected cases*, below).
 
 #### The statement entry
@@ -257,7 +257,7 @@ keeps the assertion honest across engines.
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`) |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
-| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a value-object write the validator MUST refuse pre-SQL |
+| `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
@@ -1186,7 +1186,7 @@ a surfaced error kind), and its retry configuration under `when.uow` (`retries` 
 error types stay per-language. Every boundary case is on the `api-conformance`
 lane.
 
-### Rejected cases (`m-value-object` / `m-op-algebra` / `m-inheritance` / `m-storage-layout`)
+### Rejected cases (`m-value-object` / `m-op-algebra` / `m-inheritance` / `m-storage-layout` / `m-unit-work`)
 
 A **rejected** case proves a **negative**: that a model-aware validator refuses an
 invalid input **before any SQL is emitted** (resolved question 7). It carries the
@@ -1211,6 +1211,23 @@ This is the portable analogue of Reladomo refusing a structurally-invalid
 embedded-value use (an embedded value is not a relationship target and cannot be
 reverse-navigated); Parallax pins the same "these operations are structurally
 invalid" semantics as a language-neutral pre-SQL rejection.
+
+A `when.write` is one of three inputs, and an implementation **MUST** dispatch on
+the members the input itself carries — never on the case's tags, filename, or
+named rule, which no adapter is obliged to read before validating. A `target`
+names a **predicate-selected instruction**; a `rows` array names a whole **keyed
+instruction**; anything else is the **bare neutral write row** (①). The three
+differ in what supplies the entity handle, which is why the distinction is
+load-bearing rather than cosmetic: the first two name their own target, so a
+validator checks the payload against the entity the input authored, while a bare
+row names none at all and is resolved against the model's default write root
+(the inheritance-family root when the model declares one, else the model's own
+first entity). A keyed instruction is admissible **only** here: everywhere else
+a keyed instruction reaches an implementation through `when.writeSequence` or a
+`when.scenario` step's own buffer, where the golden SQL it lowers to is what
+grades it. The rejected lane emits no SQL, so it is the one lane in which the
+instruction itself — its verb, its target, and its row count together — is the
+input under test rather than a row's contents.
 
 `then.rejectedRule` is a **closed vocabulary**, each identifier naming a normative
 MUST — the `m-op-algebra` predicate rules (bound ordering, and the
@@ -1314,6 +1331,22 @@ checked payload-shape-first then target-validity):
   target's ancestry chain (root + abstract ancestors + own).
 - `abstract-write-target` — a create / update / delete / terminate handle aimed at
   an **abstract** root or abstract subtype. Writes are concrete-subtype only.
+
+**Instruction** rules (`m-unit-work` — a schema-valid keyed instruction whose own
+shape a model-aware validator MUST refuse pre-SQL, judged against the target's
+temporal profile rather than against any row's contents):
+
+- `temporal-keyed-write-multi-row` — a keyed instruction on a **temporal** target
+  carries more than one row. Each row of a milestone chain closes its own current
+  milestone, consumes its own Temporal Observation, and opens its own successors,
+  and a temporal target never collapses into a set-based statement
+  (`m-batch-write`), so several rows under one instruction denote several
+  independent chains rather than one wider write (`m-unit-work` "A temporal keyed
+  instruction carries exactly one row"). Refusing is the rule: settling the first
+  row would silently discard the rest and invent an observation-to-row mapping the
+  instruction cannot express. The row count a keyed instruction may carry depends
+  on whether its target is temporal, which the schema cannot see, so the neutral
+  schema states the general one-or-more bound and this decides it.
 
 **Model** rules (accepted-model formation — foundational, Inheritance, and
 Storage Layout invariants that per-entity schema validation cannot express,

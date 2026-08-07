@@ -157,7 +157,7 @@
       }
     },
     {
-      "description": "A rejected case (m-value-object / m-op-algebra / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `operation` (a SCHEMA-VALID m-op-algebra node that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `operation`/`write`/`model`. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
+      "description": "A rejected case (m-value-object / m-op-algebra / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `operation` (a SCHEMA-VALID m-op-algebra node that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid, a predicate-selected instruction, or a whole KEYED instruction whose shape a model-aware validator refuses), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `operation`/`write`/`model`. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "rejected" },
@@ -195,6 +195,22 @@
       },
       "then": {
         "properties": { "when": { "required": ["observedTxStart"] } }
+      }
+    },
+    {
+      "description": "A `when.write` that is a whole KEYED INSTRUCTION (`$defs/keyedWrite`, recognized by its `rows` array) belongs to the `rejected` shape alone. Every executing shape reaches its keyed instructions through `when.writeSequence` or a `when.scenario` step's own buffer, whose golden SQL is what grades them; the rejected lane emits no SQL, so it is the one lane where the instruction ITSELF — rather than a row's contents or a statement it produced — is the input under test.",
+      "if": {
+        "required": ["when"],
+        "properties": {
+          "when": {
+            "required": ["write"],
+            "properties": { "write": { "type": "object", "required": ["rows"] } }
+          }
+        }
+      },
+      "then": {
+        "required": ["shape"],
+        "properties": { "shape": { "const": "rejected" } }
       }
     }
   ],
@@ -718,9 +734,10 @@
           }
         },
         "write": {
-          "description": "conflict cases, single-attempt form. The neutral write input (①) for this conflict's keyed UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+, on a Bitemporal target, `validEnd` — the address's Valid-Time exclusive upper bound, which the close binds in BOTH concurrency modes and which may be finite or infinity); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. An ORDERED ARRAY of rows is the MULTI-KEY form: one unit of work buffers every row and the batching rule collapses them into a single set-based statement whose one Key Target holds every key, so `then.affectedRows` is the AGGREGATE that complete target owns (m-batch-write; m-unit-work affected-row attribution). The array form is keyed and non-temporal — a versioned or temporal target materializes to per-row writes instead of collapsing.",
+          "description": "conflict cases, single-attempt form. The neutral write input (①) for this conflict's keyed UPDATE or DELETE (or a temporal / bitemporal close), as a flat attribute-named literal (`$defs/writeRow`): the primary-key attribute (classified to the `where` key), every assigned domain attribute (the `set` columns — none for a DELETE), and the reserved `observedVersion` control key. A TEMPORAL / Bitemporal close carries only the milestone pk (+, on a Bitemporal target, `validEnd` — the address's Valid-Time exclusive upper bound, which the close binds in BOTH concurrency modes and which may be finite or infinity); its close instant and observed gate ride in `when.at` / `when.observedTxStart`. Either way the golden statement + binds become an INDEPENDENT cross-check rather than a golden-parse tautology. An ORDERED ARRAY of rows is the MULTI-KEY form: one unit of work buffers every row and the batching rule collapses them into a single set-based statement whose one Key Target holds every key, so `then.affectedRows` is the AGGREGATE that complete target owns (m-batch-write; m-unit-work affected-row attribution). The array form is keyed and non-temporal — a versioned or temporal target materializes to per-row writes instead of collapsing. The `$defs/keyedWrite` branch is the `rejected` shape's alone (restricted below): a rejected case may pin a rule about the INSTRUCTION rather than about a row's contents, and only a whole keyed instruction — its `mutation`, its own `entity` handle, and its `rows` — can carry one. A reader dispatches the four branches on the members the input itself carries: `target` is the predicate-selected instruction, `rows` the keyed one, an array the multi-key conflict form, anything else the bare neutral write row (①), which names no entity handle and is therefore resolved against the model's default write root.",
           "anyOf": [
             { "$ref": "#/$defs/predicateWrite" },
+            { "$ref": "#/$defs/keyedWrite" },
             { "$ref": "#/$defs/writeRow" },
             {
               "type": "array",
@@ -935,6 +952,7 @@
             "write-required-value-object-missing",
             "write-value-type-mismatch",
             "predicate-write-readless-document-many-unsupported",
+            "temporal-keyed-write-multi-row",
             "subtype-write-sibling-attribute",
             "subtype-write-metadata-field",
             "abstract-write-target",

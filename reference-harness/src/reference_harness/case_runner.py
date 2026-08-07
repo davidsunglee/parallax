@@ -62,6 +62,7 @@ from .inheritance import (
     validate_family,
     validate_operation_inheritance,
 )
+from .keyed_write_validate import KEYED_WRITE_REJECTED_RULES, validate_keyed_write
 from .metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
 )
@@ -150,9 +151,9 @@ def _write_column_order(case: Case, entity: Entity) -> tuple[str, ...]:
 
 
 # The full pre-SQL rejection vocabulary spans value objects, operations,
-# inheritance, storage layout, and writes. The compatibility-case schema's
-# `rejectedRule` enum is the source of truth; these sets MUST stay in lockstep
-# with it.
+# inheritance, storage layout, writes, and keyed-instruction shape. The
+# compatibility-case schema's `rejectedRule` enum is the source of truth; these
+# sets MUST stay in lockstep with it.
 ALL_REJECTED_RULES = (
     REJECTED_RULES
     | METAMODEL_MODEL_REJECTED_RULES
@@ -160,6 +161,7 @@ ALL_REJECTED_RULES = (
     | STORAGE_LAYOUT_MODEL_REJECTED_RULES
     | OPERATION_REJECTED_RULES
     | WRITE_REJECTED_RULES
+    | KEYED_WRITE_REJECTED_RULES
     | {"predicate-write-readless-document-many-unsupported"}
 )
 
@@ -2905,8 +2907,15 @@ def _assert_rejected(case: Case) -> None:
     A rejected case carries exactly one schema-valid ``when.operation``,
     ``when.write``, or inline ``when.model`` and names the violated rule in
     ``then.rejectedRule``. Operations run ``validate_operation`` and Inheritance's
-    ``validate_operation_inheritance``. Writes run ``validate_write`` and
-    Inheritance's ``validate_subtype_write``. Inline models run the foundational
+    ``validate_operation_inheritance``.
+
+    A write is dispatched on the members it carries, never on the rule the case
+    names (`m-case-format` Rejected cases): a ``target`` is a predicate-selected
+    instruction, a ``rows`` array is a whole KEYED instruction judged by
+    ``validate_keyed_write`` against the entity IT names, and anything else is
+    the bare neutral write row, run through ``validate_write`` and Inheritance's
+    ``validate_subtype_write`` against the model's default write root. Inline
+    models run the foundational
     ``validate_index_identities`` before the semantic rule sets — Inheritance's
     ``validate_family`` and Storage Layout’s ``validate_storage_layout``, including
     standalone Table ownership and Column claims. The referenced top-level model
@@ -2930,6 +2939,11 @@ def _assert_rejected(case: Case) -> None:
                 _validate_rejected_predicate_write(case, write)
                 raise CaseFailure(
                     f"{case.path.name}: predicate write did not match its pre-SQL refusal"
+                )
+            if "rows" in write:
+                _validate_rejected_keyed_write(case, write)
+                raise CaseFailure(
+                    f"{case.path.name}: keyed instruction did not match its pre-SQL refusal"
                 )
             validate_write(entity, write)
             # Concrete-subtype write validation is a no-op on a non-inheritance
@@ -2960,6 +2974,25 @@ def _assert_rejected(case: Case) -> None:
         f"{case.path.name}: expected a pre-SQL rejection ({expected!r}) but model-aware "
         f"validation ACCEPTED the input."
     )
+
+
+def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
+    """Run the keyed-instruction rules against the entity the instruction names.
+
+    A keyed instruction brings its own ``entity`` handle, so — unlike the bare
+    neutral write row beside it — nothing here falls back to the model's default
+    write root; an undeclared handle is a case-authoring failure rather than a
+    silent resolution against some other entity.
+    """
+    entity_name = write.get("entity")
+    try:
+        entity = case.model.entity(str(entity_name))
+    except KeyError as exc:
+        raise CaseFailure(
+            f"{case.path.name}: keyed instruction names entity {entity_name!r}, which the "
+            f"case's model does not declare"
+        ) from exc
+    validate_keyed_write(entity, write)
 
 
 def _validate_rejected_predicate_write(case: Case, write: dict[str, Any]) -> None:

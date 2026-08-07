@@ -145,7 +145,11 @@ structural rules keep the instruction framework-honest:
   discard the rows the author wrote and invent an observation-to-row mapping the
   instruction cannot express. The row count a keyed instruction may carry therefore
   depends on the target, which is why the neutral schema states the general
-  one-or-more bound and defers this case to the model.
+  one-or-more bound and defers this case to the model. The refusal's own witness is
+  `m-unit-work-016`, a `rejected` case whose `when.write` is a whole keyed
+  instruction rather than a row — the one case shape in which the instruction is
+  itself the input under test (`m-case-format`), classified
+  `temporal-keyed-write-multi-row`.
 
 A conforming implementation **MUST** round-trip every instruction through the
 canonical form losslessly (`serialize(deserialize(x)) == x`), the write-side of the

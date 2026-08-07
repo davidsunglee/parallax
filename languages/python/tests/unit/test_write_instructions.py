@@ -567,6 +567,39 @@ def test_a_milestone_verb_is_accepted_on_a_temporal_target(instruction: dict[str
     wi.validate_instruction(wi.deserialize(instruction), model)
 
 
+def test_a_plural_keyed_instruction_is_rejected_on_a_temporal_target() -> None:
+    # The converse half of the target-profile quadrant above. Each row of a
+    # milestone chain closes its own milestone, consumes its own observation, and
+    # opens its own successors, so several rows under one instruction denote
+    # several chains rather than one wider write (m-unit-work). The refusal
+    # carries a `rule`, since the corpus grades it as a named pre-SQL rejection.
+    plural = wi.deserialize(
+        {
+            "mutation": "update",
+            "entity": "Position",
+            "rows": [{"id": 1, "value": 5.00}, {"id": 2, "value": 6.00}],
+            "validFrom": _B1,
+        }
+    )
+    with pytest.raises(wi.InstructionRejectedError, match="carries 2 rows") as exc:
+        wi.validate_instruction(plural, _POSITION)
+    assert exc.value.rule == wi.TEMPORAL_KEYED_WRITE_MULTI_ROW
+    assert isinstance(exc.value, wi.WriteInstructionError)
+
+
+def test_a_plural_keyed_instruction_is_accepted_on_a_non_temporal_target() -> None:
+    # The contrast that makes the rule the TARGET's: the same plural shape on a
+    # versioned non-temporal entity is the set-based flush batching collapses.
+    plural = wi.deserialize(
+        {
+            "mutation": "update",
+            "entity": "Account",
+            "rows": [{"id": 1, "balance": 5.00}, {"id": 2, "balance": 6.00}],
+        }
+    )
+    wi.validate_instruction(plural, _ACCOUNT)
+
+
 def test_a_milestone_verb_is_accepted_on_a_temporal_family_descendant() -> None:
     # Temporality is family-level metadata only the root declares
     # (`m-inheritance`), so a descendant whose OWN accepted Metadata carries no

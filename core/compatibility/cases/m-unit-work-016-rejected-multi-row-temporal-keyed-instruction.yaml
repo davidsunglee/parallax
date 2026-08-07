@@ -1,0 +1,43 @@
+# Rejected keyed instruction — a plural keyed write on a TEMPORAL target (m-unit-work
+# "A temporal keyed instruction carries exactly one row").
+#
+# The input is one keyed `update` on Position, a bitemporal entity, carrying TWO rows:
+# id 1 and id 2, each naming only declared members and each a perfectly ordinary
+# single-row correction on its own. A model-aware validator MUST refuse the instruction
+# BEFORE any SQL with `temporal-keyed-write-multi-row`. No golden SQL: the rejection is
+# pre-SQL, dialect-agnostic.
+#
+# The semantic distinction is that this is a rule about the INSTRUCTION, not about what
+# any row contains. Nothing is wrong with either row — swap either one into an
+# instruction of its own and it settles. What the instruction cannot express is which
+# observed milestone each row closes, because a keyed temporal write consumes exactly
+# one Temporal Observation: each row of a milestone chain closes its own current
+# milestone and opens its own successors, and a temporal target never collapses into a
+# set-based statement (m-batch-write). So an implementation that settles the first row
+# and discards the rest is non-conforming even though every statement it emitted was
+# well-formed and every discarded row would have lowered to well-formed SQL of its own —
+# the failure is silent, and refusing is the only answer that surfaces it.
+#
+# The row count a keyed instruction may carry depends on whether its target is temporal,
+# which no schema can see, so the neutral case schema states the general one-or-more
+# `rows` bound and this case is where the model decides it. The non-temporal contrast is
+# not authored here but is everywhere in the corpus: m-batch-write's multi-row keyed
+# flushes are the same shape against a target with no As-Of Axis, and they collapse
+# rather than being refused.
+#
+# This is also the corpus's only `when.write` that is a whole keyed INSTRUCTION rather
+# than a row or a predicate-selected write — the rejected lane emits no SQL, so it is
+# the one lane in which the instruction itself is the input under test (m-case-format).
+model: models/position.yaml
+tags: [m-unit-work, temporal, bitemporal, write, rejected, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: update
+    entity: Position
+    rows:
+      - { id: 1, value: 150.00 }
+      - { id: 2, value: 250.00 }
+    validFrom: "2024-03-01T00:00:00+00:00"
+then:
+  rejectedRule: temporal-keyed-write-multi-row
