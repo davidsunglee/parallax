@@ -1150,27 +1150,39 @@ supported import path.
 **Reserved member names.** A member name may not collide with a name the class
 object already carries, because class-level access is where the typed expression
 surface lives and the class-level name would win. Five families are reserved,
-and a collision fails at class creation (`entity-reserved-member-name`):
+and a collision fails at class creation (`entity-reserved-member-name`). Two of
+them — the `model_*` namespace and the `__parallax_` prefix — hold over every
+declared class body, an Entity Class and a Value Object Class alike, because
+what they protect is owned by neither declaration surface. The other three are
+the Entity surface itself and hold on an Entity Class only: a Value Object has
+no query root, no declaration protocol, no copy verb, and no temporal member, so
+those spellings are ordinary Value Object members.
 
 - the query-root and introspection classmethods — `where`, `narrow`, `include`,
   `as_of`, `as_of_range`, `history`, `meta`, `descriptor` — together with the
   instance-level copy verb `edit` (§3), which a declared `edit` member would
   otherwise overwrite, silently disabling editing for that Entity;
-- the `model_*` namespace Pydantic reserves;
+- the `model_*` namespace Pydantic reserves, on either kind, since both are
+  Pydantic models;
 - the framework temporal members, on a class whose family extends `TxTemporal`
   or `Bitemporal` and is therefore supplied them. The reservation is on the
   canonical names `validStart`, `validEnd`, `txStart`, and `txEnd`, so one rule
   covers the Python spellings `valid_start`/`valid_end`/`tx_start`/`tx_end`, a
   literal canonical spelling, and an explicit `name=` that renames onto one;
-- the `__parallax_` prefix, which names every marker the framework binds on a
-  class and every private slot it binds on an instance — the lifecycle state of a
-  materialized node and an Edited Copy's Change Record among them. The whole
-  prefix is reserved rather than the current names, so a slot added later needs no
-  second reservation. A body binding under it is not a shadowed member surface but
-  a shadowed framework value: ordinary reads would answer the class's binding, and
-  a `functools.cached_property` spelled under one would additionally recompute
-  that binding on an Edited Copy, because §3's invalidation rule reads a derived
-  cache off the class;
+- the `__parallax_` prefix, on either kind. It names the framework's *private*
+  bindings — the markers it puts on a declared class, the private slots it puts
+  on an instance (the lifecycle state of a materialized node and an Edited
+  Copy's Change Record among them), and the renderer every Value Object
+  serializes itself through. The framework's public bindings sit outside the
+  prefix and are reserved by name above, so this family reserves exactly what a
+  declaration never names, and the whole prefix is reserved rather than the
+  current names, so a slot added later needs no second reservation. Only a
+  framework root's own body — `Entity`, `TxTemporal`, `Bitemporal`,
+  `ValueObject` — binds under it. A declaration binding under it is not a
+  shadowed member surface but a shadowed framework value: ordinary reads would
+  answer the class's binding, and a `functools.cached_property` spelled under
+  one would additionally recompute that binding on an Edited Copy, because §3's
+  invalidation rule reads a derived cache off the class;
 - the ten declaration members `identity`, `container`, `persistence`, `layout`,
   `attributes`, `relationships`, `value_objects`, `as_of_axes`, `inheritance`,
   and `indices`. An Entity Class *is* its own `UnresolvedEntityDeclaration`: the
@@ -1308,7 +1320,11 @@ members `attr(...)` admits the naming and type-shaping options — `name=`,
 `type=` (`Int32`/`Float32` narrowing), and `precision=`/`scale=` (mandatory
 together on a `decimal.Decimal` member). Entity-only options fail at class
 creation: storage, keys, generation, locking, and `max_length=` (the schema
-gives a Value Object attribute no length bound). An
+gives a Value Object attribute no length bound). Of the reserved member-name
+families above, the two that are not the Entity surface — `model_*` and the
+`__parallax_` prefix, the latter covering the renderer a Value Object
+serializes itself through — hold over a Value Object class body as well, on a
+declared member and on an unannotated binding alike. An
 Entity-level occurrence member additionally admits `column=`, the occurrence's
 Structured Column override. When it is omitted, the already-resolved canonical
 occurrence name flows through `default_column_name()` exactly like a scalar
@@ -2418,8 +2434,8 @@ or descriptor authoring form and performs no audit stamping.
   cache a class writes into `self.__dict__` by hand declares nothing, so it is
   carried like any other slot. Reading the descriptor off the class also confines
   the rule to names a class may declare: the framework's own `__parallax_` prefix
-  is reserved from every class body (§2), so no declaration can present a
-  lifecycle's state or a Change Record as derived.
+  is reserved from every declaration's class body (§2), so no declaration can
+  present a lifecycle's state or a Change Record as derived.
 
   The copy carries the source's `Pin` too, which makes the read-only rule
   indifferent to how the write was authored: an Edited Copy of a view pinned at

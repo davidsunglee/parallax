@@ -330,6 +330,66 @@ def test_the_mint_token_is_the_only_way_to_declare_a_framework_root() -> None:
     assert caught.value.code == "entity-header-unknown-option"
 
 
+def _entity_binding_a_framework_name() -> type:
+    class Bad(Entity, table="bad"):
+        __parallax_marker__ = "shadow"
+
+    return Bad
+
+
+def _entity_annotating_a_framework_name() -> type:
+    class Bad(Entity, table="bad"):
+        __parallax_marker__: Attr[str]
+
+    return Bad
+
+
+def _value_object_binding_a_framework_name() -> type:
+    class Bad(ValueObject):
+        __parallax_marker__ = "shadow"
+
+    return Bad
+
+
+def _value_object_annotating_a_framework_name() -> type:
+    class Bad(ValueObject):
+        __parallax_marker__: Attr[str]
+
+    return Bad
+
+
+# Both ways a class body reaches a name — bound and annotated, which separate
+# checks answer — for each declaration kind, keyed by the kind itself so a third
+# kind added to the enum leaves an entry missing here rather than quietly
+# escaping the reservation below.
+_PREFIX_PROBES: dict[DeclarationKind, tuple[Callable[[], type], ...]] = {
+    DeclarationKind.ENTITY: (
+        _entity_binding_a_framework_name,
+        _entity_annotating_a_framework_name,
+    ),
+    DeclarationKind.VALUE_OBJECT: (
+        _value_object_binding_a_framework_name,
+        _value_object_annotating_a_framework_name,
+    ),
+}
+
+
+@pytest.mark.parametrize("kind", list(DeclarationKind), ids=lambda kind: kind.value)
+def test_the_framework_name_prefix_is_reserved_from_every_declaration_kind(
+    kind: DeclarationKind,
+) -> None:
+    # The prefix names class markers and instance slots both kinds carry, so the
+    # reservation cannot belong to one frontend: an Entity binding
+    # `__parallax_lifecycle__` would shadow a materialized node's own state, and a
+    # Value Object binding `__parallax_document__` would answer every
+    # serialization of itself in place of the canonical document.
+    assert set(_PREFIX_PROBES) == set(DeclarationKind)
+    for declare in _PREFIX_PROBES[kind]:
+        with pytest.raises(EntityDefinitionError) as caught:
+            declare()
+        assert caught.value.code == "entity-reserved-member-name"
+
+
 def test_a_framework_root_declares_nothing_and_is_never_a_candidate() -> None:
     assert is_declared_class(Entity, DeclarationKind.ENTITY)
     assert is_declared_class(ValueObject, DeclarationKind.VALUE_OBJECT)

@@ -16,8 +16,11 @@ from typing import Any, cast
 import pytest
 from value_object_bad_models import (
     build_entity_only_option_value_object,
+    build_framework_slot_annotated_value_object,
+    build_framework_slot_shadowing_value_object,
     build_header_bearing_value_object,
     build_non_attr_annotated_value_object,
+    build_pydantic_namespace_value_object,
 )
 
 from _support import value_object_models as vm
@@ -280,6 +283,9 @@ def test_a_value_object_scalar_admits_the_naming_and_type_shaping_options() -> N
         (build_non_attr_annotated_value_object, "entity-annotation-invalid"),
         (build_entity_only_option_value_object, "entity-option-context-invalid"),
         (build_header_bearing_value_object, "entity-header-unknown-option"),
+        (build_framework_slot_shadowing_value_object, "entity-reserved-member-name"),
+        (build_framework_slot_annotated_value_object, "entity-reserved-member-name"),
+        (build_pydantic_namespace_value_object, "entity-reserved-member-name"),
     ],
 )
 def test_a_value_object_body_outside_the_grammar_is_rejected(build: object, code: str) -> None:
@@ -287,6 +293,17 @@ def test_a_value_object_body_outside_the_grammar_is_rejected(build: object, code
     with pytest.raises(EntityDefinitionError) as caught:
         build()
     assert caught.value.code == code
+
+
+def test_a_value_object_still_declares_the_entity_only_reserved_spellings() -> None:
+    # The reservation narrows with the surface it protects: a Value Object has no
+    # query root, no declaration protocol, and no copy verb, so those names name
+    # nothing here and stay ordinary members.
+    class Audit(ValueObject):
+        identity: Attr[str]
+        edit: Attr[str]
+
+    assert {leaf.name for leaf in shape_of(Audit).shape.attributes} == {"identity", "edit"}
 
 
 def test_shape_lookup_rejects_a_class_the_engine_never_built() -> None:
