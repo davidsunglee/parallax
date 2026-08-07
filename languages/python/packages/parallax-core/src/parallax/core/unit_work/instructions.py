@@ -83,10 +83,16 @@ MILESTONE_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"insertUntil", "terminate", "terminateUntil", "updateUntil"}
 )
 """The mutations that OPEN, SPLIT, or CLOSE a milestone rather than writing a row
-outright, keyed and predicate-selected alike. Their complement — `insert`,
-`update`, `delete` — is the non-temporal write triad every target admits, which
-is what makes membership here exactly the applicability question a non-temporal
-target answers (`m-txtime-write` / `m-bitemp-write`)."""
+outright, keyed and predicate-selected alike. Membership answers ONE direction of
+target/mutation applicability: a target that derives no As-Of Axis admits no
+member of this set, because it has no axis to hold the milestone
+(`m-txtime-write` / `m-bitemp-write`).
+
+Non-membership grants nothing in the other direction. The complement — `insert`,
+`update`, `delete` — is not a triad every target admits: a temporal target spells
+its removal `terminate` and rejects `delete` (`python.md` "Write verbs and
+temporal spellings"), and `insert` is not on the predicate-selected surface at
+all. What a TEMPORAL target admits is a question this set does not answer."""
 
 _KEYED_MUTATIONS: Final[frozenset[str]] = INSERT_MUTATIONS | frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
@@ -277,7 +283,16 @@ def _bound(node: Mapping[str, object], key: str, shape: str) -> str | None:
 def _check_valid_time_bounds(
     mutation: str, valid_from: str | None, until: str | None, shape: str
 ) -> None:
-    """Enforce the schema's Valid-Time-bound pairing."""
+    """Enforce the schema's Valid-Time-bound pairing: a bounded ``*Until``
+    mutation carries BOTH ``validFrom`` and ``until``, and every other mutation
+    carries no ``until``.
+
+    Verb shape only. Whether ``validFrom`` is required, optional, or forbidden
+    follows from the TARGET's temporal profile, which deserialization has no
+    model to ask, so nothing here rejects a ``validFrom`` on a write whose target
+    turns out to be non-temporal or Transaction-Time-Only, nor a Bitemporal
+    write that omits one.
+    """
     if mutation in _BOUNDED_MUTATIONS:
         if valid_from is None or until is None:
             raise WriteInstructionError(
@@ -443,8 +458,12 @@ def _emit_bounds(body: dict[str, object], valid_from: str | None, until: str | N
 # Target/mutation applicability (metamodel-aware, shared across the layers).   #
 # --------------------------------------------------------------------------- #
 def non_temporal_milestone_refusal(entity_name: str, mutation: str) -> str | None:
-    """Why a NON-TEMPORAL target refuses ``mutation``, or ``None`` when it admits
-    it.
+    """Why a NON-TEMPORAL target refuses ``mutation``'s VERB, or ``None`` when
+    this rule has nothing to say about it.
+
+    ``None`` is not a verdict that the target admits the write: the verb is all
+    that is measured, and the temporal coordinates the profile does or does not
+    use go unexamined here and at every caller.
 
     Reached only once the caller has established that ``entity_name``'s
     inheritance family derives no As-Of Axis, because temporality is the whole
@@ -549,14 +568,22 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     the sharing neither scope could otherwise reach across the
     `core/spec/modules.md` section 7 DAG).
 
-    Last, for BOTH shapes, the target's temporal profile must admit the mutation
-    (:func:`non_temporal_milestone_refusal`; `m-case-format` "requires only the
-    temporal coordinates the target profile uses"). This is a rule about the
-    target rather than about the instruction, so it is asked here rather than in
+    Last, for BOTH shapes, ONE quadrant of target/mutation applicability: a
+    target whose family derives no As-Of Axis refuses a milestone verb
+    (:func:`non_temporal_milestone_refusal`). This is a rule about the target
+    rather than about the instruction, so it is asked here rather than in
     :func:`deserialize`, and it is asked of the whole write surface: without it a
     milestone verb aimed at a versioned non-temporal target reaches the
     materializing resolve and settles as an ordinary row write, keeping the row
     effect and dropping the bounded-temporal meaning the verb was chosen for.
+
+    That quadrant is the whole of it, and `m-case-format`'s rule that the
+    model-aware validator "requires only the temporal coordinates the target
+    profile uses" is NOT yet enforced here. A TEMPORAL target's verb goes
+    unmeasured, so a `delete` `python.md` rejects is accepted, and no bound is
+    measured against a profile at all: a `validFrom` on a non-temporal or
+    Transaction-Time-Only target passes, and so does a Bitemporal write that
+    omits the one it requires.
     """
     if isinstance(instruction, KeyedWrite):
         entity = _entity(model, instruction.entity)

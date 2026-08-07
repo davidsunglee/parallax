@@ -274,15 +274,17 @@ def buffer_predicate_instruction(
     it opens the transaction. EVERY model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_operation`` vocabulary and
     the bare-predicate rule over the selecting predicate, the
-    inheritance-family rejection, then member-name honesty and assignability.
-    That call establishes the CALLER ORDERING — one classification whichever
-    ingress an instruction arrives through.
+    inheritance-family rejection, member-name honesty and assignability, then
+    the one target-profile quadrant that validator enforces — a milestone verb
+    aimed at a target deriving no As-Of Axis, and no other pairing of profile
+    against verb or bound. That call establishes the CALLER ORDERING — one
+    classification whichever ingress an instruction arrives through.
 
-    The two refusals repeated here — an inheritance-family target, and a
-    milestone verb the target's temporal profile does not admit — are this
-    seam's OWN contract, not duplicates of those rules. This entry point is
-    reachable directly, with an instruction no caller validated, so it takes
-    nothing on faith: without its own refusal such an instruction reaches
+    The two refusals repeated here — an inheritance-family target, and that same
+    milestone-verb quadrant — are this seam's OWN contract, not duplicates of
+    those rules. This entry point is reachable directly, with an instruction no
+    caller validated, so it takes nothing on faith: without its own refusal such
+    an instruction reaches
     :func:`_materialize_predicate_write`'s resolving read — real SQL on the
     caller's connection — and, when that read matches no row, buffers nothing
     for the flush-time
