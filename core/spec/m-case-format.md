@@ -743,17 +743,22 @@ observed edge alongside an authored `validEnd`: the two spell one fact from
 opposite ends, so agreeing they prove nothing the derivation does not and
 disagreeing one would have to silently win.
 
-The observation form is entitled by the target and by the attempt, and an
-implementation **MUST** refuse it rather than ignore it where it is not:
+Both observation coordinates are entitled by the target and by the attempt, and
+an implementation **MUST** refuse one rather than ignore it where it is not:
 
+- A **non-temporal** target has no milestone at all, so it may author **neither**
+  `observedValidStart` **nor** `observedTxStart`, on the single-attempt `when` or
+  on any attempt. Its write gates on the row's own `observedVersion`, so a
+  milestone coordinate beside it reaches nothing that could read it.
 - `observedValidStart` names a Valid-Time start, so it is legal **only on a
-  Bitemporal target**. A Transaction-Time-Only target's milestones have no
-  Valid-Time start to name, and a non-temporal target has no milestone at all.
+  Bitemporal target**: a Transaction-Time-Only target's milestones have no
+  Valid-Time start to name.
 - The edge selects among the milestones the case's **own loaded fixtures** hold
-  current, so it is legal **only on the single-attempt `when`**. A retry attempt
-  re-reads the state the concurrent `given.apply` writer left behind, which no
-  fixture edge names and no lane performs a resolving read to discover, so a
-  retry attempt states its **address** directly.
+  current, so `observedValidStart` is legal **only on the single-attempt `when`**.
+  A retry attempt re-reads the state the concurrent `given.apply` writer left
+  behind, which no fixture edge names and no lane performs a resolving read to
+  discover, so a retry attempt states its **address** directly and gates on its
+  own `observedTxStart`.
 
 Because an edge selects exactly one milestone, a case whose own state holds two
 current milestones of one key carrying the **same** edge is unaddressable, and an
@@ -770,10 +775,13 @@ and cannot render both siblings of an edge-named pair.
 
 Neither form grades how an implementation **keys** the observations its own reads
 record. A case names the milestone its write observed, so the write consumes one
-observation resolved once from state the case supplies; no case has a write
-consume evidence one of the case's own read steps recorded. A rule about what a
-second read of one key does to the first read's evidence is therefore outside
-what this format can express today.
+observation resolved once from state the case supplies. A scenario `uow` group
+does have a write consume evidence its own find steps recorded — but only the
+**version** a non-temporal target's find observed, and one row per primary key
+already addresses that without a coordinate. No case has a write consume a
+MILESTONE one of its own read steps observed, so a rule about what a second read
+of one key does to the first read's evidence is outside what this format can
+express today.
 
 ### Scenario cases (`m-unit-work`)
 

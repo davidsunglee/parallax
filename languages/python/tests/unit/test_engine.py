@@ -2899,6 +2899,36 @@ def test_a_non_temporal_conflict_target_may_not_name_an_observed_milestone() -> 
         )
 
 
+def test_a_non_temporal_retry_attempt_may_not_name_an_observed_milestone_either() -> None:
+    # The target's entitlement holds wherever the coordinate is spelled. Checking
+    # only the root `when` would let the same unentitled coordinate through on
+    # the retry form, where the versioned path reads it exactly as little.
+    with pytest.raises(engine.EngineError, match=re.escape("no milestone to observe")):
+        engine.run_conflict_case(
+            _synthetic_write(
+                "conflict",
+                {
+                    "model": "models/account.yaml",
+                    "when": {
+                        "uow": {"concurrency": "optimistic"},
+                        "attempts": [
+                            {
+                                "statements": [
+                                    {"sql": {"postgres": "update account set name = ?"}}
+                                ],
+                                "affectedRows": 1,
+                                "write": {"id": 1, "name": "A", "observedVersion": 1},
+                                "observedTxStart": "2024-04-01T00:00:00+00:00",
+                            }
+                        ],
+                    },
+                },
+            ),
+            "postgres",
+            FakeWritePort(),
+        )
+
+
 def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
     # An edge selects among the milestones the case's own fixtures hold, while a
     # retry re-reads what the concurrent `given.apply` writer left behind. No

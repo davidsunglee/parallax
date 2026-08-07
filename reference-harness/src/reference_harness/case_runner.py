@@ -332,6 +332,14 @@ def _assert_schema(case: Case) -> None:
     elif case.is_conflict:
         if case.expected_affected_rows is None and not case.attempts:
             raise CaseFailure(f"{case.path.name}: conflict case missing affectedRows / attempts")
+        # Whether the case may name an observed milestone at all is a property of
+        # the document, not of a dialect or of an execution path, so it is decided
+        # HERE — the one layer every conflict shape reaches. The cross-check that
+        # consumes the coordinate (:func:`_assert_conflict_input`) is skipped
+        # entirely for an api-conformance lane case and for a dialect the case
+        # carries no golden for, so an entitlement left there would hold on some
+        # runs and not others.
+        _assert_observed_edge_entitlement(case, _conflict_temporal_entity(case))
     elif case.is_coherence:
         if len(case.coherence) < 2:
             raise CaseFailure(
@@ -3048,9 +3056,10 @@ _VERSION_OBSERVATION_KEY = "observedVersion"
 # The two halves of an observed milestone's own EDGE coordinate. Neither is a
 # write-row key in any authoring location: a temporal write observes a whole
 # predecessor milestone, which no flat row cell can name, so both ride beside the
-# write (`when.observedTxStart` / `when.observedValidStart`, or a retry attempt's
-# own fields — `m-case-format`). Named here so a row that spells one is refused
-# by the rule rather than by the generic "not a member" diagnosis.
+# write, at `when.observedTxStart` / `when.observedValidStart` — and, on a retry
+# attempt, `observedTxStart` alone, since the edge form is single-attempt only
+# (`m-case-format`). Named here so a row that spells one is refused by the rule
+# rather than by the generic "not a member" diagnosis.
 _MILESTONE_COORDINATE_KEYS = ("observedTxStart", "observedValidStart")
 
 # The milestone close a temporal conflict case writes. Not a `writeSequence`
@@ -3250,9 +3259,9 @@ def _classify_write_row(
             raise CaseFailure(
                 f"{case.path.name}: {entity.name} {mutation!r}: a write row spells no {key!r} "
                 f"(m-case-format: an observed milestone's own edge coordinate rides beside the "
-                f"write, at `when.observedTxStart` / `when.observedValidStart` or the "
-                f"attempt's own fields; a writeRow reserves {_VERSION_OBSERVATION_KEY!r} alone "
-                f"and every other key names an entity member)"
+                f"write, at `when.observedTxStart` / `when.observedValidStart`, or an "
+                f"attempt's own `observedTxStart`; a writeRow reserves "
+                f"{_VERSION_OBSERVATION_KEY!r} alone and every other key names an entity member)"
             )
         if key == _VERSION_OBSERVATION_KEY:
             refusal = _observation_refusal(entity, mutation)
@@ -4798,12 +4807,11 @@ def _assert_conflict_input(case: Case, dialect: str) -> None:
     against the golden is legitimate — two AUTHORED representations, never
     grading generated output.
 
-    Whether the case may name its observed milestone's EDGE at all is decided
-    first, for every conflict shape (:func:`_assert_observed_edge_entitlement`) —
-    a versioned target reaches neither derivation below, so a rule left to one of
-    them would hold on one branch and not the other.
+    Whether the case may name an observed milestone at all is decided earlier and
+    unconditionally, in :func:`_assert_schema`
+    (:func:`_assert_observed_edge_entitlement`): a versioned target reaches
+    neither derivation below, and this function itself is not on every run's path.
     """
-    _assert_observed_edge_entitlement(case, _conflict_temporal_entity(case))
     entity = _conflict_versioned_entity(case)
     if entity is None:
         _assert_temporal_conflict_input(case, dialect)
@@ -4940,35 +4948,44 @@ def _conflict_set_binds(
 
 
 def _assert_observed_edge_entitlement(case: Case, entity: Entity | None) -> None:
-    """Refuse an observed-milestone edge the conflict target cannot consume.
+    """Refuse an observation coordinate the conflict target or attempt cannot consume.
 
     Three entitlements, all properties of the CASE rather than of any attempt's
     arithmetic (`m-case-format`, *Naming the observed milestone*): a NON-temporal
-    target has no milestone to observe; a target declaring no Valid-Time axis has
-    no ``observedValidStart`` to supply, so the edge form is Bitemporal-only; and
-    a RETRY attempt re-reads what the concurrent writer left behind, while an edge
+    target has no milestone at all, so it may author NEITHER coordinate, wherever
+    it is spelled; a target declaring no Valid-Time axis has no
+    ``observedValidStart`` to supply, so the edge form is Bitemporal-only; and a
+    RETRY attempt re-reads what the concurrent writer left behind, while an edge
     selects among the milestones the case's own fixtures hold, so the observation
-    form is single-attempt only.
+    form is single-attempt only (a temporal attempt's own ``observedTxStart`` is
+    the address form's gate candidate and stays legal).
 
     Refusing here rather than at the point of use is what turns each into a named
     authoring diagnosis: the edge-named rectangle scan would otherwise look up an
-    axis a Transaction-Time-Only target never declares.
+    axis a Transaction-Time-Only target never declares, and a non-temporal
+    conflict's own execution path reads neither coordinate at all, so an
+    unentitled one would sit in the document grading nothing.
     """
-    named = [
-        pointer
-        for pointer, source in [
-            ("write", case.when),
-            *((f"attempts[{i}]", a) for i, a in enumerate(case.attempts or [])),
-        ]
-        if "observedValidStart" in source
+    sources = [
+        ("write", case.when),
+        *((f"attempts[{i}]", a) for i, a in enumerate(case.attempts or [])),
     ]
-    if not named:
+    observing = [
+        pointer
+        for pointer, source in sources
+        if any(key in source for key in _MILESTONE_COORDINATE_KEYS)
+    ]
+    if not observing:
         return
     if entity is None:
         raise CaseFailure(
             f"{case.path.name}: a NON-temporal conflict target has no milestone to observe, "
-            f"so it may not author `observedValidStart` ({', '.join(named)})."
+            f"so it may author neither of {sorted(_MILESTONE_COORDINATE_KEYS)} "
+            f"({', '.join(observing)})."
         )
+    named = [pointer for pointer, source in sources if "observedValidStart" in source]
+    if not named:
+        return
     if not any(a["dimension"] == "valid-time" for a in entity.temporal_runtime_axes):
         raise CaseFailure(
             f"{case.path.name}: {entity.name} declares no Valid-Time axis, so its milestones "
@@ -5018,7 +5035,9 @@ def _assert_temporal_conflict_input(case: Case, dialect: str) -> None:
                 _sole_conflict_write(case, attempt, pointer),
                 attempt.get("at"),
                 attempt.get("observedTxStart"),
-                attempt.get("observedValidStart"),
+                # The edge form is single-attempt only, so a retry attempt names
+                # its address directly and observes no milestone here.
+                None,
                 gated,
                 _attempt_statements(attempt, dialect),
                 _entry_binds(attempt.get("statements"), 0),

@@ -831,10 +831,10 @@ def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel)
 _VERSION_OBSERVATION_KEY: Final[str] = "observedVersion"
 
 # The two halves of an observed milestone's own EDGE coordinate. NEITHER is a
-# write-row key in any shape: they are authored beside the write
-# (`when.observedTxStart` / `when.observedValidStart`, or a retry attempt's own
-# fields — `m-case-format`), so a row carrying one is refused rather than
-# stripped.
+# write-row key in any shape: they are authored beside the write, at
+# `when.observedTxStart` / `when.observedValidStart` — and, on a retry attempt,
+# `observedTxStart` alone, since the edge form is single-attempt only
+# (`m-case-format`) — so a row carrying one is refused rather than stripped.
 _TEMPORAL_GATE_KEY: Final[str] = "observedTxStart"
 _TEMPORAL_VALID_START_KEY: Final[str] = "observedValidStart"
 
@@ -1269,9 +1269,10 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
       `compatibility-case.schema.json`'s ``writeRow`` reserves ``observedVersion``
       alone and every other key names an entity member, while a temporal close's
       observed coordinate rides beside the write, at ``when.observedTxStart`` /
-      ``when.observedValidStart`` (`m-case-format`) or the retry attempt's own
-      fields. Stripping one from a row — or projecting the row past it — would
-      silently discard the very coordinate the author meant to observe.
+      ``when.observedValidStart`` — and, on a retry attempt, ``observedTxStart``
+      alone (`m-case-format`). Stripping one from a row — or projecting the row
+      past it — would silently discard the very coordinate the author meant to
+      observe.
     - a TEMPORAL target's write observes a whole predecessor MILESTONE, which no
       flat row cell can name. It resolves through
       :class:`~parallax.conformance.temporal_state.TemporalShadow`, and a
@@ -1296,8 +1297,8 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
         return (
             f"a write row authors no `{key}` (m-case-format: an observed milestone's own edge "
             "coordinate rides beside the write, at `when.observedTxStart` / "
-            "`when.observedValidStart` or the attempt's own fields; a writeRow reserves "
-            "`observedVersion` alone and every other key names an entity member)"
+            "`when.observedValidStart`, or an attempt's own `observedTxStart`; a writeRow "
+            "reserves `observedVersion` alone and every other key names an entity member)"
         )
     if _is_temporal_entity(meta, entity_name):
         return (
@@ -4080,7 +4081,8 @@ _MILESTONE_EDGE_KEYS: Final[frozenset[str]] = frozenset({"observedTxStart", "obs
 def _refuse_unentitled_observed_edge(
     case: case_format.Case, when: Mapping[str, object], *, is_temporal: bool
 ) -> None:
-    """Refuse an observed-milestone edge the conflict target cannot consume.
+    """Refuse an observation coordinate the conflict target or attempt cannot
+    consume.
 
     Two entitlements, both decided here because both are properties of the CASE
     rather than of any one attempt's arithmetic (`m-case-format`, *Naming the
@@ -4088,26 +4090,35 @@ def _refuse_unentitled_observed_edge(
 
     * a NON-temporal target has no milestones and no edge to name one with, so
       the coordinates would be read by nothing — the versioned conflict path
-      never looks at them;
+      never looks at them. That holds wherever they are spelled, so the root
+      ``when`` and every attempt are checked alike;
     * a RETRY attempt re-reads state the concurrent writer left behind, while an
       edge selects among the milestones the case's own loaded fixtures hold. The
       two cannot be reconciled without a resolving read no lane performs, so the
-      observation form is single-attempt only and a retry names its address
-      directly.
+      OBSERVATION form is single-attempt only and a retry names its address
+      directly. A temporal attempt's own ``observedTxStart`` is the address
+      form's gate candidate and stays legal.
 
     The Transaction-Time-Only arm of the first entitlement lives where the edge
     is built (:func:`temporal_state.observed_edge`), which refuses a coordinate
     on an axis the target does not declare.
     """
-    if not is_temporal and any(key in when for key in _MILESTONE_EDGE_KEYS):
-        raise EngineError(
-            f"{case.path.name}: a NON-temporal conflict target has no milestone to observe, "
-            f"so it may author neither of {sorted(_MILESTONE_EDGE_KEYS)}"
-        )
     raw_attempts = when.get("attempts")
-    if not isinstance(raw_attempts, list):
-        return
-    for index, attempt in enumerate(cast("list[Mapping[str, object]]", raw_attempts)):
+    attempts = (
+        cast("list[Mapping[str, object]]", raw_attempts) if isinstance(raw_attempts, list) else []
+    )
+    if not is_temporal:
+        for pointer, source in [
+            ("`when`", when),
+            *((f"attempt {index}", attempt) for index, attempt in enumerate(attempts)),
+        ]:
+            if any(key in source for key in _MILESTONE_EDGE_KEYS):
+                raise EngineError(
+                    f"{case.path.name}: a NON-temporal conflict target has no milestone to "
+                    f"observe, so it may author neither of {sorted(_MILESTONE_EDGE_KEYS)} "
+                    f"({pointer})"
+                )
+    for index, attempt in enumerate(attempts):
         if "observedValidStart" in attempt:
             raise EngineError(
                 f"{case.path.name}: attempt {index} names its observed milestone's edge "
