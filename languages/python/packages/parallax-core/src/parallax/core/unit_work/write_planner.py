@@ -64,6 +64,7 @@ from parallax.core.unit_work.columns import (
     freeze_retained_value,
 )
 from parallax.core.unit_work.instructions import (
+    INSERT_MUTATIONS,
     KeyedWrite,
     PredicateWrite,
     WriteInstruction,
@@ -154,7 +155,6 @@ _FINALIZED_VERBS: Final[frozenset[str]] = frozenset({"insert", "update", "delete
 # materialize to keyed writes long before finalization.
 _READLESS_VERBS: Final[frozenset[str]] = frozenset({"update", "delete"})
 
-_INSERT_VERBS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
 _UPDATE_VERBS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
 _DELETE_VERBS: Final[frozenset[str]] = frozenset({"delete", "terminate", "terminateUntil"})
 
@@ -308,15 +308,16 @@ class WritePlanner:
                 result.append(item)
                 continue
             verb = instruction.mutation
-            if verb in _INSERT_VERBS:
+            if verb in INSERT_MUTATIONS:
                 result.append(item)
                 pending_insert[key] = len(result) - 1
             elif verb in _UPDATE_VERBS and key in pending_insert:
                 index = pending_insert[key]
                 base = result[index]
-                # An insert carries no observation, so a pending-insert slot is
-                # always a bare instruction — and folding an update into it
-                # yields an insert, which is why the merged item stays bare.
+                # An `ObservedKeyedWrite` refuses to wrap an insert, so a
+                # pending-insert slot is always a bare instruction — and folding
+                # an update into it yields an insert, which is why the merged
+                # item stays bare.
                 assert isinstance(base, KeyedWrite)
                 result[index] = _merge_update_into_insert(base, instruction, resolved)
             elif verb in _DELETE_VERBS and key in pending_insert:
@@ -355,10 +356,16 @@ class WritePlanner:
             run.clear()
 
         # A write carrying an observation is never merged into a multi-row run:
-        # a multi-row statement has no way to carry a per-row gate. It reaches
-        # the `else` branch below as its own singleton, because carrying an
-        # observation IS being wrapped — no map and no key recomputation decides
-        # it, for versioned and temporal alike.
+        # a merged statement shares ONE address, ONE assignment shape, and ONE
+        # affected-row total, while every fact an observation licenses is
+        # per-row — the milestone a close addresses, the version it advances
+        # from, the gate it binds under optimistic mode, and the single row each
+        # of those expects to affect. The exclusion therefore holds in locking
+        # mode too, where the settled write is Ungated and only the address, the
+        # advance, and the attribution are at stake. It reaches the `else`
+        # branch below as its own singleton, because carrying an observation IS
+        # being wrapped — no map and no key recomputation decides it, for
+        # versioned and temporal alike.
         for item in buffer:
             if isinstance(item, KeyedWrite) and len(item.rows) == 1:
                 item_group = group_key(item)
@@ -397,7 +404,7 @@ class WritePlanner:
             return buffered_instruction(item).mutation
 
         def order_region(region: Sequence[BufferItem]) -> list[BufferItem]:
-            inserts = [i for i in region if mutation(i) in _INSERT_VERBS]
+            inserts = [i for i in region if mutation(i) in INSERT_MUTATIONS]
             updates = [i for i in region if mutation(i) in _UPDATE_VERBS]
             deletes = [i for i in region if mutation(i) in _DELETE_VERBS]
             inserts.sort(key=rank)
@@ -1514,8 +1521,12 @@ def _canonical_item(item: BufferItem, resolved: Targets) -> BufferItem:
     Only an OPENING row is canonicalized. A revising one is sparse — an unnamed
     member there is untouched rather than zero — so adding the occurrence would turn
     a member the caller left alone into one the statement assigns.
+
+    Passing an observation carrier through untouched loses no opening row: an
+    ``ObservedKeyedWrite`` refuses to wrap an insert, so every carrier is a
+    revising write by construction.
     """
-    if not isinstance(item, KeyedWrite) or item.mutation not in _INSERT_VERBS:
+    if not isinstance(item, KeyedWrite) or item.mutation not in INSERT_MUTATIONS:
         return item
     entity = resolved.entity(item.entity)
     if entity is None:

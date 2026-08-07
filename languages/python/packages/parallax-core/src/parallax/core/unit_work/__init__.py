@@ -46,6 +46,7 @@ from parallax.core.unit_work.effects import (
     enforce_affected_rows,
 )
 from parallax.core.unit_work.instructions import (
+    INSERT_MUTATIONS,
     KeyedMutation,
     KeyedWrite,
     PredicateMutation,
@@ -64,6 +65,7 @@ from parallax.core.unit_work.materialized import (
     ObservedKeyedWrite,
     TemporalColumns,
     VersionColumns,
+    buffered_write,
 )
 from parallax.core.unit_work.observe import (
     HISTORICAL_PINNED,
@@ -206,6 +208,7 @@ __all__ = [
     "CHANGED_STATE",
     "HISTORICAL_PINNED",
     "INFINITY",
+    "INSERT_MUTATIONS",
     "LATEST_PINNED",
     "MAX_PLUS_ONE",
     "MISSING_TARGET",
@@ -337,6 +340,7 @@ __all__ = [
     "WriteRejectedError",
     "WriteTarget",
     "active_unit_of_work",
+    "buffered_write",
     "capture_subject_identity",
     "deserialize",
     "eager_segment",

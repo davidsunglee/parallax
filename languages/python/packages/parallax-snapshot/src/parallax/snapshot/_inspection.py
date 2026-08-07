@@ -105,8 +105,8 @@ class SnapshotNodeState:
 
 def snapshot_state_of(node: object) -> SnapshotNodeState | None:
     """``node``'s Snapshot state, or ``None`` for anything this lifecycle did not
-    materialize — a fresh instance, an edited copy of one, or another lifecycle's
-    node.
+    materialize — a fresh instance, an edit of a fresh instance, or another
+    lifecycle's node.
 
     An edited copy of a node this lifecycle DID materialize answers that node's
     own state, because an edit preserves every kind of instance state outside the

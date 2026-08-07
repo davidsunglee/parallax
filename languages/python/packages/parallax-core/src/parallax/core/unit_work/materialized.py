@@ -25,7 +25,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core.unit_work.columns import ColumnSlice, PredecessorColumns
-from parallax.core.unit_work.instructions import KeyedWrite, PredicateWrite
+from parallax.core.unit_work.instructions import (
+    INSERT_MUTATIONS,
+    KeyedWrite,
+    PredicateWrite,
+    WriteInstruction,
+)
 from parallax.core.unit_work.observe import TransactionTimeBasis, WriteObservation
 
 __all__ = [
@@ -34,6 +39,7 @@ __all__ = [
     "ObservedKeyedWrite",
     "TemporalColumns",
     "VersionColumns",
+    "buffered_write",
 ]
 
 
@@ -119,10 +125,48 @@ class ObservedKeyedWrite:
     absence stays structural (`m-unit-work`) rather than becoming a null field
     that flows downstream. A write that REQUIRES one and arrives bare is refused
     while it is settled, exactly where it is today.
+
+    Absence being structural cuts both ways, so construction REFUSES an insert:
+    an opening row observes nothing, and a carrier around one would be evidence
+    about a milestone that does not yet exist. That refusal is what lets
+    coalescing fold an update into a pending insert without unwrapping, and lets
+    opening-row canonicalization treat every carrier as a revising write. The
+    other half of the rule — an unversioned Non-Temporal write observes nothing
+    either — is not decidable from an instruction alone (it needs the model), and
+    is settled where the observation is resolved.
     """
 
     instruction: KeyedWrite
     observation: WriteObservation
+
+    def __post_init__(self) -> None:
+        if self.instruction.mutation in INSERT_MUTATIONS:
+            raise ValueError(
+                f"an insert carries no Write Observation: `{self.instruction.mutation}` on "
+                f"{self.instruction.entity!r} buffers bare (m-unit-work: absence is structural)"
+            )
+
+
+def buffered_write(
+    instruction: WriteInstruction, observation: WriteObservation | None
+) -> WriteInstruction | ObservedKeyedWrite:
+    """``instruction`` as the buffer item it travels to planning as: wrapped in
+    its carrier when its verb resolved an observation for it, bare when it
+    resolved none.
+
+    The one place the optional-observation-to-carrier decision is made, so every
+    producer — the developer verbs, the conformance engine's case translation,
+    and the test probes that stand in for both — spells absence the same way and
+    inherits the carrier's own refusals.
+    """
+    if observation is None:
+        return instruction
+    if not isinstance(instruction, KeyedWrite):
+        raise TypeError(
+            "only a keyed write carries a Write Observation; a predicate-selected write "
+            "materializes to a Materialized Write Group with its own observation columns"
+        )
+    return ObservedKeyedWrite(instruction=instruction, observation=observation)
 
 
 def _observation_length(observations: GroupObservations) -> int:

@@ -47,6 +47,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.op_algebra import Operation
 
 __all__ = [
+    "INSERT_MUTATIONS",
     "KeyedMutation",
     "KeyedWrite",
     "PredicateMutation",
@@ -69,8 +70,15 @@ KeyedMutation = Literal[
 # predicate cannot select rows that do not yet exist.
 PredicateMutation = Literal["update", "delete", "terminate", "updateUntil", "terminateUntil"]
 
-_KEYED_MUTATIONS: Final[frozenset[str]] = frozenset(
-    {"insert", "update", "delete", "terminate", "insertUntil", "updateUntil", "terminateUntil"}
+INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
+"""The keyed mutations that OPEN a row rather than write against an existing
+one, which is what makes them the mutations that carry no Write Observation
+(`m-unit-work` "Absence is structural"). Shared so the buffered carrier's own
+refusal and the planner's coalescing both answer "is this an insert?" from one
+definition."""
+
+_KEYED_MUTATIONS: Final[frozenset[str]] = INSERT_MUTATIONS | frozenset(
+    {"update", "delete", "terminate", "updateUntil", "terminateUntil"}
 )
 _PREDICATE_MUTATIONS: Final[frozenset[str]] = frozenset(
     {"update", "delete", "terminate", "updateUntil", "terminateUntil"}

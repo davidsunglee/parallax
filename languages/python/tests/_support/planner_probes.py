@@ -13,9 +13,9 @@ from parallax.core.unit_work import (
     BufferItem,
     KeyedWrite,
     ObjectKey,
-    ObservedKeyedWrite,
     SubjectIdentity,
     WriteObservation,
+    buffered_write,
     object_key,
 )
 
@@ -37,7 +37,10 @@ def observed_buffer(
     A planner-level suite states which objects the transaction observed, which
     is the readable way to author the scenario; the verb that would do the
     resolving is not in play. This turns that statement into what a verb
-    buffers — the instruction travelling with its own observation.
+    buffers — the instruction travelling with its own observation — through the
+    same :func:`~parallax.core.unit_work.buffered_write` a verb uses, so a suite
+    that names an object an insert also writes is refused here exactly as a verb
+    would refuse it.
     """
     if not observations:
         return list(buffer)
@@ -47,10 +50,5 @@ def observed_buffer(
             resolved.append(item)
             continue
         key = object_key(item, model)
-        observation = None if key is None else observations.get(key)
-        resolved.append(
-            item
-            if observation is None
-            else ObservedKeyedWrite(instruction=item, observation=observation)
-        )
+        resolved.append(buffered_write(item, None if key is None else observations.get(key)))
     return resolved

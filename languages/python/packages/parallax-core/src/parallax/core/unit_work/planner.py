@@ -89,9 +89,14 @@ class ObservationKey:
     key at different as-of coordinates observe two different rows, and a slot
     keyed by identity alone would let the second erase the first. Qualifying the
     slot by the observed milestone's own coordinate makes each read evidence
-    about the row it actually saw, and makes two reads of ONE milestone at
-    different pins land in one slot — the same coordinate, so the second
-    observation is a restatement of the first rather than a loss.
+    about the row it actually saw.
+
+    Two reads of ONE milestone at different pins share one coordinate and
+    therefore one slot, and the later read's observation replaces the earlier
+    one. What is preserved is the evidence about the ROW — both reads saw the
+    same persisted state — not everything the observation carries: a property of
+    the READ rather than of the milestone (a Temporal Observation's
+    Transaction-Time Basis) is the later read's.
 
     ``milestone`` is absent for a versioned Non-Temporal row, which has exactly
     one row per primary key and therefore needs no coordinate to be addressed.
@@ -226,9 +231,13 @@ def targets(model: Metamodel) -> Targets:
 # reordering (dependency ordering moves it as ONE block, ranked by its own
 # target entity, never reordering its rows internally). An observed keyed write
 # coalesces and orders exactly as its bare instruction would, and — like an
-# observed write today — never merges into a multi-row batch, because a
-# multi-row statement carries no per-row gate. Both settle directly into Planned
-# Steps at finalization; a frozen Write Plan never carries either type at all.
+# observed write today — never merges into a multi-row batch, because everything
+# an observation licenses is per-row (the milestone the write addresses, the
+# version it advances from, the gate it binds under optimistic mode, and the
+# single row each expects to affect) while a merged statement holds one address,
+# one assignment shape, and one affected-row total. Both settle directly into
+# Planned Steps at finalization; a frozen Write Plan never carries either type
+# at all.
 BufferItem = WriteInstruction | ObservedKeyedWrite | MaterializedWriteGroup
 
 

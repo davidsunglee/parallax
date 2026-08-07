@@ -45,12 +45,11 @@ from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     KeyedMutation,
-    KeyedWrite,
     ObservationKey,
-    ObservedKeyedWrite,
     PredicateWrite,
     UnitOfWork,
     WriteObservation,
+    buffered_write,
     instructions,
     validate_write,
 )
@@ -430,8 +429,8 @@ class Transaction:
         milestone state rather than from a developer's find.
 
         A value naming NO milestone therefore has no observation to resolve and
-        is refused: a fresh instance, an edited copy of one, and a copy carried
-        in from another transaction all carry no lifecycle state, so none of
+        is refused: a fresh instance, an edit of a fresh instance, and a copy
+        carried in from another transaction all carry no lifecycle state, so none of
         them can be closed on the strength of some other observation of the same
         primary key. Closing a milestone is spelled "find it, then close what you
         found".
@@ -517,9 +516,10 @@ class Transaction:
         observation: WriteObservation | None = None,
     ) -> None:
         # `observation` is what the verb resolved for THIS write from the value
-        # it was handed, and it decides which buffer variant is constructed: an
-        # `ObservedKeyedWrite` when there is one, the bare instruction when there
-        # is not. The observation is never an instruction field — a
+        # it was handed, and `buffered_write` turns it into the buffer variant it
+        # implies: an `ObservedKeyedWrite` when there is one, the bare
+        # instruction when there is not. The observation is never an
+        # instruction field — a
         # `WriteInstruction` is a durable, schema-validated document whose
         # `deserialize` refuses the reserved observation control keys outright —
         # so it rides beside the instruction rather than inside it, exactly as a
@@ -557,11 +557,7 @@ class Transaction:
         assert metadata is not None  # `entity` names the written instance's own compiled class
         validate_write(metadata, row, self._meta, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)
-        if observation is None:
-            self._uow.buffer(instruction)
-            return
-        assert isinstance(instruction, KeyedWrite)  # every verb here buffers a keyed write
-        self._uow.buffer(ObservedKeyedWrite(instruction=instruction, observation=observation))
+        self._uow.buffer(buffered_write(instruction, observation))
 
     # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(
