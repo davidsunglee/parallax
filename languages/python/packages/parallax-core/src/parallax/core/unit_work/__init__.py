@@ -48,6 +48,8 @@ from parallax.core.unit_work.effects import (
 )
 from parallax.core.unit_work.instructions import (
     INSERT_MUTATIONS,
+    TEMPORAL_KEYED_WRITE_MULTI_ROW,
+    InstructionRejectedError,
     KeyedMutation,
     KeyedWrite,
     PredicateMutation,
@@ -214,6 +216,7 @@ __all__ = [
     "PREDECESSOR_START",
     "STALE_WRITE",
     "SUPERSEDED",
+    "TEMPORAL_KEYED_WRITE_MULTI_ROW",
     "TERMINATED",
     "UNGATED",
     "UNVERSIONED",
@@ -249,6 +252,7 @@ __all__ = [
     "Infinity",
     "InsertEntry",
     "InsertOrigin",
+    "InstructionRejectedError",
     "KeyTarget",
     "KeyedMutation",
     "KeyedWrite",

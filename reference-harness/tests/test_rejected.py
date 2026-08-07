@@ -45,6 +45,10 @@ from reference_harness.inheritance import (
     resolve_effective_definition,
     validate_family,
 )
+from reference_harness.keyed_write_validate import (
+    TEMPORAL_KEYED_WRITE_MULTI_ROW,
+    validate_keyed_write,
+)
 from reference_harness.metamodel import (
     METAMODEL_INDEX_IDENTITY_DUPLICATE,
 )
@@ -539,6 +543,79 @@ def test_subtype_write_rejects_keyless_set_based_write() -> None:
     with pytest.raises(RejectionError) as exc:
         _subtype_write({"amount": 200.00, "cardNetwork": "Visa"})
     assert exc.value.rule == SUBTYPE_WRITE_SET_BASED_UNSUPPORTED
+
+
+# --- keyed-instruction shape (m-unit-work) ------------------------------------
+#
+# The third `when.write` form. Unlike a bare write row it names its own entity, so
+# the judgement is about the instruction's shape against THAT target's temporal
+# profile rather than about a payload against the model's default write root.
+
+
+def _lease_model():
+    return load_model(_COMPATIBILITY_ROOT, "models/lease.yaml")
+
+
+def _rejected_keyed_doc(instruction: dict[str, Any], rule: str) -> Case:
+    raw = {
+        "model": "models/lease.yaml",
+        "tags": ["m-unit-work"],
+        "shape": "rejected",
+        "when": {"write": instruction},
+        "then": {"rejectedRule": rule},
+    }
+    return Case(path=Path("m-unit-work-999-x.yaml"), raw=raw, model=_lease_model())
+
+
+def test_keyed_write_rejects_plural_rows_on_a_temporal_target() -> None:
+    instruction = {
+        "mutation": "update",
+        "entity": "Lease",
+        "rows": [{"id": 1, "term": "annual"}, {"id": 2, "term": "monthly"}],
+    }
+    with pytest.raises(RejectionError) as exc:
+        validate_keyed_write(_lease_model().entity("Lease"), instruction)
+    assert exc.value.rule == TEMPORAL_KEYED_WRITE_MULTI_ROW
+
+
+def test_keyed_write_accepts_plural_rows_on_a_non_temporal_target() -> None:
+    # The contrast that makes the rule the TARGET's: the same plural shape against
+    # a non-temporal entity of the same model is the set-based flush m-batch-write
+    # collapses, not a refusal.
+    instruction = {
+        "mutation": "update",
+        "entity": "LeaseNote",
+        "rows": [{"id": 1, "text": "first"}, {"id": 2, "text": "second"}],
+    }
+    validate_keyed_write(_lease_model().entity("LeaseNote"), instruction)
+
+
+def test_keyed_write_accepts_a_single_row_on_a_temporal_target() -> None:
+    instruction = {"mutation": "update", "entity": "Lease", "rows": [{"id": 1, "term": "annual"}]}
+    validate_keyed_write(_lease_model().entity("Lease"), instruction)
+
+
+def test_runner_fails_when_a_keyed_instruction_is_accepted() -> None:
+    # A single-row temporal instruction authored as rejected: the validator accepts
+    # it, so the expected pre-SQL rejection never happens.
+    case = _rejected_keyed_doc(
+        {"mutation": "update", "entity": "Lease", "rows": [{"id": 1, "term": "annual"}]},
+        TEMPORAL_KEYED_WRITE_MULTI_ROW,
+    )
+    with pytest.raises(CaseFailure, match="did not match its pre-SQL refusal"):
+        run_case(case, None)  # type: ignore[arg-type]
+
+
+def test_runner_fails_when_a_keyed_instruction_names_an_undeclared_entity() -> None:
+    # A keyed instruction resolves against the handle it authored and nothing else,
+    # so an unknown handle is an authoring failure rather than a silent fallback to
+    # the model's default write root.
+    case = _rejected_keyed_doc(
+        {"mutation": "update", "entity": "Sublease", "rows": [{"id": 1}, {"id": 2}]},
+        TEMPORAL_KEYED_WRITE_MULTI_ROW,
+    )
+    with pytest.raises(CaseFailure, match="does not declare"):
+        run_case(case, None)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("case", _rejected_cases(), ids=[c.path.stem for c in _rejected_cases()])

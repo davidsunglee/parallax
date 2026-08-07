@@ -79,3 +79,17 @@ def test_reachable_rejected_population_spans_every_when_kind() -> None:
     # goes untested.
     kinds = {_when_kind(case) for case in _REACHABLE_REJECTED}
     assert kinds == {"operation", "model", "write"}, kinds
+
+
+def test_reachable_rejected_population_spans_every_write_form() -> None:
+    # `when.write` is itself three-formed, dispatched on the members the input
+    # carries: `target` is a predicate-selected instruction, `rows` a whole keyed
+    # instruction, anything else the bare neutral write row. Each arm resolves its
+    # target differently, so each needs a reachable witness of its own.
+    forms: set[str] = set()
+    for case in _REACHABLE_REJECTED:
+        write = cast("dict[str, Any]", case_document(case).get("when") or {}).get("write")
+        if not isinstance(write, dict):
+            continue
+        forms.add("predicate" if "target" in write else "keyed" if "rows" in write else "row")
+    assert forms == {"predicate", "keyed", "row"}, forms

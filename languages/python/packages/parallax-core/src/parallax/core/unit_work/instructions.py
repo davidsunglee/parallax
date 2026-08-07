@@ -49,6 +49,8 @@ from parallax.core.op_algebra import Operation
 __all__ = [
     "INSERT_MUTATIONS",
     "MILESTONE_MUTATIONS",
+    "TEMPORAL_KEYED_WRITE_MULTI_ROW",
+    "InstructionRejectedError",
     "KeyedMutation",
     "KeyedWrite",
     "PredicateMutation",
@@ -113,8 +115,30 @@ _ASSIGNMENT_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil
 _FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset({"observedVersion", "observedTxStart"})
 
 
+# The classification a plural keyed instruction on a temporal target is refused
+# with, from the closed pre-SQL rejection vocabulary (`m-case-format` Rejected
+# cases).
+TEMPORAL_KEYED_WRITE_MULTI_ROW: Final[str] = "temporal-keyed-write-multi-row"
+
+
 class WriteInstructionError(ValueError):
     """A write-instruction document is not a well-formed canonical instruction."""
+
+
+class InstructionRejectedError(WriteInstructionError):
+    """An instruction violates a model-aware rule of the closed pre-SQL rejection
+    vocabulary, and ``rule`` is its exact classification.
+
+    A subclass rather than a sibling because the violation IS a well-formedness
+    verdict on the instruction — every layer already treating a
+    :class:`WriteInstructionError` as the build-time refusal keeps doing so
+    unchanged — while the added ``rule`` is what lets a negative-validation
+    caller report which normative MUST was broken rather than only that one was.
+    """
+
+    def __init__(self, rule: str, message: str) -> None:
+        super().__init__(message)
+        self.rule = rule
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,6 +514,33 @@ def non_temporal_milestone_refusal(entity_name: str, mutation: str) -> str | Non
     )
 
 
+def temporal_singleton_refusal(entity_name: str, instruction: WriteInstruction) -> str | None:
+    """Why a TEMPORAL target refuses ``instruction``'s ROW COUNT, or ``None``
+    when this rule has nothing to say about it.
+
+    Reached only once the caller has established that ``entity_name``'s
+    inheritance family DOES derive an As-Of Axis — the converse half of
+    :func:`non_temporal_milestone_refusal`'s quadrant, and temporality is again
+    the whole question. Each row of a milestone chain closes its own current
+    milestone, consumes its own Temporal Observation, and opens its own
+    successors, and a temporal entity never collapses into a set-based statement
+    (`m-batch-write`), so several rows under one keyed instruction denote several
+    independent chains rather than one wider write (`m-unit-work` "A temporal
+    keyed instruction carries exactly one row").
+
+    ``None`` for a predicate-selected instruction, which carries no rows at all,
+    and for the single-row keyed shape the rule admits.
+    """
+    if not isinstance(instruction, KeyedWrite) or len(instruction.rows) == 1:
+        return None
+    return (
+        f"{entity_name!r}: a keyed {instruction.mutation!r} on a temporal target carries "
+        f"{len(instruction.rows)} rows — a temporal keyed instruction carries exactly one "
+        "(m-unit-work), since each row closes its own milestone, consumes its own "
+        "observation, and chains its own successors; author one instruction per row"
+    )
+
+
 def _derives_as_of_axes(model: AcceptedMetamodel, entity: EntityMetadata) -> bool:
     """Whether ``entity``'s inheritance FAMILY derives an As-Of Axis.
 
@@ -568,16 +619,23 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     the sharing neither scope could otherwise reach across the
     `core/spec/modules.md` section 7 DAG).
 
-    Last, for BOTH shapes, ONE quadrant of target/mutation applicability: a
-    target whose family derives no As-Of Axis refuses a milestone verb
-    (:func:`non_temporal_milestone_refusal`). This is a rule about the target
-    rather than about the instruction, so it is asked here rather than in
-    :func:`deserialize`, and it is asked of the whole write surface: without it a
-    milestone verb aimed at a versioned non-temporal target reaches the
-    materializing resolve and settles as an ordinary row write, keeping the row
-    effect and dropping the bounded-temporal meaning the verb was chosen for.
+    Last, for BOTH shapes, the target's temporal profile decides one rule per
+    side. A target whose family derives NO As-Of Axis refuses a milestone verb
+    (:func:`non_temporal_milestone_refusal`); a target whose family DOES derive
+    one refuses a plural keyed instruction
+    (:func:`temporal_singleton_refusal`, classified
+    ``temporal-keyed-write-multi-row``). Both are rules about the target rather
+    than about the instruction alone, so they are asked here rather than in
+    :func:`deserialize`, and both are asked of the whole write surface. Without
+    the first, a milestone verb aimed at a versioned non-temporal target reaches
+    the materializing resolve and settles as an ordinary row write, keeping the
+    row effect and dropping the bounded-temporal meaning the verb was chosen
+    for. Without the second, a plural chain survives to
+    :mod:`parallax.core.unit_work.write_planner`, whose own settle-time refusal
+    stays the last structural backstop before SQL but can no longer name the
+    ingress that authored it.
 
-    That quadrant is the whole of it, and `m-case-format`'s rule that the
+    Those two are the whole of it, and `m-case-format`'s rule that the
     model-aware validator "requires only the temporal coordinates the target
     profile uses" is NOT yet enforced here. A TEMPORAL target's verb goes
     unmeasured, so a `delete` `python.md` rejects is accepted, and no bound is
@@ -618,7 +676,11 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
                 inheritance.validate_write_assignment(model, entity, member, assignment.value)
             except inheritance.WriteAssignmentError as exc:
                 raise WriteInstructionError(str(exc)) from exc
-    if not _derives_as_of_axes(model, entity):
+    if _derives_as_of_axes(model, entity):
+        plural = temporal_singleton_refusal(entity.identity.name, instruction)
+        if plural is not None:
+            raise InstructionRejectedError(TEMPORAL_KEYED_WRITE_MULTI_ROW, plural)
+    else:
         refusal = non_temporal_milestone_refusal(entity.identity.name, instruction.mutation)
         if refusal is not None:
             raise WriteInstructionError(refusal)

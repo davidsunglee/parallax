@@ -4605,17 +4605,24 @@ def run_rejected_case(case: case_format.Case) -> str:
     drift. A `model` input first passes the raw-descriptor family-invariant
     validator (:func:`_descriptor_family.validate`) for descriptor spellings the
     accepted algebra cannot represent, then runs through the same complete Model
-    Formation profile as every reusable model. A `write` input is
-    resolved against the model's default entity (`_rejected_target`'s own
-    convention, reused here — the family root when the model declares one,
-    else the model's single entity, since a rejected `when.write` carries no
-    explicit handle), DECODED to native carriers (:func:`decode_write_row` —
-    the case authors this row in the SAME wire spellings a read golden uses,
-    never the native form the developer-facing validator now requires), and
-    checked by the shared `validate_write`
-    (`m-value-object` write validation x `m-inheritance` concrete-subtype
-    write protocol) — the SAME validator the developer transaction verbs call
-    at buffer time (`Transaction._buffer`), so the two paths cannot drift.
+    Formation profile as every reusable model.
+
+    A `write` input is one of three, dispatched on the members the input itself
+    carries (`m-case-format` Rejected cases) — never on the case's tags or
+    filename. A `target` names a predicate-selected instruction; `rows` names a
+    keyed instruction, which brings its own `entity` handle
+    (:func:`_rejected_keyed_write`); anything else is the bare neutral write row
+    (①), which names no handle at all and is therefore resolved against the
+    model's default entity (`_rejected_target`'s own convention, reused here —
+    the family root when the model declares one, else the model's single
+    entity), DECODED to native carriers (:func:`decode_write_row` — the case
+    authors this row in the SAME wire spellings a read golden uses, never the
+    native form the developer-facing validator now requires), and checked by the
+    shared `validate_write` (`m-value-object` write validation x `m-inheritance`
+    concrete-subtype write protocol) — the SAME validator the developer
+    transaction verbs call at buffer time (`Transaction._buffer`), so the two
+    paths cannot drift.
+
     Raises :class:`EngineError` if the input is unexpectedly accepted (no rule
     violation detected) — the caller compares the returned rule against the
     case's `then.rejectedRule`.
@@ -4688,6 +4695,8 @@ def run_rejected_case(case: case_format.Case) -> str:
             f"{case.path.name}: the model-aware validator accepted a predicate write the "
             "case expects rejected pre-SQL"
         )
+    if "rows" in row:
+        return _rejected_keyed_write(case, row, model)
     target = case_entity(model, meta.entity(_rejected_target(meta)))
     try:
         validate_write(target, decode_write_row(target, row, model), model)
@@ -4696,6 +4705,44 @@ def run_rejected_case(case: case_format.Case) -> str:
     raise EngineError(
         f"{case.path.name}: the model-aware validator accepted a write the case expects "
         "rejected pre-SQL"
+    )
+
+
+def _rejected_keyed_write(
+    case: case_format.Case, authored: Mapping[str, object], model: AcceptedMetamodel
+) -> str:
+    """Grade a rejected `when.write` that is a KEYED INSTRUCTION, returning the rule.
+
+    A keyed instruction names its own `entity`, so unlike the bare neutral write
+    row beside it this input needs no default-target convention: the handle it is
+    validated against is the one it authored. The canonical document is rebuilt
+    from the instruction members alone, exactly as the writeSequence/scenario
+    producer rebuilds it — the case format's `at` is harness Clock context and
+    never an instruction field (`m-unit-work`), so it is not carried across.
+
+    The refusal is the shared build-time
+    :func:`~parallax.core.unit_work.instructions.validate_instruction`'s — the
+    SAME validator `Transaction._buffer` runs before it buffers anything — so
+    this lane and the developer path classify one instruction identically.
+    """
+    doc: dict[str, object] = {
+        key: authored[key]
+        for key in ("mutation", "entity", "rows", "validFrom", "until")
+        if key in authored
+    }
+    try:
+        instruction = instructions.deserialize(doc)
+    except (
+        instructions.WriteInstructionError
+    ) as exc:  # pragma: no cover - schema validation owns malformed writes
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    try:
+        instructions.validate_instruction(instruction, model)
+    except instructions.InstructionRejectedError as exc:
+        return exc.rule
+    raise EngineError(
+        f"{case.path.name}: the model-aware validator accepted a keyed write instruction the "
+        "case expects rejected pre-SQL"
     )
 
 

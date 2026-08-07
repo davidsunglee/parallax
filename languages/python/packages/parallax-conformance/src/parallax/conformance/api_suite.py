@@ -1069,11 +1069,22 @@ _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON: Final[str] = (
     "observable is a rejected model, not a developer verb an idiomatic story can narrate"
 )
 
+_TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON: Final[str] = (
+    "the rule is live and enforced on the developer path — `validate_instruction` refuses a "
+    "plural keyed instruction on a temporal target before `Transaction._buffer` buffers it, "
+    "and `WritePlanner._settle_temporal` refuses it again as the last structural check before "
+    "SQL — but the CASE's own authored shape has no idiomatic spelling: every typed keyed verb "
+    "(`tx.update` / `tx.terminate` / their bounded siblings) takes ONE instance and emits an "
+    "instruction of one row, so no sequence of developer calls can construct the plural "
+    "instruction this case authors. A permanent structural non-fit, not a deferred story"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     "m-unit-work-013": _WRITE_EFFECT_CLASSIFICATION_REASON,
     "m-unit-work-014": _WRITE_EFFECT_CLASSIFICATION_REASON,
+    "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     # (the locking-mode advance has an idiomatic story, m-opt-lock-002)        #
     "m-opt-lock-005": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,

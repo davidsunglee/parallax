@@ -29,6 +29,7 @@ from referencing import Registry
 
 from .case import Entity
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
+from .keyed_write_validate import validate_keyed_write
 from .metamodel import validate_index_identities
 from .operation_references import collect_reference_classes
 from .predicate_write_validate import (
@@ -221,20 +222,19 @@ def _keyed_member_names(entity_defs: list[dict[str, Any]], entity_name: str) -> 
     return names
 
 
-def _is_temporal_entity(entity_defs: list[dict[str, Any]], entity_name: str) -> bool:
-    """Whether *entity_name* is temporal, resolved over its inheritance family.
+def _effective_entity(entity_defs: list[dict[str, Any]], entity_name: str) -> Entity | None:
+    """*entity_name*'s effective definition, or ``None`` when it is undeclared.
 
     A descendant declares no temporality of its own and inherits the root's
-    profile unchanged (`m-inheritance`), so the answer comes from the effective
-    definition rather than the entity's own declaration — a concrete temporal
-    subtype is temporal here even though it declares no axis.
-
-    ``False`` for an undeclared entity; the caller reports that separately.
+    profile unchanged (`m-inheritance`), so every model-aware judgement about a
+    keyed entry reads the effective definition rather than the entity's own
+    declaration — a concrete temporal subtype is temporal here even though it
+    declares no axis. The caller reports an undeclared entity separately.
     """
     try:
-        return Entity(definition=resolve_effective_definition(entity_defs, entity_name)).is_temporal
+        return Entity(definition=resolve_effective_definition(entity_defs, entity_name))
     except (KeyError, RejectionError):
-        return False
+        return None
 
 
 def _validate_buffered_write(
@@ -258,9 +258,10 @@ def _validate_buffered_write(
       since each row closes its own milestone, consumes its own observation, and
       chains its own successors. The row count a keyed entry may carry depends on
       whether its target is temporal, which only the model knows, so the schema
-      states the general one-or-more bound and the singleton is decided here — at
-      the authoring boundary both implementations read, rather than separately
-      inside each.
+      states the general one-or-more bound and the singleton is decided by
+      :func:`~reference_harness.keyed_write_validate.validate_keyed_write` — the
+      SAME function the `rejected` lane's keyed `when.write` reaches, so a buffer
+      entry and a rejected instruction cannot be judged differently.
 
     Same-object coalescing is NOT a structural property of the buffer: a general buffer
     legitimately spans different entities and different primary-key identities (a mixed
@@ -284,17 +285,15 @@ def _validate_buffered_write(
         if not isinstance(entity_name, str):
             continue  # the case schema owns the missing/malformed entity error
         members = _keyed_member_names(entity_defs, entity_name)
-        if members is None:
+        entity = _effective_entity(entity_defs, entity_name)
+        if members is None or entity is None:
             errors.append(f"{entry_label}: keyed write entity {entity_name!r} is not declared")
             continue
+        try:
+            validate_keyed_write(entity, instruction)
+        except RejectionError as exc:
+            errors.append(f"{entry_label}: {exc.detail}")
         rows = instruction.get("rows", [])
-        if len(rows) > 1 and _is_temporal_entity(entity_defs, entity_name):
-            errors.append(
-                f"{entry_label}: a keyed write on the temporal entity {entity_name!r} carries "
-                f"{len(rows)} rows — a temporal keyed instruction carries exactly one "
-                f"(m-unit-work), since each row closes its own milestone and chains its own "
-                f"successors; author one buffer entry per row"
-            )
         for row in rows:
             if not isinstance(row, dict):
                 continue
