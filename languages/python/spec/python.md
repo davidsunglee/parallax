@@ -1201,6 +1201,15 @@ members. The `model_*` reservation is checked the same way and for the same
 reason: an unannotated `def model_copy` in a class body is a binding rather than
 a declared member, and admitting it would reinstate a copy door §3 refuses.
 
+Every family is checked against the class body as authored, which makes the
+reservation an authoring rule rather than a barrier. A name that reaches the
+class object some other way is outside it — one a class-body descriptor's
+`__set_name__` installs while the class is being created, or one assigned onto
+the class once it exists — and outside anything class creation could check, since
+a plain assignment reaches the same binding whatever the class body was permitted
+to say. What the reservation owes an author is a rejection where the collision is
+written.
+
 #### Relationships — `Rel[T]` and `rel(...)`
 
 `Rel[T]` is the sole relationship annotation and `rel(...)` is required. The
@@ -2434,8 +2443,8 @@ or descriptor authoring form and performs no audit stamping.
   cache a class writes into `self.__dict__` by hand declares nothing, so it is
   carried like any other slot. Reading the descriptor off the class also confines
   the rule to names a class may declare: the framework's own `__parallax_` prefix
-  is reserved from every declaration's class body (§2), so no declaration can
-  present a lifecycle's state or a Change Record as derived.
+  is reserved from every declaration's class body (§2), so no class body declares
+  a lifecycle's state or a Change Record derived.
 
   The copy carries the source's `Pin` too, which makes the read-only rule
   indifferent to how the write was authored: an Edited Copy of a view pinned at

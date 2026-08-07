@@ -140,25 +140,33 @@ is never a Domain Model candidate.
 """
 
 FRAMEWORK_NAME_PREFIX: Final = "__parallax_"
-"""The prefix carried by the private class markers and instance slots the
-framework binds, and which no declaration of any kind may author.
+"""The prefix carried by the framework's own private bindings, which no
+declaration of any kind may author: the class markers the engine puts on a
+declared class, the private slots it puts on an instance, and the
+``__parallax_document__`` renderer every Value Object serializes itself through.
 
-The framework also binds names outside this prefix — Pydantic's
-``model_config``, the copy verb ``edit``, the injected temporal members — but
-those are part of the surface a declaration reads and calls, so they are
-reserved by name (:data:`RESERVED_MEMBER_NAMES`) rather than by prefix. What the
-prefix covers is only what a declaration never names, which is why reserving the
-whole prefix rather than enumerating it stays correct as markers and slots are
-added, and why the reservation can be total: it applies to every Entity and
-Value Object class body alike, and only a framework root — the framework
-declaring itself — binds under it.
+The framework's public bindings sit outside this prefix, and each is reserved by
+the rule that owns it rather than by this one: the copy verb ``edit`` and the
+query-root and introspection spellings by name
+(:data:`RESERVED_MEMBER_NAMES`), Pydantic's ``model_config`` by the ``model_*``
+namespace rule, and the injected temporal members by the canonical-name rule
+that runs on a family extending a temporal root. What the prefix covers is only
+what a declaration never names, which is why reserving the whole prefix rather
+than enumerating it stays correct as markers and slots are added, and why the
+reservation can be total: it applies to every Entity and Value Object class body
+alike, and only a framework root — the framework declaring itself — binds under
+it.
 
-What it protects is that the framework's own state cannot be shadowed by a
-declaration: a class-body binding under one of these names answers every
-ordinary read the framework's own value would answer, and a
-``functools.cached_property`` spelled under one is worse than a shadow — the edit
-surface reads a derived cache off the class, so such a binding would have an
-edited copy recompute the author's answer in place of the state it carried."""
+What it protects is that no class body shadows one of those bindings: a body
+binding under one of these names answers every ordinary read the framework's own
+value would answer, and a ``functools.cached_property`` spelled under one is
+worse than a shadow — the edit surface reads a derived cache off the class, so
+such a binding would have an edited copy recompute the author's answer in place
+of the state it carried. The rule reads the class body as authored, which makes
+it an authoring rule and not a barrier: a name put on the class object after its
+namespace is scanned — by a descriptor's ``__set_name__``, or by a plain
+assignment once the class exists — is outside this rule, as it is outside
+anything class creation could check."""
 
 _KIND: Final = "__parallax_kind__"
 _AXES: Final = "__parallax_framework_axes__"
@@ -1407,14 +1415,15 @@ def _reserved_name_reason(py_name: str, kind: DeclarationKind) -> str | None:
 
     The framework's own prefix (:data:`FRAMEWORK_NAME_PREFIX`) is answered first
     and separately, because what a binding under it takes is not a member surface
-    but the framework's own class markers and instance slots — which both kinds
-    carry, so the two reservations that hold whatever a declaration is come
-    first, and only the Entity surface names follow.
+    but one of the framework's own private bindings — which both kinds carry, so
+    the two reservations that hold whatever a declaration is come first, and only
+    the Entity surface names follow.
     """
     if py_name.startswith(FRAMEWORK_NAME_PREFIX):
         return (
-            f"the `{FRAMEWORK_NAME_PREFIX}` prefix names the framework's own class markers and "
-            "instance slots, which a declaration may not bind"
+            f"the `{FRAMEWORK_NAME_PREFIX}` prefix names the framework's own private bindings — "
+            "its class markers, its instance slots, and the renderer a Value Object serializes "
+            "itself through — which a declaration may not bind"
         )
     if py_name.startswith("model_"):
         return "the `model_*` namespace is reserved by Pydantic"
