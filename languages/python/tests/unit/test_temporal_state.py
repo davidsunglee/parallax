@@ -335,3 +335,58 @@ def test_advance_replaces_tracked_state_with_the_newly_opened_rows() -> None:
         "txStart": "2024-01-01T00:00:00+00:00",
         "txEnd": "infinity",
     }
+
+
+def test_an_edge_naming_an_axis_the_target_does_not_declare_is_refused() -> None:
+    # `observedValidStart` names a Valid-Time start, and a Transaction-Time-Only
+    # target's milestones have none. Dropping the coordinate would resolve the
+    # write against a milestone the author never named, so the edge is refused
+    # where it is built rather than silently narrowed to the declared axis.
+    with pytest.raises(MilestoneEdgeError, match="declares no valid-time axis"):
+        observed_edge(
+            BALANCE,
+            BALANCE_ENTITY,
+            valid_start="2024-01-01T00:00:00+00:00",
+            tx_start="2024-04-01T00:00:00+00:00",
+        )
+
+
+def test_two_tracked_milestones_of_one_key_sharing_an_edge_are_refused() -> None:
+    # An edge names exactly one milestone, so a state holding two current
+    # milestones of one key at one edge is unaddressable: keeping the later would
+    # hand every subsequent step a row no case selected.
+    shadow = TemporalShadow()
+    twin = {**_TAIL, "value": 300.00, "validStart": _HEAD["validStart"]}
+    with pytest.raises(AmbiguousObservationError, match="carry the edge"):
+        shadow.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD, twin])
+
+
+def test_a_transaction_time_only_targets_edge_names_its_one_declared_axis() -> None:
+    # An edge is a coordinate per DECLARED axis, so a Transaction-Time-Only
+    # target's edge carries the Transaction-Time start alone and still selects
+    # its milestone — the same shared derivation the tracker keys its own slots
+    # by, one axis narrower.
+    shadow = TemporalShadow()
+    shadow.seed_fixtures(
+        BALANCE,
+        BALANCE_ENTITY,
+        [
+            {
+                "id": 1,
+                "acctNum": "A",
+                "value": 150.00,
+                "txStart": "2024-06-01T00:00:00+00:00",
+                "txEnd": "infinity",
+            }
+        ],
+    )
+    observation = shadow.resolve(
+        BALANCE,
+        BALANCE_ENTITY,
+        {"id": 1},
+        observed_edge(
+            BALANCE, BALANCE_ENTITY, valid_start=None, tx_start="2024-06-01T00:00:00+00:00"
+        ),
+    )
+    assert observation is not None
+    assert observation.predecessor.member("value") == 150.00

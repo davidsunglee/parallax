@@ -9,19 +9,24 @@
 # current milestone and chains its successor, ungated, exactly as if the audit read had
 # never happened.
 #
-# The semantic distinction is what the audit read may NOT do. The two reads observe two
-# DIFFERENT milestones of one key, so an implementation whose observations are keyed by
-# identity alone holds only one of them and the second read displaces the first. The
-# write is then licensed — or refused — by evidence about a milestone it never touched.
-# Neither outcome is conforming: an observation is keyed by the milestone it observed,
-# so the two reads occupy two slots and the write settles against the one its own value
-# came from. Reading history is an observation, never a demotion of what a transaction
-# may write.
+# The semantic distinction is that the audit read revokes nothing. There is no
+# locking-mode license for a temporal close to hold or lose: the close is licensed by
+# the shared read lock its own observing read took on the milestone it addresses, and
+# nothing about any OTHER read of the same key can withdraw that. An implementation that
+# treated the transaction's most recent read of a key as what its next write of that key
+# must answer for would refuse this write — it would see a transaction whose last look
+# at Balance id 1 was at a Transaction-Time instant in the past. That refusal is the
+# non-conforming behavior this case rules out; the accepted, ungated, current-milestone
+# close in `then.statements` is the conforming one.
 #
-# The close is ungated in both readings, so the DML alone cannot separate them — what
-# this case grades is that the write is ACCEPTED at all, and that the milestone it
-# closes is the current one the first read observed. `then.tableState` shows the
-# superseded milestone the audit read returned untouched.
+# What this case does NOT grade, so that no reader takes it for more: the milestone this
+# close addresses is resolved from the case's own current state — the one row of Balance
+# id 1 still open on Transaction Time — and NOT from either find step. Both graders work
+# that way (a case supplies the observed rows a write consumes rather than the framework
+# issuing an implicit resolving read), so a scenario write step cannot name which of its
+# unit's own finds it settles against, and nothing here observes how an implementation
+# KEYS the observations its reads record. `then.tableState` shows the superseded
+# milestone the audit read returned untouched.
 model: models/balance.yaml
 tags: [m-opt-lock, m-unit-work, m-txtime-write, m-read-lock, m-temporal-read, temporal, audit-only, as-of, scenario, slice-snapshot-1, slice-managed-1]
 shape: scenario

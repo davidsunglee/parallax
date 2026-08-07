@@ -23,6 +23,7 @@ from reference_harness.case_runner import (
     CaseFailure,
     _assert_conflict_input,
     _assert_scenario_conflict_abort,
+    _conflict_temporal_entity,
     _entry_pairs,
     _has_version_gate,
     _scenario_root_entity,
@@ -411,3 +412,63 @@ def test_a_column_merely_ending_in_the_version_name_is_not_the_gate() -> None:
 
 def test_an_unparsable_statement_carries_no_gate() -> None:
     assert not _has_version_gate("update account set where and", "version", "postgres")
+
+
+def _bitemporal_edge_named_case():
+    """The conflict case that names its observed milestone's own edge."""
+    return copy.deepcopy(next(c for c in _conflict_cases() if "observedValidStart" in c.when))
+
+
+def test_observed_edge_entitlement_holds_for_every_authored_conflict_case() -> None:
+    cases = _conflict_cases()
+    assert cases, "no conflict (m-opt-lock) case discovered"
+    for case in cases:
+        # Must not raise: every authored conflict case either names no observed
+        # milestone at all, or names one on a Bitemporal single-attempt close.
+        _assert_conflict_input(case, "postgres")
+
+
+def test_a_non_temporal_conflict_target_may_not_name_an_observed_milestone() -> None:
+    case = copy.deepcopy(_versioned_conflict_cases()[0])
+    case.when["observedValidStart"] = "2024-01-01T00:00:00+00:00"
+    # A versioned target holds one row per key and no milestone to observe, so
+    # the coordinate is read by nothing: the versioned cross-check below never
+    # looks at it, and the case would grade a claim it never made.
+    with pytest.raises(CaseFailure, match=re.escape("no milestone to observe")):
+        _assert_conflict_input(case, "postgres")
+
+
+def test_a_transaction_time_only_target_may_not_name_a_valid_time_start() -> None:
+    case = copy.deepcopy(
+        next(
+            c
+            for c in _conflict_cases()
+            if (entity := _conflict_temporal_entity(c)) is not None
+            and not any(a["dimension"] == "valid-time" for a in entity.temporal_runtime_axes)
+        )
+    )
+    case.when["observedValidStart"] = "2024-01-01T00:00:00+00:00"
+    # Its milestones carry no Valid-Time start, so the coordinate names an axis
+    # the target has no milestones on — the edge form is Bitemporal-only.
+    with pytest.raises(CaseFailure, match=re.escape("declares no Valid-Time axis")):
+        _assert_conflict_input(case, "postgres")
+
+
+def test_a_retry_attempt_may_not_name_its_observed_milestones_edge() -> None:
+    case = _bitemporal_edge_named_case()
+    edge = case.when.pop("observedValidStart")
+    case.when["attempts"] = [
+        {
+            "statements": case.when.get("statements", []),
+            "affectedRows": 1,
+            "write": {"id": 1},
+            "at": case.when["at"],
+            "observedTxStart": case.when["observedTxStart"],
+            "observedValidStart": edge,
+        }
+    ]
+    # An edge selects among the milestones the case's own fixtures hold, while a
+    # retry re-reads what the concurrent writer left behind. Nothing performs the
+    # resolving read that would reconcile the two.
+    with pytest.raises(CaseFailure, match=re.escape("names its observed milestone")):
+        _assert_conflict_input(case, "postgres")

@@ -1,6 +1,5 @@
 # The close addresses the rectangle its OBSERVATION names, not one its primary key
-# happens to hold (m-bitemp-write + m-unit-work "an observation is keyed by the
-# milestone it observed").
+# happens to hold (m-bitemp-write "The close addresses a Milestone Target").
 #
 # Position id 1 has TWO rectangles current on Transaction Time — R2 (value 100, valid
 # [2024-01-01, 2024-06-01)) and R3 (value 200, valid [2024-06-01, infinity)) — and
@@ -13,16 +12,21 @@
 #
 # That is the semantic distinction, and it is a strictly stronger claim than
 # m-bitemp-write-017's. There the discriminating `thru_z` is AUTHORED — the case
-# states the close's address directly — so an implementation that resolves a write's
-# observation by primary key alone still renders the right statement. Here the address
-# is DERIVED from the one milestone the edge selects, so keying an observation by
-# identity alone cannot produce it: a key holding several current rectangles has no
-# single answer, and whichever rectangle such an implementation picked, one of these
-# two cases binds the other one's `thru_z`.
+# states the close's address directly — so an implementation that never derives an
+# address at all still renders the right statement. Here the address is DERIVED from
+# the one milestone the edge selects, so an implementation that resolves a close's
+# address from the primary key alone cannot produce it: a key holding several current
+# rectangles has no single answer, and whichever rectangle such an implementation
+# picked, one of these two cases binds the other one's `thru_z`.
 #
 # The gate binds that same milestone's own in_z, so a close's address and its gate
 # provably come from ONE observation rather than from two independently authored
 # coordinates.
+#
+# What this case does NOT grade, so that no reader takes it for more: the observed
+# milestone is NAMED by the case, so it is one observation resolved once, from state
+# the case supplies. Nothing here observes how an implementation keys the observations
+# its own reads record, or what happens when one transaction reads a key twice.
 #
 # The close inactivates exactly 1 row: `then.tableState` shows R2 closed at 2024-10-01
 # with R1 and R3 untouched. As in -017 a conflict case runs only that single close, not

@@ -1,29 +1,34 @@
-# Reading one key at two as-of coordinates leaves TWO observations, one per milestone
-# observed — not one slot the later read overwrites (m-unit-work "an observation is
-# keyed by the milestone it observed").
+# Reading one key at two as-of coordinates leaves TWO independently pinned views, and
+# whether a view may be mutated is a property of THAT view rather than of the primary
+# key the two share (m-identity-map "Pinned views over one timeline").
 #
 # Both steps read Position id 1. Step 0 pins it at the finite Valid-Time instant
-# 2024-03-01 with Transaction Time defaulted Latest, observing the rectangle-split head
-# (value 100) — a WRITABLE Valid-Time-past view. Step 1 pins the SAME primary key at
-# the finite Transaction-Time instant 2024-02-01, observing the superseded belief
-# (value 90) — a READ-ONLY view, because the Transaction-Time past is never rewritten.
-# The two coordinates resolve to two DIFFERENT milestones of one key.
+# 2024-03-01 with Transaction Time defaulted Latest, materializing the rectangle-split
+# head (value 100) — a WRITABLE view, because a finite Valid-Time pin is the retroactive
+# correction. Step 1 pins the SAME primary key at the finite Transaction-Time instant
+# 2024-02-01, materializing the superseded belief (value 90) — a READ-ONLY view, because
+# the Transaction-Time past is never rewritten. The two coordinates resolve to two
+# DIFFERENT milestones of one key.
 #
-# The mutation verb then answers per milestone, in both directions: step 2 mutates the
-# view step 0 observed and is ACCEPTED, and step 3 mutates the view step 1 observed and
-# raises `transaction-time-pin-read-only`. Neither observation displaced the other.
+# The mutation verb then answers per view, in both directions: step 2 mutates the view
+# step 0 produced and is ACCEPTED, and step 3 mutates the view step 1 produced and
+# raises `transaction-time-pin-read-only`.
 #
-# That is the semantic distinction. An implementation whose per-object write evidence is
-# keyed by identity alone holds ONE slot for id 1, so step 1's read overwrites step 0's
-# and step 2 is refused on the strength of a milestone its own value never came from —
-# the same slot collision the other way round would license step 3. The verbs disagree
-# about one primary key precisely because they agree about two milestones.
+# That is the semantic distinction, and it is what m-bitemp-write-015 and -016 cannot
+# state: each of those pins ONE view of one key, so each is consistent with an
+# implementation holding a single view per primary key whose mutability the most recent
+# read decides. Here both views are live at once and disagree, so such an implementation
+# fails in one direction or the other — the second read would demote the first view, or
+# the first would license the second.
 #
-# This is an api-conformance-lane case, and what it grades is verb-time acceptance and
-# resolution: a `mutate` step is an in-memory change that emits no DML at all
-# (roundTrips 0, as every mutate step in the corpus does), so which row a later flush
-# would close is NOT observable here. The wire-lane conflict pair
-# (m-bitemp-write-021 / m-opt-lock-021) owns that half of the claim.
+# What this case does NOT grade, so that no reader takes it for more: a `mutate` step is
+# an in-memory change over a snapshot-read view that emits no DML at all (roundTrips 0,
+# as every mutate step in the corpus does) and enrolls the view in no unit of work. No
+# write evidence is recorded and none is consumed, so nothing here observes how an
+# implementation KEYS the observations its reads record, nor which row a later flush
+# would close. The wire-lane pair m-bitemp-write-021 / m-opt-lock-021 grades that a
+# close's address is derived from the milestone its write observed; no case in the
+# corpus grades the keying itself.
 model: models/position.yaml
 lane: api-conformance
 tags: [m-unit-work, m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, scenario, slice-snapshot-1]

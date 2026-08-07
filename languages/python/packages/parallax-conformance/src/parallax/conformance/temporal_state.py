@@ -39,41 +39,41 @@ from parallax.core.unit_work import (
 
 __all__ = [
     "AmbiguousObservationError",
-    "MilestoneEdge",
     "MilestoneEdgeError",
     "TemporalShadow",
     "observed_close_coordinates",
     "observed_edge",
 ]
 
-# One tracked milestone's own EDGE: its guaranteed-selecting start instant per
-# declared as-of axis, in the canonical axis order (Valid Time before Transaction
-# Time). The production analogue is `parallax.core.temporal_read.Edge`, which this
-# tracker cannot use directly: a case's milestone members are the AUTHORED wire
-# spellings (ISO-8601 strings and the `infinity` sentinel), not driver instants.
-MilestoneEdge = tuple[object, ...]
-
-# A tracked milestone's slot: its object identity plus the milestone's own edge.
+# A tracked milestone's slot: its object identity plus the milestone's own edge —
+# `parallax.core.temporal_read.Edge`, the same value the production read side
+# keys an observation by, since every coordinate reaching this module is
+# normalized to a UTC instant before it is stored (:func:`_coordinate`).
 # Identity alone will not do — one key may hold several disjoint Valid-Time
 # rectangles current on Transaction Time at once (`m-bitemp-write`), so a
 # pk-keyed slot silently loses every rectangle but the last one written.
-_ObjectKey = tuple[str, tuple[object, ...], MilestoneEdge]
+_ObjectKey = tuple[str, tuple[object, ...], temporal_read.Edge]
 
 
 class AmbiguousObservationError(ValueError):
-    """Several current milestones are tracked for one (entity, pk) and the input
-    handled here named no edge to choose between them — several disjoint
-    Valid-Time rectangles of one key may be current on Transaction Time
-    (`m-bitemp-write.md`), so this tracker refuses rather than silently guessing
-    which candidate a later step means. The remedy is to name the observed
-    milestone's own edge, which a conflict case authors beside its write."""
+    """This tracker cannot name one milestone, so it refuses rather than
+    silently guessing which one a later step means. Two shapes reach it: several
+    current milestones are tracked for one (entity, pk) and the input named no
+    edge to choose between them — several disjoint Valid-Time rectangles of one
+    key may be current on Transaction Time (`m-bitemp-write.md`), and the remedy
+    is to name the observed milestone's own edge, which a conflict case authors
+    beside its write; or two tracked milestones of one key carry the SAME edge,
+    which no edge could tell apart, so the state itself is unaddressable."""
 
 
 class MilestoneEdgeError(ValueError):
-    """An observed milestone's edge names fewer axes than the target declares, so
-    it selects no milestone at all. An edge is the guaranteed-selecting start
-    instant per declared axis (`m-temporal-read`); a coordinate short of one is
-    not a partial name for a milestone, it is a name for none."""
+    """An observed milestone's edge does not name the target's declared as-of
+    axes: it is short of one, or it supplies a coordinate for an axis the target
+    does not declare. An edge is the guaranteed-selecting start instant per
+    DECLARED axis (`m-temporal-read`), so either way it selects no milestone —
+    a coordinate short of one axis is not a partial name for a milestone, and a
+    coordinate on an undeclared axis names an axis the target has no milestones
+    on."""
 
 
 class TemporalShadow:
@@ -113,14 +113,14 @@ class TemporalShadow:
             if row.get(tx_end) != "infinity":
                 continue  # not current on Transaction Time
             key = self._key(entity_name, pk_names, start_names, row)
-            self._current[key] = TemporalObservation(predecessor=PredecessorRow(members=row))
+            self._track(key, TemporalObservation(predecessor=PredecessorRow(members=row)))
 
     def resolve(
         self,
         model: Metamodel,
         entity: EntityMetadata,
         row: Mapping[str, object],
-        edge: MilestoneEdge | None = None,
+        edge: temporal_read.Edge | None = None,
     ) -> TemporalObservation | None:
         """The tracked observation a temporal update/terminate/updateUntil/
         terminateUntil instruction's close/chain consumes, or ``None`` for a
@@ -209,21 +209,39 @@ class TemporalShadow:
         # observes.
         for milestone in opened:
             key = self._key(entity_name, pk_names, start_names, milestone.members)
-            self._current[key] = TemporalObservation(
-                predecessor=PredecessorRow(members=milestone.members)
+            self._track(
+                key, TemporalObservation(predecessor=PredecessorRow(members=milestone.members))
             )
+
+    def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:
+        """Store one milestone in its own slot, refusing a slot already taken.
+
+        An edge names exactly one milestone (`m-case-format`), so two current
+        milestones of one key sharing an edge are a state no case can address:
+        overwriting would silently drop one and hand every later step the other.
+        The independent grader refuses the same state where it scans for the one
+        fixture row an edge selects.
+        """
+        existing = self._current.get(key)
+        if existing is not None and existing.predecessor.members != observation.predecessor.members:
+            entity_name, pk, edge = key
+            raise AmbiguousObservationError(
+                f"{entity_name}: two current milestones of {pk!r} carry the edge {edge!r} — "
+                "an edge names exactly one milestone, so no observation could tell them apart"
+            )
+        self._current[key] = observation
 
     @staticmethod
     def _key(
         entity_name: str,
         pk_names: Sequence[str],
-        start_names: Sequence[str],
+        start_names: Mapping[TemporalDimension, str],
         row: Mapping[str, object],
     ) -> _ObjectKey:
         return (
             entity_name,
             tuple(row[name] for name in pk_names),
-            tuple(_coordinate(row[name]) for name in start_names),
+            _edge({dimension: _coordinate(row[name]) for dimension, name in start_names.items()}),
         )
 
 
@@ -233,30 +251,43 @@ def observed_edge(
     *,
     valid_start: object | None,
     tx_start: object | None,
-) -> MilestoneEdge:
+) -> temporal_read.Edge:
     """The edge coordinate a case authored for the milestone its write observed.
 
-    Built from the SAME axis order and the SAME instant normalization
-    :class:`TemporalShadow` keys its tracked milestones by, so a coordinate the
-    case spells and a milestone the tracker holds agree by shared derivation
-    rather than by two sites being careful. A declared axis the case named
-    nothing for is a coordinate that selects nothing, so it is refused here
-    rather than resolving to some milestone the author did not name.
+    Built from the SAME instant normalization :class:`TemporalShadow` keys its
+    tracked milestones by, so a coordinate the case spells and a milestone the
+    tracker holds agree by shared derivation rather than by two sites being
+    careful.
+
+    The target's DECLARED axes decide which coordinates are legal, in both
+    directions: a declared axis the case named nothing for is refused, and so is
+    a coordinate the case supplied for an axis the target does not declare. The
+    second is what keeps `observedValidStart` a Bitemporal-only control key
+    rather than a field a Transaction-Time-Only case may author and have
+    silently dropped.
     """
+    declared = _declared_dimensions(model, entity)
     supplied: dict[TemporalDimension, tuple[str, object | None]] = {
         TemporalDimension.VALID_TIME: ("valid-time", valid_start),
         TemporalDimension.TRANSACTION_TIME: ("transaction-time", tx_start),
     }
-    coordinates: list[object] = []
-    for dimension in _declared_dimensions(model, entity):
-        spelling, value = supplied[dimension]
+    coordinates: dict[TemporalDimension, dt.datetime] = {}
+    for dimension, (spelling, value) in supplied.items():
+        if dimension not in declared:
+            if value is not None:
+                raise MilestoneEdgeError(
+                    f"{entity.identity.name}: an observed milestone's edge names the target's "
+                    f"declared as-of axes, and this target declares no {spelling} axis to "
+                    f"carry the start {value!r}"
+                )
+            continue
         if value is None:
             raise MilestoneEdgeError(
                 f"{entity.identity.name}: an observed milestone's edge names every declared "
                 f"as-of axis, and the {spelling} start is missing"
             )
-        coordinates.append(_coordinate(value))
-    return tuple(coordinates)
+        coordinates[dimension] = _coordinate(value)
+    return _edge(coordinates)
 
 
 def observed_close_coordinates(
@@ -309,15 +340,25 @@ def _declared_dimensions(model: Metamodel, entity: EntityMetadata) -> tuple[Temp
     return (TemporalDimension.TRANSACTION_TIME,)
 
 
-def _axis_start_names(model: Metamodel, entity: EntityMetadata) -> tuple[str, ...]:
-    """``entity``'s family-effective axis START Attribute names, in canonical axis
-    order — the members an edge is made of (`m-temporal-read`: a milestone's edge
-    is its guaranteed-selecting from-instant per axis, and an axis END never
-    participates)."""
-    return tuple(
-        _axis_names(model, entity, dimension)[0]
-        for dimension in _declared_dimensions(model, entity)
+def _edge(coordinates: Mapping[TemporalDimension, dt.datetime]) -> temporal_read.Edge:
+    """One milestone's edge from its per-axis start instants. An axis absent from
+    ``coordinates`` is one the target does not declare, which is exactly what an
+    :class:`~parallax.core.temporal_read.Edge` spells as ``None``."""
+    return temporal_read.Edge(
+        valid_time=coordinates.get(TemporalDimension.VALID_TIME),
+        tx_time=coordinates.get(TemporalDimension.TRANSACTION_TIME),
     )
+
+
+def _axis_start_names(model: Metamodel, entity: EntityMetadata) -> Mapping[TemporalDimension, str]:
+    """``entity``'s family-effective axis START Attribute name per DECLARED axis —
+    the members an edge is made of (`m-temporal-read`: a milestone's edge is its
+    guaranteed-selecting from-instant per axis, and an axis END never
+    participates)."""
+    return {
+        dimension: _axis_names(model, entity, dimension)[0]
+        for dimension in _declared_dimensions(model, entity)
+    }
 
 
 def _axis_names(

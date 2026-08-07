@@ -167,10 +167,8 @@ class UnitOfWork:
 
         The key names the milestone the observation is *of*, so a second read of
         that milestone at another pin lands in this same slot and overwrites it.
-        The two agree about the row — same persisted state — but not about
-        everything the observation carries: a Temporal Observation's
-        Transaction-Time Basis describes the READ, so what survives is the later
-        read's.
+        The overwrite loses nothing: an observation records the row that was read
+        and nothing about the read that reached it, so the two are equal.
         """
         self._ensure_open()
         self._observations[key] = observation

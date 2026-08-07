@@ -165,9 +165,14 @@ constant `Infinity` on both axes would therefore address the open rectangle and
 silently miss every bounded sibling.
 
 The observed `in_z` rides the **gate**, never the address. That is why an
-optimistic write based on a historical observation still addresses the current
-slot rather than copying a finite historical end into it: closed history is never
-mutated, and the stale gate reports the conflict instead (`m-txtime-write`).
+optimistic write based on a **stale** observation — one that named a current
+rectangle when it was read and that another transaction has since superseded —
+still addresses the current slot rather than copying a finite historical end into
+it: closed history is never mutated, and the stale gate reports the conflict
+instead (`m-txtime-write`). An observation of a rectangle the Transaction-Time
+past holds never reaches planning at all, in either mode: it could only come from
+a view pinned at a finite Transaction-Time instant, which is read-only
+(`m-identity-map`).
 
 ## Composition with inheritance
 

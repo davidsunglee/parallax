@@ -1,7 +1,6 @@
 # The optimistic gate binds the OBSERVED rectangle's own Transaction-Time start, taken
 # from the same observation the close's address came from (m-opt-lock + m-bitemp-write
-# "Address and gate are separate", m-unit-work "an observation is keyed by the
-# milestone it observed").
+# "Address and gate are separate").
 #
 # The sibling of m-bitemp-write-021: same fixtures, same close instant, same optimistic
 # mode, and the OTHER of Position id 1's two current rectangles. This case names R3 by
@@ -15,10 +14,15 @@
 # key may carry the same in_z, so a gate bound from a misresolved observation matches
 # the wrongly addressed row just as readily as the right one, and the close still
 # reports 1 affected row. Address and gate therefore have to come from ONE resolved
-# observation — which is what an edge-keyed observation guarantees and a
-# primary-key-keyed one cannot. An implementation whose gate agreed with its address by
-# construction, while both named a rectangle the write never observed, is
+# observation — which naming the observed milestone forces and resolving from the
+# primary key alone cannot supply. An implementation whose gate agreed with its address
+# by construction, while both named a rectangle the write never observed, is
 # non-conforming here even though every count it reports is right.
+#
+# What this case does NOT grade, so that no reader takes it for more: the same limit
+# m-bitemp-write-021 states. The observed milestone is named by the case and resolved
+# once, so nothing here observes how an implementation keys the observations its own
+# reads record.
 #
 # The close inactivates exactly 1 row: `then.tableState` shows R3 closed at 2024-10-01
 # with R1 and R2 untouched. As in -021 a conflict case runs only that single close, not
