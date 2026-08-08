@@ -46,9 +46,9 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
-    ambiguous_entity_spellings,
     entity_by_name,
 )
+from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
