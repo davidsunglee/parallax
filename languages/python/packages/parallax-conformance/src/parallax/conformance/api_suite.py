@@ -797,7 +797,10 @@ _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "`CardPayment(..., tendered=...)` constructs successfully but never carries `tendered`), "
     "so no single typed instance can reproduce this payload's cross-branch shape to drive "
     "`tx.insert`/`tx.update` through it — `test_transaction_writes.py` exercises the "
-    "classified rule directly at the neutral seam (`Transaction._buffer`) instead"
+    "classified rule directly at the neutral seam (`Transaction._buffer`) instead. The same "
+    "holds for the keyed-instruction twin (m-inheritance-131), whose row carries the sibling "
+    "column alone: the typed surface reaches `Transaction._buffer` only through an instance, "
+    "and the instance cannot carry the field"
 )
 _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
     "an authored `tagValue` has no idiomatic spelling: it is framework-owned metadata "
@@ -984,6 +987,16 @@ _VO_FIND_ROOT_REASON: Final[str] = (
 # spelling through `vo_models.py` and are exercised as build-time proofs
 # above. This case is a sanctioned exception because its invalid input is
 # unrepresentable through the typed surface.
+_VO_PORTABLE_LITERAL_UNREACHABLE_REASON: Final[str] = (
+    'the case authors a WIRE literal — the string `"-0.00"` at a `decimal(12,2)` — and the '
+    "typed surface has no position for one: `SampleProfile.amount` is a `decimal.Decimal` "
+    "field, so a developer hands over a native `Decimal` the input policy never parses "
+    "(`coerce_neutral_input` admits no string for a `Decimal`), and Pydantic refuses the "
+    "string before construction. The portable literal grammar this case pins belongs to the "
+    "serde ingress (`decode_neutral_literal`), which `test_metamodel_values.py` exercises "
+    "directly; there is no idiomatic spelling that routes a wire literal through `tx.insert`"
+)
+
 _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
     "`ContactAddress(street=42, ...)` raises Pydantic's own `ValidationError` (a `str` "
     "field never coerces an `int`) before the instance can even be constructed, let alone "
@@ -1221,6 +1234,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-097": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-105": _INHERITANCE_WRITE_PHASE8_REASON,
     "m-inheritance-086": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
+    "m-inheritance-131": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-087": _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON,
     "m-inheritance-089": _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON,
     # -- m-inheritance: `when.model` descriptor rejects (unreachable) -------- #
@@ -1327,6 +1341,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-071": _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON,
     "m-value-object-072": _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON,
     "m-value-object-073": _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON,
+    "m-value-object-074": _VO_PORTABLE_LITERAL_UNREACHABLE_REASON,
     # -- m-value-object: remaining write-family siblings --------------------- #
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,

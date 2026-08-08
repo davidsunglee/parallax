@@ -1,0 +1,29 @@
+# Rejected KEYED instruction — a row carrying a SIBLING branch's attribute
+# (m-inheritance "Concrete-subtype writes", m-case-format "What decides a bare write
+# row").
+#
+# The instruction is a keyed `update` naming `CardPayment`, whose row carries
+# `tendered` — `CashPayment`'s own column, a sibling branch. No single concrete
+# subtype in CardPayment's effective set accepts every field, so a model-aware
+# validator MUST refuse it BEFORE any SQL with `subtype-write-sibling-attribute`. No
+# golden SQL: the rejection is pre-SQL, dialect-agnostic.
+#
+# The semantic distinction is PRECEDENCE, and the form the row arrives in must not
+# change it. `tendered` is not a member of CardPayment, so a validator that asks
+# member honesty first sees a row naming an undeclared key and reports a case-authoring
+# failure — losing the specific rule the family actually violated. m-inheritance's
+# Subtype-write rules own every name the FAMILY declares, and they are asked ahead of
+# both the member-honesty refusal and the instruction's own shape. Its bare-row twin
+# (m-inheritance-086) authors the same conflict as a plain `when.write` row, so the two
+# together pin the classification to the ROW rather than to the form carrying it.
+model: models/payment.yaml
+tags: [m-inheritance, m-unit-work, table-per-hierarchy, write, rejected, negative, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    mutation: update
+    entity: CardPayment
+    rows:
+      - { id: 10, tendered: 25.00 }
+then:
+  rejectedRule: subtype-write-sibling-attribute

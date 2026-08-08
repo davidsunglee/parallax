@@ -10,6 +10,7 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance.case_format import Case, SelectionFilter
+from parallax.core.base import FLOAT32, FLOAT64, AuthoredNumber, decode_neutral_literal
 
 
 def _case(
@@ -224,3 +225,37 @@ def test_quoting_an_ambiguous_scalar_changes_nothing() -> None:
 def test_a_not_a_number_scalar_resolves_to_a_float() -> None:
     loaded = cast("dict[str, float]", case_format.safe_load_yaml("key: .nan\n"))
     assert loaded["key"] != loaded["key"]
+
+
+def test_an_empty_plain_scalar_is_null() -> None:
+    # The core schema's null vocabulary is `null` / `Null` / `NULL` / `~` / the EMPTY
+    # scalar, and the empty one is the alternative a resolver table keyed by first
+    # character cannot express: an empty scalar has no first character, so a table
+    # that spells the entry as one registers a bucket nothing reaches and `key:`
+    # silently becomes the empty STRING — a different document, and one that reads as
+    # a present value where the corpus wrote an absent one.
+    assert case_format.safe_load_yaml("key:\n") == {"key": None}
+    assert case_format.safe_load_yaml("key:\n") == case_format.safe_load_yaml("key: null\n")
+    assert case_format.safe_load_yaml("outer:\n  inner:\n") == {"outer": {"inner": None}}
+
+
+def test_a_number_carries_the_digits_it_was_authored_with() -> None:
+    # Which float a number names depends on the DECLARED width, which no parser sees,
+    # so the literal travels with the carrier for `decode_neutral_literal`, which does.
+    loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.0000000596046448\n"))
+    authored = loaded["ratio"]
+    assert isinstance(authored, AuthoredNumber)
+    assert authored.literal == "1.0000000596046448"
+    assert authored == float("1.0000000596046448")
+
+
+def test_a_float32_rounds_from_the_authored_digits_not_from_the_carrier() -> None:
+    # `1.0000000596046448` lies ABOVE the midpoint between binary32 `1.0` and its
+    # successor, so one rounding at binary32 names the successor. Its nearest binary64
+    # IS that midpoint, so a consumer that narrows the carrier ties to even and answers
+    # `1.0` — two roundings, both round-to-nearest-even, and a different value.
+    loaded = cast("dict[str, object]", case_format.safe_load_yaml("ratio: 1.0000000596046448\n"))
+    authored = cast("AuthoredNumber", loaded["ratio"])
+    assert decode_neutral_literal(authored, FLOAT32) == 1.0 + 2.0**-23
+    assert decode_neutral_literal(float(authored), FLOAT32) == 1.0
+    assert decode_neutral_literal(authored, FLOAT64) == float("1.0000000596046448")

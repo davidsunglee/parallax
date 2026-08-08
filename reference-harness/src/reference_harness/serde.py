@@ -24,6 +24,8 @@ from typing import Any
 
 import yaml
 
+from .portable_literal import AuthoredNumber
+
 JSON = "json"
 YAML = "yaml"
 FORMATS = (JSON, YAML)
@@ -33,12 +35,18 @@ def _canonicalize(value: Any) -> Any:
     """Return a deterministically-ordered, JSON-compatible copy of *value*.
 
     Object keys are sorted; lists keep their order (order is significant in the
-    algebra and in attribute/row sequences). Scalars pass through unchanged.
+    algebra and in attribute/row sequences). Scalars pass through unchanged,
+    except an :class:`~reference_harness.portable_literal.AuthoredNumber`, whose
+    authored digits are decode context rather than document content: the document
+    holds the number, which is what re-reading the written form answers, so
+    keeping the carrier would break the round-trip property this module asserts.
     """
     if isinstance(value, dict):
         return {key: _canonicalize(value[key]) for key in sorted(value)}
     if isinstance(value, list):
         return [_canonicalize(item) for item in value]
+    if isinstance(value, AuthoredNumber):
+        return float(value)
     return value
 
 

@@ -23,6 +23,7 @@ import re as _re
 import struct as _struct
 import uuid as _uuid
 from dataclasses import dataclass
+from fractions import Fraction as _Fraction
 from typing import Final, TypeGuard, cast
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "TIME",
     "TIMESTAMP",
     "UUID",
+    "AuthoredNumber",
     "Boolean",
     "Bytes",
     "Date",
@@ -185,17 +187,62 @@ _HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
 # digit case, a UUID's optional hyphens, an omitted seconds field, any UTC
 # offset). Written out because a host parser's incidental surface would otherwise
 # become the cross-language contract (ADR 0016).
-_DATE_LITERAL: Final = _re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
-_TIME_LITERAL: Final = _re.compile(r"^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$")
+# Every digit below is an ASCII digit: Python's ``\d`` also matches every Unicode
+# decimal digit, so a grammar written with it would decode a date spelled in
+# ARABIC-INDIC DIGITs and a decimal whose fraction is one as members of these
+# spaces — spellings no specification gives them, and ones another language's own
+# ``\d`` need not even agree about.
+_DATE_LITERAL: Final = _re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})$")
+_TIME_LITERAL: Final = _re.compile(r"^([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]+))?)?$")
 _TIMESTAMP_LITERAL: Final = _re.compile(
-    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$"
+    r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})"
+    r"(?:\.([0-9]+))?(Z|[+-][0-9]{2}:[0-9]{2})$"
 )
 _UUID_HYPHENATED: Final = _re.compile(r"^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
 _UUID_BARE: Final = _re.compile(r"^[0-9a-fA-F]{32}$")
-_DECIMAL_LITERAL: Final = _re.compile(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?$")
+
+# A ``-`` names a value BELOW zero, so a negative spelling carries a magnitude
+# that is not zero: ``-0`` and ``-0.0`` name zero, whose one spelling is unsigned.
+_DECIMAL_LITERAL: Final = _re.compile(
+    r"^(?:(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+    r"|-(?:0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(?:\.[0-9]+)?))$"
+)
 
 # The temporal spaces hold microseconds (`m-core`).
 _MICROSECOND_DIGITS: Final[int] = 6
+
+# The bit pattern of the largest finite binary32, and the magnitude at which a
+# number rounds past it to an infinity: half an ulp above it, `2**128 - 2**103`.
+_BINARY32_MAX_BITS: Final[int] = 0x7F7FFFFF
+_BINARY32_OVERFLOW: Final[_Fraction] = _Fraction(2) ** 128 - _Fraction(2) ** 103
+
+
+class AuthoredNumber(float):
+    """A wire number that remembers the digits it was written with.
+
+    A number names the float of the DECLARED width nearest it
+    (`m-document-codec`), and the declared width is unknown where a document is
+    parsed. A parser that reads the number into a binary64 and leaves
+    :func:`decode_neutral_literal` to narrow that carrier rounds twice, and two
+    roundings are not one: ``1.0000000596046448`` lies just above the midpoint
+    between binary32 ``1.0`` and its successor, so rounding it once at binary32
+    names the successor, while binary64-then-binary32 lands exactly on that
+    midpoint and ties to the even ``1.0``. Carrying the digits lets the seam that
+    knows the width round once, from what was written.
+
+    The instance IS the binary64 nearest the literal, so a consumer that needs
+    only a number reads it as one and nothing else has to know this type exists.
+    A seam that parses wire numbers constructs these; a runtime caller handing
+    over a native ``float`` never does, and needs not — a caller chose that
+    carrier, so the carrier is the number it meant.
+    """
+
+    literal: str
+
+    def __new__(cls, literal: str) -> AuthoredNumber:
+        number = super().__new__(cls, literal)
+        number.literal = literal
+        return number
 
 
 def matches_neutral_type(value: object, declared: NeutralType) -> bool:
@@ -399,14 +446,68 @@ def _number_at_width(value: int | float, *, binary32: bool) -> float | int:
     A magnitude the width cannot hold is left as it came so
     :func:`matches_neutral_type` refuses it, rather than overflowing to an
     infinity here.
+
+    Rounding happens exactly ONCE, from the authored digits when
+    :class:`AuthoredNumber` kept them and otherwise from the carrier's own exact
+    value. Reading a number into a binary64 and narrowing that carrier rounds
+    twice, and two roundings are not one — see :class:`AuthoredNumber`.
     """
-    try:
-        widened = float(value)
-        if binary32:
-            widened = cast("float", _struct.unpack("<f", _struct.pack("<f", widened))[0])
-    except OverflowError:
+    if not binary32:
+        try:
+            return float(value)
+        except OverflowError:
+            return value
+    exact = _exact_number(value)
+    if abs(exact) >= _BINARY32_OVERFLOW:
         return value
-    return widened
+    return _math.copysign(_nearest_binary32(abs(exact)), value)
+
+
+def _exact_number(value: int | float) -> _Fraction:
+    """The number ``value`` names, exactly: its authored digits, else its carrier."""
+    if isinstance(value, AuthoredNumber):
+        return _Fraction(_decimal.Decimal(value.literal))
+    return _Fraction(value)
+
+
+def _nearest_binary32(magnitude: _Fraction) -> float:
+    """A non-negative magnitude below the overflow threshold as the binary32
+    nearest it, ties to the even mantissa.
+
+    The search starts from the binary64 the magnitude rounds to, narrowed — which
+    is the answer or one of its two neighbours, since each rounding moves by less
+    than half an ulp of the wider format — and then compares the three candidates
+    exactly, so the double rounding that produced the start point cannot survive
+    into the result.
+    """
+    start = _binary32_bits(magnitude)
+    best_bits = 0
+    best_distance: _Fraction | None = None
+    for bits in (start - 1, start, start + 1):
+        if not 0 <= bits <= _BINARY32_MAX_BITS:
+            continue
+        distance = abs(_Fraction(_binary32_at(bits)) - magnitude)
+        if best_distance is None or distance < best_distance:
+            best_bits, best_distance = bits, distance
+        elif distance == best_distance and bits % 2 == 0:
+            best_bits = bits
+    return _binary32_at(best_bits)
+
+
+def _binary32_bits(magnitude: _Fraction) -> int:
+    """The bit pattern of a binary32 within one ulp of ``magnitude``."""
+    try:
+        approximate = float(magnitude)
+    except OverflowError:  # pragma: no cover - the overflow threshold is checked first
+        return _BINARY32_MAX_BITS
+    try:
+        return int(cast("int", _struct.unpack("<I", _struct.pack("<f", approximate))[0]))
+    except OverflowError:
+        return _BINARY32_MAX_BITS
+
+
+def _binary32_at(bits: int) -> float:
+    return float(cast("float", _struct.unpack("<f", _struct.pack("<I", bits))[0]))
 
 
 def _integer_as_float(value: int, *, binary32: bool) -> float | int:

@@ -1234,6 +1234,21 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
 # date/time separator, ``decimal.Decimal``'s digit separators, leading ``+``,
 # surrounding space, and exponent — is NOT a member, or a second language would have
 # to reproduce Python rather than the neutral contract (ADR 0016).
+_ARABIC_INDIC_DIGITS = str.maketrans(
+    "0123456789", "".join(chr(0x0660 + digit) for digit in range(10))
+)
+
+
+def _unicode_digits(text: str) -> str:
+    """*text* with its ASCII digits respelled as ARABIC-INDIC DIGIT ZERO..NINE.
+
+    A Unicode decimal digit is exactly what Python's ``\\d`` additionally matches
+    and the portable grammar does not, so a spelling built this way names no value
+    however readily a host parser or a lazily written regex takes it.
+    """
+    return text.translate(_ARABIC_INDIC_DIGITS)
+
+
 @pytest.mark.parametrize(
     ("neutral_type", "value", "matches"),
     [
@@ -1278,6 +1293,13 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
         ("decimal(4,2)", "1.234e1", False),
         ("decimal(4,2)", "012.34", False),
         ("decimal(4,2)", "NaN", False),
+        ("decimal(4,2)", "-0", False),
+        ("decimal(4,2)", "-0.0", False),
+        ("decimal(4,2)", "-0.00", False),
+        ("decimal(4,2)", "0.00", True),
+        ("decimal(4,2)", "-0.01", True),
+        ("decimal(4,2)", "1." + _unicode_digits("2"), False),
+        ("decimal(4,2)", _unicode_digits("12") + ".34", False),
         ("bytes", "00ff", True),
         ("bytes", "00FF", True),
         ("bytes", "0a1B", True),
@@ -1291,6 +1313,7 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
         ("date", "20240101", False),
         ("date", "2024-W01-1", False),
         ("date", "2024-1-1", False),
+        ("date", _unicode_digits("2024-01-01"), False),
         ("time", "12:00:00", True),
         ("time", "12:00", True),
         ("time", "12:00:00+00:00", False),
@@ -1306,6 +1329,11 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
         ("timestamp", "2024-W01-1T00:00:00Z", False),
         ("timestamp", "2024-01-01T00:00:00.1234567+00:00", False),
         ("timestamp", "2024-01-01T00:00:00.1234560+00:00", True),
+        (
+            "timestamp",
+            _unicode_digits("2024-01-01") + "T" + _unicode_digits("00:00:00") + "Z",
+            False,
+        ),
         ("uuid", "123e4567-e89b-12d3-a456-426614174000", True),
         ("uuid", "123E4567-E89B-12D3-A456-426614174000", True),
         ("uuid", "123e4567e89b12d3a456426614174000", True),

@@ -1541,6 +1541,13 @@ not a member is `observedVersion`, which the shared row vocabulary admits as
 flush-time context. The refusal is asked **after** the Subtype-write rules below,
 which own the family-specific names a row may not carry and classify them.
 
+That ordering belongs to the **row**, not to the form carrying it: a keyed
+instruction's rows are asked the Subtype-write rules and then the member-honesty
+refusal, in that order, before the instruction's own shape is judged at all. A
+keyed `update` of a concrete subtype carrying a sibling branch's attribute is
+therefore `subtype-write-sibling-attribute` in both forms, and one neutral write
+row is classified one way however it is authored.
+
 That ordering only works because the two checks divide the names between them
 rather than both claiming every name. The Subtype-write rules are about names the
 **family declares**: the tag column and the `tag` / `tagValue` / `familyVariant`

@@ -231,7 +231,17 @@ def validate_subtype_write(
         )
     effective = tuple(concrete.name for concrete in position.concrete_subtypes)
     accepted = _concrete_accepted_field_names(facet, position.concrete_subtypes)
-    candidate_fields = frozenset(row) & frozenset[str]().union(*accepted, frozenset())
+    # The domain of the comparison is every name the FAMILY declares somewhere, so
+    # it is taken from the ROOT's concrete set rather than the target's effective
+    # set (`m-inheritance`: "The rule ranges over the names the family declares
+    # somewhere"). A concrete target's effective set is the target alone, so
+    # measuring against it would make every sibling name look undeclared and hand
+    # the family's own branch conflict to the member-honesty gate, which cannot
+    # name it.
+    family_declared = frozenset[str]().union(
+        *_concrete_accepted_field_names(facet, root.concrete_subtypes), frozenset()
+    )
+    candidate_fields = frozenset(row) & family_declared
     if not any(candidate_fields <= names for names in accepted):
         raise InheritanceError(
             "subtype-write-sibling-attribute",
@@ -357,8 +367,10 @@ def _concrete_accepted_field_names(
 
     A concrete position's applicable members are exactly its own ancestry chain's
     declarations, which is the set a write targeting it may name; a sibling
-    branch's member is absent from every one of them, and their UNION is every
-    name the family declares anywhere — the domain the sibling rule is about.
+    branch's member is absent from every one of them. Called with the FAMILY
+    ROOT's concrete set, the union is every name the family declares anywhere —
+    the domain the sibling rule is about, which is a property of the family and
+    not of the position being written.
     """
     return tuple(
         frozenset(

@@ -18,17 +18,28 @@ from typing import Any
 
 import yaml
 
-# The YAML 1.2 core schema's four implicit resolvers, keyed by the first character
-# a matching plain scalar can start with (PyYAML's own resolver-table shape).
-_CORE_SCHEMA: tuple[tuple[str, str, str], ...] = (
-    ("tag:yaml.org,2002:null", r"^(?:null|Null|NULL|~|)$", "~nN\0"),
-    ("tag:yaml.org,2002:bool", r"^(?:true|True|TRUE|false|False|FALSE)$", "tTfF"),
-    ("tag:yaml.org,2002:int", r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$", "-+0123456789"),
+from .portable_literal import AuthoredNumber
+
+# The YAML 1.2 core schema's four implicit resolvers, each listed with the first
+# characters a matching plain scalar can start with (PyYAML's own resolver-table
+# shape). The EMPTY string is one of the null resolver's entries and not a
+# character at all: PyYAML looks an empty plain scalar up under the `""` bucket
+# (`yaml.resolver.BaseResolver.resolve`), so `key:` resolves to null there and
+# nowhere else. Spelling that entry as a character — NUL, say — registers a
+# bucket no scalar ever reaches and leaves `key:` a plain string.
+_CORE_SCHEMA: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("tag:yaml.org,2002:null", r"^(?:null|Null|NULL|~|)$", ("~", "n", "N", "")),
+    ("tag:yaml.org,2002:bool", r"^(?:true|True|TRUE|false|False|FALSE)$", ("t", "T", "f", "F")),
+    (
+        "tag:yaml.org,2002:int",
+        r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$",
+        ("-", "+", *"0123456789"),
+    ),
     (
         "tag:yaml.org,2002:float",
         r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
         r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$",
-        "-+0123456789.",
+        ("-", "+", ".", *"0123456789"),
     ),
 )
 
@@ -53,13 +64,20 @@ def _construct_core_int(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> int:
 
 
 def _construct_core_float(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> float:
-    """A resolved core-schema float: a decimal number, an infinity, or a NaN."""
+    """A resolved core-schema float: a decimal number, an infinity, or a NaN.
+
+    A finite number keeps the digits it was authored with
+    (:class:`~reference_harness.portable_literal.AuthoredNumber`): which float a
+    number names depends on the width the member declares, which no parser can
+    see, so the seam that does see it rounds once from the literal instead of
+    twice through this carrier.
+    """
     text = str(loader.construct_scalar(node))
     if text.lower().lstrip("-+").startswith(".inf"):
         return float("-inf") if text.startswith("-") else float("inf")
     if text.lower().startswith(".nan"):
         return float("nan")
-    return float(text)
+    return AuthoredNumber(text)
 
 
 _CoreSchemaLoader.yaml_implicit_resolvers = {}

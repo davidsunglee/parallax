@@ -52,6 +52,7 @@ from parallax.core.metamodel import (
     Multiplicity,
     NestedValueObjectMetadata,
     ValueObjectMetadata,
+    entity_by_name,
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
@@ -4797,8 +4798,15 @@ def _rejected_keyed_write(
 
     The refusal is the shared build-time
     :func:`~parallax.core.unit_work.instructions.validate_instruction`'s — the
-    SAME validator `Transaction._buffer` runs before it buffers anything — so
-    this lane and the developer path classify one instruction identically.
+    SAME validator `Transaction._buffer` runs before it buffers anything — and it
+    runs in the same PLACE, after the concrete-subtype payload-shape rules
+    (`m-inheritance` "Concrete-subtype writes"). Those rules classify a
+    framework-owned metadata key and a sibling-branch member more specifically
+    than the generic member-name-honesty gate ever could, so a keyed update of
+    `CardPayment` carrying `CashPayment`'s own attribute is
+    `subtype-write-sibling-attribute` rather than an undeclared-member authoring
+    failure. Asking them here and in that order is what makes the keyed rejected
+    lane, the bare-row lane, and the developer transaction one classification.
     """
     doc: dict[str, object] = {
         key: authored[key]
@@ -4811,6 +4819,15 @@ def _rejected_keyed_write(
         instructions.WriteInstructionError
     ) as exc:  # pragma: no cover - schema validation owns malformed writes
         raise EngineError(f"{case.path.name}: {exc}") from exc
+    keyed_target = (
+        entity_by_name(model, instruction.entity) if isinstance(instruction, KeyedWrite) else None
+    )
+    if isinstance(instruction, KeyedWrite) and keyed_target is not None:
+        for keyed_row in instruction.rows:
+            try:
+                inheritance.validate_subtype_write(model, keyed_target, keyed_row)
+            except inheritance.InheritanceError as exc:
+                return exc.rule
     try:
         instructions.validate_instruction(instruction, model)
     except instructions.InstructionRejectedError as exc:

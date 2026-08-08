@@ -1,0 +1,56 @@
+# A `float32` leaf whose authored number is rounded ONCE, from the digits it was
+# written with (m-document-codec "Rounding happens once, from the digits").
+#
+# `ratio` is authored `1.0000000596046448`. That number lies just ABOVE the midpoint
+# between binary32 `1.0` and its successor `1.00000011920928955078125`, so the float32
+# it names is the successor, whose shortest round-tripping spelling — and therefore
+# the golden bind and the stored cell — is `1.0000001`.
+#
+# The semantic distinction is the number of roundings. An implementation whose YAML or
+# JSON parser reads the number into a binary64 first and then narrows that carrier
+# rounds twice: the binary64 nearest this literal is EXACTLY the binary32 midpoint, and
+# narrowing a midpoint ties to the even mantissa, which is `1.0`. Both steps used IEEE
+# round-to-nearest-even and the answer is still wrong, so the defect is invisible to
+# any test that constructs the value as a host number rather than authoring digits —
+# `1.0` and `1.0000001` are one bind apart and one stored cell apart, and this case is
+# where they separate.
+#
+# `measure` carries the SAME digits at a `float64` and is the control: the declared
+# width is the carrier's own, so one rounding and two roundings coincide there and the
+# number stores as itself. A grader that gets `ratio` wrong still gets `measure` right,
+# which is what makes the pair name the width rather than the parser.
+model: models/document-codec.yaml
+tags: [m-document-codec, m-value-object, m-sql, write-sequence, insert, json, slice-snapshot-1, slice-managed-1]
+shape: writeSequence
+when:
+  writeSequence:
+    - mutation: insert
+      entity: Sample
+      statements: 1
+      note: insert one Sample whose float32 and float64 leaves carry the same authored digits
+      rows:
+        - id: 140
+          label: Nearest
+          profile:
+            ratio: 1.0000000596046448
+            measure: 1.0000000596046448
+then:
+  statements:
+    - sql:
+        postgres: insert into sample(id, label, profile) values (?, ?, ?)
+        mariadb: insert into sample(id, label, profile) values (?, ?, ?)
+      binds:
+        - 140
+        - Nearest
+        - ratio: 1.0000001
+          measure: 1.0000000596046448
+          entries: []
+  tableState:
+    sample:
+      - id: 140
+        label: Nearest
+        profile:
+          ratio: 1.0000001
+          measure: 1.0000000596046448
+          entries: []
+  roundTrips: 1

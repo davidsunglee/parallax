@@ -27,12 +27,12 @@ from __future__ import annotations
 import datetime as _dt
 import decimal
 import json
-import math
 import re
-import struct
 import uuid as _uuid
 from collections.abc import Callable
 from typing import Any
+
+from .portable_literal import decode_number
 
 __all__ = [
     "DocumentEncodingError",
@@ -243,21 +243,12 @@ def _float_at_width(value: Any, *, binary32: bool) -> float | None:
     Which of them is that value's *encoding* is :func:`_shortest_number`'s question,
     not this one. A magnitude the width cannot hold, a truth value, and a non-number
     name no float at all.
+
+    The rule itself is :func:`~reference_harness.portable_literal.decode_number`'s,
+    which the case format's own membership check asks too: what a number names must
+    not depend on whether it is being read for storage or graded for space.
     """
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        widened = float(value)
-    except OverflowError:
-        return None
-    if not math.isfinite(widened):
-        return None
-    if not binary32:
-        return widened
-    try:
-        return struct.unpack("<f", struct.pack("<f", widened))[0]
-    except OverflowError:
-        return None
+    return decode_number(value, binary32=binary32)
 
 
 def _shortest_number(type_spelling: str, value: Any) -> Any:

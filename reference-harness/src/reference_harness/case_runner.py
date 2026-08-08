@@ -3119,6 +3119,14 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
     the instruction authored: a row naming no declared member fails the case
     outright rather than being classified with an instruction rule it never
     reached.
+
+    Ahead of BOTH runs the concrete-subtype payload-shape protocol, once per row,
+    exactly as the bare-row lane runs it ahead of its own member-honesty refusal
+    (:func:`_assert_bare_row_members_declared`). Those rules own the family-specific
+    names a row may not carry, so a keyed update of `CardPayment` carrying a
+    sibling branch's own attribute is `subtype-write-sibling-attribute` and not an
+    authoring defect — one neutral write row is judged one way whichever form
+    carries it.
     """
     entity_name = write.get("entity")
     try:
@@ -3128,6 +3136,10 @@ def _validate_rejected_keyed_write(case: Case, write: dict[str, Any]) -> None:
             f"{case.path.name}: keyed instruction names entity {entity_name!r}, which the "
             f"case's model does not declare"
         ) from exc
+    rows = write.get("rows")
+    for row in rows if isinstance(rows, list) else ():
+        if isinstance(row, dict):
+            validate_subtype_write(entity, case.model.entity_defs, row)
     unknown = undeclared_row_members(entity, write)
     if unknown:
         raise CaseFailure(

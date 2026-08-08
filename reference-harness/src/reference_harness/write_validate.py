@@ -275,9 +275,16 @@ def validate_subtype_write(
     #     declares nowhere sits on no branch, sibling or otherwise, so including it
     #     would make every ancestry chain fail and report a sibling attribute for a
     #     member honesty owns (`m-case-format` "What decides a bare write row").
+    #
+    #     That restriction ranges over the WHOLE family, never over the target's
+    #     effective set (`m-inheritance`: "The rule ranges over the names the family
+    #     declares somewhere"). A concrete target's effective set is the target alone,
+    #     so measuring against it would make every sibling name look undeclared and
+    #     hand the family's own conflict to member honesty — the one judgement that
+    #     cannot name it.
     effective = family.effective_concrete_set(name)
     accepted = {concrete: _ancestry_member_names(family, concrete) for concrete in effective}
-    declared_anywhere = frozenset[str]().union(*accepted.values()) if accepted else frozenset()
+    declared_anywhere = _family_member_names(family, name)
     domain_fields = {
         key for key in payload_fields if key not in metadata_fields and key in declared_anywhere
     }
@@ -298,6 +305,20 @@ def validate_subtype_write(
             f"{name!r} is an abstract root / subtype; a create / update / delete write "
             f"handle must name a concrete subtype",
         )
+
+
+def _family_member_names(family: Family, name: str) -> frozenset[str]:
+    """Every member NAME declared anywhere in *name*'s family.
+
+    The union over the family ROOT's concrete set, so an abstract interior node's
+    declarations arrive through the ancestry chains that pass through it. This is
+    the domain of the sibling comparison, and it does not depend on which position
+    in the family the write targets.
+    """
+    root = family.root_of(name) or name
+    concretes = family.effective_concrete_set(root)
+    names = [_ancestry_member_names(family, concrete) for concrete in concretes]
+    return frozenset[str]().union(*names) if names else frozenset()
 
 
 def _ancestry_member_names(family: Family, concrete: str) -> frozenset[str]:

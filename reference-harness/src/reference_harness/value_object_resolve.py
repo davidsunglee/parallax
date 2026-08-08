@@ -29,11 +29,10 @@ from __future__ import annotations
 import decimal
 import math
 import re
-import struct
 from typing import Any
 
 from .case import Entity
-from .portable_literal import decode_decimal, decoded_as
+from .portable_literal import decode_decimal, decode_number, decoded_as
 
 # --- rule vocabulary --------------------------------------------------------
 #
@@ -174,25 +173,7 @@ def _matches_float(value: Any, *, binary32: bool) -> bool:
     inexact, ``1e30`` being the one the codec gives ``1.0000000150474662e30`` — but
     "exact or already canonical", which narrows the value space itself.
     """
-    if not _is_number(value):
-        return False
-    try:
-        widened = float(value)
-    except OverflowError:
-        return False
-    if not math.isfinite(widened):
-        return False
-    return _at_width(widened, binary32=binary32) is not None
-
-
-def _at_width(value: float, *, binary32: bool) -> float | None:
-    """*value* as a float of the declared width holds it, or ``None`` on overflow."""
-    if not binary32:
-        return value
-    try:
-        return float(struct.unpack("<f", struct.pack("<f", value))[0])
-    except OverflowError:
-        return None
+    return decode_number(value, binary32=binary32) is not None
 
 
 def _is_utf8_encodable(value: str) -> bool:
