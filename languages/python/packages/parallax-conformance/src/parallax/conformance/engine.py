@@ -2211,14 +2211,16 @@ def _run_snapshot_scenario(
     round_trips = 0
     results: list[list[_assembly.Node]] = []
     pins: list[Pin | None] = []
+    identities: list[EntityIdentity | None] = []
     errors: list[dict[str, object]] = []
     for index, step in enumerate(steps):
         if "action" in step:
-            error_class = _grade_mutate_step(case, step, steps, results, pins)
+            error_class = _grade_mutate_step(case, step, results, pins, identities)
             if error_class is not None:
                 errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
             results.append([])
             pins.append(None)
+            identities.append(None)
             continue
         target = step.get("targetEntity")
         find_doc = step.get("find")
@@ -2230,6 +2232,10 @@ def _run_snapshot_scenario(
             raw_op = deserialize(find_doc)
             result = find(raw_op, case_model(meta), dialect, target, port)
             pin = _find_step_pin(meta, target, raw_op)
+            # The case document's own spelling is resolved HERE, where the
+            # document is read, so no later step carries a spelling into a
+            # production seam that takes an Entity Identity.
+            identity = case_entity(case_model(meta), meta.entity(target)).identity
         except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         for statement in result.execution.statements:
@@ -2237,6 +2243,7 @@ def _run_snapshot_scenario(
         round_trips += result.execution.round_trips
         results.append(list(result.nodes))
         pins.append(pin)
+        identities.append(identity)
     return emissions, round_trips, errors
 
 
@@ -2254,9 +2261,9 @@ def _find_step_pin(meta: Metamodel, target: str, raw_op: Operation) -> Pin:
 def _grade_mutate_step(
     case: case_format.Case,
     step: Mapping[str, object],
-    steps: Sequence[Mapping[str, object]],
     results: Sequence[list[_assembly.Node]],
     pins: Sequence[Pin | None],
+    identities: Sequence[EntityIdentity | None],
 ) -> str | None:
     """Grade one scenario `mutate` action step through the SAME production
     validator the keyed developer verbs run
@@ -2271,12 +2278,13 @@ def _grade_mutate_step(
     a loud :class:`EngineError`, never a silently dropped observation."""
     _check_action_step(case, step)
     on = step.get("on")
-    if not isinstance(on, int) or not (0 <= on < len(results)):
-        raise EngineError(f"{case.path.name}: `mutate` names an invalid `on` step index {on!r}")
-    target = steps[on].get("targetEntity")
+    source = on if isinstance(on, int) and 0 <= on < len(results) else None
+    identity = None if source is None else identities[source]
+    if source is None or identity is None:
+        raise EngineError(f"{case.path.name}: `mutate` names {on!r}, which is no earlier find step")
     expected = step.get("expectError")
     try:
-        validate_source_pin(str(target), pins[on])
+        validate_source_pin(identity, pins[source])
     except TransactionTimePinReadOnlyError as exc:
         if expected != exc.code:
             declared = f"expectError {expected!r}" if expected is not None else "no expectError"

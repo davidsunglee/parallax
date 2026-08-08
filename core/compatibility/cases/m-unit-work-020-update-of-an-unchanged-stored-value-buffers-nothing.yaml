@@ -1,0 +1,30 @@
+# A value this verb's own source produced that no author has changed is NOT a
+# refusal for `update` (m-unit-work *Write value provenance*): it buffers
+# nothing, issues no statement, and raises nothing — the same outcome as an edit
+# whose net change is empty. Requiring an author to test each value before
+# writing it would defeat the change tracking the framework performs on the
+# author's behalf, so writing every value a read returned and changing only some
+# of them is correct.
+#
+# The accepted half of the provenance partition, and the contrast that gives the
+# other three cases their edges: the SAME provenance the `insert` family refuses
+# (m-unit-work-018) is the one the `update` family requires, and editedness —
+# which decides what a write CONTAINS — decides nothing about which verb accepts
+# the value.
+#
+# This is an api-conformance-lane case: the observable is that a client's verb
+# call raised nothing and emitted nothing over a VALUE the client holds, which
+# the single-connection wire harness cannot construct, so the harness
+# schema-validates it and each language's API Conformance Suite verifies it.
+model: models/account.yaml
+lane: api-conformance
+tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - action: update
+      value: thisSource
+      roundTrips: 0
+      note: accepted, and with no change to write it buffers nothing — no expectError, no DML
+then:
+  roundTrips: 0

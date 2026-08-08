@@ -4554,11 +4554,13 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
 
 
 def test_run_scenario_case_mutate_grading_rejects_an_out_of_range_on_index() -> None:
-    # The grading wrapper guards `on` itself (its pin lookup indexes the find
-    # steps' own recorded pins), before the in-memory apply ever runs.
+    # The grading wrapper guards `on` itself (its identity and pin lookups both
+    # index the find steps' own recorded state), before the in-memory apply ever
+    # runs. One guard answers every way `on` can fail to name a find step —
+    # out of range, absent, or naming an action step, which resolves no Entity.
     when = {"scenario": [{"action": "mutate", "on": 5, "set": {"name": "Mutant"}}]}
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(engine.EngineError, match="invalid `on`"):
+    with pytest.raises(engine.EngineError, match="no earlier find step"):
         engine.run_scenario_case(case, "postgres", FakeDbPort([]))
 
 

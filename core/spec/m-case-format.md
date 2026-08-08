@@ -1162,6 +1162,7 @@ prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
 | `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
 | `mergeBack` | reconcile a detached copy with the store | prior object (`on` required) | `m-detach` |
 | `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` / `m-detach` |
+| `insert` / `update` | hand the keyed write verb of that name a value of stated provenance (`value`) | a value, not a prior object (`on` inapplicable) | `m-unit-work` |
 
 **`on` is REQUIRED for the object-targeting verbs** (`mutate`, `detachCopy`,
 `load`, `access`, `mergeBack`) — each acts on the object(s) a prior step
@@ -1174,6 +1175,40 @@ the buffered write it materializes). Every `on` index — single or in the array
 form — MUST name an **earlier** step, and the array form's indices MUST be
 **unique** (a source is referenced at most once); a forward / self / out-of-range
 or duplicated index is a loud harness failure.
+
+##### Keyed write action steps (the value's provenance)
+
+The `insert` / `update` action verbs name the **keyed write verb** a client calls,
+and what such a step observes is which verbs accept the **value** it is handed.
+Provenance is a property of that value rather than of a prior step's result, so
+the step names no `on`; it carries a **`value`** token instead, drawn from the
+closed partition `m-unit-work` *Write value provenance* fixes:
+
+- **`unmanaged`** — no managed read produced the value.
+- **`thisSource`** — a read through the **very source this verb writes through**
+  produced it.
+- **`anotherSource`** — a read through some **other** framework-managed source
+  produced it, the same store or not.
+
+A case states the provenance and never how to obtain it. How an implementation
+retains which source produced a value is its own affair, so an adapter arranges a
+value of the stated provenance through its own managed reads — the same reason
+the vocabulary names sources rather than markers.
+
+Such a step carries **no golden SQL** and declares `roundTrips: 0`: an accepted
+value's write is buffered rather than emitted, and a refused one reaches no
+statement at all. Its observable is the per-step `expectError`, which makes every
+keyed write action step **adapter-delegated** — the wire harness validates the
+step and skips grading it, exactly as it skips a whole `api-conformance`-lane
+case. A step that declares no `expectError` asserts the value is **accepted**:
+the verb takes it, raises nothing, and the write joins the unit of work's buffer.
+
+```yaml
+- action: update
+  value: unmanaged                          # no managed read produced it
+  roundTrips: 0
+  expectError: write-value-not-stored       # ... so `update` addresses no stored row
+```
 
 `set` is legal **only** on a `mutate` action; `path` (the navigated relationship,
 e.g. `items` or `items.statuses`) only on `load` / `access`. Because golden SQL
