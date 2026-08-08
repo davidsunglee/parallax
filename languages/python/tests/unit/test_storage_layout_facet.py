@@ -348,7 +348,7 @@ def _large_tph_model(width: int) -> Any:
     ]
     declarations.extend(
         Declaration(
-            identity=(concrete := identity(f"WideConcrete{width}_{index}")),
+            identity=(concrete := identity(f"WideConcrete{width}N{index}")),
             attributes=(attribute(concrete, f"local{index}", type=STRING),),
             inheritance=ConcreteSubtype(ExactEntityReference(root), f"row-{index}"),
         )

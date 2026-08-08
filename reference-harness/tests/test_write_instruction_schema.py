@@ -16,14 +16,17 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from reference_harness import serde
+from reference_harness.schemas import build_registry, load_schemas
 
-_SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2] / "core" / "schemas" / "write-instruction.schema.json"
-)
+_CORE = Path(__file__).resolve().parents[2] / "core"
+_SCHEMA_PATH = _CORE / "schemas" / "write-instruction.schema.json"
+_REGISTRY = build_registry(load_schemas(_CORE))
 
 
 def _validator() -> Draft202012Validator:
-    return Draft202012Validator(json.loads(_SCHEMA_PATH.read_text(encoding="utf-8")))
+    return Draft202012Validator(
+        json.loads(_SCHEMA_PATH.read_text(encoding="utf-8")), registry=_REGISTRY
+    )
 
 
 def _valid(doc: dict[str, Any]) -> bool:

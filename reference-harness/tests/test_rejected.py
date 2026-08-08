@@ -13,9 +13,10 @@ normative rule in `then.rejectedRule`. These tests exercise, without a database:
 * the runner FAILS loudly when a valid input is (mis)authored as rejected or the
   wrong rule is named; and
 * the purely regex-level negatives (an empty path after the value-object name, a
-  bad-cased segment) are the OPERATION SCHEMA's job — they are rejected by
-  `operation.schema.json`'s `nestedRef` grammar, NOT by a `rejected` case
-  (resolved Q7 keeps them as schema-validation unit tests).
+  bad-cased segment, a reference rooted at a value object rather than an Entity)
+  are the OPERATION SCHEMA's job — they are rejected by `operation.schema.json`'s
+  reference grammars, NOT by a `rejected` case (resolved Q7 keeps them as
+  schema-validation unit tests).
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ from reference_harness.metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
 )
 from reference_harness.op_validate import validate_operation
+from reference_harness.schemas import build_registry, load_schemas
 from reference_harness.storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
 )
@@ -86,6 +88,7 @@ from reference_harness.write_validate import (
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 _OPERATION_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "operation.schema.json"
+_REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
 
 
 def _rejected_cases() -> list[Case]:
@@ -460,13 +463,17 @@ def test_resolve_effective_definition_inherits_temporality_from_the_root_only() 
 
 def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None:
     used = {c.rejected_rule for c in _rejected_cases()}
-    # Operation negatives (the four contract clauses, the typed-literal MUST, and
-    # the bound-ordering MUST).
+    # Operation negatives (three of the four contract clauses, the typed-literal
+    # MUST, and the bound-ordering MUST). `find-root-value-object` is deliberately
+    # absent: a value-object occurrence name is lowercase-initial and an Entity's
+    # local name capitalized, so no serialized document can spell a reference rooted
+    # at a value object, and the negative is the operation schema's (see the
+    # regex-level section below). The rule itself stays live for an operation built
+    # natively.
     assert {
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
         "deep-fetch-value-object-segment",
         "navigate-value-object-target",
-        "find-root-value-object",
         NESTED_LITERAL_TYPE_MISMATCH,
         BETWEEN_BOUNDS_INVERTED,
     } <= used
@@ -1557,7 +1564,9 @@ def test_rejected_write_refuses_the_conflict_multi_key_array(write: list[Any]) -
 
 
 def _operation_validator() -> Draft202012Validator:
-    return Draft202012Validator(json.loads(_OPERATION_SCHEMA_PATH.read_text(encoding="utf-8")))
+    return Draft202012Validator(
+        json.loads(_OPERATION_SCHEMA_PATH.read_text(encoding="utf-8")), registry=_REGISTRY
+    )
 
 
 def _op_valid(operation: dict[str, Any]) -> bool:
@@ -1584,3 +1593,27 @@ def test_schema_rejects_bad_segment_casing() -> None:
     # the lowercase-initial segment grammar.
     assert not _op_valid({"nestedEq": {"path": "Customer.Address.city", "value": "x"}})
     assert not _op_valid({"nestedEq": {"path": "Customer.address.City", "value": "x"}})
+
+
+def test_schema_rejects_a_reference_rooted_at_a_value_object() -> None:
+    # `find()` MUST NOT be rooted at a value object (m-value-object "Materialization
+    # and navigation contract" 5). In a SERIALIZED operation that refusal is
+    # grammar-level and needs no model: a value-object occurrence name is a
+    # lowercase-initial `identifier`, an Entity's local name is capitalized, so
+    # `address` can never occupy the Entity segment of a reference. `address.city`
+    # therefore matches no attribute reference at all — the same grammar that lets a
+    # canonical `parallax.compatibility.Customer.address` be spelled unambiguously.
+    assert not _op_valid({"isNotNull": {"attr": "address.city"}})
+    assert not _op_valid({"between": {"attr": "address.city", "lower": "a", "upper": "b"}})
+
+
+def test_schema_rejects_a_value_object_in_an_entity_position() -> None:
+    # The same grammar closes the remaining positions an operation could root at a
+    # value object: a narrow guard's polymorphic position and each subtype it
+    # narrows to.
+    assert not _op_valid(
+        {"narrow": {"entity": "address", "to": ["Customer"], "operand": {"all": {}}}}
+    )
+    assert not _op_valid(
+        {"narrow": {"entity": "Customer", "to": ["address"], "operand": {"all": {}}}}
+    )

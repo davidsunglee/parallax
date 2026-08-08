@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/identity.schema.json",
+  "title": "Parallax Entity Identity and reference grammars (m-metamodel)",
+  "description": "The single owner of every serialized Entity-identity and member-reference grammar. An Entity Identity is namespace-qualified (m-metamodel), so a reference position spells it either bare — legal wherever it resolves to exactly one declared Entity — or canonically as `<namespace>.<Entity>`. Case is what keeps the split decidable from the text alone: every namespace segment begins lowercase, an Entity's local name begins uppercase, and every member segment begins lowercase, so a dotted reference carries at most one segment beginning with an uppercase letter. That segment is the Entity's local name; everything before it is the namespace and everything after it is the member path. `operation.schema.json`, `write-instruction.schema.json`, and `compatibility-case.schema.json` reference these definitions across files rather than redefining them. `metamodel.schema.json` deliberately keeps LOCAL copies of `namespaceSegment`, `entityLocalName`, and `identifier` instead, because it is vendored and validated standalone with no registry; a reference-harness test pins those copies equal to the definitions here.",
+  "$defs": {
+    "namespaceSegment": {
+      "description": "An Entity namespace: one or more dot-separated segments, each beginning with a lowercase letter and continuing with lowercase letters and digits. Underscores are excluded so the boundary against the member grammar stays sharp.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$"
+    },
+    "entityLocalName": {
+      "description": "An Entity's local name: capitalized and dot-free. The capitalization is normative (m-metamodel), because it is what makes the Entity segment of a dotted reference identifiable without consulting a model.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]*$"
+    },
+    "entityName": {
+      "description": "An Entity spelling in a reference position: the canonical `<namespace>.<Entity>` or the bare `<Entity>`. Input is permissive — a bare spelling remains legal where it resolves to exactly one declared Entity — while everything a frontend or exporter SERIALIZES carries the resolved canonical spelling.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*$"
+    },
+    "identifier": {
+      "description": "A member identifier: an element or property name beginning with a lowercase letter and continuing with letters, digits, and underscores. camelCase is the naming CONVENTION (m-descriptor); the underscore is admitted because m-descriptor ships normative `defaultColumn` vectors for underscore-bearing member names.",
+      "type": "string",
+      "pattern": "^[a-z][a-zA-Z0-9_]*$"
+    },
+    "attributeRef": {
+      "description": "A metamodel attribute reference: an `entityName` followed by a dot and the attribute's member identifier (`Order.id`, `parallax.compatibility.Order.id`).",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+    },
+    "relationshipRef": {
+      "description": "A metamodel relationship reference: an `entityName` followed by a dot and the relationship's member identifier (`Order.items`, `parallax.compatibility.Order.items`).",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+    },
+    "nestedRef": {
+      "description": "A reference into a valueObject's inner field: an `entityName`, its valueObject member, and one or more further dotted segments into the embedded document (`Customer.address.city`, `Customer.address.geo.lat`). It has an ATTRIBUTE leaf and so carries at least two member segments.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*(\\.[a-z][A-Za-z0-9_]*)+$"
+    },
+    "valueObjectRef": {
+      "description": "A path TERMINATING at a valueObject member rather than an inner attribute: an `entityName` followed by one or more valueObject member segments (`Customer.address`, `Customer.address.phones`). Unlike `nestedRef` it may carry a single member segment, because its subject is the value OBJECT itself.",
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*\\.)?[A-Z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)+$"
+    },
+    "elementRef": {
+      "description": "An ELEMENT-RELATIVE path: one or more member identifiers, carrying NO Entity spelling at all because its subject is an array element bound by an enclosing scoped `where`. It is distinguishable from a `valueObjectRef` by exactly the property the split rule rests on — no segment begins with an uppercase letter.",
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9_]*(\\.[a-z][A-Za-z0-9_]*)*$"
+    }
+  }
+}

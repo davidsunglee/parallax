@@ -68,7 +68,8 @@ and class-backed hubs.
 ## Canonical identities and order
 
 ```text
-EntityIdentity(namespace: string | absent, name: nonempty dot-free string)
+EntityIdentity(namespace: dotted lowercase segments | absent,
+               name: capitalized dot-free string)
 AttributeIdentity(entity: EntityIdentity, name: nonempty string)
 RelationshipIdentity(source: EntityIdentity, name: nonempty string)
 IndexIdentity(entity: EntityIdentity, name: nonempty string)
@@ -106,6 +107,46 @@ An empty namespace is invalid. The canonical Entity spelling is
 is always qualified. `*Id` remains reserved for Entity instance primary-key
 values.
 
+### The identifier constraint and the parse rule
+
+Three character-level constraints hold over every Identity, and they exist
+together for one reason — to make a serialized dotted reference splittable into
+an Entity spelling and a member path **from the text alone**, without consulting
+a model:
+
+- an Entity's **local name** MUST begin with an uppercase letter and continue
+  with letters and digits; it is dot-free;
+- every **namespace segment** MUST begin with a lowercase letter and continue
+  with lowercase letters and digits; a namespace is one or more such segments
+  joined by dots; and
+- a **member identifier** — an Attribute, Relationship, Index, or Value Object
+  occurrence name — MUST begin with a lowercase letter and continue with
+  letters, digits, and underscores.
+
+A model that violates any of them is invalid; a resolver MUST refuse it rather
+than normalize it.
+
+**The parse rule.** Split a serialized reference on its dots. Because a
+namespace segment and a member identifier both begin lowercase and only an
+Entity's local name begins uppercase, at most one segment begins with an
+uppercase letter. **The last capitalized segment is the Entity's local name**:
+every segment before it is the namespace, and every segment after it is the
+member path. A reference with no capitalized segment names no Entity at all —
+it is element-relative, resolved against a subject supplied by its position
+rather than by its own text.
+
+```text
+parallax.compatibility.Order.id   ->  Entity parallax.compatibility.Order  member (id)
+Order.address.city                ->  Entity Order                        member (address, city)
+catalog.SharedVariant             ->  Entity catalog.SharedVariant        member ()
+address.city                      ->  no Entity                          member (address, city)
+```
+
+The rule is total and position-independent: one implementation of it serves
+every reference position on every serialized surface. It is what allows a
+namespaced Entity to be named exactly where a bare local name would resolve to
+two Entities and therefore to none.
+
 Entity sets enumerate by ascending `(namespace or "", name)` codepoint order.
 All local declared sequences preserve authoring order, including attributes,
 relationships, Value Objects and their recursive members, As-Of Axes, indices,
@@ -115,7 +156,7 @@ key/index components, and ordering clauses.
 
 ```text
 EntityReference =
-    RelativeEntityReference(name: nonempty dot-free string)
+    RelativeEntityReference(name: capitalized dot-free string)
   | ExactEntityReference(identity: EntityIdentity)
 
 resolve(owner, RelativeEntityReference(name)) =

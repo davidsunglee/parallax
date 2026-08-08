@@ -220,6 +220,7 @@ def test_a_root_declaring_the_version_attribute_is_accepted() -> None:
 class _Ledger(
     Entity,
     table="ledger",
+    name="Ledger",
     namespace=_NS,
     persistence=READ_ONLY,
     inheritance=AbstractRoot(TablePerHierarchy(tag_column="kind")),
@@ -228,12 +229,18 @@ class _Ledger(
 
 
 class _AuditLedger(
-    _Ledger, namespace=_NS, persistence=READ_ONLY, inheritance=ConcreteSubtype(tag_value="audit")
+    _Ledger,
+    name="AuditLedger",
+    namespace=_NS,
+    persistence=READ_ONLY,
+    inheritance=ConcreteSubtype(tag_value="audit"),
 ):
     note: Attr[str | None] = attr(max_length=32)
 
 
-class _SilentLedger(_Ledger, namespace=_NS, inheritance=ConcreteSubtype(tag_value="silent")):
+class _SilentLedger(
+    _Ledger, name="SilentLedger", namespace=_NS, inheritance=ConcreteSubtype(tag_value="silent")
+):
     label: Attr[str | None] = attr(max_length=32)
 
 
@@ -248,12 +255,12 @@ def test_a_descendant_authored_persistence_makes_the_family_an_invalid_model() -
         DomainModel(_Ledger, _AuditLedger)
     (issue,) = caught.value.issues
     assert issue.code == inheritance.PERSISTENCE_NOT_ROOT_OWNED
-    assert issue.location == EntityLocation(_identity("_AuditLedger"))
-    assert issue.related == (EntityLocation(_identity("_Ledger")),)
+    assert issue.location == EntityLocation(_identity("AuditLedger"))
+    assert issue.related == (EntityLocation(_identity("Ledger")),)
 
 
 def test_a_descendant_that_declares_no_mode_inherits_the_root_owned_one() -> None:
     view = inheritance.view(model_of(DomainModel(_Ledger, _SilentLedger)))
-    silent = view.entity(_identity("_SilentLedger"))
+    silent = view.entity(_identity("SilentLedger"))
     assert silent is not None
     assert silent.persistence is PersistenceMode.READ_ONLY

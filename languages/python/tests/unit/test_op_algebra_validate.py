@@ -189,7 +189,7 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 21 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 20 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
@@ -211,7 +211,6 @@ _REJECTED_CASE_IDS = (
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
-    "m-value-object-037",
     "m-value-object-038",
 )
 

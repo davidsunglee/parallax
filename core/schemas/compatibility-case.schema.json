@@ -393,8 +393,7 @@
               },
               "entity": {
                 "description": "The temporal entity the mutation targets.",
-                "type": "string",
-                "minLength": 1
+                "$ref": "#/$defs/entityName"
               },
               "statements": {
                 "description": "How many golden DML statements this step emits (for documentation / count consistency). The sum over all steps MUST equal the number of `then.statements` per dialect. This is an integer COUNT, not a statement-entry list (a writeSequence step carries no per-step SQL — the golden DML lives at `then.statements`).",
@@ -1013,9 +1012,8 @@
       "pattern": "^($|/.*)$"
     },
     "entityName": {
-      "description": "A metamodel entity name (the queried/target entity a read starts from, m-case-format `targetEntity`). Matches the `Class` grammar the operation schema's attribute/relationship references use before the dot.",
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*$"
+      "description": "A metamodel Entity spelling, bare or namespace-qualified (identity.schema.json) — the queried/target entity a read starts from (m-case-format `targetEntity`), and the entity a write-sequence step mutates. The same grammar the operation schema's attribute/relationship references use before the member dot.",
+      "$ref": "identity.schema.json#/$defs/entityName"
     },
     "referenceSql": {
       "description": "Independent naive SQL oracle. Required for non-trivial reads and optional for trivial single-table predicates. A string is dialect-neutral; a dialect-keyed map MUST cover the exact golden SQL dialect set, which the harness verifies.",

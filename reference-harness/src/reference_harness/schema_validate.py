@@ -57,8 +57,10 @@ def validation_error(
     """Return the most relevant JSON Schema failure, or ``None`` when valid.
 
     *registry* resolves cross-file ``$ref``s (the case schema references the
-    canonical write-instruction ``$defs``); a bare validator cannot reach another
-    file, so callers validating the case schema MUST pass it.
+    canonical write-instruction ``$defs``, and the case, operation, and
+    write-instruction schemas all reference the identity grammars); a bare
+    validator cannot reach another file, so callers validating any of those
+    schemas MUST pass it.
     """
     validator = (
         Draft202012Validator(schema, registry=registry)
@@ -172,6 +174,7 @@ def _validate_predicate_write(
     operation_schema: dict[str, Any],
     label: str,
     errors: list[str],
+    registry: Registry | None = None,
 ) -> Entity | None:
     """Validate the operation and model-dependent parts of one write instruction."""
     if not isinstance(write, dict):
@@ -181,7 +184,7 @@ def _validate_predicate_write(
         return None  # the case schema owns missing/malformed target errors
     predicate = target.get("predicate")
     if predicate is not None:
-        _validate(predicate, operation_schema, f"{label} target.predicate", errors)
+        _validate(predicate, operation_schema, f"{label} target.predicate", errors, registry)
     target_name = target.get("entity")
     if not isinstance(target_name, str):
         return None
@@ -218,6 +221,7 @@ def _validate_buffered_write(
     operation_schema: dict[str, Any],
     label: str,
     errors: list[str],
+    registry: Registry | None = None,
 ) -> None:
     """Validate a buffered scenario write — the m-unit-work general keyed buffer.
 
@@ -257,7 +261,7 @@ def _validate_buffered_write(
             continue  # the case schema owns non-object entries
         if "target" in instruction:
             _validate_predicate_write(
-                instruction, entity_defs, operation_schema, entry_label, errors
+                instruction, entity_defs, operation_schema, entry_label, errors, registry
             )
             continue
         entity_name = instruction.get("entity")
@@ -412,6 +416,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                 operation_schema,
                 f"case {case_path.name} operation",
                 errors,
+                registry,
             )
             # A read case names its queried entity with `targetEntity`; cross-check it
             # against the operation's queried-entity references (m-case-format Q1).
@@ -433,6 +438,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         operation_schema,
                         f"case {case_path.name} scenario[{index}].find",
                         errors,
+                        registry,
                     )
                     _validate_scenario_reference_sql(
                         step,
@@ -454,6 +460,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         operation_schema,
                         f"case {case_path.name} scenario[{index}]",
                         errors,
+                        registry,
                     )
                     if entity is not None:
                         try:
@@ -469,6 +476,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         operation_schema,
                         f"case {case_path.name} scenario[{index}]",
                         errors,
+                        registry,
                     )
         # A coherence case likewise carries read-step operations under
         # `when.coherence[].find`; each must validate against the operation algebra schema.
@@ -480,6 +488,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         operation_schema,
                         f"case {case_path.name} coherence[{index}].find",
                         errors,
+                        registry,
                     )
                     _check_target_entity(
                         step["find"],

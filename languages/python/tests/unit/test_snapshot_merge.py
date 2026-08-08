@@ -408,7 +408,9 @@ def test_a_null_many_cardinality_document_column_constructs_an_empty_tuple() -> 
 # and construction must say so rather than hand back a decoded record typed as #
 # the declared member (spec §3's instances-only contract).                     #
 # --------------------------------------------------------------------------- #
-class _MergeScalarProfile(Entity, table="merge_scalar_profile", namespace=_NAMESPACE):
+class _MergeScalarProfile(
+    Entity, table="merge_scalar_profile", name="MergeScalarProfile", namespace=_NAMESPACE
+):
     id: Attr[int] = attr(primary_key=True)
     profile: Attr[str] = attr(max_length=32)
 
@@ -423,7 +425,7 @@ class _MergeDocumentProfile(ValueObject):
 class _MergeVoProfile(
     Entity,
     table="merge_scalar_profile",
-    name="_MergeScalarProfile",
+    name="MergeScalarProfile",
     namespace=_NAMESPACE,
 ):
     id: Attr[int] = attr(primary_key=True)
@@ -441,7 +443,7 @@ def test_a_value_object_member_with_no_bound_class_is_refused() -> None:
     assert _MergeScalarProfile.value_objects == ()
 
     builder = GraphBuilder(_SCALAR_PROFILE, model=_PROFILE_AS_VALUE_OBJECT)
-    node = builder.node("_MergeScalarProfile", {"id": 1, "profile": {"note": "x"}})
+    node = builder.node("MergeScalarProfile", {"id": 1, "profile": {"note": "x"}})
     with pytest.raises(GraphConstructionError) as refusal:
         builder.materialize(node)
     assert refusal.value.code == "entity-graph-invalid-member"
@@ -474,6 +476,7 @@ def test_a_temporal_node_carries_the_whole_graph_pin_and_its_own_edge() -> None:
 # (`models/rate.yaml`), where the concrete declares NO `asOfAttributes` locally.
 class _MergeTemporalRoot(
     Bitemporal,
+    name="MergeTemporalRoot",
     namespace=_NAMESPACE,
     inheritance=AbstractRoot(TABLE_PER_CONCRETE_SUBTYPE),
 ):
@@ -484,6 +487,7 @@ class _MergeTemporalRoot(
 class _MergeTemporalLeaf(
     _MergeTemporalRoot,
     table="merge_temporal_leaf",
+    name="MergeTemporalLeaf",
     namespace=_NAMESPACE,
     inheritance=ConcreteSubtype,
 ):
@@ -496,7 +500,7 @@ _TEMPORAL_TPCS = DomainModel(_MergeTemporalRoot, _MergeTemporalLeaf)
 def test_a_temporal_concrete_reads_its_edge_off_the_family_roots_own_axes() -> None:
     builder = GraphBuilder(_TEMPORAL_TPCS)
     leaf = builder.node(
-        "_MergeTemporalLeaf",
+        "MergeTemporalLeaf",
         {
             "id": 1,
             "amount": Decimal("2.50"),

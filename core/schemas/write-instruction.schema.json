@@ -102,10 +102,7 @@
       "additionalProperties": false,
       "required": ["attr", "value"],
       "properties": {
-        "attr": {
-          "type": "string",
-          "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
-        },
+        "attr": { "$ref": "identity.schema.json#/$defs/attributeRef" },
         "value": { "type": ["string", "number", "boolean", "null", "object", "array"] }
       }
     },
@@ -156,9 +153,8 @@
       "minLength": 1
     },
     "entityName": {
-      "description": "An exact concrete descriptor entity name (the position a write begins from).",
-      "type": "string",
-      "minLength": 1
+      "description": "The concrete descriptor entity a write begins from, spelled bare or namespace-qualified (identity.schema.json).",
+      "$ref": "identity.schema.json#/$defs/entityName"
     },
     "keyedMutation": {
       "description": "The keyed write mutation surface: the MVP non-temporal / audit-only verbs (`insert` / `update` / `delete` / `terminate`) plus the full-bitemporal bounded rectangle split (`insertUntil` / `updateUntil` / `terminateUntil`). Deferred extension verbs are added here when their slices claim them. `compatibility-case.schema.json`'s buffered keyed write references this enum rather than redefining it.",

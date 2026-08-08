@@ -303,6 +303,23 @@ keeps the assertion honest across engines.
 | `then.roundTrips` | `then` | no | declared statement count (default `1`); for a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count; for a scenario the SUM of per-step round trips |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
+#### How a case spells an Entity
+
+Every case field that ROUTES by model identity — `when.targetEntity` and a
+scenario / coherence read step's `targetEntity`, a `writeSequence[].entity`, a
+keyed or conflict write's `entity`, and a predicate write's `target.entity` —
+carries an Entity spelling under `m-metamodel`'s identifier constraint and parse
+rule: an Entity's local name begins capitalized and every namespace segment is
+lowercase. Each admits the two spellings a reference position admits
+(`m-op-algebra`) — the bare local name, legal wherever it names exactly one
+declared Entity of the case's model, or the canonical `<namespace>.<Entity>` —
+and resolves by the same rule.
+
+This is addressing vocabulary. It is distinct from the *result* vocabulary a
+case asserts — `then.graph` root keys, narrowed-view keys, and `familyVariant` —
+which names what a read materialized rather than what it addressed, and keeps
+its own ambiguity-sensitive rule stated with each.
+
 #### Read targeting (`targetEntity`)
 
 Every read names the entity it targets. A read case carries **`when.targetEntity`**
