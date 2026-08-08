@@ -51,12 +51,17 @@ def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> li
     """The row keys *instruction* names that *entity* does not declare, sorted.
 
     Member honesty is a payload judgement, not an instruction-shape rule, and it
-    is asked FIRST wherever both are asked: a row naming nothing real is a
-    case-authoring defect rather than a violated normative MUST, so classifying
+    is asked before the SHAPE wherever both are asked: a row naming nothing real is
+    a case-authoring defect rather than a violated normative MUST, so classifying
     such an input as a rejection rule would report a rule the case does not
     exercise. That is the precedence the developer-facing validator applies too
     (`instructions.validate_instruction` refuses undeclared members before the
     temporal singleton), so one instruction cannot be judged two ways.
+
+    It is asked AFTER the concrete-subtype payload-shape rules, which own every
+    name the FAMILY declares (`m-inheritance`): a sibling branch's attribute is not
+    a member of the target either, and reporting it here would replace the specific
+    rule the family violated with a generic authoring failure.
 
     The judgement itself is the neutral write row's
     (:func:`~reference_harness.write_validate.undeclared_members`), applied to each

@@ -8,9 +8,13 @@
 # MariaDB uses json_value (which maps a JSON `null` leaf and a missing path alike
 # to SQL NULL, so the absence collapse holds on both dialects — m-dialect).
 #
-# The quotes around `country: NO` are load-bearing: unquoted, YAML reads `NO` as a
-# boolean, and a `string` leaf holding one is invalid stored data (m-document-codec)
-# rather than the country code the row means.
+# `country: NO` is authored BARE, and that is what it witnesses. The corpus loads at
+# YAML 1.2 core (m-case-format), whose only implicit types are null, boolean, integer
+# and float, so `NO` is the string the row means and the ISO country code reaches the
+# `json` column intact. A loader left on its host library's YAML 1.1 defaults folds
+# `NO` into the boolean false, and a `string` leaf holding one is invalid stored data
+# (m-document-codec) — so this row fails loudly on exactly the misconfiguration the
+# fixed schema exists to prevent, which quoting the value would have hidden.
 #
 # The rows instantiate the distinguishable presence / absence states the
 # absence-collapse rule (m-op-algebra) folds to "not present":

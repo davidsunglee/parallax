@@ -305,25 +305,43 @@ draw is the width, and it is the same one the encoding draws: `1048576.2` names
 binary32 `1048576.25` at a `float32` and a different, exactly-representable
 binary64 at a `float64`.
 
+**Rounding happens once, from the digits.** The number a document carries is the
+one its digits name, so the declared width is applied to *that* number and to
+nothing else. A consumer whose parser first rounds the digits into a wider
+carrier — a binary64, say — and then narrows that carrier to the declared width
+has rounded twice, and two roundings are not one: `1.0000000596046448` lies above
+the midpoint between binary32 `1.0` and `1.00000011920928955078125`, so rounding
+it once at binary32 names the upper value, while binary64-then-binary32 lands
+exactly on the midpoint and its tie-to-even names `1.0`. Both consumers used
+round-to-nearest-even at every step and answered different values, so a consumer
+that parses into a wider carrier MUST keep enough of the authored number to round
+from it. `float64` is unaffected only because its carrier is already the declared
+width.
+
 *What nearest-value decoding gives up, deliberately.* It is not exact. A number
 no float of the declared width represents exactly is still admitted, and it names
 a **different** value than the one written: `16777217` at a `float32` names
-`16777216`, and `9007199254740993` at a `float64` names `9007199254740992`. A
-writer that cares is protected by the *encoding* rule, which never produces such
-a number for a value it holds; a document carrying one was written by something
-that did not follow this table, and the read seam narrows rather than refuses.
-Refusing instead cannot be spelled "the number must be exact", because a
+`16777216`, and `9007199254740993` at a `float64` names `9007199254740992`.
+Refusing it instead cannot be spelled "the number must be exact", because a
 canonical spelling is routinely inexact — `1e30` is the number this table gives
 the binary32 value `1.0000000150474662e30` — so the honest refusing rule is
 "exact **or** already the canonical spelling of the value it rounds to", which
 narrows what a `float32` member may hold rather than how a number is read.
 
-Canonical float rendering is a writer obligation. A read seam MUST reject a
-noncanonical stored number when its carrier preserves enough information to
-distinguish that number from the canonical one. When parsing has already
-collapsed both numbers to the same carrier value, as a binary64 carrier does for
-`float64`, the seam cannot recover that distinction and MUST still materialize
-the declared value; it does not weaken the writer obligation.
+**Reading a number and validating a stored document are two questions.** The rule
+above answers the first for every number wherever it appears — a case literal, a
+predicate literal, a member of a document being decoded — and it never refuses on
+canonicality, because what a number names cannot depend on who wrote it.
+
+Canonicality is a separate, *writer* obligation, and the seam that reads a
+document back **out of storage** is where it is enforced: that seam MUST reject a
+stored number that is not the canonical rendering of the value it names, when its
+carrier preserves enough information to tell the two apart. When parsing has
+already collapsed both numbers to the same carrier value, as a binary64 carrier
+does for `float64`, the seam cannot recover the distinction and MUST materialize
+the declared value; that does not weaken the obligation on the writer. A case
+literal is not a stored document and is not subject to this check — it is an
+input a case authored, graded for membership alone (`m-case-format` "In-space").
 
 **Encoding and decoding are inverse.** For every value of a declared type,
 decoding its encoding yields an equal value, and the encoding is the unique

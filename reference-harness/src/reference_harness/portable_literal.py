@@ -17,29 +17,151 @@ reproduce, and no specification states it.
 Decoding is MANY-TO-ONE where the document encoding is one-to-one: a value is
 stored in exactly one canonical spelling, while every spelling this grammar
 admits names the same value and stores as that canonical one.
+
+Every digit in this grammar is an ASCII digit. Python's ``\\d`` also matches every
+Unicode decimal digit, so a regex written with it would decode a date spelled in
+ARABIC-INDIC DIGITs and a decimal whose fraction is one as members of these
+spaces — spellings no specification gives them, and ones another language's own
+``\\d`` need not even agree about.
 """
 
 from __future__ import annotations
 
 import datetime
 import decimal
+import math
 import re
+import struct
 import uuid
+from fractions import Fraction
 from typing import Any
 
-_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
-_TIME = re.compile(r"^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$")
+_DATE = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})$")
+_TIME = re.compile(r"^([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]+))?)?$")
 _TIMESTAMP = re.compile(
-    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$"
+    r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})"
+    r"(?:\.([0-9]+))?(Z|[+-][0-9]{2}:[0-9]{2})$"
 )
 _UUID_HYPHENATED = re.compile(r"^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
 _UUID_BARE = re.compile(r"^[0-9a-fA-F]{32}$")
-_DECIMAL = re.compile(r"^(-?)(0|[1-9]\d*)(?:\.(\d+))?$")
+
+# A `-` names a value BELOW zero, so a negative spelling carries a magnitude that
+# is not zero: `-0` and `-0.0` name zero, which has the one spelling `0` / `0.0`.
+_DECIMAL = re.compile(
+    r"^(?:(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+    r"|-(?:0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(?:\.[0-9]+)?))$"
+)
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 # A value beyond this many fractional digits is only in space when the extra
 # digits are zeros: the temporal spaces are microsecond-precision (`m-core`).
 _MICROSECOND_DIGITS = 6
+
+# The bit pattern of the largest finite binary32, and the magnitude at which a
+# number rounds past it to an infinity: half an ulp above it, `2**128 - 2**103`.
+_BINARY32_MAX_BITS = 0x7F7FFFFF
+_BINARY32_OVERFLOW = Fraction(2) ** 128 - Fraction(2) ** 103
+
+
+class AuthoredNumber(float):
+    """A document number that remembers the digits it was written with.
+
+    A number names the float of the DECLARED width nearest it
+    (`m-document-codec`), and the declared width is unknown where a document is
+    parsed. A parser that reads the number into a binary64 and leaves a later
+    seam to narrow that carrier rounds twice, and two roundings are not one:
+    ``1.0000000596046448`` lies just above the midpoint between binary32 ``1.0``
+    and its successor, so rounding it once at binary32 names the successor, while
+    binary64-then-binary32 lands exactly on that midpoint and ties to the even
+    ``1.0``. Carrying the digits lets :func:`decode_number` — the seam that knows
+    the width — round once, from what was written.
+
+    The instance IS the binary64 nearest the literal, so a consumer that needs
+    only a number reads it as one and nothing else has to know this type exists.
+    """
+
+    literal: str
+
+    def __new__(cls, literal: str) -> AuthoredNumber:
+        number = super().__new__(cls, literal)
+        number.literal = literal
+        return number
+
+
+def decode_number(value: Any, *, binary32: bool) -> float | None:
+    """*value* as the float of the declared width nearest it, else ``None``.
+
+    ``None`` means the number names no member: only a magnitude that would round
+    to an infinity does, so this is deliberately not an exactness test —
+    ``16777217`` at a `float32` names ``16777216.0``.
+
+    The host carrier decides nothing, because ``20`` and ``20.0`` are one number
+    and so are ``16777217`` and ``16777217.0``: an ``int`` and a ``float``
+    spelling the same number answer the same value. Rounding happens exactly once,
+    from the authored digits when :class:`AuthoredNumber` kept them and otherwise
+    from the carrier's own exact value.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if not binary32:
+        try:
+            widened = float(value)
+        except OverflowError:
+            return None
+        return widened if math.isfinite(widened) else None
+    exact = _exact_number(value)
+    if abs(exact) >= _BINARY32_OVERFLOW:
+        return None
+    return math.copysign(_nearest_binary32(abs(exact)), value)
+
+
+def _exact_number(value: int | float) -> Fraction:
+    """The number *value* names, exactly: its authored digits, else its carrier."""
+    if isinstance(value, AuthoredNumber):
+        return Fraction(decimal.Decimal(value.literal))
+    return Fraction(value)
+
+
+def _nearest_binary32(magnitude: Fraction) -> float:
+    """A non-negative magnitude below the overflow threshold as the binary32
+    nearest it, ties to the even mantissa.
+
+    The search starts from the binary64 the magnitude rounds to, narrowed — which
+    is the answer or one of its two neighbours, since each rounding moves by less
+    than half an ulp of the wider format — and then compares the three candidates
+    exactly, so the double rounding that produced the start point cannot survive
+    into the result.
+    """
+    start = _binary32_bits(magnitude)
+    best_bits = 0
+    best_distance: Fraction | None = None
+    for bits in (start - 1, start, start + 1):
+        if not 0 <= bits <= _BINARY32_MAX_BITS:
+            continue
+        distance = abs(Fraction(_binary32_at(bits)) - magnitude)
+        if best_distance is None or distance < best_distance:
+            best_bits, best_distance = bits, distance
+        elif distance == best_distance and bits % 2 == 0:
+            best_bits = bits
+    return _binary32_at(best_bits)
+
+
+def _binary32_bits(magnitude: Fraction) -> int:
+    """The bit pattern of a binary32 within one ulp of *magnitude*."""
+    try:
+        approximate = float(magnitude)
+    except OverflowError:  # pragma: no cover - the overflow threshold is checked first
+        return _BINARY32_MAX_BITS
+    try:
+        return int(struct.unpack("<I", struct.pack("<f", approximate))[0])
+    except OverflowError:
+        return _BINARY32_MAX_BITS
+
+
+def _binary32_at(bits: int) -> float:
+    return float(struct.unpack("<f", struct.pack("<I", bits))[0])
 
 
 def decode_date(literal: str) -> datetime.date | None:
@@ -129,10 +251,11 @@ def decode_decimal(literal: str) -> decimal.Decimal | None:
     """*literal* as the exact decimal it spells, else ``None``.
 
     The exact decimal spelling `m-document-codec` fixes: a ``-`` only for a value
-    below zero, integer digits with no leading zero, and an optional fraction.
+    below zero — so ``-0`` and ``-0.0`` spell nothing, zero being neither below
+    nor signed — integer digits with no leading zero, and an optional fraction.
     No exponent — a `decimal` carries a declared scale, which an exponent does
-    not spell — and no sign, separator, or surrounding space a host parser might
-    otherwise take.
+    not spell — and none of the leading ``+``, digit separator, or surrounding
+    space a host parser might otherwise take.
     """
     if _DECIMAL.match(literal) is None:
         return None

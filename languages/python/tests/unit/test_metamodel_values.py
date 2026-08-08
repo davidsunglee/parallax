@@ -316,6 +316,21 @@ def test_neutral_value_conformance_is_exact_logical_membership(
 # `16777217.0` are one number, and only an out-of-range magnitude names none. The
 # narrowing is the stated cost — see `decode_neutral_literal`, and
 # `coerce_neutral_input` below for the narrower developer-input rule.
+_ARABIC_INDIC_DIGITS = str.maketrans(
+    "0123456789", "".join(chr(0x0660 + digit) for digit in range(10))
+)
+
+
+def _unicode_digits(text: str) -> str:
+    """``text`` with its ASCII digits respelled as ARABIC-INDIC DIGIT ZERO..NINE.
+
+    A Unicode decimal digit is exactly what Python's ``\\d`` additionally matches
+    and the portable literal grammar does not, so a spelling built this way names
+    no value however readily a host parser or a lazily written regex takes it.
+    """
+    return text.translate(_ARABIC_INDIC_DIGITS)
+
+
 def _runtime_member(value: object, declared: base.NeutralType) -> bool:
     return base.matches_neutral_type(base.decode_neutral_literal(value, declared), declared)
 
@@ -398,6 +413,20 @@ def _runtime_member(value: object, declared: base.NeutralType) -> bool:
         ("1.234e1", base.Decimal(4, 2), False),
         ("012.34", base.Decimal(4, 2), False),
         ("-12.34", base.Decimal(4, 2), True),
+        ("-0", base.Decimal(4, 2), False),
+        ("-0.0", base.Decimal(4, 2), False),
+        ("-0.00", base.Decimal(4, 2), False),
+        ("0.00", base.Decimal(4, 2), True),
+        ("-0.01", base.Decimal(4, 2), True),
+        ("1." + _unicode_digits("2"), base.Decimal(4, 2), False),
+        (_unicode_digits("12") + ".34", base.Decimal(4, 2), False),
+        (_unicode_digits("2026-01-01"), base.DATE, False),
+        (_unicode_digits("00:00:00"), base.TIME, False),
+        (
+            _unicode_digits("2026-01-01") + "T" + _unicode_digits("00:00:00") + "Z",
+            base.TIMESTAMP,
+            False,
+        ),
     ],
 )
 def test_runtime_neutral_membership_is_exact_lossless_and_total(
@@ -451,6 +480,48 @@ def test_a_number_literal_names_the_float_of_the_declared_width_nearest_it() -> 
     # Out of range still names nothing, at either width.
     assert base.decode_neutral_literal(1e39, base.FLOAT32) == 1e39
     assert _runtime_member(1e39, base.FLOAT32) is False
+
+
+def test_a_number_literal_is_rounded_once_from_the_digits_it_names() -> None:
+    # `1.0000000596046448` lies ABOVE the midpoint between binary32 `1.0` and its
+    # successor, so the binary32 nearest it IS the successor. Its nearest BINARY64 is
+    # exactly that midpoint, so a decode that narrows the carrier instead of the number
+    # ties to even and answers `1.0` — two roundings, each round-to-nearest-even, and a
+    # value the document never named. `AuthoredNumber` is how a wire parser hands the
+    # digits over; a plain `float` carrier is all a decode can round from, and rounds
+    # from it once.
+    authored = base.AuthoredNumber("1.0000000596046448")
+    assert base.decode_neutral_literal(authored, base.FLOAT32) == 1.0 + 2.0**-23
+    assert base.decode_neutral_literal(float(authored), base.FLOAT32) == 1.0
+    assert base.decode_neutral_literal(authored, base.FLOAT64) == float(authored)
+    # The rule is unchanged for every number whose digits do not straddle a midpoint,
+    # so the carrier and the digits agree everywhere else.
+    assert base.decode_neutral_literal(base.AuthoredNumber("1048576.2"), base.FLOAT32) == 1048576.25
+    assert base.decode_neutral_literal(base.AuthoredNumber("1e39"), base.FLOAT32) == 1e39
+
+
+def test_a_number_exactly_between_two_floats_names_the_one_with_the_even_mantissa() -> None:
+    # `1 + 3 * 2**-24` is exactly halfway between the binary32 successors of `1.0`,
+    # and the LOWER of the pair has the odd mantissa, so round-to-nearest-EVEN picks
+    # the upper. A rule that broke the tie by proximity alone, or toward the search's
+    # own starting point, would answer the lower one.
+    halfway = base.AuthoredNumber("1.000000178813934326171875")
+    assert base.decode_neutral_literal(halfway, base.FLOAT32) == 1.0 + 2.0**-22
+
+
+def test_the_float32_overflow_boundary_is_the_magnitude_that_rounds_to_an_infinity() -> None:
+    # `2**128 - 2**103` is half an ulp above the largest finite binary32, so it is the
+    # first magnitude that rounds to an infinity — a member of no float space. One
+    # below it still names the largest finite value, even though the binary64 a host
+    # parser would put THAT number in has already overflowed the width.
+    largest_finite = float(2**128 - 2**104)
+    assert (
+        base.decode_neutral_literal(base.AuthoredNumber(str(2**128 - 2**103 - 1)), base.FLOAT32)
+        == largest_finite
+    )
+    assert base.decode_neutral_literal(2**128 - 2**103 - 1, base.FLOAT32) == largest_finite
+    beyond = base.decode_neutral_literal(base.AuthoredNumber(str(2**128 - 2**103)), base.FLOAT32)
+    assert base.matches_neutral_type(beyond, base.FLOAT32) is False
 
 
 @pytest.mark.parametrize("declared", [base.FLOAT32, base.FLOAT64])
