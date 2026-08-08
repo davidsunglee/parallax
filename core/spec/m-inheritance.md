@@ -360,7 +360,12 @@ case with a `then.rejectedRule` (`m-case-format`). `m-sql` fixes the resulting D
   subtype itself) — the same inherited chain reads and DDL derive. A field declared
   on a **sibling** concrete branch, or on any **unrelated** branch of the family, is
   invalid: no single concrete subtype in the target's effective set accepts it
-  (`subtype-write-sibling-attribute`).
+  (`subtype-write-sibling-attribute`). The rule ranges over the names the family
+  **declares somewhere**. A name declared nowhere in the family is on no branch, so
+  it is outside this comparison — reading it as a sibling field would fail every
+  candidate ancestry chain and report a branch conflict for a field that does not
+  exist. What such a name is instead is a question for the surface that admitted
+  it, not for this protocol.
 - **Metadata is framework-owned, never authored.** A payload **MUST NOT** carry the
   `tag` column, `tag`, `tagValue`, or `familyVariant`. Under table-per-hierarchy the
   write **derives** the tag column from the concrete subtype's `tagValue` (exactly as

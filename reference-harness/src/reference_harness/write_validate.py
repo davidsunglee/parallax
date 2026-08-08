@@ -268,14 +268,20 @@ def validate_subtype_write(
                 f"(m-inheritance), never accepts as input",
             )
 
-    # (3) Sibling / unrelated-branch attribute. The accepted fields are exactly the
-    #     target's ancestry chain, so every authored (non-metadata) attribute MUST fit
+    # (3) Sibling / unrelated-branch member. The accepted fields are exactly the
+    #     target's ancestry chain, so every authored member the FAMILY declares MUST fit
     #     the ancestry chain of a SINGLE concrete subtype in the target's effective set.
-    domain_fields = {key for key in payload_fields if key not in metadata_fields}
+    #     The comparison is restricted to family-declared names: a name the family
+    #     declares nowhere sits on no branch, sibling or otherwise, so including it
+    #     would make every ancestry chain fail and report a sibling attribute for a
+    #     member honesty owns (`m-case-format` "What decides a bare write row").
     effective = family.effective_concrete_set(name)
-    if effective and not any(
-        domain_fields <= _ancestry_attribute_names(family, concrete) for concrete in effective
-    ):
+    accepted = {concrete: _ancestry_member_names(family, concrete) for concrete in effective}
+    declared_anywhere = frozenset[str]().union(*accepted.values()) if accepted else frozenset()
+    domain_fields = {
+        key for key in payload_fields if key not in metadata_fields and key in declared_anywhere
+    }
+    if effective and not any(domain_fields <= names for names in accepted.values()):
         raise RejectionError(
             SUBTYPE_WRITE_SIBLING_ATTRIBUTE,
             f"the write input to {name!r} carries fields {sorted(domain_fields)} that no "
@@ -294,8 +300,11 @@ def validate_subtype_write(
         )
 
 
-def _ancestry_attribute_names(family: Family, concrete: str) -> set[str]:
-    """The declared attribute NAMES in *concrete*'s ancestry chain (root -> ... -> self).
+def _ancestry_member_names(family: Family, concrete: str) -> frozenset[str]:
+    """The declared member NAMES in *concrete*'s ancestry chain (root -> ... -> self).
+
+    Attributes and top-level Value Objects alike, because both are members a payload
+    aimed at *concrete* may name.
 
     Reads the RAW ancestor definitions, so the synthesized framework-owned tag column
     (added only by the flattened definition) is excluded — it is metadata, not an
@@ -303,11 +312,12 @@ def _ancestry_attribute_names(family: Family, concrete: str) -> set[str]:
     """
     names: set[str] = set()
     for ancestor in family.ancestry(concrete):
-        for attribute in family.defs.get(ancestor, {}).get("attributes", []) or []:
-            attr_name = attribute.get("name")
-            if isinstance(attr_name, str):
-                names.add(attr_name)
-    return names
+        definition = family.defs.get(ancestor, {})
+        for member in (definition.get("attributes") or []) + (definition.get("valueObjects") or []):
+            member_name = member.get("name")
+            if isinstance(member_name, str):
+                names.add(member_name)
+    return frozenset(names)
 
 
 def _primary_key_names(family: Family, name: str) -> list[str]:

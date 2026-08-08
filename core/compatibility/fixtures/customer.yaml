@@ -8,7 +8,7 @@
 # MariaDB uses json_value (which maps a JSON `null` leaf and a missing path alike
 # to SQL NULL, so the absence collapse holds on both dialects — m-dialect).
 #
-# The quotes around `country: "NO"` are load-bearing: unquoted, YAML reads `NO` as a
+# The quotes around `country: NO` are load-bearing: unquoted, YAML reads `NO` as a
 # boolean, and a `string` leaf holding one is invalid stored data (m-document-codec)
 # rather than the country code the row means.
 #
@@ -77,7 +77,7 @@ Customer:
       street: 1 Park Ave
       city: Oslo
       geo:
-        country: "NO"
+        country: NO
         zip: "0150"
         elevation: 10.5
         point:
@@ -92,7 +92,7 @@ Customer:
       street: 2 Main St
       city: Oslo
       geo:
-        country: "NO"
+        country: NO
         zip: "0151"
         elevation: 20.0
         point:
@@ -218,7 +218,7 @@ Location:
       street: 1 Harbour Way
       city: Oslo
       geo:
-        country: "NO"
+        country: NO
         zip: "0150"
         elevation: 12.0
         point:
@@ -242,7 +242,7 @@ Location:
       street: 5 Karl Johans Gate
       city: Oslo
       geo:
-        country: "NO"
+        country: NO
         elevation: 8.0
         point:
           lat: 59.92

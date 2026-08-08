@@ -1214,11 +1214,18 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
 # The neutral type vocabulary is CLOSED, and membership asks whether the authored
 # PORTABLE literal decodes to a value of the space. Decoding is many-to-one where the
 # document encoding is one-to-one, so the two directions are pinned together: a
-# non-canonical spelling that names a value is a member (uppercase hex, a hyphenless
-# or wrapped UUID, an unpadded time, a non-UTC offset), while a literal that names no
+# non-canonical spelling the portable grammar admits is a member (uppercase hex, a
+# hyphenless UUID, an unpadded time, a non-UTC offset), while a literal that names no
 # value is not (an integer beyond its width, a number no float of the width holds
 # exactly, a decimal the scale cannot hold, text with no UTF-8 encoding, a separator
 # inside a hex spelling, a malformed spelling, a sub-microsecond instant).
+#
+# The grammar is bounded ABOVE as well: a spelling only the host parser takes —
+# ``uuid.UUID``'s brace-wrapped and ``urn:uuid:`` forms and its indifference to
+# hyphen position, ``fromisoformat``'s week dates, basic-format runs, and arbitrary
+# date/time separator, ``decimal.Decimal``'s digit separators, leading ``+``,
+# surrounding space, and exponent — is NOT a member, or a second language would have
+# to reproduce Python rather than the neutral contract (ADR 0016).
 @pytest.mark.parametrize(
     ("neutral_type", "value", "matches"),
     [
@@ -1245,10 +1252,18 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
         ("string", 1, False),
         ("string", "\ud800", False),
         ("decimal(4,2)", "12.34", True),
+        ("decimal(4,2)", "-12.34", True),
+        ("decimal(4,2)", "0.50", True),
         ("decimal(4,2)", 12, True),
         ("decimal(4,2)", "12.345", False),
         ("decimal(4,2)", "123.45", False),
         ("decimal(4,2)", "not-a-decimal", False),
+        ("decimal(4,2)", "1_2.34", False),
+        ("decimal(4,2)", "+12.34", False),
+        ("decimal(4,2)", " 12.34 ", False),
+        ("decimal(4,2)", "1.234e1", False),
+        ("decimal(4,2)", "012.34", False),
+        ("decimal(4,2)", "NaN", False),
         ("bytes", "00ff", True),
         ("bytes", "00FF", True),
         ("bytes", "0a1B", True),
@@ -1258,18 +1273,31 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
         ("bytes", "0z", False),
         ("date", "2024-01-01", True),
         ("date", "not-a-date", False),
+        ("date", "2024-02-30", False),
+        ("date", "20240101", False),
+        ("date", "2024-W01-1", False),
+        ("date", "2024-1-1", False),
         ("time", "12:00:00", True),
         ("time", "12:00", True),
         ("time", "12:00:00+00:00", False),
+        ("time", "T12:00:00", False),
+        ("time", "1200", False),
+        ("timestamp", "2024-01-01T00:00:00Z", True),
         ("timestamp", "2024-01-01T00:00:00+00:00", True),
         ("timestamp", "2024-01-01T00:00:00+02:00", True),
         ("timestamp", "2024-01-01T00:00:00", False),
+        ("timestamp", "2024-01-01 00:00:00+00:00", False),
+        ("timestamp", "2024-01-01X00:00:00+00:00", False),
+        ("timestamp", "20240101T000000Z", False),
+        ("timestamp", "2024-W01-1T00:00:00Z", False),
         ("timestamp", "2024-01-01T00:00:00.1234567+00:00", False),
         ("timestamp", "2024-01-01T00:00:00.1234560+00:00", True),
         ("uuid", "123e4567-e89b-12d3-a456-426614174000", True),
         ("uuid", "123E4567-E89B-12D3-A456-426614174000", True),
         ("uuid", "123e4567e89b12d3a456426614174000", True),
-        ("uuid", "urn:uuid:123e4567-e89b-12d3-a456-426614174000", True),
+        ("uuid", "{123e4567-e89b-12d3-a456-426614174000}", False),
+        ("uuid", "urn:uuid:123e4567-e89b-12d3-a456-426614174000", False),
+        ("uuid", "123e4567-e89b12d3-a456-426614174000", False),
         ("uuid", "not-a-uuid", False),
         ("json", {"any": "value"}, True),
     ],
