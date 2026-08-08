@@ -82,6 +82,7 @@ from parallax.snapshot.handle._write_inputs import (
     validate_source_pin,
     validate_until,
     validate_valid_from,
+    validate_write_value,
     written_object_key,
 )
 
@@ -203,10 +204,13 @@ class Transaction:
         the recorded original, spec §3/§5). An EMPTY effective change set
         issues no DML at all (zero round trips, the net-zero-chain no-op rule
         — the no-op-first ordering `m-opt-lock` fixes: dropped before any
-        observation or locking concern). Raises
-        :class:`~parallax.core.entity.EntityRowError`
-        (``entity-row-no-change-record``) for a provenance-less instance (never
-        produced via ``edit(...)``). The version column, if
+        observation or locking concern), and a node this transaction's own read
+        returned that no edit touched carries exactly that empty change set:
+        writing every value a find returned and editing only some of them is
+        correct code. A value no read of this store produced is refused instead,
+        before any row is derived
+        (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
+        ``write-value-not-stored``). The version column, if
         any, is never authored here — it is framework-owned end to end
         (`m-opt-lock`; ADR 0013): the write seam derives its advance from this
         unit of work's own recorded observation at lowering
@@ -242,7 +246,7 @@ class Transaction:
         :class:`~parallax.snapshot.handle.TransactionTimePinReadOnlyError`
         before any buffering, exactly as every other keyed verb does."""
         record = metadata_of_instance(self._meta, node_or_instance)
-        validate_source_pin(record.identity.name, source_pin(node_or_instance))
+        validate_source_pin(record.identity, source_pin(node_or_instance))
         self._buffer(
             "delete",
             record.identity,
@@ -351,7 +355,9 @@ class Transaction:
         pinned at a finite Transaction-Time instant
         (:func:`validate_source_pin` — the Transaction-Time past is read-only,
         and an edited copy of such a view carries that view's own pin, so
-        deriving one is no route past this refusal), then validate +
+        deriving one is no route past this refusal), refuse a value whose
+        provenance this mutation's verb does not accept
+        (:func:`validate_write_value`, before any row is derived), then validate +
         render ``valid_from`` against that declaring entity's own
         temporality (:func:`validate_valid_from`, spec §5). Returns the
         record (``_buffer``'s own entity-name argument), the declaring entity
@@ -360,7 +366,8 @@ class Transaction:
         non-temporal/audit-only target)."""
         record = metadata_of_instance(self._meta, node_or_instance)
         declaring = declaring_of(self._meta, record)
-        validate_source_pin(record.identity.name, source_pin(node_or_instance))
+        validate_source_pin(record.identity, source_pin(node_or_instance))
+        validate_write_value(record.identity, node_or_instance, mutation)
         valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
         return record, declaring, valid_from_literal
 
@@ -478,7 +485,7 @@ class Transaction:
         # pending buffered writes, so a refused read must be refused before it.
         construction = _materializing(self._construction)
         lowered = preflight_find(query, model=self._meta)
-        target, op = lowered.target.name, lowered.operation
+        target, op = lowered.target.canonical, lowered.operation
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         if scans_an_axis(op):
             history_result = self._uow.read(

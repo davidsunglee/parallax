@@ -62,7 +62,9 @@ public-surface check promises. Where the exported names live:
 - :mod:`~parallax.snapshot.handle._write_inputs` —
   :class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin`, the
   finite-Transaction-Time-pin refusal the keyed verbs and the conformance
-  engine's scenario grading share.
+  engine's scenario grading share, plus :class:`KeyedWriteValueError` and
+  :data:`KEYED_WRITE_VALUE_CODES`, the provenance refusal the value-taking keyed
+  verbs run before deriving a row.
 
 The modules behind no exported name (``_materializer``, ``_family``,
 ``_keyed_sql``, ``_predicate_writes``, ``_preflight``) are reached only through the modules
@@ -101,6 +103,8 @@ from parallax.snapshot.handle._read import (
 from parallax.snapshot.handle._step_lowering import lower_step
 from parallax.snapshot.handle._transaction import Transaction
 from parallax.snapshot.handle._write_inputs import (
+    KEYED_WRITE_VALUE_CODES,
+    KeyedWriteValueError,
     TransactionTimePinReadOnlyError,
     validate_source_pin,
 )
@@ -108,12 +112,14 @@ from parallax.snapshot.handle._write_lowering import stream_lowered
 from parallax.snapshot.handle._write_types import WriteLoweringError
 
 __all__ = [
+    "KEYED_WRITE_VALUE_CODES",
     "Database",
     "DeferredFeatureError",
     "ExecutedStatement",
     "Execution",
     "FindResult",
     "HistoryFindResult",
+    "KeyedWriteValueError",
     "NoResultFound",
     "ObservationCollector",
     "QueryTargetError",

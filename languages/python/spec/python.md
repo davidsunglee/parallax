@@ -2870,8 +2870,8 @@ or descriptor authoring form and performs no audit stamping.
   row_codec_of(model: DomainModel) -> EntityRowCodec
 
   EntityRowError(RuntimeError)      # exported from parallax.core.entity
-    entity-row-not-an-entity          entity-row-no-change-record
-    entity-row-target-not-in-model    entity-row-malformed-provenance
+    entity-row-not-an-entity          entity-row-malformed-provenance
+    entity-row-target-not-in-model
     entity-row-member-missing
   ```
 
@@ -2934,42 +2934,48 @@ or descriptor authoring form and performs no audit stamping.
   from keeps the two as separate declaration-ordered sequences. Physical names
   never appear: the canonical-member-to-default-column rule stays authoritative,
   so `taxID` is emitted as `taxID` and its column `tax_i_d` is
-  `m-storage-layout`'s business. `identity_row` is the primary-key row and
-  carries **raw** primary-key values, while `full_row` and `edited_row` carry
-  **serialized** values; the asymmetry is preserved deliberately rather than
-  incidentally.
+  `m-storage-layout`'s business. All three operations carry
+  **serialized** values, so a caller holding several rows of one value compares
+  like with like. Uniformity moves no emitted bind: a primary key is
+  structurally an Attribute of a scalar type, which serialization passes through
+  by identity, so `identity_row`'s values are the ones the instance holds
+  whatever the rule says.
 
-  `edited_row` requires accepted Edited Copy provenance and returns the identity
-  row plus the **effective** caller-authored changes, those whose current value
-  differs from the recorded original. It preserves first-touched originals
-  across a chain and returns `None` for a net-zero edit, so "nothing to write"
-  has exactly one representation.
+  `edited_row` returns the identity row plus the **effective** caller-authored
+  changes, those whose current value differs from the recorded original. It
+  preserves first-touched originals across a chain and answers `None` when the
+  value carries no effective change. `None` is one proposition — *this value
+  names no change to write* — so a net-zero edit and a value no edit ever
+  touched are the same answer, and "nothing to write" has exactly one
+  representation whatever the value's history.
 
   A **Change Record** is a mapping from each member the edit chain touched to
   the value that member held when it was first touched, stored in one private
-  first-party slot that only `edit(...)` ever writes. Its two refusals are told
-  apart by that slot rather than by its contents: a value carrying **no** Change
-  Record raises `entity-row-no-change-record` — the ordinary refusal of a plain,
-  never-edited value — while a value whose slot holds something that is not a
-  Change Record raises `entity-row-malformed-provenance`. The second reports
+  first-party slot that only `edit(...)` ever writes. An absent slot and an
+  empty record name the same empty selection, because both say the chain touched
+  nothing; a value whose slot holds something that is **not** a Change Record
+  raises `entity-row-malformed-provenance` instead. That refusal reports
   corruption of private first-party state rather than classifying anything a
-  developer authored, which is why the two are separate codes rather than one:
-  collapsing an unreadable carrier into "never edited" would name the wrong
-  defect and leave the corruption unreported. A recorded name the resolved
-  identity does not declare is not a provenance defect — it is the same
-  undeclared-member case `full_row` reports, so it raises
-  `entity-row-member-missing`.
+  developer authored, which is why it survives while the absent-record refusal
+  does not: collapsing an unreadable carrier into "nothing to write" would name
+  the wrong defect and leave the corruption unreported. Which verbs accept a
+  plain, never-edited value is not the codec's question at all — the write verb
+  decides it from the value's provenance, before deriving any row (§5). A
+  recorded name the resolved identity does not declare is not a provenance
+  defect either — it is the same undeclared-member case `full_row` reports, so
+  it raises `entity-row-member-missing`.
 
   **Refusals are ordered, so one input has one code.** Every operation resolves
   the value's Entity Identity first — `entity-row-not-an-entity`, then
   `entity-row-target-not-in-model` — and judges members last. `edited_row`
-  admits provenance in between, and settles the carrier's presence and shape
-  before the Change Record is read for names: a value carrying no Change Record
-  raises `entity-row-no-change-record` and an unreadable carrier raises
-  `entity-row-malformed-provenance` whatever else that value populates, so
-  `entity-row-member-missing` from `edited_row` always reports a name a
-  readable record supplied. `full_row` and `identity_row` consult no provenance
-  at all and never raise either provenance code, so the same plain value whose
+  settles the carrier's shape in between, before the Change Record is read for
+  names: an unreadable carrier raises `entity-row-malformed-provenance` whatever
+  else that value populates, so `entity-row-member-missing` from `edited_row`
+  always reports a name a readable record supplied. An absent record narrows
+  nothing: the primary-key half of the selection is judged exactly as it is for
+  a net-zero chain, so a value whose class supplies no attribute for a declared
+  key member is refused rather than answered `None`. `full_row` and
+  `identity_row` read no Change Record at all, so the same plain value whose
   populated member the model does not declare raises
   `entity-row-member-missing` from `full_row` and emits a row from
   `identity_row`, whose selection is the declared primary key.
@@ -3090,6 +3096,39 @@ or descriptor authoring form and performs no audit stamping.
   MAY-tier administrative mutations that would widen the invariant
   (`insertForRecovery`, `purge`, `inactivateForArchiving`) sit outside the
   required parity surface and are not offered.
+- **A keyed write verb accepts a value by its provenance.** Which verbs accept
+  a given value is decided by which framework-managed source, if any, produced
+  it from a read (`m-unit-work` *Write value provenance*), never by whether an
+  author has since changed it. The three answers partition the values a verb
+  can be handed, so a refused value carries exactly one code of exported
+  `KEYED_WRITE_VALUE_CODES` on exported `KeyedWriteValueError` — a `ValueError`
+  for the reason `TransactionTimePinReadOnlyError` is one, since both refuse a
+  neutral application-lifecycle argument the caller supplied. Both names are
+  reached from `parallax.snapshot` and from `parallax.snapshot.handle`: a
+  developer catches the class on the ordinary `connect` / `transact` path, and
+  names the codes from the module they caught it in. `update` / `update_until`
+  handed a value **no** read of this store produced raise
+  `write-value-not-stored`, whose message names `tx.insert(...)`; `insert` /
+  `insert_until` handed a value this store's own read produced raise
+  `write-value-already-stored`, whose message names `tx.update(...)`; and both
+  families refuse a value **another** framework-managed source produced with
+  `write-value-foreign-lifecycle`, a source reading the same store included. The
+  refusal is decided in the shared keyed-verb preamble, **before** any row is
+  derived, so a refused value reaches no codec, no buffer, no plan, and no
+  adapter — it is never a translation of a lower-level failure, and no
+  `EntityRowError` is caught or rethrown anywhere on the path. `delete`,
+  `terminate`, and `terminate_until` derive an identity row alone and take no
+  position on provenance. **An unchanged stored value is no refusal at all**: a
+  node this store's read returned that no edit touched carries the empty
+  effective change set, so `tx.update` on it buffers nothing, issues no
+  statement, and raises nothing — exactly as an edit whose net change is empty
+  does. Writing every value a find returned and editing only some of them is
+  correct code, which is the point of tracking changes on the author's behalf.
+  A value this transaction merely **buffered an insert for** is not a value a
+  read produced, so `tx.update` of it is `write-value-not-stored`; the
+  insert-then-update coalescing shape is expressed by inserting the value the
+  flush should write, and `terminate` (which takes no position) keeps the
+  same-transaction pairing the bullet below describes.
 - **A keyed temporal close requires a value that names a milestone.** The
   observation a temporal `update`/`terminate`/`*_until` settles against is
   resolved at the verb from the **value being written** — its own `Edge` —
