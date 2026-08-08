@@ -1126,6 +1126,30 @@ def test_a_value_another_lifecycle_produced_is_refused_by_both_families(verb: st
     assert refusal.value.code == "write-value-foreign-lifecycle"
 
 
+class _RekeyedTwin(Entity, table="twin", name="Twin", namespace="parallax.compatibility"):
+    id_elsewhere: Attr[int] = attr(primary_key=True)
+    right_only: Attr[str] = attr(max_length=8)
+
+
+def test_a_value_that_keys_no_row_is_still_refused_for_its_provenance() -> None:
+    # The refusal precedes row derivation for EVERY value, including one whose
+    # own class keys this Entity by another member and can therefore derive no
+    # identity row at all. The exemption a buffered insert grants is decided from
+    # the object each value names rather than from a row, so this transaction
+    # having an insert to compare against cannot turn a provenance refusal into
+    # an `EntityRowError` reported on the value's behalf.
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.insert(_TwinRight(id=1, right_only="x"))
+        tx.update(_RekeyedTwin(id_elsewhere=1, right_only="y").edit(right_only="z"))
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        db_for(_TWIN_RIGHT, port).transact(fn)
+    assert refusal.value.code == "write-value-not-stored"
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
 # --------------------------------------------------------------------------- #
 # What a framework-managed SOURCE is (ADR 0010): the managed lifecycle, so     #
 # every `Database` over one store is one source. The two arrangements below    #

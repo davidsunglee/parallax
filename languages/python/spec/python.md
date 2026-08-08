@@ -3138,7 +3138,13 @@ or descriptor authoring form and performs no audit stamping.
   coalesces in place*) — the same read-your-own-writes provenance the bullet
   below grants a keyed temporal close. The exemption is keyed by the OBJECT,
   so a value naming a primary key this transaction never inserted is refused
-  exactly as any other value no read produced is.
+  exactly as any other value no read produced is. Which object a value names is
+  read off its own primary-key members rather than derived through the Entity Row
+  Codec, because the refusal this exemption lifts is decided before any row
+  exists: a cross-model value whose class keys the same Entity by other members
+  names no object at all, and it therefore reaches `write-value-not-stored`
+  rather than the `entity-row-member-missing` an identity row would have raised
+  on its behalf.
 - **A keyed temporal close requires a value that names a milestone.** The
   observation a temporal `update`/`terminate`/`*_until` settles against is
   resolved at the verb from the **value being written** — its own `Edge` —

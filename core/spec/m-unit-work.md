@@ -210,7 +210,10 @@ WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
 
 - **NotStored** (`write-value-not-stored`) — an `update` / `updateUntil` verb was
   handed a value **no** managed read produced. No stored row exists for it to
-  address, so the refusal names the `insert` verb as the one that accepts it.
+  address, so the refusal names the `insert` verb as the one that accepts it —
+  **unless the writing unit of work has itself already buffered an insert of that
+  object**, in which case the value is accepted and the pair coalesces in place
+  (*Same-transaction write coalescing*).
 - **AlreadyStored** (`write-value-already-stored`) — an `insert` / `insertUntil`
   verb was handed a value produced by a read through **the very source this verb
   writes through**. That value already denotes a row that source stores, so the
@@ -231,7 +234,19 @@ carried on the value, held in an identity map, held in an implementation-owned
 registry — is the implementation's own affair, and no conforming behavior depends
 on the choice.
 
-Two consequences are normative:
+The partition is over **provenance**; whether a given answer *refuses* is the
+verb's question, and NotStored is the one answer whose refusal a second fact can
+lift. The value of an object the writing unit of work has already buffered an
+insert for keeps the NotStored provenance — no read produced it — but there is
+now a row for the update to address, because that unit of work is the one storing
+it. **Read-your-own-writes** is therefore normative: an implementation that
+refused such a value would refuse the developer spelling of *Insert-then-update
+coalesces in place*, and its refusal would name the `insert` verb the developer
+had just called. The exemption is keyed by the **object**: a value naming an
+object this unit of work never inserted is refused exactly as any other value no
+read produced is, and no other unit of work's buffer lifts anything.
+
+Three consequences are normative:
 
 - A value this verb's own source produced that no author has changed is **not** a
   refusal for an `update` verb. It buffers nothing, issues no statement, and raises nothing —
@@ -242,6 +257,10 @@ Two consequences are normative:
   value a verb does not accept reaches no row derivation, no buffer, no plan, no
   SQL, and no database. A refusal is never a translation of a lower-level failure
   raised further down that path.
+- The read-your-own-writes exemption is decided the same way, from the object the
+  value names rather than from a row derived for it. A value that can key no row
+  at all names no object this unit of work inserted, so it reaches the NotStored
+  refusal rather than whatever failure deriving its row would have produced.
 
 The `delete`, `terminate`, and `terminateUntil` verbs derive an identity row alone
 and take no position on provenance.
