@@ -61,11 +61,24 @@ neither more nor less observed than the one it admits. A new normative notion of
 source, wearing the clothes of a bug fix, is the wrong trade at that price.
 
 Under this decision `ForeignLifecycle` is reachable only from a second managed
-lifecycle, and the Python runtime ships one. A conformance case's `anotherSource`
-value is therefore arranged by constructing a value through the core's own Entity
-Graph Construction seam with a state factory of its own, which is precisely what a
-second lifecycle is as far as the rule is concerned: the value carries lifecycle
+lifecycle, and the Python runtime ships one. No read this runtime can perform
+produces a foreign value, so a conformance case's `anotherSource` value is
+**synthesized**: a real `Account` constructed through the core's own Entity Graph
+Construction seam under a state factory of the runner's own, carrying lifecycle
 state the Snapshot never attached.
+
+That is a second lifecycle's *state*, not a second lifecycle. The runner
+materializes from literals rather than from rows, and nothing recognizes the
+value later as its own, so what `m-unit-work-019` pins is exactly the classifier's
+question and no more: `validate_write_value` reads `lifecycle_state_of` (is there
+managed state?) and `snapshot_state_of` (is it this lifecycle's?), and a value
+answering yes-then-no is refused by both verb families. Where the value's members
+came from is invisible to that question, which is why synthesizing the state is
+sufficient to witness the rule and why a case cannot ask for more (`m-case-format`
+*Keyed write action steps*: an implementation shipping one lifecycle arranges the
+token under a second lifecycle's own state). What it is **not** is evidence that a
+second materializing lifecycle would interoperate correctly; the Python runtime
+ships none for that to be a question about.
 
 No compatibility case witnesses the cross-handle arrangement, deliberately. Under
 this decision a value from a second handle is definitionally not another source,

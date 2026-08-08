@@ -1041,11 +1041,13 @@ def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() ->
 # unchanged stored value that is no refusal at all.                            #
 # --------------------------------------------------------------------------- #
 def _foreign_lifecycle_account() -> mm.Account:
-    """An `Account` ANOTHER framework-managed source produced.
+    """An `Account` carrying ANOTHER framework-managed source's lifecycle state.
 
-    Built through the core's own Entity Graph Construction seam with a state
-    factory of its own, which is exactly what a second lifecycle package is: the
-    value carries lifecycle state this Snapshot never attached.
+    Synthesized rather than read: this runtime ships one managed lifecycle (ADR
+    0010), so the value is built through the core's own Entity Graph Construction
+    seam under a state factory of its own. That gives it a second lifecycle's
+    state, which is the whole of what the provenance classifier reads, and not a
+    second lifecycle.
     """
 
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:

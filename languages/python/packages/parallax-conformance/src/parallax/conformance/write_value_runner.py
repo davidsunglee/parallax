@@ -73,7 +73,12 @@ UNMANAGED_ID: Final[int] = 91
 class _AnotherLifecycleState:
     """The whole of another framework-managed source's per-node state, as far as
     the provenance rule is concerned: state this Snapshot lifecycle did not
-    attach."""
+    attach.
+
+    Empty because the rule asks nothing else of it. What distinguishes a foreign
+    value is that its lifecycle slot is occupied by something this Snapshot did
+    not put there, so the class needs no members to make the classifier answer
+    `anotherSource` — and giving it any would suggest the rule reads them."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,11 +146,16 @@ def value_of(provenance: str, tx: Transaction) -> Account:
 
     ``unmanaged`` is a plainly constructed instance — no managed read produced
     it. ``thisSource`` is read through ``tx`` itself, the very source the verb
-    under test writes through. ``anotherSource`` is materialized through the
+    under test writes through.
+
+    ``anotherSource`` is SYNTHESIZED rather than read: this runtime ships exactly
+    one managed lifecycle (ADR 0010), so no read it can perform produces a value
+    of another one. The value is a real ``Account`` materialized through the
     core's own Entity Graph Construction seam under a lifecycle state of this
-    module's own, which is exactly what a second framework-managed source is: the
-    value is real, and the production validator — never this module — decides
-    what its provenance means.
+    module's own — a second lifecycle's state, not a second lifecycle — which is
+    the whole of what the provenance classifier reads. Its members are literals
+    matching the fixture row, and nothing here decides what any of it means: the
+    production validator does.
     """
     if provenance == "unmanaged":
         return Account(id=UNMANAGED_ID, owner="Unmanaged", balance=Decimal("0.00"))

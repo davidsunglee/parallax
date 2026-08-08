@@ -10,8 +10,11 @@
 # application-lifecycle error over a VALUE a client holds, and the second managed
 # source the case requires is one no wire harness can arrange, so the harness
 # schema-validates it and each language's API Conformance Suite returns and
-# verifies the error observations. Which second source an implementation uses is
-# its own affair — the case states only that the value came from one.
+# verifies the error observations. How an implementation arranges the value is its
+# own affair — one shipping a single managed lifecycle has no read that produces a
+# foreign value and arranges one under a second lifecycle's own state instead. The
+# case states the provenance the implementation's own classifier must answer,
+# never how the value was obtained.
 model: models/account.yaml
 lane: api-conformance
 tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]
