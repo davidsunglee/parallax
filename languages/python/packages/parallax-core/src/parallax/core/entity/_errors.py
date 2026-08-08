@@ -45,7 +45,6 @@ __all__ = [
     "ENTITY_ROW_MALFORMED_PROVENANCE",
     "ENTITY_ROW_MEMBER_MISSING",
     "ENTITY_ROW_NOT_AN_ENTITY",
-    "ENTITY_ROW_NO_CHANGE_RECORD",
     "ENTITY_ROW_TARGET_NOT_IN_MODEL",
     "GRAPH_CONSTRUCTION_CODES",
     "METAMODEL_DEFINITION_CODES",
@@ -215,8 +214,6 @@ ENTITY_ROW_TARGET_NOT_IN_MODEL: Final = "entity-row-target-not-in-model"
 ENTITY_ROW_MEMBER_MISSING: Final = "entity-row-member-missing"
 """An operation selected a member it cannot emit: either the resolved identity
 does not declare it, or the value's class carries no attribute for one it does."""
-ENTITY_ROW_NO_CHANGE_RECORD: Final = "entity-row-no-change-record"
-"""An edited row was asked of a plain value that was never edited."""
 ENTITY_ROW_MALFORMED_PROVENANCE: Final = "entity-row-malformed-provenance"
 """The private Change Record slot holds something that is not a Change Record."""
 
@@ -225,7 +222,6 @@ ENTITY_ROW_CODES: Final[frozenset[str]] = frozenset(
         ENTITY_ROW_NOT_AN_ENTITY,
         ENTITY_ROW_TARGET_NOT_IN_MODEL,
         ENTITY_ROW_MEMBER_MISSING,
-        ENTITY_ROW_NO_CHANGE_RECORD,
         ENTITY_ROW_MALFORMED_PROVENANCE,
     }
 )

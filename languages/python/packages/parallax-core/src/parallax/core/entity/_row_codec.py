@@ -44,7 +44,6 @@ from parallax.core.entity._entity import CHANGE_RECORD_SLOT, Entity, WireNames, 
 from parallax.core.entity._errors import (
     ENTITY_ROW_MALFORMED_PROVENANCE,
     ENTITY_ROW_MEMBER_MISSING,
-    ENTITY_ROW_NO_CHANGE_RECORD,
     ENTITY_ROW_NOT_AN_ENTITY,
     ENTITY_ROW_TARGET_NOT_IN_MODEL,
     EntityRowError,
@@ -65,7 +64,7 @@ __all__ = ["EntityRowCodec", "row_codec_of"]
 
 _NO_RECORD: Final = object()
 """Distinguishes an absent Change Record slot from one holding anything at all,
-which is what tells the two provenance refusals apart."""
+which is what tells "no change to write" from a corrupt carrier."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,10 +127,11 @@ class EntityRowCodec:
     def identity_row(self, value: object) -> dict[str, object]:
         """``value``'s primary-key members, keyed by canonical name.
 
-        Its values are **raw** where :meth:`full_row` and :meth:`edited_row`
-        carry serialized ones — a deliberately preserved asymmetry rather than
-        an accident. Its selection is the resolved identity's own declared
-        primary key, so it names no candidate the metadata did not supply; a
+        Its values are serialized exactly as :meth:`full_row`'s and
+        :meth:`edited_row`'s are, so all three operations carry one form and a
+        caller holding several of them compares like with like. Its selection is
+        the resolved identity's own declared primary key, so it names no
+        candidate the metadata did not supply; a
         cross-model value whose own class keys the same Entity by other members
         carries no attribute to read one from, and that is refused rather than
         dropped, because an unkeyed row is no identity row.
@@ -141,12 +141,13 @@ class EntityRowCodec:
 
     def edited_row(self, value: object) -> dict[str, object] | None:
         """``value``'s identity plus its effective caller-authored changes, or
-        ``None`` when the edit nets to zero.
+        ``None`` when it carries no effective change.
 
-        Requires accepted Edited Copy provenance. A member the edit chain
-        touched drops out when its current value equals the original the chain
-        first recorded, so a net-zero chain answers ``None`` and "nothing to
-        write" has exactly one representation.
+        ``None`` is one proposition — *this value names no change to write* —
+        and a value no edit ever touched answers it exactly as a chain that nets
+        to zero does. A member the edit chain touched drops out when its current
+        value equals the original the chain first recorded, so "nothing to
+        write" has exactly one representation whatever the value's history.
 
         Refusal follows selection, and effectiveness is weighed afterwards: the
         whole selection — the primary key and every recorded name — is judged
@@ -289,7 +290,10 @@ class EntityRowCodec:
         self, facts: _RowFacts, names: WireNames, value: object, operation: str
     ) -> dict[str, object]:
         py_names = self._require_supplied(facts, names, facts.primary_key, operation)
-        return {canonical: getattr(value, py_names[canonical]) for canonical in facts.primary_key}
+        return {
+            canonical: serialize_member(getattr(value, py_names[canonical]))
+            for canonical in facts.primary_key
+        }
 
     def _serialized(
         self,
@@ -337,24 +341,17 @@ def row_codec_of(model: DomainModel) -> EntityRowCodec:
 
 
 def _change_record(facts: _RowFacts, value: object) -> Mapping[str, object]:
-    """``value``'s accepted Change Record, or the refusal its slot earns.
+    """``value``'s accepted Change Record — empty when it carries none.
 
-    The two refusals are told apart by the slot rather than by its contents: an
-    absent slot is the ordinary plain, never-edited value, while a slot holding
-    anything unreadable reports corruption of private first-party state.
-    Collapsing the second into the first would name the wrong defect and leave
-    the corruption unreported.
+    An absent slot and an empty record name the same selection, because both say
+    an edit chain touched nothing: the ordinary plain, never-edited value is not
+    a defect and earns no refusal. A slot holding anything unreadable is a
+    different matter — it reports corruption of private first-party state, and
+    collapsing that into the empty selection would leave it unreported.
     """
     record = value.__dict__.get(CHANGE_RECORD_SLOT, _NO_RECORD)
     if record is _NO_RECORD:
-        raise EntityRowError(
-            code=ENTITY_ROW_NO_CHANGE_RECORD,
-            message=(
-                f"this {facts.identity.canonical} value carries no Change Record, so it names "
-                "no change to write; derive an edited copy with `value.edit(**changes)`"
-            ),
-            identity=facts.identity,
-        )
+        return {}
     if not _is_change_record(record):
         raise EntityRowError(
             code=ENTITY_ROW_MALFORMED_PROVENANCE,

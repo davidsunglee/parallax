@@ -43,7 +43,6 @@ _SPEC_CODES = frozenset(
         "entity-row-not-an-entity",
         "entity-row-target-not-in-model",
         "entity-row-member-missing",
-        "entity-row-no-change-record",
         "entity-row-malformed-provenance",
     }
 )
@@ -78,6 +77,20 @@ class RekeyedWidget(Entity, name="Widget", table="widget", namespace=_NS):
     label: Attr[str]
 
 
+class Keyed(Entity, table="keyed", namespace=_NS):
+    """An `int64` primary key — one of the two types a corpus primary key holds."""
+
+    id: Attr[int] = attr(primary_key=True)
+    label: Attr[str]
+
+
+class Labelled(Entity, table="labelled", namespace=_NS):
+    """A `string` primary key — the other."""
+
+    code: Attr[str] = attr(primary_key=True, max_length=16)
+    label: Attr[str]
+
+
 class Detail(ValueObject):
     note: Attr[str | None]
 
@@ -91,6 +104,8 @@ class Interleaved(Entity, table="interleaved", namespace=_NS):
     tail: Attr[str]
 
 
+KEYED_MODEL = DomainModel(Keyed)
+LABELLED_MODEL = DomainModel(Labelled)
 NARROW_MODEL = DomainModel(Widget)
 WIDER_MODEL = DomainModel(WiderWidget)
 INTERLEAVED_MODEL = DomainModel(Interleaved)
@@ -317,7 +332,7 @@ def test_a_constructed_instance_needs_no_framework_owned_value_to_derive_a_row()
 
 
 # --------------------------------------------------------------------------- #
-# identity_row: the declared primary key, raw.                                #
+# identity_row: the declared primary key, serialized like every other row.    #
 # --------------------------------------------------------------------------- #
 def test_identity_row_projects_only_the_declared_primary_key() -> None:
     assert _accounts().identity_row(_fetched_account(version=7)) == {"id": 1}
@@ -326,6 +341,24 @@ def test_identity_row_projects_only_the_declared_primary_key() -> None:
 def test_identity_row_carries_the_values_the_instance_holds_unchanged() -> None:
     account = _account()
     assert _accounts().identity_row(account)["id"] is account.id
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(Keyed(id=7, label="a"), 7), (Labelled(code="K-1", label="a"), "K-1")],
+    ids=["int64", "string"],
+)
+def test_serialization_is_the_identity_on_every_type_a_primary_key_can_hold(
+    value: object, expected: object
+) -> None:
+    # All three operations serialize now, and a primary key is structurally
+    # restricted to a scalar Attribute type `serialize_member` passes through by
+    # identity — which is why uniformity moves no emitted bind: the metamodel
+    # schema gives `primaryKey` to an Attribute alone, and never to a Value
+    # Object occurrence.
+    codec = row_codec_of(KEYED_MODEL if isinstance(value, Keyed) else LABELLED_MODEL)
+    (emitted,) = codec.identity_row(value).values()
+    assert emitted is expected or emitted == expected
 
 
 # --------------------------------------------------------------------------- #
@@ -572,10 +605,9 @@ def test_a_recorded_name_the_value_supplies_no_attribute_for_is_refused() -> Non
 
 
 def test_a_never_edited_value_derives_no_edited_row() -> None:
-    with pytest.raises(EntityRowError) as refusal:
-        _accounts().edited_row(_account())
-    assert refusal.value.code == "entity-row-no-change-record"
-    assert refusal.value.identity == mm.Account.identity
+    # `None` is one proposition — this value names no change to write — so a
+    # value no edit ever touched answers it exactly as a net-zero chain does.
+    assert _accounts().edited_row(_account()) is None
 
 
 @pytest.mark.parametrize(
@@ -598,19 +630,21 @@ def test_an_unreadable_change_record_reports_corruption_rather_than_absence(
 # --------------------------------------------------------------------------- #
 def test_an_unresolved_identity_outranks_every_later_refusal() -> None:
     # A plain value of an Entity this model does not declare reports the
-    # identity, not the absent Change Record.
+    # identity rather than answering the no-change `None`.
     with pytest.raises(EntityRowError) as refusal:
         row_codec_of(NARROW_MODEL).edited_row(_account())
     assert refusal.value.code == "entity-row-target-not-in-model"
 
 
-def test_provenance_outranks_the_member_rule_in_edited_row() -> None:
-    # The carrier's presence settles before the record is read for names, so an
-    # `entity-row-member-missing` from `edited_row` always reports a name a
-    # readable record supplied.
+def test_a_never_edited_value_still_judges_the_primary_key_selection() -> None:
+    # A never-edited value and a net-zero chain answer `None` through the SAME
+    # path, so both judge the identity selection first: a value whose class
+    # carries no attribute for a key member the resolved identity declares is
+    # refused rather than answered.
     with pytest.raises(EntityRowError) as refusal:
-        row_codec_of(NARROW_MODEL).edited_row(WiderWidget(id=1, label="a", extra="x"))
-    assert refusal.value.code == "entity-row-no-change-record"
+        row_codec_of(NARROW_MODEL).edited_row(RekeyedWidget(key=1, label="a"))
+    assert refusal.value.code == "entity-row-member-missing"
+    assert "'id'" in refusal.value.message
 
 
 # --------------------------------------------------------------------------- #
