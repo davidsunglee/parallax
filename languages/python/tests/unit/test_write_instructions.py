@@ -49,6 +49,9 @@ _ACCOUNT = models.accepted_model(_MODELS["account"])
 _PAYMENT = models.accepted_model(_MODELS["payment"])
 _BALANCE = models.accepted_model(_MODELS["balance"])
 _POSITION = models.accepted_model(_MODELS["position"])
+# Two Entities sharing one local name across namespaces — the corpus model the
+# ambiguity rule is authored against (`m-op-algebra-048` / `-051`).
+_SHARED_LOCAL_NAME = models.accepted_model(_MODELS["shared-local-name"])
 
 _B1 = "2024-01-01T00:00:00+00:00"
 _B2 = "2024-06-01T00:00:00+00:00"
@@ -516,6 +519,32 @@ def test_member_name_honesty_rejects_unknown_entity() -> None:
     keyed = wi.deserialize({"mutation": "delete", "entity": "Ghost", "rows": [{"id": 1}]})
     with pytest.raises(wi.WriteInstructionError, match="unknown entity"):
         wi.validate_instruction(keyed, _ACCOUNT)
+
+
+def test_an_ambiguous_bare_spelling_is_classified_apart_from_an_unknown_one() -> None:
+    # `entity_by_name` answers one miss for two different mistakes. The write
+    # boundary every externally produced instruction crosses tells them apart:
+    # a bare spelling two namespaces share names the normative rule and reports
+    # the canonical spellings that would resolve, while a name the model does
+    # not declare at all stays the plain well-formedness refusal.
+    keyed = wi.deserialize({"mutation": "delete", "entity": "SharedVariant", "rows": [{"id": 1}]})
+    with pytest.raises(wi.InstructionRejectedError) as excinfo:
+        wi.validate_instruction(keyed, _SHARED_LOCAL_NAME)
+    assert excinfo.value.rule == "reference-ambiguous-entity-name"
+    assert "archive.SharedVariant" in str(excinfo.value)
+    assert "catalog.SharedVariant" in str(excinfo.value)
+
+    unknown = wi.deserialize({"mutation": "delete", "entity": "Ghost", "rows": [{"id": 1}]})
+    with pytest.raises(wi.WriteInstructionError, match="unknown entity") as plain:
+        wi.validate_instruction(unknown, _SHARED_LOCAL_NAME)
+    assert not isinstance(plain.value, wi.InstructionRejectedError)
+
+
+def test_a_canonical_spelling_resolves_where_the_bare_one_is_ambiguous() -> None:
+    keyed = wi.deserialize(
+        {"mutation": "delete", "entity": "archive.SharedVariant", "rows": [{"id": 1}]}
+    )
+    wi.validate_instruction(keyed, _SHARED_LOCAL_NAME)
 
 
 # --------------------------------------------------------------------------- #

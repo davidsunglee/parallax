@@ -126,6 +126,11 @@ _FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset(
 # cases).
 TEMPORAL_KEYED_WRITE_MULTI_ROW: Final[str] = "temporal-keyed-write-multi-row"
 
+# The same vocabulary's classification of a bare Entity spelling two namespaces
+# share, owned normatively by `m-op-algebra` (a property of the reference site,
+# not of the model) and raised here for a write's own target reference.
+REFERENCE_AMBIGUOUS_ENTITY_NAME: Final[str] = "reference-ambiguous-entity-name"
+
 
 class WriteInstructionError(ValueError):
     """A write-instruction document is not a well-formed canonical instruction."""
@@ -772,12 +777,35 @@ def _reject_result_modifier(entity_name: str, predicate: Operation) -> None:
 
 def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     """The accepted Metadata a write's bare-or-canonical target names, by
-    :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule;
-    an unknown or ambiguous name raises :class:`WriteInstructionError`."""
+    :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule.
+
+    That rule answers a miss for two different mistakes, and this is the boundary
+    every externally produced instruction crosses, so the two are classified
+    apart: a bare spelling two namespaces share is the normative
+    `reference-ambiguous-entity-name` refusal
+    (:class:`InstructionRejectedError`, `m-op-algebra` "Entity spellings in a
+    reference position"), naming the canonical spellings that would resolve;
+    anything else names no declared Entity at all and stays a plain
+    :class:`WriteInstructionError`. Classifying here is also what keeps an
+    ambiguous instruction out of the planner, whose own target lookup would
+    answer the same miss by leaving the write unbound to any observation.
+    """
     entity = entity_by_name(model, name)
-    if entity is None:
-        raise WriteInstructionError(f"unknown entity {name!r}")
-    return entity
+    if entity is not None:
+        return entity
+    shared = sorted(
+        candidate.identity.canonical
+        for candidate in model.entities
+        if candidate.identity.name == name
+    )
+    if len(shared) > 1:
+        raise InstructionRejectedError(
+            REFERENCE_AMBIGUOUS_ENTITY_NAME,
+            f"the bare Entity spelling {name!r} is shared by {shared}, so it names no single "
+            "Entity in this model and the write resolves nowhere (m-op-algebra reference "
+            "resolution); spell the one this write means",
+        )
+    raise WriteInstructionError(f"unknown entity {name!r}")
 
 
 def _declared_members(model: AcceptedMetamodel, entity: EntityMetadata) -> frozenset[str]:
