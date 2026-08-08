@@ -6,12 +6,12 @@ model: models/orders.yaml
 tags: [m-navigate, navigate, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     navigate:
-      rel: Order.statuses
+      rel: parallax.compatibility.Order.statuses
       op:
-        eq: { attr: OrderStatus.code, value: SHIPPED }
+        eq: { attr: parallax.compatibility.OrderStatus.code, value: SHIPPED }
 then:
   statements:
     - sql:

@@ -16,6 +16,6 @@ when:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: Customer.address }] }
+        - { segments: [{ rel: parallax.compatibility.Customer.address }] }
 then:
   rejectedRule: deep-fetch-value-object-segment

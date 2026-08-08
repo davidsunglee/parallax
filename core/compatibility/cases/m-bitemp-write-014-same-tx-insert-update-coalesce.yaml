@@ -24,13 +24,13 @@ when:
   scenario:
     - write:
         - mutation: insert
-          entity: Position
+          entity: parallax.compatibility.Position
           rows:
             - { id: 9, acctNum: D, value: 100.00 }
           validFrom: "2024-01-01T00:00:00+00:00"
           at: "2024-01-01T00:00:00+00:00"
         - mutation: update
-          entity: Position
+          entity: parallax.compatibility.Position
           rows:
             - { id: 9, value: 150.00 }
           at: "2024-01-01T00:00:00+00:00"
@@ -40,14 +40,14 @@ when:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
           binds: [9, D, 150.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
-    - targetEntity: Position
+    - targetEntity: parallax.compatibility.Position
       find:
         asOf:
           operand:
             asOf:
               operand:
                 eq:
-                  attr: Position.id
+                  attr: parallax.compatibility.Position.id
                   value: 9
               dimension: transaction-time
               coordinate: latest

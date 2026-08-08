@@ -4,15 +4,15 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, count, nullable, groupBy]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     groupBy:
       operand:
         all: {}
-      keys: [Order.active]
+      keys: [parallax.compatibility.Order.active]
       aggregates:
         - count: { as: row_count }
-        - count: { attr: Order.sku, as: sku_count }
+        - count: { attr: parallax.compatibility.Order.sku, as: sku_count }
 then:
   statements:
     - sql:

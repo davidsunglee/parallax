@@ -19,14 +19,14 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child levels - the shared Order.items IN-list binds are the distinct order ids the root query returned, and the OrderItem.statuses IN-list binds are the distinct item ids the items level returned, so both child emissions depend on a query result"
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: Order.items }] }
-        - { segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }
+        - { segments: [{ rel: parallax.compatibility.Order.items }] }
+        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
 then:
   statements:
     - sql:

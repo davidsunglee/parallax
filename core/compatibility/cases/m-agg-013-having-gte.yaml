@@ -7,18 +7,18 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, sum, groupBy, having, gte]
 shape: read
 when:
-  targetEntity: OrderItem
+  targetEntity: parallax.compatibility.OrderItem
   operation:
     groupBy:
       operand:
         all: {}
-      keys: [OrderItem.orderId]
+      keys: [parallax.compatibility.OrderItem.orderId]
       aggregates:
-        - sum: { attr: OrderItem.quantity, as: total_quantity }
+        - sum: { attr: parallax.compatibility.OrderItem.quantity, as: total_quantity }
       having:
         gte:
           agg:
-            sum: { attr: OrderItem.quantity, as: total_quantity }
+            sum: { attr: parallax.compatibility.OrderItem.quantity, as: total_quantity }
           value: 4
 then:
   statements:

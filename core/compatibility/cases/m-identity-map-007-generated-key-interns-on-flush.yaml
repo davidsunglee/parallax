@@ -34,10 +34,10 @@ when:
         - sql:
             postgres: insert into badge(id, holder) values (?, ?)
           binds: [1, Bo]
-    - targetEntity: Badge
+    - targetEntity: parallax.compatibility.Badge
       find:
         eq:
-          attr: Badge.id
+          attr: parallax.compatibility.Badge.id
           value: 1
       roundTrips: 1
       identityAttr: id

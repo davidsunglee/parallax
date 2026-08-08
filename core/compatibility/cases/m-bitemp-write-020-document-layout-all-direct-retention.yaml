@@ -44,9 +44,9 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Mooring
+    - targetEntity: parallax.compatibility.Mooring
       find:
-        eq: { attr: Mooring.id, value: 1 }
+        eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
       roundTrips: 1
       note: the materializing read — `t0.payload` is projected for the observation, not for any member
       statements:
@@ -59,9 +59,9 @@ when:
     - write:
         mutation: terminateUntil
         target:
-          entity: Mooring
+          entity: parallax.compatibility.Mooring
           predicate:
-            eq: { attr: Mooring.id, value: 1 }
+            eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
         at: "2026-02-15T00:00:00+00:00"
         validFrom: "2026-03-01T00:00:00+00:00"
         until: "2026-09-01T00:00:00+00:00"
@@ -92,11 +92,11 @@ when:
             - "2026-02-15T00:00:00+00:00"
             - infinity
             - berthCode: NB-118
-    - targetEntity: Mooring
+    - targetEntity: parallax.compatibility.Mooring
       find:
         asOf:
           operand:
-            eq: { attr: Mooring.id, value: 1 }
+            eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
           dimension: valid-time
           coordinate: "2026-05-01T00:00:00+00:00"
       roundTrips: 1

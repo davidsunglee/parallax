@@ -16,7 +16,7 @@ model: models/position.yaml
 tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, past, audit, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Position
+  targetEntity: parallax.compatibility.Position
   operation:
     asOf:
       operand:

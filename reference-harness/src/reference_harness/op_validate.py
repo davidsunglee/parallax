@@ -296,8 +296,8 @@ def _walk_element(value_object: dict[str, Any], node: Any) -> None:
 
 def _check_navigation(entity: Entity, body: dict[str, Any]) -> None:
     rel = body.get("rel", "")
-    cls, _, member = rel.partition(".")
-    if cls == entity.name and find_top_value_object(entity, member) is not None:
+    cls, _, member = rel.rpartition(".")
+    if _names(entity, cls) and find_top_value_object(entity, member) is not None:
         raise RejectionError(
             NAVIGATE_VALUE_OBJECT_TARGET,
             f"relationship navigation targets value object {member!r} on {entity.name} — "
@@ -312,8 +312,8 @@ def _check_deep_fetch(entity: Entity, body: dict[str, Any]) -> None:
             # A path segment is a closed object ``{rel, narrow?}`` (m-op-algebra);
             # the value-object misuse rule is about the traversed relationship ref.
             rel = segment["rel"] if isinstance(segment, dict) else segment
-            cls, _, member = rel.partition(".")
-            if cls == entity.name and find_top_value_object(entity, member) is not None:
+            cls, _, member = rel.rpartition(".")
+            if _names(entity, cls) and find_top_value_object(entity, member) is not None:
                 raise RejectionError(
                     DEEP_FETCH_VALUE_OBJECT_SEGMENT,
                     f"deepFetch path segment {rel!r} names value object {member!r} — "
@@ -346,10 +346,18 @@ def _check_path_root_narrow(entity: Entity, narrow: Any) -> None:
             )
 
 
+def _names(entity: Entity, spelling: str) -> bool:
+    """Whether ``spelling`` — bare or canonical — names ``entity`` itself."""
+    return spelling in (entity.name, entity.canonical_name)
+
+
 def _check_find_root(entity: Entity, attr: Any) -> None:
+    # An `attr` is `<Entity>.<member>`, so its root is everything before the LAST
+    # dot: a value-object occurrence name reaching the root position (`address.city`)
+    # lands there whole, and a canonical Entity spelling does too.
     if not isinstance(attr, str):
         return
-    cls = attr.partition(".")[0]
+    cls = attr.rpartition(".")[0]
     if find_top_value_object(entity, cls) is not None:
         raise RejectionError(
             FIND_ROOT_VALUE_OBJECT,

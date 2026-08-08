@@ -12,7 +12,7 @@ model: models/scalars.yaml
 tags: [m-core, m-descriptor, m-sql, m-dialect, scalar, mariadb]
 shape: read
 when:
-  targetEntity: ScalarThing
+  targetEntity: parallax.compatibility.ScalarThing
   operation:
     all: {}
 then:

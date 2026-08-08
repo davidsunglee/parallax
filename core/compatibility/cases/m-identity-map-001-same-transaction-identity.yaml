@@ -17,10 +17,10 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 2
       roundTrips: 1
       note: find by primary key
@@ -30,10 +30,10 @@ when:
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.owner
+          attr: parallax.compatibility.Account.owner
           value: Linus
       roundTrips: 1
       sameObjectAs: 0

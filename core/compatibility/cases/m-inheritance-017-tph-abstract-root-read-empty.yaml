@@ -14,9 +14,9 @@ model: models/animal.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Animal
+  targetEntity: parallax.compatibility.Animal
   operation:
-    eq: { attr: Animal.name, value: Ghost }
+    eq: { attr: parallax.compatibility.Animal.name, value: Ghost }
 then:
   statements:
     - sql:

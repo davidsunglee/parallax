@@ -192,7 +192,7 @@ def test_an_entity_rooted_nested_predicate_carries_the_dotted_canonical_path() -
     predicate = vm.Customer.address.geo.country == "DE"
     assert isinstance(predicate, Predicate)
     assert serialize(predicate.op) == {
-        "nestedEq": {"path": "Customer.address.geo.country", "value": "DE"}
+        "nestedEq": {"path": "parallax.compatibility.Customer.address.geo.country", "value": "DE"}
     }
 
 
@@ -201,28 +201,36 @@ def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() 
     # build the NESTED node carrying the whole dotted path, not the scalar node over a
     # truncated `Class.member` reference.
     assert serialize(vm.Customer.address.geo.elevation.between(5, 12).op) == {
-        "nestedBetween": {"path": "Customer.address.geo.elevation", "lower": 5, "upper": 12}
+        "nestedBetween": {
+            "path": "parallax.compatibility.Customer.address.geo.elevation",
+            "lower": 5,
+            "upper": 12,
+        }
     }
     assert serialize(vm.Customer.address.city.not_in(["Oslo"]).op) == {
-        "nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}
+        "nestedNotIn": {"path": "parallax.compatibility.Customer.address.city", "values": ["Oslo"]}
     }
     assert serialize(vm.Customer.address.city.starts_with("Os").op) == {
-        "nestedStartsWith": {"path": "Customer.address.city", "value": "Os"}
+        "nestedStartsWith": {"path": "parallax.compatibility.Customer.address.city", "value": "Os"}
     }
     assert serialize(vm.Customer.address.city.like("OS%", case_insensitive=True).op) == {
-        "nestedLike": {"path": "Customer.address.city", "value": "OS%", "caseInsensitive": True}
+        "nestedLike": {
+            "path": "parallax.compatibility.Customer.address.city",
+            "value": "OS%",
+            "caseInsensitive": True,
+        }
     }
     # A non-nested attribute on the same Entity keeps the scalar spelling, and the
     # fluent surface never authors an explicit `caseInsensitive: false`.
     assert serialize(vm.Customer.name.starts_with("A").op) == {
-        "startsWith": {"attr": "Customer.name", "value": "A"}
+        "startsWith": {"attr": "parallax.compatibility.Customer.name", "value": "A"}
     }
     # A non-nested attribute on the same Entity keeps the scalar spellings.
     assert serialize(vm.Customer.name.not_in(["Ada"]).op) == {
-        "notIn": {"attr": "Customer.name", "values": ["Ada"]}
+        "notIn": {"attr": "parallax.compatibility.Customer.name", "values": ["Ada"]}
     }
     assert serialize(vm.Customer.id.between(1, 3).op) == {
-        "between": {"attr": "Customer.id", "lower": 1, "upper": 3}
+        "between": {"attr": "parallax.compatibility.Customer.id", "lower": 1, "upper": 3}
     }
 
 

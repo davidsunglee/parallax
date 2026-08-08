@@ -14,14 +14,14 @@ model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, to-many, relationship, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: Order.items }] }
-        - { segments: [{ rel: Order.statuses }] }
+        - { segments: [{ rel: parallax.compatibility.Order.items }] }
+        - { segments: [{ rel: parallax.compatibility.Order.statuses }] }
 then:
   statements:
     - sql:

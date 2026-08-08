@@ -34,7 +34,7 @@ shape: rejected
 when:
   write:
     mutation: update
-    entity: Position
+    entity: parallax.compatibility.Position
     rows:
       - { id: 1, value: 150.00 }
       - { id: 2, value: 250.00 }

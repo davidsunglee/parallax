@@ -10,11 +10,11 @@ when:
   write:
     mutation: update
     target:
-      entity: Traveler
+      entity: parallax.compatibility.Traveler
       predicate:
-        eq: { attr: Traveler.id, value: 1 }
+        eq: { attr: parallax.compatibility.Traveler.id, value: 1 }
     assignments:
-      - attr: Traveler.tags
+      - attr: parallax.compatibility.Traveler.tags
         value:
           - { label: founder }
 then:

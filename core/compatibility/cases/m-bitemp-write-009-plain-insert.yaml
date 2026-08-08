@@ -28,7 +28,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Position
+      entity: parallax.compatibility.Position
       statements: 1
       note: open a fully-Latest rectangle [valid inf, transaction inf), no prior row to close
       rows:

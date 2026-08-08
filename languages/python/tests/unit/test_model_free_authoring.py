@@ -252,7 +252,9 @@ def test_every_assignment_surface_refuses_a_temporal_endpoint_the_same_way() -> 
     # render one verdict, which is what deriving the designation at declaration
     # rather than at acceptance buys.
     boundary = _boundary_verdict(GADGETS, Gadget, "txStart", _INSTANT)
-    assert boundary == "Gadget.txStart: framework-owned fields may not be assigned"
+    assert boundary == (
+        "parallax.compatibility.Gadget.txStart: framework-owned fields may not be assigned"
+    )
     typed = _typed_violation(Gadget, "tx_start", _INSTANT)
     edited = _edit_violation(Gadget(id=1, label="x"), "tx_start", _INSTANT)
     assert typed == edited

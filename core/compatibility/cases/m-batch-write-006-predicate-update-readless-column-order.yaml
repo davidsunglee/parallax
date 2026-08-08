@@ -21,20 +21,20 @@ when:
     - write:
         mutation: update
         target:
-          entity: Wallet
+          entity: parallax.compatibility.Wallet
           predicate:
-            lessThan: { attr: Wallet.balance, value: 200.00 }
+            lessThan: { attr: parallax.compatibility.Wallet.balance, value: 200.00 }
         assignments:
-          - { attr: Wallet.balance, value: 150.00 }
-          - { attr: Wallet.owner, value: Updated }
+          - { attr: parallax.compatibility.Wallet.balance, value: 150.00 }
+          - { attr: parallax.compatibility.Wallet.owner, value: Updated }
       roundTrips: 1
       statements:
         - sql:
             postgres: update wallet set owner = ?, balance = ? where balance < ?
           binds: [Updated, 150.00, 200.00]
-    - targetEntity: Wallet
+    - targetEntity: parallax.compatibility.Wallet
       find:
-        eq: { attr: Wallet.owner, value: Updated }
+        eq: { attr: parallax.compatibility.Wallet.owner, value: Updated }
       roundTrips: 1
       statements:
         - sql:

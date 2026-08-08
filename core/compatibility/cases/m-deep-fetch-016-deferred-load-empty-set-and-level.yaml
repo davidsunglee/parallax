@@ -13,10 +13,10 @@ tags: [m-deep-fetch, relationship, deferred-load, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: Order
+    - targetEntity: parallax.compatibility.Order
       find:
         in:
-          attr: Order.id
+          attr: parallax.compatibility.Order.id
           values: [999]
       roundTrips: 1
       note: an empty source set (no such order)
@@ -31,10 +31,10 @@ when:
       roundTrips: 0
       note: empty source -> NO child SQL
       expectRows: []
-    - targetEntity: Order
+    - targetEntity: parallax.compatibility.Order
       find:
         in:
-          attr: Order.id
+          attr: parallax.compatibility.Order.id
           values: [3]
       roundTrips: 1
       note: order 3 exists but has no line items

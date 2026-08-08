@@ -29,7 +29,6 @@ from parallax.core import (
     ConcreteSubtype,
     DomainModel,
     Entity,
-    OperationRejectedError,
     QueryDefinitionError,
     Rel,
     TablePerHierarchy,
@@ -127,10 +126,13 @@ def _preflight(
 
 
 def test_a_deeper_hop_spells_its_owner_from_the_paths_target() -> None:
-    # The owner is the hop target's own local Entity name, and the member is the
-    # canonical name its Python spelling denotes.
+    # The owner is the hop target's own canonical Entity spelling, and the member
+    # is the canonical name its Python spelling denotes.
     path = SalesOrder.customer.notes
-    assert [segment.rel for segment in path.segments] == ["Order.customer", "Customer.notes"]
+    assert [segment.rel for segment in path.segments] == [
+        "sales.Order.customer",
+        "sales.Customer.notes",
+    ]
 
 
 def test_a_deeper_hop_camel_cases_a_snake_case_member_spelling() -> None:
@@ -141,23 +143,23 @@ def test_a_deeper_hop_validates_as_an_include_path() -> None:
     operation = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
     assert operation.paths == (
         NavigationPath(
-            segments=(PathSegment(rel="Order.customer"), PathSegment(rel="Customer.notes"))
+            segments=(
+                PathSegment(rel="sales.Order.customer"),
+                PathSegment(rel="sales.Customer.notes"),
+            )
         ),
     )
 
 
-def test_a_deeper_hop_across_namespaces_needs_an_unambiguous_local_name() -> None:
-    # The wire spells a relationship owner locally, so the hop taken from
-    # `Order.customer` reads `Customer.notes` however the path's own target was
-    # spelled. A model whose bare `Customer` resolves to one Entity accepts it; a
-    # second namespace declaring the same local name makes the reference resolve
-    # nowhere, which is the reference rule rather than anything about the hop.
+def test_a_deeper_hop_across_namespaces_names_the_target_it_was_composed_from() -> None:
+    # The hop is spelled from the path's own target, exactly, so a second
+    # namespace declaring the local name `Customer` does not reach it: the same
+    # operation validates against both models and addresses `sales.Customer`
+    # either way. A bare owner would have named two Entities and therefore none.
     operation = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
-    with pytest.raises(OperationRejectedError) as caught:
-        validate_operation(
-            TWO_NAMESPACE_LEDGER.meta(SalesOrder), operation, model_of(TWO_NAMESPACE_LEDGER)
-        )
-    assert caught.value.rule == "reference-ambiguous-entity-name"
+    validate_operation(
+        TWO_NAMESPACE_LEDGER.meta(SalesOrder), operation, model_of(TWO_NAMESPACE_LEDGER)
+    )
 
 
 def test_a_renamed_deeper_member_erases_and_preflight_refuses_it() -> None:
@@ -167,7 +169,7 @@ def test_a_renamed_deeper_member_erases_and_preflight_refuses_it() -> None:
     # through a path rooted at the Entity that declares it keeps the exact name.
     with pytest.raises(ValueError, match="names no declared relationship on Branch"):
         _preflight(ORCHARD, Root, Root.branches.leaves)
-    assert Branch.leaves.segments == (PathSegment(rel="Branch.canopy"),)
+    assert Branch.leaves.segments == (PathSegment(rel="orchard.Branch.canopy"),)
 
 
 def test_an_inherited_deeper_member_erases_and_preflight_refuses_it() -> None:
@@ -194,20 +196,20 @@ def test_a_first_hop_target_is_the_canonical_entity_spelling() -> None:
     assert Root.branches.target == "orchard.Branch"
 
 
-def test_a_first_hop_reference_names_its_owner_locally_and_its_declared_member() -> None:
+def test_a_first_hop_reference_names_its_owner_exactly_and_its_declared_member() -> None:
     # The reference splits the first segment the way the wire spells it: the
-    # owner's local Entity name — `Order`, not `sales.Order` — and the
-    # relationship's own declared name, not the Python member it was authored as.
-    assert Root.branches.ref == RelationshipRef("Root", "branches")
-    assert Branch.leaves.ref == RelationshipRef("Branch", "canopy")
-    assert SalesOrder.customer.ref == RelationshipRef("Order", "customer")
+    # owner's canonical Entity spelling, and the relationship's own declared
+    # name rather than the Python member it was authored as.
+    assert Root.branches.ref == RelationshipRef("orchard.Root", "branches")
+    assert Branch.leaves.ref == RelationshipRef("orchard.Branch", "canopy")
+    assert SalesOrder.customer.ref == RelationshipRef("sales.Order", "customer")
 
 
 def test_a_hop_narrowed_to_one_class_targets_it_canonically() -> None:
-    # The narrow list is the wire's own and names each class locally; the path's
-    # target takes the exact spelling.
+    # A narrow list is a reference position like any other, so it names each
+    # class exactly — the same spelling the path's own target takes.
     path = Root.branches.narrow(Branch)
-    assert path.segments[-1].narrow == ("Branch",)
+    assert path.segments[-1].narrow == ("orchard.Branch",)
     assert path.target == "orchard.Branch"
 
 
@@ -255,8 +257,8 @@ def test_a_deeper_hop_narrows_independently_of_the_hop_it_continued() -> None:
     # keeps the one it was given.
     path = Root.branches.narrow(Branch).leaves.narrow(Leaf)
     assert [(segment.rel, segment.narrow) for segment in path.segments] == [
-        ("Root.branches", ("Branch",)),
-        ("Branch.leaves", ("Leaf",)),
+        ("orchard.Root.branches", ("orchard.Branch",)),
+        ("orchard.Branch.leaves", ("orchard.Leaf",)),
     ]
 
 
@@ -271,7 +273,7 @@ def test_a_path_that_already_continued_cannot_continue_again() -> None:
 
 def test_a_directly_built_path_carries_no_target_and_cannot_continue() -> None:
     built: RelationshipPath[SalesOrder, Any] = RelationshipPath(
-        segments=(PathSegment(rel="Order.customer"),), target=None
+        segments=(PathSegment(rel="sales.Order.customer"),), target=None
     )
     with pytest.raises(AttributeError, match="already continued past the hop"):
         _ = built.notes

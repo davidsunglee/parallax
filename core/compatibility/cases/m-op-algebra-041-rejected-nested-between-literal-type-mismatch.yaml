@@ -19,7 +19,7 @@ shape: rejected
 when:
   operation:
     nestedExists:
-      path: Customer.address.phones
+      path: parallax.compatibility.Customer.address.phones
       where:
         nestedBetween:
           path: number

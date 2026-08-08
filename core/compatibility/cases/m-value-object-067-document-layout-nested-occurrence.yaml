@@ -11,7 +11,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Traveler
+      entity: parallax.compatibility.Traveler
       statements: 1
       note: seed a row whose occurrence nests a further occurrence inside it
       rows:
@@ -25,7 +25,7 @@ when:
           tags:
             - { label: pilot }
     - mutation: update
-      entity: Traveler
+      entity: parallax.compatibility.Traveler
       statements: 1
       note: assign the occurrence while omitting its nullable nested `geo`
       rows:

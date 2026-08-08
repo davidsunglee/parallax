@@ -63,7 +63,7 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Subscriber
+    - targetEntity: parallax.compatibility.Subscriber
       find:
         all: {}
       roundTrips: 1
@@ -81,7 +81,7 @@ when:
             city: Rome
             geo:
               country: IT
-    - targetEntity: Subscriber
+    - targetEntity: parallax.compatibility.Subscriber
       find:
         all: {}
       roundTrips: 1
@@ -96,7 +96,7 @@ when:
     - write:
         mutation: delete
         target:
-          entity: Subscriber
+          entity: parallax.compatibility.Subscriber
           predicate:
             all: {}
       roundTrips: 1
@@ -106,7 +106,7 @@ when:
             postgres: delete from subscriber where id = ? and version = ?
             mariadb: delete from subscriber where id = ? and version = ?
           binds: [1, 1]
-    - targetEntity: Subscriber
+    - targetEntity: parallax.compatibility.Subscriber
       find:
         all: {}
       roundTrips: 1

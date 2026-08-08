@@ -7,13 +7,13 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Attendee
+      entity: parallax.compatibility.Attendee
       statements: 1
       note: allocate id 1
       rows:
         - { id: { computed: maxPlusOne }, name: Ada }
     - mutation: insert
-      entity: Attendee
+      entity: parallax.compatibility.Attendee
       statements: 1
       note: allocate id 2 (re-reads the new max)
       rows:

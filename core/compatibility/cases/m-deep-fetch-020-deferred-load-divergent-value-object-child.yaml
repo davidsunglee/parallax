@@ -27,9 +27,9 @@ compileEligibility:
   note: "deferred load - the Customer.depots child IN-list binds are the distinct parent keys gathered from step 0's find result, so the child emission depends on a query result"
 when:
   scenario:
-    - targetEntity: Customer
+    - targetEntity: parallax.compatibility.Customer
       find:
-        eq: { attr: Customer.id, value: 1 }
+        eq: { attr: parallax.compatibility.Customer.id, value: 1 }
       roundTrips: 1
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM (id, name, then address last)
       statements:

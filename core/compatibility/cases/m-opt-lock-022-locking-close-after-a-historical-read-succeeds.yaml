@@ -38,10 +38,10 @@ when:
     concurrency: locking
   scenario:
     - uow: audit-then-close
-      targetEntity: Balance
+      targetEntity: parallax.compatibility.Balance
       find:
         eq:
-          attr: Balance.id
+          attr: parallax.compatibility.Balance.id
           value: 1
       roundTrips: 1
       note: read the CURRENT milestone of id 1 (value 150, known from 2024-06-01) under the shared row lock this unit's locking mode takes
@@ -52,12 +52,12 @@ when:
       expectRows:
         - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
     - uow: audit-then-close
-      targetEntity: Balance
+      targetEntity: parallax.compatibility.Balance
       find:
         asOf:
           operand:
             eq:
-              attr: Balance.id
+              attr: parallax.compatibility.Balance.id
               value: 1
           dimension: transaction-time
           coordinate: "2024-04-01T00:00:00+00:00"
@@ -72,7 +72,7 @@ when:
     - uow: audit-then-close
       write:
         - mutation: update
-          entity: Balance
+          entity: parallax.compatibility.Balance
           rows:
             - { id: 1, acctNum: A, value: 175.00 }
           at: "2024-10-01T00:00:00+00:00"

@@ -12,7 +12,7 @@ tags: [m-op-list, lazy, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: Order
+    - targetEntity: parallax.compatibility.Order
       find:
         all: {}
       roundTrips: 0

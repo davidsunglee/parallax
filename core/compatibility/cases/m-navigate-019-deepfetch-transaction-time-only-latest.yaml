@@ -9,7 +9,7 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child level - the Invoice.lines IN-list binds are the distinct invoice ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: Invoice
+  targetEntity: parallax.compatibility.Invoice
   operation:
     deepFetch:
       operand:
@@ -18,7 +18,7 @@ when:
           dimension: transaction-time
           coordinate: latest
       paths:
-        - { segments: [{ rel: Invoice.lines }] }
+        - { segments: [{ rel: parallax.compatibility.Invoice.lines }] }
 then:
   statements:
     - sql:

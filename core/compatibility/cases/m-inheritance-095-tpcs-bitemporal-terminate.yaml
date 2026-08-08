@@ -25,7 +25,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: DepositRate
+      entity: parallax.compatibility.DepositRate
       statements: 1
       note: open the original Latest rectangle in the concrete deposit_rate table
       rows:
@@ -33,7 +33,7 @@ when:
       validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: terminate
-      entity: DepositRate
+      entity: parallax.compatibility.DepositRate
       statements: 2
       note: inactivate the original in the concrete table (no tag guard), then chain head only
       rows:

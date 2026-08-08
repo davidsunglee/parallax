@@ -14,7 +14,7 @@ model: models/animal.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, tag, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Pet
+  targetEntity: parallax.compatibility.Pet
   operation:
     all: {}
 then:

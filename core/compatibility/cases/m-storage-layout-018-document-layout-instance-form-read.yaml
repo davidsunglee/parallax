@@ -26,9 +26,9 @@ model: models/document-layout.yaml
 tags: [m-storage-layout, m-value-object, m-sql, m-document-codec, read, json, nested, document-layout, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Traveler
+  targetEntity: parallax.compatibility.Traveler
   operation:
-    nestedEq: { path: Traveler.address.geo.country, value: "NO" }
+    nestedEq: { path: parallax.compatibility.Traveler.address.geo.country, value: "NO" }
 then:
   statements:
     - sql:

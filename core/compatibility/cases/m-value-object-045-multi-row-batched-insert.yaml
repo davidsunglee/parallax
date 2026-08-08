@@ -15,7 +15,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Customer
+      entity: parallax.compatibility.Customer
       statements: 1
       note: two Customers collapse into one multi-row INSERT, each address document atomic
       rows:

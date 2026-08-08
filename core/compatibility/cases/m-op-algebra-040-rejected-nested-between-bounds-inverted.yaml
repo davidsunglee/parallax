@@ -15,7 +15,7 @@ shape: rejected
 when:
   operation:
     nestedBetween:
-      path: Customer.address.geo.elevation
+      path: parallax.compatibility.Customer.address.geo.elevation
       lower: 12
       upper: 5
 then:

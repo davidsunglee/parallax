@@ -33,7 +33,7 @@ when:
     concurrency: optimistic
   writeSequence:
     - mutation: update
-      entity: Ledger
+      entity: parallax.compatibility.Ledger
       statements: 1
       note: one document path patched, the version Column advanced and gated
       rows:

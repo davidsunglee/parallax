@@ -11,7 +11,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Attendee
+      entity: parallax.compatibility.Attendee
       statements: 1
       note: allocate the first id via max(id)+1 over an empty table
       rows:

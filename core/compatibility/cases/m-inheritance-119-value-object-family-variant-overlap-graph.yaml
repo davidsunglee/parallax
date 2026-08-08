@@ -5,7 +5,7 @@ model: models/materialization-key-compatibility.yaml
 tags: [m-inheritance, m-value-object, m-sql, m-api-conformance, table-per-hierarchy, familyVariant, graph, instance-form, materialization-key, positive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: VariantRecord
+  targetEntity: compatibility.overlap.VariantRecord
   operation:
     all: {}
 then:

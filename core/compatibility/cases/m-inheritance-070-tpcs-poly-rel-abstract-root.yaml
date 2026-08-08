@@ -24,10 +24,10 @@ model: models/document.yaml
 tags: [m-navigate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, exists, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Folder
+  targetEntity: parallax.compatibility.Folder
   operation:
     exists:
-      rel: Folder.documents
+      rel: parallax.compatibility.Folder.documents
 then:
   statements:
     - sql:

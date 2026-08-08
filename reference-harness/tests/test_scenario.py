@@ -134,7 +134,7 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find() ->
     # the observing find), its golden SQL unchanged.
     (instruction,) = write["write"]
     assert instruction["mutation"] == "update"
-    assert instruction["entity"] == "Account"
+    assert instruction["entity"] == "parallax.compatibility.Account"
     assert instruction["rows"] == [{"id": 1, "balance": 175.00}]
     update_sql = write["statements"][0]["sql"]["postgres"]
     assert update_sql.startswith("update account set")
@@ -156,7 +156,7 @@ def test_read_your_own_writes_delete_scenario_observes_absence() -> None:
     # (the observation licenses the write; the gate follows the concurrency mode).
     (instruction,) = write["write"]
     assert instruction["mutation"] == "delete"
-    assert instruction["entity"] == "Account"
+    assert instruction["entity"] == "parallax.compatibility.Account"
     assert instruction["rows"] == [{"id": 3}]
     assert write["statements"][0]["sql"]["postgres"] == "delete from account where id = ?"
     # The dependent find returns ZERO rows — the deletion is visible.

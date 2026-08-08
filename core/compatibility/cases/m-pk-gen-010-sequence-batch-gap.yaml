@@ -15,13 +15,13 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: PkSequence
+      entity: parallax.compatibility.PkSequence
       statements: 1
       note: reserve block of 3 (base 1)
       rows:
         - { name: pass_seq, nextVal: { increment: 3 } }
     - mutation: insert
-      entity: Pass
+      entity: parallax.compatibility.Pass
       statements: 1
       note: "hand out only id 1 (2,3 lost)"
       rows:

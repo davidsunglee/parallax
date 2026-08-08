@@ -7,13 +7,13 @@ model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, to-one, nullable, relationship, slice-managed-1]
 shape: read
 when:
-  targetEntity: OrderStatus
+  targetEntity: parallax.compatibility.OrderStatus
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: OrderStatus.orderItem }] }
+        - { segments: [{ rel: parallax.compatibility.OrderStatus.orderItem }] }
 then:
   statements:
     - sql:

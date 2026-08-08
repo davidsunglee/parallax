@@ -20,12 +20,12 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Balance
+    - targetEntity: parallax.compatibility.Balance
       find:
         asOf:
           operand:
             eq:
-              attr: Balance.id
+              attr: parallax.compatibility.Balance.id
               value: 2
           dimension: transaction-time
           coordinate: "2024-04-01T00:00:00+00:00"
@@ -37,12 +37,12 @@ when:
           binds: [2, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
       expectRows:
         - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
-    - targetEntity: Balance
+    - targetEntity: parallax.compatibility.Balance
       find:
         asOf:
           operand:
             eq:
-              attr: Balance.id
+              attr: parallax.compatibility.Balance.id
               value: 2
           dimension: transaction-time
           coordinate: "2024-05-01T00:00:00+00:00"

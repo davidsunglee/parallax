@@ -29,7 +29,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Charter
+      entity: parallax.compatibility.Charter
       statements: 1
       note: open the original Latest rectangle carrying the whole document
       rows:
@@ -40,7 +40,7 @@ when:
       validFrom: "2026-01-01T00:00:00+00:00"
       at: "2026-01-01T00:00:00+00:00"
     - mutation: updateUntil
-      entity: Charter
+      entity: parallax.compatibility.Charter
       statements: 4
       note: inactivate the original, then chain head / middle / tail carrying old / new / old
       rows:

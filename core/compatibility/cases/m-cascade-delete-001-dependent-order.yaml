@@ -12,7 +12,7 @@ given:
 when:
   writeSequence:
     - mutation: cascadeDelete
-      entity: Order
+      entity: parallax.compatibility.Order
       statements: 3
       note: delete dependent statuses, dependent items, then the root order
       rows:

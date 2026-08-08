@@ -5,13 +5,13 @@ model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, empty-root, relationship, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     deepFetch:
       operand:
-        eq: { attr: Order.id, value: 999 }
+        eq: { attr: parallax.compatibility.Order.id, value: 999 }
       paths:
-        - { segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }
+        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
 then:
   statements:
     - sql:

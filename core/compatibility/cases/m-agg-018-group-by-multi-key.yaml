@@ -9,14 +9,14 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, sum, groupBy, multi-key]
 shape: read
 when:
-  targetEntity: OrderItem
+  targetEntity: parallax.compatibility.OrderItem
   operation:
     groupBy:
       operand:
         all: {}
-      keys: [OrderItem.orderId, OrderItem.sku]
+      keys: [parallax.compatibility.OrderItem.orderId, parallax.compatibility.OrderItem.sku]
       aggregates:
-        - sum: { attr: OrderItem.quantity, as: total_quantity }
+        - sum: { attr: parallax.compatibility.OrderItem.quantity, as: total_quantity }
 then:
   statements:
     - sql:

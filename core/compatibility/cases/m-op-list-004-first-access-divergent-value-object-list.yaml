@@ -23,7 +23,7 @@ tags: [m-op-list, m-value-object, lazy, materialization, json, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: Depot
+    - targetEntity: parallax.compatibility.Depot
       find:
         all: {}
       roundTrips: 0

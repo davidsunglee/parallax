@@ -31,7 +31,7 @@ shape: rejected
 when:
   operation:
     exists:
-      rel: Register.variant
+      rel: parallax.compatibility.Register.variant
       op:
         eq: { attr: SharedVariant.archiveLabel, value: A-1 }
 then:

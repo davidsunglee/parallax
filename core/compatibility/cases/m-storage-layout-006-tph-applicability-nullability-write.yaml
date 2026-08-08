@@ -20,13 +20,13 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: LayoutCardPayment
+      entity: parallax.compatibility.LayoutCardPayment
       statements: 1
       note: insert a card variant; kind='card' is derived, tendered does not apply
       rows:
         - { id: 1, amount: 100.00, cardNetwork: Visa }
     - mutation: insert
-      entity: LayoutCashPayment
+      entity: parallax.compatibility.LayoutCashPayment
       statements: 1
       note: insert a cash variant into the same shared table; card_network does not apply
       rows:

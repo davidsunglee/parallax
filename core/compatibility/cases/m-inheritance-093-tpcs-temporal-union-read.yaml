@@ -32,7 +32,7 @@ shape: read
 given:
   fixtures: true
 when:
-  targetEntity: Rate
+  targetEntity: parallax.compatibility.Rate
   operation:
     asOf:
       operand:

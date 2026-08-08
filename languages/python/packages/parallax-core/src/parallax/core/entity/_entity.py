@@ -367,7 +367,7 @@ def _edit_violations(
                 )
             )
             continue
-        violation = judged_edit_violation(member, serialize_member(value), owner=cls_name)
+        violation = judged_edit_violation(member, serialize_member(value), owner=entity.canonical)
         if violation is not None:
             violations.append(violation)
     return tuple(violations)
@@ -535,9 +535,9 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         (``narrow-outside-position``) — as does the per-model question of which
         concrete subtypes the named classes resolve to.
         """
-        to = tuple(declaration_of(subtype).identity.name for subtype in subtypes)
+        to = tuple(declaration_of(subtype).identity.canonical for subtype in subtypes)
         operand: Operation = where.op if where is not None else All()
-        return Predicate(Narrow(entity=cls.identity.name, to=to, operand=operand))
+        return Predicate(Narrow(entity=cls.identity.canonical, to=to, operand=operand))
 
     def edit(self, **changes: object) -> Self:
         """The one door to an Edited Copy (spec §3).

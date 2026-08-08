@@ -3,11 +3,11 @@ model: models/orders.yaml
 tags: [m-op-algebra, not, boolean, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     not:
       operand:
-        eq: { attr: Order.active, value: true }
+        eq: { attr: parallax.compatibility.Order.active, value: true }
 then:
   statements:
     - sql:

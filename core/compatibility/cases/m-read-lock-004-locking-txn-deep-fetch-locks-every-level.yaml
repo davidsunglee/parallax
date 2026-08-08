@@ -19,7 +19,7 @@ tags: [m-read-lock, m-dialect, m-deep-fetch, m-op-list, m-api-conformance, locki
 lane: api-conformance
 shape: read
 when:
-  targetEntity: OrderItem
+  targetEntity: parallax.compatibility.OrderItem
   uow:
     concurrency: locking
   operation:
@@ -27,7 +27,7 @@ when:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: OrderItem.order }] }
+        - { segments: [{ rel: parallax.compatibility.OrderItem.order }] }
 then:
   statements:
     - sql:

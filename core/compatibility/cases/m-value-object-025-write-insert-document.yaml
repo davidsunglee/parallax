@@ -18,7 +18,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Customer
+      entity: parallax.compatibility.Customer
       statements: 1
       note: insert one Customer, binding the whole address document atomically in its layout position
       rows:

@@ -40,9 +40,9 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Ledger
+    - targetEntity: parallax.compatibility.Ledger
       find:
-        greaterThan: { attr: Ledger.id, value: 0 }
+        greaterThan: { attr: parallax.compatibility.Ledger.id, value: 0 }
       roundTrips: 1
       note: the materialize read — both ledgers resolve, and `label` is decoded out of the Structured Column
       statements:
@@ -56,11 +56,11 @@ when:
     - write:
         mutation: update
         target:
-          entity: Ledger
+          entity: parallax.compatibility.Ledger
           predicate:
-            greaterThan: { attr: Ledger.id, value: 0 }
+            greaterThan: { attr: parallax.compatibility.Ledger.id, value: 0 }
         assignments:
-          - { attr: Ledger.label, value: null }
+          - { attr: parallax.compatibility.Ledger.label, value: null }
       roundTrips: 1
       note: only row 100 changes — row 200's missing Document Path already IS the assigned state
       statements:
@@ -70,9 +70,9 @@ when:
           binds:
             postgres: ['{label}', 'null', 2, 100, 1]
             mariadb: ['$.label', 'null', 2, 100, 1]
-    - targetEntity: Ledger
+    - targetEntity: parallax.compatibility.Ledger
       find:
-        greaterThan: { attr: Ledger.id, value: 0 }
+        greaterThan: { attr: parallax.compatibility.Ledger.id, value: 0 }
       roundTrips: 1
       note: an explicit JSON null on 100 and a missing key on 200 read back as one absence; only 100's version moved
       statements:

@@ -22,7 +22,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Wallet
+      entity: parallax.compatibility.Wallet
       statements: 1
       note: three buffered inserts collapse into one multi-row INSERT
       rows:
@@ -30,7 +30,7 @@ when:
         - { id: 11, owner: Omar, balance: 20.00 }
         - { id: 12, owner: Nell, balance: 30.00 }
     - mutation: update
-      entity: Wallet
+      entity: parallax.compatibility.Wallet
       statements: 1
       note: a batched UPDATE over two keys in a single statement
       rows:

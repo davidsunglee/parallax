@@ -588,13 +588,14 @@ class Rel[T]:
 
 
 def _access_source(owner: type | None) -> str | None:
-    """The declared Entity name class access went THROUGH, or ``None`` for a bare
-    descriptor invocation that names no class.
+    """The canonical Entity spelling class access went THROUGH, or ``None`` for a
+    bare descriptor invocation that names no class.
 
     The accessing class's own declared identity answers this, so this module
     resolves nothing and reaches no model: whether that Entity differs from the
     relationship's declaring one, and whether it narrows the queried position, are
-    both decided later, where the query's own position is known.
+    both decided later, where the query's own position is known. The spelling is
+    exact because a path-root guard names a position it must resolve to one Entity.
     """
-    name = getattr(getattr(owner, "identity", None), "name", None)
-    return name if isinstance(name, str) else None
+    canonical = getattr(getattr(owner, "identity", None), "canonical", None)
+    return canonical if isinstance(canonical, str) else None

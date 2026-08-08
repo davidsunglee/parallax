@@ -121,7 +121,9 @@ def test_single_hop_include_builds_a_deep_fetch_node() -> None:
     query = sm.SnapOrder.where(sm.SnapOrder.all).include(sm.SnapOrder.items)
     op = lowered_operation(query)
     assert isinstance(op, DeepFetch)
-    assert op.paths == (NavigationPath(segments=(PathSegment(rel="SnapOrder.items"),)),)
+    assert op.paths == (
+        NavigationPath(segments=(PathSegment(rel="parallax.compatibility.SnapOrder.items"),)),
+    )
 
 
 def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
@@ -131,8 +133,8 @@ def test_multi_hop_include_resolves_the_deeper_hop_against_the_model() -> None:
     assert op.paths == (
         NavigationPath(
             segments=(
-                PathSegment(rel="SnapOrder.items"),
-                PathSegment(rel="SnapOrderItem.statuses"),
+                PathSegment(rel="parallax.compatibility.SnapOrder.items"),
+                PathSegment(rel="parallax.compatibility.SnapOrderItem.statuses"),
             )
         ),
     )
@@ -142,7 +144,7 @@ def test_a_path_that_already_continued_cannot_continue_again() -> None:
     # A composed hop points at an Entity the path names no class for, so a third
     # hop has no owner to spell itself from.
     bare: RelationshipPath[sm.SnapOrder, Any] = RelationshipPath(
-        segments=(PathSegment(rel="SnapOrder.items"),), target=None
+        segments=(PathSegment(rel="parallax.compatibility.SnapOrder.items"),), target=None
     )
     with pytest.raises(AttributeError, match="already continued past the hop"):
         _ = bare.statuses
@@ -182,15 +184,18 @@ def test_relationship_path_dynamic_hop_rejects_a_private_name() -> None:
 
 def test_hop_narrow_derives_the_narrowed_view_path_segment() -> None:
     path = im.Folder.documents.narrow(im.Invoice, im.Receipt)
-    assert path.segments[-1].rel == "Folder.documents"
-    assert set(path.segments[-1].narrow) == {"Invoice", "Receipt"}
+    assert path.segments[-1].rel == "parallax.compatibility.Folder.documents"
+    assert set(path.segments[-1].narrow) == {
+        "parallax.compatibility.Invoice",
+        "parallax.compatibility.Receipt",
+    }
 
 
 def test_include_of_a_narrowed_path_serializes_the_hop_narrow() -> None:
     query = im.Folder.where(im.Folder.all).include(im.Folder.documents.narrow(im.Invoice))
     op = lowered_operation(query)
     assert isinstance(op, DeepFetch)
-    assert op.paths[0].segments[0].narrow == ("Invoice",)
+    assert op.paths[0].segments[0].narrow == ("parallax.compatibility.Invoice",)
 
 
 # --------------------------------------------------------------------------- #
@@ -203,11 +208,13 @@ def test_reaching_an_inherited_relationship_through_a_subtype_guards_the_path_ro
     # beside `segments` — never a per-subtype relationship and never a segment
     # narrow.
     path = Dog.owner
-    assert path.segments == (PathSegment(rel="Animal.owner"),)
-    assert path.source == "Dog"
+    assert path.segments == (PathSegment(rel="parallax.compatibility.Animal.owner"),)
+    assert path.source == "parallax.compatibility.Dog"
     op = lowered_operation(Animal.where(Animal.all).include(path))
     assert isinstance(op, DeepFetch)
-    assert op.paths[0].narrow == PathRootNarrow(entity="Animal", to=("Dog",))
+    assert op.paths[0].narrow == PathRootNarrow(
+        entity="parallax.compatibility.Animal", to=("parallax.compatibility.Dog",)
+    )
 
 
 def test_a_subtype_declared_relationship_guards_the_path_root_the_same_way() -> None:
@@ -216,11 +223,13 @@ def test_a_subtype_declared_relationship_guards_the_path_root_the_same_way() -> 
     # the QUERIED position, not from that comparison, so a subtype-declared path
     # rooted at the family root guards exactly as an inherited one does.
     path = Hound.handler
-    assert path.segments == (PathSegment(rel="Hound.handler"),)
-    assert path.source == "Hound"
+    assert path.segments == (PathSegment(rel="parallax.tests.include.Hound.handler"),)
+    assert path.source == "parallax.tests.include.Hound"
     op = lowered_operation(Beast.where(Beast.all).include(path))
     assert isinstance(op, DeepFetch)
-    assert op.paths[0].narrow == PathRootNarrow(entity="Beast", to=("Hound",))
+    assert op.paths[0].narrow == PathRootNarrow(
+        entity="parallax.tests.include.Beast", to=("parallax.tests.include.Hound",)
+    )
 
 
 def test_a_subtype_declared_relationship_queried_at_its_own_position_guards_nothing() -> None:
@@ -241,12 +250,16 @@ def test_include_through_two_subtypes_authors_two_guarded_paths() -> None:
     assert isinstance(op, DeepFetch)
     assert op.paths == (
         NavigationPath(
-            segments=(PathSegment(rel="Animal.owner"),),
-            narrow=PathRootNarrow(entity="Animal", to=("Dog",)),
+            segments=(PathSegment(rel="parallax.compatibility.Animal.owner"),),
+            narrow=PathRootNarrow(
+                entity="parallax.compatibility.Animal", to=("parallax.compatibility.Dog",)
+            ),
         ),
         NavigationPath(
-            segments=(PathSegment(rel="Animal.owner"),),
-            narrow=PathRootNarrow(entity="Animal", to=("Cat",)),
+            segments=(PathSegment(rel="parallax.compatibility.Animal.owner"),),
+            narrow=PathRootNarrow(
+                entity="parallax.compatibility.Animal", to=("parallax.compatibility.Cat",)
+            ),
         ),
     )
 
@@ -260,10 +273,14 @@ def test_a_guarded_path_keeps_its_root_guard_through_deeper_and_narrowed_hops() 
     assert op.paths == (
         NavigationPath(
             segments=(
-                PathSegment(rel="Animal.owner"),
-                PathSegment(rel="Person.pets", narrow=("Dog",)),
+                PathSegment(rel="parallax.compatibility.Animal.owner"),
+                PathSegment(
+                    rel="parallax.compatibility.Person.pets", narrow=("parallax.compatibility.Dog",)
+                ),
             ),
-            narrow=PathRootNarrow(entity="Animal", to=("Pet",)),
+            narrow=PathRootNarrow(
+                entity="parallax.compatibility.Animal", to=("parallax.compatibility.Pet",)
+            ),
         ),
     )
 
@@ -287,7 +304,9 @@ def test_a_query_narrow_does_not_restrict_which_root_guards_are_legal() -> None:
     # observation as a guard no result row happens to match.
     op = lowered_operation(Animal.where(Animal.all).narrow(Cat).include(Dog.owner))
     assert isinstance(op, DeepFetch)
-    assert op.paths[0].narrow == PathRootNarrow(entity="Animal", to=("Dog",))
+    assert op.paths[0].narrow == PathRootNarrow(
+        entity="parallax.compatibility.Animal", to=("parallax.compatibility.Dog",)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -295,19 +314,19 @@ def test_a_query_narrow_does_not_restrict_which_root_guards_are_legal() -> None:
 # --------------------------------------------------------------------------- #
 def test_any_with_no_predicates_is_a_bare_existence_test() -> None:
     predicate = sm.SnapOrder.items.exists()
-    assert predicate.op == Exists(rel="SnapOrder.items", op=None)
+    assert predicate.op == Exists(rel="parallax.compatibility.SnapOrder.items", op=None)
 
 
 def test_any_with_predicates_conjoins_the_interior() -> None:
     predicate = sm.SnapOrder.items.exists(sm.SnapOrderItem.sku == "A")
     op = predicate.op
     assert isinstance(op, Exists)
-    assert op.rel == "SnapOrder.items"
+    assert op.rel == "parallax.compatibility.SnapOrder.items"
 
 
 def test_none_builds_not_exists() -> None:
     predicate = sm.SnapOrder.items.not_exists()
-    assert predicate.op == NotExists(rel="SnapOrder.items", op=None)
+    assert predicate.op == NotExists(rel="parallax.compatibility.SnapOrder.items", op=None)
 
 
 def test_any_none_on_a_multi_hop_path_is_rejected() -> None:
@@ -336,14 +355,18 @@ def test_narrow_inside_a_relationship_scope_must_name_the_target_exactly() -> No
 # --------------------------------------------------------------------------- #
 def test_narrow_constructor_builds_the_canonical_node() -> None:
     predicate = im.Document.narrow(im.Invoice, im.Receipt)
-    assert predicate.op == Narrow(entity="Document", to=("Invoice", "Receipt"), operand=All())
+    assert predicate.op == Narrow(
+        entity="parallax.compatibility.Document",
+        to=("parallax.compatibility.Invoice", "parallax.compatibility.Receipt"),
+        operand=All(),
+    )
 
 
 def test_narrow_with_where_scopes_attribute_access_to_the_subtype() -> None:
     predicate = im.Document.narrow(im.Invoice, where=im.Invoice.amount_due > 100)
     op = predicate.op
     assert isinstance(op, Narrow)
-    assert op.to == ("Invoice",)
+    assert op.to == ("parallax.compatibility.Invoice",)
 
 
 def test_narrow_or_composition_of_two_branches_validates_at_where_build() -> None:
@@ -371,8 +394,8 @@ def test_query_level_narrow_wraps_the_conjoined_predicate() -> None:
     query = im.Document.where(im.Document.all).narrow(im.Invoice, im.Receipt)
     op = lowered_operation(query)
     assert isinstance(op, Narrow)
-    assert op.entity == "Document"
-    assert op.to == ("Invoice", "Receipt")
+    assert op.entity == "parallax.compatibility.Document"
+    assert op.to == ("parallax.compatibility.Invoice", "parallax.compatibility.Receipt")
     assert op.operand == All()
 
 
@@ -437,7 +460,9 @@ def test_the_narrow_clauses_no_retroactive_scope_rule_is_static_only() -> None:
 # (test_snapshot_find.py / test_transaction_reads.py).                         #
 # --------------------------------------------------------------------------- #
 _WINDOW = (dt.datetime(2024, 1, 1, tzinfo=dt.UTC), dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
-_COVERAGES = (NavigationPath(segments=(PathSegment(rel="Policy.coverages"),)),)
+_COVERAGES = (
+    NavigationPath(segments=(PathSegment(rel="parallax.compatibility.Policy.coverages"),)),
+)
 
 
 @pytest.mark.parametrize(

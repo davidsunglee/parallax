@@ -7,14 +7,14 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, min, max, numeric]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     groupBy:
       operand:
         all: {}
       aggregates:
-        - min: { attr: Order.price, as: min_price }
-        - max: { attr: Order.price, as: max_price }
+        - min: { attr: parallax.compatibility.Order.price, as: min_price }
+        - max: { attr: parallax.compatibility.Order.price, as: max_price }
 then:
   statements:
     - sql:

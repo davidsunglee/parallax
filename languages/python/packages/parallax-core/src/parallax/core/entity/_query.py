@@ -302,7 +302,8 @@ class FindQuery[E, S]:
                 code="query-clause-invalid", message="narrow requires at least one subtype"
             )
         return replace(
-            self, _narrow=tuple(declaration_of(subtype).identity.name for subtype in subtypes)
+            self,
+            _narrow=tuple(declaration_of(subtype).identity.canonical for subtype in subtypes),
         )
 
     def as_of(
@@ -385,9 +386,9 @@ class FindQuery[E, S]:
         queried position itself guards nothing, so it authors no narrow at all
         rather than one resolving to the whole position.
         """
-        if source is None or source == self._target.name:
+        if source is None or source == self._target.canonical:
             return None
-        return PathRootNarrow(entity=self._target.name, to=(source,))
+        return PathRootNarrow(entity=self._target.canonical, to=(source,))
 
     def _with_temporal(self, clauses: tuple[_TemporalClause, ...]) -> FindQuery[E, S]:
         if self._temporal:
@@ -439,7 +440,7 @@ class FindQuery[E, S]:
         """:func:`lower_find_query`'s body, stated where the clauses live."""
         op = self._predicate
         if self._narrow is not None:
-            op = Narrow(entity=self._target.name, to=self._narrow, operand=op)
+            op = Narrow(entity=self._target.canonical, to=self._narrow, operand=op)
         for clause in self._temporal:
             op = clause.wrap(op)
         if self._order_keys:

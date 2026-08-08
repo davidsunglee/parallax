@@ -22,11 +22,11 @@ when:
   scenario:
     - write:
         - mutation: insert
-          entity: Account
+          entity: parallax.compatibility.Account
           rows:
             - { id: 8, owner: Turing, balance: 1.00, version: 1 }
         - mutation: update
-          entity: Account
+          entity: parallax.compatibility.Account
           rows:
             - { id: 8, balance: 99.00 }
       roundTrips: 1
@@ -35,10 +35,10 @@ when:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
           binds: [8, Turing, 99.00, 1]
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 8
       roundTrips: 1
       note: a dependent find observes the combined insert's final values (read-your-own-writes)

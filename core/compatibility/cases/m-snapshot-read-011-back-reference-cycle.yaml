@@ -19,15 +19,15 @@ compileEligibility:
   note: "deep-fetch child level - the Order.items IN-list binds are the distinct order ids gathered from the root query result, so the child emissions depend on a query result (the back-reference OrderItem.order hop resolves from the already-materialized graph and issues no SQL of its own)"
 lane: api-conformance
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     deepFetch:
       operand:
         eq:
-          attr: Order.id
+          attr: parallax.compatibility.Order.id
           value: 1
       paths:
-        - { segments: [{ rel: Order.items }, { rel: OrderItem.order }] }
+        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.order }] }
 then:
   statements:
     - sql:

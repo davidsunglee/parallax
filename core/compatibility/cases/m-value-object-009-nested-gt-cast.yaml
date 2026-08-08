@@ -13,9 +13,9 @@ model: models/customer.yaml
 tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Customer
+  targetEntity: parallax.compatibility.Customer
   operation:
-    nestedGt: { path: Customer.address.geo.elevation, value: 8 }
+    nestedGt: { path: parallax.compatibility.Customer.address.geo.elevation, value: 8 }
 then:
   statements:
     - sql:

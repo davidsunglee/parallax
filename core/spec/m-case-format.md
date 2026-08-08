@@ -327,7 +327,12 @@ and resolves by the same rule.
 This is addressing vocabulary. It is distinct from the *result* vocabulary a
 case asserts — `then.graph` root keys, narrowed-view keys, and `familyVariant` —
 which names what a read materialized rather than what it addressed, and keeps
-its own ambiguity-sensitive rule stated with each.
+its own ambiguity-sensitive rule stated with each. The two are spelled
+differently on purpose, and a `then.graph` root key is where that is easiest to
+get wrong: it is the queried Entity's **local** name, derived by resolving
+`targetEntity` and taking the resolved Entity's local name, never the canonical
+spelling `targetEntity` itself now carries. `familyVariant` is what
+disambiguates inside a graph whose family shares a local name across namespaces.
 
 #### Read targeting (`targetEntity`)
 

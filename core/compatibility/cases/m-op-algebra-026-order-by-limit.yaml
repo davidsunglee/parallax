@@ -10,14 +10,14 @@ model: models/orders.yaml
 tags: [m-op-algebra, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     limit:
       count: 2
       operand:
         orderBy:
           keys:
-            - { attr: Order.qty, direction: desc }
+            - { attr: parallax.compatibility.Order.qty, direction: desc }
           operand:
             all: {}
 then:

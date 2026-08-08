@@ -18,7 +18,7 @@ tags: [m-read-lock, m-dialect, m-api-conformance, locking-mode, slice-snapshot-1
 lane: api-conformance
 shape: read
 when:
-  targetEntity: Account
+  targetEntity: parallax.compatibility.Account
   uow:
     concurrency: locking
   operation:

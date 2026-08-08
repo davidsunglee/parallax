@@ -8,15 +8,15 @@ model: models/orders.yaml
 tags: [m-op-algebra, group, boolean, precedence, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     or:
       operands:
-        - greaterThanEquals: { attr: Order.qty, value: 25 }
+        - greaterThanEquals: { attr: parallax.compatibility.Order.qty, value: 25 }
         - and:
             operands:
-              - lessThanEquals: { attr: Order.qty, value: 5 }
-              - eq: { attr: Order.active, value: true }
+              - lessThanEquals: { attr: parallax.compatibility.Order.qty, value: 5 }
+              - eq: { attr: parallax.compatibility.Order.active, value: true }
 then:
   statements:
     - sql:

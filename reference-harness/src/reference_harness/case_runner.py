@@ -660,7 +660,7 @@ def _column_of(entity: Entity, attr_name: str) -> str:
 
 def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]]:
     """Resolve ``Class.relationship`` to its owning entity + relationship def."""
-    class_name, rel_name = rel_ref.split(".", 1)
+    class_name, _, rel_name = rel_ref.rpartition(".")
     entity = model.entity(class_name)
     return entity, entity.relationship_metadata_by_name(rel_name)
 
@@ -716,7 +716,7 @@ def _deepfetch_root_entity(case: Case) -> Entity:
     any entity in a multi-entity model, not just the descriptor's first one.
     """
     first_rel = _deepfetch_paths(case)[0][0]
-    root_class = first_rel.split(".", 1)[0]
+    root_class = first_rel.rpartition(".")[0]
     return case.model.entity(root_class)
 
 
@@ -813,7 +813,7 @@ def _pk_sequence_target(case: Case) -> tuple[Entity, dict[str, Any], dict[str, A
     """
     inserted = {step["entity"] for step in case.write_sequence if step.get("mutation") == "insert"}
     for entity in case.model.entities:
-        if entity.name not in inserted:
+        if not inserted & {entity.name, entity.canonical_name}:
             continue
         pk_attr = next((a for a in entity.attributes if a.get("primaryKey")), None)
         if pk_attr is None:
@@ -1017,7 +1017,7 @@ class _FetchStep:
         variant_map: dict[Any, str],
     ) -> None:
         self.rel_ref = rel_ref
-        self.rel_name = rel_ref.split(".", 1)[1]
+        self.rel_name = rel_ref.rpartition(".")[2]
         self.parent_entity = parent_entity
         self.child_entity = child_entity
         self.parent_attr = parent_attr
@@ -1101,7 +1101,7 @@ def _step_of(
     parent_entity, relationship = _resolve_rel_ref(model, rel_ref)
     child_entity = model.entity(relationship["join"]["target"]["entity"])
     this_attr, other_attr = _join_endpoints(relationship)
-    rel_name = rel_ref.split(".", 1)[1]
+    rel_name = rel_ref.rpartition(".")[2]
 
     if hop.effective_set is not None and hop.target is not None:
         # The shared table holds the WHOLE family's concretes (the root's
@@ -2084,14 +2084,14 @@ def _materialize_tpcs_document_row(
         return row
     document = decode_stored(row[slot.column])
     materialized = {key: value for key, value in row.items() if key != slot.column}
-    entities = {entity.name: entity for entity in case.model.entities}
+    entities = {entity.canonical_name: entity for entity in case.model.entities}
     for candidate in case.model.storage_layout.tables:
         if candidate.contribution(slot.contributor) is None:
             continue
         for address, placement in candidate.placements.items():
             if len(address.path) != 1 or not isinstance(placement, DocumentPath):
                 continue
-            declaration = entities[address.owner.rsplit(".", 1)[-1]]
+            declaration = entities[address.owner]
             name = address.path[0]
             attribute = next(
                 (item for item in declaration.attributes if item["name"] == name), None
@@ -2101,7 +2101,7 @@ def _materialize_tpcs_document_row(
     for address, placement in layout.placements.items():
         if len(address.path) != 1 or not isinstance(placement, DocumentPath):
             continue
-        entity = entities[address.owner.rsplit(".", 1)[-1]]
+        entity = entities[address.owner]
         name = address.path[0]
         attribute = next((item for item in entity.attributes if item["name"] == name), None)
         occurrence = next((item for item in entity.value_objects if item["name"] == name), None)

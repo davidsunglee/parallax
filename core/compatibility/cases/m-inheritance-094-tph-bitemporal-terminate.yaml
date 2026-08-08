@@ -28,7 +28,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Bond
+      entity: parallax.compatibility.Bond
       statements: 1
       note: open the original Latest rectangle; kind=bond derived from tagValue
       rows:
@@ -36,7 +36,7 @@ when:
       validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: terminate
-      entity: Bond
+      entity: parallax.compatibility.Bond
       statements: 2
       note: inactivate the original on the Transaction-Time dimension (tag-guarded on kind='bond'), then chain head only
       rows:

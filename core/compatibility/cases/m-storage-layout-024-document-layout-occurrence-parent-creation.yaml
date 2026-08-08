@@ -24,7 +24,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: Traveler
+      entity: parallax.compatibility.Traveler
       statements: 3
       note: different assigned cities keep the batch in per-key form
       rows:

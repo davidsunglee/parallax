@@ -23,9 +23,9 @@ model: models/customer.yaml
 tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, between, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Customer
+  targetEntity: parallax.compatibility.Customer
   operation:
-    nestedBetween: { path: Customer.address.phones.number, lower: '555-0000', upper: '555-1234' }
+    nestedBetween: { path: parallax.compatibility.Customer.address.phones.number, lower: '555-0000', upper: '555-1234' }
 then:
   statements:
     - sql:

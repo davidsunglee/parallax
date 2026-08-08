@@ -20,17 +20,17 @@ when:
     - write:
         mutation: delete
         target:
-          entity: Wallet
+          entity: parallax.compatibility.Wallet
           predicate:
-            lessThan: { attr: Wallet.balance, value: 200.00 }
+            lessThan: { attr: parallax.compatibility.Wallet.balance, value: 200.00 }
       roundTrips: 1
       statements:
         - sql:
             postgres: delete from wallet where balance < ?
           binds: [200.00]
-    - targetEntity: Wallet
+    - targetEntity: parallax.compatibility.Wallet
       find:
-        lessThan: { attr: Wallet.balance, value: 200.00 }
+        lessThan: { attr: parallax.compatibility.Wallet.balance, value: 200.00 }
       roundTrips: 1
       statements:
         - sql:

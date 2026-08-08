@@ -15,6 +15,6 @@ tags: [m-op-algebra, m-inheritance, rejected, negative, slice-snapshot-1, slice-
 shape: rejected
 when:
   operation:
-    eq: { attr: Person.name, value: Ada }
+    eq: { attr: parallax.compatibility.Person.name, value: Ada }
 then:
   rejectedRule: attribute-outside-active-position

@@ -15,7 +15,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: CardPayment
+      entity: parallax.compatibility.CardPayment
       statements: 1
       note: correct CardPayment 1's own card_network; keyed by pk and tag-guarded on kind='card'
       rows:

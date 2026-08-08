@@ -25,12 +25,12 @@ model: models/document-layout.yaml
 tags: [m-navigate, m-storage-layout, m-relationship, m-sql, read, json, navigate, relationship, document-layout, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Traveler
+  targetEntity: parallax.compatibility.Traveler
   operation:
     navigate:
-      rel: Traveler.trips
+      rel: parallax.compatibility.Traveler.trips
       op:
-        eq: { attr: Trip.destination, value: Oslo }
+        eq: { attr: parallax.compatibility.Trip.destination, value: Oslo }
 then:
   statements:
     - sql:

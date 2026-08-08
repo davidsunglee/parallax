@@ -46,10 +46,10 @@ when:
     concurrency: optimistic
   scenario:
     - uow: observe-and-update
-      targetEntity: Vehicle
+      targetEntity: parallax.compatibility.Vehicle
       find:
         eq:
-          attr: Vehicle.id
+          attr: parallax.compatibility.Vehicle.id
           value: 1
       roundTrips: 1
       note: observe vehicle 1 through the abstract root; the row resolves to the concrete Car
@@ -60,7 +60,7 @@ when:
     - uow: observe-and-update
       write:
         - mutation: update
-          entity: Car
+          entity: parallax.compatibility.Car
           rows:
             - { id: 1, name: Coupe }
       roundTrips: 1
@@ -70,10 +70,10 @@ when:
             postgres: update vehicle set name = ?, version = ? where id = ? and kind = ? and version = ?
           binds: [Coupe, 6, 1, car, 5]
     - uow: observe-and-update
-      targetEntity: Car
+      targetEntity: parallax.compatibility.Car
       find:
         eq:
-          attr: Car.id
+          attr: parallax.compatibility.Car.id
           value: 1
       roundTrips: 1
       note: read the renamed row back as the concrete the write named; the group COMMITS after this

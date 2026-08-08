@@ -23,10 +23,10 @@ tags: [m-detach, detached, deep-copy, identity, scenario, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 1
       roundTrips: 1
       expectState: persisted
@@ -56,10 +56,10 @@ when:
       roundTrips: 0
       expectState: detached
       note: mutate copy A in memory (balance 500.00) — no DML; crosses to neither copy B nor the original
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 1
       roundTrips: 0
       sameObjectAs: 0

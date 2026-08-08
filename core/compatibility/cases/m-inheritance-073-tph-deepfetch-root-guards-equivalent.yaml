@@ -21,14 +21,14 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child level - the guarded owner hop binds its person-table IN-list from the owner ids gathered from the Cat and Dog rows of the root query result, so the child emission depends on a query result"
 when:
-  targetEntity: Animal
+  targetEntity: parallax.compatibility.Animal
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { narrow: { entity: Animal, to: [Pet] }, segments: [{ rel: Animal.owner }] }
-        - { narrow: { entity: Animal, to: [Cat, Dog] }, segments: [{ rel: Animal.owner }] }
+        - { narrow: { entity: parallax.compatibility.Animal, to: [parallax.compatibility.Pet] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
+        - { narrow: { entity: parallax.compatibility.Animal, to: [parallax.compatibility.Cat, parallax.compatibility.Dog] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
 then:
   statements:
     - sql:

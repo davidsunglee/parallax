@@ -26,7 +26,7 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child level - the owner hop binds its person-table IN-list from the owner id gathered from the ordered, narrowed, top-1 root query result, so the child emission depends on a query result"
 when:
-  targetEntity: Animal
+  targetEntity: parallax.compatibility.Animal
   operation:
     deepFetch:
       operand:
@@ -35,15 +35,15 @@ when:
           operand:
             orderBy:
               keys:
-                - { attr: Dog.barkVolume, direction: desc }
+                - { attr: parallax.compatibility.Dog.barkVolume, direction: desc }
               operand:
                 narrow:
-                  entity: Animal
-                  to: [Dog]
+                  entity: parallax.compatibility.Animal
+                  to: [parallax.compatibility.Dog]
                   operand:
                     all: {}
       paths:
-        - { segments: [{ rel: Animal.owner }] }
+        - { segments: [{ rel: parallax.compatibility.Animal.owner }] }
 then:
   statements:
     - sql:

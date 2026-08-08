@@ -55,10 +55,10 @@ compileEligibility:
 when:
   scenario:
     - uow: doomed-delete
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 3
       roundTrips: 1
       note: observe account 3 (Grace, balance 10.00, version 1) before the delete, inside the doomed unit of work
@@ -71,7 +71,7 @@ when:
     - uow: doomed-delete
       write:
         - mutation: delete
-          entity: Account
+          entity: parallax.compatibility.Account
           rows:
             - { id: 3 }
       rollback: true
@@ -82,10 +82,10 @@ when:
             postgres: delete from account where id = ?
           binds: [3]
     - uow: doomed-delete
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 3
       roundTrips: 1
       note: the SAME find re-issued INSIDE the still-open doomed transaction (mirrors the story's forced-flush find) — it MUST observe the deletion; the group ROLLS BACK after this, its last step
@@ -94,10 +94,10 @@ when:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
           binds: [3]
       expectRows: []
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 3
       roundTrips: 1
       note: the dependent post-abort find, UNGROUPED — the aborted delete was discarded, so this MUST observe the ORIGINAL account 3

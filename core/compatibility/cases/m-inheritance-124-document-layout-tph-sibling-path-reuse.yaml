@@ -11,20 +11,20 @@ model: models/document-layout.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Payment
+  targetEntity: parallax.compatibility.Payment
   operation:
     or:
       operands:
         - narrow:
-            entity: Payment
-            to: [CardPayment]
+            entity: parallax.compatibility.Payment
+            to: [parallax.compatibility.CardPayment]
             operand:
-              eq: { attr: CardPayment.detail, value: visa-4242 }
+              eq: { attr: parallax.compatibility.CardPayment.detail, value: visa-4242 }
         - narrow:
-            entity: Payment
-            to: [CashPayment]
+            entity: parallax.compatibility.Payment
+            to: [parallax.compatibility.CashPayment]
             operand:
-              greaterThan: { attr: CashPayment.detail, value: 10.00 }
+              greaterThan: { attr: parallax.compatibility.CashPayment.detail, value: 10.00 }
 then:
   statements:
     - sql:

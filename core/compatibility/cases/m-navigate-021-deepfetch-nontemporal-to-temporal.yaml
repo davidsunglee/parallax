@@ -10,12 +10,12 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child level - the Tenant.leases IN-list binds are the distinct tenant ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: Tenant
+  targetEntity: parallax.compatibility.Tenant
   operation:
     deepFetch:
       operand: { all: {} }
       paths:
-        - { segments: [{ rel: Tenant.leases }] }
+        - { segments: [{ rel: parallax.compatibility.Tenant.leases }] }
 then:
   statements:
     - sql:

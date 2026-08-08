@@ -37,7 +37,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Branch
+      entity: parallax.compatibility.Branch
       statements: 1
       note: open the original Latest rectangle carrying the address document D1
       rows:
@@ -53,7 +53,7 @@ when:
       validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: updateUntil
-      entity: Branch
+      entity: parallax.compatibility.Branch
       statements: 4
       note: inactivate the original on the Transaction-Time dimension, then chain head / middle / tail carrying D1 / D2 / D1
       rows:

@@ -29,7 +29,7 @@ given:
 when:
   writeSequence:
     - mutation: insert
-      entity: Account
+      entity: parallax.compatibility.Account
       statements: 1
       note: merge-back of a detached copy whose deleted original is NOT found re-inserts it
       rows:

@@ -39,6 +39,8 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
+from parallax.conformance.read_models import CardPayment, Payment
+from parallax.conformance.vo_models import Contact, Shipment
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr, opt_lock
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
@@ -82,7 +84,9 @@ def test_keyed_insert_through_the_verb_follows_the_entity_layout_slot_order() ->
     port = RecordingPort()
     db_for(PAYMENT, port).transact(
         lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-            "insert", "CardPayment", {"cardNetwork": "Visa", "id": 10, "amount": Decimal("200.00")}
+            "insert",
+            CardPayment.identity,
+            {"cardNetwork": "Visa", "id": 10, "amount": Decimal("200.00")},
         )
     )
     assert port.ops == [
@@ -294,7 +298,7 @@ def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
         account_db(port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
                 "insert",
-                "Account",
+                mm.Account.identity,
                 {
                     "id": 1,
                     "owner": "Newton",
@@ -335,7 +339,7 @@ def test_buffer_rejects_a_required_attribute_missing_at_any_depth() -> None:
         db_for(CONTACT, port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
                 "insert",
-                "Contact",
+                Contact.identity,
                 {
                     "id": 1,
                     "name": "Acme",
@@ -356,7 +360,7 @@ def test_buffer_rejects_a_required_value_object_missing() -> None:
     with pytest.raises(WriteRejectedError) as exc_info:
         db_for(SHIPMENT, port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert", "Shipment", {"id": 5, "name": "Express"}
+                "insert", Shipment.identity, {"id": 5, "name": "Express"}
             )
         )
     assert exc_info.value.rule == "write-required-value-object-missing"
@@ -375,7 +379,7 @@ def test_buffer_rejects_a_value_type_mismatch() -> None:
         db_for(CONTACT, port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
                 "insert",
-                "Contact",
+                Contact.identity,
                 {
                     "id": 5,
                     "name": "Echo",
@@ -396,7 +400,7 @@ def test_buffer_rejects_a_keyless_inheritance_write() -> None:
     with pytest.raises(WriteRejectedError) as exc_info:
         db_for(PAYMENT, port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert", "CardPayment", {"amount": 200.00, "cardNetwork": "Visa"}
+                "insert", CardPayment.identity, {"amount": 200.00, "cardNetwork": "Visa"}
             )
         )
     assert exc_info.value.rule == "subtype-write-set-based-unsupported"
@@ -408,7 +412,7 @@ def test_buffer_rejects_framework_owned_metadata() -> None:
     with pytest.raises(WriteRejectedError) as exc_info:
         db_for(PAYMENT, port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert", "CardPayment", {"id": 10, "amount": 200.00, "tagValue": "card"}
+                "insert", CardPayment.identity, {"id": 10, "amount": 200.00, "tagValue": "card"}
             )
         )
     assert exc_info.value.rule == "subtype-write-metadata-field"
@@ -422,7 +426,7 @@ def test_buffer_rejects_a_sibling_branch_attribute() -> None:
         db_for(PAYMENT, port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
                 "insert",
-                "Payment",
+                Payment.identity,
                 {"id": 10, "amount": 200.00, "cardNetwork": "Visa", "tendered": 25.00},
             )
         )
@@ -436,7 +440,7 @@ def test_buffer_rejects_an_abstract_write_target() -> None:
     with pytest.raises(WriteRejectedError) as exc_info:
         db_for(PAYMENT, port).transact(
             lambda tx: tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
-                "insert", "Payment", {"id": 10, "amount": 200.00, "cardNetwork": "Visa"}
+                "insert", Payment.identity, {"id": 10, "amount": 200.00, "cardNetwork": "Visa"}
             )
         )
     assert exc_info.value.rule == "abstract-write-target"
@@ -455,7 +459,7 @@ def test_sparse_update_does_not_trip_required_attribute_missing_for_an_untouched
     def fn(tx: Transaction) -> None:
         tx._buffer(  # pyright: ignore[reportPrivateUsage] - unit test drives the transaction's private buffer seam
             "update",
-            "Account",
+            mm.Account.identity,
             {"id": 1, "balance": Decimal("175.00")},
             observation=VersionObservation(observed_version=1),
         )

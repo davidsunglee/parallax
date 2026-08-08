@@ -18,7 +18,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Invoice
+      entity: parallax.compatibility.Invoice
       statements: 1
       note: insert an Invoice into its own concrete-subtype table; no tag column
       rows:

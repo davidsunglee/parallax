@@ -11,16 +11,16 @@ model: models/policy.yaml
 tags: [m-navigate, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Policy
+  targetEntity: parallax.compatibility.Policy
   operation:
     asOf:
       operand:
         asOf:
           operand:
             exists:
-              rel: Policy.coverages
+              rel: parallax.compatibility.Policy.coverages
               op:
-                greaterThanEquals: { attr: Coverage.amount, value: 600.00 }
+                greaterThanEquals: { attr: parallax.compatibility.Coverage.amount, value: 600.00 }
           dimension: transaction-time
           coordinate: latest
       dimension: valid-time

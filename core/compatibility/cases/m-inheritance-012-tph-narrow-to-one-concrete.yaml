@@ -13,13 +13,13 @@ model: models/animal.yaml
 tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Animal
+  targetEntity: parallax.compatibility.Animal
   operation:
     narrow:
-      entity: Animal
-      to: [Dog]
+      entity: parallax.compatibility.Animal
+      to: [parallax.compatibility.Dog]
       operand:
-        greaterThan: { attr: Dog.barkVolume, value: 3 }
+        greaterThan: { attr: parallax.compatibility.Dog.barkVolume, value: 3 }
 then:
   statements:
     - sql:

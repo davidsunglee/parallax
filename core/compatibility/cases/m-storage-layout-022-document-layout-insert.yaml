@@ -32,7 +32,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Traveler
+      entity: parallax.compatibility.Traveler
       statements: 1
       note: every member named — one document, occurrences at their containment paths
       rows:
@@ -48,14 +48,14 @@ when:
           tags:
             - { label: guide }
     - mutation: insert
-      entity: Traveler
+      entity: parallax.compatibility.Traveler
       statements: 1
       note: one scalar — the nullable members absent contribute no key, the absent `many` writes []
       rows:
         - id: 5
           displayName: Eli
     - mutation: insert
-      entity: Beacon
+      entity: parallax.compatibility.Beacon
       statements: 1
       note: no document-resident member at all — the NOT NULL Structured Column still binds
       rows:

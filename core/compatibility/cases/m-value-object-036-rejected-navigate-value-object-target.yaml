@@ -14,6 +14,6 @@ shape: rejected
 when:
   operation:
     navigate:
-      rel: Customer.address
+      rel: parallax.compatibility.Customer.address
 then:
   rejectedRule: navigate-value-object-target

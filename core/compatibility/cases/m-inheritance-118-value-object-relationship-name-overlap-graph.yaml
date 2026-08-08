@@ -10,13 +10,13 @@ compileEligibility:
   reason: query-result-dependent
   note: "the details child IN-list bind is gathered from the root query result"
 when:
-  targetEntity: ProfileOwner
+  targetEntity: compatibility.overlap.ProfileOwner
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: ProfileOwner.details }] }
+        - { segments: [{ rel: compatibility.overlap.ProfileOwner.details }] }
 then:
   statements:
     - sql:

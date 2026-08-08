@@ -5,10 +5,10 @@ model: models/orders.yaml
 tags: [m-op-algebra, between, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     between:
-      attr: Order.price
+      attr: parallax.compatibility.Order.price
       lower: 20.00
       upper: 50.75
 then:

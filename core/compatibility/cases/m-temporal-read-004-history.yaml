@@ -10,12 +10,12 @@ model: models/balance.yaml
 tags: [m-temporal-read, m-sql, history, audit-only, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Balance
+  targetEntity: parallax.compatibility.Balance
   operation:
     history:
       operand:
         eq:
-          attr: Balance.id
+          attr: parallax.compatibility.Balance.id
           value: 1
       dimension: transaction-time
 then:

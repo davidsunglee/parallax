@@ -18,14 +18,14 @@ model: models/document.yaml
 tags: [m-navigate, m-op-algebra, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Folder
+  targetEntity: parallax.compatibility.Folder
   operation:
     exists:
-      rel: Folder.documents
+      rel: parallax.compatibility.Folder.documents
       op:
         narrow:
-          entity: Document
-          to: [FinancialDocument]
+          entity: parallax.compatibility.Document
+          to: [parallax.compatibility.FinancialDocument]
           operand:
             all: {}
 then:

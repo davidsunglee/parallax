@@ -15,6 +15,6 @@ tags: [m-op-algebra, m-value-object, rejected, negative, nested, string, slice-s
 shape: rejected
 when:
   operation:
-    nestedStartsWith: { path: Contact.address.phones.expires, value: '2024' }
+    nestedStartsWith: { path: parallax.compatibility.Contact.address.phones.expires, value: '2024' }
 then:
   rejectedRule: nested-string-predicate-non-string-member

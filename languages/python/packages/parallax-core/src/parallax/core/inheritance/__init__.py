@@ -332,8 +332,9 @@ def validate_write_assignment(
     the three callers, never the rule.
 
     The judgement names the member relative to its own owner, so this caller
-    prefixes the addressed Entity: an assignment reported here reads
-    ``Order.total: …`` however deep in a Value Object the violation was found.
+    prefixes the addressed Entity exactly: an assignment reported here reads
+    ``parallax.compatibility.Order.total: …`` however deep in a Value Object the
+    violation was found.
 
     A ``name`` this family declares NEITHER a scalar attribute NOR a value object
     for (one `validate_instruction`'s own member-name-honesty gate already
@@ -341,7 +342,7 @@ def validate_write_assignment(
     silently, leaving that classification to its own owning check.
     """
     position = _entity_view(view(model), entity.identity)
-    owner = entity.identity.name
+    owner = entity.identity.canonical
     for attribute in position.applicable_attributes:
         if attribute.identity.name == name:
             _judged(owner, attribute, value)

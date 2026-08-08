@@ -11,7 +11,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: WritableScalar
+      entity: parallax.compatibility.WritableScalar
       statements: 1
       note: write a string of exactly maxLength (8) characters
       rows:

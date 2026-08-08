@@ -17,7 +17,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: Account
+      entity: parallax.compatibility.Account
       statements: 1
       note: merge-back of a copy with two edited attributes updates both in one UPDATE
       rows:

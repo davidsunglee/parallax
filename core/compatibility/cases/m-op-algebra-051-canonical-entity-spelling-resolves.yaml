@@ -27,10 +27,10 @@ model: models/shared-local-name.yaml
 tags: [m-op-algebra, exists, relationship, to-one, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Register
+  targetEntity: parallax.compatibility.Register
   operation:
     exists:
-      rel: Register.variant
+      rel: parallax.compatibility.Register.variant
       op:
         eq: { attr: archive.SharedVariant.archiveLabel, value: A-1 }
 then:

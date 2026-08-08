@@ -24,17 +24,17 @@ when:
     - write:
         mutation: delete
         target:
-          entity: Customer
+          entity: parallax.compatibility.Customer
           predicate:
-            nestedEq: { path: Customer.address.city, value: Boston }
+            nestedEq: { path: parallax.compatibility.Customer.address.city, value: Boston }
       roundTrips: 1
       statements:
         - sql:
             postgres: delete from customer where jsonb_extract_path_text(address, ?) = ?
           binds: [city, Boston]
-    - targetEntity: Customer
+    - targetEntity: parallax.compatibility.Customer
       find:
-        nestedEq: { path: Customer.address.city, value: Boston }
+        nestedEq: { path: parallax.compatibility.Customer.address.city, value: Boston }
       roundTrips: 1
       statements:
         - sql:

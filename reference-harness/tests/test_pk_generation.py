@@ -91,8 +91,8 @@ def _pass_case() -> SimpleNamespace:
     return SimpleNamespace(
         model=model,
         write_sequence=[
-            {"mutation": "update", "entity": "PkSequence"},
-            {"mutation": "insert", "entity": "Pass"},
+            {"mutation": "update", "entity": "parallax.compatibility.PkSequence"},
+            {"mutation": "insert", "entity": "parallax.compatibility.Pass"},
         ],
         path=Path("m-pk-gen-008-unit.yaml"),
     )
@@ -225,7 +225,9 @@ def test_pkgen_sequence_increment_amount_corruption_is_rejected() -> None:
     # `m-pk-gen-004` step 1 advances the registry via `next_val = next_val + ?` by 1. Corrupt
     # the `{ increment: <n> }` amount so the DERIVED bind no longer matches the golden.
     case = copy.deepcopy(_pkgen_case("m-pk-gen-004"))
-    step = next(s for s in case.write_sequence if s["entity"] == "PkSequence")
+    step = next(
+        s for s in case.write_sequence if s["entity"] == "parallax.compatibility.PkSequence"
+    )
     step["rows"][0]["nextVal"] = {"increment": 99}
     with pytest.raises(CaseFailure):
         _assert_write_input_columns(case, "postgres")

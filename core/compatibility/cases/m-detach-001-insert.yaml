@@ -19,7 +19,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Account
+      entity: parallax.compatibility.Account
       statements: 1
       note: merge-back of an unpersisted detached copy inserts a new row
       rows:

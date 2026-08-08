@@ -28,12 +28,12 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Position
+    - targetEntity: parallax.compatibility.Position
       find:
         and:
           operands:
-            - { eq: { attr: Position.id, value: 1 } }
-            - { eq: { attr: Position.value, value: 200.00 } }
+            - { eq: { attr: parallax.compatibility.Position.id, value: 1 } }
+            - { eq: { attr: parallax.compatibility.Position.value, value: 200.00 } }
       roundTrips: 1
       statements:
         - sql:
@@ -45,14 +45,14 @@ when:
     - write:
         mutation: updateUntil
         target:
-          entity: Position
+          entity: parallax.compatibility.Position
           predicate:
             and:
               operands:
-                - { eq: { attr: Position.id, value: 1 } }
-                - { eq: { attr: Position.value, value: 200.00 } }
+                - { eq: { attr: parallax.compatibility.Position.id, value: 1 } }
+                - { eq: { attr: parallax.compatibility.Position.value, value: 200.00 } }
         assignments:
-          - { attr: Position.value, value: 300.00 }
+          - { attr: parallax.compatibility.Position.value, value: 300.00 }
         at: "2024-10-01T00:00:00+00:00"
         validFrom: "2024-07-01T00:00:00+00:00"
         until: "2024-09-01T00:00:00+00:00"
@@ -70,11 +70,11 @@ when:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
           binds: [1, A, 200.00, "2024-09-01T00:00:00+00:00", infinity, "2024-10-01T00:00:00+00:00", infinity]
-    - targetEntity: Position
+    - targetEntity: parallax.compatibility.Position
       find:
         asOf:
           operand:
-            eq: { attr: Position.value, value: 300.00 }
+            eq: { attr: parallax.compatibility.Position.value, value: 300.00 }
           dimension: valid-time
           coordinate: "2024-08-01T00:00:00+00:00"
       roundTrips: 1

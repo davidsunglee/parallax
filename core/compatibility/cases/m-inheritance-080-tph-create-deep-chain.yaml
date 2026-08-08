@@ -16,7 +16,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Dog
+      entity: parallax.compatibility.Dog
       statements: 1
       note: insert a Dog; kind='dog' derived from tagValue; full inherited chain written
       rows:

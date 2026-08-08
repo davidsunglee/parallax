@@ -36,10 +36,10 @@ when:
   uow:
     concurrency: locking
   scenario:
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         lessThan:
-          attr: Account.balance
+          attr: parallax.compatibility.Account.balance
           value: 200.00
       roundTrips: 1
       note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1)
@@ -54,11 +54,11 @@ when:
     - write:
         mutation: update
         target:
-          entity: Account
+          entity: parallax.compatibility.Account
           predicate:
-            lessThan: { attr: Account.balance, value: 200.00 }
+            lessThan: { attr: parallax.compatibility.Account.balance, value: 200.00 }
         assignments:
-          - { attr: Account.balance, value: 0.00 }
+          - { attr: parallax.compatibility.Account.balance, value: 0.00 }
       roundTrips: 2
       note: one per-object version-advancing UPDATE per materialized row (no gate, locking mode)
       statements:
@@ -68,10 +68,10 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [0.00, 2, 3]
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         lessThan:
-          attr: Account.balance
+          attr: parallax.compatibility.Account.balance
           value: 200.00
       roundTrips: 1
       note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2

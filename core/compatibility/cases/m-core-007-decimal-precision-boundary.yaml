@@ -13,7 +13,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: WritableScalar
+      entity: parallax.compatibility.WritableScalar
       statements: 1
       note: write a decimal(18,4) value using all four fractional digits
       rows:

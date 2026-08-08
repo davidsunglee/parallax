@@ -25,7 +25,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Sample
+      entity: parallax.compatibility.Sample
       statements: 1
       note: insert one Sample whose float32 and float64 leaves carry the same authored digits
       rows:

@@ -18,13 +18,13 @@ given:
 when:
   writeSequence:
     - mutation: cascadeDelete
-      entity: Order
+      entity: parallax.compatibility.Order
       statements: 3
       note: cascade root order 2 — dependent status, dependent item, then the order
       rows:
         - { id: 2 }
     - mutation: cascadeDelete
-      entity: Order
+      entity: parallax.compatibility.Order
       statements: 3
       note: cascade root order 42 — dependent statuses, dependent items, then the order
       rows:

@@ -7,7 +7,7 @@ model: models/ledger.yaml
 tags: [m-temporal-read, m-sql, m-descriptor, as-of, audit-only, boundary, half-open, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Ledger
+  targetEntity: parallax.compatibility.Ledger
   operation:
     asOf:
       operand:

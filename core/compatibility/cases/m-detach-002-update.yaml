@@ -19,7 +19,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: Account
+      entity: parallax.compatibility.Account
       statements: 1
       note: merge-back of a mutated detached copy updates the original in place
       rows:

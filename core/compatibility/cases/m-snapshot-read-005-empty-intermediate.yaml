@@ -17,15 +17,15 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child levels - the Order.items IN-list binds are the distinct order ids the root query returned, and the empty items result means the OrderItem.statuses level gathers no parent keys and issues no statement at all, so the child emissions (including the statement count) depend on a query result"
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     deepFetch:
       operand:
         eq:
-          attr: Order.id
+          attr: parallax.compatibility.Order.id
           value: 4
       paths:
-        - { segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }
+        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
 then:
   statements:
     - sql:

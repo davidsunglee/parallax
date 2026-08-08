@@ -24,7 +24,7 @@ given:
 when:
   writeSequence:
     - mutation: delete
-      entity: Wallet
+      entity: parallax.compatibility.Wallet
       statements: 1
       note: three buffered deletes collapse into ONE `delete ... where id in (?, ?, ?)`
       rows:

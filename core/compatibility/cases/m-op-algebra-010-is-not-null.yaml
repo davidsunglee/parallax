@@ -5,10 +5,10 @@ model: models/orders.yaml
 tags: [m-op-algebra, isNotNull, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     isNotNull:
-      attr: Order.sku
+      attr: parallax.compatibility.Order.sku
 then:
   statements:
     - sql:
