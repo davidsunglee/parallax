@@ -129,7 +129,15 @@ def _scenario_steps(case: case_format.Case) -> list[dict[str, Any]]:
 
 
 def write_value_steps(case: case_format.Case) -> list[WriteValueStep]:
-    """The case's own ordered steps, in the runner's shape."""
+    """The case's own ordered steps, in the runner's shape.
+
+    Reads EVERY step of the scenario, which is sound for exactly the cases
+    :func:`reachable_write_value_cases` selects: a selected case has already been
+    established to carry keyed write action steps and nothing else. A scenario
+    mixing one with a step this runner cannot drive never reaches here — it is
+    refused at selection rather than partly parsed here, because grading such a
+    case in part would report a pass for steps that never ran.
+    """
     return [
         WriteValueStep(
             action=cast("str", step["action"]),

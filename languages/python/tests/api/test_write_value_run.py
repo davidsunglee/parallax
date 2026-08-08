@@ -41,8 +41,11 @@ def test_write_value_case_runs_through_the_shipped_verbs(
         return write_value_runner.graded_outcomes(tx, steps)
 
     assert db.transact(fn) == [step.expect_error for step in steps]
-    # Every step is a refusal or an accepted value carrying no change, so the
-    # fixture row stands exactly as it was loaded.
+    # The fixture row stands exactly as it was loaded whatever the case's steps
+    # declare: a refusal writes nothing, an accepted `update` carries no change
+    # (this runner never edits the value it arranges), and an accepted `insert`
+    # writes `UNMANAGED_ID`, which is outside the fixture range precisely so a
+    # value no managed read produced cannot address a row one did.
     stored = db.transact(
         lambda tx: tx.find(Account.where(Account.id == write_value_runner.TARGET_ID)).result()
     )

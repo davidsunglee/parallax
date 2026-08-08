@@ -52,9 +52,14 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
 
     outcomes = _db(port).transact(fn)
     assert outcomes == [step.expect_error for step in steps]
-    # Every step of every case is a refusal or an accepted value that carries no
-    # change, so no case reaches DML at all.
-    assert not any(op[0] == "write" for op in port.ops)
+    # What reaches DML is derived from the case rather than assumed of the
+    # corpus: an accepted `insert` step buffers a row the enclosing transaction
+    # flushes, while a refusal buffers nothing and an accepted `update` carries
+    # no change (this runner never edits the value it arranges). The recorded
+    # operations are what makes either claim provable with no database at all.
+    assert any(op[0] == "write" for op in port.ops) == any(
+        step.expect_error is None and step.action == "insert" for step in steps
+    )
 
 
 def test_the_corpus_witnesses_every_code_of_the_closed_vocabulary() -> None:
