@@ -1117,6 +1117,28 @@ def _write_value_step_costing_a_round_trip() -> dict[str, Any]:
     return doc
 
 
+def _write_value_scenario_on_the_harness_lane() -> dict[str, Any]:
+    """A keyed-write-value scenario declaring `lane: harness`.
+
+    The wire harness holds no client value to hand a verb, so it can neither
+    arrange the step's provenance nor execute the step — and a scenario is one
+    ordered execution rather than a set of steps to divide between executors, so
+    the whole case is `api-conformance` or it is gradeable by nobody."""
+    doc = _write_value_scenario_case()
+    doc["lane"] = "harness"
+    return doc
+
+
+def _write_value_scenario_without_a_lane() -> dict[str, Any]:
+    """A keyed-write-value scenario declaring no lane at all.
+
+    The lane default is `harness`, which this case cannot be, so the routing is
+    REQUIRED here rather than left to a default that would misroute it."""
+    doc = _write_value_scenario_case()
+    del doc["lane"]
+    return doc
+
+
 def _read_case_with_zero_round_trips() -> dict[str, Any]:
     """A read case declaring `then.roundTrips: 0`.
 
@@ -1142,6 +1164,8 @@ def _rejected_case_costing_a_round_trip() -> dict[str, Any]:
 REJECTED_CASES = {
     "write-value-step-with-golden-statements": _write_value_step_with_golden_statements,
     "write-value-step-costing-a-round-trip": _write_value_step_costing_a_round_trip,
+    "write-value-scenario-on-the-harness-lane": _write_value_scenario_on_the_harness_lane,
+    "write-value-scenario-without-a-lane": _write_value_scenario_without_a_lane,
     "read-with-zero-round-trips": _read_case_with_zero_round_trips,
     "rejected-costing-a-round-trip": _rejected_case_costing_a_round_trip,
     "legacy-layout": _legacy_layout,

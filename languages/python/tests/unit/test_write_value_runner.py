@@ -19,7 +19,8 @@ import pytest
 from _transact_support import FIXED, NoIoPort, RecordingPort
 
 from parallax.conformance import case_format, write_value_runner
-from parallax.conformance.story_models import ACCOUNT_MODEL, Account
+from parallax.conformance.another_source import AnotherSource
+from parallax.conformance.story_models import ACCOUNT_MODEL, ORDERS_MODEL, Account, Order
 from parallax.core.db_port import Row
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
@@ -46,9 +47,10 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
 ) -> None:
     steps = write_value_runner.write_value_steps(case)
     port = RecordingPort(rows=[_TARGET_ROW])
+    another = AnotherSource(ACCOUNT_MODEL, port)
 
     def fn(tx: Transaction) -> list[str | None]:
-        return write_value_runner.graded_outcomes(tx, steps)
+        return write_value_runner.graded_outcomes(tx, steps, another)
 
     outcomes = _db(port).transact(fn)
     assert outcomes == [step.expect_error for step in steps]
@@ -76,22 +78,55 @@ def test_the_corpus_witnesses_every_code_of_the_closed_vocabulary() -> None:
     }
 
 
-@pytest.mark.parametrize(
-    "provenance", ["unmanaged", "anotherSource"], ids=["unmanaged", "another-source"]
-)
-def test_a_value_needing_no_read_is_arranged_without_touching_the_adapter(
-    provenance: str,
-) -> None:
+def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -> None:
+    # `unmanaged` is the one provenance no managed read produces, so arranging it
+    # reaches no port at all. The other two are reads, each through the source
+    # whose provenance the token names.
+    unreachable = AnotherSource(ACCOUNT_MODEL, NoIoPort())
+
     def fn(tx: Transaction) -> Account:
-        return write_value_runner.value_of(provenance, tx)
+        return write_value_runner.value_of("unmanaged", tx, unreachable)
 
     value = Database.connect(NoIoPort(), ACCOUNT_MODEL, clock=FixedClock(FIXED)).transact(fn)
     assert isinstance(value, Account)
 
 
+def test_the_second_source_materializes_from_a_read_and_recognizes_its_own() -> None:
+    # The two halves of what `m-unit-work` calls a framework-managed source: it
+    # materializes values from reads, and it attaches the state by which it later
+    # recognizes its own. A sibling source over the same store claims nothing of
+    # this one's, which is what makes recognition per-source rather than a test
+    # for managed-ness in general.
+    port = RecordingPort(rows=[_TARGET_ROW])
+    another = AnotherSource(ACCOUNT_MODEL, port)
+
+    (value,) = another.find(Account.where(Account.id == write_value_runner.TARGET_ID))
+
+    assert [op[0] for op in port.ops] == ["read"]
+    assert (value.id, value.owner, value.balance) == (
+        write_value_runner.TARGET_ID,
+        "Linus",
+        Decimal("250.00"),
+    )
+    assert another.produced(value)
+    assert not AnotherSource(ACCOUNT_MODEL, port).produced(value)
+    assert not another.produced(Account(id=1, owner="Unmanaged", balance=Decimal("0.00")))
+
+
+def test_the_second_source_refuses_a_deep_fetch_before_reading() -> None:
+    # It populates no relationship view, so a query asking for one is refused at
+    # the query rather than read and then answered without its levels — and the
+    # raising port proves the refusal precedes the read.
+    another = AnotherSource(ORDERS_MODEL, NoIoPort())
+
+    with pytest.raises(ValueError, match="flat graphs only"):
+        another.find(Order.where(Order.id == 1).include(Order.items))
+
+
 def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
-    # Selection by containment, not by uniformity: a keyed write action step
-    # that acquires a neighbour this runner cannot drive must not drop out of
+    # Selection by containment, not by uniformity: such a case is
+    # api-conformance throughout, so this suite is its only executor and a
+    # neighbour this runner cannot drive must not let the keyed step drop out of
     # the graded set silently.
     steps: list[dict[str, Any]] = [
         {"action": "update", "value": "unmanaged", "roundTrips": 0},
@@ -112,9 +147,10 @@ def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
 
 def test_an_unrecognized_provenance_token_is_loud() -> None:
     port = RecordingPort(rows=[_TARGET_ROW])
+    another = AnotherSource(ACCOUNT_MODEL, port)
 
     def fn(tx: Transaction) -> Account:
-        return write_value_runner.value_of("invented", tx)
+        return write_value_runner.value_of("invented", tx, another)
 
     with pytest.raises(ValueError, match="unrecognized value provenance"):
         _db(port).transact(fn)
@@ -138,9 +174,10 @@ def test_a_graded_mismatch_is_loud_in_either_direction(
     step: write_value_runner.WriteValueStep, message: str
 ) -> None:
     port = RecordingPort(rows=[_TARGET_ROW])
+    another = AnotherSource(ACCOUNT_MODEL, port)
 
     def fn(tx: Transaction) -> str | None:
-        return write_value_runner.grade_step(tx, step)
+        return write_value_runner.grade_step(tx, step, another)
 
     with pytest.raises(AssertionError, match=message):
         _db(port).transact(fn)

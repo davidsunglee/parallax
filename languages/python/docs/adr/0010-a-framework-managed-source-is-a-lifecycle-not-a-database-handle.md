@@ -61,24 +61,30 @@ neither more nor less observed than the one it admits. A new normative notion of
 source, wearing the clothes of a bug fix, is the wrong trade at that price.
 
 Under this decision `ForeignLifecycle` is reachable only from a second managed
-lifecycle, and the Python runtime ships one. No read this runtime can perform
-produces a foreign value, so a conformance case's `anotherSource` value is
-**synthesized**: a real `Account` constructed through the core's own Entity Graph
-Construction seam under a state factory of the runner's own, carrying lifecycle
-state the Snapshot never attached.
+lifecycle, and the Python *runtime* is one. No read the Snapshot performs produces
+a foreign value, so the conformance adapter **supplies** the second source rather
+than synthesizing a value for it: `parallax.conformance.another_source` executes
+its own query through the shared find executor and materializes what that read
+returned itself — its own merge over the Snapshot Graph Input, its own Entity
+Graph Construction drive, its own per-node state, and its own recognizer for the
+values carrying that state.
 
-That is a second lifecycle's *state*, not a second lifecycle. The runner
-materializes from literals rather than from rows, and nothing recognizes the
-value later as its own, so what `m-unit-work-019` pins is exactly the classifier's
-question and no more: `validate_write_value` reads `lifecycle_state_of` (is there
-managed state?) and `snapshot_state_of` (is it this lifecycle's?), and a value
-answering yes-then-no is refused by both verb families. Where the value's members
-came from is invisible to that question, which is why synthesizing the state is
-sufficient to witness the rule and why a case cannot ask for more (`m-case-format`
-*Keyed write action steps*: an implementation shipping one lifecycle arranges the
-token under a second lifecycle's own state). What it is **not** is evidence that a
-second materializing lifecycle would interoperate correctly; the Python runtime
-ships none for that to be a question about.
+That is a second lifecycle by the definition `m-unit-work` gives — machinery that
+materializes values from reads and attaches the state by which it later
+recognizes its own — and a source is machinery, not a shipped product. So
+`m-unit-work-019` arranges what it says it arranges: a value a read through
+another framework-managed source produced, refused by both verb families. It
+shares the port with the source under test on purpose, because a connection is
+not a source under this very decision.
+
+`validate_write_value` reads only `lifecycle_state_of` (is there managed state?)
+and `snapshot_state_of` (is it this lifecycle's?), so the classifier's answer
+would be the same for a value built from literals — which is exactly why building
+one would not witness the rule: it would arrange the token rather than the value
+(`m-case-format` *Keyed write action steps*). What the case is still **not**
+evidence of is that a second *shipped* lifecycle would interoperate correctly
+across the rest of the runtime; the adapter's source materializes flat graphs and
+writes nothing.
 
 No compatibility case witnesses the cross-handle arrangement, deliberately. Under
 this decision a value from a second handle is definitionally not another source,

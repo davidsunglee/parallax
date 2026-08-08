@@ -120,6 +120,16 @@ def test_rejected_cases_exist() -> None:
         )
 
 
+def test_every_rejected_case_costs_zero_round_trips() -> None:
+    """A pre-SQL refusal composes no statement, so every rejected case answers
+    zero — the count `m-conformance-adapter` requires a rejected observation to
+    report. None of them declares `then.roundTrips`, so this is the shape's own
+    default rather than an authored value."""
+    for case in _rejected_cases():
+        assert "roundTrips" not in case.then, case.path.name
+        assert case.round_trips == 0, case.path.name
+
+
 def test_model_negatives_use_closed_owner_vocabularies() -> None:
     """Every model rejection belongs to the resolver, Inheritance, or Storage Layout."""
     model_cases = [c for c in _rejected_cases() if "model" in c.when]

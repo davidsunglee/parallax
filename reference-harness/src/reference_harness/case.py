@@ -999,7 +999,18 @@ class Case:
 
     @property
     def round_trips(self) -> int:
-        return self.then.get("roundTrips", 1)
+        """The statements this case costs: what ``then.roundTrips`` declares, or
+        the shape's own default where it is absent.
+
+        One for a shape that reaches the database, and ZERO for a ``rejected``
+        case, whose input a validator refuses before any statement is composed
+        (``m-conformance-adapter``: a rejected observation reports
+        ``roundTrips: 0``). The schema pins the declared value to ``0`` there, so
+        the shape-aware default is the same number a declaration would carry —
+        and it is the number every rejected case actually answers, since none of
+        them declares the field.
+        """
+        return self.then.get("roundTrips", 0 if self.is_rejected else 1)
 
     @property
     def tolerance(self) -> Decimal | None:
