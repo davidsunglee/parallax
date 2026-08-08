@@ -5,13 +5,15 @@ ONE parametrized test over EVERY reachable keyed-write-value corpus case, driven
 through the REAL `db.transact` over the recording fake port the transaction
 suites share — so each case's stated provenance is arranged by the shipped
 runner, graded by the production validator, and refused (or accepted) before any
-DML. `tests/api/test_write_value_run.py` runs the same cases against a real
-database; this suite is what makes their grading provable with no Docker.
+DML. The fake port is what makes that grading provable with no database at all:
+the recorded operations are the proof no case reached one.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
+from typing import Any
 
 import pytest
 from _transact_support import FIXED, NoIoPort, RecordingPort
@@ -80,6 +82,27 @@ def test_a_value_needing_no_read_is_arranged_without_touching_the_adapter(
 
     value = Database.connect(NoIoPort(), ACCOUNT_MODEL, clock=FixedClock(FIXED)).transact(fn)
     assert isinstance(value, Account)
+
+
+def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
+    # Selection by containment, not by uniformity: a keyed write action step
+    # that acquires a neighbour this runner cannot drive must not drop out of
+    # the graded set silently.
+    steps: list[dict[str, Any]] = [
+        {"action": "update", "value": "unmanaged", "roundTrips": 0},
+        {"find": {}, "targetEntity": "parallax.compatibility.Account", "roundTrips": 1},
+    ]
+    mixed = case_format.Case(
+        path=Path("m-unit-work-999-mixed.yaml"),
+        case_id="m-unit-work-999",
+        shape="scenario",
+        tags=("m-unit-work",),
+        model="models/account.yaml",
+        document={"when": {"scenario": steps}},
+    )
+
+    with pytest.raises(ValueError, match="graded neither whole nor in part"):
+        write_value_runner.reachable_write_value_cases([mixed])
 
 
 def test_an_unrecognized_provenance_token_is_loud() -> None:

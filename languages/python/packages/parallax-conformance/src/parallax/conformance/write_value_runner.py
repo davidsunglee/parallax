@@ -22,9 +22,9 @@ for the loop-mechanics branches.
   own `mutate` grading uses — an undeclared refusal and a declared expectation
   the verb never raised are both failures, never silently dropped observations.
 
-Exercised by the real-database suite (``tests/api/test_write_value_run.py``, over
-the shipped ``parallax-postgres`` adapter) and, DB-free, by unit tests over a fake
-port (``tests/unit/test_write_value_runner.py``).
+Every function here takes the live :class:`~parallax.snapshot.handle.Transaction`
+it drives and reaches no adapter of its own, so the same runner grades a case
+against a real database and against a fake port alike.
 """
 
 from __future__ import annotations
@@ -90,15 +90,30 @@ class WriteValueStep:
 def reachable_write_value_cases(
     cases: list[case_format.Case] | None = None,
 ) -> list[case_format.Case]:
-    """Every corpus case whose steps are keyed write action steps (parametrized
-    at runtime, never a hand list)."""
+    """Every corpus case carrying keyed write action steps (parametrized at
+    runtime, never a hand list).
+
+    Selection is by what a case CONTAINS rather than by what it is made of, so a
+    keyed write action step cannot leave the graded set by acquiring a neighbour:
+    a case mixing one with a step this runner does not drive is loud here rather
+    than silently unreachable.
+    """
     corpus = cases if cases is not None else case_format.load_cases()
     return [case for case in corpus if case.shape == "scenario" and _is_write_value_case(case)]
 
 
 def _is_write_value_case(case: case_format.Case) -> bool:
     steps = _scenario_steps(case)
-    return bool(steps) and all(step.get("action") in _WRITE_VALUE_ACTIONS for step in steps)
+    keyed = [step for step in steps if step.get("action") in _WRITE_VALUE_ACTIONS]
+    if not keyed:
+        return False
+    if len(keyed) != len(steps):
+        raise ValueError(
+            f"{case.case_id}: a keyed write action step shares this scenario with a step no "
+            "keyed-write-value runner drives, so the case can be graded neither whole nor in "
+            "part"
+        )
+    return True
 
 
 def _scenario_steps(case: case_format.Case) -> list[dict[str, Any]]:

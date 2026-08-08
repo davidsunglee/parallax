@@ -30,6 +30,7 @@ from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
 from parallax.snapshot import handle
+from parallax.snapshot.handle import QueryTargetError
 
 
 def _entity(name: str, namespace: str) -> records.Entity:
@@ -126,6 +127,16 @@ def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() 
     with pytest.raises(OperationRejectedError) as excinfo:
         handle.find(All(), _model(), POSTGRES, "Person", cast("DbPort", _RefusingPort()))
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
+
+
+def test_the_read_executor_refuses_a_target_the_model_does_not_declare() -> None:
+    # The other half of the executor's own classification: `find` / `find_history`
+    # are exported and take a bare target spelling, so an undeclared one reaches
+    # this seam and earns the same `query-target-not-in-model` refusal the read
+    # preflight answers with — never a bare `KeyError` from a lookup miss.
+    with pytest.raises(QueryTargetError) as excinfo:
+        handle.find(All(), _model(), POSTGRES, "Nope", cast("DbPort", _RefusingPort()))
+    assert excinfo.value.code == "query-target-not-in-model"
 
 
 def test_a_canonical_spelling_names_one_of_two_twins_at_every_reference_position() -> None:

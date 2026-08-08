@@ -351,11 +351,11 @@ def test_identity_row_carries_the_values_the_instance_holds_unchanged() -> None:
 def test_serialization_is_the_identity_on_every_type_a_primary_key_can_hold(
     value: object, expected: object
 ) -> None:
-    # All three operations serialize now, and a primary key is structurally
+    # All three operations serialize, and a primary key is structurally
     # restricted to a scalar Attribute type `serialize_member` passes through by
-    # identity — which is why uniformity moves no emitted bind: the metamodel
-    # schema gives `primaryKey` to an Attribute alone, and never to a Value
-    # Object occurrence.
+    # identity — which is why uniform serialization moves no emitted bind: the
+    # metamodel schema gives `primaryKey` to an Attribute alone, and never to a
+    # Value Object occurrence.
     codec = row_codec_of(KEYED_MODEL if isinstance(value, Keyed) else LABELLED_MODEL)
     (emitted,) = codec.identity_row(value).values()
     assert emitted is expected or emitted == expected

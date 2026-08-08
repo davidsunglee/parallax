@@ -3124,11 +3124,14 @@ or descriptor authoring form and performs no audit stamping.
   statement, and raises nothing — exactly as an edit whose net change is empty
   does. Writing every value a find returned and editing only some of them is
   correct code, which is the point of tracking changes on the author's behalf.
-  A value this transaction merely **buffered an insert for** is not a value a
-  read produced, so `tx.update` of it is `write-value-not-stored`; the
-  insert-then-update coalescing shape is expressed by inserting the value the
-  flush should write, and `terminate` (which takes no position) keeps the
-  same-transaction pairing the bullet below describes.
+  **A value this transaction already buffered an insert for is exempt** from
+  `write-value-not-stored`: a row this unit of work inserted is a row it stores,
+  so `tx.update` of that object is accepted and the pair coalesces into the
+  single final-value write the flush emits (`m-unit-work` *Insert-then-update
+  coalesces in place*) — the same read-your-own-writes provenance the bullet
+  below grants a keyed temporal close. The exemption is keyed by the OBJECT,
+  so a value naming a primary key this transaction never inserted is refused
+  exactly as any other value no read produced is.
 - **A keyed temporal close requires a value that names a milestone.** The
   observation a temporal `update`/`terminate`/`*_until` settles against is
   resolved at the verb from the **value being written** — its own `Edge` —

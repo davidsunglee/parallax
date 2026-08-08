@@ -215,6 +215,16 @@
         "required": ["shape"],
         "properties": { "shape": { "const": "rejected" } }
       }
+    },
+    {
+      "description": "`then.roundTrips` may declare ZERO only for a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way). Every other shape asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
+      "if": {
+        "required": ["shape"],
+        "properties": { "shape": { "not": { "const": "scenario" } } }
+      },
+      "then": {
+        "properties": { "then": { "properties": { "roundTrips": { "minimum": 1 } } } }
+      }
     }
   ],
   "properties": {
@@ -474,12 +484,19 @@
                 "then": { "required": ["on"] }
               },
               {
-                "description": "A keyed write ACTION verb (`insert` / `update`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none.",
+                "description": "A keyed write ACTION verb (`insert` / `update`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none. Such a step carries NO golden SQL and declares `roundTrips: 0` (m-case-format *Keyed write action steps*): an accepted value's write is buffered rather than emitted, and a refused one reaches no statement at all, so its whole observable is the per-step `expectError`.",
                 "if": {
                   "required": ["action"],
                   "properties": { "action": { "enum": ["insert", "update"] } }
                 },
-                "then": { "required": ["value"], "not": { "required": ["on"] } },
+                "then": {
+                  "required": ["value"],
+                  "allOf": [
+                    { "not": { "required": ["on"] } },
+                    { "not": { "required": ["statements"] } }
+                  ],
+                  "properties": { "roundTrips": { "const": 0 } }
+                },
                 "else": { "not": { "required": ["value"] } }
               },
               {
@@ -1011,7 +1028,7 @@
           ]
         },
         "roundTrips": {
-          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way), the one shape whose declared total is legitimately 0.",
+          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way), the one shape whose declared total is legitimately 0 and the only one this floor is relaxed for (the top-level `allOf` keeps the minimum of 1 everywhere else).",
           "type": "integer",
           "minimum": 0,
           "default": 1

@@ -46,11 +46,12 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    ambiguous_entity_spellings,
     entity_by_name,
 )
 from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
-from parallax.snapshot.handle._errors import SnapshotMaterializationError
+from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.materialize import (
     LevelContext,
@@ -619,26 +620,28 @@ def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
     normative `reference-ambiguous-entity-name` refusal, carried by
     ``op_algebra``'s own :class:`~parallax.core.op_algebra.OperationRejectedError`
     so one rule and one class answer it whether preflight or this executor
-    resolves the reference. Every other miss is unreachable: the root target was
-    resolved by identity at preflight, and each level's own target is the
-    canonical spelling its resolved position minted.
+    resolves the reference. Any other miss names no declared Entity at all and is
+    the same `query-target-not-in-model` refusal the read preflight answers with:
+    a developer's ``db.find`` reaches this executor with an identity-resolved
+    target, but :func:`find` / :func:`find_history` are exported and take a bare
+    target spelling, so this seam classifies its own miss rather than assuming
+    one.
     """
     metadata = entity_by_name(meta, name)
     if metadata is not None:
         return metadata
-    shared = sorted(
-        candidate.identity.canonical
-        for candidate in meta.entities
-        if candidate.identity.name == name
-    )
-    if len(shared) > 1:
+    shared = ambiguous_entity_spellings(meta, name)
+    if shared:
         raise op_algebra.OperationRejectedError(
             "reference-ambiguous-entity-name",
-            f"{name!r}: the bare Entity spelling is shared by {shared}, so it names no single "
-            "Entity in this model and the read resolves nowhere (m-op-algebra reference "
+            f"{name!r}: the bare Entity spelling is shared by {list(shared)}, so it names no "
+            "single Entity in this model and the read resolves nowhere (m-op-algebra reference "
             "resolution)",
         )
-    raise KeyError(name)  # pragma: no cover - preflight resolved this target by identity
+    raise QueryTargetError(
+        f"the connected model declares no Entity for the read target {name!r} "
+        "(query-target-not-in-model)"
+    )
 
 
 def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetadata:

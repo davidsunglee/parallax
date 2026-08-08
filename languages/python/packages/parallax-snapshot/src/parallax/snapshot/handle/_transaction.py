@@ -138,10 +138,11 @@ class Transaction:
         self._codec = codec
         # The observation slots THIS transaction buffered an insert for — the
         # read-your-own-writes exemption from the §5 prior-observation license
-        # (`_resolve_observed_milestone`): a same-transaction insert IS the
-        # provenance a subsequent keyed temporal close builds on. An inserted
+        # (`_resolve_observed_milestone`) AND from the keyed-write value
+        # provenance refusal (`_has_buffered_insert`): a same-transaction insert
+        # IS the provenance a subsequent keyed write builds on. An inserted
         # instance names no milestone yet, so the slot carries no coordinate and
-        # a close derived from that instance resolves to the same one.
+        # a close or update derived from that instance resolves to the same one.
         self._inserted_keys: set[ObservationKey] = set()
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
@@ -210,7 +211,10 @@ class Transaction:
         correct code. A value no read of this store produced is refused instead,
         before any row is derived
         (:class:`~parallax.snapshot.handle.KeyedWriteValueError`,
-        ``write-value-not-stored``). The version column, if
+        ``write-value-not-stored``) — unless THIS transaction already buffered
+        its insert, which is the row it stores and the pair the flush coalesces
+        into one final-value write (`m-unit-work` "Insert-then-update coalesces
+        in place"). The version column, if
         any, is never authored here — it is framework-owned end to end
         (`m-opt-lock`; ADR 0013): the write seam derives its advance from this
         unit of work's own recorded observation at lowering
@@ -357,7 +361,10 @@ class Transaction:
         and an edited copy of such a view carries that view's own pin, so
         deriving one is no route past this refusal), refuse a value whose
         provenance this mutation's verb does not accept
-        (:func:`validate_write_value`, before any row is derived), then validate +
+        (:func:`validate_write_value`, before any row is derived — with the
+        object this transaction already buffered an insert for exempted, so an
+        insert-then-update pair coalesces rather than being refused), then
+        validate +
         render ``valid_from`` against that declaring entity's own
         temporality (:func:`validate_valid_from`, spec §5). Returns the
         record (``_buffer``'s own entity-name argument), the declaring entity
@@ -367,9 +374,30 @@ class Transaction:
         record = metadata_of_instance(self._meta, node_or_instance)
         declaring = declaring_of(self._meta, record)
         validate_source_pin(record.identity, source_pin(node_or_instance))
-        validate_write_value(record.identity, node_or_instance, mutation)
+        validate_write_value(
+            record.identity,
+            node_or_instance,
+            mutation,
+            inserted_here=lambda: self._has_buffered_insert(record, declaring, node_or_instance),
+        )
         valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
         return record, declaring, valid_from_literal
+
+    def _has_buffered_insert(
+        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
+    ) -> bool:
+        """Whether THIS transaction already buffered an insert of the object
+        ``instance`` names — the read-your-own-writes half of the provenance
+        rule, and the same ``_inserted_keys`` slot the temporal close's own
+        exemption reads.
+
+        A transaction that buffered no insert answers ``False`` without touching
+        the codec, which is what keeps a provenance refusal ahead of every row
+        derivation on the ordinary path.
+        """
+        return bool(self._inserted_keys) and (
+            self._observation_key(record, declaring, instance) in self._inserted_keys
+        )
 
     def _observation_key(
         self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase

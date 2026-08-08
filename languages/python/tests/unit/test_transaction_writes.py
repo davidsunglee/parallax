@@ -773,18 +773,35 @@ def test_unobserved_temporal_update_from_a_cross_transaction_copy_raises() -> No
     assert not any(op[0] == "write" for op in port.ops)
 
 
-def test_same_transaction_insert_then_update_of_the_inserted_value_is_refused() -> None:
-    # A buffered insert is not a read: `update` accepts a value some read of
-    # this store produced, and this transaction's own `insert` produced nothing
-    # to read. The same-transaction provenance exemption `m-txtime-write-008`
-    # relies on survives for the verbs that take no position on provenance
-    # (`terminate` below), and the insert-then-update coalescing shape stays
-    # reachable through the neutral buffer seam, which carries instructions
-    # rather than values.
+def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
+    # Read-your-own-writes exemption: this transaction's OWN buffered insert
+    # IS the provenance a subsequent keyed write builds on (`m-txtime-write-008`'s
+    # same-transaction coalescing shape) — the value is exempt from the
+    # provenance refusal, no observation lookup applies, and the planner folds
+    # the pair into the single INSERT carrying the updated value.
+    port = RecordingPort()
+    db = db_for(BALANCE, port)
+
     def fn(tx: Transaction) -> None:
         fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(fresh)
         tx.update(fresh.edit(value=Decimal("2.00")))
+
+    db.transact(fn)
+    write_ops = [op for op in port.ops if op[0] == "write"]
+    assert len(write_ops) == 1  # coalesced to one INSERT
+    assert Decimal("2.00") in cast("tuple[object, ...]", write_ops[0][2])
+
+
+def test_an_update_of_a_value_a_different_object_was_inserted_under_is_refused() -> None:
+    # The exemption is keyed by the OBJECT this transaction inserted, not by the
+    # verb having been called: a value naming a different primary key was never
+    # inserted here, so it still addresses no stored row.
+    def fn(tx: Transaction) -> None:
+        tx.insert(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
+        tx.update(
+            mm.Balance(id=10, acct_num="Z", value=Decimal("1.00")).edit(value=Decimal("2.00"))
+        )
 
     with pytest.raises(KeyedWriteValueError) as refusal:
         Database.connect(NoIoPort(), BALANCE, clock=FixedClock(FIXED)).transact(fn)
@@ -1071,9 +1088,10 @@ def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
 
 
 def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
-    # Today's misleading refusal — a required attribute reported absent on a
-    # plainly populated row — replaced by the one that names the mistake: the
-    # row this value denotes is already stored.
+    # The refusal names the mistake itself — the row this value denotes is
+    # already stored — rather than reporting a required attribute absent on a
+    # plainly populated row, which is what deriving the insert's own row first
+    # would report.
     port = RecordingPort(
         rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
     )
