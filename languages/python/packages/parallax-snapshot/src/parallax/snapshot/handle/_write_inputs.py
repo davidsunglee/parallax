@@ -11,8 +11,10 @@ plus the observation machinery a read leaves behind for it:
   the value-taking keyed verbs run before any row is derived
   (:class:`KeyedWriteValueError`, :data:`KEYED_WRITE_VALUE_CODES`,
   :func:`validate_write_value`);
-* instance -> accepted-Metadata resolution (:func:`metadata_of_instance`) and the
-  identity half of its observation key (:func:`written_object_key`);
+* instance -> accepted-Metadata resolution (:func:`metadata_of_instance`), the
+  identity half of its observation key (:func:`written_object_key`), and the
+  codec-free reading of which object a value names (:func:`written_object`) that
+  a decision taken BEFORE any row derivation has to use;
 * the observation record a read leaves behind (:class:`ReadObservations`) and its
   recording into the unit of work (:func:`record_observations`), plus the per-row
   column contributions a materializing predicate-write resolve streams into its
@@ -51,7 +53,7 @@ from typing import Final, cast
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import lifecycle_state_of
+from parallax.core.entity import lifecycle_state_of, wire_names_of
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -94,6 +96,7 @@ __all__ = [
     "KeyedWriteValueError",
     "ReadObservations",
     "TransactionTimePinReadOnlyError",
+    "WrittenObject",
     "is_no_op_assignment",
     "key_column_values",
     "metadata_of_instance",
@@ -105,6 +108,7 @@ __all__ = [
     "validate_until",
     "validate_valid_from",
     "validate_write_value",
+    "written_object",
     "written_object_key",
 ]
 
@@ -206,6 +210,43 @@ def written_object_key(
             for attr in _declared_primary_key(declaring_entity)
         ),
     )
+
+
+type WrittenObject = tuple[EntityIdentity, tuple[tuple[str, object], ...]]
+"""Which object a written value names, as :func:`written_object` reads it — the
+equivalence a same-transaction insert is recognized by, never a row and never an
+:class:`~parallax.core.unit_work.ObjectKey`."""
+
+
+def written_object(
+    record: EntityMetadata, declaring_entity: EntityMetadata, value: EntityBase
+) -> WrittenObject | None:
+    """Which object ``value`` names, read straight off its primary-key members —
+    or ``None`` when its own class carries no attribute for one of them.
+
+    The counterpart of :func:`written_object_key` for the one question that must
+    be answerable BEFORE a row exists: whether a value is one this transaction
+    already buffered an insert of, which is what exempts it from the NotStored
+    provenance refusal (`m-unit-work` *Write value provenance*). That refusal is
+    decided before any row is derived, so the question may not be asked through
+    the Entity Row Codec: a cross-model value whose class keys the same Entity by
+    other members has no identity row to derive, and deriving one would answer
+    the developer's mistaken provenance with an ``EntityRowError``. Such a value
+    is no object this transaction inserted, which is exactly what ``None`` says
+    and exactly what leaves the provenance refusal standing.
+
+    Both sides of every comparison are read here, so members are compared as the
+    value carries them rather than as a row would serialize them; nothing derived
+    here addresses a row or reaches a codec.
+    """
+    names = wire_names_of(type(value))
+    pairs: list[tuple[str, object]] = []
+    for attribute in _declared_primary_key(declaring_entity):
+        py_name = names.name_to_py.get(attribute.identity.name)
+        if py_name is None:
+            return None
+        pairs.append((attribute.identity.name, getattr(value, py_name)))
+    return (record.identity, tuple(pairs))
 
 
 @dataclass(frozen=True, slots=True)
@@ -546,8 +587,10 @@ def validate_write_value(
     update that follows carries the final value the flush writes rather than
     addressing nothing (`m-unit-work` "Insert-then-update coalesces in place").
     It is consulted only on the branch that would otherwise refuse, so an
-    accepted value never pays for it and a transaction that buffered no insert
-    answers it without deriving anything from the value.
+    accepted value never pays for it, and it answers from what the value itself
+    names (:func:`written_object`) rather than from a row, so a value whose class
+    can key no row still reaches THIS refusal rather than an
+    :class:`~parallax.core.entity.EntityRowError` raised on its behalf.
 
     Provenance is read through :func:`~parallax.snapshot._inspection.
     snapshot_state_of` and the un-narrowed

@@ -75,6 +75,7 @@ from parallax.snapshot.handle._read import (
 )
 from parallax.snapshot.handle._write_inputs import (
     ReadObservations,
+    WrittenObject,
     metadata_of_instance,
     record_observations,
     source_edge,
@@ -83,6 +84,7 @@ from parallax.snapshot.handle._write_inputs import (
     validate_until,
     validate_valid_from,
     validate_write_value,
+    written_object,
     written_object_key,
 )
 
@@ -117,6 +119,7 @@ class Transaction:
         "_construction",
         "_dialect",
         "_inserted_keys",
+        "_inserted_objects",
         "_meta",
         "_uow",
     )
@@ -136,14 +139,21 @@ class Transaction:
         self._dialect = dialect
         self._construction = construction
         self._codec = codec
-        # The observation slots THIS transaction buffered an insert for — the
-        # read-your-own-writes exemption from the §5 prior-observation license
-        # (`_resolve_observed_milestone`) AND from the keyed-write value
-        # provenance refusal (`_has_buffered_insert`): a same-transaction insert
-        # IS the provenance a subsequent keyed write builds on. An inserted
-        # instance names no milestone yet, so the slot carries no coordinate and
-        # a close or update derived from that instance resolves to the same one.
+        # What THIS transaction buffered an insert of, recorded once per insert
+        # (`_record_buffered_insert`) in the two readings the two
+        # read-your-own-writes exemptions need — a same-transaction insert IS the
+        # provenance a subsequent keyed write builds on.
+        #
+        # The observation slots serve the §5 prior-observation license
+        # (`_resolve_observed_milestone`), which runs where a row has already been
+        # derived. An inserted instance names no milestone yet, so the slot
+        # carries no coordinate and a close derived from that instance resolves to
+        # the same one. The written objects serve the keyed-write value provenance
+        # refusal (`_has_buffered_insert`), which is decided before any row is
+        # derived and therefore cannot ask the codec anything — which is why that
+        # slot holds the total reading `written_object` answers for any value.
         self._inserted_keys: set[ObservationKey] = set()
+        self._inserted_objects: set[WrittenObject | None] = set()
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
@@ -168,7 +178,7 @@ class Transaction:
             self._codec.full_row(instance),
             valid_from=valid_from_literal,
         )
-        self._inserted_keys.add(self._observation_key(record, declaring, instance))
+        self._record_buffered_insert(record, declaring, instance)
 
     def insert_until(
         self, instance: EntityBase, *, valid_from: dt.datetime, until: dt.datetime
@@ -197,7 +207,7 @@ class Transaction:
             valid_from=valid_from_literal,
             until=until_literal,
         )
-        self._inserted_keys.add(self._observation_key(record, declaring, instance))
+        self._record_buffered_insert(record, declaring, instance)
 
     def update(self, copy: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a sparse keyed ``update``: primary key + the effective change
@@ -383,21 +393,41 @@ class Transaction:
         valid_from_literal = validate_valid_from(declaring, mutation, valid_from)
         return record, declaring, valid_from_literal
 
+    def _record_buffered_insert(
+        self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
+    ) -> None:
+        """Record a buffered insert in both slots the read-your-own-writes
+        exemptions read.
+
+        One write site, so the observation slot a temporal close is exempted by
+        and the written object a provenance refusal is exempted by can never
+        describe different inserts. Reached only after the insert's own row is
+        derived, which is why the codec-derived observation key is free here —
+        and why an insert whose value names no object never arrives: deriving
+        that row refused it first.
+        """
+        self._inserted_keys.add(self._observation_key(record, declaring, instance))
+        self._inserted_objects.add(written_object(record, declaring, instance))
+
     def _has_buffered_insert(
         self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
     ) -> bool:
         """Whether THIS transaction already buffered an insert of the object
         ``instance`` names — the read-your-own-writes half of the provenance
-        rule, and the same ``_inserted_keys`` slot the temporal close's own
-        exemption reads.
+        rule.
 
-        A transaction that buffered no insert answers ``False`` without touching
-        the codec, which is what keeps a provenance refusal ahead of every row
-        derivation on the ordinary path.
+        Asked on the branch that would otherwise refuse, so it derives nothing
+        from ``instance`` that could fail: a value whose class cannot even name
+        an object (:func:`written_object`) is no object this transaction
+        inserted, and answering ``False`` for it is what leaves the provenance
+        refusal — rather than an ``EntityRowError`` from a row nothing asked for
+        — as what the developer sees. A transaction that buffered no insert
+        answers without reading ``instance`` at all.
         """
-        return bool(self._inserted_keys) and (
-            self._observation_key(record, declaring, instance) in self._inserted_keys
-        )
+        if not self._inserted_objects:
+            return False
+        object_written = written_object(record, declaring, instance)
+        return object_written is not None and object_written in self._inserted_objects
 
     def _observation_key(
         self, record: EntityMetadata, declaring: EntityMetadata, instance: EntityBase
