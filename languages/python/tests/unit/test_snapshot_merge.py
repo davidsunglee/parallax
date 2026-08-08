@@ -105,8 +105,8 @@ def test_an_included_to_many_is_a_tuple_and_its_back_reference_closes_the_cycle(
     builder = GraphBuilder(_ORDERS)
     order = builder.node("SnapOrder", _ORDER_ROW)
     item = builder.node("SnapOrderItem", _ITEM_ROW)
-    builder.attach(order, "SnapOrder.items", (item,))
-    builder.attach(item, "SnapOrderItem.order", order)
+    builder.attach(order, "parallax.compatibility.SnapOrder.items", (item,))
+    builder.attach(item, "parallax.compatibility.SnapOrderItem.order", order)
     (root,) = builder.materialize(order)
     assert isinstance(root, sm.SnapOrder)
     assert isinstance(root.items, tuple)
@@ -125,8 +125,8 @@ def test_loaded_null_and_loaded_empty_are_distinct_from_unloaded() -> None:
     builder = GraphBuilder(_ORDERS)
     order = builder.node("SnapOrder", _ORDER_ROW)
     item = builder.node("SnapOrderItem", _ITEM_ROW)
-    builder.attach(order, "SnapOrder.items", ())
-    builder.attach(item, "SnapOrderItem.order", None)
+    builder.attach(order, "parallax.compatibility.SnapOrder.items", ())
+    builder.attach(item, "parallax.compatibility.SnapOrderItem.order", None)
     root, orphan = builder.materialize(order, item)
     assert isinstance(root, sm.SnapOrder)
     assert isinstance(orphan, sm.SnapOrderItem)
@@ -159,10 +159,10 @@ def test_a_diamond_collapses_onto_one_instance_and_unions_the_views() -> None:
     order = builder.node("Order", _ORDER_ROW)
     via_items = builder.node("OrderItem", _ITEM_ROW)
     via_ship_date = builder.node("OrderItem", _ITEM_ROW)
-    builder.attach(order, "Order.items", (via_items,))
-    builder.attach(order, "Order.itemsByShipDate", (via_ship_date,))
+    builder.attach(order, "parallax.compatibility.Order.items", (via_items,))
+    builder.attach(order, "parallax.compatibility.Order.itemsByShipDate", (via_ship_date,))
     # Only the SECOND path loaded the back-reference: the union is what carries it.
-    builder.attach(via_ship_date, "OrderItem.order", order)
+    builder.attach(via_ship_date, "parallax.compatibility.OrderItem.order", order)
     (root,) = builder.materialize(order)
     assert isinstance(root, _soOrder)
     assert root.items[0] is root.items_by_ship_date[0]
@@ -175,10 +175,10 @@ def test_a_view_both_projections_carried_wires_exactly_once() -> None:
     order = builder.node("Order", _ORDER_ROW)
     via_items = builder.node("OrderItem", _ITEM_ROW)
     via_ship_date = builder.node("OrderItem", _ITEM_ROW)
-    builder.attach(order, "Order.items", (via_items,))
-    builder.attach(order, "Order.itemsByShipDate", (via_ship_date,))
-    builder.attach(via_items, "OrderItem.order", order)
-    builder.attach(via_ship_date, "OrderItem.order", order)
+    builder.attach(order, "parallax.compatibility.Order.items", (via_items,))
+    builder.attach(order, "parallax.compatibility.Order.itemsByShipDate", (via_ship_date,))
+    builder.attach(via_items, "parallax.compatibility.OrderItem.order", order)
+    builder.attach(via_ship_date, "parallax.compatibility.OrderItem.order", order)
     (root,) = builder.materialize(order)
     assert isinstance(root, _soOrder)
     assert root.items[0] is root.items_by_ship_date[0]
@@ -197,8 +197,12 @@ def test_each_to_many_view_keeps_its_own_order_through_the_merge() -> None:
     second_by_id = builder.node("OrderItem", _ITEM_ROW)
     first_by_ship_date = builder.node("OrderItem", _ITEM_ROW)
     second_by_ship_date = builder.node("OrderItem", {**_ITEM_ROW, "id": 12, "sku": "later"})
-    builder.attach(order, "Order.items", (first_by_id, second_by_id))
-    builder.attach(order, "Order.itemsByShipDate", (first_by_ship_date, second_by_ship_date))
+    builder.attach(order, "parallax.compatibility.Order.items", (first_by_id, second_by_id))
+    builder.attach(
+        order,
+        "parallax.compatibility.Order.itemsByShipDate",
+        (first_by_ship_date, second_by_ship_date),
+    )
     (root,) = builder.materialize(order)
     assert isinstance(root, _soOrder)
     assert [item.id for item in root.items] == [12, 11]
@@ -217,8 +221,8 @@ def test_a_scalar_the_first_projection_carries_wins_without_comparison() -> None
     order = builder.node("Order", _ORDER_ROW)
     first = builder.node("OrderItem", _ITEM_ROW)
     second = builder.node("OrderItem", {**_ITEM_ROW, "sku": "y"})
-    builder.attach(order, "Order.items", (first,))
-    builder.attach(order, "Order.itemsByShipDate", (second,))
+    builder.attach(order, "parallax.compatibility.Order.items", (first,))
+    builder.attach(order, "parallax.compatibility.Order.itemsByShipDate", (second,))
     (root,) = builder.materialize(order)
     assert isinstance(root, _soOrder)
     assert root.items[0].sku == "x"
@@ -232,7 +236,7 @@ def test_polymorphic_children_materialize_as_their_concrete_classes() -> None:
     owner = builder.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = builder.node("Dog", _DOG_ROW)
     cat = builder.node("Cat", _CAT_ROW)
-    builder.attach(owner, "AnimalOwner.animals", (dog, cat))
+    builder.attach(owner, "parallax.compatibility.AnimalOwner.animals", (dog, cat))
     (root,) = builder.materialize(owner)
     assert isinstance(root, sm.AnimalOwner)
     reached_dog, reached_cat = root.animals
@@ -245,7 +249,7 @@ def test_a_narrowed_view_is_independent_of_the_broad_relationship() -> None:
     builder = GraphBuilder(_ANIMAL)
     owner = builder.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = builder.node("Dog", _DOG_ROW)
-    builder.attach(owner, "AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
+    builder.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
     (root,) = builder.materialize(owner)
     assert isinstance(root, sm.AnimalOwner)
     path = sm.AnimalOwner.pets.narrow(sm.Dog)
@@ -263,8 +267,8 @@ def test_two_narrowed_views_coexist_independently_on_one_node() -> None:
     owner = builder.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = builder.node("Dog", _DOG_ROW)
     cat = builder.node("Cat", _CAT_ROW)
-    builder.attach(owner, "AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
-    builder.attach(owner, "AnimalOwner.pets", (cat,), narrowed="pets[Cat]")
+    builder.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
+    builder.attach(owner, "parallax.compatibility.AnimalOwner.pets", (cat,), narrowed="pets[Cat]")
     (root,) = builder.materialize(owner)
     dogs = cast("tuple[object, ...]", view(root, sm.AnimalOwner.pets.narrow(sm.Dog)))
     cats = cast("tuple[object, ...]", view(root, sm.AnimalOwner.pets.narrow(sm.Cat)))
@@ -278,11 +282,12 @@ def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> 
     builder = GraphBuilder(_ANIMAL)
     owner = builder.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": None})
     dog = builder.node("Dog", _DOG_ROW)
-    builder.attach(owner, "AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
+    builder.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed="pets[Dog]")
     (root,) = builder.materialize(owner)
     derived = sm.AnimalOwner.pets.narrow(sm.Dog)
     direct: RelationshipPath[sm.AnimalOwner, sm.Dog] = RelationshipPath(
-        segments=(PathSegment(rel="AnimalOwner.pets", narrow=("Dog",)),), target="Dog"
+        segments=(PathSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow=("Dog",)),),
+        target="Dog",
     )
     for path in (derived, direct):
         reached = cast("tuple[object, ...]", view(root, path))
@@ -294,8 +299,12 @@ def test_a_narrowed_to_one_view_carries_a_single_node_or_loaded_null() -> None:
     alice = builder.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": 1})
     bob = builder.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
     dog = builder.node("Dog", _DOG_ROW)
-    builder.attach(alice, "AnimalOwner.favorite", dog, narrowed="favorite[Dog]")
-    builder.attach(bob, "AnimalOwner.favorite", None, narrowed="favorite[Dog]")
+    builder.attach(
+        alice, "parallax.compatibility.AnimalOwner.favorite", dog, narrowed="favorite[Dog]"
+    )
+    builder.attach(
+        bob, "parallax.compatibility.AnimalOwner.favorite", None, narrowed="favorite[Dog]"
+    )
     first, second = builder.materialize(alice, bob)
     assert type(view(first, sm.AnimalOwner.favorite.narrow(sm.Dog))) is sm.Dog
     assert view(second, sm.AnimalOwner.favorite.narrow(sm.Dog)) is None

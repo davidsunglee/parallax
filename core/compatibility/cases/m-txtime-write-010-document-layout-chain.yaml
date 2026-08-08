@@ -25,7 +25,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Voyage
+      entity: parallax.compatibility.Voyage
       statements: 1
       note: open the original current milestone carrying the whole document
       rows:
@@ -37,7 +37,7 @@ when:
           legs: []
       at: "2026-01-01T00:00:00+00:00"
     - mutation: update
-      entity: Voyage
+      entity: parallax.compatibility.Voyage
       statements: 2
       note: close the current row, then chain a successor whose document carries the new title beside the unchanged members
       rows:

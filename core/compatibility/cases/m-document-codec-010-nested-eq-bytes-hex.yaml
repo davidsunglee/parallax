@@ -14,9 +14,9 @@ model: models/document-codec.yaml
 tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Sample
+  targetEntity: parallax.compatibility.Sample
   operation:
-    nestedEq: { path: Sample.profile.blob, value: '0A1B' }
+    nestedEq: { path: parallax.compatibility.Sample.profile.blob, value: '0A1B' }
 then:
   statements:
     - sql:

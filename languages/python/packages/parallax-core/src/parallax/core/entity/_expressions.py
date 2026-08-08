@@ -843,21 +843,17 @@ class ElementAttributeExpr[V, T]:
         return hash(self._path)
 
 
-def _subtype_names(subtype: type) -> tuple[str, str]:
-    """A subtype class's ``(local Entity name, canonical spelling)``.
+def _subtype_name(subtype: type) -> str:
+    """A subtype class's canonical Entity spelling.
 
     Read off the class's own declared identity when it carries one, so this
     module resolves nothing and imports no frontend; a class that declares none
-    falls back to its Python name for both. A hop's narrow list is the wire's own
-    vocabulary and names each subtype locally, resolved against the hop target's
-    namespace, while the path's target is the exact spelling.
+    falls back to its Python name. A hop's narrow list is a reference position
+    like any other, so it names each subtype exactly rather than relying on the
+    hop target's namespace to disambiguate it.
     """
-    identity = getattr(subtype, "identity", None)
-    name = getattr(identity, "name", None)
-    canonical = getattr(identity, "canonical", None)
-    if isinstance(name, str) and isinstance(canonical, str):
-        return name, canonical
-    return subtype.__name__, subtype.__name__
+    canonical = getattr(getattr(subtype, "identity", None), "canonical", None)
+    return canonical if isinstance(canonical, str) else subtype.__name__
 
 
 @dataclass(frozen=True, slots=True)
@@ -933,8 +929,8 @@ class RelationshipPath[E, R]:
         """The next hop, spelled from this path's target and the member's name.
 
         Authoring reaches no model, so the segment is composed rather than
-        resolved: the target's own local Entity name, and the canonical member
-        name the Python spelling denotes. Whether that names a declared
+        resolved: the target's own canonical Entity spelling, and the canonical
+        member name the Python spelling denotes. Whether that names a declared
         relationship — and what it points at — is settled at execution preflight,
         which resolves every segment against the connected model.
 
@@ -961,9 +957,8 @@ class RelationshipPath[E, R]:
                 f"what that hop points at — root the deeper traversal at the Entity {name!r} "
                 "is declared on and add it as its own `.include(...)` path"
             )
-        _, _, local = self.target.rpartition(".")
         return RelationshipPath(
-            segments=(*self.segments, PathSegment(rel=f"{local}.{snake_to_camel(name)}")),
+            segments=(*self.segments, PathSegment(rel=f"{self.target}.{snake_to_camel(name)}")),
             target=None,
             source=self.source,
         )
@@ -1016,11 +1011,11 @@ class RelationshipPath[E, R]:
                 code="query-path-invalid",
                 message=f"{last.rel}: narrow requires at least one subtype",
             )
-        narrowed = tuple(_subtype_names(subtype) for subtype in subtypes)
-        new_last = PathSegment(rel=last.rel, narrow=tuple(local for local, _ in narrowed))
+        narrowed = tuple(_subtype_name(subtype) for subtype in subtypes)
+        new_last = PathSegment(rel=last.rel, narrow=narrowed)
         new_target = self.target
         if len(narrowed) == 1:  # a hop narrowed to one subtype points at that subtype
-            _, new_target = narrowed[0]
+            new_target = narrowed[0]
         return RelationshipPath(segments=(*head, new_last), target=new_target, source=self.source)
 
     def exists(self, *predicates: Predicate[R]) -> Predicate[Any]:

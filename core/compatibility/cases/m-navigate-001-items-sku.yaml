@@ -15,12 +15,12 @@ model: models/orders.yaml
 tags: [m-navigate, m-relationship, m-metamodel, m-model-formation, navigate, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     navigate:
-      rel: Order.items
+      rel: parallax.compatibility.Order.items
       op:
-        eq: { attr: OrderItem.sku, value: A-100 }
+        eq: { attr: parallax.compatibility.OrderItem.sku, value: A-100 }
 then:
   statements:
     - sql:

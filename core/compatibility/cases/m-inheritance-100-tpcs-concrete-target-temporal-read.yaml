@@ -23,7 +23,7 @@ shape: read
 given:
   fixtures: true
 when:
-  targetEntity: DepositRate
+  targetEntity: parallax.compatibility.DepositRate
   operation:
     asOf:
       operand:

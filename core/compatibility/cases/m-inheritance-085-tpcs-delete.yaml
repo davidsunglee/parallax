@@ -16,7 +16,7 @@ given:
 when:
   writeSequence:
     - mutation: delete
-      entity: Invoice
+      entity: parallax.compatibility.Invoice
       statements: 1
       note: delete Invoice 1 from its own concrete table by pk; no tag, no shared table
       rows:

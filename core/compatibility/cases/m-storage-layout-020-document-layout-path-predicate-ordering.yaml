@@ -25,16 +25,16 @@ model: models/document-layout.yaml
 tags: [m-storage-layout, m-sql, m-dialect, m-op-algebra, read, json, document-layout, cast, order-by, limit, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Traveler
+  targetEntity: parallax.compatibility.Traveler
   operation:
     limit:
       count: 1
       operand:
         orderBy:
           keys:
-            - { attr: Traveler.score, direction: desc, nulls: last }
+            - { attr: parallax.compatibility.Traveler.score, direction: desc, nulls: last }
           operand:
-            greaterThan: { attr: Traveler.score, value: 5 }
+            greaterThan: { attr: parallax.compatibility.Traveler.score, value: 5 }
 then:
   statements:
     - sql:

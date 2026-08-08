@@ -15,7 +15,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: LayoutProfile
+      entity: parallax.compatibility.LayoutProfile
       statements: 1
       note: insert a complete profile; the whole contact document binds as one cell
       rows:
@@ -26,7 +26,7 @@ when:
             email: solveig@example.test
             phone: '555-0100'
     - mutation: insert
-      entity: LayoutProfile
+      entity: parallax.compatibility.LayoutProfile
       statements: 1
       note: omit the optional note; the document keeps its position after the scalars
       rows:

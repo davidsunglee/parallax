@@ -16,13 +16,13 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: PkSequence
+      entity: parallax.compatibility.PkSequence
       statements: 1
       note: reserve a block of 1 (next_val += 1), base = 1
       rows:
         - { name: badge_seq, nextVal: { increment: 1 } }
     - mutation: insert
-      entity: Badge
+      entity: parallax.compatibility.Badge
       statements: 1
       note: hand out the reserved id 1
       rows:

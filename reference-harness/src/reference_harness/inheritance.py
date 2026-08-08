@@ -44,6 +44,7 @@ from .operation_references import (
     OPERAND_ROW_WRAPPER_TAGS,
     PATH_REFERENCE_TAGS,
 )
+from .references import entity_spelling
 from .value_object_resolve import RejectionError
 
 if TYPE_CHECKING:
@@ -950,7 +951,7 @@ def narrowed_view_key(family: Family, rel_ref: str, effective_set: list[str]) ->
     effective set and therefore the same key. A BROAD hop uses the ordinary
     relationship name and never calls this.
     """
-    rel_name = rel_ref.split(".", 1)[1] if "." in rel_ref else rel_ref
+    rel_name = rel_ref.rpartition(".")[2]
     return f"{rel_name}[{','.join(effective_set)}]"
 
 
@@ -1021,10 +1022,12 @@ def _check_member_reference(family: Family, reference: Any) -> None:
 
 def _check_path_reference(family: Family, reference: Any) -> None:
     """Check the entity spelling of a nested value-object ``path``, whose class
-    part is its FIRST segment — every trailing segment is a declared
-    value-object member rather than one member name."""
-    if isinstance(reference, str) and "." in reference:
-        _check_reference_entity_name(family, reference, reference.split(".", 1)[0])
+    part is everything up to its LAST capitalized segment — every trailing
+    segment is a declared value-object member rather than one member name. An
+    element-relative path names no entity and is checked by its own resolver."""
+    named = entity_spelling(reference)
+    if named is not None:
+        _check_reference_entity_name(family, reference, named)
 
 
 def resolve_clamped_narrow(

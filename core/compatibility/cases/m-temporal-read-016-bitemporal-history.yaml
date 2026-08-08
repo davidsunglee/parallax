@@ -11,14 +11,14 @@ model: models/position.yaml
 tags: [m-temporal-read, m-sql, bitemporal, temporal, history, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Position
+  targetEntity: parallax.compatibility.Position
   operation:
     history:
       operand:
         history:
           operand:
             eq:
-              attr: Position.id
+              attr: parallax.compatibility.Position.id
               value: 1
           dimension: transaction-time
       dimension: valid-time

@@ -33,6 +33,7 @@ from typing import Any
 
 from .case import Entity
 from .portable_literal import decode_decimal, decode_number, decoded_as
+from .references import split_reference
 
 # --- rule vocabulary --------------------------------------------------------
 #
@@ -295,7 +296,8 @@ def resolve_nested_ref(entity: Entity, path: str) -> dict[str, Any]:
     schema's ``nestedRef`` grammar already guarantees ≥3 dotted components, so a
     resolved path always has a value-object segment and an attribute leaf.
     """
-    _cls, first, *rest = path.split(".")
+    _cls, members = split_reference(path)
+    first, *rest = members
     value_object = find_top_value_object(entity, first)
     if value_object is None:
         raise RejectionError(
@@ -327,7 +329,8 @@ def resolve_value_object_ref(entity: Entity, path: str) -> dict[str, Any]:
     Used by ``nestedExists`` / ``nestedNotExists`` (the path ends AT a value object,
     not an attribute). Raises :class:`RejectionError` on the first undeclared segment.
     """
-    _cls, first, *rest = path.split(".")
+    _cls, members = split_reference(path)
+    first, *rest = members
     value_object = find_top_value_object(entity, first)
     if value_object is None:
         raise RejectionError(

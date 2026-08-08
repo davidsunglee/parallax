@@ -316,17 +316,17 @@ def _segment_owner(node: object, segment: PathSegment) -> RelationshipIdentity |
     """The Relationship Identity ``segment`` names for ``node``'s concrete class,
     or ``None`` when no accepted ancestor of that class declares it.
 
-    A segment spells its owner by local Entity name, so the answer is the ancestry
-    position carrying that name and declaring that relationship — which is how an
+    A segment spells its owner exactly, so the answer is the ancestry position
+    carrying that Identity and declaring that relationship — which is how an
     ancestor's declaration applies to a concrete subtype while a disjoint
     sibling's identically named one does not.
     """
-    owner_local, _, name = segment.rel.rpartition(".")
+    owner, _, name = segment.rel.rpartition(".")
     for ancestor in type(node).__mro__:
         if not is_entity_class(ancestor):
             continue
         identity = declaration_of(ancestor).identity
-        if identity.name == owner_local and name in members_of(ancestor).relationship_py:
+        if identity.canonical == owner and name in members_of(ancestor).relationship_py:
             return RelationshipIdentity(identity, name)
     return None
 
@@ -338,12 +338,18 @@ def _entity_of(node: object) -> EntityIdentity | None:
 
 def _view_key(segment: PathSegment) -> str:
     """The private per-segment view key: the relationship's local name, plus the
-    effective concrete-subtype set for a narrowed segment.
+    variant spellings of the concrete subtypes a narrowed segment names.
 
-    The same derivation deep-fetch planning applied when it keyed the view it
-    populated, so equivalent authored narrowings name one view.
+    A view key is RESULT vocabulary while the segment's own ``rel`` and ``narrow``
+    are addressing references, so both halves shed their namespace here — the
+    same local spelling deep-fetch planning derived through
+    ``inheritance.family_variant_name`` when it keyed the view it populated.
     """
-    _, _, local = segment.rel.rpartition(".")
+    local = _local(segment.rel)
     if not segment.narrow:
         return local
-    return f"{local}[{','.join(sorted(segment.narrow))}]"
+    return f"{local}[{','.join(sorted(_local(name) for name in segment.narrow))}]"
+
+
+def _local(spelling: str) -> str:
+    return spelling.rpartition(".")[2]

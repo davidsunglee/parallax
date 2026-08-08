@@ -25,7 +25,7 @@ model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, materialization, graph, to-one, to-many, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Customer
+  targetEntity: parallax.compatibility.Customer
   operation:
     all: {}
 then:

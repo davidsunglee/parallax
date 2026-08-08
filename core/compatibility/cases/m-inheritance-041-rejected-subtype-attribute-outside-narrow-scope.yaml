@@ -13,6 +13,6 @@ tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1
 shape: rejected
 when:
   operation:
-    greaterThan: { attr: Dog.barkVolume, value: 5 }
+    greaterThan: { attr: parallax.compatibility.Dog.barkVolume, value: 5 }
 then:
   rejectedRule: subtype-attribute-outside-narrow-scope

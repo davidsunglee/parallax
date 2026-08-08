@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .references import entity_spelling
+
 # The closed set `m-op-algebra` names as the wrappers "returning their operand's
 # OWN rows": the result-shaping directives (``orderBy`` / ``limit`` / ``distinct``
 # / ``deepFetch``, which attaches fetched levels to those rows rather than
@@ -112,12 +114,13 @@ def _add_path_reference_class(reference: Any, classes: set[str]) -> None:
     """Add the class part of a value-object ``path`` (``Class.valueObject[.…]``).
 
     A path's trailing segments are declared value-object members rather than one
-    member name, so its class is the FIRST segment — the same resolution the
-    nested-path resolvers perform. Namespaced spellings therefore do not resolve
-    here, exactly as they do not in those resolvers.
+    member name, so the class is everything up to the LAST capitalized segment
+    (:func:`~reference_harness.references.split_reference`) rather than up to the
+    last dot. An element-relative path names no class and contributes nothing.
     """
-    if isinstance(reference, str) and "." in reference:
-        classes.add(reference.split(".", 1)[0])
+    named = entity_spelling(reference)
+    if named is not None:
+        classes.add(named)
 
 
 def collect_reference_classes(

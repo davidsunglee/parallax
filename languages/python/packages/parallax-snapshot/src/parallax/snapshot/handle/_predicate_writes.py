@@ -191,7 +191,7 @@ def buffer_predicate(
     doc: dict[str, object] = {
         "mutation": mutation,
         "target": {
-            "entity": selection.target.name,
+            "entity": selection.target.canonical,
             "predicate": op_algebra.serialize(selection.predicate),
         },
     }

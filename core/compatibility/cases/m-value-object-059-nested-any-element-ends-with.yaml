@@ -16,9 +16,9 @@ model: models/customer.yaml
 tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, string, endsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Customer
+  targetEntity: parallax.compatibility.Customer
   operation:
-    nestedEndsWith: { path: Customer.address.phones.number, value: '9999' }
+    nestedEndsWith: { path: parallax.compatibility.Customer.address.phones.number, value: '9999' }
 then:
   statements:
     - sql:

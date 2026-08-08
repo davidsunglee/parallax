@@ -19,7 +19,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: Wallet
+      entity: parallax.compatibility.Wallet
       statements: 2
       note: two distinct keys take DIFFERENT new balances ⇒ one keyed UPDATE each
       rows:

@@ -15,7 +15,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Memo
+      entity: parallax.compatibility.Memo
       statements: 1
       note: insert a Memo into its own concrete table; sibling branch, no currency, no tag
       rows:

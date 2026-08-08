@@ -36,7 +36,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Traveler
+      entity: parallax.compatibility.Traveler
       statements: 1
       note: seed one complete row so the update has keys it must NOT touch
       rows:
@@ -52,7 +52,7 @@ when:
           tags:
             - { label: scout }
     - mutation: update
-      entity: Traveler
+      entity: parallax.compatibility.Traveler
       statements: 1
       note: assign two scalars — two ordered path patches inside the one Structured Column
       rows:

@@ -33,14 +33,14 @@ when:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
           binds: [2, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
-    - targetEntity: Position
+    - targetEntity: parallax.compatibility.Position
       find:
         asOf:
           operand:
             asOf:
               operand:
                 eq:
-                  attr: Position.id
+                  attr: parallax.compatibility.Position.id
                   value: 2
               dimension: transaction-time
               coordinate: latest
@@ -77,14 +77,14 @@ when:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
           binds: [2, A, 100.00, "2024-09-01T00:00:00+00:00", infinity, "2024-02-15T00:00:00+00:00", infinity]
-    - targetEntity: Position
+    - targetEntity: parallax.compatibility.Position
       find:
         asOf:
           operand:
             asOf:
               operand:
                 eq:
-                  attr: Position.id
+                  attr: parallax.compatibility.Position.id
                   value: 2
               dimension: transaction-time
               coordinate: latest

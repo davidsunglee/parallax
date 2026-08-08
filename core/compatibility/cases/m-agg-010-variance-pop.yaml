@@ -13,14 +13,14 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, variance, variancePop, twoColumn]
 shape: read
 when:
-  targetEntity: OrderItem
+  targetEntity: parallax.compatibility.OrderItem
   operation:
     groupBy:
       operand:
         all: {}
       aggregates:
-        - variancePop: { attr: OrderItem.quantity, as: quantity_variance }
-        - count: { attr: OrderItem.quantity, as: sample_count }
+        - variancePop: { attr: parallax.compatibility.OrderItem.quantity, as: quantity_variance }
+        - count: { attr: parallax.compatibility.OrderItem.quantity, as: sample_count }
 then:
   statements:
     - sql:

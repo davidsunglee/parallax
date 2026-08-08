@@ -23,12 +23,12 @@ tags: [m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, read-only, 
 shape: scenario
 when:
   scenario:
-    - targetEntity: Position
+    - targetEntity: parallax.compatibility.Position
       find:
         asOf:
           operand:
             eq:
-              attr: Position.id
+              attr: parallax.compatibility.Position.id
               value: 1
           dimension: transaction-time
           coordinate: "2024-02-01T00:00:00+00:00"

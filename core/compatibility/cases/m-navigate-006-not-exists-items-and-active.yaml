@@ -7,13 +7,13 @@ model: models/orders.yaml
 tags: [m-navigate, notExists, boolean, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     and:
       operands:
         - notExists:
-            rel: Order.items
-        - eq: { attr: Order.active, value: true }
+            rel: parallax.compatibility.Order.items
+        - eq: { attr: parallax.compatibility.Order.active, value: true }
 then:
   statements:
     - sql:

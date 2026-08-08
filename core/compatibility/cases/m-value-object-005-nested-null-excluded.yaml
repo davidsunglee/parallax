@@ -16,9 +16,9 @@ model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Customer
+  targetEntity: parallax.compatibility.Customer
   operation:
-    nestedNotEq: { path: Customer.address.city, value: Boston }
+    nestedNotEq: { path: parallax.compatibility.Customer.address.city, value: Boston }
 then:
   statements:
     - sql:

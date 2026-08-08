@@ -14,12 +14,12 @@ tags: [m-deep-fetch, m-temporal-read, m-navigate, temporal, propagation, audit-o
 shape: scenario
 when:
   scenario:
-    - targetEntity: Invoice
+    - targetEntity: parallax.compatibility.Invoice
       find:
         asOf:
           operand:
             eq:
-              attr: Invoice.id
+              attr: parallax.compatibility.Invoice.id
               value: 100
           dimension: transaction-time
           coordinate: latest
@@ -31,12 +31,12 @@ when:
           binds: [100, infinity]
       expectRows:
         - { id: 100, name: INV-100, in_z: "2024-01-01T00:00:00+00:00", out_z: infinity }
-    - targetEntity: Invoice
+    - targetEntity: parallax.compatibility.Invoice
       find:
         asOf:
           operand:
             eq:
-              attr: Invoice.id
+              attr: parallax.compatibility.Invoice.id
               value: 100
           dimension: transaction-time
           coordinate: "2024-02-01T00:00:00+00:00"

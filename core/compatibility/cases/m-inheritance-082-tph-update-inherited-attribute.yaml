@@ -16,7 +16,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: Dog
+      entity: parallax.compatibility.Dog
       statements: 1
       note: correct Dog 1's inherited Pet.licenseId; keyed by pk and tag-guarded on kind='dog'
       rows:

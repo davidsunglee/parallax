@@ -19,7 +19,7 @@ when:
   scenario:
     - write:
         - mutation: insert
-          entity: Account
+          entity: parallax.compatibility.Account
           rows:
             - { id: 7, owner: Newton, balance: 5.00, version: 1 }
       roundTrips: 1
@@ -28,10 +28,10 @@ when:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
           binds: [7, Newton, 5.00, 1]
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 7
       roundTrips: 1
       note: a dependent find MUST observe the flushed write (read-your-own-writes)

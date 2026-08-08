@@ -44,7 +44,7 @@ when:
     concurrency: optimistic
   writeSequence:
     - mutation: insert
-      entity: Position
+      entity: parallax.compatibility.Position
       statements: 1
       note: open the original Latest rectangle [valid inf, transaction inf)
       rows:
@@ -52,7 +52,7 @@ when:
       validFrom: "2024-01-01T00:00:00+00:00"
       at: "2024-01-01T00:00:00+00:00"
     - mutation: updateUntil
-      entity: Position
+      entity: parallax.compatibility.Position
       statements: 4
       note: GATED-inactivate the observed rectangle on the Transaction-Time dimension, then chain head / middle / tail
       rows:

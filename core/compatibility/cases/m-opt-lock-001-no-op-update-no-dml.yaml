@@ -48,10 +48,10 @@ compileEligibility:
 when:
   scenario:
     - uow: observe-noop-verify
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 2
       roundTrips: 1
       note: observe account 2 (Linus, 250.00, version 1), inside the SAME unit of work as the no-op write and verify find below
@@ -64,16 +64,16 @@ when:
     - uow: observe-noop-verify
       write:
         - mutation: update
-          entity: Account
+          entity: parallax.compatibility.Account
           rows:
             - { id: 2 }
       roundTrips: 0
       note: no attribute changes (PK-only sparse row) ⇒ NO DML, no version advance
     - uow: observe-noop-verify
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 2
       roundTrips: 1
       note: a real dependent read (no query cache exists) — observes the SAME unchanged row through the group's own held transaction; the group COMMITS after this, its last step

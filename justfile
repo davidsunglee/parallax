@@ -130,6 +130,7 @@ core-check-contract-tools:
     cd {{harness}} && uv run python -m reference_harness.descriptor_contract_check ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.retired_vocab_check ..
     cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility
+    cd {{harness}} && uv run python -m reference_harness.canonical_spelling_check ../core/compatibility
 
 [metadata("runtime:fast")]
 [doc("Every completed language spec still fills in the canonical template.")]

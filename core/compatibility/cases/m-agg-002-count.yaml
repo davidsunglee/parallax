@@ -8,7 +8,7 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, count]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     groupBy:
       operand:

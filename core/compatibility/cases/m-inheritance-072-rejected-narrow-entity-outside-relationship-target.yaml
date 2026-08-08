@@ -17,11 +17,11 @@ shape: rejected
 when:
   operation:
     exists:
-      rel: Person.pets
+      rel: parallax.compatibility.Person.pets
       op:
         narrow:
-          entity: Animal
-          to: [Dog]
+          entity: parallax.compatibility.Animal
+          to: [parallax.compatibility.Dog]
           operand:
             all: {}
 then:

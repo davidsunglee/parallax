@@ -11,7 +11,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Event
+      entity: parallax.compatibility.Event
       statements: 1
       note: insert an instant with .123456 microseconds; all six digits must survive
       rows:

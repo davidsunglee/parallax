@@ -13,7 +13,7 @@ shape: rejected
 when:
   operation:
     nestedExists:
-      path: Contact.address.phones
+      path: parallax.compatibility.Contact.address.phones
       where:
         nestedEndsWith: { path: expires, value: '-01' }
 then:

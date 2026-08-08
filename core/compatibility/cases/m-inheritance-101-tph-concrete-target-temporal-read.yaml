@@ -22,7 +22,7 @@ shape: read
 given:
   fixtures: true
 when:
-  targetEntity: Bond
+  targetEntity: parallax.compatibility.Bond
   operation:
     asOf:
       operand:

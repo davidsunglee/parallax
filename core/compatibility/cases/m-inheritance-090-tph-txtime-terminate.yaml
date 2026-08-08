@@ -22,14 +22,14 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: MeterReading
+      entity: parallax.compatibility.MeterReading
       statements: 1
       note: open a current milestone [2024-01-01, infinity); kind=meter derived from tagValue
       rows:
         - { id: 1, celsius: 20.00 }
       at: "2024-01-01T00:00:00+00:00"
     - mutation: terminate
-      entity: MeterReading
+      entity: parallax.compatibility.MeterReading
       statements: 1
       note: close the current row, tag-guarded on kind='meter'; insert nothing
       rows:

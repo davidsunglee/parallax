@@ -20,10 +20,10 @@ when:
   coherence:
     - node: B
       kind: read
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.owner
+          attr: parallax.compatibility.Account.owner
           value: Trent
       statements:
         - sql:
@@ -42,10 +42,10 @@ when:
       note: node A commits an INSERT of the new account on a separate connection
     - node: B
       kind: read
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.owner
+          attr: parallax.compatibility.Account.owner
           value: Trent
       statements:
         - sql:

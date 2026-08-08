@@ -16,7 +16,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Customer
+      entity: parallax.compatibility.Customer
       statements: 1
       note: seed a Customer with the original address document
       rows:
@@ -30,7 +30,7 @@ when:
             phones:
               - { type: home, number: '555-1111' }
     - mutation: update
-      entity: Customer
+      entity: parallax.compatibility.Customer
       statements: 1
       note: replace the WHOLE address document (a different shape — proves no path-level merge)
       rows:

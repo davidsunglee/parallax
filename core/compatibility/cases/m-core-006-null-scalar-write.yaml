@@ -13,7 +13,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: WritableScalar
+      entity: parallax.compatibility.WritableScalar
       statements: 1
       note: insert a row binding every nullable scalar column explicitly NULL
       rows:

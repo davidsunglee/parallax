@@ -23,6 +23,6 @@ tags: [m-op-algebra, m-inheritance, rejected, negative, narrow, slice-snapshot-1
 shape: rejected
 when:
   operation:
-    eq: { attr: Dog.name, value: Rex }
+    eq: { attr: parallax.compatibility.Dog.name, value: Rex }
 then:
   rejectedRule: subtype-attribute-outside-narrow-scope

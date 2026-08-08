@@ -21,7 +21,7 @@ model: models/storage-layout.yaml
 tags: [m-storage-layout, m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: LayoutReport
+  targetEntity: parallax.compatibility.LayoutReport
   operation:
     all: {}
 then:

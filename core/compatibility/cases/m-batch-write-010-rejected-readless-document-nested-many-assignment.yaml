@@ -9,11 +9,11 @@ when:
   write:
     mutation: update
     target:
-      entity: NestedRoute
+      entity: parallax.compatibility.NestedRoute
       predicate:
-        eq: { attr: NestedRoute.id, value: 1 }
+        eq: { attr: parallax.compatibility.NestedRoute.id, value: 1 }
     assignments:
-      - attr: NestedRoute.route
+      - attr: parallax.compatibility.NestedRoute.route
         value:
           name: Coastal
           segment:

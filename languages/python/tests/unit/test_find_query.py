@@ -60,28 +60,56 @@ def _op(pred: Predicate[Any]) -> dict[str, object]:
 
 
 def test_scalar_comparison_operators() -> None:
-    assert _op(Widget.id == 42) == {"eq": {"attr": "Widget.id", "value": 42}}
-    assert _op(Widget.id != 42) == {"notEq": {"attr": "Widget.id", "value": 42}}
-    assert _op(Widget.qty > 1) == {"greaterThan": {"attr": "Widget.qty", "value": 1}}
-    assert _op(Widget.qty >= 1) == {"greaterThanEquals": {"attr": "Widget.qty", "value": 1}}
-    assert _op(Widget.qty < 9) == {"lessThan": {"attr": "Widget.qty", "value": 9}}
-    assert _op(Widget.qty <= 9) == {"lessThanEquals": {"attr": "Widget.qty", "value": 9}}
-    assert _op(Widget.active.is_(True)) == {"eq": {"attr": "Widget.active", "value": True}}
+    assert _op(Widget.id == 42) == {"eq": {"attr": "parallax.compatibility.Widget.id", "value": 42}}
+    assert _op(Widget.id != 42) == {
+        "notEq": {"attr": "parallax.compatibility.Widget.id", "value": 42}
+    }
+    assert _op(Widget.qty > 1) == {
+        "greaterThan": {"attr": "parallax.compatibility.Widget.qty", "value": 1}
+    }
+    assert _op(Widget.qty >= 1) == {
+        "greaterThanEquals": {"attr": "parallax.compatibility.Widget.qty", "value": 1}
+    }
+    assert _op(Widget.qty < 9) == {
+        "lessThan": {"attr": "parallax.compatibility.Widget.qty", "value": 9}
+    }
+    assert _op(Widget.qty <= 9) == {
+        "lessThanEquals": {"attr": "parallax.compatibility.Widget.qty", "value": 9}
+    }
+    assert _op(Widget.active.is_(True)) == {
+        "eq": {"attr": "parallax.compatibility.Widget.active", "value": True}
+    }
 
 
 def test_membership_between_null_and_string_operators() -> None:
-    assert _op(Widget.id.in_([1, 2])) == {"in": {"attr": "Widget.id", "values": [1, 2]}}
-    assert _op(Widget.id.not_in([1, 2])) == {"notIn": {"attr": "Widget.id", "values": [1, 2]}}
-    assert _op(Widget.qty.between(1, 9)) == {
-        "between": {"attr": "Widget.qty", "lower": 1, "upper": 9}
+    assert _op(Widget.id.in_([1, 2])) == {
+        "in": {"attr": "parallax.compatibility.Widget.id", "values": [1, 2]}
     }
-    assert _op(Widget.sku.is_null()) == {"isNull": {"attr": "Widget.sku"}}
-    assert _op(Widget.sku.is_not_null()) == {"isNotNull": {"attr": "Widget.sku"}}
-    assert _op(Widget.sku.like("A%")) == {"like": {"attr": "Widget.sku", "value": "A%"}}
-    assert _op(Widget.sku.not_like("A%")) == {"notLike": {"attr": "Widget.sku", "value": "A%"}}
-    assert _op(Widget.sku.starts_with("A")) == {"startsWith": {"attr": "Widget.sku", "value": "A"}}
-    assert _op(Widget.sku.ends_with("Z")) == {"endsWith": {"attr": "Widget.sku", "value": "Z"}}
-    assert _op(Widget.sku.contains("m")) == {"contains": {"attr": "Widget.sku", "value": "m"}}
+    assert _op(Widget.id.not_in([1, 2])) == {
+        "notIn": {"attr": "parallax.compatibility.Widget.id", "values": [1, 2]}
+    }
+    assert _op(Widget.qty.between(1, 9)) == {
+        "between": {"attr": "parallax.compatibility.Widget.qty", "lower": 1, "upper": 9}
+    }
+    assert _op(Widget.sku.is_null()) == {"isNull": {"attr": "parallax.compatibility.Widget.sku"}}
+    assert _op(Widget.sku.is_not_null()) == {
+        "isNotNull": {"attr": "parallax.compatibility.Widget.sku"}
+    }
+    assert _op(Widget.sku.like("A%")) == {
+        "like": {"attr": "parallax.compatibility.Widget.sku", "value": "A%"}
+    }
+    assert _op(Widget.sku.not_like("A%")) == {
+        "notLike": {"attr": "parallax.compatibility.Widget.sku", "value": "A%"}
+    }
+    assert _op(Widget.sku.starts_with("A")) == {
+        "startsWith": {"attr": "parallax.compatibility.Widget.sku", "value": "A"}
+    }
+    assert _op(Widget.sku.ends_with("Z")) == {
+        "endsWith": {"attr": "parallax.compatibility.Widget.sku", "value": "Z"}
+    }
+    assert _op(Widget.sku.contains("m")) == {
+        "contains": {"attr": "parallax.compatibility.Widget.sku", "value": "m"}
+    }
     ci = _op(Widget.name.like("a", case_insensitive=True))
     assert ci["like"]["caseInsensitive"] is True  # type: ignore[index] - indexes the JSON-union operand at its known serialized shape
 
@@ -91,8 +119,8 @@ def test_boolean_combinators_and_grouping() -> None:
     assert conj == {
         "and": {
             "operands": [
-                {"greaterThan": {"attr": "Widget.qty", "value": 1}},
-                {"lessThan": {"attr": "Widget.qty", "value": 9}},
+                {"greaterThan": {"attr": "parallax.compatibility.Widget.qty", "value": 1}},
+                {"lessThan": {"attr": "parallax.compatibility.Widget.qty", "value": 9}},
             ]
         }
     }
@@ -108,8 +136,18 @@ def test_boolean_combinators_and_grouping() -> None:
             "operand": {
                 "or": {
                     "operands": [
-                        {"greaterThanEquals": {"attr": "Widget.qty", "value": 9}},
-                        {"lessThanEquals": {"attr": "Widget.qty", "value": 1}},
+                        {
+                            "greaterThanEquals": {
+                                "attr": "parallax.compatibility.Widget.qty",
+                                "value": 9,
+                            }
+                        },
+                        {
+                            "lessThanEquals": {
+                                "attr": "parallax.compatibility.Widget.qty",
+                                "value": 1,
+                            }
+                        },
                     ]
                 }
             }
@@ -122,14 +160,14 @@ def test_where_conjoins_and_flattens() -> None:
     assert lowered_document(query) == {
         "and": {
             "operands": [
-                {"eq": {"attr": "Widget.active", "value": True}},
-                {"greaterThan": {"attr": "Widget.qty", "value": 1}},
+                {"eq": {"attr": "parallax.compatibility.Widget.active", "value": True}},
+                {"greaterThan": {"attr": "parallax.compatibility.Widget.qty", "value": 1}},
             ]
         }
     }
     assert lowered_document(Widget.where(Widget.all)) == {"all": {}}
     assert lowered_document(Widget.where(Widget.id == 1)) == {
-        "eq": {"attr": "Widget.id", "value": 1}
+        "eq": {"attr": "parallax.compatibility.Widget.id", "value": 1}
     }
 
 
@@ -172,8 +210,8 @@ def test_result_shaping_clauses() -> None:
                 "orderBy": {
                     "operand": {"all": {}},
                     "keys": [
-                        {"attr": "Widget.qty", "direction": "desc"},
-                        {"attr": "Widget.name", "direction": "asc"},
+                        {"attr": "parallax.compatibility.Widget.qty", "direction": "desc"},
+                        {"attr": "parallax.compatibility.Widget.name", "direction": "asc"},
                     ],
                 }
             },
@@ -268,7 +306,7 @@ def test_expression_bool_and_scalar_guards() -> None:
 
 def test_attribute_expr_ref_and_str() -> None:
     expr = Widget.name
-    assert str(expr.ref) == "Widget.name"
+    assert str(expr.ref) == "parallax.compatibility.Widget.name"
 
 
 def test_a_find_query_is_an_opaque_value_with_no_truth_and_no_structural_equality() -> None:

@@ -39,7 +39,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Sample
+      entity: parallax.compatibility.Sample
       statements: 1
       note: insert one Sample, binding the whole profile document atomically in its layout position
       rows:

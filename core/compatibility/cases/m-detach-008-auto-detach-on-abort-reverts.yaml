@@ -23,10 +23,10 @@ tags: [m-detach, m-unit-work, detached, lifecycle, scenario, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 1
       roundTrips: 1
       expectState: persisted

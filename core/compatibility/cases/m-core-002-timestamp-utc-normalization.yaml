@@ -13,7 +13,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Event
+      entity: parallax.compatibility.Event
       statements: 1
       note: insert an instant authored at +05:30; it must store as UTC
       rows:

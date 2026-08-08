@@ -5,20 +5,20 @@ model: models/document-layout.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-concrete-subtype, document-layout, union-all, narrow, predicate, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Publication
+  targetEntity: parallax.compatibility.Publication
   operation:
     or:
       operands:
         - narrow:
-            entity: Publication
-            to: [Book]
+            entity: parallax.compatibility.Publication
+            to: [parallax.compatibility.Book]
             operand:
-              greaterThan: { attr: Book.pages, value: 300 }
+              greaterThan: { attr: parallax.compatibility.Book.pages, value: 300 }
         - narrow:
-            entity: Publication
-            to: [Film]
+            entity: parallax.compatibility.Publication
+            to: [parallax.compatibility.Film]
             operand:
-              greaterThan: { attr: Film.minutes, value: 100 }
+              greaterThan: { attr: parallax.compatibility.Film.minutes, value: 100 }
 then:
   statements:
     - sql:

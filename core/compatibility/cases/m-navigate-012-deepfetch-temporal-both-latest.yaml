@@ -11,7 +11,7 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child level - the Policy.coverages IN-list binds are the distinct policy ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: Policy
+  targetEntity: parallax.compatibility.Policy
   operation:
     deepFetch:
       operand:
@@ -24,7 +24,7 @@ when:
           dimension: valid-time
           coordinate: latest
       paths:
-        - { segments: [{ rel: Policy.coverages }] }
+        - { segments: [{ rel: parallax.compatibility.Policy.coverages }] }
 then:
   statements:
     - sql:

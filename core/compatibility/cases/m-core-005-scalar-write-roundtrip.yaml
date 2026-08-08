@@ -18,7 +18,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: WritableScalar
+      entity: parallax.compatibility.WritableScalar
       statements: 1
       note: insert one row binding float32/float64/bytes/time/uuid
       rows:

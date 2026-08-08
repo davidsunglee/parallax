@@ -5,15 +5,15 @@ model: models/orders.yaml
 tags: [m-navigate, exists, relationship, multi-hop, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     exists:
-      rel: Order.items
+      rel: parallax.compatibility.Order.items
       op:
         exists:
-          rel: OrderItem.statuses
+          rel: parallax.compatibility.OrderItem.statuses
           op:
-            eq: { attr: OrderStatus.code, value: PACKED }
+            eq: { attr: parallax.compatibility.OrderStatus.code, value: PACKED }
 then:
   statements:
     - sql:

@@ -58,12 +58,12 @@ when:
     concurrency: optimistic
   scenario:
     - uow: observe-then-close
-      targetEntity: Position
+      targetEntity: parallax.compatibility.Position
       find:
         asOf:
           operand:
             eq:
-              attr: Position.id
+              attr: parallax.compatibility.Position.id
               value: 1
           dimension: valid-time
           coordinate: "2024-03-01T00:00:00+00:00"
@@ -76,12 +76,12 @@ when:
       expectRows:
         - { pos_id: 1, acct_num: A, val: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-06-01T00:00:00+00:00", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
     - uow: observe-then-close
-      targetEntity: Position
+      targetEntity: parallax.compatibility.Position
       find:
         asOf:
           operand:
             eq:
-              attr: Position.id
+              attr: parallax.compatibility.Position.id
               value: 1
           dimension: valid-time
           coordinate: "2024-09-01T00:00:00+00:00"
@@ -97,7 +97,7 @@ when:
       "on": 0
       write:
         - mutation: update
-          entity: Position
+          entity: parallax.compatibility.Position
           rows:
             - { id: 1, value: 150.00 }
           validFrom: "2024-03-01T00:00:00+00:00"

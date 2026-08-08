@@ -23,14 +23,14 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child levels - the broad and the Dog-guarded owner hops each bind their person-table IN-list from owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: Animal
+  targetEntity: parallax.compatibility.Animal
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: Animal.owner }] }
-        - { narrow: { entity: Animal, to: [Dog] }, segments: [{ rel: Animal.owner }] }
+        - { segments: [{ rel: parallax.compatibility.Animal.owner }] }
+        - { narrow: { entity: parallax.compatibility.Animal, to: [parallax.compatibility.Dog] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
 then:
   statements:
     - sql:

@@ -16,13 +16,13 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Order
+      entity: parallax.compatibility.Order
       statements: 1
       note: insert the parent Order first (the referenced row)
       rows:
         - { id: 100, name: Hopper, sku: X-1, qty: 1, price: 9.99, active: true, orderedOn: "2024-07-01" }
     - mutation: insert
-      entity: OrderItem
+      entity: parallax.compatibility.OrderItem
       statements: 1
       note: then insert the child OrderItem whose order_id references it
       rows:

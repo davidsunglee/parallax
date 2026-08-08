@@ -50,9 +50,10 @@ def validate_predicate_write(entity: Entity, instruction: dict[str, Any]) -> Non
     if not isinstance(target, dict):  # pragma: no cover - structural schema guard
         raise PredicateWriteValidationError("predicate write target must be an object")
     target_name = target.get("entity")
-    if target_name != entity.name:
+    if target_name not in (entity.name, entity.canonical_name):
         raise PredicateWriteValidationError(
-            f"predicate write target entity {target_name!r} is not model entity {entity.name!r}"
+            f"predicate write target entity {target_name!r} is not model entity "
+            f"{entity.canonical_name!r}"
         )
     if inheritance_of(entity.definition) is not None:
         raise PredicateWriteValidationError(
@@ -65,7 +66,7 @@ def validate_predicate_write(entity: Entity, instruction: dict[str, Any]) -> Non
             "predicate write target needs an operation-shaped predicate"
         )
     _assert_bare_predicate(predicate)
-    _assert_predicate_scope(predicate, entity.name)
+    _assert_predicate_scope(predicate, entity)
     try:
         validate_operation(entity, predicate)
     except RejectionError as exc:
@@ -126,7 +127,8 @@ def validate_predicate_write_materialization(
     target_finds = [
         (index, step)
         for index, step in enumerate(preceding_steps)
-        if step.get("targetEntity") == entity.name and isinstance(step.get("find"), dict)
+        if step.get("targetEntity") in (entity.name, entity.canonical_name)
+        and isinstance(step.get("find"), dict)
     ]
     matching_finds = [
         (index, step)
@@ -256,7 +258,7 @@ def _assigned_columns(entity: Entity, assignments: Any) -> set[str]:
         reference = assignment.get("attr")
         if not isinstance(reference, str) or "." not in reference:
             continue
-        _, name = reference.split(".", 1)
+        _, name = reference.rsplit(".", 1)
         try:
             columns.add(entity.attribute_by_name(name)["column"])
         except KeyError:
@@ -319,17 +321,18 @@ def _assert_bare_predicate(node: Any) -> None:
         _assert_bare_predicate(body.get("where"))
 
 
-def _assert_predicate_scope(node: Any, target_name: str) -> None:
+def _assert_predicate_scope(node: Any, entity: Entity) -> None:
     classes: set[str] = set()
     # A predicate write is a BARE predicate (asserted just above), so the walk
     # stays in the predicate core and does not expect result modifiers.  A
     # navigation's inner operation and a nestedExists `where` resolve in a
     # different scope and are not descended (see collect_reference_classes).
     collect_reference_classes(node, classes, descend_result_modifiers=False)
-    mismatched = sorted(cls for cls in classes if cls != target_name)
+    named = (entity.name, entity.canonical_name)
+    mismatched = sorted(cls for cls in classes if cls not in named)
     if mismatched:
         raise PredicateWriteValidationError(
-            f"predicate write target {target_name!r} is inconsistent with reference "
+            f"predicate write target {entity.canonical_name!r} is inconsistent with reference "
             f"class(es) {mismatched}"
         )
 
@@ -345,8 +348,8 @@ def _assert_assignments(entity: Entity, assignments: Any) -> None:
         ref = assignment.get("attr")
         if not isinstance(ref, str) or "." not in ref:
             raise PredicateWriteValidationError(f"assignment attribute {ref!r} is not qualified")
-        class_name, attribute_name = ref.split(".", 1)
-        if class_name != entity.name:
+        class_name, _, attribute_name = ref.rpartition(".")
+        if class_name not in (entity.name, entity.canonical_name):
             raise PredicateWriteValidationError(
                 f"assignment {ref!r} is unassignable outside target entity {entity.name!r}"
             )

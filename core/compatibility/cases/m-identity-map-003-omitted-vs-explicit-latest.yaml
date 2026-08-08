@@ -19,10 +19,10 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Balance
+    - targetEntity: parallax.compatibility.Balance
       find:
         eq:
-          attr: Balance.id
+          attr: parallax.compatibility.Balance.id
           value: 1
       roundTrips: 1
       note: OMITTED coordinate — the default-injected current-row predicate (lowers to out_z = infinity)
@@ -32,12 +32,12 @@ when:
           binds: [1, infinity]
       expectRows:
         - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
-    - targetEntity: Balance
+    - targetEntity: parallax.compatibility.Balance
       find:
         asOf:
           operand:
             eq:
-              attr: Balance.id
+              attr: parallax.compatibility.Balance.id
               value: 1
           dimension: transaction-time
           coordinate: latest

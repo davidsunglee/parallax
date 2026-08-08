@@ -21,7 +21,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: Balance
+      entity: parallax.compatibility.Balance
       statements: 2
       note: merge-back of a mutated audit-only copy closes id 2's current row and chains the new value
       rows:

@@ -15,14 +15,14 @@ model: models/orders.yaml
 tags: [m-op-algebra, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     limit:
       count: 2
       operand:
         orderBy:
           keys:
-            - { attr: Order.sku, direction: desc, nulls: first }
+            - { attr: parallax.compatibility.Order.sku, direction: desc, nulls: first }
           operand:
             all: {}
 then:

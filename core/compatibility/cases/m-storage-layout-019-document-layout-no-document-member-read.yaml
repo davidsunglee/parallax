@@ -19,7 +19,7 @@ model: models/document-layout.yaml
 tags: [m-storage-layout, m-sql, read, json, document-layout, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Beacon
+  targetEntity: parallax.compatibility.Beacon
   operation:
     all: {}
 then:

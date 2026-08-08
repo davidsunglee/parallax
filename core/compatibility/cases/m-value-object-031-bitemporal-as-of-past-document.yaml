@@ -21,7 +21,7 @@ model: models/branch.yaml
 tags: [m-value-object, m-temporal-read, m-sql, nested, json, temporal, bitemporal, as-of, both-axes, past, audit, materialization, graph, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Branch
+  targetEntity: parallax.compatibility.Branch
   operation:
     asOf:
       operand:

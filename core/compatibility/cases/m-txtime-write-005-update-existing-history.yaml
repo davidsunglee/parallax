@@ -25,7 +25,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: Balance
+      entity: parallax.compatibility.Balance
       statements: 2
       note: close the one CURRENT id-1 milestone among the priors, then chain a new current row
       rows:

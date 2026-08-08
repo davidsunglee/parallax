@@ -1069,16 +1069,23 @@ def _build_entity(
         vo_classes=vo_classes,
     )
     cls = _pydantic_class(mcs, cls_name, bases, ns)
+    # Every reference this class hands out is seeded with the Entity's EXACT
+    # canonical spelling, so everything downstream that re-emits it — a
+    # serialized operation, a durable write document — carries an identity two
+    # namespaces sharing a local name cannot confuse. Nothing downstream builds
+    # a spelling of its own; they all re-emit this one.
     for py_name, canonical in py_to_name.items():
         setattr(
-            cls, py_name, Attr(AttributeRef(identity.name, canonical), py_name, members[canonical])
+            cls,
+            py_name,
+            Attr(AttributeRef(identity.canonical, canonical), py_name, members[canonical]),
         )
     for canonical, py_name in relationship_py.items():
         setattr(
             cls,
             py_name,
             Rel(
-                RelationshipRef(identity.name, canonical),
+                RelationshipRef(identity.canonical, canonical),
                 py_name,
                 _target_spelling(identity, tuple(relationships), canonical),
             ),

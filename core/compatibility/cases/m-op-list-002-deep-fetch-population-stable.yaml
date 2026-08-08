@@ -11,7 +11,7 @@ tags: [m-op-list, m-deep-fetch, relationship, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: Order
+    - targetEntity: parallax.compatibility.Order
       find:
         all: {}
       roundTrips: 1

@@ -11,10 +11,10 @@ model: models/orders.yaml
 tags: [m-op-algebra, m-conformance-adapter, eq, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     eq:
-      attr: Order.id
+      attr: parallax.compatibility.Order.id
       value: 42
 then:
   statements:

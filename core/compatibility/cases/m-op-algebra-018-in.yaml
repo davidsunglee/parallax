@@ -7,10 +7,10 @@ model: models/orders.yaml
 tags: [m-op-algebra, in, membership, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     in:
-      attr: Order.id
+      attr: parallax.compatibility.Order.id
       values: [1, 2, 42]
 then:
   statements:

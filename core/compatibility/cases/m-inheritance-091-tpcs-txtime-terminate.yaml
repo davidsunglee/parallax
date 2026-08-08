@@ -20,14 +20,14 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: SpotQuote
+      entity: parallax.compatibility.SpotQuote
       statements: 1
       note: open a current milestone [2024-01-01, infinity) in the concrete spot_quote table
       rows:
         - { id: 1, price: 50.00, symbol: ACME }
       at: "2024-01-01T00:00:00+00:00"
     - mutation: terminate
-      entity: SpotQuote
+      entity: parallax.compatibility.SpotQuote
       statements: 1
       note: close the current row in the concrete table; no tag guard, insert nothing
       rows:

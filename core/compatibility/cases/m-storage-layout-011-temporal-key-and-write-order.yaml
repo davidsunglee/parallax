@@ -38,7 +38,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: LayoutMeterReading
+      entity: parallax.compatibility.LayoutMeterReading
       statements: 1
       note: open a current milestone; kind='meter' is derived and in_z/out_z are bookkeeping
       rows:
@@ -49,7 +49,7 @@ when:
             model: TH-1
       at: "2024-01-01T00:00:00+00:00"
     - mutation: update
-      entity: LayoutMeterReading
+      entity: parallax.compatibility.LayoutMeterReading
       statements: 2
       note: close the current milestone, then chain a second row under the same model key
       rows:

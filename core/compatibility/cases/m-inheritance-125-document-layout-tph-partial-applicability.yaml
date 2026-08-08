@@ -11,12 +11,12 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: CardPayment
+      entity: parallax.compatibility.CardPayment
       statements: 1
       rows:
         - { id: 10, detail: mc-1010, authorizationCode: AUTH-10 }
     - mutation: insert
-      entity: CashPayment
+      entity: parallax.compatibility.CashPayment
       statements: 1
       rows:
         - { id: 11, detail: 25.00 }

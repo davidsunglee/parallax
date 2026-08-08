@@ -31,7 +31,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Supplier
+      entity: parallax.compatibility.Supplier
       statements: 1
       note: open a current milestone [2024-01-01, infinity) carrying the address document D1
       rows:
@@ -46,7 +46,7 @@ when:
               - { type: home, number: '555-0100' }
       at: "2024-01-01T00:00:00+00:00"
     - mutation: update
-      entity: Supplier
+      entity: parallax.compatibility.Supplier
       statements: 2
       note: close the current row, then chain a new current milestone carrying the new document D2
       rows:

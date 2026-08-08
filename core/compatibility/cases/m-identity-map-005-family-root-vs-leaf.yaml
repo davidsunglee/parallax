@@ -18,10 +18,10 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Animal
+    - targetEntity: parallax.compatibility.Animal
       find:
         eq:
-          attr: Animal.id
+          attr: parallax.compatibility.Animal.id
           value: 1
       roundTrips: 1
       note: ROOT finder over the abstract family root — the concrete superset + raw tag
@@ -31,10 +31,10 @@ when:
           binds: [1]
       expectRows:
         - { id: 1, name: Rex, owner_id: 10, license_id: L-100, indoor: null, bark_volume: 7, tusk_length: null, kind: dog }
-    - targetEntity: Dog
+    - targetEntity: parallax.compatibility.Dog
       find:
         eq:
-          attr: Dog.id
+          attr: parallax.compatibility.Dog.id
           value: 1
       roundTrips: 1
       sameObjectAs: 0

@@ -580,12 +580,12 @@ def test_class_level_member_access_seeds_operation_nodes() -> None:
     predicate = Order.id == 1
     assert isinstance(predicate, Predicate)
     assert isinstance(predicate.op, Comparison)
-    assert serialize(predicate.op) == {"eq": {"attr": "Order.id", "value": 1}}
+    assert serialize(predicate.op) == {"eq": {"attr": "sales.Order.id", "value": 1}}
     path = Order.customer
     assert isinstance(path, RelationshipPath)
     # A relationship reference names its owner locally, as the wire does; the
     # path's own target keeps the namespace a continuing hop resolves in.
-    assert path.segments == (PathSegment(rel="Order.customer"),)
+    assert path.segments == (PathSegment(rel="sales.Order.customer"),)
     assert path.target == "sales.Customer"
 
 
@@ -596,7 +596,7 @@ def test_a_query_over_a_class_no_model_composed_still_builds() -> None:
     # connected model's question, answered at execution preflight.
     lowered = lower_find_query(Order.where(Order.id == 1))
     assert lowered.target == Order.identity
-    assert serialize(lowered.operation) == {"eq": {"attr": "Order.id", "value": 1}}
+    assert serialize(lowered.operation) == {"eq": {"attr": "sales.Order.id", "value": 1}}
 
 
 def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:

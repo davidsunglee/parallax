@@ -15,7 +15,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: Customer
+      entity: parallax.compatibility.Customer
       statements: 1
       note: seed a Customer with an address document
       rows:
@@ -28,7 +28,7 @@ when:
               country: "NO"
             phones: []
     - mutation: update
-      entity: Customer
+      entity: parallax.compatibility.Customer
       statements: 1
       note: null out the nullable address valueObject → SQL NULL (the whole column)
       rows:

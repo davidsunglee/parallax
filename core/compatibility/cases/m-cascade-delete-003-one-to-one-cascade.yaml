@@ -18,7 +18,7 @@ given:
 when:
   writeSequence:
     - mutation: cascadeDelete
-      entity: Person
+      entity: parallax.compatibility.Person
       statements: 2
       note: delete the dependent passport, then the root person
       rows:

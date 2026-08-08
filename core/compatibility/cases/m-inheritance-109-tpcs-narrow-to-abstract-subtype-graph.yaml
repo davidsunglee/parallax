@@ -13,11 +13,11 @@ model: models/document.yaml
 tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Document
+  targetEntity: parallax.compatibility.Document
   operation:
     narrow:
-      entity: Document
-      to: [FinancialDocument]
+      entity: parallax.compatibility.Document
+      to: [parallax.compatibility.FinancialDocument]
       operand:
         all: {}
 then:

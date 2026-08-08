@@ -17,10 +17,10 @@ tags: [m-process-cache, query cache, cache-hit, scenario]
 shape: scenario
 when:
   scenario:
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 1
       roundTrips: 1
       note: cache MISS — execute the find once against the database
@@ -30,10 +30,10 @@ when:
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 1
       roundTrips: 0
       sameObjectAs: 0

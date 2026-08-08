@@ -14,11 +14,11 @@ shape: rejected
 when:
   operation:
     exists:
-      rel: Person.pets
+      rel: parallax.compatibility.Person.pets
       op:
         narrow:
-          entity: Pet
-          to: [WildBoar]
+          entity: parallax.compatibility.Pet
+          to: [parallax.compatibility.WildBoar]
           operand:
             all: {}
 then:

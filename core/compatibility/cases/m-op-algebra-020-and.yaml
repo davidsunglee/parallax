@@ -4,12 +4,12 @@ model: models/orders.yaml
 tags: [m-op-algebra, and, boolean, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     and:
       operands:
-        - eq: { attr: Order.active, value: true }
-        - greaterThan: { attr: Order.qty, value: 10 }
+        - eq: { attr: parallax.compatibility.Order.active, value: true }
+        - greaterThan: { attr: parallax.compatibility.Order.qty, value: 10 }
 then:
   statements:
     - sql:

@@ -13,20 +13,20 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, avg, groupBy, having, and]
 shape: read
 when:
-  targetEntity: OrderItem
+  targetEntity: parallax.compatibility.OrderItem
   operation:
     groupBy:
       operand:
         all: {}
-      keys: [OrderItem.orderId]
+      keys: [parallax.compatibility.OrderItem.orderId]
       aggregates:
-        - avg: { attr: OrderItem.quantity, as: avg_quantity }
+        - avg: { attr: parallax.compatibility.OrderItem.quantity, as: avg_quantity }
       having:
         and:
           operands:
             - gte:
                 agg:
-                  avg: { attr: OrderItem.quantity, as: avg_quantity }
+                  avg: { attr: parallax.compatibility.OrderItem.quantity, as: avg_quantity }
                 value: 2
             - gte:
                 agg:

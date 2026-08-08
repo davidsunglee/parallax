@@ -18,6 +18,6 @@ when:
     orderBy:
       operand: { all: {} }
       keys:
-        - { attr: Person.name }
+        - { attr: parallax.compatibility.Person.name }
 then:
   rejectedRule: attribute-outside-active-position

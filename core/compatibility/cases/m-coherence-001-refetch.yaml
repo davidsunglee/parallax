@@ -26,10 +26,10 @@ when:
   coherence:
     - node: B
       kind: read
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 2
       statements:
         - sql:
@@ -49,10 +49,10 @@ when:
       note: node A commits a new balance (version advances 1 -> 2) on a separate connection
     - node: B
       kind: read
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 2
       statements:
         - sql:

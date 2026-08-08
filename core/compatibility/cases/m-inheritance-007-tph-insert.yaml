@@ -20,7 +20,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: CardPayment
+      entity: parallax.compatibility.CardPayment
       statements: 1
       note: insert a CardPayment; kind='card' is derived from tagValue, not authored
       rows:

@@ -25,10 +25,10 @@ model: models/customer.yaml
 tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, like, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Customer
+  targetEntity: parallax.compatibility.Customer
   operation:
     nestedExists:
-      path: Customer.address.phones
+      path: parallax.compatibility.Customer.address.phones
       where:
         and:
           operands:

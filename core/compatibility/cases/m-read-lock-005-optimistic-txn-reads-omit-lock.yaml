@@ -15,12 +15,12 @@ tags: [m-read-lock, m-opt-lock, m-dialect, m-api-conformance, slice-snapshot-1, 
 lane: api-conformance
 shape: read
 when:
-  targetEntity: Account
+  targetEntity: parallax.compatibility.Account
   uow:
     concurrency: optimistic
   operation:
     eq:
-      attr: Account.id
+      attr: parallax.compatibility.Account.id
       value: 2
 then:
   statements:

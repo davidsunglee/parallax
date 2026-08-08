@@ -260,7 +260,7 @@ def test_an_ancestors_predicate_addresses_every_descendant_position() -> None:
     # parameter would break: `Predicate[Animal]` lands in a `Dog` position
     # because a root-declared member is available to every concrete under it.
     assert lowered_document(preflighted(Dog.where(Animal.name == "Ada"))) == {
-        "eq": {"attr": "Animal.name", "value": "Ada"}
+        "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
 
@@ -270,7 +270,7 @@ def test_an_inherited_member_is_parameterized_by_the_class_it_is_reached_through
     # spelling that makes the reference applicable to every concrete under
     # `Animal`. The two are different questions and the two answers differ.
     assert lowered_document(preflighted(Dog.where(Dog.name == "Ada"))) == {
-        "eq": {"attr": "Animal.name", "value": "Ada"}
+        "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
 
@@ -283,7 +283,7 @@ def test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is
     # that declares it, and the suppression records the asymmetry rather than
     # leaving it to be discovered.
     assert lowered_document(preflighted(Animal.where(Dog.name == "Ada"))) == {  # pyright: ignore[reportArgumentType]
-        "eq": {"attr": "Animal.name", "value": "Ada"}
+        "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
 
@@ -298,7 +298,7 @@ def test_one_identity_reached_through_two_classes_is_refused_statically_only() -
     foreign = TwinLeft.where(TwinRight.id == 1)  # pyright: ignore[reportArgumentType]
     native = TwinLeft.where(TwinLeft.id == 1)
     assert lowered_document(preflighted(foreign, _TWINS)) == {
-        "eq": {"attr": "TypedTwin.id", "value": 1}
+        "eq": {"attr": "parallax.tests.typed.TypedTwin.id", "value": 1}
     }
     assert lowered_document(preflighted(native, _TWINS)) == lowered_document(foreign)
 
@@ -312,8 +312,8 @@ def test_a_conjunction_addresses_the_position_both_of_its_operands_address() -> 
     ) == {
         "and": {
             "operands": [
-                {"eq": {"attr": "Animal.name", "value": "Ada"}},
-                {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
+                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
+                {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
             ]
         }
     }
@@ -329,8 +329,8 @@ def test_a_mixed_conjunction_reads_the_same_in_the_other_operand_order() -> None
     ) == {
         "and": {
             "operands": [
-                {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
-                {"eq": {"attr": "Animal.name", "value": "Ada"}},
+                {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
+                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
             ]
         }
     }
@@ -376,16 +376,16 @@ def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
     assert ancestor_first == {
         "or": {
             "operands": [
-                {"eq": {"attr": "Animal.name", "value": "Ada"}},
-                {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
+                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
+                {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
             ]
         }
     }
     assert descendant_first == {
         "or": {
             "operands": [
-                {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
-                {"eq": {"attr": "Animal.name", "value": "Ada"}},
+                {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
+                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
             ]
         }
     }
@@ -439,9 +439,11 @@ def test_a_narrow_scope_is_how_a_descendants_member_reaches_an_ancestor_position
         preflighted(Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)))
     ) == {
         "narrow": {
-            "entity": "Animal",
-            "to": ["Dog"],
-            "operand": {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
+            "entity": "parallax.compatibility.Animal",
+            "to": ["parallax.compatibility.Dog"],
+            "operand": {
+                "greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}
+            },
         }
     }
 
@@ -470,7 +472,7 @@ def test_a_comparison_literal_is_the_wire_value_rather_than_the_members_python_t
     # member's Python type would refuse the canonical spelling. The value stays
     # the wire's, and no suppression belongs here.
     assert lowered_document(preflighted(SnapOrder.where(SnapOrder.price >= 600.00), _ORDERS)) == {
-        "greaterThanEquals": {"attr": "SnapOrder.price", "value": 600.00}
+        "greaterThanEquals": {"attr": "parallax.compatibility.SnapOrder.price", "value": 600.00}
     }
 
 
@@ -481,7 +483,7 @@ def test_an_equality_literal_is_judged_by_the_model_rather_than_by_the_signature
     # literal-type rule, the model-aware validator is what states it: the same
     # mismatch one value-object hop deeper is refused by name.
     assert lowered_document(preflighted(SnapOrder.where(SnapOrder.price == "abc"), _ORDERS)) == {
-        "eq": {"attr": "SnapOrder.price", "value": "abc"}
+        "eq": {"attr": "parallax.compatibility.SnapOrder.price", "value": "abc"}
     }
     with pytest.raises(OperationRejectedError) as caught:
         preflighted(SnapOrderStatus.where(SnapOrderStatus.primary_tag.label == 42), _ORDERS)
@@ -551,9 +553,13 @@ def test_an_ancestors_sort_key_orders_a_union_narrowed_result() -> None:
     ) == {
         "orderBy": {
             "operand": {
-                "narrow": {"entity": "Animal", "to": ["Cat", "Dog"], "operand": {"all": {}}}
+                "narrow": {
+                    "entity": "parallax.compatibility.Animal",
+                    "to": ["parallax.compatibility.Cat", "parallax.compatibility.Dog"],
+                    "operand": {"all": {}},
+                }
             },
-            "keys": [{"attr": "Animal.name", "direction": "asc"}],
+            "keys": [{"attr": "parallax.compatibility.Animal.name", "direction": "asc"}],
         }
     }
 
@@ -574,8 +580,14 @@ def test_a_sort_key_orders_the_result_a_single_subtype_narrow_moved_to() -> None
     key: SortKey[Dog] = Dog.bark_volume.desc()
     assert lowered_document(preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key))) == {
         "orderBy": {
-            "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
-            "keys": [{"attr": "Dog.barkVolume", "direction": "desc"}],
+            "operand": {
+                "narrow": {
+                    "entity": "parallax.compatibility.Animal",
+                    "to": ["parallax.compatibility.Dog"],
+                    "operand": {"all": {}},
+                }
+            },
+            "keys": [{"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}],
         }
     }
 
@@ -588,8 +600,16 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
     assert lowered_document(preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key)))[
         "orderBy"
     ] == {
-        "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
-        "keys": [{"attr": "Dog.barkVolume", "direction": "desc", "nulls": "first"}],
+        "operand": {
+            "narrow": {
+                "entity": "parallax.compatibility.Animal",
+                "to": ["parallax.compatibility.Dog"],
+                "operand": {"all": {}},
+            }
+        },
+        "keys": [
+            {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc", "nulls": "first"}
+        ],
     }
     with pytest.raises(QueryDefinitionError) as caught:
         key.nulls_last()
@@ -607,8 +627,14 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
 def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
     admitted = Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())
     assert lowered_document(preflighted(admitted))["orderBy"] == {
-        "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
-        "keys": [{"attr": "Dog.barkVolume", "direction": "desc"}],
+        "operand": {
+            "narrow": {
+                "entity": "parallax.compatibility.Animal",
+                "to": ["parallax.compatibility.Dog"],
+                "operand": {"all": {}},
+            }
+        },
+        "keys": [{"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}],
     }
     # A sibling's key is refused by the answered parameter and by the gate: the
     # ordered rows are Dogs, and `Cat.indoor` applies to none of them.
@@ -621,8 +647,14 @@ def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
 def test_narrowing_to_two_subtypes_answers_their_union() -> None:
     admitted = Animal.where(Animal.all).narrow(Cat, Dog).order_by(Animal.name.asc())
     assert lowered_document(preflighted(admitted))["orderBy"] == {
-        "operand": {"narrow": {"entity": "Animal", "to": ["Cat", "Dog"], "operand": {"all": {}}}},
-        "keys": [{"attr": "Animal.name", "direction": "asc"}],
+        "operand": {
+            "narrow": {
+                "entity": "parallax.compatibility.Animal",
+                "to": ["parallax.compatibility.Cat", "parallax.compatibility.Dog"],
+                "operand": {"all": {}},
+            }
+        },
+        "keys": [{"attr": "parallax.compatibility.Animal.name", "direction": "asc"}],
     }
     # `Cat | Dog` is not a subtype of `Dog`, so a Dog member does not apply to
     # every concrete the narrow left in the position — the union is what the
@@ -643,13 +675,25 @@ def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
     subtypes: list[type[Entity]] = [Dog]
     admitted = Animal.where(Animal.all).narrow(*subtypes).order_by(Animal.name.asc())
     assert lowered_document(preflighted(admitted))["orderBy"] == {
-        "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
-        "keys": [{"attr": "Animal.name", "direction": "asc"}],
+        "operand": {
+            "narrow": {
+                "entity": "parallax.compatibility.Animal",
+                "to": ["parallax.compatibility.Dog"],
+                "operand": {"all": {}},
+            }
+        },
+        "keys": [{"attr": "parallax.compatibility.Animal.name", "direction": "asc"}],
     }
     conservative = Animal.where(Animal.all).narrow(*subtypes).order_by(Dog.bark_volume.desc())  # pyright: ignore[reportArgumentType]
     assert lowered_document(preflighted(conservative))["orderBy"] == {
-        "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
-        "keys": [{"attr": "Dog.barkVolume", "direction": "desc"}],
+        "operand": {
+            "narrow": {
+                "entity": "parallax.compatibility.Animal",
+                "to": ["parallax.compatibility.Dog"],
+                "operand": {"all": {}},
+            }
+        },
+        "keys": [{"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}],
     }
 
 
@@ -780,8 +824,11 @@ def test_a_descendants_path_is_a_legal_include_source_of_its_ancestors_query() -
             "operand": {"all": {}},
             "paths": [
                 {
-                    "narrow": {"entity": "Beast", "to": ["Hound"]},
-                    "segments": [{"rel": "Beast.keeper"}],
+                    "narrow": {
+                        "entity": "parallax.tests.typed.Beast",
+                        "to": ["parallax.tests.typed.Hound"],
+                    },
+                    "segments": [{"rel": "parallax.tests.typed.Beast.keeper"}],
                 }
             ],
         }
@@ -816,7 +863,16 @@ def test_a_hop_narrowed_to_a_descendant_stands_where_the_broad_hop_does() -> Non
     assert lowered_document(preflighted(Keeper.where(Keeper.all).include(narrowed), _BESTIARY)) == {
         "deepFetch": {
             "operand": {"all": {}},
-            "paths": [{"segments": [{"rel": "Keeper.beasts", "narrow": {"to": ["Hound"]}}]}],
+            "paths": [
+                {
+                    "segments": [
+                        {
+                            "rel": "parallax.tests.typed.Keeper.beasts",
+                            "narrow": {"to": ["parallax.tests.typed.Hound"]},
+                        }
+                    ]
+                }
+            ],
         }
     }
     assert broad.segments[-1].narrow == ()
@@ -871,20 +927,16 @@ def test_a_path_reaches_the_element_type_of_every_declared_relationship_shape() 
 # --------------------------------------------------------------------------- #
 
 
-def test_a_bare_reference_two_namespaces_answer_is_refused_by_the_model_alone() -> None:
-    # The converse family's own test in its purest form: ONE expression, two
-    # models. The wire spells every operation reference bare, so `LeftShared.id`
-    # reaches the model as `Shared.id` and the namespace that told the two
-    # classes apart has erased. One model answers that name and the other cannot,
-    # while the checker read one expression and no model at all — so no
-    # suppression belongs on either line, and none could.
+def test_a_reference_names_the_namespace_its_own_class_declares() -> None:
+    # The namespace is what does NOT erase: one expression, two models, one
+    # answer. `LeftShared.id` serializes the exact identity of the class it was
+    # authored through, so declaring the local name `Shared` a second time
+    # changes nothing about what this query addresses — where a bare spelling
+    # would have named both Entities and therefore neither.
     query = LeftShared.where(LeftShared.id == 1)
-    assert lowered_document(preflighted(query, _ONE_SHARED_NAME)) == {
-        "eq": {"attr": "Shared.id", "value": 1}
-    }
-    with pytest.raises(OperationRejectedError) as caught:
-        preflighted(query, _TWO_SHARED_NAMES)
-    assert caught.value.rule == "reference-ambiguous-entity-name"
+    expected = {"eq": {"attr": "parallax.tests.typed.alpha.Shared.id", "value": 1}}
+    assert lowered_document(preflighted(query, _ONE_SHARED_NAME)) == expected
+    assert lowered_document(preflighted(query, _TWO_SHARED_NAMES)) == expected
 
 
 def test_a_relationship_hop_past_the_first_erases_and_the_gate_refuses_it() -> None:
@@ -903,7 +955,10 @@ def test_an_authored_chain_stops_at_the_second_hop() -> None:
     # so a longer traversal is authored as a path rooted where the deeper hop
     # starts.
     second = Keeper.beasts.keeper
-    assert [segment.rel for segment in second.segments] == ["Keeper.beasts", "Beast.keeper"]
+    assert [segment.rel for segment in second.segments] == [
+        "parallax.tests.typed.Keeper.beasts",
+        "parallax.tests.typed.Beast.keeper",
+    ]
     assert second.target is None
     with pytest.raises(AttributeError, match="already continued past the hop"):
         _ = second.badge

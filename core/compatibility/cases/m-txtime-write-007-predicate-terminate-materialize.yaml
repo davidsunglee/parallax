@@ -29,9 +29,9 @@ when:
   uow:
     concurrency: locking
   scenario:
-    - targetEntity: Balance
+    - targetEntity: parallax.compatibility.Balance
       find:
-        lessThan: { attr: Balance.value, value: 250.00 }
+        lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
       roundTrips: 1
       statements:
         - sql:
@@ -44,9 +44,9 @@ when:
     - write:
         mutation: terminate
         target:
-          entity: Balance
+          entity: parallax.compatibility.Balance
           predicate:
-            lessThan: { attr: Balance.value, value: 250.00 }
+            lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
         at: "2024-10-01T00:00:00+00:00"
       roundTrips: 2
       statements:
@@ -56,9 +56,9 @@ when:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
           binds: ["2024-10-01T00:00:00+00:00", 2, infinity]
-    - targetEntity: Balance
+    - targetEntity: parallax.compatibility.Balance
       find:
-        lessThan: { attr: Balance.value, value: 250.00 }
+        lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
       roundTrips: 1
       statements:
         - sql:

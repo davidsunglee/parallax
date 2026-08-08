@@ -17,14 +17,14 @@ model: models/orders.yaml
 tags: [m-agg, m-sql-agg, stdDev, stdDevPop, twoColumn]
 shape: read
 when:
-  targetEntity: OrderItem
+  targetEntity: parallax.compatibility.OrderItem
   operation:
     groupBy:
       operand:
         all: {}
       aggregates:
-        - stdDevPop: { attr: OrderItem.quantity, as: quantity_stddev_pop }
-        - count: { attr: OrderItem.quantity, as: sample_count }
+        - stdDevPop: { attr: parallax.compatibility.OrderItem.quantity, as: quantity_stddev_pop }
+        - count: { attr: parallax.compatibility.OrderItem.quantity, as: sample_count }
 then:
   statements:
     - sql:

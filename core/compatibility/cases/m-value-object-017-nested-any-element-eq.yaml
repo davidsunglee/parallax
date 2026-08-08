@@ -22,9 +22,9 @@ model: models/customer.yaml
 tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Customer
+  targetEntity: parallax.compatibility.Customer
   operation:
-    nestedEq: { path: Customer.address.phones.type, value: home }
+    nestedEq: { path: parallax.compatibility.Customer.address.phones.type, value: home }
 then:
   statements:
     - sql:

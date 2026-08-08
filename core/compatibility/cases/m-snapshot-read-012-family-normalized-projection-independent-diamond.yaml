@@ -22,16 +22,16 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child levels - the broad Person.animals and narrowed pets[Dog] IN-list binds are both the distinct owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: Person
+  targetEntity: parallax.compatibility.Person
   operation:
     deepFetch:
       operand:
         eq:
-          attr: Person.id
+          attr: parallax.compatibility.Person.id
           value: 10
       paths:
-        - { segments: [{ rel: Person.animals }] }
-        - { segments: [{ rel: Person.pets, narrow: { to: [Dog] } }] }
+        - { segments: [{ rel: parallax.compatibility.Person.animals }] }
+        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Dog] } }] }
 then:
   statements:
     - sql:

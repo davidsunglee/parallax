@@ -6,12 +6,12 @@ model: models/orders.yaml
 tags: [m-navigate, exists, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     exists:
-      rel: Order.items
+      rel: parallax.compatibility.Order.items
       op:
-        greaterThanEquals: { attr: OrderItem.quantity, value: 4 }
+        greaterThanEquals: { attr: parallax.compatibility.OrderItem.quantity, value: 4 }
 then:
   statements:
     - sql:

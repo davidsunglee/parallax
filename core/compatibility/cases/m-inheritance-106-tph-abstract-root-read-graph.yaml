@@ -13,7 +13,7 @@ model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Payment
+  targetEntity: parallax.compatibility.Payment
   operation:
     all: {}
 then:

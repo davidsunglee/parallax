@@ -19,7 +19,7 @@ shape: read
 given:
   fixtures: true
 when:
-  targetEntity: Instrument
+  targetEntity: parallax.compatibility.Instrument
   operation:
     asOf:
       operand:

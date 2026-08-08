@@ -16,7 +16,7 @@ given:
 when:
   writeSequence:
     - mutation: delete
-      entity: CardPayment
+      entity: parallax.compatibility.CardPayment
       statements: 1
       note: delete CardPayment 2 from the shared table by pk, tag-guarded on kind='card'
       rows:

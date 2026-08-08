@@ -36,10 +36,10 @@ compileEligibility:
 when:
   scenario:
     - uow: observed-delete
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 3
       roundTrips: 1
       note: observe account 3 (Grace, balance 10.00, version 1) before the delete, inside the SAME unit of work as the write below
@@ -52,7 +52,7 @@ when:
     - uow: observed-delete
       write:
         - mutation: delete
-          entity: Account
+          entity: parallax.compatibility.Account
           rows:
             - { id: 3 }
       roundTrips: 1
@@ -62,10 +62,10 @@ when:
             postgres: delete from account where id = ?
           binds: [3]
     - uow: observed-delete
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 3
       roundTrips: 1
       note: a dependent find MUST observe the deletion (read-your-own-writes) — zero rows; the group COMMITS after this, its last step

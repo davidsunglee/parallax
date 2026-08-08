@@ -21,12 +21,12 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: Balance
+    - targetEntity: parallax.compatibility.Balance
       find:
         asOf:
           operand:
             eq:
-              attr: Balance.id
+              attr: parallax.compatibility.Balance.id
               value: 1
           dimension: transaction-time
           coordinate: "2024-03-01T00:00:00+00:00"

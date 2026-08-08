@@ -45,13 +45,13 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child level - the Customer.locations IN-list binds are the distinct parent keys gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: Customer
+  targetEntity: parallax.compatibility.Customer
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: Customer.locations }] }
+        - { segments: [{ rel: parallax.compatibility.Customer.locations }] }
 then:
   statements:
     - sql:

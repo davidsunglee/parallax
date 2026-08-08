@@ -22,7 +22,7 @@ shape: rejected
 when:
   write:
     mutation: update
-    entity: CardPayment
+    entity: parallax.compatibility.CardPayment
     rows:
       - { id: 10, tendered: 25.00 }
 then:

@@ -11,13 +11,13 @@ model: models/person.yaml
 tags: [m-deep-fetch, m-op-list, one-to-one, relationship, nullable, slice-managed-1]
 shape: read
 when:
-  targetEntity: Person
+  targetEntity: parallax.compatibility.Person
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: Person.passport }] }
+        - { segments: [{ rel: parallax.compatibility.Person.passport }] }
 then:
   statements:
     - sql:

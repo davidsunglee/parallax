@@ -31,7 +31,7 @@ given:
 when:
   writeSequence:
     - mutation: delete
-      entity: Account
+      entity: parallax.compatibility.Account
       statements: 2
       note: a versioned set-based delete materializes to ONE keyed delete per key, ungated in locking mode
       rows:

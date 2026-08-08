@@ -11,7 +11,7 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child level - the Lease.notes IN-list binds are the distinct lease ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: Lease
+  targetEntity: parallax.compatibility.Lease
   operation:
     deepFetch:
       operand:
@@ -20,7 +20,7 @@ when:
           dimension: transaction-time
           coordinate: latest
       paths:
-        - { segments: [{ rel: Lease.notes }] }
+        - { segments: [{ rel: parallax.compatibility.Lease.notes }] }
 then:
   statements:
     - sql:

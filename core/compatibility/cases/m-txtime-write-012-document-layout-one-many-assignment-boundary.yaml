@@ -30,7 +30,7 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: Voyage
+      entity: parallax.compatibility.Voyage
       statements: 2
       note: assign one and many occurrences in the same observed successor
       rows:

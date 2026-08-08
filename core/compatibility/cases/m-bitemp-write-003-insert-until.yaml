@@ -19,7 +19,7 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insertUntil
-      entity: Position
+      entity: parallax.compatibility.Position
       statements: 1
       note: open a single Valid-Time-bounded rectangle [2024-03-01, 2024-09-01)
       rows:

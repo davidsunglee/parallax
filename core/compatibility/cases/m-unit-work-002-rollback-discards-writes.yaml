@@ -36,10 +36,10 @@ compileEligibility:
 when:
   scenario:
     - uow: doomed-update
-      targetEntity: Account
+      targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 1
       roundTrips: 1
       note: observe account 1 (balance 100.00, version 1) before the aborted write, inside the doomed unit of work
@@ -52,7 +52,7 @@ when:
     - uow: doomed-update
       write:
         - mutation: update
-          entity: Account
+          entity: parallax.compatibility.Account
           rows:
             - { id: 1, balance: 999.00 }
       rollback: true
@@ -62,10 +62,10 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [999.00, 2, 1]
-    - targetEntity: Account
+    - targetEntity: parallax.compatibility.Account
       find:
         eq:
-          attr: Account.id
+          attr: parallax.compatibility.Account.id
           value: 1
       roundTrips: 1
       note: the SAME find, UNGROUPED, re-resolves after the group's rollback and MUST observe 100.00, not 999.00

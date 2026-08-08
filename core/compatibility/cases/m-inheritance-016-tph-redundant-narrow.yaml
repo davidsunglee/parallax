@@ -12,11 +12,11 @@ model: models/animal.yaml
 tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Pet
+  targetEntity: parallax.compatibility.Pet
   operation:
     narrow:
-      entity: Pet
-      to: [Pet]
+      entity: parallax.compatibility.Pet
+      to: [parallax.compatibility.Pet]
       operand:
         all: {}
 then:

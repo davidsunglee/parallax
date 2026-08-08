@@ -74,7 +74,7 @@ def _order_graph(*, items: tuple[dict[str, object], ...] | None = None) -> Any:
     order = builder.node("SnapOrder", _ORDER_ROW)
     if items is not None:
         refs = tuple(builder.node("SnapOrderItem", row) for row in items)
-        builder.attach(order, "SnapOrder.items", refs)
+        builder.attach(order, "parallax.compatibility.SnapOrder.items", refs)
     (root,) = builder.materialize(order)
     return root
 
@@ -178,15 +178,15 @@ def test_a_to_many_path_fans_out_into_one_flat_tuple_in_traversal_order() -> Non
     order = builder.node("SnapOrder", _ORDER_ROW)
     first = builder.node("SnapOrderItem", _item_row(11))
     second = builder.node("SnapOrderItem", _item_row(12))
-    builder.attach(order, "SnapOrder.items", (first, second))
+    builder.attach(order, "parallax.compatibility.SnapOrder.items", (first, second))
     builder.attach(
         first,
-        "SnapOrderItem.statuses",
+        "parallax.compatibility.SnapOrderItem.statuses",
         tuple(builder.node("SnapOrderStatus", _status_row(status)) for status in (21, 22)),
     )
     builder.attach(
         second,
-        "SnapOrderItem.statuses",
+        "parallax.compatibility.SnapOrderItem.statuses",
         (builder.node("SnapOrderStatus", _status_row(23)),),
     )
     (root,) = builder.materialize(order)
@@ -206,9 +206,9 @@ def test_an_all_to_one_path_answers_its_terminal_or_none() -> None:
     order = builder.node("SnapOrder", _ORDER_ROW)
     item = builder.node("SnapOrderItem", _item_row(11))
     orphan = builder.node("SnapOrderItem", _item_row(50))
-    builder.attach(order, "SnapOrder.items", (item,))
-    builder.attach(item, "SnapOrderItem.order", order)
-    builder.attach(orphan, "SnapOrderItem.order", None)
+    builder.attach(order, "parallax.compatibility.SnapOrder.items", (item,))
+    builder.attach(item, "parallax.compatibility.SnapOrderItem.order", order)
+    builder.attach(orphan, "parallax.compatibility.SnapOrderItem.order", None)
     root, lone = builder.materialize(order, orphan)
     assert view(cast("Any", root).items[0], sm.SnapOrderItem.order) is root
     assert view(lone, sm.SnapOrderItem.order) is None
@@ -230,7 +230,7 @@ def _narrowed_owner(view_key: str, columns: dict[str, object] | None = None) -> 
     builder = GraphBuilder(_ANIMAL)
     owner = builder.node("AnimalOwner", columns if columns is not None else _OWNER_ROW)
     dog = builder.node("Dog", _DOG_ROW)
-    builder.attach(owner, "AnimalOwner.pets", (dog,), narrowed=view_key)
+    builder.attach(owner, "parallax.compatibility.AnimalOwner.pets", (dog,), narrowed=view_key)
     (root,) = builder.materialize(owner)
     return root
 
@@ -248,7 +248,10 @@ def test_a_narrowed_view_is_read_by_its_own_path_and_never_marks_the_broad_one()
 def test_equivalent_narrow_spellings_name_one_view() -> None:
     root = _narrowed_owner("pets[Cat,Dog]")
     directly = RelationshipPath[Any, Any](
-        segments=(PathSegment(rel="AnimalOwner.pets", narrow=("Dog", "Cat")),), target=None
+        segments=(
+            PathSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow=("Dog", "Cat")),
+        ),
+        target=None,
     )
     assert is_view_loaded(root, sm.AnimalOwner.pets.narrow(sm.Cat, sm.Dog)) is True
     assert is_view_loaded(root, directly) is True
@@ -266,9 +269,14 @@ def test_a_narrowed_to_one_view_answers_the_node_itself_or_loaded_null() -> None
     alice = builder.node("AnimalOwner", {"id": 10, "name": "Alice", "favorite_id": 1})
     bob = builder.node("AnimalOwner", {"id": 11, "name": "Bob", "favorite_id": None})
     builder.attach(
-        alice, "AnimalOwner.favorite", builder.node("Dog", _DOG_ROW), narrowed="favorite[Dog]"
+        alice,
+        "parallax.compatibility.AnimalOwner.favorite",
+        builder.node("Dog", _DOG_ROW),
+        narrowed="favorite[Dog]",
     )
-    builder.attach(bob, "AnimalOwner.favorite", None, narrowed="favorite[Dog]")
+    builder.attach(
+        bob, "parallax.compatibility.AnimalOwner.favorite", None, narrowed="favorite[Dog]"
+    )
     first, second = builder.materialize(alice, bob)
     assert type(view(first, sm.AnimalOwner.favorite.narrow(sm.Dog))) is sm.Dog
     assert is_view_loaded(second, sm.AnimalOwner.favorite.narrow(sm.Dog)) is True
@@ -278,14 +286,16 @@ def test_a_narrowed_to_one_view_answers_the_node_itself_or_loaded_null() -> None
 def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() -> None:
     builder = GraphBuilder(_ANIMAL)
     owner = builder.node("AnimalOwner", _OWNER_ROW)
-    builder.attach(owner, "AnimalOwner.animals", (builder.node("Dog", _DOG_ROW),))
+    builder.attach(
+        owner, "parallax.compatibility.AnimalOwner.animals", (builder.node("Dog", _DOG_ROW),)
+    )
     (root,) = builder.materialize(owner)
     # `AnimalOwner.animals` reaches an `Animal`; continuing with a segment
     # spelled from an unrelated owner reaches nothing that declares it.
     path = RelationshipPath[Any, Any](
         segments=(
-            PathSegment(rel="AnimalOwner.animals"),
-            PathSegment(rel="SnapOrder.items"),
+            PathSegment(rel="parallax.compatibility.AnimalOwner.animals"),
+            PathSegment(rel="parallax.compatibility.SnapOrder.items"),
         ),
         target=None,
     )

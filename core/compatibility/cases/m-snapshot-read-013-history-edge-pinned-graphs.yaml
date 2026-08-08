@@ -13,12 +13,12 @@ model: models/invoice.yaml
 tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, temporal, history, edge-pinned, graph, audit-only, slice-snapshot-1]
 shape: read
 when:
-  targetEntity: InvoiceLine
+  targetEntity: parallax.compatibility.InvoiceLine
   operation:
     history:
       operand:
         eq:
-          attr: InvoiceLine.id
+          attr: parallax.compatibility.InvoiceLine.id
           value: 1000
       dimension: transaction-time
 then:

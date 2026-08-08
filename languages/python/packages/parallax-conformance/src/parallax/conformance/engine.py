@@ -223,7 +223,7 @@ def case_model(meta: Metamodel) -> AcceptedMetamodel:
 def case_entity(model: AcceptedMetamodel, entity: Entity) -> EntityMetadata:
     """``entity``'s accepted Metadata in ``model``.
 
-    A case names an Entity by its bare declared name, which the record graph
+    A case names an Entity by its canonical spelling, which the record graph
     already resolved; taking that record rather than the name again is what
     makes the two views provably the same Entity of the same descriptor.
     """
@@ -462,8 +462,9 @@ def run_graph_case(
         Emission("/operation", statement.sql, statement.binds)
         for statement in result.execution.statements
     ]
-    graph_wire = _render_graph(target, result.nodes, model)
-    identity_checks = _evaluate_identity_checks(case, target, result.nodes)
+    root_key = _graph_root_key(target, model)
+    graph_wire = _render_graph(root_key, result.nodes, model)
+    identity_checks = _evaluate_identity_checks(case, root_key, result.nodes)
     return emissions, graph_wire, result.execution.round_trips, identity_checks
 
 
@@ -493,23 +494,38 @@ def run_graphs_case(
         Emission("/operation", statement.sql, statement.binds)
         for statement in result.execution.statements
     ]
+    root_key = _graph_root_key(target, model)
     graphs_wire: list[dict[str, object]] = [
         {
             "pin": {name: wire_value(instant) for name, instant in graph.pin.items()},
-            "graph": _render_graph(target, graph.nodes, model),
+            "graph": _render_graph(root_key, graph.nodes, model),
         }
         for graph in result.graphs
     ]
     return emissions, graphs_wire, result.execution.round_trips
 
 
+def _graph_root_key(target: str, model: AcceptedMetamodel) -> str:
+    """The `then.graph` root key the read's ``targetEntity`` denotes.
+
+    Result vocabulary is LOCAL where an addressing reference is exact
+    (`m-case-format`), so the authored spelling is resolved and the Entity's own
+    local name answers — the same key a bare spelling produced before every
+    reference position became canonical.
+    """
+    entity = entity_by_name(model, target)
+    if entity is None:  # pragma: no cover - the read already resolved this target
+        raise EngineError(f"{target!r} names no entity the accepted model declares")
+    return entity.identity.name
+
+
 def _render_graph(
-    target: str, nodes: Sequence[_assembly.Node], model: AcceptedMetamodel
+    root_key: str, nodes: Sequence[_assembly.Node], model: AcceptedMetamodel
 ) -> dict[str, list[Row]]:
     """The wire `then.graph` shape: root-class-keyed, each root row rendered
     through :func:`_render_node` (back-reference cycles truncate to a PK-only
     stub; a diamond at a non-cyclic position keeps its full value)."""
-    return {target: [_render_node(node, frozenset(), model) for node in nodes]}
+    return {root_key: [_render_node(node, frozenset(), model) for node in nodes]}
 
 
 def _render_node(
@@ -618,7 +634,7 @@ def _render_value(
 
 
 def _evaluate_identity_checks(
-    case: case_format.Case, target: str, nodes: Sequence[_assembly.Node]
+    case: case_format.Case, root_key: str, nodes: Sequence[_assembly.Node]
 ) -> list[dict[str, object]] | None:
     """The case's declared `then.identityChecks` (m-case-format / m-conformance-
     adapter), each evaluated as Python reference identity (`is`) over the
@@ -635,7 +651,7 @@ def _evaluate_identity_checks(
     )
     if not declared:
         return None
-    root_map = {target: nodes}
+    root_map = {root_key: nodes}
     results: list[dict[str, object]] = []
     for check in cast("list[Mapping[str, object]]", declared):
         left = _resolve_graph_pointer(case, root_map, cast("str", check["left"]))
@@ -2381,7 +2397,7 @@ def _buffer_execution_instruction(
     entity_metadata = case_entity(model, meta.entity(instruction.entity))
     tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
         instruction.mutation,
-        instruction.entity,
+        entity_metadata.identity,
         decode_write_row(entity_metadata, instruction.rows[0], model),
         valid_from=instruction.valid_from,
         until=instruction.until,
@@ -4123,7 +4139,7 @@ def _run_conflict_write(
         for write in resolved:
             tx._buffer(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
                 mutation,
-                target,
+                target_metadata.identity,
                 decode_write_row(target_metadata, write.row, model),
                 observation=write.observation,
             )

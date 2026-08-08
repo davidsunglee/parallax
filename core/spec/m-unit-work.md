@@ -127,6 +127,14 @@ names one declared Entity, or the canonical `<namespace>.<Entity>` — and resol
 the same rule. An `assignments[].attr` is that Entity spelling followed by one
 member identifier: `Account.balance`, `parallax.compatibility.Account.balance`.
 
+Input is permissive and output is exact here exactly as it is in the operation
+algebra: a frontend accepts either spelling, and every durable write instruction
+it **serializes** MUST carry the resolved canonical one at all three positions.
+The owner of an `assignments[].attr` is measured by IDENTITY rather than by text,
+so a canonical owner names the write's exact target while a bare one two
+namespaces share resolves nowhere and is refused — never silently matched against
+the target's local name.
+
 Three structural rules keep the instruction framework-honest:
 
 - **The instant surface is dimension-explicit.** A Bitemporal write's authored

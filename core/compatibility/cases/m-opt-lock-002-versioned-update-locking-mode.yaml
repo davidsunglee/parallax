@@ -22,7 +22,7 @@ when:
     concurrency: locking
   writeSequence:
     - mutation: update
-      entity: Account
+      entity: parallax.compatibility.Account
       statements: 1
       note: locking-mode keyed update advances the version with no gate
       rows:

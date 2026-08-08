@@ -14,13 +14,13 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: PkSequence
+      entity: parallax.compatibility.PkSequence
       statements: 1
       note: "reserve block (stride 5), base 1000"
       rows:
         - { name: ticket_seq, nextVal: { increment: 5 } }
     - mutation: insert
-      entity: Ticket
+      entity: parallax.compatibility.Ticket
       statements: 1
       note: hand out id 1000
       rows:

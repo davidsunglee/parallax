@@ -41,7 +41,7 @@ from parallax.core.entity import (
     FindQuery,
 )
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -162,7 +162,7 @@ class Transaction:
         )
         self._buffer(
             "insert",
-            record.identity.name,
+            record.identity,
             self._codec.full_row(instance),
             valid_from=valid_from_literal,
         )
@@ -190,7 +190,7 @@ class Transaction:
         until_literal = validate_until(declaring, "insertUntil", valid_from, until)
         self._buffer(
             "insertUntil",
-            record.identity.name,
+            record.identity,
             self._codec.full_row(instance),
             valid_from=valid_from_literal,
             until=until_literal,
@@ -228,7 +228,7 @@ class Transaction:
             return
         self._buffer(
             "update",
-            record.identity.name,
+            record.identity,
             row,
             valid_from=valid_from_literal,
             observation=self._resolve_observed_milestone(record, declaring, copy),
@@ -245,7 +245,7 @@ class Transaction:
         validate_source_pin(record.identity.name, source_pin(node_or_instance))
         self._buffer(
             "delete",
-            record.identity.name,
+            record.identity,
             self._codec.identity_row(node_or_instance),
             observation=self._resolve_observation(
                 record, declaring_of(self._meta, record), node_or_instance
@@ -275,7 +275,7 @@ class Transaction:
         )
         self._buffer(
             "terminate",
-            record.identity.name,
+            record.identity,
             self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
             observation=self._resolve_observed_milestone(record, declaring, node_or_instance),
@@ -307,7 +307,7 @@ class Transaction:
             return
         self._buffer(
             "updateUntil",
-            record.identity.name,
+            record.identity,
             row,
             valid_from=valid_from_literal,
             until=until_literal,
@@ -331,7 +331,7 @@ class Transaction:
         until_literal = validate_until(declaring, "terminateUntil", valid_from, until)
         self._buffer(
             "terminateUntil",
-            record.identity.name,
+            record.identity,
             self._codec.identity_row(node_or_instance),
             valid_from=valid_from_literal,
             until=until_literal,
@@ -503,7 +503,7 @@ class Transaction:
     def _buffer(
         self,
         mutation: KeyedMutation,
-        entity: str,
+        entity: EntityIdentity,
         row: Mapping[str, object],
         *,
         valid_from: str | None = None,
@@ -542,14 +542,19 @@ class Transaction:
         # temporal write translation both pass them the SAME way (`m-txtime-write`
         # / `m-bitemp-write` — the dimension-explicit `validFrom` / `until`
         # instruction fields, never smuggled onto `row`, ADR 0010/0013).
-        doc: dict[str, object] = {"mutation": mutation, "entity": entity, "rows": [dict(row)]}
+        doc: dict[str, object] = {
+            "mutation": mutation,
+            "entity": entity.canonical,
+            "rows": [dict(row)],
+        }
         if valid_from is not None:
             doc["validFrom"] = valid_from
         if until is not None:
             doc["until"] = until
         instruction = instructions.deserialize(doc)
-        metadata = entity_by_name(self._meta, entity)
-        assert metadata is not None  # `entity` names the written instance's own compiled class
+        metadata = self._meta.entity(entity)
+        if metadata is None:  # pragma: no cover - `entity` is the written instance's own identity
+            raise AssertionError(f"{entity.canonical} is not declared by the connected model")
         validate_write(metadata, row, self._meta, mutation=mutation)
         instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(buffered_write(instruction, observation))

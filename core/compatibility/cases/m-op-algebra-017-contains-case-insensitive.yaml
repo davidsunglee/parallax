@@ -5,10 +5,10 @@ model: models/orders.yaml
 tags: [m-op-algebra, contains, string, caseInsensitive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     contains:
-      attr: Order.name
+      attr: parallax.compatibility.Order.name
       value: A
       caseInsensitive: true
 then:

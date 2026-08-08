@@ -24,7 +24,7 @@ when:
     concurrency: optimistic
   writeSequence:
     - mutation: update
-      entity: Car
+      entity: parallax.compatibility.Car
       statements: 1
       note: rename Car 1 under an optimistic gate; tag guard rides with the pk, gate binds last
       rows:

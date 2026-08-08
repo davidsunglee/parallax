@@ -19,7 +19,7 @@ model: models/orders.yaml
 tags: [m-op-algebra, group, boolean, precedence, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     and:
       operands:
@@ -27,9 +27,9 @@ when:
             operand:
               or:
                 operands:
-                  - greaterThanEquals: { attr: Order.qty, value: 25 }
-                  - lessThanEquals: { attr: Order.qty, value: 5 }
-        - eq: { attr: Order.active, value: true }
+                  - greaterThanEquals: { attr: parallax.compatibility.Order.qty, value: 25 }
+                  - lessThanEquals: { attr: parallax.compatibility.Order.qty, value: 5 }
+        - eq: { attr: parallax.compatibility.Order.active, value: true }
   equivalentEncodings:
     - and:
         operands:
@@ -37,18 +37,18 @@ when:
               operand:
                 or:
                   operands:
-                    - greaterThanEquals: { attr: Order.qty, value: 25 }
-                    - lessThanEquals: { attr: Order.qty, value: 5 }
-          - eq: { value: true, attr: Order.active }
+                    - greaterThanEquals: { attr: parallax.compatibility.Order.qty, value: 25 }
+                    - lessThanEquals: { attr: parallax.compatibility.Order.qty, value: 5 }
+          - eq: { value: true, attr: parallax.compatibility.Order.active }
     - and:
         operands:
           - group:
               operand:
                 or:
                   operands:
-                    - greaterThanEquals: { value: 25, attr: Order.qty }
-                    - lessThanEquals: { value: 5, attr: Order.qty }
-          - eq: { attr: Order.active, value: true }
+                    - greaterThanEquals: { value: 25, attr: parallax.compatibility.Order.qty }
+                    - lessThanEquals: { value: 5, attr: parallax.compatibility.Order.qty }
+          - eq: { attr: parallax.compatibility.Order.active, value: true }
 then:
   statements:
     - sql:

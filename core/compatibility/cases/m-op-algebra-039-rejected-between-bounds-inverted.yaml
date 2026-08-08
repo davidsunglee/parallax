@@ -15,7 +15,7 @@ shape: rejected
 when:
   operation:
     between:
-      attr: Order.price
+      attr: parallax.compatibility.Order.price
       lower: 50.75
       upper: 20.00
 then:

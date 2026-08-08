@@ -22,13 +22,13 @@ given:
 when:
   writeSequence:
     - mutation: update
-      entity: AuditSeq
+      entity: parallax.compatibility.AuditSeq
       statements: 1
       note: reserve a block of 1 (next_val += 1), base = 1
       rows:
         - { name: entry_seq, nextVal: { increment: 1 } }
     - mutation: insert
-      entity: AuditEntry
+      entity: parallax.compatibility.AuditEntry
       statements: 1
       note: open a milestone [txInstant, infinity) carrying the reserved id 1
       rows:

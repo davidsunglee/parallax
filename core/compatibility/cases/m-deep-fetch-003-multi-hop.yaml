@@ -14,15 +14,15 @@ model: models/orders.yaml
 tags: [m-deep-fetch, m-op-list, multi-hop, relationship, slice-managed-1]
 shape: read
 when:
-  targetEntity: Order
+  targetEntity: parallax.compatibility.Order
   operation:
     deepFetch:
       operand:
         in:
-          attr: Order.id
+          attr: parallax.compatibility.Order.id
           values: [1, 42]
       paths:
-        - { segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }
+        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
 then:
   statements:
     - sql:

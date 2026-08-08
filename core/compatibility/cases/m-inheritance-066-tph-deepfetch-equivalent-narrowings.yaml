@@ -18,14 +18,14 @@ compileEligibility:
   reason: query-result-dependent
   note: "deep-fetch child level - the deduplicated pets[Cat,Dog] view's shared animal-table IN-list binds are the distinct owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: Person
+  targetEntity: parallax.compatibility.Person
   operation:
     deepFetch:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: Person.pets, narrow: { to: [Pet] } }] }
-        - { segments: [{ rel: Person.pets, narrow: { to: [Cat, Dog] } }] }
+        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Pet] } }] }
+        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Cat, parallax.compatibility.Dog] } }] }
 then:
   statements:
     - sql:

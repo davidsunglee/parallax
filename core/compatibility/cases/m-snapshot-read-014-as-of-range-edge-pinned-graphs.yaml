@@ -13,12 +13,12 @@ model: models/invoice.yaml
 tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, temporal, as-of-range, edge-pinned, graph, audit-only, slice-snapshot-1]
 shape: read
 when:
-  targetEntity: InvoiceLine
+  targetEntity: parallax.compatibility.InvoiceLine
   operation:
     asOfRange:
       operand:
         eq:
-          attr: InvoiceLine.id
+          attr: parallax.compatibility.InvoiceLine.id
           value: 1000
       dimension: transaction-time
       start: "2024-02-01T00:00:00+00:00"

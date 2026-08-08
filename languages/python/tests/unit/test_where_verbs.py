@@ -94,13 +94,13 @@ _WHERE_SHIPMENT = DomainModel(_WhereShipment)
 def test_set_on_a_scalar_attribute_builds_an_attribute_assignment() -> None:
     assignment = vom.Customer.name.set("Ada")
     assert isinstance(assignment, AttributeAssignment)
-    assert str(assignment.attr) == "Customer.name"
+    assert str(assignment.attr) == "parallax.compatibility.Customer.name"
     assert assignment.value == "Ada"
 
 
 def test_set_string_matches_the_class_member_reference() -> None:
     assignment = vom.Customer.name.set("Ada")
-    assert str(assignment) == "Customer.name"
+    assert str(assignment) == "parallax.compatibility.Customer.name"
 
 
 def test_set_on_a_nested_value_object_path_raises() -> None:

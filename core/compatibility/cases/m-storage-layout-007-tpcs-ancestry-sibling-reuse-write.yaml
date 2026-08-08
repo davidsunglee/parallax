@@ -17,13 +17,13 @@ shape: writeSequence
 when:
   writeSequence:
     - mutation: insert
-      entity: LayoutAudit
+      entity: parallax.compatibility.LayoutAudit
       statements: 1
       note: insert into the audit table; ancestry chain then the reused detail column
       rows:
         - { id: 1, title: Quarterly audit, auditor: Ingrid }
     - mutation: insert
-      entity: LayoutSurvey
+      entity: parallax.compatibility.LayoutSurvey
       statements: 1
       note: insert into the sibling survey table, which reuses the same column spelling
       rows:

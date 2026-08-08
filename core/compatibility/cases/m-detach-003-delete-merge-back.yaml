@@ -12,7 +12,7 @@ given:
 when:
   writeSequence:
     - mutation: delete
-      entity: Account
+      entity: parallax.compatibility.Account
       statements: 1
       note: merge-back of a deleted detached copy deletes the original row
       rows:
