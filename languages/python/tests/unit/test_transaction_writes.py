@@ -40,7 +40,7 @@ from _transact_support import (
 
 from _support import mirrored_models as mm
 from parallax.conformance.class_models import MODELS
-from parallax.conformance.read_models import CardPayment, Payment
+from parallax.conformance.read_models import CardPayment, Payment, Person
 from parallax.conformance.vo_models import Contact, Shipment
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr, opt_lock
 from parallax.core.db_port import Row
@@ -1122,6 +1122,54 @@ def test_a_value_another_lifecycle_produced_is_refused_by_both_families(verb: st
     with pytest.raises(KeyedWriteValueError) as refusal:
         Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
     assert refusal.value.code == "write-value-foreign-lifecycle"
+
+
+# --------------------------------------------------------------------------- #
+# What a framework-managed SOURCE is (ADR 0010): the managed lifecycle, so     #
+# every `Database` over one store is one source. The two arrangements below    #
+# are one situation — a second handle's read and this handle's own             #
+# non-transactional read both hand a write a value the writing unit of work    #
+# never observed — so they MUST reach the identical outcome. The same-handle   #
+# arrangement is what breaks first if handle identity is ever threaded onto a  #
+# materialized node.                                                           #
+# --------------------------------------------------------------------------- #
+def _person_read_outside_the_writing_transaction(
+    port: RecordingPort, *, second_handle: bool
+) -> tuple[Database, Person]:
+    """A `Person` a managed read produced, plus the `Database` that will write it.
+
+    ``second_handle`` reads through a DIFFERENT `Database` over the same port;
+    otherwise the writing handle reads it itself, non-transactionally.
+    """
+    writer = db_for(PERSON, port)
+    reader = db_for(PERSON, port) if second_handle else writer
+    return writer, reader.find(Person.where(Person.id == 1)).result()
+
+
+@pytest.mark.parametrize("second_handle", [True, False], ids=["second-handle", "same-handle"])
+def test_a_read_outside_the_writing_transaction_is_still_this_source(second_handle: bool) -> None:
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+    writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        writer.transact(lambda tx: tx.insert(node))
+    assert refusal.value.code == "write-value-already-stored"
+
+
+@pytest.mark.parametrize("second_handle", [True, False], ids=["second-handle", "same-handle"])
+def test_an_unversioned_update_of_such_a_value_is_addressed_by_its_key(second_handle: bool) -> None:
+    # Provenance carries no cross-read guarantee, and an unversioned target has
+    # nothing to gate on — so the update the framework never observed a read for
+    # is planned and emitted, which is what unversioned means.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
+    writer, node = _person_read_outside_the_writing_transaction(port, second_handle=second_handle)
+
+    writer.transact(lambda tx: tx.update(node.edit(name="Grace")))
+    assert port.ops[-3:] == [
+        ("begin",),
+        ("write", POSTGRES.to_driver_sql("update person set name = ? where id = ?"), ("Grace", 1)),
+        ("commit",),
+    ]
 
 
 def test_update_of_an_unedited_node_buffers_nothing() -> None:
