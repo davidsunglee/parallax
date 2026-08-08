@@ -607,6 +607,25 @@ def test_schema_accepts_minimal_case_for_every_shape(shape: str) -> None:
     assert errors == [], f"{shape} case should validate, got: {[e.message for e in errors]}"
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "detached-relationship-load",
+        "transaction-time-pin-read-only",
+        "write-value-not-stored",
+        "write-value-already-stored",
+        "write-value-foreign-lifecycle",
+    ],
+)
+def test_schema_accepts_every_expect_error_code(code: str) -> None:
+    # The closed application-lifecycle vocabulary: the m-detach / m-identity-map
+    # pair plus m-unit-work's three write-value provenance refusals. The
+    # `action-unknown-expect-error` rejection fixture pins the other direction.
+    doc = _action_identity_error_case()
+    doc["when"]["scenario"][2]["expectError"] = code
+    assert _is_valid(doc)
+
+
 # --- value-object document whose content is marker-SHAPED -------------------
 #
 # A DB-computed marker (`{computed}` / `{increment}`) vs a value-object document is

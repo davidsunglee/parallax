@@ -410,7 +410,9 @@ golden SQL cannot see, mirroring the explicit-verdict shape of `identityCheck`:
 - **`errors`** — one entry per scenario step declaring `expectError`, each
   `{ at, errorClass, native? }`: `at` the step pointer, `errorClass` the neutral
   application-lifecycle error the verb raised (`detached-relationship-load` /
-  `transaction-time-pin-read-only` — `m-detach` / `m-identity-map`, **distinct** from the
+  `transaction-time-pin-read-only` / `write-value-not-stored` /
+  `write-value-already-stored` / `write-value-foreign-lifecycle` — `m-detach` /
+  `m-identity-map` / `m-unit-work`, **distinct** from the
   `m-db-error` taxonomy), and an optional `native` witness carrying the raw
   implementation error.
 

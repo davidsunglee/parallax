@@ -179,6 +179,59 @@ canonical form losslessly (`serialize(deserialize(x)) == x`), the write-side of 
 A Write Instruction is **buffered author intent** and stays that until flush. It
 is never a Planned Write, and a Planned Write is never serialized back into one.
 
+### Write value provenance
+
+A keyed frontend verb is handed a **value**, not an instruction: the instruction's
+row is derived from that value. Which verbs accept a given value is decided by the
+value's **provenance** — whether this framework produced it from a read of this
+store — and never by whether an author has since changed it. Editedness answers a
+different question: it decides what a write *contains*, not whether the verb the
+author called was the right one.
+
+Three provenance answers are refusals, one per value kind some verb does not
+accept:
+
+```text
+WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
+```
+
+- **NotStored** (`write-value-not-stored`) — an `update` / `updateUntil` verb was
+  handed a value this framework did not produce from a read of this store. No
+  stored row exists for it to address, so the refusal names the `insert` verb as
+  the one that accepts it.
+- **AlreadyStored** (`write-value-already-stored`) — an `insert` / `insertUntil`
+  verb was handed a value this framework **did** produce from a read of this
+  store. That value already denotes a stored row, so the refusal names the
+  `update` verb.
+- **ForeignLifecycle** (`write-value-foreign-lifecycle`) — the value was produced
+  by a read through some **other** framework-managed source than the one this verb
+  writes through. Both families refuse it rather than mistake it for a value this
+  store produced.
+
+The set is **closed**, and the tags are **neutral**: each names a class of value a
+verb rejects, never a language's exception type. The one fact an implementation
+**MUST** be able to decide about a value it is handed is *whether this framework
+produced it from a read of this store, and through which source* — which any
+implementation that materializes values already knows at the moment it
+materializes them. How that fact is retained — carried on the value, held in an
+identity map, held in a session registry — is the implementation's own affair, and
+no conforming behavior depends on the choice.
+
+Two consequences are normative:
+
+- A value this store produced that no author has changed is **not** a refusal for
+  an `update` verb. It buffers nothing, issues no statement, and raises nothing —
+  the same outcome as an edit whose net change is empty. Requiring an author to
+  test each value before writing it would defeat the change tracking the framework
+  performs on the author's behalf.
+- Every refusal is decided from provenance **before** the row is derived, so a
+  value a verb does not accept reaches no row derivation, no buffer, no plan, no
+  SQL, and no database. A refusal is never a translation of a lower-level failure
+  raised further down that path.
+
+The `delete`, `terminate`, and `terminateUntil` verbs derive an identity row alone
+and take no position on provenance.
+
 ## Write finalization
 
 ### The Write Planner

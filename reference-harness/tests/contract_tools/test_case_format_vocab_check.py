@@ -1,11 +1,12 @@
-"""Docker-free tests for the `rejectedRule` prose <-> schema vocabulary check.
+"""Docker-free tests for the case-format prose <-> schema vocabulary check.
 
-Guards the normative property `case_format_vocab_check` exists to prove: the
-`rejectedRule` vocabulary `core/spec/m-case-format.md` documents in prose is
-EXACTLY the `enum` `core/schemas/compatibility-case.schema.json` declares —
-neither side may drift from the other. The drift is silent and
-safety-critical: a schema `enum` missing a rule the prose documents makes a
-case pinning that rule fail schema validation regardless of whether every
+Guards the normative property `case_format_vocab_check` exists to prove: each
+closed vocabulary `core/spec/m-case-format.md` documents in prose — the
+`rejectedRule` rule set and a scenario step's `expectError` code set — is
+EXACTLY the `enum` `core/schemas/compatibility-case.schema.json` declares for
+it, and neither side may drift from the other. The drift is silent and
+safety-critical: a schema `enum` missing a value the prose documents makes a
+case pinning that value fail schema validation regardless of whether every
 implementation classifies it correctly.
 """
 
@@ -13,11 +14,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
+
+import pytest
 
 from reference_harness.case_format_vocab_check import (
+    VocabMismatch,
     check,
     main,
+    prose_expect_errors,
     prose_rejected_rules,
+    schema_expect_errors,
     schema_rejected_rules,
 )
 
@@ -85,6 +92,39 @@ def test_real_schema_enum_is_the_full_forty_seven_rule_set() -> None:
     assert "inheritance-physical-column-collision" not in rules
 
 
+_EXPECT_ERRORS = {
+    "detached-relationship-load",
+    "transaction-time-pin-read-only",
+    "write-value-not-stored",
+    "write-value-already-stored",
+    "write-value-foreign-lifecycle",
+}
+
+_FOREIGN_LIFECYCLE_BULLET = (
+    "  - `write-value-foreign-lifecycle` — a write verb handed a value produced by a\n"
+    "    read through some other framework-managed source than the one it writes\n"
+    "    through (`m-unit-work`).\n"
+)
+
+
+def _schema_expect_error_enum(schema: dict[str, object]) -> list[str]:
+    """The live per-step `expectError` enum list, for in-place mutation."""
+    node = cast("dict[str, Any]", schema)
+    for key in ("properties", "when", "properties", "scenario", "items", "properties"):
+        node = node[key]
+    return cast("list[str]", node["expectError"]["enum"])
+
+
+def test_real_prose_expect_error_vocabulary_is_the_full_five_code_set() -> None:
+    # A sanity floor: the parser read the whole nested bullet list under the
+    # `expectError` bullet, not a subset a drifted anchor truncated.
+    assert prose_expect_errors(_real_markdown()) == _EXPECT_ERRORS
+
+
+def test_real_schema_expect_error_enum_is_the_full_five_code_set() -> None:
+    assert schema_expect_errors(_real_schema()) == _EXPECT_ERRORS
+
+
 def test_missing_schema_entry_is_reported() -> None:
     # The exact historical regression: the schema `enum` drops a rule the
     # prose still documents.
@@ -95,6 +135,50 @@ def test_missing_schema_entry_is_reported() -> None:
     assert len(errors) == 1
     assert "inheritance-temporality-not-root-owned" in errors[0]
     assert "absent from the schema enum" in errors[0]
+
+
+def test_missing_schema_expect_error_entry_is_reported() -> None:
+    # The same drift on the second vocabulary: the per-step `expectError` enum
+    # drops a code the prose still documents.
+    schema = _real_schema()
+    _schema_expect_error_enum(schema).remove("write-value-foreign-lifecycle")
+    errors = check(_real_markdown(), schema)
+    assert len(errors) == 1
+    assert "expectError" in errors[0]
+    assert "write-value-foreign-lifecycle" in errors[0]
+    assert "absent from the schema enum" in errors[0]
+
+
+def test_missing_prose_expect_error_entry_is_reported() -> None:
+    # The reverse drift: the schema declares a code the prose no longer names.
+    markdown = _real_markdown().replace(_FOREIGN_LIFECYCLE_BULLET, "")
+    assert "write-value-foreign-lifecycle" not in prose_expect_errors(markdown)
+    errors = check(markdown, _real_schema())
+    assert len(errors) == 1
+    assert "expectError" in errors[0]
+    assert "write-value-foreign-lifecycle" in errors[0]
+    assert "undocumented in m-case-format.md" in errors[0]
+
+
+def test_expect_error_bullet_moved_out_of_its_owning_section_is_rejected() -> None:
+    # The whole bullet list relocates under another heading: the extractor must
+    # fail loudly rather than silently report an empty vocabulary.
+    markdown = _real_markdown().replace("- **`expectError`** —", "- **`expectErrorMoved`** —", 1)
+    with pytest.raises(VocabMismatch, match="expectError"):
+        prose_expect_errors(markdown)
+
+
+def test_schema_expect_error_extractor_rejects_a_malformed_step_shape() -> None:
+    # An intermediate node of an unexpected type collapses to the missing-enum
+    # mismatch instead of escaping as a KeyError or TypeError.
+    malformed: tuple[dict[str, object], ...] = (
+        {},
+        {"properties": {"when": []}},
+        {"properties": {"when": {"properties": {"scenario": {"items": {"properties": {}}}}}}},
+    )
+    for schema in malformed:
+        with pytest.raises(VocabMismatch, match="no expectError enum"):
+            schema_expect_errors(schema)
 
 
 def test_missing_prose_entry_is_reported() -> None:

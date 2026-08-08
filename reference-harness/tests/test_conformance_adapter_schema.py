@@ -6,6 +6,7 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
 from jsonschema import Draft202012Validator
 
 from reference_harness.paths import schemas_dir
@@ -175,6 +176,27 @@ def test_run_rejects_unknown_expected_state() -> None:
         ],
     }
     assert list(_validator().iter_errors(_valid_run(observations)))
+
+
+@pytest.mark.parametrize(
+    "error_class",
+    [
+        "detached-relationship-load",
+        "transaction-time-pin-read-only",
+        "write-value-not-stored",
+        "write-value-already-stored",
+        "write-value-foreign-lifecycle",
+    ],
+)
+def test_run_accepts_every_application_lifecycle_error_class(error_class: str) -> None:
+    # The `errors` observation's vocabulary is the case format's whole closed
+    # `expectError` set: the m-detach / m-identity-map pair plus m-unit-work's
+    # three write-value provenance refusals.
+    observations = {
+        "roundTrips": 1,
+        "errors": [{"at": "/scenario/2", "errorClass": error_class}],
+    }
+    assert list(_validator().iter_errors(_valid_run(observations))) == []
 
 
 def test_run_rejects_unknown_error_class() -> None:

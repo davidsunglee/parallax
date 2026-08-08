@@ -1,19 +1,29 @@
-"""Assert `m-case-format.md`'s prose `rejectedRule` vocabulary equals the
-`compatibility-case.schema.json` enum (the closed-vocabulary two-home
+"""Assert `m-case-format.md`'s prose closed vocabularies equal the matching
+`compatibility-case.schema.json` enums (the closed-vocabulary two-home
 consistency check)::
 
     uv run python -m reference_harness.case_format_vocab_check core/spec
 
-``then.rejectedRule`` is documented in TWO places that must never drift apart:
-the normative prose in ``core/spec/m-case-format.md``'s "Rejected cases"
-section, and the schema `enum` in ``compatibility-case.schema.json``. A schema
-`enum` missing an entry the prose already documents is a safety-critical gap,
-since a rejected case pinning that rule would fail SCHEMA validation
-regardless of whether every implementation classified it correctly. This is a
-mechanical guard: it parses both sides and asserts set equality, independent
-of either author remembering to update the other.
+Two case-format vocabularies are documented in TWO places each that must never
+drift apart — the normative prose in ``core/spec/m-case-format.md`` and an
+``enum`` in ``compatibility-case.schema.json``:
 
-Parsing the prose: the "Rejected cases" section names each rule in one of two
+1. ``then.rejectedRule``, from the "Rejected cases" section against the
+   schema's ``properties.then.properties.rejectedRule`` enum;
+2. a scenario step's ``expectError``, from the "Per-step lifecycle observables"
+   section against the per-step enum at
+   ``properties.when.properties.scenario.items.properties.expectError`` — the
+   ``expectError`` position is on the STEP shape, not under ``then``, so it is
+   a different schema path rather than a second ``then`` property.
+
+A schema `enum` missing an entry the prose already documents is a
+safety-critical gap, since a case pinning that value would fail SCHEMA
+validation regardless of whether every implementation classified it correctly.
+This is a mechanical guard: it parses both sides of both vocabularies and
+asserts set equality, independent of either author remembering to update the
+other.
+
+Parsing the prose. The "Rejected cases" section names each rule in one of two
 shapes. **Operation** / **Write** / **Subtype-write** rules are each a
 top-level bullet whose FIRST inline-code span is the rule name (` - `rule-name`
 — description`); this module reads the rule name at the start of every such
@@ -21,7 +31,10 @@ bullet line. **Model** rules are instead named inline, comma-separated, inside
 one prose paragraph opening "**Model** rules (...)"; this module extracts
 every inline-code span in that one paragraph, excluding a module reference
 (`` `m-inheritance` ``, `` `m-op-algebra` ``, …) or a dotted field reference
-(`` `when.model` ``) — neither of which is ever a `rejectedRule` value.
+(`` `when.model` ``) — neither of which is ever a `rejectedRule` value. The
+``expectError`` vocabulary is instead one NESTED bullet list under the
+"Per-step lifecycle observables" section's ``expectError`` bullet; this module
+reads the first inline-code span of every nested bullet under it.
 """
 
 from __future__ import annotations
@@ -33,7 +46,14 @@ from pathlib import Path
 from .paths import schemas_dir
 from .schemas import load_json
 
-__all__ = ["VocabMismatch", "main", "prose_rejected_rules", "schema_rejected_rules"]
+__all__ = [
+    "VocabMismatch",
+    "main",
+    "prose_expect_errors",
+    "prose_rejected_rules",
+    "schema_expect_errors",
+    "schema_rejected_rules",
+]
 
 # A rule identifier: lower-kebab-case, never a module reference (`m-xxx`) and
 # never containing a dot (a `when.foo` field reference) — both appear as
@@ -45,15 +65,36 @@ _RULE_NAME = re.compile(r"[a-z][a-z0-9-]*")
 # later backticked spans, which this deliberately ignores).
 _BULLET_RULE = re.compile(r"^-\s*`([a-z][a-z0-9-]*)`", re.MULTILINE)
 
+# A NESTED bullet's own code: the first inline-code span after an INDENTED
+# bullet dash. The owning bullet's own prose names other backticked spans
+# (`m-db-error`, `errorClass`, …), none of which starts a nested bullet.
+_NESTED_BULLET_CODE = re.compile(r"^\s+-\s*`([a-z][a-z0-9-]*)`", re.MULTILINE)
+
+# The start of the bullet FOLLOWING a top-level bullet's whole body.
+_TOP_LEVEL_BULLET = re.compile(r"^-\s", re.MULTILINE)
+
 _HEADING = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
 
 _REJECTED_HEADING_MARKER = "Rejected cases"
 _MODEL_RULES_MARKER = "**Model** rules"
 _MODEL_RULES_END_MARKER = "invariant)."
 
+_OBSERVABLES_HEADING_MARKER = "Per-step lifecycle observables"
+_EXPECT_ERROR_MARKER = "- **`expectError`**"
+
+_EXPECT_ERROR_SCHEMA_PATH = (
+    "properties",
+    "when",
+    "properties",
+    "scenario",
+    "items",
+    "properties",
+    "expectError",
+)
+
 
 class VocabMismatch(ValueError):
-    """The prose and schema `rejectedRule` vocabularies disagree."""
+    """A prose and schema case-format vocabulary disagree, or a home is malformed."""
 
 
 def _section(markdown: str, heading_contains: str) -> str:
@@ -100,6 +141,31 @@ def prose_rejected_rules(markdown: str) -> set[str]:
     return _bulleted_rules(section) | _model_rules(section)
 
 
+def prose_expect_errors(case_format_markdown: str) -> set[str]:
+    """The `expectError` vocabulary `m-case-format.md`'s prose documents.
+
+    Reads the nested bullet list under the "Per-step lifecycle observables"
+    section's ``expectError`` bullet, which ends where the next TOP-LEVEL
+    bullet begins. Raises `VocabMismatch` when the section or that bullet is
+    missing, or when the bullet carries no nested code — each of which means
+    the parsing anchor drifted rather than that the vocabulary emptied.
+    """
+    section = _section(case_format_markdown, _OBSERVABLES_HEADING_MARKER)
+    if _EXPECT_ERROR_MARKER not in section:
+        raise VocabMismatch(
+            f"no {_EXPECT_ERROR_MARKER!r} bullet found in the "
+            f"{_OBSERVABLES_HEADING_MARKER!r} section"
+        )
+    start = section.index(_EXPECT_ERROR_MARKER) + len(_EXPECT_ERROR_MARKER)
+    rest = section[start:]
+    following = _TOP_LEVEL_BULLET.search(rest)
+    bullet = rest[: following.start()] if following else rest
+    codes = set(_NESTED_BULLET_CODE.findall(bullet))
+    if not codes:
+        raise VocabMismatch("the expectError bullet lists no nested error codes")
+    return codes
+
+
 def schema_rejected_rules(schema: dict[str, object]) -> set[str]:
     """The `rejectedRule` enum `compatibility-case.schema.json` declares.
 
@@ -119,23 +185,61 @@ def schema_rejected_rules(schema: dict[str, object]) -> set[str]:
     raise VocabMismatch("compatibility-case.schema.json declares no rejectedRule enum")
 
 
-def check(case_format_markdown: str, schema: dict[str, object]) -> list[str]:
-    """Every inconsistency between the prose and schema vocabularies (empty ⇒ consistent)."""
-    prose = prose_rejected_rules(case_format_markdown)
-    schema_enum = schema_rejected_rules(schema)
+def schema_expect_errors(schema: dict[str, object]) -> set[str]:
+    """The `expectError` enum `compatibility-case.schema.json` declares.
+
+    Lives on the SCENARIO STEP shape rather than under ``then``: a step, not a
+    case, declares the error its verb raises.
+    """
+    node: object = schema
+    for key in _EXPECT_ERROR_SCHEMA_PATH:
+        if not isinstance(node, dict):
+            node = None
+            break
+        node = node.get(key)
+    enum = node.get("enum") if isinstance(node, dict) else None
+    if isinstance(enum, list):
+        return {str(value) for value in enum}
+    raise VocabMismatch(
+        "compatibility-case.schema.json declares no expectError enum at "
+        f"{'.'.join(_EXPECT_ERROR_SCHEMA_PATH)}"
+    )
+
+
+def _vocabulary_errors(vocabulary: str, prose: set[str], schema_enum: set[str]) -> list[str]:
+    """Both drift directions between one vocabulary's two homes."""
     errors: list[str] = []
     missing_from_schema = sorted(prose - schema_enum)
     missing_from_prose = sorted(schema_enum - prose)
     if missing_from_schema:
         errors.append(
-            f"documented in m-case-format.md but absent from the schema enum: {missing_from_schema}"
+            f"{vocabulary}: documented in m-case-format.md but absent from the schema enum: "
+            f"{missing_from_schema}"
         )
     if missing_from_prose:
         errors.append(
-            "declared in the schema enum but undocumented in m-case-format.md: "
+            f"{vocabulary}: declared in the schema enum but undocumented in m-case-format.md: "
             f"{missing_from_prose}"
         )
     return errors
+
+
+def check(case_format_markdown: str, schema: dict[str, object]) -> list[str]:
+    """Every inconsistency between the prose and schema homes of BOTH the
+    `rejectedRule` and `expectError` vocabularies (empty ⇒ consistent).
+
+    Propagates `VocabMismatch` when a home is missing or malformed; the
+    returned list covers only set-level disagreement between parsed homes.
+    """
+    return _vocabulary_errors(
+        "rejectedRule",
+        prose_rejected_rules(case_format_markdown),
+        schema_rejected_rules(schema),
+    ) + _vocabulary_errors(
+        "expectError",
+        prose_expect_errors(case_format_markdown),
+        schema_expect_errors(schema),
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -169,7 +273,10 @@ def main(argv: list[str]) -> int:
             print(f"  - {error}", file=sys.stderr)
         return 1
 
-    print("case-format vocabulary check OK: prose and schema rejectedRule vocabularies match")
+    print(
+        "case-format vocabulary check OK: prose and schema rejectedRule and "
+        "expectError vocabularies match"
+    )
     return 0
 
 
