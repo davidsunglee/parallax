@@ -270,7 +270,6 @@
     "VoDocumentViolation",
     "WriteAssignmentError",
     "accept_metamodel",
-    "ambiguous_entity_spellings",
     "canonical_issue_key",
     "canonical_location_key",
     "compile_metadata",

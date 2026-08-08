@@ -334,11 +334,17 @@ def ambiguous_entity_spellings(model: Metamodel, name: str) -> tuple[str, ...]:
 
     This classifies :func:`entity_by_name`'s miss, which answers two different
     mistakes the same way: a spelling that resolves nowhere because it is shared,
-    and one that resolves nowhere because the model declares it at all. Every
-    boundary telling those apart asks here and raises its OWN carrier — the
+    and one that resolves nowhere because the model does not declare it at all.
+    Every boundary telling those apart asks here and raises its OWN carrier — the
     normative `reference-ambiguous-entity-name` refusal in the vocabulary that
     boundary reports in — so the classification and the sorted spellings a
     refusal names exist once while no carrier is imposed on any caller.
+
+    Reached through this defining module by each boundary that needs it rather
+    than through the package's public surface: it composes a refusal's message
+    from a miss :func:`entity_by_name` already reported, so it is a collaboration
+    between first-party boundaries and no part of what a developer resolves a
+    spelling with.
     """
     shared = sorted(
         entity.identity.canonical for entity in model.entities if entity.identity.name == name

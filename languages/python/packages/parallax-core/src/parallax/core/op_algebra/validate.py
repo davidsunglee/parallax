@@ -95,10 +95,10 @@ from parallax.core.metamodel import (
     RelationshipDeclaration,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
-    ambiguous_entity_spellings,
     entity_by_name,
     split_reference,
 )
+from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.op_algebra.nodes import (
     All,
     And,

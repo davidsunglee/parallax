@@ -42,12 +42,9 @@ from types import MappingProxyType
 from typing import Final, Literal, cast
 
 from parallax.core import inheritance, op_algebra
-from parallax.core.metamodel import (
-    EntityMetadata,
-    ambiguous_entity_spellings,
-    entity_by_name,
-)
+from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.op_algebra import Operation
 
 __all__ = [
