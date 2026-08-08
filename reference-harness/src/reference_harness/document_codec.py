@@ -272,22 +272,24 @@ def _shortest_number(type_spelling: str, value: Any) -> Any:
     through :func:`_float_at_width`, the same leg a read narrows by, so one number
     cannot be the encoding while writing and not while reading.
 
-    Which float the authored value names is settled BEFORE any of that, and a value
-    naming none is refused here rather than rendered as the nearest one. A fractional
-    number is a rendering, so it names the float of the declared width nearest it:
-    ``1048576.2`` names binary32 ``1048576.25`` and is that value's own encoding. An
-    integer names a value rather than a rendering, so an integer no float of the width
-    holds exactly names nothing — ``2**24 + 1`` at binary32 and ``2**53 + 1`` at
-    binary64 are outside the space, not values to round into it — and neither does a
-    magnitude the width overflows, a non-finite float, or a non-number. Refusing them
-    is what the ``decimal``, ``bytes``, ``date``, ``time``, ``timestamp`` and ``uuid``
-    rows already do with a literal they cannot spell. The integer arm needs it most:
-    narrowing first and rendering afterwards answers ``2**24 + 1`` with ``16777216``,
-    which is not the value it was given.
+    Which float the authored value names is settled BEFORE any of that, by
+    :func:`_float_at_width`: every number names the float of the declared width
+    nearest it, so ``1048576.2`` names binary32 ``1048576.25`` and ``2**24 + 1``
+    names ``16777216``. Only a magnitude the width overflows, a non-finite float, or
+    a non-number names nothing, and those are refused here rather than rendered —
+    what the ``decimal``, ``bytes``, ``date``, ``time``, ``timestamp`` and ``uuid``
+    rows already do with a literal they cannot spell.
+
+    So an authored number the width cannot hold exactly encodes as the value it
+    names, not as itself: a case writing ``2**24 + 1`` at a `float32` puts
+    ``16777216`` in the document. That is the same narrowing the case format's
+    membership rule admits (`m-case-format` "In-space"), deliberately, and the two
+    MUST agree — a value the write validator accepts and this table refused would be
+    a row no case could author.
     """
     binary32 = type_spelling == "float32"
     target = _float_at_width(value, binary32=binary32)
-    if target is None or (_is_integer(value) and target != value):
+    if target is None:
         raise DocumentEncodingError(f"{value!r} names no {type_spelling} value")
     for precision in range(1, _MAX_SIGNIFICANT_DIGITS + 1):
         candidate = float(f"{target:.{precision}g}")

@@ -291,6 +291,33 @@ shortest-round-trip float formatter produces, the even-digit tie-break included;
 a fixed-width `17`-significant-digit rendering is not admissible, even though it
 also round-trips.
 
+**A JSON number names the float of the declared width nearest it.** The encoding
+rule above is stated in terms of what a number *decodes back to*, so that decode
+belongs to this table too: a number at a `float32` names the binary32 value
+nearest it and a number at a `float64` the nearest binary64, under IEEE
+round-to-nearest-even, and only a magnitude that would round to an infinity —
+`1e39` at a `float32` — names no value at all. It is the *number* that is read,
+never its spelling or the carrier a host parser put it in: `20` and `20.0` are
+one JSON number, and so are `16777217` and `16777217.0`, so a consumer whose
+parser hands the first of each pair back as an integer and the second as a float
+MUST still answer the same value for both. The one distinction this rule does
+draw is the width, and it is the same one the encoding draws: `1048576.2` names
+binary32 `1048576.25` at a `float32` and a different, exactly-representable
+binary64 at a `float64`.
+
+*What nearest-value decoding gives up, deliberately.* It is not exact. A number
+no float of the declared width represents exactly is still admitted, and it names
+a **different** value than the one written: `16777217` at a `float32` names
+`16777216`, and `9007199254740993` at a `float64` names `9007199254740992`. A
+writer that cares is protected by the *encoding* rule, which never produces such
+a number for a value it holds; a document carrying one was written by something
+that did not follow this table, and the read seam narrows rather than refuses.
+Refusing instead cannot be spelled "the number must be exact", because a
+canonical spelling is routinely inexact — `1e30` is the number this table gives
+the binary32 value `1.0000000150474662e30` — so the honest refusing rule is
+"exact **or** already the canonical spelling of the value it rounds to", which
+narrows what a `float32` member may hold rather than how a number is read.
+
 Canonical float rendering is a writer obligation. A read seam MUST reject a
 noncanonical stored number when its carrier preserves enough information to
 distinguish that number from the canonical one. When parsing has already

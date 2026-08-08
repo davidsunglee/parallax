@@ -307,10 +307,15 @@ def test_neutral_value_conformance_is_exact_logical_membership(
 
 # A runtime write validator asks membership of a value that may still carry its
 # portable literal spelling, so it decodes first and then checks membership. That
-# composite must be exact (no value the space cannot represent is admitted),
-# lossless (an integer literal spells a float value only when some float of the
-# target width carries it exactly), and total (a value outside the space
-# classifies as a non-member, never raises).
+# composite must be exact for every space whose literal is a spelling (no value the
+# space cannot represent is admitted) and total (a value outside the space classifies
+# as a non-member, never raises).
+#
+# A float literal is the one space where exactness is deliberately NOT the rule: a
+# JSON number names the float of the declared width nearest it, `16777217` and
+# `16777217.0` are one number, and only an out-of-range magnitude names none. The
+# narrowing is the stated cost — see `decode_neutral_literal`, and
+# `coerce_neutral_input` below for the narrower developer-input rule.
 def _runtime_member(value: object, declared: base.NeutralType) -> bool:
     return base.matches_neutral_type(base.decode_neutral_literal(value, declared), declared)
 
@@ -320,15 +325,21 @@ def _runtime_member(value: object, declared: base.NeutralType) -> bool:
     [
         (3, base.FLOAT64, True),
         (2**53, base.FLOAT64, True),
-        (2**53 + 1, base.FLOAT64, False),
+        (2**53 + 1, base.FLOAT64, True),
+        (float(2**53 + 1), base.FLOAT64, True),
         (10**1000, base.FLOAT64, False),
         (-(10**1000), base.FLOAT64, False),
         (3, base.FLOAT32, True),
         (2**24, base.FLOAT32, True),
-        (2**24 + 1, base.FLOAT32, False),
+        (2**24 + 1, base.FLOAT32, True),
+        (float(2**24 + 1), base.FLOAT32, True),
+        (1e30, base.FLOAT32, True),
+        (1048576.25, base.FLOAT32, True),
         (2**64, base.FLOAT32, True),
         (10**40, base.FLOAT32, False),
         (10**1000, base.FLOAT32, False),
+        (True, base.FLOAT32, False),
+        ("1.5", base.FLOAT32, False),
         ("123e4567-e89b-12d3-a456-426614174000", base.UUID, True),
         ("not-a-uuid", base.UUID, False),
         ("deadbeef", base.BYTES, True),
@@ -422,6 +433,24 @@ def test_an_exact_decimal_string_is_a_decimal_literal_too() -> None:
     assert base.decode_neutral_literal("nan", base.Decimal(18, 2)) == "nan"
     assert _runtime_member("nan", base.Decimal(18, 2)) is False
     assert _runtime_member("Infinity", base.Decimal(18, 2)) is False
+
+
+def test_a_number_literal_names_the_float_of_the_declared_width_nearest_it() -> None:
+    # The carrier a parser chose is not part of the number, so the two spellings of one
+    # JSON number decode alike, and the declared WIDTH is what decides the value.
+    assert base.decode_neutral_literal(2**24 + 1, base.FLOAT32) == 16777216.0
+    assert base.decode_neutral_literal(float(2**24 + 1), base.FLOAT32) == 16777216.0
+    assert base.decode_neutral_literal(2**24 + 1, base.FLOAT64) == float(2**24 + 1)
+    assert base.decode_neutral_literal(2**53 + 1, base.FLOAT64) == 9007199254740992.0
+    # Narrowing is lossy and admitted anyway: `16777217` is in space and names a
+    # DIFFERENT number than the one written. Refusing it would take an "exact or
+    # already canonical" rule rather than a plain exactness test, because a canonical
+    # binary32 spelling is itself routinely inexact — `1e30` is one, which
+    # `test_document_codec` pins from the encoding side.
+    assert base.decode_neutral_literal(1e30, base.FLOAT32) != 1e30
+    # Out of range still names nothing, at either width.
+    assert base.decode_neutral_literal(1e39, base.FLOAT32) == 1e39
+    assert _runtime_member(1e39, base.FLOAT32) is False
 
 
 @pytest.mark.parametrize("declared", [base.FLOAT32, base.FLOAT64])

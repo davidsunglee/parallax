@@ -256,8 +256,8 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     The inverse of the portable literal encoding, and MANY-TO-ONE where the
     encoding is one-to-one: a value is stored in exactly one canonical spelling,
     while every spelling that names it decodes here. A JSON number spells a
-    :class:`Decimal` and, when some float of the target width carries it
-    exactly, a :class:`Float32` or :class:`Float64`; an ISO-8601 string spells a
+    :class:`Decimal`, and — unless its magnitude overflows the target width — a
+    :class:`Float32` or :class:`Float64`; an ISO-8601 string spells a
     :class:`Date`, :class:`Time`, or :class:`Timestamp` at whatever UTC offset
     and with whatever optional fields the portable grammar admits; a UUID string
     spells a :class:`Uuid` in either digit case, hyphenated or bare; and a
@@ -275,20 +275,30 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     Every other space is already carried natively, so its literal decodes to
     itself.
 
-    A fractional number literal is read at the **declared width**: a
-    :class:`Float32` literal names the binary32 value nearest it, because a
-    binary32's portable literal is the shortest decimal that decodes back to it
-    *at that width* (``parallax.core.document_codec``), so reading ``1048576.2``
-    as a binary64 would answer a number no binary32 holds and the encode/decode
-    inverse would fail for exactly the values the shortest-number rule pins
-    down. An INTEGER literal stays exact instead, and the difference is not an
-    oversight: an integer names a value rather than a rendering of one, so an
-    integer no float of the width represents exactly is a literal of no float
-    space and decodes to itself.
+    A number literal is read at the **declared width**, and names the float of
+    that width NEAREST it: a :class:`Float32` literal names a binary32 value,
+    because a binary32's portable literal is the shortest decimal that decodes
+    back to it *at that width* (``parallax.core.document_codec``), so reading
+    ``1048576.2`` as a binary64 would answer a number no binary32 holds and the
+    encode/decode inverse would fail for exactly the values the shortest-number
+    rule pins down. The host carrier the literal arrived in decides nothing —
+    ``20`` and ``20.0`` are one JSON number, and so are ``16777217`` and
+    ``16777217.0`` — so an ``int`` and a ``float`` spelling the same number
+    decode alike. Only a magnitude the width cannot hold names no value.
+
+    Nearest is not exact, deliberately: a number no float of the width
+    represents exactly is a literal of the space and decodes to a DIFFERENT
+    number than the one written — ``16777217`` at a :class:`Float32` decodes to
+    ``16777216.0``. Refusing it cannot be spelled "the literal must be exact",
+    because a canonical spelling is routinely inexact (``1e30`` is the one the
+    codec gives the binary32 ``1.0000000150474662e30``); the honest refusing
+    rule is "exact or already canonical", which narrows :class:`Float32`
+    membership itself rather than this inverse. The DEVELOPER input policy is
+    the narrower one — see :func:`coerce_neutral_input`.
 
     Total and nonthrowing: a value that is not a literal of ``declared`` — a
-    spelling outside the grammar, a truth value where a number belongs, an
-    integer no float of the width represents exactly, a hexadecimal string
+    spelling outside the grammar, a truth value where a number belongs, a
+    magnitude no float of the width can hold, a hexadecimal string
     carrying a separator or an odd digit count, a :class:`Time` or
     :class:`Timestamp` literal carrying non-zero sub-microsecond precision, or an
     unrelated object — is returned unchanged, so :func:`matches_neutral_type` alone decides
@@ -296,12 +306,10 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     defect on its own.
     """
     match declared:
-        case Float64() if _is_integer(value):
-            return _integer_as_float(value, binary32=False)
-        case Float32() if _is_integer(value):
-            return _integer_as_float(value, binary32=True)
-        case Float32() if isinstance(value, float):
-            return _narrowed_binary32(value)
+        case Float64() if _is_number(value):
+            return _number_at_width(value, binary32=False)
+        case Float32() if _is_number(value):
+            return _number_at_width(value, binary32=True)
         case Decimal() if _is_integer(value):
             return _decimal.Decimal(value)
         case Decimal() if isinstance(value, float):
@@ -335,7 +343,7 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     literal, so only the input policy's own narrow, exact/lossless typed
     widenings apply: an :class:`int` for a :class:`Decimal` (exact — decimal
     construction from an integer never rounds), an :class:`int` for a
-    :class:`Float32` / :class:`Float64` (lossless only, reusing
+    :class:`Float32` / :class:`Float64` (lossless only, through
     :func:`_integer_as_float`'s own exactness test), and a canonical UUID
     string for :class:`Uuid`. Every other case — INCLUDING a :class:`float`
     for a :class:`Decimal`, which the input policy explicitly rejects — is
@@ -344,6 +352,15 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
     case-format / descriptor serde seam (:func:`decode_neutral_literal`)
     decodes once at ingestion, never a form the developer input policy itself
     admits at this boundary.
+
+    The :class:`int`-for-float widening is where the two boundaries part, and
+    the difference is the contract. :func:`decode_neutral_literal` reads a JSON
+    NUMBER, where ``16777217`` and ``16777217.0`` are one number and the
+    declared width decides the value, so it narrows to the nearest float. Here
+    a caller chose the Python type, so an :class:`int` no float of the width
+    carries exactly stays an :class:`int` and fails membership — the runtime
+    rounds nothing a caller did not ask it to (`python.md`: "integral inputs
+    must narrow exactly, while fractional inputs may round").
 
     Total and nonthrowing, exactly like :func:`decode_neutral_literal`: a
     value this function does not recognize as one of the three widenings
@@ -375,27 +392,34 @@ def _canonical_uuid_input(value: str) -> object:
     return decoded if isinstance(decoded, _uuid.UUID) and str(decoded) == value else value
 
 
-def _narrowed_binary32(value: float) -> float:
-    """``value`` as binary32 represents it.
+def _number_at_width(value: int | float, *, binary32: bool) -> float | int:
+    """``value`` as the float of the declared width nearest it, or ``value``
+    unchanged.
 
-    A magnitude binary32 cannot hold is left unchanged so
-    :func:`matches_neutral_type` refuses it, rather than overflowing to infinity
-    here.
+    A magnitude the width cannot hold is left as it came so
+    :func:`matches_neutral_type` refuses it, rather than overflowing to an
+    infinity here.
     """
     try:
-        return cast("float", _struct.unpack("<f", _struct.pack("<f", value))[0])
+        widened = float(value)
+        if binary32:
+            widened = cast("float", _struct.unpack("<f", _struct.pack("<f", widened))[0])
     except OverflowError:
         return value
+    return widened
 
 
 def _integer_as_float(value: int, *, binary32: bool) -> float | int:
     """``value`` as the float that carries it exactly, or ``value`` unchanged.
 
-    An integer spells a float value only when a float of the target width
-    represents it exactly. A magnitude that overflows the width, or one whose
-    low bits no mantissa of the width can hold, is not a literal of the space:
-    it decodes to itself so membership fails, never rounding to a nearby float
-    or overflowing to infinity.
+    The DEVELOPER input policy's widening (`python.md` "Neutral scalar type
+    mapping"), deliberately narrower than :func:`decode_neutral_literal`'s
+    number rule: a caller hands over a value in a Python type of its own
+    choosing, not a JSON number some parser typed for it, so an :class:`int`
+    widens only where the width carries it exactly and is otherwise left to fail
+    membership. A magnitude that overflows the width, or one whose low bits no
+    mantissa of the width can hold, is returned unchanged rather than rounded to
+    a nearby float or overflowed to infinity.
     """
     try:
         widened = float(value)
@@ -548,6 +572,11 @@ def _utc_offset(zone: str) -> _dt.timezone | None:
 def _is_integer(value: object) -> TypeGuard[int]:
     """Whether ``value`` is an integer rather than a truth value."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_number(value: object) -> TypeGuard[int | float]:
+    """Whether ``value`` is a JSON number — a truth value is its own kind, never one."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _is_utf8_encodable(value: str) -> bool:

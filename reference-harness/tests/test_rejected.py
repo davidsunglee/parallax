@@ -1216,9 +1216,17 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
 # document encoding is one-to-one, so the two directions are pinned together: a
 # non-canonical spelling the portable grammar admits is a member (uppercase hex, a
 # hyphenless UUID, an unpadded time, a non-UTC offset), while a literal that names no
-# value is not (an integer beyond its width, a number no float of the width holds
-# exactly, a decimal the scale cannot hold, text with no UTF-8 encoding, a separator
-# inside a hex spelling, a malformed spelling, a sub-microsecond instant).
+# value is not (an integer beyond its width, a number whose magnitude the declared
+# float width cannot hold, a decimal the scale cannot hold, text with no UTF-8
+# encoding, a separator inside a hex spelling, a malformed spelling, a
+# sub-microsecond instant).
+#
+# A float literal is where "names a value" is WIDEST: every number in range names the
+# float of the declared width nearest it, so an inexact one is a member and stores as
+# the value it names. The integer / fraction carrier the loader chose is not a
+# distinction — `16777217` and `16777217.0` are one JSON number — and exactness is
+# deliberately not the rule, since a canonical float32 spelling is itself routinely
+# inexact (`m-case-format` "In-space").
 #
 # The grammar is bounded ABOVE as well: a spelling only the host parser takes —
 # ``uuid.UUID``'s brace-wrapped and ``urn:uuid:`` forms and its indifference to
@@ -1240,12 +1248,18 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
         ("float64", "1.5", False),
         ("float64", True, False),
         ("float64", 9007199254740992, True),
-        ("float64", 9007199254740993, False),
+        ("float64", 9007199254740993, True),
+        ("float64", 9007199254740993.0, True),
+        ("float64", 10**400, False),
         ("float64", 1.7976931348623157e308, True),
         ("float32", 1.5, True),
         ("float32", 16777216, True),
-        ("float32", 16777217, False),
-        ("float32", 2**31 - 1, False),
+        ("float32", 16777217, True),
+        ("float32", 16777217.0, True),
+        ("float32", 1e30, True),
+        ("float32", 1048576.25, True),
+        ("float32", 2**31 - 1, True),
+        ("float32", 1e39, False),
         ("float32", 1e100, False),
         ("float32", 1.7976931348623157e308, False),
         ("string", "s", True),

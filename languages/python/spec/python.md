@@ -1820,6 +1820,14 @@ or descriptor authoring form and performs no audit stamping.
   non-finite values are rejected. Reads widen the narrowed binary32 value back
   into the Python `float` carrier.
 
+  This column is the **developer input** policy and is deliberately stricter
+  than the wire decode: an interchange seam reads a JSON *number*, where the
+  `int` / `float` carrier a parser chose carries no information, so every
+  in-range number names the nearest float of the declared width
+  (`m-document-codec`). Here the caller chose the Python type, so an `int` no
+  float of the width carries exactly is refused rather than rounded — the
+  runtime narrows nothing the caller did not write as a float.
+
 - **Metamodel serde ownership.** Source owner and enforcement scope
   `parallax.descriptor`, shipped in the separately installable
   `parallax-descriptor` artifact. Its complete public surface is
