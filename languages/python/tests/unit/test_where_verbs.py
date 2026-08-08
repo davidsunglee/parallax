@@ -53,7 +53,10 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 # same local-class pattern `test_snapshot_wrap_values.py`'s own `_WrapTemporalRoot`
 # uses).
 class _WhereTemporalLedger(
-    TxTemporal, table="where_temporal_ledger", namespace="parallax.compatibility"
+    TxTemporal,
+    table="where_temporal_ledger",
+    name="WhereTemporalLedger",
+    namespace="parallax.compatibility",
 ):
     id: Attr[int] = attr(primary_key=True)
     amount: Attr[Decimal] = attr(precision=18, scale=2)
@@ -72,7 +75,9 @@ class _WhereShipmentDestination(ValueObject):
     city: Attr[str]
 
 
-class _WhereShipment(Entity, table="where_shipment", namespace="parallax.compatibility"):
+class _WhereShipment(
+    Entity, table="where_shipment", name="WhereShipment", namespace="parallax.compatibility"
+):
     id: Attr[int] = attr(primary_key=True)
     name: Attr[str] = attr(max_length=64)
     note: Attr[str | None] = attr(max_length=64)

@@ -2,7 +2,10 @@
 
 ``compatibility-case.schema.json`` references the canonical write-instruction
 ``$defs`` (``write-instruction.schema.json``) across files rather than redefining
-them (m-unit-work / m-case-format). Every validator built from a schema that
+them (m-unit-work / m-case-format), and the operation, write-instruction, and
+case schemas all reference the Entity-identity grammars
+(``identity.schema.json``) rather than each keeping a literal copy. Every
+validator built from a schema that
 carries such a cross-file ``$ref`` MUST resolve it through a
 :class:`referencing.Registry` keyed by each schema's ``$id`` — a bare
 ``Draft202012Validator(schema)`` cannot reach another file. This module is the one
@@ -23,6 +26,7 @@ from referencing import Registry, Resource
 from .paths import schemas_dir
 
 SCHEMA_FILES = (
+    "identity.schema.json",
     "metamodel.schema.json",
     "operation.schema.json",
     "compatibility-case.schema.json",

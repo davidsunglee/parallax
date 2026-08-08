@@ -76,18 +76,36 @@ owns SQL lowering; `m-temporal-read` owns temporal interval behavior.
 
 ### Entity spellings in a reference position
 
-Every operation position that names an Entity spells it **bare and dot-free**: the
-`Class` prefix of an `attr`, a `rel`, an `orderBy` key, a `groupBy` key, an
-aggregate function's `attr`, and a nested value-object `path`; a `narrow`'s
-`entity` and each of its `to` entries; and a `deepFetch` path's hop `rel` and root
-guard. No reference grammar in `operation.schema.json` admits a namespace segment.
+Every operation position that names an Entity spells it either **bare** — the
+Entity's local name alone — or **canonically**, the namespace-qualified
+`<namespace>.<Entity>` of `m-metamodel`. The positions are the Entity prefix of
+an `attr`, a `rel`, an `orderBy` key, a `groupBy` key, an aggregate function's
+`attr`, and a nested value-object `path`; a `narrow`'s `entity` and each of its
+`to` entries; and a `deepFetch` path's hop `rel` and root guard.
 
-Entity Identity, however, is **namespace-qualified** (`m-metamodel`), so one model
-may declare the same local name in two namespaces. A reference position naming
-such a name resolves to **no single Entity**, and a resolver **MUST** reject it
+**Input is permissive; output is exact.** A bare spelling remains legal at every
+one of those positions and MUST resolve whenever it names exactly one declared
+Entity model-wide. Everything an implementation **serializes** — every operation
+document a frontend emits — MUST carry the resolved canonical Entity spelling.
+The two rules are not in tension: an implementation accepts what an author
+writes and emits what the model resolved it to.
+
+Splitting a reference into its Entity spelling and its member path is
+`m-metamodel`'s parse rule — *the last capitalized segment is the Entity's local
+name* — and needs no model: `parallax.compatibility.Order.id` names the Entity
+`parallax.compatibility.Order` and the member `id`, while `Order.address.city`
+names the Entity `Order` and the member path `address.city`. An element-relative
+path inside a scoped `where` carries no capitalized segment and so names no
+Entity; its subject is the array element the enclosing exists binds.
+
+Entity Identity is **namespace-qualified** (`m-metamodel`), so one model may
+declare the same local name in two namespaces. A **bare** reference naming such a
+name resolves to **no single Entity**, and a resolver **MUST** reject it
 (`reference-ambiguous-entity-name`) rather than answer it with the first matching
 declaration — that first match would be applicable, lowerable, and wrong,
 answering against one Entity's table for a spelling that names another's equally.
+The canonical spelling is the remedy: it names one of the two exactly, and a
+resolver MUST accept it.
 
 This rule and the two positional rules under *Subtype narrowing* partition one
 condition in resolution order: this one fires when a reference resolves to **more
@@ -97,12 +115,13 @@ resolve, to an Entity outside the active position.
 The refusal is a property of the **reference site**, not of the model. Both
 Entities remain declarable, remain materializable under their exact qualified
 identities, and remain readable through any position that names them
-unambiguously — a family root, or a relationship target a hop resolves through a
-declaration rather than through the operation's own spelling. A position carried
-**beside** an operation rather than inside it — the queried position a read names,
-or the target entity of a predicate-selected write — is the same bare spelling and
-resolves by the same rule; the surface owning that position names the refusal in
-its own vocabulary rather than in this one.
+unambiguously — the canonical spelling, a family root, or a relationship target a
+hop resolves through a declaration rather than through the operation's own
+spelling. A position carried **beside** an operation rather than inside it — the
+queried position a read names, or the target entity of a predicate-selected
+write — admits the same two spellings and resolves by the same rule; the surface
+owning that position names the refusal in its own vocabulary rather than in this
+one.
 
 ### Identities
 

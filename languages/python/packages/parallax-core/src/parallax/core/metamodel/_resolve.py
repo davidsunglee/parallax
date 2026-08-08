@@ -13,6 +13,7 @@ or implements another module's semantic rules.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -104,9 +105,15 @@ __all__ = [
     "resolve",
 ]
 
+# `identity.schema.json` `$defs/entityLocalName`, mirrored so a descriptor
+# installed from native classes is legal exactly where the same descriptor
+# authored as a document is.
+_ENTITY_LOCAL_NAME = re.compile(r"^[A-Z][A-Za-z0-9]*$")
+
 INVALID_ENTITY_IDENTITY: Final[IssueCode] = "metamodel-invalid-entity-identity"
-"""An Entity name is empty or carries a dot. The namespace half of the grammar
-is unconstructible, so only the name can reach resolution malformed."""
+"""An Entity name is empty, carries a dot, or does not begin capitalized. The
+namespace half of the grammar is unconstructible, so only the name can reach
+resolution malformed."""
 
 DUPLICATE_ENTITY_IDENTITY: Final[IssueCode] = "metamodel-duplicate-entity-identity"
 """Two or more declarations resolve to one Entity Identity. Duplicates are legal
@@ -302,7 +309,7 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
                 MetamodelIssue(
                     INVALID_ENTITY_IDENTITY,
                     EntityLocation(identity),
-                    message=(f"Entity name {identity.name!r} is not a nonempty dot-free name"),
+                    message=(f"Entity name {identity.name!r} is not a capitalized dot-free name"),
                 )
             )
         if len(bearers) == 1:
@@ -359,7 +366,14 @@ def resolve(unresolved: UnresolvedMetamodel) -> ResolutionResult:
 
 
 def _well_formed_entity_name(name: str) -> bool:
-    return bool(name) and "." not in name
+    """An Entity's local name is dot-free and begins capitalized.
+
+    The capitalization is what makes the Entity segment of a dotted reference
+    identifiable without consulting a model, so it is the same rule the
+    serialized grammars enforce (``identity.schema.json``) rather than a
+    convention the accepted-model path could hold independently.
+    """
+    return _ENTITY_LOCAL_NAME.match(name) is not None
 
 
 def _local_member_positions(

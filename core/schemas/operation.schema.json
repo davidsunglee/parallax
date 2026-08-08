@@ -6,19 +6,16 @@
   "$ref": "#/$defs/operation",
   "$defs": {
     "attributeRef": {
-      "description": "A metamodel attribute reference of the form Class.attribute.",
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+      "description": "A metamodel attribute reference of the form Entity.attribute, whose Entity segment is bare or namespace-qualified (identity.schema.json).",
+      "$ref": "identity.schema.json#/$defs/attributeRef"
     },
     "entityName": {
-      "description": "A bare metamodel entity name (no dotted member) — the `Class` grammar the attribute/relationship refs use before the dot. Used by `narrow` to name a polymorphic entity position and each authored subtype it narrows to (m-op-algebra, m-inheritance).",
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*$"
+      "description": "A metamodel Entity spelling with no dotted member — bare or namespace-qualified (identity.schema.json) — the grammar the attribute/relationship refs use before the member dot. Used by `narrow` to name a polymorphic entity position and each authored subtype it narrows to (m-op-algebra, m-inheritance).",
+      "$ref": "identity.schema.json#/$defs/entityName"
     },
     "relationshipRef": {
-      "description": "A metamodel relationship reference of the form Class.relationship.",
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*$"
+      "description": "A metamodel relationship reference of the form Entity.relationship, whose Entity segment is bare or namespace-qualified (identity.schema.json).",
+      "$ref": "identity.schema.json#/$defs/relationshipRef"
     },
     "aggregateAlias": {
       "description": "An aggregate result-column name (the `as` of an aggregate function). Lowercase, snake_case allowed (e.g. total_quantity, sample_count), matching the canonical SQL alias.",
@@ -765,9 +762,8 @@
     },
 
     "nestedRef": {
-      "description": "A reference into a valueObject's inner field: `Class.valueObject` followed by one or more dotted path segments into the embedded document (e.g. Customer.address.city, Customer.address.geo.lat). Lowers to a dialect-specific text extraction on the value object's backing column (m-sql/m-dialect).",
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*\\.[a-z][A-Za-z0-9_]*(\\.[a-z][A-Za-z0-9_]*)+$"
+      "description": "A reference into a valueObject's inner field: an Entity spelling (bare or namespace-qualified, identity.schema.json) and its valueObject followed by one or more dotted path segments into the embedded document (e.g. Customer.address.city, Customer.address.geo.lat). Lowers to a dialect-specific text extraction on the value object's backing column (m-sql/m-dialect).",
+      "$ref": "identity.schema.json#/$defs/nestedRef"
     },
     "nestedComparison": {
       "description": "A nested-field comparison: a valueObject inner attribute (referenced by a dotted path) compared against a TYPED literal. The `path` resolves against the model's declared valueObject structure (first segment a declared valueObject on the entity, intermediates nested valueObjects, leaf a declared attribute); the `value` is a polymorphic `literal` whose type MUST match the leaf attribute's declared type (m-op-algebra). The dialect-specific document extraction (m-sql/m-dialect) casts to that declared type before comparing.",
@@ -938,14 +934,12 @@
     },
 
     "valueObjectRef": {
-      "description": "A path that TERMINATES at a valueObject member (not an inner attribute): `Class.valueObject` optionally followed by nested valueObject segments (e.g. Customer.address, Customer.address.phones). Unlike `nestedRef` — which requires an ATTRIBUTE leaf and so has ≥3 components — this path may be just `Class.valueObject` (2 components) because its subject is the value OBJECT itself. It resolves against the declared structure (first segment a declared valueObject on the entity, each further segment a nested valueObject declared on the preceding member); the final member's multiplicity (`one` / `many`) selects the presence vs non-empty semantics of nestedExists/nestedNotExists (m-op-algebra).",
-      "type": "string",
-      "pattern": "^[A-Za-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)+$"
+      "description": "A path that TERMINATES at a valueObject member (not an inner attribute): an Entity spelling (bare or namespace-qualified, identity.schema.json) and its valueObject, optionally followed by nested valueObject segments (e.g. Customer.address, Customer.address.phones). Unlike `nestedRef` — which requires an ATTRIBUTE leaf and so carries at least two member segments — this path may carry just one, because its subject is the value OBJECT itself. It resolves against the declared structure (first member segment a declared valueObject on the entity, each further segment a nested valueObject declared on the preceding member); the final member's multiplicity (`one` / `many`) selects the presence vs non-empty semantics of nestedExists/nestedNotExists (m-op-algebra).",
+      "$ref": "identity.schema.json#/$defs/valueObjectRef"
     },
     "elementRef": {
-      "description": "An ELEMENT-RELATIVE path used ONLY inside a scoped `where` (nestedExists/nestedNotExists over a `many` member). It has NO leading `Class.valueObject` — the subject is the array element bound by the enclosing exists — so it is one or more lowercase dotted segments naming declared members of that element (`type`, `number`, or `geo.country` to descend a nested value object of the element). Each segment resolves against the element's declared structure (intermediates nested valueObjects, leaf a declared attribute).",
-      "type": "string",
-      "pattern": "^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9_]*)*$"
+      "description": "An ELEMENT-RELATIVE path used ONLY inside a scoped `where` (nestedExists/nestedNotExists over a `many` member). It carries NO Entity spelling — the subject is the array element bound by the enclosing exists — so it is one or more lowercase-initial dotted segments naming declared members of that element (`type`, `number`, or `geo.country` to descend a nested value object of the element). Each segment resolves against the element's declared structure (intermediates nested valueObjects, leaf a declared attribute).",
+      "$ref": "identity.schema.json#/$defs/elementRef"
     },
 
     "elementComparison": {

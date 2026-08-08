@@ -275,6 +275,16 @@ One-round-trip materialization is proven by `read` cases carrying `then.graph` a
 to-many value-object values, decoded from the single document column, with **no**
 child statement (`m-value-object-023` materializes every row's full nested
 composite under `all`; `m-value-object-024` materializes the matching owners'
-composites under a nested-field filter). The invalid uses above (a
-`deepFetch`/navigation path through a value object, a `find()` rooted at a value
-object) are pinned as pre-SQL `rejected` cases (`m-case-format`).
+composites under a nested-field filter). A `deepFetch` or navigation path through a
+value object is pinned as a pre-SQL `rejected` case (`m-case-format`): a value
+object's occurrence name is a legal *member* segment, so such a path is spellable
+and only a model-aware resolver knows the member it names is a value object.
+
+Rooting a `find()` at a value object is refused earlier, and by a different
+authority. An occurrence name begins lowercase while an Entity's local name is
+capitalized (`m-metamodel`), so a value object can never occupy the Entity segment
+of a serialized reference — a value-object-rooted reference matches no reference
+grammar, and the refusal in a serialized document is grammar-level rather than
+model-aware. The `find-root-value-object` rule remains in force for an operation
+constructed natively, where no grammar stands between the caller and the resolver;
+the compatibility corpus therefore carries no `rejected` case for it.

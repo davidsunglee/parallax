@@ -616,7 +616,7 @@ def test_a_null_one_occurrence_is_the_documents_own_absent_state() -> None:
 # --------------------------------------------------------------------------- #
 
 
-class _Milestone(Bitemporal, table="graph_milestone", namespace="parallax.test"):
+class _Milestone(Bitemporal, table="graph_milestone", name="Milestone", namespace="parallax.test"):
     id: Attr[int] = attr(primary_key=True)
     amount: Attr[Decimal] = attr(precision=18, scale=2)
 

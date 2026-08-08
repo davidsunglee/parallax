@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/metamodel.schema.json",
   "title": "Parallax Model Descriptor (m-descriptor)",
+  "$comment": "`namespaceSegment`, `entityLocalName`, and `identifier` are deliberate LOCAL copies of `identity.schema.json`'s definitions of the same names, not cross-file `$ref`s. This file is vendored into language distributions and validated standalone with no registry, so a target integrates it by copying one file and validating with any Draft 2020-12 library. A reference-harness test pins the copies equal to their originals.",
   "description": "Canonical serialized m-descriptor input to m-metamodel. An omitted entity-member column derives from the canonical member name through m-descriptor's normative defaultColumn operation; an explicit column always overrides it. This revision covers persistence, pkGeneration, the defining/reverse relationship union, indices, the temporality profile, closed-tree inheritance, and recursively typed value objects with One/Many multiplicity.",
   "type": "object",
   "additionalProperties": false,
@@ -34,8 +35,18 @@
         }
       ]
     },
+    "namespaceSegment": {
+      "description": "An Entity namespace: one or more dot-separated segments, each beginning with a lowercase letter and continuing with lowercase letters and digits. Underscores are excluded so the boundary against the member grammar stays sharp.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$"
+    },
+    "entityLocalName": {
+      "description": "An Entity's local name: capitalized and dot-free. The capitalization is normative (m-metamodel), because it is what makes the Entity segment of a dotted reference identifiable without consulting a model.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9]*$"
+    },
     "identifier": {
-      "description": "camelCase element/property name.",
+      "description": "A member identifier: an element or property name beginning with a lowercase letter and continuing with letters, digits, and underscores. camelCase is the naming CONVENTION (m-descriptor); the underscore is admitted because m-descriptor ships normative `defaultColumn` vectors for underscore-bearing member names.",
       "type": "string",
       "pattern": "^[a-z][a-zA-Z0-9_]*$"
     },
@@ -44,8 +55,8 @@
       "additionalProperties": false,
       "required": ["name"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "namespace": { "type": "string", "minLength": 1 },
+        "name": { "$ref": "#/$defs/entityLocalName" },
+        "namespace": { "$ref": "#/$defs/namespaceSegment" },
         "table": { "type": "string", "minLength": 1 },
         "persistence": {
           "enum": ["read-write", "read-only"],

@@ -113,8 +113,21 @@ how `m-op-algebra` hosts `operation.schema.json`; `m-case-format` and
 
 The embedded predicate is a canonical `m-op-algebra` node, legal vocabulary here
 because `m-unit-work` already depends on `m-op-algebra` (the dependency-graph edge);
-the write instruction is the sole place the write side reaches the algebra. Three
-structural rules keep the instruction framework-honest:
+the write instruction is the sole place the write side reaches the algebra.
+
+**How a write instruction spells the Entity it addresses.** A keyed instruction's
+`entity`, a predicate-selected instruction's `target.entity`, and the Entity prefix
+of every `assignments[].attr` all carry an Entity spelling, and all three obey
+`m-metamodel`'s identifier constraint and parse rule: an Entity's local name begins
+capitalized, every namespace segment is lowercase, every member identifier is
+lowercase-initial, and the last capitalized segment of a dotted reference is the
+Entity's local name. Each position therefore admits exactly the two spellings a
+reference position admits (`m-op-algebra`) — the bare local name, legal wherever it
+names one declared Entity, or the canonical `<namespace>.<Entity>` — and resolves by
+the same rule. An `assignments[].attr` is that Entity spelling followed by one
+member identifier: `Account.balance`, `parallax.compatibility.Account.balance`.
+
+Three structural rules keep the instruction framework-honest:
 
 - **The instant surface is dimension-explicit.** A Bitemporal write's authored
   Valid-Time lower bound is `validFrom`; bounded writes use `until` for the

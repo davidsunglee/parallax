@@ -12,22 +12,37 @@ and the metamodel-aware member-name honesty validator.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from typing import Any, cast
 
 import jsonschema
 import pytest
+from referencing import Registry, Resource
 
 from _support.repo import REPO_ROOT
 from parallax.conformance import models
 from parallax.core import inheritance, op_algebra
 from parallax.core.unit_work import instructions as wi
 
-_SCHEMA = cast(
-    "dict[str, Any]",
-    json.loads((REPO_ROOT / "core" / "schemas" / "write-instruction.schema.json").read_text()),
+_SCHEMAS = REPO_ROOT / "core" / "schemas"
+
+
+def _schema(name: str) -> dict[str, Any]:
+    return cast("dict[str, Any]", json.loads((_SCHEMAS / name).read_text()))
+
+
+_SCHEMA = _schema("write-instruction.schema.json")
+# The write-instruction schema references the shared Entity-identity grammars
+# across files, so a validator needs an `$id`-keyed registry to reach them.
+_REGISTRY: Registry[Any] = Registry[Any]().with_resources(
+    (schema["$id"], Resource[Any].from_contents(schema))
+    for schema in (_SCHEMA, _schema("identity.schema.json"))
 )
-_validate = cast("Callable[[object, object], None]", jsonschema.validate)
+
+
+def _validate(doc: object, schema: dict[str, Any]) -> None:
+    validator = cast("Any", jsonschema.Draft202012Validator(schema, registry=_REGISTRY))
+    validator.validate(doc)
+
 
 _MODELS = models.load_models()
 _ACCOUNT = models.accepted_model(_MODELS["account"])

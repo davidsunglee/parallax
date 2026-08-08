@@ -972,11 +972,6 @@ _VO_NAVIGATE_TARGET_REASON: Final[str] = (
     "idiomatic surface has no spelling that produces THAT exact shape, only a "
     "differently-typed valid one"
 )
-_VO_FIND_ROOT_REASON: Final[str] = (
-    "`ValueObject` classes have no `.where()` classmethod at all (only `Entity` does); "
-    "`vm.Address.where(...)` raises a plain Python `AttributeError` — the type system "
-    "itself prevents rooting a find at a value object"
-)
 
 # Value-type mismatch (m-value-object-043): empirically confirmed (a REPL
 # probe against the shipped surface) to have NO idiomatic spelling through
@@ -1333,7 +1328,6 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-034": _VO_UNKNOWN_NESTED_FIELD_REASON,
     "m-value-object-035": _VO_DEEPFETCH_SEGMENT_REASON,
     "m-value-object-036": _VO_NAVIGATE_TARGET_REASON,
-    "m-value-object-037": _VO_FIND_ROOT_REASON,
     # -- m-value-object: write-input validation rejects ---------------------- #
     "m-value-object-043": _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON,
     "m-value-object-069": _VO_DEPTH_ZERO_ATTRIBUTE_UNREACHABLE_REASON,
