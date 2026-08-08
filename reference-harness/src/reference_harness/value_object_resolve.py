@@ -122,7 +122,7 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     whatever a host parser happens to take.
 
     A literal that decodes to no member is out of space: an integer beyond its
-    declared width, a number no float of the declared width represents exactly, a
+    declared width, a number whose magnitude the declared float width cannot hold, a
     decimal the declared precision and scale cannot hold exactly, text with no UTF-8
     encoding, and any spelling outside the portable grammar.
 
@@ -161,25 +161,28 @@ def _is_integer(value: Any) -> bool:
 def _matches_float(value: Any, *, binary32: bool) -> bool:
     """Whether a JSON number spells a member of a float space of the given width.
 
-    The two literal kinds decode differently, and the difference is the contract
-    rather than an accident. An INTEGER names a value rather than a rendering of
-    one, so it spells a float only when a float of the width carries it EXACTLY:
-    ``16777217`` is no `float32` and ``9007199254740993`` no `float64`, because
-    reading either would answer a different number than the one written. A
-    FRACTIONAL literal names the nearest float of the width — that is the inverse of
-    the shortest-round-tripping encoding (`m-document-codec`) — so only a magnitude
-    the width cannot hold, such as ``1e100`` at a `float32`, spells no member.
+    Every number names the float of the width nearest it — the inverse of the
+    shortest-round-tripping encoding (`m-document-codec`) — so only a magnitude the
+    width cannot hold, such as ``1e39`` at a `float32`, spells no member. The host
+    carrier the loader put the number in decides nothing, because ``20`` and
+    ``20.0`` are one JSON number and so are ``16777217`` and ``16777217.0``.
+
+    Nearest is not exact, and that is the stated trade rather than an oversight: a
+    number no float of the width represents exactly is admitted and NARROWED, so a
+    case authoring ``16777217`` at a `float32` stores ``16777216``. Refusing it is
+    not "the number must be exact" — a canonical `float32` spelling is routinely
+    inexact, ``1e30`` being the one the codec gives ``1.0000000150474662e30`` — but
+    "exact or already canonical", which narrows the value space itself.
     """
-    if _is_integer(value):
-        try:
-            widened = float(value)
-        except OverflowError:
-            return False
-        held = _at_width(widened, binary32=binary32)
-        return held is not None and held == value
-    if not isinstance(value, float) or not math.isfinite(value):
+    if not _is_number(value):
         return False
-    return _at_width(value, binary32=binary32) is not None
+    try:
+        widened = float(value)
+    except OverflowError:
+        return False
+    if not math.isfinite(widened):
+        return False
+    return _at_width(widened, binary32=binary32) is not None
 
 
 def _at_width(value: float, *, binary32: bool) -> float | None:

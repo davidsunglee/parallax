@@ -162,6 +162,16 @@ def test_a_float_encoding_decodes_back_at_the_width_that_chose_it() -> None:
     assert decode_neutral_literal(3.5e38, FLOAT32) == 3.5e38
 
 
+def test_a_canonical_float32_number_need_not_be_exactly_a_binary32_value() -> None:
+    # Why literal membership cannot be an exactness test (`m-document-codec`, "What
+    # nearest-value decoding gives up"): the shortest number that decodes back to a
+    # binary32 value is routinely not that value, so a rule refusing every inexact
+    # number would refuse spellings this table itself produces.
+    binary32_value = decode_neutral_literal(1e30, FLOAT32)
+    assert binary32_value == 1.0000000150474662e30
+    assert encode_leaf(FLOAT32, binary32_value) == 1e30
+
+
 def test_decode_reads_a_float32_leaf_at_its_declared_width() -> None:
     shape = DocumentShape(members=(Leaf(name="ratio", type=FLOAT32, nullable=True),))
     stored = encode_document(shape, {"ratio": Present(1048576.25)})
@@ -187,6 +197,7 @@ def _one_leaf(neutral_type: NeutralType) -> DocumentShape:
         (UUID, "123E4567-E89B-12D3-A456-426614174000"),
         (UUID, "123e4567e89b12d3a456426614174000"),
         (FLOAT32, 1048576.3),
+        (FLOAT32, 16777217),
     ],
     ids=lambda param: repr(param),
 )

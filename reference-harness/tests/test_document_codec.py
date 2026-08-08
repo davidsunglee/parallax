@@ -81,28 +81,29 @@ def test_a_value_the_table_cannot_spell_is_refused_rather_than_passed_through() 
         encode_leaf("geography", "POINT(0 0)")
 
 
-def test_an_authored_number_naming_no_float_of_the_width_is_refused_rather_than_rounded() -> None:
-    # Nothing between a case's authored value and the document it stores asks whether
-    # that value is a member of the declared space, so rendering `2**24 + 1` as the
-    # nearest binary32 would put `16777216` into a fixture row and a golden bind under
-    # a member the case wrote `16777217` for.
+def test_an_authored_number_names_the_float_of_the_width_nearest_it() -> None:
+    # Only a magnitude the width cannot hold, a non-finite float, and a non-number name
+    # no value; every number in range names one and encodes to THAT value's shortest
+    # number.
     for spelling, authored in (
-        ("float32", 2**24 + 1),
-        ("float64", 2**53 + 1),
         ("float32", 1e39),
         ("float64", float("inf")),
         ("float32", "1.5"),
+        ("float64", 10**400),
     ):
         with pytest.raises(DocumentEncodingError, match="names no"):
             encode_leaf(spelling, authored)
-    # A fractional number is a rendering, so it names the float of the width nearest
-    # it and encodes to THAT value's shortest number — which is how every `float32`
-    # the corpus authors is read.
     assert encode_leaf("float32", 1048576.2) == 1048576.2
     assert encode_leaf("float32", 1048576.3) == 1048576.2
-    # An integer a float of the width holds exactly names that float, at either width.
     assert encode_leaf("float32", 20) == 20.0
     assert encode_leaf("float64", 2**24 + 1) == float(2**24 + 1)
+    # The carrier the number arrived in decides nothing, so an inexact one is narrowed
+    # rather than refused: this table and the case format's membership rule must agree,
+    # or a value `validate_write` accepts would be a document no case could author
+    # (`m-case-format` "In-space"). The cost is that `2**24 + 1` stores `16777216`.
+    assert encode_leaf("float32", 2**24 + 1) == 16777216.0
+    assert encode_leaf("float32", float(2**24 + 1)) == 16777216.0
+    assert encode_leaf("float64", 2**53 + 1) == 9007199254740992.0
 
 
 def test_only_the_six_text_compared_types_have_a_comparison_text() -> None:
@@ -253,9 +254,9 @@ def test_decode_leaf_reads_a_float32_at_its_declared_width() -> None:
 def test_a_float_document_number_reads_as_a_float_of_its_declared_width() -> None:
     # `20` and `20.0` are one JSON number and either rendering may be written, so an
     # integer-rendered float carries the float value a Column of that width reads
-    # back, not a Python `int`. An integer NO float of the width holds exactly names
-    # no value of that space at all: `2**24 + 1` is invalid stored data for a
-    # `float32` rather than the nearest binary32 to it.
+    # back, not a Python `int`. `2**24 + 1` names binary32 `16777216` — every in-range
+    # number names some float of the width — but it is not that value's ONE document
+    # spelling, so it is invalid stored data all the same.
     assert decode_leaf("float32", 20) == 20.0
     assert isinstance(decode_leaf("float32", 20), float)
     assert isinstance(decode_leaf("float64", 20), float)
@@ -266,15 +267,16 @@ def test_a_float_document_number_reads_as_a_float_of_its_declared_width() -> Non
 
 def test_an_integral_float_number_answers_the_same_whichever_rendering_carries_it() -> None:
     # `20` and `20.0` are one JSON number, so validity cannot depend on which of them
-    # the parser handed back as an `int` and which as a `float`. `2**24 + 1` names a
-    # value binary32 does not hold, in either rendering, so both are invalid stored
-    # data — never the silently rounded `16777216.0` a narrow-first reader answers.
+    # the parser handed back as an `int` and which as a `float`. Both renderings of
+    # `2**24 + 1` are noncanonical spellings of binary32 `16777216`, so both are
+    # invalid stored data — the read seam narrows nothing a writer of that value would
+    # not have written this way.
     for rendering in (2**24 + 1, float(2**24 + 1)):
         with pytest.raises(DocumentEncodingError, match="invalid stored data"):
             decode_leaf("float32", rendering)
     assert decode_leaf("float32", 20) == decode_leaf("float32", 20.0) == 20.0
-    # The same law one width up: binary64 holds neither `2**53 + 1` nor any decimal
-    # naming it, so that integer is a member of no float space either.
+    # The same law one width up, where `2**53 + 1` is a noncanonical spelling of
+    # binary64 `2**53`.
     with pytest.raises(DocumentEncodingError, match="invalid stored data"):
         decode_leaf("float64", 2**53 + 1)
 

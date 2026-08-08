@@ -1598,14 +1598,24 @@ Reading the columns:
   belongs, an offset carrying seconds, and a decimal carrying a digit separator, a
   leading `+`, surrounding whitespace, an exponent, or `nan` / `infinity` are each
   **out of space**, however readily some host parser takes them.
+- A **number literal at a `float32` / `float64`** names the float of the declared
+  width nearest it (`m-document-codec`), so the only such literal out of space is
+  one whose magnitude the width cannot hold — `1e39` at a `float32`. The carrier a
+  loader happens to put the number in decides nothing: `20`, `20.0`, `16777217`, and
+  `16777217.0` are all in space at a `float32`, because `20` and `20.0` are one JSON
+  number and so are `16777217` and `16777217.0`. This is deliberately **not** an
+  exactness rule — the last two store as `16777216`, a different number than the case
+  wrote — and a case that means to author a value the width holds exactly must
+  therefore write one; the grader will not catch it. Exactness cannot be recovered by
+  refusing inexact literals here, because a canonical `float32` spelling is routinely
+  inexact (`1e30` is the one `m-document-codec` gives `1.0000000150474662e30`), so
+  the refusing rule is "exact **or** canonical" and narrows the value space rather
+  than the case format.
 - **Out of space** is a literal that decodes to no member: an integer beyond its
-  declared width; a number no float of the declared width represents **exactly** —
-  an integer literal names a value, so `16777217` is no `float32` and
-  `9007199254740993` no `float64`, and a magnitude the width cannot hold, such as
-  `1e100` at a `float32`, is no member either; a decimal the declared precision and
-  scale cannot hold exactly; text with no UTF-8 encoding; a temporal literal
-  carrying non-zero sub-microsecond precision; and any spelling outside the grammar
-  above.
+  declared width; a number whose magnitude the declared float width cannot hold; a
+  decimal the declared precision and scale cannot hold exactly; text with no UTF-8
+  encoding; a temporal literal carrying non-zero sub-microsecond precision; and any
+  spelling outside the grammar above.
 - A **DB-computed marker** (`{computed: …}` / `{increment: …}`) is admitted at a
   scalar Attribute and is a value no other position can hold. The disambiguation is
   by the position's declared metamodel ROLE, never by the value's shape, so a
