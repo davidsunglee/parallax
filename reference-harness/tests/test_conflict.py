@@ -128,15 +128,13 @@ def test_conflict_write_rows_normalizes_both_authored_forms() -> None:
     assert multi, "no multi-key (array-form) conflict case discovered"
     for case in multi:
         # The array form denotes an ORDERED row list one unit of work buffers
-        # together and the batching rule may collapse into one statement. No
-        # single row stands for it, so `write` answers None and readers that need
-        # the input take `write_rows`.
-        assert case.write is None
+        # together and the batching rule may collapse into one statement, so it
+        # normalizes to that list rather than to any one row standing for it.
         assert case.write_rows == list(case.when["write"])
     single = [c for c in _conflict_cases() if isinstance(c.when.get("write"), dict)]
     assert single, "no single-row conflict case discovered"
     for case in single:
-        assert case.write_rows == [case.write]
+        assert case.write_rows == [case.when["write"]]
 
 
 def test_conflict_input_holds_for_authored_versioned_cases() -> None:
@@ -155,7 +153,7 @@ def test_conflict_input_observed_version_corruption_is_rejected() -> None:
         next(
             c
             for c in _versioned_conflict_cases()
-            if isinstance(c.write, dict) and "observedVersion" in c.write
+            if isinstance(c.when.get("write"), dict) and "observedVersion" in c.when["write"]
         )
     )
     # Corrupt the observed version in ①: the derived advance (`observedVersion + 1`)

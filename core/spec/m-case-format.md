@@ -798,14 +798,25 @@ observed edge's Transaction-Time coordinate IS the milestone's Transaction-Time
 start, which is exactly what the optimistic gate binds — so in any case that names
 an edge the coordinate the case authored and the coordinate a derivation reads off
 the resolution are the same instant, and an implementation that binds the gate
-straight from `observedTxStart` renders every conforming golden. A grouped write
-naming its source find authors no coordinate at all, so there its gate cannot come
-from the case document — but address and gate are then read off one resolved
-milestone, and a key's current rectangles are disjoint on Valid Time, so no case
-can hold two whose addresses agree while their gates differ. A misresolution moves
-both binds together, and the address is what fails. Either shape therefore grades
-the **address**'s derivation, and a header that claims the gate's is claiming what
-no degradation of a conforming implementation can falsify.
+straight from `observedTxStart` renders every conforming golden. A conflict case
+therefore grades the **address**'s derivation alone, and a header of one that
+claims the gate's is claiming what no degradation of a conforming implementation
+can falsify.
+
+A grouped write naming its source find authors no coordinate at all, so there both
+binds are read off the one resolved milestone and which of them a misresolution
+moves depends on the target's **profile**. On a Bitemporal target a key's current
+rectangles are disjoint on Valid Time, so two observations of one key differ in
+their Valid-Time end and the misresolved **address** is what fails. On a
+Transaction-Time-Only target there is no Valid-Time half at all: a close addresses
+the key plus the invariant open Transaction-Time bound, so every observation of one
+key carries the *same* address and differs only in the milestone's
+Transaction-Time start — which is the **gate**. Two observations of one key are
+what a group holds whenever it reads that key twice at different as-of
+coordinates, on either profile; the profile decides only which bind states which
+milestone was settled against. That is why this reference is legal against any
+temporal target and why a Transaction-Time-Only witness grades the **gate**'s
+derivation, the half a conflict case cannot reach.
 
 ### Scenario cases (`m-unit-work`)
 
@@ -919,6 +930,16 @@ nothing from the earlier. Naming the find is what says which of them the write w
 handed — an implementation keying by identity alone settles the write against the
 historical milestone while the current one its value came from is the one it can
 close.
+
+The profiles differ only in **which bind** a misresolution moves. A Bitemporal
+close addresses the observed rectangle's Valid-Time exclusive upper bound, so
+naming the wrong milestone changes the address. A Transaction-Time-Only close
+addresses the key plus the invariant open Transaction-Time bound — an address every
+observation of that key shares — so there the whole of the difference lands on the
+optimistic **gate**, which binds the observed milestone's own Transaction-Time
+start. Neither profile is the weaker witness; a Transaction-Time-Only one grades
+the gate's derivation, which no conflict case can reach (*Naming the observed
+milestone*, above).
 
 A write settling against a find's result is **query-result-dependent**: the
 milestone it addresses is read off a row no compile lane executes, so such a case
@@ -1235,9 +1256,14 @@ instruction**; anything else is the **bare neutral write row** (①). The three
 differ in what supplies the entity handle, which is why the distinction is
 load-bearing rather than cosmetic: the first two name their own target, so a
 validator checks the payload against the entity the input authored, while a bare
-row names none at all and is resolved against the model's default write root
-(the inheritance-family root when the model declares one, else the model's own
-first entity).
+row names none at all and is resolved against the model's default write root: the
+inheritance-family root when the model declares exactly one family, else — when it
+declares no family at all — its own first entity. A model declaring **several**
+families names no single root and therefore has no default; a bare row against one
+is a case-authoring failure, not a rule to grade, because resolving it to whichever
+entity happens to be declared first would grade a rule against an entity the case
+never named. The same default resolves a `when.operation`, which likewise names no
+target.
 
 All three are **objects**, and a rejected `when.write` that is not one is
 **invalid**. The `when.write` vocabulary is shared with conflict cases, which also
@@ -1461,6 +1487,68 @@ schema-valid accepted-model formation defects, including standalone/table-level
 collisions and cross-entity family invariants. Table legality is strategy-relative
 and therefore belongs to whole-model formation: a TPH root owns the shared table,
 whereas a TPCS concrete subtype owns its table.
+
+#### What decides a bare write row
+
+The three forms above close the **dispatch** question by construction: the schema
+admits exactly those objects, their discriminators are mutually reserved, and the
+array is refused outright, so every reader picks the same form for every admitted
+input. Nothing in the schema closes the question that follows it — *which rule an
+admitted bare row violates* — because the schema is model-blind: a row's members are
+attribute and value-object names it cannot know, and its values are the unrestricted
+`writeRowValue`. Two independent graders can agree there only if this specification
+decides every position a row can occupy, so it is enumerated rather than left to
+each implementation's reading of the three rules.
+
+A bare row is resolved **member by member against the target's declared structure**,
+in **declaration order** — every declared Attribute, then every declared Value
+Object, each document depth-first. Declaration order is normative: it makes the rule
+a row of two defects violates a property of the *model* rather than of the row's
+authoring order, so two implementations classify one row identically. The row is
+graded as a **full document** — it carries no mutation to make it sparse — and every
+key it names that the target does not declare is ignored, since an undeclared name
+resolves to no position with a rule to violate.
+
+Each position is one of six declared kinds, and the value authored at it falls in
+one of five classes. The cells are the complete enumeration:
+
+| declared position | absent | explicit `null` | in-space literal | out-of-space value | non-scalar where a document is declared, or the converse |
+| --- | --- | --- | --- | --- | --- |
+| Attribute, `nullable: false` | `write-required-attribute-missing` | `write-required-attribute-missing` | accepted | `write-value-type-mismatch` | `write-value-type-mismatch` |
+| Attribute, `nullable: true` | accepted | accepted | accepted | `write-value-type-mismatch` | `write-value-type-mismatch` |
+| Value Object `one`, `nullable: false` | `write-required-value-object-missing` | `write-required-value-object-missing` | — | — | `write-value-type-mismatch` |
+| Value Object `one`, `nullable: true` | accepted | accepted | — | — | `write-value-type-mismatch` |
+| Value Object `many` | accepted (the empty collection) | `write-required-value-object-missing` | — | — | `write-value-type-mismatch` |
+| framework-owned Attribute | accepted | accepted | accepted | accepted | accepted |
+
+Reading the columns:
+
+- **In-space** is membership of the declared neutral type's value space as its
+  **portable literal** spells it (`m-core`, `m-document-codec`) — the closed
+  vocabulary the metamodel schema fixes, with nothing outside it. An integer beyond
+  its declared width, a decimal the declared precision and scale cannot hold
+  exactly, a malformed ISO-8601 or UUID or hex spelling, and a sub-microsecond
+  temporal literal are all **out of space**, not merely of the wrong shape.
+- A **DB-computed marker** (`{computed: …}` / `{increment: …}`) is in-space at a
+  scalar Attribute and out of space anywhere else. The disambiguation is by the
+  position's declared metamodel ROLE, never by the value's shape, so a marker-shaped
+  value inside a value-object document is a document field like any other.
+- The last column is the multiplicity and document rules: a `one` occurrence binds a
+  document, a `many` occurrence binds a list **of documents**, and a scalar standing
+  at either — or a non-document element inside a `many` list — is a value the
+  position cannot hold. It is a **type mismatch**, not an absence: the member was
+  named, so no required-ness rule is what it violates.
+- A **framework-owned** Attribute (the optimistic-lock version, an As-Of Axis
+  endpoint, a table-per-hierarchy tag column) is outside the walk entirely: the
+  framework supplies its value, so its absence is no caller omission. A payload that
+  *carries* the tag column violates the concrete-subtype protocol above instead.
+
+The kinds compose: a nested Attribute or Value Object inside a present document
+answers to its own row of the table, so the three rules hold "at any depth" by
+recursion rather than by a separate depth rule. Where the target participates in an
+inheritance family, the **Subtype-write** rules above run **first**
+and over the family-effective member set, so an inherited required member is
+required of a subtype write.
 
 ## Case-header house style
 

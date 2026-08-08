@@ -2933,10 +2933,10 @@ def _assert_rejected(case: Case) -> None:
     The raised rule must match exactly. No rejected variant reaches dialect
     selection, provisioning, SQL emission, or database execution.
     """
-    entity = case.model.root_entity
     expected = case.rejected_rule
     try:
         if "operation" in case.when:
+            entity = _rejected_default_root(case)
             validate_operation(entity, case.when["operation"])
             # Inheritance narrow / subtype-scope validation (m-op-algebra x
             # m-inheritance): a no-op on a non-inheritance model, so it runs after
@@ -2954,11 +2954,18 @@ def _assert_rejected(case: Case) -> None:
                 raise CaseFailure(
                     f"{case.path.name}: keyed instruction did not match its pre-SQL refusal"
                 )
-            validate_write(entity, write)
-            # Concrete-subtype write validation is a no-op on a non-inheritance
-            # model, so it runs after
-            # the value-object write validation without disturbing the existing cases.
+            # The concrete-subtype payload-shape and target-validity rules run
+            # FIRST, unconditionally (`m-inheritance` "A validator checks these
+            # payload-shape rules... before the target-validity rule"): a malformed
+            # inheritance payload has no well-defined target for the declared-member
+            # walk to run against. A no-op on a non-inheritance model.
+            #
+            # The default write root is resolved HERE rather than up front: the two
+            # instruction forms above name their own handle, so a model with no
+            # default is only a defect for the bare row, which names none.
+            entity = _rejected_default_root(case)
             validate_subtype_write(entity, case.model.entity_defs, write)
+            validate_write(entity, write)
         elif "model" in case.when:
             inline_model = derive_temporal_structure(case.when["model"])
             inline_entities = inline_model.get("entities")
@@ -2985,6 +2992,34 @@ def _assert_rejected(case: Case) -> None:
     )
 
 
+def _rejected_default_root(case: Case) -> Entity:
+    """The entity a rejected case's ``when`` is resolved against but never names.
+
+    A rejected case authors no ``targetEntity``, and neither an ``operation`` nor a
+    bare ``when.write`` row carries an entity handle of its own, so both resolve
+    against the model's DEFAULT write root (`m-case-format` Rejected cases): the
+    inheritance-family root when the model declares exactly one family, else — when
+    the model declares no family at all — its own first entity.
+
+    A model declaring SEVERAL families names no single root, so it has no default
+    and the case must carry its own handle; resolving such a model to whichever
+    entity happens to be declared first would grade a rule against an entity the
+    case never asked about.
+    """
+    entities = case.model.entities
+    participants = [entity for entity in entities if entity.inheritance is not None]
+    if not participants:
+        return entities[0]
+    roots = [entity for entity in participants if entity.role == "root"]
+    if len(roots) != 1:
+        raise CaseFailure(
+            f"{case.path.name}: the case's model declares {len(roots)} inheritance family "
+            f"roots, so a `when` naming no explicit target has no default write root to "
+            f"resolve against"
+        )
+    return roots[0]
+
+
 def _rejected_write_input(case: Case) -> dict[str, Any]:
     """The ONE ``when.write`` document a rejected case puts under test.
 
@@ -2994,9 +3029,9 @@ def _rejected_write_input(case: Case) -> dict[str, Any]:
     vocabulary also admits is the conflict lane's form alone
     (`compatibility-case.schema.json`): it states a collapsed statement's
     aggregate affected-row count, which a pre-SQL rejection asserts nothing about.
-    Refused here rather than read through :attr:`Case.write`, whose single-row
-    conflict accessor answers a one-element array with its row and a longer one
-    with nothing — either way grading a document no rejected lane defines.
+    Refused here rather than normalized: reading a one-element array as its row and
+    a longer one as nothing would, in both directions, grade a document no rejected
+    lane defines.
     """
     write = case.when.get("write")
     if not isinstance(write, dict):
@@ -5523,13 +5558,17 @@ def _assert_scenario_settled_close(case: Case, dialect: str) -> None:
 
     The observed milestone is resolved INDEPENDENTLY of the golden, from the named
     find step's own ``expectRows`` — the rows that read returned, which is exactly
-    the evidence the store it filled holds. Both the close's address (its
-    Valid-Time exclusive upper bound) and, under optimistic concurrency, its gate
-    are then derived from that ONE row and compared against the step's first golden
-    statement, which a milestone split always leads with. A case whose close binds
-    the OTHER current rectangle of the same key therefore fails here as well as in
-    execution, so the corpus states which milestone the write settled against in
-    two independent places.
+    the evidence the store it filled holds. The close's address (on a Bitemporal
+    target, its Valid-Time exclusive upper bound) and, under optimistic
+    concurrency, its gate are then derived from that ONE row and compared against
+    the step's first golden statement, which a temporal write always leads with.
+
+    Which bind a misresolution moves is the target's PROFILE's answer: a Bitemporal
+    key's current rectangles are disjoint on Valid Time, so a close binding the
+    OTHER current rectangle fails on the address, while a Transaction-Time-Only
+    close addresses the key plus the invariant open bound and so fails on the gate
+    alone. Either way the corpus states which milestone the write settled against
+    in two independent places — here and in execution.
     """
     for index, step in enumerate(case.scenario):
         if "write" not in step or "on" not in step:

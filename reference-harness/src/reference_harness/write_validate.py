@@ -1,27 +1,35 @@
 """Model-aware WRITE validation for the ``rejected`` case shape (m-value-object).
 
 A write `rejected` case (m-case-format, resolved Q7) carries a neutral write row
-(①) whose value-object document a model-aware validator MUST refuse **before any
-DML is emitted**. A value object is written **atomically as one whole document**
-(m-value-object), so the document must be structurally complete against its
-*declared* recursive structure. This module validates each value-object document in
-the row and raises
+(①) that a model-aware validator MUST refuse **before any DML is emitted**. The row
+is resolved against the target's **declared** structure — its scalar Attributes and
+its Value Objects, recursively — and this module raises
 :class:`~reference_harness.value_object_resolve.RejectionError` naming the rule:
 
 * ``write-required-attribute-missing`` — a required (`nullable: false`) attribute is
-  absent (or null) at any depth;
+  absent (or null) at any depth, the entity's own top-level Attributes included;
 * ``write-required-value-object-missing`` — a required `one` value object is absent
   (or null) at any depth, or a `many` occurrence is present as an explicit null. An
   ABSENT `many` is not a violation: absence and the empty array are one logical zero
   state, so an unnamed `many` occurrence is the empty collection (m-value-object,
   m-document-codec);
-* ``write-value-type-mismatch`` — a document field value's type differs from the
-  attribute's declared neutral type.
+* ``write-value-type-mismatch`` — a value's type differs from what its declared
+  position admits: a scalar leaf whose literal does not match the Attribute's
+  neutral type, a non-document at a `one` occurrence, or a non-list (or a list of
+  non-documents) at a `many` one. A value object binds **atomically as one whole
+  document** (m-value-object), so a scalar standing where a document is declared is
+  a type mismatch rather than an absence.
 
-Scalar-attribute presence/typing is out of scope here (a value object's write
-validation is about the DOCUMENT), so a non-value-object key is ignored. The
-reference harness runs this so the reference implementation actually rejects what
-the `rejected` cases pin — the refusal each language implementation must make.
+The bare `when.write` row carries no mutation context, so it is graded as a FULL
+document: every declared member must be present, save a `many` occurrence, whose
+absence IS its empty collection. Two member kinds are outside the walk because the
+framework, never the caller, supplies their values — the optimistic-lock version
+and the As-Of Axis endpoints (:func:`framework_owned_names`), plus a
+table-per-hierarchy tag column, whose presence the concrete-subtype protocol below
+refuses outright.
+
+The reference harness runs this so the reference implementation actually rejects
+what the `rejected` cases pin — the refusal each language implementation must make.
 """
 
 from __future__ import annotations
@@ -37,111 +45,143 @@ from .inheritance import (
     Family,
     inheritance_of,
     is_abstract,
+    tag_of,
 )
+from .temporality import temporal_axes
 from .value_object_resolve import (
     WRITE_REQUIRED_ATTRIBUTE_MISSING,
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
     WRITE_VALUE_TYPE_MISMATCH,
     RejectionError,
-    find_top_value_object,
     literal_matches_type,
 )
 
+# A single-key mapping shaped like one of these is a DB-computed write marker
+# (`m-value-object` "Writing" -- pk-gen / the framework version advance) and is
+# exempt from type checking. The disambiguation is by the field's declared
+# metamodel ROLE, never by the value's shape, so the exemption holds at a scalar
+# Attribute alone -- never inside a document, where a value object binds its whole
+# document even when that document happens to be shaped like a marker.
+_MARKER_KEYS = (frozenset({"computed"}), frozenset({"increment"}))
+
+
+def framework_owned_names(entity: Entity) -> frozenset[str]:
+    """The declared attribute names on *entity* whose values the FRAMEWORK supplies.
+
+    A neutral write input never authors these, so their absence from a row is not a
+    caller omission to report: the optimistic-lock version (a write derives its
+    advance and its gate from the observation, ADR 0013), each As-Of Axis endpoint
+    (the Transaction-Time instant is Clock-supplied flush context and the Valid-Time
+    bounds ride on the instruction, ADR 0010), and a table-per-hierarchy tag column,
+    which the write derives from the concrete subtype's ``tagValue``
+    (`m-inheritance`).
+    """
+    facts = entity.runtime_facts
+    names = {endpoint.name for axis in temporal_axes(facts) for endpoint in (axis.start, axis.end)}
+    names.update(
+        attribute["name"] for attribute in entity.attributes if attribute.get("optimisticLocking")
+    )
+    tag = tag_of(facts)
+    if tag is not None:
+        names.add(tag[0])
+    return frozenset(names)
+
 
 def validate_write(entity: Entity, row: dict[str, Any]) -> None:
-    """Reject *row* pre-SQL if a value-object document is structurally invalid.
+    """Reject *row* pre-SQL if it is invalid against *entity*'s declared structure.
 
     Raises :class:`RejectionError` (``.rule`` one of the write rules) on the first
-    violation, walking each value-object document depth-first in declaration order.
+    violation, walking *entity*'s declared Attributes and then its Value Objects in
+    DECLARATION order, each document depth-first. Declaration order is what makes
+    the classification a property of the model rather than of the row's authoring
+    order, so a row carrying two defects names the same rule however it is spelled.
     Used ONLY for ``rejected`` cases.
     """
-    # A required top-level `one` value object omitted ENTIRELY from the row is a
-    # violation (a present-but-null one is caught below via `_validate_member`). A
-    # `many` occurrence is exempt: its absence IS its empty collection.
+    framework_owned = framework_owned_names(entity)
+    for attribute in entity.attributes:
+        if attribute["name"] in framework_owned:
+            continue
+        _validate_attribute(row, attribute, path=f"{entity.name}.{attribute['name']}")
     for value_object in entity.value_objects:
-        if _is_many(value_object) or value_object.get("nullable", False):
-            continue
-        if value_object["name"] not in row:
-            raise RejectionError(
-                WRITE_REQUIRED_VALUE_OBJECT_MISSING,
-                f"required value object {value_object['name']!r} is absent from the write input",
-            )
-    for key, value in row.items():
-        if key == "observedVersion":
-            continue
-        value_object = find_top_value_object(entity, key)
-        if value_object is None:
-            # A scalar attribute (or an unknown key): scalar-attribute validation is
-            # out of scope for value-object write validation.
-            continue
-        _validate_member(value_object, value)
+        _validate_occurrence(row, value_object, path=f"{entity.name}.{value_object['name']}")
 
 
 def _is_many(value_object: dict[str, Any]) -> bool:
     return value_object.get("multiplicity", "one") == "many"
 
 
-def _validate_member(value_object: dict[str, Any], value: Any) -> None:
-    """Validate a PRESENT value at a value-object member position against its
-    declaration — the caller decides whether an absent key is a violation."""
-    nullable = value_object.get("nullable", False)
-    if value is None:
-        # An explicit null at a `many` position names a state the model gives it
-        # none of: a `many` is never nullable, so the null is refused here even
-        # though its absence would not have been.
-        if not nullable:
+def _is_marker(value: Any) -> bool:
+    return isinstance(value, dict) and frozenset(value) in _MARKER_KEYS
+
+
+def _validate_attribute(
+    document: dict[str, Any], attribute: dict[str, Any], *, path: str, marker_exempt: bool = True
+) -> None:
+    """Validate one scalar Attribute position inside *document*."""
+    name = attribute["name"]
+    value = document.get(name)
+    if name not in document or value is None:
+        if not attribute.get("nullable", False):
+            raise RejectionError(
+                WRITE_REQUIRED_ATTRIBUTE_MISSING,
+                f"{path}: required attribute (nullable:false) is absent or null",
+            )
+        return
+    if marker_exempt and _is_marker(value):
+        return
+    if not literal_matches_type(value, attribute.get("type")):
+        raise RejectionError(
+            WRITE_VALUE_TYPE_MISMATCH,
+            f"{path}: value {value!r} does not match the declared type {attribute.get('type')!r}",
+        )
+
+
+def _validate_occurrence(
+    document: dict[str, Any], value_object: dict[str, Any], *, path: str
+) -> None:
+    """Validate one Value Object occurrence inside *document*, present or not."""
+    name = value_object["name"]
+    value = document.get(name)
+    if name not in document or value is None:
+        # An UNNAMED `many` is its empty collection, never a missing member; naming
+        # one explicitly null is refused, because the model gives it no null state.
+        zero_state = name not in document and _is_many(value_object)
+        if not value_object.get("nullable", False) and not zero_state:
             raise RejectionError(
                 WRITE_REQUIRED_VALUE_OBJECT_MISSING,
-                f"required value object {value_object['name']!r} (nullable:false) is "
-                f"absent or null",
+                f"{path}: required value object (nullable:false) is absent or null",
             )
         return
-    if _is_many(value_object):
-        # An empty array is the sole zero-element representation, so writing one is
-        # writing a value. Validate each element as a document.
-        if isinstance(value, list):
-            for element in value:
-                _validate_document(value_object, element)
+    _validate_value(value_object, value, path=path)
+
+
+def _validate_value(value_object: dict[str, Any], value: Any, *, path: str) -> None:
+    """Validate a PRESENT, non-null value against *value_object*'s multiplicity."""
+    if not _is_many(value_object):
+        _validate_document(value_object, value, path=path)
         return
-    _validate_document(value_object, value)
+    if not isinstance(value, list):
+        raise RejectionError(
+            WRITE_VALUE_TYPE_MISMATCH,
+            f"{path}: a `many` value object binds a list of documents, got {type(value).__name__}",
+        )
+    for index, element in enumerate(value):
+        _validate_document(value_object, element, path=f"{path}[{index}]")
 
 
-def _validate_document(value_object: dict[str, Any], document: Any) -> None:
-    """Validate one document (a `one` member / a `many` element) against its members."""
+def _validate_document(value_object: dict[str, Any], document: Any, *, path: str) -> None:
+    """Validate one document (a `one` occurrence / a `many` element) against its members."""
     if not isinstance(document, dict):
-        # A non-object where an object is expected is out of the negatives' scope
-        # (the absence-collapse rule reads it as not-present at read time).
-        return
+        raise RejectionError(
+            WRITE_VALUE_TYPE_MISMATCH,
+            f"{path}: expected a value-object document, got {type(document).__name__}",
+        )
     for attribute in value_object.get("attributes", []):
-        name = attribute["name"]
-        present = name in document and document[name] is not None
-        if not present:
-            if not attribute.get("nullable", False):
-                raise RejectionError(
-                    WRITE_REQUIRED_ATTRIBUTE_MISSING,
-                    f"required attribute {value_object['name']}.{name} (nullable:false) is "
-                    f"absent or null",
-                )
-            continue
-        if not literal_matches_type(document[name], attribute.get("type")):
-            raise RejectionError(
-                WRITE_VALUE_TYPE_MISMATCH,
-                f"{value_object['name']}.{name} value {document[name]!r} does not match "
-                f"declared type {attribute.get('type')!r}",
-            )
+        _validate_attribute(
+            document, attribute, path=f"{path}.{attribute['name']}", marker_exempt=False
+        )
     for nested in value_object.get("valueObjects", []):
-        name = nested["name"]
-        if name not in document:
-            # An unnamed nested `many` is its empty collection, never a missing
-            # required member; every other unnamed occurrence answers to its own
-            # nullability, exactly as a present-but-null one does.
-            if not _is_many(nested) and not nested.get("nullable", False):
-                raise RejectionError(
-                    WRITE_REQUIRED_VALUE_OBJECT_MISSING,
-                    f"required value object {nested['name']!r} (nullable:false) is absent or null",
-                )
-            continue
-        _validate_member(nested, document[name])
+        _validate_occurrence(document, nested, path=f"{path}.{nested['name']}")
 
 
 # --- concrete-subtype write validation ----------------------------------------

@@ -1,0 +1,25 @@
+# Negative (m-value-object write validation, resolved Q7): a SCALAR standing where a
+# `many` value object is declared is refused PRE-SQL.
+#
+# A `many` occurrence binds a JSON ARRAY of documents — that array IS its value, and the
+# empty one is its zero state. Contact's `address.phones` is a `many` occurrence; this
+# write binds the string `"555"` to it. The distinction from m-value-object-042 is what
+# the write did: omitting `phones` would have stored the empty collection, whereas
+# naming it with a non-array binds a value the occurrence's multiplicity cannot hold, so
+# the rule is the type mismatch. Every other member is present and well-typed.
+model: models/contact.yaml
+tags: [m-value-object, rejected, negative, write, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  write:
+    id: 1
+    name: Acme
+    address:
+      street: 1 Main St
+      city: Oslo
+      geo:
+        country: "NO"
+        point: { lat: 59.9, lon: 10.7 }
+      phones: "555"
+then:
+  rejectedRule: write-value-type-mismatch
