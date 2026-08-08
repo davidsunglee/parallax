@@ -42,7 +42,11 @@ from types import MappingProxyType
 from typing import Final, Literal, cast
 
 from parallax.core import inheritance, op_algebra
-from parallax.core.metamodel import EntityMetadata, entity_by_name
+from parallax.core.metamodel import (
+    EntityMetadata,
+    ambiguous_entity_spellings,
+    entity_by_name,
+)
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.op_algebra import Operation
 
@@ -793,16 +797,12 @@ def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     entity = entity_by_name(model, name)
     if entity is not None:
         return entity
-    shared = sorted(
-        candidate.identity.canonical
-        for candidate in model.entities
-        if candidate.identity.name == name
-    )
-    if len(shared) > 1:
+    shared = ambiguous_entity_spellings(model, name)
+    if shared:
         raise InstructionRejectedError(
             REFERENCE_AMBIGUOUS_ENTITY_NAME,
-            f"the bare Entity spelling {name!r} is shared by {shared}, so it names no single "
-            "Entity in this model and the write resolves nowhere (m-op-algebra reference "
+            f"the bare Entity spelling {name!r} is shared by {list(shared)}, so it names no "
+            "single Entity in this model and the write resolves nowhere (m-op-algebra reference "
             "resolution); spell the one this write means",
         )
     raise WriteInstructionError(f"unknown entity {name!r}")

@@ -95,6 +95,7 @@ from parallax.core.metamodel import (
     RelationshipDeclaration,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
+    ambiguous_entity_spellings,
     entity_by_name,
     split_reference,
 )
@@ -392,14 +393,12 @@ def _ambiguous_reference(
     canonical spelling this refusal reports, or through any position that names
     them unambiguously — so the reference is refused, never the declaration.
     """
-    canonical = sorted(
-        entity.identity.canonical for entity in model.entities if entity.identity.name == class_name
-    )
-    if len(canonical) < 2:
+    canonical = ambiguous_entity_spellings(model, class_name)
+    if not canonical:
         return None
     return OperationRejectedError(
         "reference-ambiguous-entity-name",
-        f"{reference!r}: the bare Entity spelling {class_name!r} is shared by {canonical}, "
+        f"{reference!r}: the bare Entity spelling {class_name!r} is shared by {list(canonical)}, "
         "so it names no single Entity in this model and the reference resolves nowhere "
         "(m-op-algebra reference resolution)",
     )

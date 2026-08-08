@@ -110,6 +110,7 @@ from parallax.core.metamodel._states import (
     UnresolvedMetamodel,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
+    ambiguous_entity_spellings,
     entity_by_name,
 )
 from parallax.core.metamodel._temporal_structure import (
@@ -295,6 +296,7 @@ __all__ = [
     "VoDocumentViolation",
     "WriteAssignmentError",
     "accept_metamodel",
+    "ambiguous_entity_spellings",
     "canonical_issue_key",
     "canonical_location_key",
     "compile_metadata",

@@ -250,6 +250,35 @@ def _action_identity_error_case() -> dict[str, Any]:
     }
 
 
+def _write_value_scenario_case() -> dict[str, Any]:
+    """A scenario of KEYED WRITE ACTION steps (m-case-format *Keyed write action
+    steps*).
+
+    Each step hands a keyed write verb a value whose provenance the sibling
+    `value` states, names no `on`, carries no golden SQL, and declares
+    `roundTrips: 0` — so the whole scenario's declared total is legitimately 0,
+    the one shape where that floor is relaxed.
+    """
+    return {
+        "model": "models/account.yaml",
+        "tags": ["m-unit-work"],
+        "lane": "api-conformance",
+        "shape": "scenario",
+        "when": {
+            "scenario": [
+                {
+                    "action": "update",
+                    "value": "unmanaged",
+                    "roundTrips": 0,
+                    "expectError": "write-value-not-stored",
+                },
+                {"action": "update", "value": "thisSource", "roundTrips": 0},
+            ]
+        },
+        "then": {"roundTrips": 0},
+    }
+
+
 def _conflict_case() -> dict[str, Any]:
     return {
         "model": "models/account.yaml",
@@ -586,6 +615,7 @@ VALID_CASES = {
     "scenario-action": _action_scenario_case,
     "scenario-action-identity-error": _action_identity_error_case,
     "scenario-action-boundary-no-on": _action_boundary_no_on_case,
+    "scenario-keyed-write-value": _write_value_scenario_case,
     "conflict": _conflict_case,
     "conflict-retry": _conflict_retry_case,
     "coherence": _coherence_case,
@@ -1053,7 +1083,44 @@ def _identity_check_stray_key() -> dict[str, Any]:
     return doc
 
 
+def _write_value_step_with_golden_statements() -> dict[str, Any]:
+    """A keyed write action step listing golden SQL.
+
+    Such a step carries NONE: an accepted value's write is buffered rather than
+    emitted, and a refused one reaches no statement at all, so any `statements`
+    there claims an emission the step cannot have."""
+    doc = _write_value_scenario_case()
+    doc["when"]["scenario"][0]["statements"] = [
+        {"sql": {"postgres": "update account set balance = ? where id = ?"}, "binds": [1, 2]}
+    ]
+    return doc
+
+
+def _write_value_step_costing_a_round_trip() -> dict[str, Any]:
+    """A keyed write action step declaring a nonzero `roundTrips`.
+
+    The step's whole observable is which verb accepted the value, so it costs
+    zero round trips by construction."""
+    doc = _write_value_scenario_case()
+    doc["when"]["scenario"][0]["roundTrips"] = 1
+    return doc
+
+
+def _read_case_with_zero_round_trips() -> dict[str, Any]:
+    """A read case declaring `then.roundTrips: 0`.
+
+    Zero is legal only for a scenario, whose total is the sum of its steps'; a
+    read executes the golden SQL it asserts, so an all-zero total is impossible
+    and is refused here rather than in a later harness check."""
+    doc = _read_case()
+    doc["then"]["roundTrips"] = 0
+    return doc
+
+
 REJECTED_CASES = {
+    "write-value-step-with-golden-statements": _write_value_step_with_golden_statements,
+    "write-value-step-costing-a-round-trip": _write_value_step_costing_a_round_trip,
+    "read-with-zero-round-trips": _read_case_with_zero_round_trips,
     "legacy-layout": _legacy_layout,
     "mislabeled-shape": _mislabeled_shape,
     "string-sql-at-golden-location": _string_sql_at_golden_location,

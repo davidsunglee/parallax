@@ -44,7 +44,7 @@ developer catches from ``parallax.snapshot`` itself.
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, cast
 
@@ -519,7 +519,11 @@ def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
 
 
 def validate_write_value(
-    identity: EntityIdentity, value: EntityBase, mutation: KeyedMutation
+    identity: EntityIdentity,
+    value: EntityBase,
+    mutation: KeyedMutation,
+    *,
+    inserted_here: Callable[[], bool],
 ) -> None:
     """Refuse a value whose PROVENANCE ``mutation``'s verb does not accept
     (`m-unit-work` "Write value provenance"), before any row is derived from it.
@@ -536,6 +540,15 @@ def validate_write_value(
     ``delete`` / ``terminate`` / ``terminateUntil`` derive an identity row alone
     and fall through, exactly as they already do for ``valid_from``.
 
+    ``inserted_here`` answers whether the writing unit of work has ALREADY
+    buffered an insert of this object, and its ``True`` exempts a value from the
+    NotStored refusal: a row this transaction inserted is a row it stores, so the
+    update that follows carries the final value the flush writes rather than
+    addressing nothing (`m-unit-work` "Insert-then-update coalesces in place").
+    It is consulted only on the branch that would otherwise refuse, so an
+    accepted value never pays for it and a transaction that buffered no insert
+    answers it without deriving anything from the value.
+
     Provenance is read through :func:`~parallax.snapshot._inspection.
     snapshot_state_of` and the un-narrowed
     :func:`~parallax.core.entity.lifecycle_state_of`, never through a value's
@@ -547,7 +560,7 @@ def validate_write_value(
         return
     state = lifecycle_state_of(value)
     if state is None:
-        if mutation in INSERT_MUTATIONS:
+        if mutation in INSERT_MUTATIONS or inserted_here():
             return
         raise KeyedWriteValueError(
             code="write-value-not-stored",

@@ -51,6 +51,7 @@ __all__ = [
     "UnresolvedMetamodel",
     "ValueObjectAttributeMetadata",
     "ValueObjectMetadata",
+    "ambiguous_entity_spellings",
     "entity_by_name",
 ]
 
@@ -324,3 +325,22 @@ def entity_by_name(model: Metamodel, name: str) -> EntityMetadata | None:
             bare = entity
             bare_matches += 1
     return bare if bare_matches == 1 else None
+
+
+def ambiguous_entity_spellings(model: Metamodel, name: str) -> tuple[str, ...]:
+    """The sorted canonical spellings ``name`` is shared by when it is a bare
+    local name two or more namespaces of ``model`` declare, and the empty tuple
+    when it names at most one Entity.
+
+    This classifies :func:`entity_by_name`'s miss, which answers two different
+    mistakes the same way: a spelling that resolves nowhere because it is shared,
+    and one that resolves nowhere because the model declares it at all. Every
+    boundary telling those apart asks here and raises its OWN carrier — the
+    normative `reference-ambiguous-entity-name` refusal in the vocabulary that
+    boundary reports in — so the classification and the sorted spellings a
+    refusal names exist once while no carrier is imposed on any caller.
+    """
+    shared = sorted(
+        entity.identity.canonical for entity in model.entities if entity.identity.name == name
+    )
+    return tuple(shared) if len(shared) > 1 else ()
