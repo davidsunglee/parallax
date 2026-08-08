@@ -183,44 +183,48 @@ is never a Planned Write, and a Planned Write is never serialized back into one.
 
 A keyed frontend verb is handed a **value**, not an instruction: the instruction's
 row is derived from that value. Which verbs accept a given value is decided by the
-value's **provenance** — whether this framework produced it from a read of this
-store — and never by whether an author has since changed it. Editedness answers a
+value's **provenance** — which framework-managed source, if any, produced it from a
+read — and never by whether an author has since changed it. Editedness answers a
 different question: it decides what a write *contains*, not whether the verb the
 author called was the right one.
 
-Three provenance answers are refusals, one per value kind some verb does not
-accept:
+Provenance has exactly three answers for a given verb, and they **partition** the
+values that verb can be handed: no managed read produced the value, the source
+this verb writes through produced it, or a **different** managed source did. Each
+answer is a refusal for one family of verbs, so a refused value always has exactly
+one code:
 
 ```text
 WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
 ```
 
 - **NotStored** (`write-value-not-stored`) — an `update` / `updateUntil` verb was
-  handed a value this framework did not produce from a read of this store. No
-  stored row exists for it to address, so the refusal names the `insert` verb as
-  the one that accepts it.
+  handed a value **no** managed read produced. No stored row exists for it to
+  address, so the refusal names the `insert` verb as the one that accepts it.
 - **AlreadyStored** (`write-value-already-stored`) — an `insert` / `insertUntil`
-  verb was handed a value this framework **did** produce from a read of this
-  store. That value already denotes a stored row, so the refusal names the
-  `update` verb.
+  verb was handed a value produced by a read through **the very source this verb
+  writes through**. That value already denotes a row that source stores, so the
+  refusal names the `update` verb.
 - **ForeignLifecycle** (`write-value-foreign-lifecycle`) — the value was produced
   by a read through some **other** framework-managed source than the one this verb
-  writes through. Both families refuse it rather than mistake it for a value this
-  store produced.
+  writes through. Both families refuse it, including when that other source reads
+  the same store: a value's stored counterpart is only the one the writing source
+  itself produced, and no verb may treat another source's value as its own.
 
 The set is **closed**, and the tags are **neutral**: each names a class of value a
 verb rejects, never a language's exception type. The one fact an implementation
-**MUST** be able to decide about a value it is handed is *whether this framework
-produced it from a read of this store, and through which source* — which any
-implementation that materializes values already knows at the moment it
-materializes them. How that fact is retained — carried on the value, held in an
-identity map, held in a session registry — is the implementation's own affair, and
-no conforming behavior depends on the choice.
+**MUST** be able to decide about a value it is handed is *which of those three
+answers holds* — no managed read produced it, this verb's own source did, or
+another managed source did — which any implementation that materializes values
+already knows at the moment it materializes them. How that fact is retained —
+carried on the value, held in an identity map, held in an implementation-owned
+registry — is the implementation's own affair, and no conforming behavior depends
+on the choice.
 
 Two consequences are normative:
 
-- A value this store produced that no author has changed is **not** a refusal for
-  an `update` verb. It buffers nothing, issues no statement, and raises nothing —
+- A value this verb's own source produced that no author has changed is **not** a
+  refusal for an `update` verb. It buffers nothing, issues no statement, and raises nothing —
   the same outcome as an edit whose net change is empty. Requiring an author to
   test each value before writing it would defeat the change tracking the framework
   performs on the author's behalf.
