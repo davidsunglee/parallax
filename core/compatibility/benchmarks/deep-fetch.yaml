@@ -17,7 +17,6 @@ tags: [m-perf-bench, deep-fetch]
 model: models/orders.yaml
 dataset:
   generate:
-    entity: Order
     rows: 200
     recipe: orders-tree
     fanout: 5

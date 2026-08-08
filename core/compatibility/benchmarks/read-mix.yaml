@@ -12,7 +12,6 @@ tags: [m-perf-bench, operation-mix]
 model: models/account.yaml
 dataset:
   generate:
-    entity: Account
     rows: 1000
     recipe: accounts-sequential
 workloads:
