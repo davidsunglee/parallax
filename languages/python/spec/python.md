@@ -3112,7 +3112,14 @@ or descriptor authoring form and performs no audit stamping.
   `insert_until` handed a value this store's own read produced raise
   `write-value-already-stored`, whose message names `tx.update(...)`; and both
   families refuse a value **another** framework-managed source produced with
-  `write-value-foreign-lifecycle`, a source reading the same store included. The
+  `write-value-foreign-lifecycle`. The classifier's axis is which managed
+  **lifecycle** attached the value's state, never which `Database` issued the
+  read: every `Database` over one store shares this one lifecycle, so a value a
+  second handle read is this source's value, and a non-transactional
+  `db.find(...)` produces one exactly as `tx.find(...)` does (ADR 0010). What such
+  a value may then be written into is the prior-observation rule's answer rather
+  than provenance's — that rule is what carries consistency across reads, and it
+  asks only whether THIS unit of work observed the row. The
   refusal is decided in the shared keyed-verb preamble, **before** any row is
   derived, so a refused value reaches no codec, no buffer, no plan, and no
   adapter — it is never a translation of a lower-level failure, and no

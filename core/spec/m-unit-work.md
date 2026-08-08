@@ -188,6 +188,16 @@ read — and never by whether an author has since changed it. Editedness answers
 different question: it decides what a write *contains*, not whether the verb the
 author called was the right one.
 
+A **framework-managed source** is one managed value lifecycle: the machinery that
+materializes values from reads and attaches to each the state by which it later
+recognizes its own. A source is not a connection, a handle, or a transaction. Any
+number of those sharing one lifecycle over one store are **one** source, and a
+value any of them read is a value that source produced. Provenance therefore
+carries no cross-read guarantee, and none is asked of it: whether a write may
+proceed from a row an earlier read returned is settled by whether the writing unit
+of work **observed** that row, which the observation requirements decide on their
+own and independently of which reader produced the value.
+
 Provenance has exactly three answers for a given verb, and they **partition** the
 values that verb can be handed: no managed read produced the value, the source
 this verb writes through produced it, or a **different** managed source did. Each
@@ -207,9 +217,9 @@ WriteValueRefusal = NotStored | AlreadyStored | ForeignLifecycle
   refusal names the `update` verb.
 - **ForeignLifecycle** (`write-value-foreign-lifecycle`) — the value was produced
   by a read through some **other** framework-managed source than the one this verb
-  writes through. Both families refuse it, including when that other source reads
-  the same store: a value's stored counterpart is only the one the writing source
-  itself produced, and no verb may treat another source's value as its own.
+  writes through. Both families refuse it, including when that other lifecycle
+  reads the same store: a value's stored counterpart is only the one the writing
+  source itself produced, and no verb may treat another source's value as its own.
 
 The set is **closed**, and the tags are **neutral**: each names a class of value a
 verb rejects, never a language's exception type. The one fact an implementation
