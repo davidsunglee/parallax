@@ -281,7 +281,7 @@
           "items": { "$ref": "#/$defs/stateCheck" }
         },
         "errors": {
-          "description": "Neutral application-lifecycle errors (m-detach / m-identity-map) an adapter reports for scenario steps declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",
+          "description": "Neutral application-lifecycle errors (m-detach / m-identity-map / m-unit-work) an adapter reports for scenario steps declaring `expectError`. Optional and additive — an adapter that raises no such error omits it, and existing run outputs stay valid.",
           "type": "array",
           "items": { "$ref": "#/$defs/errorObservation" }
         },

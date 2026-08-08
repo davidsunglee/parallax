@@ -579,7 +579,7 @@
                 "enum": ["in-memory", "persisted", "deleted", "detached", "detached-deleted"]
               },
               "expectError": {
-                "description": "A neutral application-lifecycle error this step's verb must raise: `detached-relationship-load`; `transaction-time-pin-read-only` for a mutation through a finite Transaction-Time-pinned view; or one of the three write-value provenance refusals (m-unit-work) — `write-value-not-stored` for an update handed a value this framework did not produce from a read of this store, `write-value-already-stored` for an insert handed a value it did, and `write-value-foreign-lifecycle` for a value produced through some other framework-managed source.",
+                "description": "A neutral application-lifecycle error this step's verb must raise: `detached-relationship-load`; `transaction-time-pin-read-only` for a mutation through a finite Transaction-Time-pinned view; or one of the three write-value provenance refusals (m-unit-work), which partition a value's provenance — `write-value-not-stored` for an update handed a value no managed read produced, `write-value-already-stored` for an insert handed a value produced by a read through the very source it writes through, and `write-value-foreign-lifecycle` for a value produced through some other framework-managed source, the same store or not.",
                 "enum": [
                   "detached-relationship-load",
                   "transaction-time-pin-read-only",

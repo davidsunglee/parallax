@@ -1214,15 +1214,14 @@ verifies them (`m-conformance-adapter`, `m-api-conformance`):
   - `transaction-time-pin-read-only` — a mutation through a finite
     Transaction-Time pinned view, which records what the system knew and is never rewritten
     (`m-identity-map`).
-  - `write-value-not-stored` — an `update` verb handed a value this framework did
-    not produce from a read of this store, which therefore addresses no stored row
-    (`m-unit-work`).
-  - `write-value-already-stored` — an `insert` verb handed a value this framework
-    did produce from a read of this store, which therefore already denotes one
-    (`m-unit-work`).
+  - `write-value-not-stored` — an `update` verb handed a value no managed read
+    produced, which therefore addresses no stored row (`m-unit-work`).
+  - `write-value-already-stored` — an `insert` verb handed a value produced by a
+    read through the very source it writes through, which therefore already
+    denotes a row that source stores (`m-unit-work`).
   - `write-value-foreign-lifecycle` — a write verb handed a value produced by a
     read through some other framework-managed source than the one it writes
-    through (`m-unit-work`).
+    through, the same store or not (`m-unit-work`).
 
 ### Coherence cases (`m-coherence`)
 
