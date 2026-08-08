@@ -6,15 +6,15 @@
 # 0330 catches an EXISTS lowering that drops the propagated child as-of terms:
 # correct latest-as-of excludes it, but a child query with no Coverage as-of
 # would incorrectly admit Policy 2.
-Policy:
+parallax.compatibility.Policy:
   - { id: 1, name: Auto, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
   - { id: 2, name: Home, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
-Coverage:
+parallax.compatibility.Coverage:
   - { id: 10, policyId: 1, amount: 500.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: "2024-04-01T00:00:00+00:00" }
   - { id: 10, policyId: 1, amount: 600.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: "2024-06-01T00:00:00+00:00", txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
   - { id: 10, policyId: 1, amount: 700.00, validStart: "2024-06-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-04-01T00:00:00+00:00", txEnd: infinity }
   - { id: 20, policyId: 2, amount: 300.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
   - { id: 21, policyId: 2, amount: 900.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2023-12-01T00:00:00+00:00", txEnd: "2024-01-01T00:00:00+00:00" }
-Claim:
+parallax.compatibility.Claim:
   - { id: 1000, coverageId: 10, reserve: 9000.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }
   - { id: 2000, coverageId: 20, reserve: 4000.00, validStart: "2024-01-01T00:00:00+00:00", validEnd: infinity, txStart: "2024-01-01T00:00:00+00:00", txEnd: infinity }

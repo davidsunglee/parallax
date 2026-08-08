@@ -53,7 +53,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Tool
+      parent: parallax.compatibility.Tool
       tagValue: hand
     attributes:
       - name: gripSize
@@ -63,7 +63,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Tool
+      parent: parallax.compatibility.Tool
       tagValue: power
     attributes:
       - name: wattage
@@ -89,7 +89,7 @@ entities:
     table: timber
     inheritance:
       role: concrete-subtype
-      parent: Material
+      parent: parallax.compatibility.Material
     attributes:
       - name: grade
         type: string
@@ -100,7 +100,7 @@ entities:
     table: steel
     inheritance:
       role: concrete-subtype
-      parent: Material
+      parent: parallax.compatibility.Material
     attributes:
       - name: alloy
         type: string

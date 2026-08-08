@@ -48,7 +48,7 @@ entities:
     table: deposit_rate
     inheritance:
       role: concrete-subtype
-      parent: Rate
+      parent: parallax.compatibility.Rate
     attributes:
       - name: grade
         type: string
@@ -59,7 +59,7 @@ entities:
     table: loan_rate
     inheritance:
       role: concrete-subtype
-      parent: Rate
+      parent: parallax.compatibility.Rate
     attributes:
       - name: spread
         type: decimal(18,2)

@@ -7,7 +7,7 @@
 # owns no rows.
 #
 #   id 1 Fridge  name Cold-1  capacityLiters 300  version 5
-Fridge:
+parallax.compatibility.Fridge:
   - id: 1
     name: Cold-1
     capacityLiters: 300

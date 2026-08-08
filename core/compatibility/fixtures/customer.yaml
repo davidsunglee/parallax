@@ -74,7 +74,7 @@
 # that tells the two apart. exists = non-empty {1,2,7}; notExists (empty-or-absent)
 # folds the empty array (3), the NULL column (4), the missing key (5,6) and every
 # non-array state (8,9,10) together.
-Customer:
+parallax.compatibility.Customer:
   - id: 1
     name: Ada
     address:
@@ -214,7 +214,7 @@ Customer:
 # orderBy), one of them the null-document child; Customer 2 owns one; Customers
 # 3-10 own none, so they appear in the graph with an empty `locations` list
 # (the fan-out attaches by key, never dropping childless parents).
-Location:
+parallax.compatibility.Location:
   - id: 100
     customerId: 1
     label: HQ
@@ -269,7 +269,7 @@ Location:
 # Customer 1 owns BOTH depots (200, 201 — ordered id asc per the relationship
 # orderBy); no other customer owns a depot, so an `all(Depot)` read returns exactly
 # these two.
-Depot:
+parallax.compatibility.Depot:
   - id: 200
     customerId: 1
     label: Dock

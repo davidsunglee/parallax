@@ -86,7 +86,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: LayoutPayment
+      parent: parallax.compatibility.LayoutPayment
       tagValue: card
     attributes:
       - name: cardNetwork
@@ -96,7 +96,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: LayoutPayment
+      parent: parallax.compatibility.LayoutPayment
       tagValue: cash
     attributes:
       - name: tendered
@@ -118,7 +118,7 @@ entities:
     table: layout_audit
     inheritance:
       role: concrete-subtype
-      parent: LayoutReport
+      parent: parallax.compatibility.LayoutReport
     attributes:
       - name: auditor
         type: string
@@ -129,7 +129,7 @@ entities:
     table: layout_survey
     inheritance:
       role: concrete-subtype
-      parent: LayoutReport
+      parent: parallax.compatibility.LayoutReport
     attributes:
       - name: respondent
         type: string
@@ -160,7 +160,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: LayoutReading
+      parent: parallax.compatibility.LayoutReading
       tagValue: meter
     attributes:
       - name: celsius

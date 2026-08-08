@@ -19,7 +19,7 @@
 #                                                        NOT a Pet — so Carol is reached by the
 #                                                        abstract-ROOT relationship `animals` but
 #                                                        NOT the abstract-SUBTYPE relationship `pets`)
-Dog:
+parallax.compatibility.Dog:
   - id: 1
     name: Rex
     licenseId: L-100
@@ -30,18 +30,18 @@ Dog:
     licenseId: L-101
     barkVolume: 3
     ownerId: 11
-Cat:
+parallax.compatibility.Cat:
   - id: 3
     name: Whiskers
     licenseId: L-200
     indoor: true
     ownerId: 10
-WildBoar:
+parallax.compatibility.WildBoar:
   - id: 4
     name: Tusker
     tuskLength: 12.50
     ownerId: 12
-Person:
+parallax.compatibility.Person:
   - id: 10
     name: Alice
   - id: 11

@@ -38,7 +38,7 @@
 # `label: null` is therefore a no-op on 200 and a real change on 100 — one authored
 # write, two different per-row outcomes, so a resolve that never decoded the document
 # would collapse both to one answer.
-Traveler:
+parallax.compatibility.Traveler:
   - id: 1
     displayName: Ada
     score: 7
@@ -65,7 +65,7 @@ Traveler:
     joinedOn: null
     note: null
     address: null
-Trip:
+parallax.compatibility.Trip:
   - id: 51
     travelerId: 1
     destination: Oslo
@@ -78,7 +78,7 @@ Trip:
     travelerId: 2
     destination: Bergen
     nights: 7
-Ledger:
+parallax.compatibility.Ledger:
   - id: 100
     version: 1
     label: opening
@@ -90,14 +90,14 @@ Ledger:
     details: { code: settled }
 # Beacon rows carry no document-resident member at all, so each row's Structured
 # Column is the empty object — present and `NOT NULL`, extracted from by nothing.
-Beacon:
+parallax.compatibility.Beacon:
   - id: 10
   - id: 11
 # The one Mooring row is a single open rectangle: current on both axes, and — like
 # Beacon's rows — carrying the empty object, since every member it declares holds a
 # direct-column role. What its Structured Column ends up holding is not authorable
 # here, which is the point; the case that needs a key inside it writes one out of band.
-Mooring:
+parallax.compatibility.Mooring:
   - id: 1
     validStart: "2026-01-01T00:00:00+00:00"
     validEnd: infinity
@@ -106,14 +106,14 @@ Mooring:
 # The sibling Payment rows use one physical path for two distinct declared types.
 # `authorizationCode` applies only to CardPayment and is absent from the cash
 # document rather than stored as JSON null.
-CardPayment:
+parallax.compatibility.CardPayment:
   - id: 1
     detail: visa-4242
     authorizationCode: AUTH-7
-CashPayment:
+parallax.compatibility.CashPayment:
   - id: 2
     detail: 12.50
-Book:
+parallax.compatibility.Book:
   - { id: 10, title: Systems, detail: ISBN-10, pages: 320 }
-Film:
+parallax.compatibility.Film:
   - { id: 20, title: Frames, detail: 850, minutes: 95 }

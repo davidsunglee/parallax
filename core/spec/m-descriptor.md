@@ -310,6 +310,15 @@ its final dot, so the final segment is the relationship name. Canonical export
 always emits a namespace-qualified Entity spelling when the target is
 namespaced.
 
+Every declaration-site Entity Reference reads and exports the same way,
+`inheritance.parent` (`m-inheritance`) included. A bare `parent` stays legal
+input and resolves relative to the child's own namespace, but canonical export
+spells the resolved Entity Identity exactly: `parent: parallax.compatibility.Animal`
+for a namespaced parent, and the bare local name only when the parent is
+ownerless. Sharing the child's namespace shortens nothing — one canonical
+interface has one spelling for an Entity, and a reference position that resolves
+must be re-readable without knowing which Entity declared it.
+
 `join.source` is local to the declaring Entity. `join.target.attribute` and
 each `orderBy.attribute` are local to the target Entity. Omitted ordering
 direction normalizes to `asc` and omitted `orderBy.nulls` to `last` — the

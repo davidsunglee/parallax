@@ -36,7 +36,7 @@ entities:
     table: spot_quote
     inheritance:
       role: concrete-subtype
-      parent: Quote
+      parent: parallax.compatibility.Quote
     attributes:
       - name: symbol
         type: string

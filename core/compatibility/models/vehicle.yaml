@@ -44,7 +44,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Vehicle
+      parent: parallax.compatibility.Vehicle
       tagValue: car
     attributes:
       - name: doors
@@ -54,7 +54,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Vehicle
+      parent: parallax.compatibility.Vehicle
       tagValue: truck
     attributes:
       - name: axles

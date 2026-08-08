@@ -9,7 +9,7 @@
 # here.
 #
 #   id 1 MeterReading  celsius 20.00  in_z 2024-01-01  out_z infinity  (kind=meter, derived)
-MeterReading:
+parallax.compatibility.MeterReading:
   - id: 1
     celsius: 20.00
     txStart: "2024-01-01T00:00:00+00:00"

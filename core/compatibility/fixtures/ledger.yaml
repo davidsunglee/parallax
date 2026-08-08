@@ -10,7 +10,7 @@
 # A pin exactly on 2024-06-01 with the INCLUSIVE upper bound returns BOTH id-1
 # milestones (the row ending at the boundary is now included), unlike the
 # exclusive read which drops it.
-Ledger:
+parallax.compatibility.Ledger:
   - id: 1
     acctNum: A
     value: 100.00

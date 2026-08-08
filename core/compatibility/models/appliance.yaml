@@ -43,7 +43,7 @@ entities:
     table: fridge
     inheritance:
       role: concrete-subtype
-      parent: Appliance
+      parent: parallax.compatibility.Appliance
     attributes:
       - name: capacityLiters
         type: int32
@@ -53,7 +53,7 @@ entities:
     table: oven
     inheritance:
       role: concrete-subtype
-      parent: Appliance
+      parent: parallax.compatibility.Appliance
     attributes:
       - name: wattage
         type: int32

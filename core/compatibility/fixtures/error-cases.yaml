@@ -2,6 +2,6 @@
 # deadlock / lockWaitTimeout cases lock from opposite directions. Widget and Tag
 # start empty and self-seed via each case's golden (the first INSERT succeeds,
 # the second collides).
-Gauge:
+parallax.compatibility.Gauge:
   - { id: 1, v: 0 }
   - { id: 2, v: 0 }

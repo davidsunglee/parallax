@@ -7,7 +7,7 @@
 # Truck subtype owns no rows.
 #
 #   id 1 Car  name Sedan  doors 4  version 5  (kind=car, derived)
-Car:
+parallax.compatibility.Car:
   - id: 1
     name: Sedan
     doors: 4

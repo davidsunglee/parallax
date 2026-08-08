@@ -13,7 +13,7 @@
 # transaction [2024-01-01, infinity)), so a read pinned Valid-Time-past 2024-06-01 /
 # Transaction-Time Latest returns both, each carrying its familyVariant (bond -> Bond,
 # stock -> Stock). Inner subtype columns not applicable to a row load as null.
-Bond:
+parallax.compatibility.Bond:
   - id: 1
     price: 100.00
     coupon: 5.00
@@ -21,7 +21,7 @@ Bond:
     validEnd: infinity
     txStart: "2024-01-01T00:00:00+00:00"
     txEnd: infinity
-Stock:
+parallax.compatibility.Stock:
   - id: 2
     price: 200.00
     ticker: ACME

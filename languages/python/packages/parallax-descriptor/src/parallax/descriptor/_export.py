@@ -145,7 +145,7 @@ def _entity(entity: EntityMetadata) -> dict[str, object]:
     if entity.declared_value_objects:
         out["valueObjects"] = [_value_object(v) for v in entity.declared_value_objects]
     if entity.inheritance is not None:
-        out["inheritance"] = _inheritance(entity.inheritance, identity)
+        out["inheritance"] = _inheritance(entity.inheritance)
     return out
 
 
@@ -303,7 +303,7 @@ def _index(index: IndexMetadata) -> dict[str, object]:
     return out
 
 
-def _inheritance(inheritance: InheritanceMetadata, child: EntityIdentity) -> dict[str, object]:
+def _inheritance(inheritance: InheritanceMetadata) -> dict[str, object]:
     match inheritance:
         case AbstractRoot(strategy):
             out: dict[str, object] = {}
@@ -317,20 +317,18 @@ def _inheritance(inheritance: InheritanceMetadata, child: EntityIdentity) -> dic
                     out["role"] = "root"
             return out
         case AbstractSubtype(parent):
-            return {"role": "abstract-subtype", "parent": _parent(parent, child)}
+            return {"role": "abstract-subtype", "parent": _parent(parent)}
         case ConcreteSubtype(parent, tag_value):
-            out = {"role": "concrete-subtype", "parent": _parent(parent, child)}
+            out = {"role": "concrete-subtype", "parent": _parent(parent)}
             if tag_value is not None:
                 out["tagValue"] = tag_value
             return out
 
 
-def _parent(parent: EntityIdentity, child: EntityIdentity) -> str:
-    """The ``parent`` spelling a same-namespace family authors bare and a
-    cross-namespace parent authors fully qualified — the asymmetry canonical form
-    bakes in for an inheritance parent."""
-    if parent.namespace == child.namespace:
-        return parent.name
+def _parent(parent: EntityIdentity) -> str:
+    """Canonical form spells an inheritance parent exactly, as it already spells a
+    relationship target and a ``reverseOf`` peer — a bare parent is legal input,
+    relative to the child's namespace, but never an exported spelling."""
     return parent.canonical
 
 

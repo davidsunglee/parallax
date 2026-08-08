@@ -70,6 +70,15 @@ scale without hand-authoring thousands of rows. The reference harness ships a
 small deterministic generator; the *shape* and *scale* are normative, the
 generator implementation is not.
 
+A dataset's rows are keyed by Entity exactly as a fixture document's are
+(`m-case-format`): **canonical Entity spellings**, whether the rows are authored
+inline or produced by a recipe.
+
+A recipe names the Entities it fills by emitting their keys, so a generated
+dataset declares a row count and a recipe and nothing else about which Entity it
+builds. A recipe may fill several — the `orders-tree` shape fills three — so no
+single Entity property could describe one honestly.
+
 ## Measurement protocol
 
 For each workload the harness measures and reports:

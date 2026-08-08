@@ -2,7 +2,7 @@
 #
 # The byte payload uses YAML's standard binary tag, which safe_load materializes
 # as bytes before the provider binds it to the dialect's binary column type.
-ScalarThing:
+parallax.compatibility.ScalarThing:
   - id: 1
     f32: 1.5
     f64: 2.25

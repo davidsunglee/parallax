@@ -22,7 +22,7 @@
 #   valid-time=2024-03-01 & transaction-time=Latest -> R2 (100): the head, still current.
 #   valid-time=2024-03-01 & transaction-time=2024-02-01 -> R1 (90): what the system BELIEVED
 #       on 2024-02-01 about Valid Time 2024-03-01 — the audit (Transaction-Time) axis.
-Position:
+parallax.compatibility.Position:
   - id: 1
     acctNum: A
     value: 90.00

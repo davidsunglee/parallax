@@ -14,7 +14,7 @@
 # fetch have a graph to traverse. The shape is chosen so the relationships fan
 # out unevenly (some orders have items, some don't; some items have statuses,
 # some don't), which makes navigate / exists / deep-fetch results discriminating.
-Order:
+parallax.compatibility.Order:
   - id: 1
     name: Ada
     sku: A-100
@@ -59,7 +59,7 @@ Order:
     orderedOn: 2024-06-30
 
 # Line items. Orders 1, 2, and 42 have items; orders 3, 4, 5 have none.
-OrderItem:
+parallax.compatibility.OrderItem:
   - id: 11
     orderId: 1
     sku: A-100
@@ -91,7 +91,7 @@ OrderItem:
 # (reached via the multi-hop Order.items -> OrderItem.statuses). This dual role
 # lets one entity exercise both a to-many off the root and the second hop of the
 # 1 -> N -> N deep fetch.
-OrderStatus:
+parallax.compatibility.OrderStatus:
   # order-level
   - id: 101
     orderId: 1
@@ -128,7 +128,7 @@ OrderStatus:
 # list is fragile(5), then the priority=2 tie broken by `label asc` -> gift,
 # urgent. Only the multi-key ordering case (0322) navigates Order.tags; every
 # other case ignores this table.
-OrderTag:
+parallax.compatibility.OrderTag:
   - id: 1
     orderId: 1
     label: urgent
@@ -149,7 +149,7 @@ OrderTag:
 # bucket differently from insertion/id order — a dropped or mis-placed ORDER BY
 # cannot pass by coincidence. Order 42's bucket is fully resolved, so it is the
 # no-NULL contrast, and its dates are likewise non-monotonic in id.
-OrderNote:
+parallax.compatibility.OrderNote:
   - id: 51
     orderId: 1
     body: gift wrap
