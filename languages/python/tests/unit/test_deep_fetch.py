@@ -662,9 +662,11 @@ def test_plan_accepts_a_non_deep_fetch_operation_with_zero_levels() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Root as-of injection over a CONCRETE inheritance target whose family's axes  #
-# are declared on the ROOT alone. `plan()` must inject the default-latest or   #
-# pinned as-of predicate even though `DepositRate` carries no local axes.      #
+# Root as-of injection over a CONCRETE inheritance target whose family's axes #
+# are declared on the ROOT alone. `plan()` must inject the default-latest or  #
+# pinned as-of predicate even though `DepositRate` carries no local axes. The #
+# injected term names its DECLARING Entity by exact identity, so it stays     #
+# addressed at one Entity in a model two namespaces could share a name in.    #
 # --------------------------------------------------------------------------- #
 def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
     plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), All(), RATE)
@@ -672,8 +674,8 @@ def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
     # milestone since neither axis is pinned: `thru_z = infinity`, `out_z = infinity`.
     assert plan.root_operation == And(
         operands=(
-            Comparison(op="eq", attr="Rate.validEnd", value="infinity"),
-            Comparison(op="eq", attr="Rate.txEnd", value="infinity"),
+            Comparison(op="eq", attr="parallax.compatibility.Rate.validEnd", value="infinity"),
+            Comparison(op="eq", attr="parallax.compatibility.Rate.txEnd", value="infinity"),
         )
     )
 
@@ -684,9 +686,17 @@ def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
     assert plan.root_operation == And(
         operands=(
             # Valid Time defaults to latest (never pinned by this operation)
-            Comparison(op="eq", attr="Rate.validEnd", value="infinity"),
+            Comparison(op="eq", attr="parallax.compatibility.Rate.validEnd", value="infinity"),
             # Transaction Time is pinned to the past instant (containment)
-            Comparison(op="lessThanEquals", attr="Rate.txStart", value="2024-01-15T00:00:00+00:00"),
-            Comparison(op="greaterThan", attr="Rate.txEnd", value="2024-01-15T00:00:00+00:00"),
+            Comparison(
+                op="lessThanEquals",
+                attr="parallax.compatibility.Rate.txStart",
+                value="2024-01-15T00:00:00+00:00",
+            ),
+            Comparison(
+                op="greaterThan",
+                attr="parallax.compatibility.Rate.txEnd",
+                value="2024-01-15T00:00:00+00:00",
+            ),
         )
     )

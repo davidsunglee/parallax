@@ -316,8 +316,8 @@ def hop_as_of_terms(
     # A Temporal Dimension's member value IS its canonical axis rank, so
     # Valid-Time-first needs no separate ordering table.
     for axis in sorted(axes, key=lambda item: item.dimension.value):
-        start_ref = f"{declarer.identity.name}.{axis.start_attribute.name}"
-        end_ref = f"{declarer.identity.name}.{axis.end_attribute.name}"
+        start_ref = f"{declarer.identity.canonical}.{axis.start_attribute.name}"
+        end_ref = f"{declarer.identity.canonical}.{axis.end_attribute.name}"
         instant = root_pins.get(axis.dimension)
         if instant is None:
             terms.append(Comparison(op="eq", attr=end_ref, value=INFINITY_LITERAL))

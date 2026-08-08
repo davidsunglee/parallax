@@ -80,6 +80,42 @@ def test_op_algebra_resolver_rejects_an_ambiguous_bare_name() -> None:
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 
+def test_a_canonical_spelling_names_one_of_two_twins_at_every_reference_position() -> None:
+    # The counterpart to the refusal above: the SAME two-namespace model, addressed
+    # canonically. Each position that resolves an Entity spelling — a narrow's
+    # `entity` and `to` entries, an attribute's Entity prefix — names exactly one
+    # twin, and the twin it names is the one the namespace segment selects.
+    model = _model()
+    root = _named(model, "a.Person")
+
+    narrow = Narrow(entity="a.Person", to=("a.Person",), operand=All())
+    validate_operation(root, narrow, model)
+
+    predicate = oa.Comparison(op="eq", attr="a.Person.id", value=1)
+    validate_operation(root, predicate, model)
+
+    # The other twin is a different Entity, so its attribute is outside this
+    # position rather than merely ambiguous.
+    with pytest.raises(OperationRejectedError) as excinfo:
+        validate_operation(root, oa.Comparison(op="eq", attr="b.Person.id", value=1), model)
+    assert excinfo.value.rule == "attribute-outside-active-position"
+
+
+def test_sql_lowering_reaches_the_table_the_canonical_spelling_names() -> None:
+    # The whole point of the widened grammar: two Entities sharing a local name are
+    # separately addressable, and the SQL proves WHICH one a spelling reached.
+    model = _model()
+
+    for namespace in ("a", "b"):
+        root = _named(model, f"{namespace}.Person")
+        op = oa.Comparison(op="eq", attr=f"{namespace}.Person.id", value=1)
+        validate_operation(root, op, model)
+        compiled = compile_read(op, model, POSTGRES, root)
+        assert compiled.statement.sql == (
+            f"select t0.id from {namespace}_person t0 where t0.id = ?"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # The same rule at the LOWERING seams.                                         #
 #                                                                              #
@@ -247,3 +283,43 @@ def test_navigation_canonicalization_resolves_a_hop_from_another_namespace() -> 
     op = oa.Exists(rel="Beast.den")
     validate_operation(wolf, op, model)
     assert navigate.canonicalize(op, model, wolf) == op
+
+
+def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
+    # The same three seams, asked with the canonical spelling of each reference
+    # rather than the bare one. `zoo.Beast` and `den.Den` are namespaced while the
+    # concrete subtypes are ownerless, so a canonical spelling and a bare one
+    # coincide for `Wolf` — which is what makes the namespaced positions the
+    # load-bearing half of each assertion.
+    model = _cross_namespace_model()
+    den = _named(model, "den.Den")
+    beast = _named(model, "zoo.Beast")
+    wolf = _named(model, "Wolf")
+
+    hop = oa.Exists(
+        rel="den.Den.beasts", op=Narrow(entity="zoo.Beast", to=("Wolf",), operand=All())
+    )
+    validate_operation(den, hop, model)
+    compiled = compile_read(hop, model, POSTGRES, den)
+    assert compiled.statement.sql == (
+        "select t0.id from den t0 where exists (select 1 from beast t1 "
+        "where t1.den_id = t0.id and t1.kind = ?)"
+    )
+    assert compiled.statement.binds == ("wolf",)
+
+    root_guard = oa.DeepFetch(
+        operand=All(),
+        paths=(
+            oa.NavigationPath(
+                narrow=oa.PathRootNarrow(entity="zoo.Beast", to=("Wolf",)),
+                segments=(oa.PathSegment(rel="zoo.Beast.den"),),
+            ),
+        ),
+    )
+    validate_operation(beast, root_guard, model)
+    guarded = deep_fetch.plan(beast, root_guard, model).levels
+    assert [level.source_position for level in guarded] == [(wolf.identity,)]
+
+    navigation = oa.Exists(rel="zoo.Beast.den")
+    validate_operation(wolf, navigation, model)
+    assert navigate.canonicalize(navigation, model, wolf) == navigation

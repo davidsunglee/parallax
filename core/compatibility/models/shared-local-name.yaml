@@ -1,14 +1,16 @@
 # Shared local name: one model declaring the SAME local Entity name in two
-# namespaces — the reference-position exemplar for `reference-ambiguous-entity-name`
-# (m-op-algebra "Entity spellings in a reference position").
+# namespaces — the reference-position exemplar for both halves of
+# m-op-algebra "Entity spellings in a reference position".
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. Entity
 # Identity is namespace-qualified (m-metamodel), so `archive.SharedVariant` and
 # `catalog.SharedVariant` are two distinct Entities that a model may declare
 # together — models/materialization-key-compatibility.yaml already does, and
-# m-inheritance-120 requires it. What such a pair cannot do is be NAMED in an
-# operation reference position: every reference grammar in operation.schema.json
-# spells its Entity bare and dot-free, so `SharedVariant` there names neither one.
+# m-inheritance-120 requires it. A reference position spells such a pair either
+# way, and the two spellings answer differently: the canonical
+# `archive.SharedVariant` names exactly one of the twins (m-op-algebra-051),
+# while the bare `SharedVariant` names both and therefore neither
+# (m-op-algebra-048).
 #
 #   Register              (parallax.compatibility) — the queried position; owns the
 #                          `variant` relationship into archive.SharedVariant
@@ -26,8 +28,10 @@
 # `archiveLabel` perfectly applicable at the hop position and emit SQL against
 # archive_shared for a reference that names two tables' worth of Entities.
 #
-# There are NO fixtures and NO golden SQL for this model: its case asserts a
-# pre-SQL refusal, so nothing is ever provisioned or executed.
+# fixtures/shared-local-name.yaml provisions all three tables, because the positive
+# half of the pair executes: m-op-algebra-051 reads through the same hop with the
+# canonical spelling and its golden SQL must be observed to reach archive_shared
+# rather than catalog_shared.
 entities:
   - name: Register
     namespace: parallax.compatibility

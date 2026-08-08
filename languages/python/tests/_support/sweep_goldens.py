@@ -218,6 +218,13 @@ _DOCUMENT_LAYOUT_READS: Final[frozenset[str]] = frozenset(
         "m-navigate-025",
     }
 )
+# The canonical-Entity-spelling read (`m-op-algebra`): a predicate reference names
+# one of two twins sharing a local name across namespaces, so the golden proves
+# WHICH Entity a canonical spelling reached — it selects from `archive_shared` and
+# never `catalog_shared`. Its `rejected` counterpart (`m-op-algebra-048`) spells the
+# same reference bare over the same model and is refused, so only this half has a
+# golden to grade.
+_CANONICAL_ENTITY_SPELLING_READS: Final[frozenset[str]] = frozenset({"m-op-algebra-051"})
 COMPILE_EXERCISED: Final[frozenset[str]] = (
     _SCALAR_READS
     | _DOCUMENT_CODEC_READS
@@ -239,6 +246,7 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _MATERIALIZATION_KEY_COMPATIBILITY_READS
     | _STORAGE_LAYOUT_READS
     | _DOCUMENT_LAYOUT_READS
+    | _CANONICAL_ENTITY_SPELLING_READS
 )
 
 # Keyed, non-temporal unit-of-work writes graded byte-exact across `m-unit-work`,

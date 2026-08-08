@@ -71,6 +71,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
+    split_reference,
 )
 from parallax.core.op_algebra import (
     All,
@@ -734,14 +735,14 @@ def _lower_element_nested(op: _FlatNested, scope: ElementScope) -> str:
 
 
 def _flat_vo_path(path: str, scope: EntityScope) -> tuple[ValueObjectMetadata, tuple[str, ...]]:
-    """Parse a flat `Class.valueObject(.valueObject)*.attribute` reference
+    """Parse a flat `<Entity>.valueObject(.valueObject)*.attribute` reference
     (m-op-algebra) into its top-level value object and the path segments after
     it (which may cross zero or more nested value objects before reaching a
     leaf, or a `many` member — `_split_at_many` tells the two apart)."""
-    parts = path.split(".")
-    if len(parts) < 3:
+    entity_name, members = split_reference(path)
+    if entity_name is None or len(members) < 2:
         raise SqlGenError(f"nested path {path!r} needs Class.valueObject.attribute")
-    entity_name, vo_name, *segments = parts
+    vo_name, *segments = members
     owner = entity_by_name(scope.meta, entity_name)
     occurrence = (
         None
@@ -920,15 +921,15 @@ def _resolve_vo_terminus(
     path: str, entity: EntityMetadata
 ) -> tuple[ValueObjectMetadata, tuple[str, ...], _VoContainer]:
     """Resolve a `nestedExists`/`nestedNotExists` value-object-TERMINATED path
-    (`Class.valueObject(.valueObject)*`, m-op-algebra) to its top-level value
+    (`<Entity>.valueObject(.valueObject)*`, m-op-algebra) to its top-level value
     object, the full segment chain from that object's own document column to
     the terminal member, and the terminal container itself (`vo` unchanged
     when the path names the top-level object directly, no further segments).
     """
-    parts = path.split(".")
-    if len(parts) < 2:
+    entity_name, members = split_reference(path)
+    if entity_name is None or not members:
         raise SqlGenError(f"nested path {path!r} needs at least Class.valueObject")
-    _entity_name, vo_name, *segments = parts
+    vo_name, *segments = members
     vo = _value_object(entity, vo_name)
     container: _VoContainer = vo
     for segment in segments:

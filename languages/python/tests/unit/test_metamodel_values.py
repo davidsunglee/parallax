@@ -52,6 +52,7 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
     designate_framework_owned,
     resolve_entity_reference,
+    split_reference,
 )
 
 _ORDERS = EntityIdentity("parallax.test", "Order")
@@ -152,6 +153,45 @@ def test_an_ownerless_owner_resolves_a_relative_reference_without_a_namespace() 
 def test_an_exact_reference_ignores_its_owner() -> None:
     target = EntityIdentity("other", "Item")
     assert resolve_entity_reference(_ORDERS, ExactEntityReference(target)) == target
+
+
+@pytest.mark.parametrize(
+    ("spelling", "expected"),
+    [
+        pytest.param("Order.id", ("Order", ("id",)), id="bare-attribute"),
+        pytest.param(
+            "parallax.compatibility.Order.id",
+            ("parallax.compatibility.Order", ("id",)),
+            id="canonical-attribute",
+        ),
+        pytest.param("Order.address.city", ("Order", ("address", "city")), id="bare-nested"),
+        pytest.param(
+            "catalog.SharedVariant.address.geo.lat",
+            ("catalog.SharedVariant", ("address", "geo", "lat")),
+            id="canonical-nested",
+        ),
+        pytest.param("Order", ("Order", ()), id="bare-entity"),
+        pytest.param("catalog.SharedVariant", ("catalog.SharedVariant", ()), id="canonical-entity"),
+        pytest.param("address.city", (None, ("address", "city")), id="element-relative"),
+        pytest.param("type", (None, ("type",)), id="element-relative-single-segment"),
+        pytest.param("Order.legacy_ID", ("Order", ("legacy_ID",)), id="underscored-member"),
+    ],
+)
+def test_a_reference_splits_at_its_last_capitalized_segment(
+    spelling: str, expected: tuple[str | None, tuple[str, ...]]
+) -> None:
+    assert split_reference(spelling) == expected
+
+
+def test_splitting_a_reference_needs_no_model_and_resolves_nothing() -> None:
+    # The split is lexical: a spelling naming no declared Entity, and a bare one
+    # two namespaces would share, both split exactly as their text reads. Which
+    # Entity the spelling names is `entity_by_name`'s question, asked later.
+    assert split_reference("archive.SharedVariant.archiveLabel") == (
+        "archive.SharedVariant",
+        ("archiveLabel",),
+    )
+    assert split_reference("SharedVariant.archiveLabel") == ("SharedVariant", ("archiveLabel",))
 
 
 def test_cardinality_carries_structured_side_multiplicities() -> None:

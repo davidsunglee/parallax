@@ -1,0 +1,20 @@
+# Fixture rows for the shared-local-name model (models/shared-local-name.yaml).
+#
+# The top-level keys are CANONICAL Entity spellings, which this file has no
+# choice about: `SharedVariant` is declared in two namespaces, so a bare key
+# would name neither Entity.
+#
+# The two variant tables are keyed alike and labelled ACROSS each other: id 10
+# carries archiveLabel A-1 but catalogLabel A-2, and id 20 the reverse. A read
+# whose reference reached the wrong twin therefore selects the other Register
+# row rather than failing, so the golden rows discriminate the two Entities on
+# their own.
+parallax.compatibility.Register:
+  - { id: 1, variantId: 10 }
+  - { id: 2, variantId: 20 }
+archive.SharedVariant:
+  - { id: 10, archiveLabel: A-1 }
+  - { id: 20, archiveLabel: A-2 }
+catalog.SharedVariant:
+  - { id: 10, catalogLabel: A-2 }
+  - { id: 20, catalogLabel: A-1 }

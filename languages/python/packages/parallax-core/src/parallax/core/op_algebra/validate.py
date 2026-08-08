@@ -38,12 +38,13 @@ Rule provenance:
 - `reference-ambiguous-entity-name` — `m-op-algebra` "Entity spellings in a
   reference position": every reference position — an `attr`, a `rel`, an `orderBy`
   key, a nested path's root, a `narrow`'s `entity` and `to` entries, a deep-fetch
-  path's hops and root guard — spells its Entity BARE, so a local name two
-  namespaces of the model declare names no single Entity and resolves nowhere. It
-  is the resolution half of the positional rules above, which presuppose a
-  reference that resolved: those fire when a reference resolves to an Entity
-  outside the position, this one when it resolves to more than one and therefore
-  to none.
+  path's hops and root guard — spells its Entity either canonically or BARE, and a
+  bare local name two namespaces of the model declare names no single Entity and
+  resolves nowhere. The canonical spelling of either of those two names one of them
+  and resolves. It is the resolution half of the positional rules above, which
+  presuppose a reference that resolved: those fire when a reference resolves to an
+  Entity outside the position, this one when it resolves to more than one and
+  therefore to none.
 - `narrow-outside-relationship-target` — `m-navigate` "Polymorphic navigation":
   a `narrow` inside a navigation filter's `op` (or a deep-fetch path segment's
   hop narrow) does **not** clamp; its `entity` MUST name the relationship
@@ -95,6 +96,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
+    split_reference,
 )
 from parallax.core.op_algebra.nodes import (
     All,
@@ -137,9 +139,10 @@ _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
 def referenced_entities(op: Operation) -> frozenset[str]:
-    """The bare Entity spellings ``op`` names anywhere — the ``Class`` prefix of
-    every attribute / nested-path / relationship reference, plus every ``narrow``
-    entity and subtype name.
+    """The Entity spellings ``op`` names anywhere, exactly as authored — the Entity
+    prefix of every attribute / nested-path / relationship reference, plus every
+    ``narrow`` entity and subtype name. A spelling may be bare or canonical; this
+    resolves neither.
 
     A caller assembling a coherent model to validate ``op`` against needs every
     Entity the operation reaches, not only the read's own root: a deep-fetch or
@@ -150,7 +153,10 @@ def referenced_entities(op: Operation) -> frozenset[str]:
 
 
 def _class_of(reference: str) -> str:
-    return reference.partition(".")[0]
+    entity, _ = split_reference(reference)
+    if entity is None:  # pragma: no cover - every position collected here bears an Entity
+        raise ValueError(f"{reference!r} carries no Entity spelling")
+    return entity
 
 
 def _collect_entities(op: Operation, names: set[str]) -> None:
@@ -378,13 +384,13 @@ def _ambiguous_reference(
     ``class_name`` is a bare local spelling two namespaces of ``model`` share, or
     absence when it names at most one Entity.
 
-    Every operation reference position carries a bare, dot-free Entity spelling, so
-    a local name two namespaces declare names no single Entity there:
+    A bare spelling carries no namespace to select by, so a local name two
+    namespaces declare names no single Entity:
     :func:`~parallax.core.metamodel.entity_by_name` answers it with a miss rather
     than a silent first match, and the refusal names the canonical spellings that
-    would resolve. Both Entities stay declarable and stay reachable through a
-    position that names them unambiguously — the reference is refused, never the
-    declaration.
+    would resolve. Both Entities stay declarable and stay reachable — through the
+    canonical spelling this refusal reports, or through any position that names
+    them unambiguously — so the reference is refused, never the declaration.
     """
     canonical = sorted(
         entity.identity.canonical for entity in model.entities if entity.identity.name == class_name
@@ -706,14 +712,14 @@ def _resolve_leaf(
 
 
 def _resolve_nested_leaf(path: str, model: Metamodel) -> ValueObjectAttributeMetadata:
-    """Resolve a `Class.valueObject(.valueObject)*.attribute` path to its leaf."""
-    parts = path.split(".")
-    if len(parts) < 3:
+    """Resolve an `<Entity>.valueObject(.valueObject)*.attribute` path to its leaf."""
+    class_name, members = split_reference(path)
+    if class_name is None or len(members) < 2:
         raise OperationRejectedError(
             "nested-path-unknown-member",
             f"{path!r} needs at least Class.valueObject.attribute",
         )
-    class_name, vo_name, *segments = parts
+    vo_name, *segments = members
     entity = _lookup_entity(model, class_name)
     if entity is None:
         raise _unresolved_reference(model, path, class_name)
@@ -743,12 +749,12 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
     returning the TERMINAL value-object descriptor — the same-element scope an
     optional `where` predicate's element-relative members resolve against.
     """
-    parts = path.split(".")
-    if len(parts) < 2:
+    class_name, members = split_reference(path)
+    if class_name is None or not members:
         raise OperationRejectedError(
             "nested-path-unknown-member", f"{path!r} needs at least Class.valueObject"
         )
-    class_name, vo_name, *segments = parts
+    vo_name, *segments = members
     entity = _lookup_entity(model, class_name)
     if entity is None:
         raise _unresolved_reference(model, path, class_name)
