@@ -3529,6 +3529,57 @@ def test_run_rejected_case_write_dispatch_over_an_inheritance_model() -> None:
     assert engine.run_rejected_case(case) == "abstract-write-target"
 
 
+def test_run_rejected_case_refuses_a_bare_row_naming_an_undeclared_member() -> None:
+    # An undeclared name resolves to no declared position, so no rule of the closed
+    # vocabulary is about it. Grading the row anyway reports whichever rule some OTHER
+    # member violates — here the missing required `owner` — and the case passes while
+    # testing a member it never named. The keyed instruction form refuses the same
+    # way, so one neutral write row is judged one way whichever form carries it.
+    graded: dict[str, object] = {"id": 1, "balance": "10.00"}
+    assert (
+        engine.run_rejected_case(_synthetic_bare_row(graded, "models/account.yaml"))
+        == "write-required-attribute-missing"
+    )
+    with pytest.raises(engine.EngineError, match=r"names \['bogus'\]"):
+        engine.run_rejected_case(_synthetic_bare_row({**graded, "bogus": 1}, "models/account.yaml"))
+
+
+def test_a_bare_row_carries_the_shared_observation_control_key() -> None:
+    # `observedVersion` is flush-time context the shared row vocabulary admits at
+    # every row position, so it is not a member name to refuse; the row is graded on
+    # its declared members alone.
+    row: dict[str, object] = {"id": 1, "balance": "10.00", "observedVersion": 3}
+    assert (
+        engine.run_rejected_case(_synthetic_bare_row(row, "models/account.yaml"))
+        == "write-required-attribute-missing"
+    )
+
+
+def test_the_subtype_protocol_classifies_the_family_names_member_honesty_would_claim() -> None:
+    # `tagValue` names no declared member either, but `m-inheritance` orders the
+    # payload-shape rules first and gives it a rule of its own. Asking member honesty
+    # before them would report an authoring failure for an input the corpus grades as
+    # `subtype-write-metadata-field` (m-inheritance-087).
+    row: dict[str, object] = {"id": 1, "amount": "10.00", "tagValue": "card"}
+    assert (
+        engine.run_rejected_case(_synthetic_bare_row(row, "models/payment.yaml"))
+        == "subtype-write-metadata-field"
+    )
+
+
+def _synthetic_bare_row(row: dict[str, object], model: str) -> case_format.Case:
+    from pathlib import Path
+
+    return case_format.Case(
+        path=Path("m-value-object-996-synthetic-rejected.yaml"),
+        case_id="m-value-object-996",
+        shape="rejected",
+        tags=("m-value-object", "rejected", "slice-snapshot-1"),
+        model=model,
+        document={"model": model, "when": {"write": row}, "then": {"rejectedRule": "x"}},
+    )
+
+
 def _synthetic_keyed_rejected(write: dict[str, object], model: str) -> case_format.Case:
     from pathlib import Path
 

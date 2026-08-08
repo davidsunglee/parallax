@@ -100,7 +100,7 @@ from .storage_layout import (
 )
 from .temporality import TEMPORAL_DIMENSION_RANK, derive_temporal_structure, temporal_axes
 from .value_object_resolve import REJECTED_RULES, RejectionError
-from .write_validate import validate_subtype_write, validate_write
+from .write_validate import undeclared_members, validate_subtype_write, validate_write
 
 
 class _MaterializedRow(dict[str, Any]):
@@ -2965,6 +2965,7 @@ def _assert_rejected(case: Case) -> None:
             # default is only a defect for the bare row, which names none.
             entity = _rejected_default_root(case)
             validate_subtype_write(entity, case.model.entity_defs, write)
+            _assert_bare_row_members_declared(case, entity, write)
             validate_write(entity, write)
         elif "model" in case.when:
             inline_model = derive_temporal_structure(case.when["model"])
@@ -3018,6 +3019,32 @@ def _rejected_default_root(case: Case) -> Entity:
             f"resolve against"
         )
     return roots[0]
+
+
+def _assert_bare_row_members_declared(case: Case, entity: Entity, row: dict[str, Any]) -> None:
+    """Fail the case when the bare row names members *entity* does not declare.
+
+    Member honesty is a case-authoring judgement, not a violated normative MUST: an
+    undeclared name resolves to no declared position, so no rule of the closed
+    ``then.rejectedRule`` vocabulary is about it, and grading the row anyway would
+    report whichever rule some OTHER member happens to violate — a case that passes
+    while testing something it never claimed. The keyed instruction lane refuses the
+    same way (:func:`_validate_rejected_keyed_write`), so one neutral write row is
+    judged one way whichever form carries it.
+
+    Asked AFTER the concrete-subtype protocol, which `m-inheritance` orders first and
+    which owns the family-specific names a row may not carry: the tag column and the
+    ``tag`` / ``tagValue`` / ``familyVariant`` handles are
+    ``subtype-write-metadata-field``, and a sibling branch's attribute is
+    ``subtype-write-sibling-attribute``. Those are classified rules, so they must not
+    be reported as authoring defects.
+    """
+    unknown = undeclared_members(entity, row)
+    if unknown:
+        raise CaseFailure(
+            f"{case.path.name}: the bare write row names {unknown}, which are not "
+            f"attributes or value objects of {entity.name}"
+        )
 
 
 def _rejected_write_input(case: Case) -> dict[str, Any]:

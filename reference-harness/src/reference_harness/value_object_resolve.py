@@ -30,6 +30,7 @@ import datetime
 import decimal
 import math
 import re
+import struct
 import uuid
 from typing import Any
 
@@ -90,11 +91,11 @@ class RejectionError(Exception):
 #
 # The neutral type vocabulary is CLOSED (`metamodel.schema.json` `$defs/attribute`
 # `type`): boolean, int32, int64, float32, float64, string, bytes, date, time,
-# timestamp, uuid, json, and decimal(precision,scale). Each admits exactly one
-# portable literal form, and the check below decides membership of that form — not
-# of a loose category. A category guess would leave the vocabulary open again: a
-# spelling nothing here models would be accepted, which is precisely how a
-# `decimal(12,2)` or a `bytes` field once admitted a truth value or an array.
+# timestamp, uuid, json, and decimal(precision,scale). Membership is decided per
+# type against the portable literal's own DECODE, never against a loose category: a
+# category guess leaves the vocabulary open, so a `decimal(12,2)` position admits a
+# truth value and a `bytes` position an array — spellings the space holds no value
+# for.
 
 _INT_BOUNDS: dict[str, tuple[int, int]] = {
     "int32": (-(2**31), 2**31 - 1),
@@ -102,6 +103,8 @@ _INT_BOUNDS: dict[str, tuple[int, int]] = {
 }
 
 _DECIMAL_TYPE = re.compile(r"^decimal\((\d+),(\d+)\)$")
+
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 
 def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
@@ -112,15 +115,22 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     always type-acceptable — nullability is a SEPARATE check (required vs optional),
     never a type mismatch.
 
-    The domain is the PORTABLE literal, the spelling a case authors, so membership
-    is decided against the wire form each space encodes to (`m-core`,
-    `m-document-codec`): a JSON number for the integer and float spaces, an ISO-8601
-    string for `date` / `time` / `timestamp`, a canonical UUID string, a lowercase
-    hex string for `bytes`, and either a JSON number or an exact digit string for a
-    `decimal`, which is the one space no JSON number can carry a scale for. An
-    integer outside its declared width and a decimal the declared precision and
-    scale cannot represent exactly are non-members: representing either would
-    require rounding or truncation.
+    The domain is the PORTABLE literal, the spelling a case authors, and membership
+    asks whether that literal DECODES to a value of the space (`m-core`,
+    `m-document-codec`, `m-case-format` "What decides a bare write row"). Decoding is
+    many-to-one where encoding is one-to-one: the document form a value is STORED in
+    is its single canonical spelling, while several authored spellings name the same
+    value. So a `bytes` literal is hexadecimal in either case, a `uuid` literal is
+    hexadecimal in either case with its hyphens optional, a `time` needs no
+    zero-padded seconds, and a `timestamp` may carry any UTC offset — each decodes to
+    a member and stores as the canonical form.
+
+    A literal that decodes to no member is out of space: an integer beyond its
+    declared width, a number no float of the declared width represents exactly, a
+    decimal the declared precision and scale cannot hold exactly, text with no UTF-8
+    encoding, a hexadecimal string with an odd digit count or a separator, a
+    malformed ISO-8601 or UUID spelling, and a temporal literal carrying non-zero
+    sub-microsecond precision.
 
     A type spelling the closed vocabulary does not carry is accepted rather than
     guessed at — such a descriptor never passed schema validation, so refusing it
@@ -139,11 +149,11 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
         low, high = _INT_BOUNDS[kind]
         return _is_integer(value) and low <= value <= high
     if kind in ("float32", "float64"):
-        return _is_number(value) and _is_finite(value)
+        return _matches_float(value, binary32=kind == "float32")
     if kind == "string":
-        return isinstance(value, str)
+        return isinstance(value, str) and _is_utf8_encodable(value)
     if kind == "bytes":
-        return isinstance(value, str) and _is_lowercase_hex(value)
+        return isinstance(value, str) and _spells_octets(value)
     if kind in ("date", "time", "timestamp"):
         return isinstance(value, str) and _is_iso_temporal(value, kind)
     if kind == "uuid":
@@ -158,8 +168,47 @@ def _is_integer(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _is_finite(value: Any) -> bool:
-    return not isinstance(value, float) or math.isfinite(value)
+def _matches_float(value: Any, *, binary32: bool) -> bool:
+    """Whether a JSON number spells a member of a float space of the given width.
+
+    The two literal kinds decode differently, and the difference is the contract
+    rather than an accident. An INTEGER names a value rather than a rendering of
+    one, so it spells a float only when a float of the width carries it EXACTLY:
+    ``16777217`` is no `float32` and ``9007199254740993`` no `float64`, because
+    reading either would answer a different number than the one written. A
+    FRACTIONAL literal names the nearest float of the width — that is the inverse of
+    the shortest-round-tripping encoding (`m-document-codec`) — so only a magnitude
+    the width cannot hold, such as ``1e100`` at a `float32`, spells no member.
+    """
+    if _is_integer(value):
+        try:
+            widened = float(value)
+        except OverflowError:
+            return False
+        held = _at_width(widened, binary32=binary32)
+        return held is not None and held == value
+    if not isinstance(value, float) or not math.isfinite(value):
+        return False
+    return _at_width(value, binary32=binary32) is not None
+
+
+def _at_width(value: float, *, binary32: bool) -> float | None:
+    """*value* as a float of the declared width holds it, or ``None`` on overflow."""
+    if not binary32:
+        return value
+    try:
+        return float(struct.unpack("<f", struct.pack("<f", value))[0])
+    except OverflowError:
+        return None
+
+
+def _is_utf8_encodable(value: str) -> bool:
+    """Whether text has a UTF-8 encoding; an unpaired surrogate has none."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _matches_decimal(value: Any, precision: int, scale: int) -> bool:
@@ -197,8 +246,16 @@ def _matches_decimal(value: Any, precision: int, scale: int) -> bool:
     return len(str(coefficient)) + exponent + scale <= precision
 
 
-def _is_lowercase_hex(value: str) -> bool:
-    return len(value) % 2 == 0 and all(character in "0123456789abcdef" for character in value)
+def _spells_octets(value: str) -> bool:
+    """Whether *value* spells whole octets in hexadecimal, in either case.
+
+    Two hexadecimal digits per octet, no prefix and no separator
+    (`m-document-codec`), so an odd digit count, a non-hexadecimal digit, and an
+    embedded space each name no octet sequence. Case carries no information in the
+    DECODE — the canonical stored spelling is lowercase, which is the direction
+    `m-document-codec-001` writes `0A1B` and reads back as `0a1b`.
+    """
+    return len(value) % 2 == 0 and all(character in _HEX_DIGITS for character in value)
 
 
 def _is_iso_temporal(value: str, kind: str) -> bool:
@@ -232,6 +289,16 @@ def _within_microsecond_precision(value: str) -> bool:
 
 
 def _parses_as_uuid(value: str) -> bool:
+    """Whether *value* spells one of the 128-bit UUID values.
+
+    Case carries no information (`m-core`), so the decode is CASE-INSENSITIVE and
+    accepts more spellings than the canonical lowercase 8-4-4-4-12 form a value is
+    stored as: `123E4567-E89B-12D3-A456-426614174000` and its hyphenless,
+    brace-wrapped, and `urn:uuid:`-prefixed spellings all name one value.
+    `m-document-codec-001` authors the uppercase form and reads back the canonical
+    one, which is the distinction between decoding a literal and encoding a value.
+    A spelling carrying other than 32 hexadecimal digits names no value.
+    """
     try:
         uuid.UUID(value)
     except ValueError:

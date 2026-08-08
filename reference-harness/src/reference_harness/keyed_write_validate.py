@@ -40,6 +40,7 @@ from typing import Any
 
 from .case import Entity
 from .value_object_resolve import RejectionError
+from .write_validate import undeclared_members
 
 TEMPORAL_KEYED_WRITE_MULTI_ROW = "temporal-keyed-write-multi-row"
 
@@ -57,23 +58,16 @@ def undeclared_row_members(entity: Entity, instruction: Mapping[str, Any]) -> li
     (`instructions.validate_instruction` refuses undeclared members before the
     temporal singleton), so one instruction cannot be judged two ways.
 
-    Names are read from *entity*'s ancestry-effective declarations, so a concrete
-    subtype's row may name an inherited member (`m-inheritance`). The framework's
-    observation control keys are forbidden on a durable row by the canonical
-    write-instruction schema and so are not member names here.
+    The judgement itself is the neutral write row's
+    (:func:`~reference_harness.write_validate.undeclared_members`), applied to each
+    row the instruction carries; this function only spreads it over them, so a row
+    is judged the same whether an instruction or a bare `when.write` carries it.
     """
-    facts = entity.runtime_facts
-    declared = {
-        member["name"]
-        for kind in ("attributes", "valueObjects")
-        for member in facts.get(kind, []) or []
-        if isinstance(member, dict) and isinstance(member.get("name"), str)
-    }
     rows = instruction.get("rows")
     unknown: set[str] = set()
     for row in rows if isinstance(rows, list) else ():
         if isinstance(row, Mapping):
-            unknown |= {key for key in row if key not in declared}
+            unknown |= set(undeclared_members(entity, row))
     return sorted(unknown)
 
 

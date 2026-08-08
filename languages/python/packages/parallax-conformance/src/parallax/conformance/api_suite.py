@@ -999,8 +999,8 @@ _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
 # Depth-0 write validation (m-value-object-069/070): the SAME sanctioned
 # exception one level out. The corpus grades a bare `when.write` row against the
 # ENTITY's own Attributes, and this frontend declares each of them a Python field,
-# so a missing required Attribute and an uncoercible literal are both refused by
-# Pydantic at construction — empirically confirmed against the shipped surface.
+# so a missing required Attribute and an uncoercible literal are refused at
+# construction and neither shape can reach a validator.
 _VO_DEPTH_ZERO_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
     "the defect sits at the ENTITY's own Attribute, which this frontend declares as a "
     "Python field: `Contact(id=1, address=...)` (omitting the required `name`) and "
