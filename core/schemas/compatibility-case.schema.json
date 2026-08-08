@@ -474,6 +474,15 @@
                 "then": { "required": ["on"] }
               },
               {
+                "description": "A keyed write ACTION verb (`insert` / `update`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none.",
+                "if": {
+                  "required": ["action"],
+                  "properties": { "action": { "enum": ["insert", "update"] } }
+                },
+                "then": { "required": ["value"], "not": { "required": ["on"] } },
+                "else": { "not": { "required": ["value"] } }
+              },
+              {
                 "description": "A scenario-step `referenceSql` is a naive oracle for a read (`find`) only; writes and lifecycle actions do not produce rows to compare.",
                 "if": { "required": ["referenceSql"] },
                 "then": { "required": ["find"] }
@@ -549,8 +558,8 @@
                 "minimum": 0
               },
               "action": {
-                "description": "Marks an ACTION step and names the managed-object lifecycle verb it performs (m-case-format lifecycle vocabulary). `mutate` — assign the attributes in `set` in memory (no SQL for a snapshot / detached object). `detachCopy` — take a detached deep copy of the target (m-detach). `load` — explicitly trigger a deferred relationship load (m-deep-fetch), the portable, mandatory load trigger; its resolving read is INSTANCE-FORM (m-sql *Read projection*), materializing the loaded objects and selecting applicable Storage Layout `Document` slots. `access` — read a relationship / operation-backed list (m-op-list): the FIRST access resolves and materializes the list in one INSTANCE-FORM read, while a later access hits already-populated state with no SQL. `flush` — emit the unit of work's buffered DML. `mergeBack` — reconcile a detached copy with the store (m-detach). `commit` / `abort` — end the unit of work, committing or discarding it (m-unit-work / m-detach).",
-                "enum": ["mutate", "detachCopy", "load", "access", "flush", "mergeBack", "commit", "abort"]
+                "description": "Marks an ACTION step and names the managed-object lifecycle verb it performs (m-case-format lifecycle vocabulary). `mutate` — assign the attributes in `set` in memory (no SQL for a snapshot / detached object). `detachCopy` — take a detached deep copy of the target (m-detach). `load` — explicitly trigger a deferred relationship load (m-deep-fetch), the portable, mandatory load trigger; its resolving read is INSTANCE-FORM (m-sql *Read projection*), materializing the loaded objects and selecting applicable Storage Layout `Document` slots. `access` — read a relationship / operation-backed list (m-op-list): the FIRST access resolves and materializes the list in one INSTANCE-FORM read, while a later access hits already-populated state with no SQL. `flush` — emit the unit of work's buffered DML. `mergeBack` — reconcile a detached copy with the store (m-detach). `commit` / `abort` — end the unit of work, committing or discarding it (m-unit-work / m-detach). `insert` / `update` — hand the keyed write verb of that name a VALUE whose provenance the sibling `value` states (m-unit-work *Write value provenance*): the step observes which verbs accept that value, so it names no prior step and carries no golden SQL.",
+                "enum": ["mutate", "detachCopy", "load", "access", "flush", "mergeBack", "commit", "abort", "insert", "update"]
               },
               "on": {
                 "description": "The earlier scenario step(s) whose result this step operates on. A single zero-based index, or an array of indices when an ACTION spans sources at DIFFERENT lowered coordinates (a coordinate-grouped `load`, m-deep-fetch / m-identity-map). Every index MUST name an EARLIER step (the harness asserts `0 <= index < the current step's index`); the array form's indices MUST be UNIQUE (`uniqueItems`) — a source is referenced at most once. On an ACTION step it names the source object(s) the verb acts on: REQUIRED for object-targeting verbs and optional for boundary verbs (see the sibling `allOf`). On a GROUPED WRITE step it instead names the SOURCE FIND — the read whose result the write settles against, so the write consumes the observation that find recorded rather than one resolved from case state (m-case-format *Settling against a grouped find*); there the single-index form is the only legal one and the step MUST declare `uow`.",
@@ -563,6 +572,10 @@
                     "items": { "type": "integer", "minimum": 0 }
                   }
                 ]
+              },
+              "value": {
+                "description": "insert / update action only (enforced by the sibling `allOf`, which also REQUIRES it there). The PROVENANCE of the value the step hands its keyed write verb, as m-unit-work *Write value provenance* partitions it: `unmanaged` — no managed read produced the value; `thisSource` — a read through the very source this verb writes through produced it; `anotherSource` — a read through some OTHER framework-managed source produced it, the same store or not. The case states the provenance and never how to obtain it: how an implementation retains which source produced a value is its own affair, so the adapter arranges a value of the stated provenance through its own managed reads.",
+                "enum": ["unmanaged", "thisSource", "anotherSource"]
               },
               "set": {
                 "description": "mutate action only (enforced by the sibling `allOf`). The attribute assignments a `mutate` applies, as an attribute-name-keyed map of new values.",
@@ -998,9 +1011,9 @@
           ]
         },
         "roundTrips": {
-          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips.",
+          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way), the one shape whose declared total is legitimately 0.",
           "type": "integer",
-          "minimum": 1,
+          "minimum": 0,
           "default": 1
         },
         "tolerance": {

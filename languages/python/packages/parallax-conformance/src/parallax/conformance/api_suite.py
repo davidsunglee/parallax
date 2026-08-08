@@ -1115,9 +1115,27 @@ _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON: Final[str] = (
     "instruction this case authors. A permanent structural non-fit, not a deferred story"
 )
 
+_WRITE_VALUE_PROVENANCE_REASON: Final[str] = (
+    "a keyed write value-provenance witness (m-unit-work *Write value provenance*, "
+    "m-case-format *Keyed write action steps*): graded end-to-end by the case-driven "
+    "write-value runner (`tests/api/test_write_value_run.py`, driving the REAL "
+    "`tx.insert` / `tx.update` against the provisioned database, and "
+    "`tests/unit/test_write_value_runner.py` Docker-free), which arranges a value of "
+    "each stated provenance through its own managed sources. The runner's generic "
+    "provenance-to-value mapping is deliberately not a per-case hand function, and the "
+    "refusals themselves are unit-pinned at every keyed verb "
+    "(`KeyedWriteValueError`, test_transaction_writes.py); the idiomatic spelling is "
+    "the ordinary find-then-write every managed story already shows, called with the "
+    "value the other verb accepts"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
+    "m-unit-work-017": _WRITE_VALUE_PROVENANCE_REASON,
+    "m-unit-work-018": _WRITE_VALUE_PROVENANCE_REASON,
+    "m-unit-work-019": _WRITE_VALUE_PROVENANCE_REASON,
+    "m-unit-work-020": _WRITE_VALUE_PROVENANCE_REASON,
     "m-unit-work-013": _WRITE_EFFECT_CLASSIFICATION_REASON,
     "m-unit-work-014": _WRITE_EFFECT_CLASSIFICATION_REASON,
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,

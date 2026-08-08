@@ -1,0 +1,32 @@
+# BOTH keyed write families refuse a value produced by a read through some OTHER
+# framework-managed source (m-unit-work *Write value provenance*): a value's
+# stored counterpart is only the one the writing source itself produced, so no
+# verb may treat another source's value as its own — the same store or not. The
+# refusal is `write-value-foreign-lifecycle` for the `insert` family and for the
+# `update` family alike, which is what makes the three-way partition total: every
+# value a keyed verb can be handed falls under exactly one of the three answers.
+#
+# This is an api-conformance-lane case: its defining observable is a raised
+# application-lifecycle error over a VALUE a client holds, and the second managed
+# source the case requires is one no wire harness can arrange, so the harness
+# schema-validates it and each language's API Conformance Suite returns and
+# verifies the error observations. Which second source an implementation uses is
+# its own affair — the case states only that the value came from one.
+model: models/account.yaml
+lane: api-conformance
+tags: [m-unit-work, write-value, provenance, scenario, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - action: insert
+      value: anotherSource
+      roundTrips: 0
+      expectError: write-value-foreign-lifecycle
+      note: the insert family refuses another managed source's value
+    - action: update
+      value: anotherSource
+      roundTrips: 0
+      expectError: write-value-foreign-lifecycle
+      note: and so does the update family — neither writes a value it did not produce
+then:
+  roundTrips: 0
