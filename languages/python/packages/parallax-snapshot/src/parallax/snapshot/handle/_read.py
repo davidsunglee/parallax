@@ -612,12 +612,33 @@ def _distinct_keys(
 
 
 def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
-    """``name``'s accepted Metadata within ``meta``, raising when the model
-    declares no such Entity."""
+    """``name``'s accepted Metadata within ``meta``, raising when it names no
+    single declared Entity.
+
+    A bare spelling two namespaces share names no single Entity and is the
+    normative `reference-ambiguous-entity-name` refusal, carried by
+    ``op_algebra``'s own :class:`~parallax.core.op_algebra.OperationRejectedError`
+    so one rule and one class answer it whether preflight or this executor
+    resolves the reference. Every other miss is unreachable: the root target was
+    resolved by identity at preflight, and each level's own target is the
+    canonical spelling its resolved position minted.
+    """
     metadata = entity_by_name(meta, name)
-    if metadata is None:  # pragma: no cover - a queried target is always declared
-        raise KeyError(name)
-    return metadata
+    if metadata is not None:
+        return metadata
+    shared = sorted(
+        candidate.identity.canonical
+        for candidate in meta.entities
+        if candidate.identity.name == name
+    )
+    if len(shared) > 1:
+        raise op_algebra.OperationRejectedError(
+            "reference-ambiguous-entity-name",
+            f"{name!r}: the bare Entity spelling is shared by {shared}, so it names no single "
+            "Entity in this model and the read resolves nowhere (m-op-algebra reference "
+            "resolution)",
+        )
+    raise KeyError(name)  # pragma: no cover - preflight resolved this target by identity
 
 
 def declaring_metadata(model: Metamodel, target: EntityIdentity) -> EntityMetadata:

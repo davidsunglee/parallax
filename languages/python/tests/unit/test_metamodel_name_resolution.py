@@ -14,17 +14,22 @@ what makes "preflight accepted this reference" imply "lowering resolves it".
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from parallax.core import deep_fetch, navigate
 from parallax.core import op_algebra as oa
 from parallax.core._formation_profile import form_metamodel
+from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.op_algebra import All, Narrow, OperationRejectedError, validate_operation
 from parallax.core.sql_gen import compile_read
+from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
+from parallax.snapshot import handle
 
 
 def _entity(name: str, namespace: str) -> records.Entity:
@@ -77,6 +82,49 @@ def test_op_algebra_resolver_rejects_an_ambiguous_bare_name() -> None:
     op = Narrow(entity="Person", to=("Person",), operand=All())
     with pytest.raises(OperationRejectedError) as excinfo:
         validate_operation(root, op, model)
+    assert excinfo.value.rule == "reference-ambiguous-entity-name"
+
+
+def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
+    # The write side of the same thesis: a deserialized instruction's target
+    # resolves through the SAME helper, and its miss is classified with the SAME
+    # normative rule name the operation resolver uses — a different package and
+    # a different exception class, one rule.
+    model = _model()
+    keyed = instructions.deserialize(
+        {"mutation": "delete", "entity": "Person", "rows": [{"id": 1}]}
+    )
+    with pytest.raises(instructions.InstructionRejectedError) as excinfo:
+        instructions.validate_instruction(keyed, model)
+    assert excinfo.value.rule == "reference-ambiguous-entity-name"
+
+    canonical = instructions.deserialize(
+        {"mutation": "delete", "entity": "a.Person", "rows": [{"id": 1}]}
+    )
+    instructions.validate_instruction(canonical, model)
+
+
+class _RefusingPort:
+    """Every adapter call is a failure — a read refused for its spelling reaches
+    none of them."""
+
+    def execute(self, sql: str, binds: object) -> list[dict[str, object]]:
+        raise AssertionError(f"the read reached the adapter: {sql!r}")
+
+    def execute_write(self, sql: str, binds: object) -> int:
+        raise AssertionError(f"the read reached the adapter: {sql!r}")
+
+    def transaction(self, body: object) -> object:
+        raise AssertionError("the read opened a transaction")
+
+
+def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
+    # The read side: the find executor resolves its target spelling through the
+    # same helper, and reports the same rule through `op_algebra`'s own rejected
+    # carrier — so one rule and one class answer an ambiguous spelling whether
+    # preflight or lowering resolves it.
+    with pytest.raises(OperationRejectedError) as excinfo:
+        handle.find(All(), _model(), POSTGRES, "Person", cast("DbPort", _RefusingPort()))
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 

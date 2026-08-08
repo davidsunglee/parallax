@@ -307,7 +307,7 @@ class Database:
         # two entry points refuse a classless connection in the same order.
         construction = self._connected.materializing()
         lowered = preflight_find(query, model=self._meta)
-        target, op = lowered.target.name, lowered.operation
+        target, op = lowered.target.canonical, lowered.operation
         if scans_an_axis(op):
             history_result = find_history(op, self._meta, self._dialect, target, self._port)
             return snapshot_from_history_result(history_result, self._meta, construction)
