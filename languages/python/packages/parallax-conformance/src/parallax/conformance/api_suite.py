@@ -996,6 +996,34 @@ _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON: Final[str] = (
     "a coverage gap this frontend can idiomatically close"
 )
 
+# Depth-0 write validation (m-value-object-069/070): the SAME sanctioned
+# exception one level out. The corpus grades a bare `when.write` row against the
+# ENTITY's own Attributes, and this frontend declares each of them a Python field,
+# so a missing required Attribute and an uncoercible literal are both refused by
+# Pydantic at construction — empirically confirmed against the shipped surface.
+_VO_DEPTH_ZERO_ATTRIBUTE_UNREACHABLE_REASON: Final[str] = (
+    "the defect sits at the ENTITY's own Attribute, which this frontend declares as a "
+    "Python field: `Contact(id=1, address=...)` (omitting the required `name`) and "
+    "`Contact(id='five', ...)` each raise Pydantic's own `ValidationError` before the "
+    "instance exists, let alone reaches `validate_write`. Same sanctioned exception as "
+    "m-value-object-043's, one level out from the document: the type system prevents "
+    "authoring the invalid shape, so this is not a coverage gap the frontend can close"
+)
+
+# Occurrence-shape write validation (m-value-object-071/072/073): a Value Object
+# member position admits only its own class (or, for a `many`, a tuple of them), so
+# the frontend refuses a scalar there with its OWN TypeError before any validator
+# runs — a stronger refusal than Pydantic's, and equally unreachable.
+_VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON: Final[str] = (
+    "a Value Object member accepts only an instance of its class — never a raw mapping "
+    "and never a scalar — so `Contact(address='1 Main St')`, `phones='555'`, and "
+    "`phones=('555',)` each raise the frontend's own `TypeError` at construction "
+    "(\"requires a 'ContactAddress' instance\" / \"requires a tuple of 'ContactPhone' "
+    "instances\" / \"element '555' is not a 'ContactPhone' instance\"), before "
+    "`validate_write` sees anything. Same sanctioned exception as m-value-object-043's: "
+    "the type system prevents authoring the corpus's invalid occurrence shape"
+)
+
 # The remaining value-object write-family siblings each use the matching
 # module-level reason above.
 _VO_BATCH_WRITE_REASON: Final[str] = (
@@ -1294,6 +1322,11 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-value-object-037": _VO_FIND_ROOT_REASON,
     # -- m-value-object: write-input validation rejects ---------------------- #
     "m-value-object-043": _VO_VALUE_TYPE_MISMATCH_UNREACHABLE_REASON,
+    "m-value-object-069": _VO_DEPTH_ZERO_ATTRIBUTE_UNREACHABLE_REASON,
+    "m-value-object-070": _VO_DEPTH_ZERO_ATTRIBUTE_UNREACHABLE_REASON,
+    "m-value-object-071": _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON,
+    "m-value-object-072": _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON,
+    "m-value-object-073": _VO_OCCURRENCE_SHAPE_UNREACHABLE_REASON,
     # -- m-value-object: remaining write-family siblings --------------------- #
     "m-value-object-045": _VO_BATCH_WRITE_REASON,
     "m-value-object-046": _VO_OPT_LOCK_CONFLICT_REASON,
