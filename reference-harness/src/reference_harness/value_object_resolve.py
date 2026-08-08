@@ -26,6 +26,11 @@ each language implementation must.
 
 from __future__ import annotations
 
+import datetime
+import decimal
+import math
+import re
+import uuid
 from typing import Any
 
 from .case import Entity
@@ -82,34 +87,155 @@ class RejectionError(Exception):
 
 
 # --- typed-literal checking -------------------------------------------------
+#
+# The neutral type vocabulary is CLOSED (`metamodel.schema.json` `$defs/attribute`
+# `type`): boolean, int32, int64, float32, float64, string, bytes, date, time,
+# timestamp, uuid, json, and decimal(precision,scale). Each admits exactly one
+# portable literal form, and the check below decides membership of that form — not
+# of a loose category. A category guess would leave the vocabulary open again: a
+# spelling nothing here models would be accepted, which is precisely how a
+# `decimal(12,2)` or a `bytes` field once admitted a truth value or an array.
 
-_STRING_TYPES = frozenset({"string", "text", "char", "varchar", "uuid"})
-_TEMPORAL_TYPES = frozenset({"timestamp", "date", "time", "datetime"})
-_INT_TYPES = frozenset({"int8", "int16", "int32", "int64", "int", "integer"})
-_FLOAT_TYPES = frozenset({"float32", "float64", "float", "double", "decimal", "numeric"})
-_BOOL_TYPES = frozenset({"boolean", "bool"})
+_INT_BOUNDS: dict[str, tuple[int, int]] = {
+    "int32": (-(2**31), 2**31 - 1),
+    "int64": (-(2**63), 2**63 - 1),
+}
+
+_DECIMAL_TYPE = re.compile(r"^decimal\((\d+),(\d+)\)$")
 
 
 def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
-    """Whether a literal / document value is compatible with a declared neutral type.
+    """Whether a literal / document value spells a member of a declared neutral type.
 
     Used both for a nested comparison's literal (`m-op-algebra` typed-literal MUST)
-    and a write document field's value (`m-value-object` write validation). A
-    ``null`` is always type-acceptable — nullability is a SEPARATE check (required
-    vs optional), never a type mismatch. An UNKNOWN neutral type is accepted rather
-    than guessed, so the validator never false-rejects a type it does not model.
+    and a write row's scalar leaf (`m-value-object` write validation). A ``null`` is
+    always type-acceptable — nullability is a SEPARATE check (required vs optional),
+    never a type mismatch.
+
+    The domain is the PORTABLE literal, the spelling a case authors, so membership
+    is decided against the wire form each space encodes to (`m-core`,
+    `m-document-codec`): a JSON number for the integer and float spaces, an ISO-8601
+    string for `date` / `time` / `timestamp`, a canonical UUID string, a lowercase
+    hex string for `bytes`, and either a JSON number or an exact digit string for a
+    `decimal`, which is the one space no JSON number can carry a scale for. An
+    integer outside its declared width and a decimal the declared precision and
+    scale cannot represent exactly are non-members: representing either would
+    require rounding or truncation.
+
+    A type spelling the closed vocabulary does not carry is accepted rather than
+    guessed at — such a descriptor never passed schema validation, so refusing it
+    here would report a write rule for what is a malformed model.
     """
     if value is None:
         return True
-    kind = (neutral_type or "").lower()
-    if kind in _STRING_TYPES or kind in _TEMPORAL_TYPES:
-        return isinstance(value, str)
-    if kind in _INT_TYPES:
-        return isinstance(value, int) and not isinstance(value, bool)
-    if kind in _FLOAT_TYPES:
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if kind in _BOOL_TYPES:
+    kind = neutral_type or ""
+    decimal_type = _DECIMAL_TYPE.match(kind)
+    if decimal_type is not None:
+        precision, scale = (int(group) for group in decimal_type.groups())
+        return _matches_decimal(value, precision, scale)
+    if kind == "boolean":
         return isinstance(value, bool)
+    if kind in _INT_BOUNDS:
+        low, high = _INT_BOUNDS[kind]
+        return _is_integer(value) and low <= value <= high
+    if kind in ("float32", "float64"):
+        return _is_number(value) and _is_finite(value)
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "bytes":
+        return isinstance(value, str) and _is_lowercase_hex(value)
+    if kind in ("date", "time", "timestamp"):
+        return isinstance(value, str) and _is_iso_temporal(value, kind)
+    if kind == "uuid":
+        return isinstance(value, str) and _parses_as_uuid(value)
+    if kind == "json":
+        return True
+    return True
+
+
+def _is_integer(value: Any) -> bool:
+    """Whether *value* is an integer rather than a truth value."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_finite(value: Any) -> bool:
+    return not isinstance(value, float) or math.isfinite(value)
+
+
+def _matches_decimal(value: Any, precision: int, scale: int) -> bool:
+    """Whether *value* spells a decimal the declared precision and scale hold exactly.
+
+    A JSON number spells one through its shortest round-tripping text, so the digits
+    tested are the digits written rather than a float's binary expansion; a string
+    spells one directly, which is the form a structured document stores.
+    """
+    if _is_integer(value):
+        spelling = str(value)
+    elif isinstance(value, float):
+        spelling = repr(value) if math.isfinite(value) else ""
+    elif isinstance(value, str):
+        spelling = value
+    else:
+        return False
+    try:
+        decimal_value = decimal.Decimal(spelling)
+    except decimal.InvalidOperation:
+        return False
+    if not decimal_value.is_finite():
+        return False
+    _sign, digits, exponent = decimal_value.as_tuple()
+    if not isinstance(exponent, int):
+        return False
+    coefficient = int("".join(str(digit) for digit in digits))
+    if coefficient == 0:
+        return True
+    while coefficient % 10 == 0:
+        coefficient //= 10
+        exponent += 1
+    if exponent < -scale:
+        return False
+    return len(str(coefficient)) + exponent + scale <= precision
+
+
+def _is_lowercase_hex(value: str) -> bool:
+    return len(value) % 2 == 0 and all(character in "0123456789abcdef" for character in value)
+
+
+def _is_iso_temporal(value: str, kind: str) -> bool:
+    """Whether *value* is a microsecond-precision ISO-8601 literal of *kind*.
+
+    A `timestamp` carries a UTC offset (it names an instant); a `time` carries none
+    (it names a wall clock). A fractional field with a non-zero digit past the sixth
+    names no member of a microsecond-precision space.
+    """
+    if not _within_microsecond_precision(value):
+        return False
+    try:
+        if kind == "date":
+            datetime.date.fromisoformat(value)
+            return True
+        if kind == "time":
+            return datetime.time.fromisoformat(value).tzinfo is None
+        return datetime.datetime.fromisoformat(value).utcoffset() is not None
+    except ValueError:
+        return False
+
+
+def _within_microsecond_precision(value: str) -> bool:
+    """Whether no fractional field carries a non-zero digit past the sixth.
+
+    A temporal literal may spell more than one fractional field — a fractional
+    second and a fractional offset — so every ``.`` / ``,``-initiated digit run is
+    inspected, not just the first.
+    """
+    return all(set(fraction[6:]) <= {"0"} for fraction in re.findall(r"[.,](\d+)", value))
+
+
+def _parses_as_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
     return True
 
 

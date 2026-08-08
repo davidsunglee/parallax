@@ -75,8 +75,13 @@ from reference_harness.value_object_resolve import (
     WRITE_REQUIRED_VALUE_OBJECT_MISSING,
     WRITE_VALUE_TYPE_MISMATCH,
     RejectionError,
+    literal_matches_type,
 )
-from reference_harness.write_validate import validate_subtype_write, validate_write
+from reference_harness.write_validate import (
+    framework_owned_names,
+    validate_subtype_write,
+    validate_write,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
@@ -724,9 +729,14 @@ def test_validate_operation_accepts_valid_nested_predicates() -> None:
     validate_operation(entity, {"eq": {"attr": "Customer.name", "value": "Ada"}})
 
 
-def test_validate_write_accepts_complete_and_null_documents() -> None:
-    entity = _contact_entity()
-    complete = {
+def _complete_contact_row() -> dict[str, Any]:
+    """A Contact write row every declared member of which is present and well-typed.
+
+    A rejected write probe mutates ONE position of this row, so the rule it raises is
+    the one that position's defect names rather than whichever member the row also
+    happened to omit.
+    """
+    return {
         "id": 1,
         "name": "Acme",
         "address": {
@@ -736,6 +746,11 @@ def test_validate_write_accepts_complete_and_null_documents() -> None:
             "phones": [{"type": "home", "number": "555"}],
         },
     }
+
+
+def test_validate_write_accepts_complete_and_null_documents() -> None:
+    entity = _contact_entity()
+    complete = _complete_contact_row()
     validate_write(entity, complete)  # no raise
     # A nullable top-level value object may be null (binds SQL NULL); an empty `many`
     # array satisfies a nullable to-many member.
@@ -1056,28 +1071,187 @@ def test_nested_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -
 
 
 def test_write_present_but_null_required_value_object_rejected() -> None:
+    row = _complete_contact_row()
+    row["address"]["geo"] = None
     with pytest.raises(RejectionError) as exc:
-        validate_write(
-            _contact_entity(),
-            {"id": 1, "address": {"street": "S", "city": "C", "geo": None}},
-        )
+        validate_write(_contact_entity(), row)
     assert exc.value.rule == WRITE_REQUIRED_VALUE_OBJECT_MISSING
 
 
 def test_write_deep_type_mismatch_rejected() -> None:
+    row = _complete_contact_row()
+    row["address"]["geo"]["point"]["lat"] = "not-a-number"
     with pytest.raises(RejectionError) as exc:
-        validate_write(
-            _contact_entity(),
-            {
-                "id": 1,
-                "address": {
-                    "street": "S",
-                    "city": "C",
-                    "geo": {"country": "NO", "point": {"lat": "not-a-number", "lon": 2.0}},
-                },
-            },
-        )
+        validate_write(_contact_entity(), row)
     assert exc.value.rule == WRITE_VALUE_TYPE_MISMATCH
+
+
+# --- the bare write row's complete cell table (m-case-format "What decides a bare
+# --- write row") -------------------------------------------------------------
+#
+# A rejected `when.write` row is decided position by position, so what an
+# implementation may be asked is the cross product of the six declared position
+# kinds with the value classes a schema-valid row can author at one. The schema
+# closes the DISPATCH question and cannot close this one — it is model-blind, and
+# `writeRowValue` admits every JSON value — so the specification enumerates the
+# cells and these pin the harness against that enumeration. The corpus pins the
+# same cells across BOTH graders; these reach the ones no rejected case witnesses,
+# including every accepted cell, which no case can express.
+
+
+_ABSENT = object()
+
+
+def _contact_row_at(path: str, value: Any) -> dict[str, Any]:
+    """The complete Contact row with the member at dotted *path* replaced.
+
+    ``_ABSENT`` removes the key; every other value is authored as written. A `many`
+    element is addressed by its index (``address.phones.0.number``).
+    """
+    row = _complete_contact_row()
+    node: Any = row
+    *parents, leaf = path.split(".")
+    for parent in parents:
+        node = node[int(parent)] if parent.isdigit() else node[parent]
+    if value is _ABSENT:
+        node.pop(leaf, None)
+    else:
+        node[leaf] = value
+    return row
+
+
+# Contact declares `id` / `name` (required attributes), a nullable `one` `address`,
+# and inside it required `street` / `city`, a required nested `one` `geo`, and a
+# `many` `phones` whose element attributes are nullable.
+@pytest.mark.parametrize(
+    ("path", "value", "expected"),
+    [
+        # Attribute, nullable: false — absent and explicit null are the same absence.
+        ("name", _ABSENT, WRITE_REQUIRED_ATTRIBUTE_MISSING),
+        ("name", None, WRITE_REQUIRED_ATTRIBUTE_MISSING),
+        ("name", "Acme", None),
+        ("id", 7, None),
+        ("id", "seven", WRITE_VALUE_TYPE_MISMATCH),
+        ("id", True, WRITE_VALUE_TYPE_MISMATCH),
+        ("id", {"street": "x"}, WRITE_VALUE_TYPE_MISMATCH),
+        ("id", [1], WRITE_VALUE_TYPE_MISMATCH),
+        # Attribute, nullable: true — absence and null are both licensed.
+        ("address.phones.0.number", _ABSENT, None),
+        ("address.phones.0.number", None, None),
+        ("address.phones.0.number", 555, WRITE_VALUE_TYPE_MISMATCH),
+        # Value Object `one`, nullable: true — a null document binds SQL NULL.
+        ("address", _ABSENT, None),
+        ("address", None, None),
+        ("address", "1 Main St", WRITE_VALUE_TYPE_MISMATCH),
+        ("address", [{"street": "x"}], WRITE_VALUE_TYPE_MISMATCH),
+        # Value Object `one`, nullable: false (nested).
+        ("address.geo", _ABSENT, WRITE_REQUIRED_VALUE_OBJECT_MISSING),
+        ("address.geo", None, WRITE_REQUIRED_VALUE_OBJECT_MISSING),
+        ("address.geo", 42, WRITE_VALUE_TYPE_MISMATCH),
+        # Value Object `many` — absence IS the empty collection, null is not a state
+        # the model gives it, and the value bound is a list OF DOCUMENTS.
+        ("address.phones", _ABSENT, None),
+        ("address.phones", [], None),
+        ("address.phones", None, WRITE_REQUIRED_VALUE_OBJECT_MISSING),
+        ("address.phones", "555", WRITE_VALUE_TYPE_MISMATCH),
+        ("address.phones", {"number": "555"}, WRITE_VALUE_TYPE_MISMATCH),
+        ("address.phones", ["555"], WRITE_VALUE_TYPE_MISMATCH),
+    ],
+)
+def test_bare_write_row_cell(path: str, value: Any, expected: str | None) -> None:
+    entity = _contact_entity()
+    row = _contact_row_at(path, value)
+    if expected is None:
+        validate_write(entity, row)
+        return
+    with pytest.raises(RejectionError) as exc:
+        validate_write(entity, row)
+    assert exc.value.rule == expected
+
+
+def test_bare_write_row_classifies_in_declaration_order() -> None:
+    # Two defects in one row: `name` absent (an Attribute) and `address.geo` absent
+    # (a Value Object). Declaration order puts every Attribute before every Value
+    # Object, so the rule is the model's answer rather than the row's key order —
+    # the property that lets two independent graders classify one row identically.
+    defects = {"id": 1, "address": {"street": "S", "city": "C"}}
+    reversed_order = {"address": {"street": "S", "city": "C"}, "id": 1}
+    for row in (defects, reversed_order):
+        with pytest.raises(RejectionError) as exc:
+            validate_write(_contact_entity(), row)
+        assert exc.value.rule == WRITE_REQUIRED_ATTRIBUTE_MISSING
+
+
+def test_bare_write_row_exempts_framework_owned_attributes() -> None:
+    # The framework supplies these values, so their absence is no caller omission:
+    # Account's `version` carries `optimisticLocking`, and Balance's Transaction-Time
+    # endpoints are derived structure rather than authored members. A row omitting
+    # both is complete.
+    account = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
+    assert "version" in framework_owned_names(account)
+    validate_write(account, {"id": 1, "owner": "Ada", "balance": "10.00"})
+
+    balance = load_model(_COMPATIBILITY_ROOT, "models/balance.yaml").root_entity
+    assert {"txStart", "txEnd"} <= framework_owned_names(balance)
+    validate_write(balance, {"id": 1, "acctNum": "A", "value": "10.00"})
+
+
+def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() -> None:
+    # A marker is disambiguated by the position's declared metamodel ROLE, never by
+    # the value's shape: it stands for a value the DB computes at a scalar Attribute
+    # column, and a value object binds its whole document even when that document
+    # happens to be shaped like one.
+    account = load_model(_COMPATIBILITY_ROOT, "models/account.yaml").root_entity
+    validate_write(account, {"id": {"computed": "maxPlusOne"}, "owner": "Ada", "balance": "1.00"})
+
+    row = _complete_contact_row()
+    row["address"]["geo"]["point"]["lat"] = {"computed": "maxPlusOne"}
+    with pytest.raises(RejectionError) as exc:
+        validate_write(_contact_entity(), row)
+    assert exc.value.rule == WRITE_VALUE_TYPE_MISMATCH
+
+
+# The neutral type vocabulary is CLOSED, and membership is of the PORTABLE literal
+# each space encodes to. A value of the right JSON kind but outside the space —
+# an integer beyond its width, a decimal the scale cannot hold, a malformed
+# spelling, a sub-microsecond instant — is a mismatch, not an accepted near-miss.
+@pytest.mark.parametrize(
+    ("neutral_type", "value", "matches"),
+    [
+        ("boolean", True, True),
+        ("boolean", 1, False),
+        ("int32", 2**31 - 1, True),
+        ("int32", 2**31, False),
+        ("int32", True, False),
+        ("int64", 2**63 - 1, True),
+        ("int64", 2**63, False),
+        ("float64", 1.5, True),
+        ("float64", "1.5", False),
+        ("string", "s", True),
+        ("string", 1, False),
+        ("decimal(4,2)", "12.34", True),
+        ("decimal(4,2)", 12, True),
+        ("decimal(4,2)", "12.345", False),
+        ("decimal(4,2)", "123.45", False),
+        ("decimal(4,2)", "not-a-decimal", False),
+        ("bytes", "00ff", True),
+        ("bytes", "0f0", False),
+        ("bytes", "00FF", False),
+        ("date", "2024-01-01", True),
+        ("date", "not-a-date", False),
+        ("time", "12:00:00", True),
+        ("time", "12:00:00+00:00", False),
+        ("timestamp", "2024-01-01T00:00:00+00:00", True),
+        ("timestamp", "2024-01-01T00:00:00", False),
+        ("timestamp", "2024-01-01T00:00:00.1234567+00:00", False),
+        ("timestamp", "2024-01-01T00:00:00.1234560+00:00", True),
+        ("uuid", "123e4567-e89b-12d3-a456-426614174000", True),
+        ("uuid", "not-a-uuid", False),
+        ("json", {"any": "value"}, True),
+    ],
+)
+def test_portable_literal_membership(neutral_type: str, value: Any, matches: bool) -> None:
+    assert literal_matches_type(value, neutral_type) is matches
 
 
 # --- the runner FAILS on a mis-authored rejected case -----------------------
@@ -1116,6 +1290,30 @@ def test_runner_fails_when_the_named_rule_is_wrong() -> None:
         NESTED_LITERAL_TYPE_MISMATCH,  # actual rule: first-segment-not-value-object
     )
     with pytest.raises(CaseFailure):
+        run_case(case, None)  # type: ignore[arg-type]
+
+
+def test_runner_fails_a_handleless_input_against_a_multi_family_model() -> None:
+    # A bare row and an operation both name no target, so both resolve the model's
+    # DEFAULT write root. A model declaring several families names no single root, so
+    # there is no default: the case must carry its own handle. Resolving it to
+    # whichever entity is declared first would grade a rule against an entity the
+    # case never named, which is the failure this refusal replaces. The instruction
+    # forms beside it name their own handle and are unaffected — the corpus's own
+    # m-batch-write-009 is a predicate write on exactly such a model.
+    from reference_harness.case import Model
+
+    model = load_model(_COMPATIBILITY_ROOT, "models/workshop.yaml")
+    assert isinstance(model, Model)
+    raw = {
+        "model": "models/workshop.yaml",
+        "tags": ["m-value-object"],
+        "shape": "rejected",
+        "when": {"write": {"id": 1}},
+        "then": {"rejectedRule": WRITE_REQUIRED_ATTRIBUTE_MISSING},
+    }
+    case = Case(path=Path("m-value-object-998-x.yaml"), raw=raw, model=model)
+    with pytest.raises(CaseFailure, match="no default write root"):
         run_case(case, None)  # type: ignore[arg-type]
 
 
