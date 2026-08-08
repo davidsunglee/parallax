@@ -4,10 +4,13 @@ Everything a write verb needs BEFORE an instruction reaches the unit of work,
 plus the observation machinery a read leaves behind for it:
 
 * build-time window validation every keyed AND ``_where`` temporal verb shares
-  (:func:`validate_valid_from`, :func:`validate_until`) and the
+  (:func:`validate_valid_from`, :func:`validate_until`), the
   finite-Transaction-Time-pin refusal every keyed verb runs on its source
   instance (:class:`TransactionTimePinReadOnlyError`,
-  :func:`validate_source_pin`, :func:`source_pin`);
+  :func:`validate_source_pin`, :func:`source_pin`), and the provenance refusal
+  the value-taking keyed verbs run before any row is derived
+  (:class:`KeyedWriteValueError`, :data:`KEYED_WRITE_VALUE_CODES`,
+  :func:`validate_write_value`);
 * instance -> accepted-Metadata resolution (:func:`metadata_of_instance`) and the
   identity half of its observation key (:func:`written_object_key`);
 * the observation record a read leaves behind (:class:`ReadObservations`) and its
@@ -33,7 +36,9 @@ Privacy is carried by this MODULE's leading underscore and by the package's
 frozen ``__all__``, never by per-name underscores —
 :class:`TransactionTimePinReadOnlyError` and :func:`validate_source_pin` are
 additionally re-exported through that ``__all__`` (the conformance engine's
-scenario grading shares the exact validator the developer verbs run).
+scenario grading shares the exact validator the developer verbs run), as are
+:class:`KeyedWriteValueError` and :data:`KEYED_WRITE_VALUE_CODES`, which a
+developer catches from ``parallax.snapshot`` itself.
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ from typing import Final, cast
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
+from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -60,6 +66,7 @@ from parallax.core.metamodel import (
 from parallax.core.storage_layout import EntityLayoutView
 from parallax.core.temporal_read import Edge, Latest, Pin
 from parallax.core.unit_work import (
+    INSERT_MUTATIONS,
     KeyedMutation,
     ObjectKey,
     PredecessorRow,
@@ -83,6 +90,8 @@ from parallax.snapshot.handle._family import (
 )
 
 __all__ = [
+    "KEYED_WRITE_VALUE_CODES",
+    "KeyedWriteValueError",
     "ReadObservations",
     "TransactionTimePinReadOnlyError",
     "is_no_op_assignment",
@@ -95,8 +104,50 @@ __all__ = [
     "validate_source_pin",
     "validate_until",
     "validate_valid_from",
+    "validate_write_value",
     "written_object_key",
 ]
+
+_UPDATE_MUTATIONS: Final[frozenset[str]] = frozenset({"update", "updateUntil"})
+"""The keyed mutations that write against an existing row from a value's own
+effective changes — the family a value no managed read produced is refused for.
+:data:`~parallax.core.unit_work.INSERT_MUTATIONS` is the complementary family;
+every other keyed mutation derives an identity row alone."""
+
+KEYED_WRITE_VALUE_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "write-value-not-stored",
+        "write-value-already-stored",
+        "write-value-foreign-lifecycle",
+    }
+)
+"""The complete keyed-write value refusal vocabulary (`m-unit-work` "Write value
+provenance"). The three name the three answers provenance has for a verb — no
+managed read produced this value, this verb's own source produced it, another
+managed source did — so a refused value carries exactly one of them."""
+
+
+class KeyedWriteValueError(ValueError):
+    """A keyed write verb was handed a value whose PROVENANCE it does not accept.
+
+    A ``ValueError`` for :class:`TransactionTimePinReadOnlyError`'s reason, which
+    is the sibling this shares a vocabulary with: both report a neutral
+    application-lifecycle refusal of an argument a caller supplied, so a caller
+    catching one kind of refused write value catches the other the same way.
+
+    ``code`` is the neutral `m-unit-work` refusal and ``identity`` the Entity
+    Identity the write addressed. The value itself is never retained: what the
+    refusal is about is which source produced it, and the message names the verb
+    that does accept it.
+    """
+
+    def __init__(self, *, code: str, message: str, identity: EntityIdentity) -> None:
+        if code not in KEYED_WRITE_VALUE_CODES:
+            raise ValueError(f"{code!r} is not a keyed write value code")
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+        self.identity = identity
 
 
 class TransactionTimePinReadOnlyError(ValueError):
@@ -437,7 +488,7 @@ def source_edge(instance: object) -> Edge | None:
     return None if state is None else state.edge
 
 
-def validate_source_pin(entity_name: str, pin: Pin | None) -> None:
+def validate_source_pin(identity: EntityIdentity, pin: Pin | None) -> None:
     """Reject a mutation sourced from a view pinned at a FINITE Transaction-Time
     instant (`m-temporal-read`'s finite-pin mutation row): raise
     :class:`TransactionTimePinReadOnlyError` at the verb call, before any
@@ -448,19 +499,86 @@ def validate_source_pin(entity_name: str, pin: Pin | None) -> None:
     and the conformance engine's scenario ``mutate`` grading, so the two
     callers can never drift. The predicate-selected ``_where`` family needs no
     counterpart: a set-based write target must be a bare statement, so it can
-    never carry an as-of pin at all."""
+    never carry an as-of pin at all.
+
+    Takes the written Entity's structured ``identity`` rather than a spelling:
+    no layer of the keyed-write path holds an Entity spelling, and the message
+    reports the canonical one the identity renders."""
     if pin is None:
         return
     tx_time = pin.tx_time
     if tx_time is None or isinstance(tx_time, Latest):
         return
     raise TransactionTimePinReadOnlyError(
-        f"{entity_name}: the write's source view is pinned at the finite Transaction-Time "
-        f"instant {tx_time.isoformat()} and is read-only — the Transaction-Time past "
-        "records what the system knew and is never rewritten "
+        f"{identity.canonical}: the write's source view is pinned at the finite "
+        f"Transaction-Time instant {tx_time.isoformat()} and is read-only — the "
+        "Transaction-Time past records what the system knew and is never rewritten "
         "(transaction-time-pin-read-only); read the current milestone "
         "(Transaction Time Latest) to mutate it"
     )
+
+
+def validate_write_value(
+    identity: EntityIdentity, value: EntityBase, mutation: KeyedMutation
+) -> None:
+    """Refuse a value whose PROVENANCE ``mutation``'s verb does not accept
+    (`m-unit-work` "Write value provenance"), before any row is derived from it.
+
+    Provenance is which framework-managed source, if any, produced the value from
+    a read — never whether an author has since changed it, which decides what a
+    write CONTAINS rather than which verb accepts it. The three answers partition
+    the values a verb can be handed, so a refused value earns exactly one code and
+    the message names the verb that does accept it.
+
+    An unedited value this source produced is NOT refused for an `update`: it
+    carries no change, so it buffers nothing, issues no statement, and raises
+    nothing — the same outcome as an edit whose net change is empty.
+    ``delete`` / ``terminate`` / ``terminateUntil`` derive an identity row alone
+    and fall through, exactly as they already do for ``valid_from``.
+
+    Provenance is read through :func:`~parallax.snapshot._inspection.
+    snapshot_state_of` and the un-narrowed
+    :func:`~parallax.core.entity.lifecycle_state_of`, never through a value's
+    private state: the narrowed answer says this Snapshot lifecycle produced the
+    value, and the un-narrowed one is what distinguishes ANOTHER framework-managed
+    source's value from one no managed read produced at all.
+    """
+    if mutation not in _UPDATE_MUTATIONS and mutation not in INSERT_MUTATIONS:
+        return
+    state = lifecycle_state_of(value)
+    if state is None:
+        if mutation in INSERT_MUTATIONS:
+            return
+        raise KeyedWriteValueError(
+            code="write-value-not-stored",
+            message=(
+                f"{identity.canonical}: {mutation!r} was handed a value no read of this "
+                "store produced, so it addresses no stored row; write it with "
+                "`tx.insert(...)`, or update a value a `find` returned"
+            ),
+            identity=identity,
+        )
+    if snapshot_state_of(value) is None:
+        raise KeyedWriteValueError(
+            code="write-value-foreign-lifecycle",
+            message=(
+                f"{identity.canonical}: {mutation!r} was handed a value another "
+                "framework-managed source produced, and no verb writes another source's "
+                "value through this one; read the row through this transaction and write "
+                "what that read returns"
+            ),
+            identity=identity,
+        )
+    if mutation in INSERT_MUTATIONS:
+        raise KeyedWriteValueError(
+            code="write-value-already-stored",
+            message=(
+                f"{identity.canonical}: {mutation!r} was handed a value this store's own read "
+                "produced, so the row it names is already stored; change it with "
+                "`value.edit(...)` and write it with `tx.update(...)`"
+            ),
+            identity=identity,
+        )
 
 
 def validate_valid_from(

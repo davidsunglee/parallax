@@ -355,6 +355,8 @@
   "parallax.snapshot": [
     "DeferredFeatureError",
     "Execution",
+    "KEYED_WRITE_VALUE_CODES",
+    "KeyedWriteValueError",
     "NoResultFound",
     "QueryTargetError",
     "Snapshot",
@@ -399,6 +401,8 @@
     "Execution",
     "FindResult",
     "HistoryFindResult",
+    "KEYED_WRITE_VALUE_CODES",
+    "KeyedWriteValueError",
     "NoResultFound",
     "ObservationCollector",
     "QueryTargetError",

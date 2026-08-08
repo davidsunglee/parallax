@@ -517,14 +517,17 @@ def test_stale_write_is_never_retried_even_with_the_opt_in() -> None:
 
 
 def _rename_person(tx: Transaction) -> None:
-    tx.update(mm.Person(id=1, name="Ada").edit(name="Grace"))
+    fetched = tx.find(mm.Person.where(mm.Person.id == 1)).result()
+    tx.update(fetched.edit(name="Grace"))
 
 
 def test_missing_target_is_never_retried_even_with_the_opt_in() -> None:
     # An observation-free keyed write against an unversioned Entity: a shortfall
     # says only that the addressed rows are not there, and re-executing cannot
-    # bring them into being.
-    port = RecordingPort()
+    # bring them into being. The renamed value comes from this transaction's own
+    # read — an unversioned target needs no observation to WRITE, but every
+    # keyed update needs a value some read of this store produced.
+    port = RecordingPort(rows=[{"id": 1, "name": "Ada"}])
     port.write_affected_queue = [0, 1]
     with pytest.raises(MissingTargetError):
         db_for(PERSON, port).transact(_rename_person, retry_optimistic_conflicts=True)

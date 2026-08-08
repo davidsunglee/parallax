@@ -36,6 +36,8 @@ def test_top_package_public_surfaces() -> None:
         "Snapshot",
         "Execution",
         "DeferredFeatureError",
+        "KEYED_WRITE_VALUE_CODES",
+        "KeyedWriteValueError",
         "NoResultFound",
         "QueryTargetError",
         "SnapshotConnectionError",

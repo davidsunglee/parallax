@@ -17,6 +17,7 @@ from typing import Any, cast
 
 import pytest
 from _transact_support import (
+    ACCOUNT,
     BALANCE,
     CONTACT,
     FIND_SQL,
@@ -44,7 +45,14 @@ from parallax.conformance.vo_models import Contact, Shipment
 from parallax.core import LATEST, Attr, DomainModel, Entity, attr, opt_lock
 from parallax.core.db_port import Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import EntityRowError
+from parallax.core.entity import (
+    EntityAttributeInput,
+    EntityGraphWriter,
+    EntityRowError,
+    NodeHandle,
+    graph_construction_of,
+)
+from parallax.core.metamodel import AttributeIdentity
 from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
@@ -54,7 +62,13 @@ from parallax.core.unit_work import (
     WriteRejectedError,
     validate_write,
 )
-from parallax.snapshot.handle import Database, Transaction, TransactionTimePinReadOnlyError
+from parallax.snapshot.handle import (
+    KEYED_WRITE_VALUE_CODES,
+    Database,
+    KeyedWriteValueError,
+    Transaction,
+    TransactionTimePinReadOnlyError,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -274,15 +288,17 @@ def test_insert_until_rejects_an_equal_or_reversed_window() -> None:
 def test_update_with_an_empty_effective_change_set_issues_no_dml() -> None:
     # An `edit()` with no changes carries forward the SAME (empty)
     # Change Record: the sparse-update no-op rule (spec §3/§5).
-    port = RecordingPort()
-    fetched = mm.Account.model_construct(id=1, owner="Ada", balance=Decimal("100.00"), version=1)
-    edited = fetched.edit(balance=Decimal("100.00"))  # net-zero touch
+    port = RecordingPort(
+        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
+    )
 
     def fn(tx: Transaction) -> None:
-        tx.update(edited)
+        fetched = tx.find(mm.Account.where(mm.Account.id == 1)).result()
+        tx.update(fetched.edit(balance=Decimal("100.00")))  # net-zero touch
 
     account_db(port).transact(fn)
-    assert port.ops == [("begin",), ("commit",)]  # no write round trip at all
+    # The read happened; the write never did.
+    assert port.ops == [("begin",), ("read", FIND_SQL, (1,)), ("commit",)]
 
 
 def test_row_naming_an_undeclared_member_is_rejected_at_buffer_time() -> None:
@@ -564,27 +580,19 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
     # no-op return, for every window verb, never the reverse -- see the
     # sibling equal-bounds pin immediately below for the corrected
     # precedence made visible).
-    port = RecordingPort()
-    fetched = WherePosition.model_construct(
-        id=1,
-        acct_num="A",
-        value=Decimal("100.00"),
-        valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        valid_end=INFINITY_INSTANT,
-        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        tx_end=INFINITY_INSTANT,
-    )
-    edited = fetched.edit(value=Decimal("100.00"))  # net-zero touch
+    port = RecordingPort(rows=[_position_row_dt()])
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_until(edited, valid_from=valid_from, until=until)
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        # net-zero touch
+        tx.update_until(fetched.edit(value=Decimal("100.00")), valid_from=valid_from, until=until)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         fn, concurrency="optimistic"
     )
-    assert not any(op[0] in ("read", "write") for op in port.ops)
+    assert not any(op[0] == "write" for op in port.ops)
 
 
 def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds() -> None:
@@ -594,27 +602,20 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
     # ("all validated at build"): validating the window only after the no-op
     # return would let an equal/reversed window slip through when the change
     # set is empty.
-    port = RecordingPort()
-    fetched = WherePosition.model_construct(
-        id=1,
-        acct_num="A",
-        value=Decimal("100.00"),
-        valid_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        valid_end=INFINITY_INSTANT,
-        tx_start=dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
-        tx_end=INFINITY_INSTANT,
-    )
-    edited = fetched.edit(value=Decimal("100.00"))  # net-zero touch
+    port = RecordingPort(rows=[_position_row_dt()])
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        tx.update_until(edited, valid_from=valid_from, until=valid_from)  # EQUAL bounds
+        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        tx.update_until(  # EQUAL bounds, net-zero touch
+            fetched.edit(value=Decimal("100.00")), valid_from=valid_from, until=valid_from
+        )
 
     with pytest.raises(ValueError, match="requires valid_from < until"):
         Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
             fn, concurrency="optimistic"
         )
-    assert not any(op[0] in ("read", "write") for op in port.ops)  # never reached the no-op check
+    assert not any(op[0] == "write" for op in port.ops)  # never reached the no-op check
 
 
 def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -> None:
@@ -772,23 +773,41 @@ def test_unobserved_temporal_update_from_a_cross_transaction_copy_raises() -> No
     assert not any(op[0] == "write" for op in port.ops)
 
 
-def test_same_transaction_insert_then_temporal_update_is_licensed() -> None:
+def test_same_transaction_insert_then_update_of_the_inserted_value_is_refused() -> None:
+    # A buffered insert is not a read: `update` accepts a value some read of
+    # this store produced, and this transaction's own `insert` produced nothing
+    # to read. The same-transaction provenance exemption `m-txtime-write-008`
+    # relies on survives for the verbs that take no position on provenance
+    # (`terminate` below), and the insert-then-update coalescing shape stays
+    # reachable through the neutral buffer seam, which carries instructions
+    # rather than values.
+    def fn(tx: Transaction) -> None:
+        fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
+        tx.insert(fresh)
+        tx.update(fresh.edit(value=Decimal("2.00")))
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        Database.connect(NoIoPort(), BALANCE, clock=FixedClock(FIXED)).transact(fn)
+    assert refusal.value.code == "write-value-not-stored"
+
+
+def test_same_transaction_insert_then_terminate_is_licensed() -> None:
     # Read-your-own-writes exemption: this transaction's OWN buffered insert
-    # IS the provenance (`m-txtime-write-008`'s same-transaction coalescing
-    # shape) — no observation lookup applies, and the planner folds the pair
-    # into the single INSERT carrying the updated value.
+    # IS the observation provenance a keyed temporal close needs — no
+    # observation lookup applies, and `terminate` derives an identity row alone,
+    # so it takes no position on where the value came from.
     port = RecordingPort()
     db = db_for(BALANCE, port)
 
     def fn(tx: Transaction) -> None:
         fresh = mm.Balance(id=9, acct_num="Z", value=Decimal("1.00"))
         tx.insert(fresh)
-        tx.update(fresh.edit(value=Decimal("2.00")))
+        tx.terminate(fresh)
 
     db.transact(fn)
-    write_ops = [op for op in port.ops if op[0] == "write"]
-    assert len(write_ops) == 1  # coalesced to one INSERT
-    assert Decimal("2.00") in cast("tuple[object, ...]", write_ops[0][2])
+    # Licensed rather than refused for want of an observation: the flush then
+    # cancels the pair, which is the coalescing rule rather than a refusal.
+    assert not any(op[0] == "write" for op in port.ops)
 
 
 # The Transaction-Time instant the audit read pins: inside the current
@@ -994,3 +1013,134 @@ def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() ->
 
     db_for(_TWIN_LEFT, port).transact(fn)
     assert [op[0] for op in port.ops] == ["begin", "write", "commit"]
+
+
+# --------------------------------------------------------------------------- #
+# The keyed-write value contract (`m-unit-work` "Write value provenance";      #
+# `_write_inputs.validate_write_value`): which verbs accept a value is decided #
+# by which framework-managed source produced it, and never by whether an       #
+# author has since changed it. The four outcomes below are the whole rule —    #
+# three refusals partitioning the values a verb can be handed, and the         #
+# unchanged stored value that is no refusal at all.                            #
+# --------------------------------------------------------------------------- #
+def _foreign_lifecycle_account() -> mm.Account:
+    """An `Account` ANOTHER framework-managed source produced.
+
+    Built through the core's own Entity Graph Construction seam with a state
+    factory of its own, which is exactly what a second lifecycle package is: the
+    value carries lifecycle state this Snapshot never attached.
+    """
+
+    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
+        handle = writer.allocate(mm.Account.identity)
+        writer.populate(
+            handle,
+            (
+                EntityAttributeInput(AttributeIdentity(mm.Account.identity, "id"), 1),
+                EntityAttributeInput(AttributeIdentity(mm.Account.identity, "owner"), "Ada"),
+                EntityAttributeInput(
+                    AttributeIdentity(mm.Account.identity, "balance"), Decimal("100.00")
+                ),
+                EntityAttributeInput(AttributeIdentity(mm.Account.identity, "version"), 1),
+            ),
+            (),
+            (),
+        )
+        return (handle,)
+
+    (node,) = graph_construction_of(ACCOUNT).construct(
+        build, state_factory=lambda view, handle: _OtherLifecycleState()
+    )
+    return cast("mm.Account", node)
+
+
+class _OtherLifecycleState:
+    """The whole of another lifecycle's per-node state, as far as this rule is
+    concerned: something this Snapshot did not attach."""
+
+
+def test_update_of_a_value_no_read_produced_names_the_insert_verb() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.update(new_account().edit(balance=Decimal("9.00")))
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+    assert refusal.value.code == "write-value-not-stored"
+    assert refusal.value.identity == mm.Account.identity
+    assert "tx.insert(...)" in refusal.value.message
+
+
+def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
+    # Today's misleading refusal — a required attribute reported absent on a
+    # plainly populated row — replaced by the one that names the mistake: the
+    # row this value denotes is already stored.
+    port = RecordingPort(
+        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.insert(tx.find(mm.Account.where(mm.Account.id == 1)).result())
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        account_db(port).transact(fn)
+    assert refusal.value.code == "write-value-already-stored"
+    assert "tx.update(...)" in refusal.value.message
+    assert not any(op[0] == "write" for op in port.ops)  # refused before any DML
+
+
+@pytest.mark.parametrize("verb", ["insert", "update"], ids=["insert", "update"])
+def test_a_value_another_lifecycle_produced_is_refused_by_both_families(verb: str) -> None:
+    # A value's stored counterpart is only the one the writing source itself
+    # produced, so neither family accepts another source's value — and the
+    # raising port proves the refusal precedes every adapter call.
+    foreign = _foreign_lifecycle_account()
+
+    def fn(tx: Transaction) -> None:
+        if verb == "insert":
+            tx.insert(foreign)
+        else:
+            tx.update(foreign.edit(balance=Decimal("175.00")))
+
+    with pytest.raises(KeyedWriteValueError) as refusal:
+        Database.connect(NoIoPort(), ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+    assert refusal.value.code == "write-value-foreign-lifecycle"
+
+
+def test_update_of_an_unedited_node_buffers_nothing() -> None:
+    # The rule the change tracking exists for: writing every value a find
+    # returned and editing only some of them is correct code. The unedited one
+    # is neither a refusal nor a write.
+    port = RecordingPort(
+        rows=[{"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1}]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.update(tx.find(mm.Account.where(mm.Account.id == 1)).result())
+
+    account_db(port).transact(fn)
+    assert port.ops == [("begin",), ("read", FIND_SQL, (1,)), ("commit",)]
+
+
+def test_a_terminate_takes_no_position_on_a_values_provenance() -> None:
+    # `delete` / `terminate` / `terminateUntil` derive an identity row alone, so
+    # a value no read produced is not refused for them — the milestone rules
+    # decide what they need, and this one has no observation to close against.
+    port = RecordingPort()
+
+    def fn(tx: Transaction) -> None:
+        tx.terminate(mm.Balance(id=9, acct_num="Z", value=Decimal("1.00")))
+
+    with pytest.raises(opt_lock.UnobservedMilestoneError):
+        db_for(BALANCE, port).transact(fn)
+
+
+def test_the_keyed_write_value_code_set_is_closed_against_an_unlisted_code() -> None:
+    assert {
+        "write-value-not-stored",
+        "write-value-already-stored",
+        "write-value-foreign-lifecycle",
+    } == KEYED_WRITE_VALUE_CODES
+    with pytest.raises(ValueError, match="not a keyed write value code"):
+        KeyedWriteValueError(
+            code="write-value-nosuch", message="invented", identity=mm.Account.identity
+        )

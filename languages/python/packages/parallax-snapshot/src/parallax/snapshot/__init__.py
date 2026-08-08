@@ -15,7 +15,10 @@ own refusal of a nested ``transact`` through a handle that did not open it;
 :class:`SnapshotDecodingError`, of stored data a read cannot convert into the
 graph-input algebra; and
 :class:`SnapshotMaterializationError`, the one translation of a failure to build
-the Entity graph a successful read's rows describe.
+the Entity graph a successful read's rows describe; and
+:class:`KeyedWriteValueError`, of a value whose provenance the keyed write verb
+it was handed to does not accept, whose three codes are
+:data:`KEYED_WRITE_VALUE_CODES`.
 
 It also publishes the surface that inspects a node this lifecycle produced —
 :func:`is_view_loaded`, :func:`view`, :func:`pin_of`, :func:`edge_of`, their
@@ -39,8 +42,10 @@ from parallax.snapshot._inspection import (
     view,
 )
 from parallax.snapshot.handle import (
+    KEYED_WRITE_VALUE_CODES,
     DeferredFeatureError,
     Execution,
+    KeyedWriteValueError,
     NoResultFound,
     QueryTargetError,
     Snapshot,
@@ -53,8 +58,10 @@ from parallax.snapshot.handle import (
 from parallax.snapshot.materialize import SnapshotDecodingError
 
 __all__ = [
+    "KEYED_WRITE_VALUE_CODES",
     "DeferredFeatureError",
     "Execution",
+    "KeyedWriteValueError",
     "NoResultFound",
     "QueryTargetError",
     "Snapshot",
