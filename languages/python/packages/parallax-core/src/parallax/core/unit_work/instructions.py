@@ -210,10 +210,13 @@ class PredicateWrite:
 
 WriteInstruction = KeyedWrite | PredicateWrite
 
-# The reference pattern a predicate-write assignment `attr` must match
-# (write-instruction.schema.json `$defs/writeAssignment`): a qualified
-# `Class.member` descriptor reference.
-_ASSIGNMENT_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9_]*$")
+# The reference pattern a predicate-write assignment `attr` must match, mirroring
+# identity.schema.json's `attributeRef` by way of write-instruction.schema.json
+# `$defs/writeAssignment`: an Entity spelling — canonical or bare — followed by
+# the member it assigns.
+_ASSIGNMENT_REF = re.compile(
+    r"^([a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*\.)?[A-Z][A-Za-z0-9]*\.[a-z][A-Za-z0-9_]*$"
+)
 
 # The result modifiers a write target's predicate may never carry, by canonical
 # wire tag (`m-case-format` `target.predicate`: "it is a bare write predicate,
@@ -666,8 +669,12 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
         members = _declared_members(model, entity)
         seen: set[str] = set()
         for assignment in instruction.assignments:
-            owner, _, member = assignment.attr.rpartition(".")
-            if owner != entity.identity.name or member not in members:
+            # The owner segment is RESOLVED rather than compared as text, so a
+            # canonical spelling names the target it denotes while an ambiguous
+            # bare one — which resolves nowhere — stays refused.
+            owner_spelling, _, member = assignment.attr.rpartition(".")
+            owner = entity_by_name(model, owner_spelling)
+            if owner is None or owner.identity != entity.identity or member not in members:
                 raise WriteInstructionError(
                     f"{entity.identity.name}: assignment {assignment.attr!r} does not name a "
                     "declared member"

@@ -48,6 +48,7 @@ from parallax.core.metamodel._identities import (
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
     resolve_entity_reference,
+    split_reference,
 )
 from parallax.core.metamodel._issues import (
     METAMODEL_MODULE,
@@ -309,6 +310,7 @@ __all__ = [
     "resolve",
     "resolve_entity_reference",
     "sort_issues",
+    "split_reference",
     "temporality_profile",
     "value_object_metadata",
     "vo_document_violation",

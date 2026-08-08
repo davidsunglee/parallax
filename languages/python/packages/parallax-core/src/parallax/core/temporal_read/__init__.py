@@ -481,8 +481,8 @@ def _mode_of(wrapper: AsOf | AsOfRange | History) -> _AxisMode:
 
 
 def _terms(mode: _AxisMode, axis: AcceptedAsOfAxis, entity: EntityMetadata) -> list[Operation]:
-    start_ref = f"{entity.identity.name}.{axis.start_attribute.name}"
-    end_ref = f"{entity.identity.name}.{axis.end_attribute.name}"
+    start_ref = f"{entity.identity.canonical}.{axis.start_attribute.name}"
+    end_ref = f"{entity.identity.canonical}.{axis.end_attribute.name}"
     if isinstance(mode, _Scan):
         return []
     if isinstance(mode, _Latest):

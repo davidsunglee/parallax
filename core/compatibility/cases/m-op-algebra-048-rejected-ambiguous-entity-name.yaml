@@ -5,10 +5,11 @@
 # The read is positioned at `Register` (the model's first entity, the default a
 # rejected case takes) and the predicate reaches `archive.SharedVariant` through
 # the `variant` hop, which re-roots the inner position at that Entity. The
-# reference `SharedVariant.archiveLabel` is spelled the only way an operation can
-# spell it — bare and dot-free, per the `attributeRef` grammar — and the model
-# declares `SharedVariant` in BOTH `archive` and `catalog`, so the spelling names
-# two Entities and therefore none.
+# reference `SharedVariant.archiveLabel` is spelled BARE — a choice, not a
+# constraint, since `attributeRef` admits the canonical spelling m-op-algebra-051
+# uses over this same model and this same hop — and the model declares
+# `SharedVariant` in BOTH `archive` and `catalog`, so the bare spelling names two
+# Entities and therefore none.
 #
 # The hop is what pins the case at its weakest point: `archiveLabel` is declared on
 # exactly one of the twins, and the hop's position is exactly that one, so a

@@ -85,19 +85,26 @@ _NESTED_STRINGS: frozenset[str] = frozenset(
 )
 _NESTED_NULL: frozenset[str] = frozenset({"nestedIsNull", "nestedIsNotNull"})
 
-# Reference-string patterns (operation.schema.json $defs). An attribute and
-# relationship reference share the `Class.member` grammar; an
-# entity name is a bare `Class`; a nested reference descends >=1 dotted member into
-# a value object (`Class.valueObject.field`); a value-object reference terminates
-# AT a value object (>=1 member, `Class.valueObject`); an element-relative
-# reference (inside a scoped `where`) drops the `Class.` prefix (`type`,
-# `geo.country`). The serde enforces the matching pattern wherever a reference of
-# that kind appears, so a malformed reference is rejected rather than accepted.
-_MEMBER_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*$")
-_ENTITY_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
-_NESTED_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*(\.[a-z][A-Za-z0-9]*)+$")
-_VALUE_OBJECT_REF = re.compile(r"^[A-Za-z][A-Za-z0-9]*(\.[a-z][A-Za-z0-9]*)+$")
-_ELEMENT_REF = re.compile(r"^[a-z][A-Za-z0-9]*(\.[a-z][A-Za-z0-9]*)*$")
+# Reference-string patterns, mirroring identity.schema.json's `$defs` exactly —
+# the schemas are the contract and these are this target's copy of it, so a
+# reference either side accepts is accepted by both. An Entity spelling is the
+# canonical `<namespace>.<Entity>` or the bare `<Entity>`, its namespace segments
+# lowercase and its local name capitalized so the Entity/member boundary is
+# decidable from the text alone (m-metamodel). An attribute and relationship
+# reference share the `<Entity>.member` grammar; a nested reference descends >=1
+# dotted member into a value object (`<Entity>.valueObject.field`); a value-object
+# reference terminates AT a value object (>=1 member, `<Entity>.valueObject`); an
+# element-relative reference (inside a scoped `where`) carries no Entity spelling
+# at all (`type`, `geo.country`). The serde enforces the matching pattern wherever
+# a reference of that kind appears, so a malformed reference is rejected rather
+# than accepted.
+_ENTITY = r"([a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*\.)?[A-Z][A-Za-z0-9]*"
+_MEMBER = r"[a-z][A-Za-z0-9_]*"
+_MEMBER_REF = re.compile(rf"^{_ENTITY}\.{_MEMBER}$")
+_ENTITY_NAME = re.compile(rf"^{_ENTITY}$")
+_NESTED_REF = re.compile(rf"^{_ENTITY}\.{_MEMBER}(\.{_MEMBER})+$")
+_VALUE_OBJECT_REF = re.compile(rf"^{_ENTITY}(\.{_MEMBER})+$")
+_ELEMENT_REF = re.compile(rf"^{_MEMBER}(\.{_MEMBER})*$")
 
 # The operation kinds `operation.schema.json` admits inside a nestedExists /
 # nestedNotExists `where` (its `elementPredicate` oneOf): the scoped nested*

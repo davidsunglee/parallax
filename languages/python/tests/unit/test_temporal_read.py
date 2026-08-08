@@ -202,9 +202,11 @@ def test_directives_survive_injection() -> None:
     injected = inject_as_of(op, BALANCE)
     assert isinstance(injected, oa.Limit)
     assert isinstance(injected.operand, oa.OrderBy)
-    # The as-of predicate is injected UNDER the peeled directives.
+    # The as-of predicate is injected UNDER the peeled directives, and names its
+    # Entity by the exact identity the axis was resolved on rather than by a local
+    # name a second namespace could share.
     assert injected.operand.operand == oa.Comparison(
-        op="eq", attr="Balance.txEnd", value="infinity"
+        op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
     )
 
 
@@ -330,7 +332,9 @@ def test_member_keyed_edge_rejects_a_non_instant_member() -> None:
 def test_directive_distinct_survives_injection() -> None:
     injected = inject_as_of(oa.Distinct(operand=oa.All()), BALANCE)
     assert isinstance(injected, oa.Distinct)
-    assert injected.operand == oa.Comparison(op="eq", attr="Balance.txEnd", value="infinity")
+    assert injected.operand == oa.Comparison(
+        op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
+    )
 
 
 def test_pin_reports_only_pinned_axes() -> None:

@@ -24,6 +24,7 @@ __all__ = [
     "ValueObjectAttributeIdentity",
     "ValueObjectIdentity",
     "resolve_entity_reference",
+    "split_reference",
 ]
 
 
@@ -216,3 +217,37 @@ def resolve_entity_reference(owner: EntityIdentity, reference: EntityReference) 
             return EntityIdentity(owner.namespace, name)
         case ExactEntityReference(identity):
             return identity
+
+
+def split_reference(spelling: str) -> tuple[str | None, tuple[str, ...]]:
+    """Split a serialized reference into its Entity spelling and member path.
+
+    The identifier constraint (m-metamodel) makes the boundary decidable from the
+    text alone: every namespace segment begins lowercase, an Entity's local name
+    begins uppercase, and every member segment begins lowercase, so a reference
+    carries at most one segment beginning with an uppercase letter and that
+    segment is the Entity's local name. Everything up to and including it is the
+    Entity spelling — bare or canonical, unresolved either way — and everything
+    after it is the member path.
+
+    The split is total and position-independent. A reference terminating at the
+    Entity yields an empty member path, and an element-relative path carries no
+    uppercase segment at all and so yields no Entity spelling::
+
+        "parallax.compatibility.Order.id" -> ("parallax.compatibility.Order", ("id",))
+        "Order.address.city"              -> ("Order", ("address", "city"))
+        "catalog.SharedVariant"           -> ("catalog.SharedVariant", ())
+        "address.city"                    -> (None, ("address", "city"))
+
+    Resolving the Entity spelling to a declared Entity is a separate question
+    this answers nothing about: :func:`~parallax.core.metamodel.entity_by_name`
+    owns it, and a bare spelling two namespaces share resolves nowhere.
+    """
+    segments = spelling.split(".")
+    boundary = -1
+    for index, segment in enumerate(segments):
+        if segment[:1].isupper():
+            boundary = index
+    if boundary < 0:
+        return None, tuple(segments)
+    return ".".join(segments[: boundary + 1]), tuple(segments[boundary + 1 :])

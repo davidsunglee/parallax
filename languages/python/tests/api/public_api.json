@@ -285,6 +285,7 @@
     "resolve",
     "resolve_entity_reference",
     "sort_issues",
+    "split_reference",
     "temporality_profile",
     "value_object_metadata",
     "vo_document_violation"

@@ -1,0 +1,45 @@
+# Positive (m-op-algebra reference resolution): a predicate reference spells its
+# Entity CANONICALLY, so a local name two namespaces of the model declare names
+# exactly one Entity and the read lowers to SQL against that Entity's table.
+#
+# This is m-op-algebra-048's counterpart, and deliberately differs from it in one
+# thing only. Same model, same queried position, same `variant` hop re-rooting the
+# inner position at `archive.SharedVariant`, same member `archiveLabel` — the
+# reference is spelled `archive.SharedVariant.archiveLabel` instead of
+# `SharedVariant.archiveLabel`, and that is the whole of why one resolves and the
+# other is refused as `reference-ambiguous-entity-name`. Input stays permissive
+# elsewhere in this case: `Register` and `Register.variant` are spelled bare
+# because a single Entity carries that local name.
+#
+# WHICH Entity was reached is observable twice over. The golden selects from
+# archive_shared and compares its archive_label column, never catalog_shared's
+# catalog_label. And the fixtures label the twins across each other — id 10 is
+# archiveLabel A-1 but catalogLabel A-2 — so a reference that resolved to
+# `catalog.SharedVariant` would return Register id 2 rather than id 1, making the
+# wrong resolution a wrong ANSWER rather than an error the runner could mistake
+# for a schema problem.
+#
+# The hop is what makes the witness load-bearing rather than incidental:
+# `archiveLabel` is declared on exactly one twin, so this reference is the one
+# m-op-algebra-048's header warns a first-match resolver would accept silently.
+# Naming the twin exactly is what removes the guess.
+model: models/shared-local-name.yaml
+tags: [m-op-algebra, exists, relationship, to-one, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  targetEntity: Register
+  operation:
+    exists:
+      rel: Register.variant
+      op:
+        eq: { attr: archive.SharedVariant.archiveLabel, value: A-1 }
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.variant_id from register t0 where exists (select 1 from archive_shared t1 where t1.id = t0.variant_id and t1.archive_label = ?)
+        mariadb: select t0.id, t0.variant_id from register t0 where exists (select 1 from archive_shared t1 where t1.id = t0.variant_id and t1.archive_label = ?)
+      binds: [A-1]
+  referenceSql: select id, variant_id from register where variant_id in (select id from archive_shared where archive_label = 'A-1')
+  rows:
+    - { id: 1, variant_id: 10 }
+  roundTrips: 1

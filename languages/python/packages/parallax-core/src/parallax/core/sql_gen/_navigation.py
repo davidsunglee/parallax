@@ -217,7 +217,7 @@ def plan_hop(op: Navigate | Exists | NotExists, scope: _PlanScope) -> HopPlan:
     negate = isinstance(op, NotExists)
     join = _resolve_join(op.rel, scope)
     target = _entity(scope.meta, join.target.entity)
-    parent_column = scope.column_of(f"{scope.entity.identity.name}.{join.source.name}")
+    parent_column = scope.column_of(f"{scope.entity.identity.canonical}.{join.source.name}")
     if target.inheritance is not None:
         return _plan_polymorphic_hop(
             target, op.op, parent_column, join.target.name, scope, negate=negate
@@ -244,7 +244,11 @@ def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
     # single `Ctx` — its bind list and alias counter — by identity, and neither of
     # these two calls allocates.
     child = scope.child(branch.entity, alias)
-    related_ref = f"{branch.entity.identity.name}.{branch.related_attr}"
+    # The correlation's own reference is MANUFACTURED from an Identity this scope
+    # already holds, purely to re-enter the member resolver, so it is spelled
+    # canonically: a local name a second namespace also declares would resolve to
+    # neither Entity and lose a hop into a model that is otherwise legal.
+    related_ref = f"{branch.entity.identity.canonical}.{branch.related_attr}"
     correlation = f"{child.column_of(related_ref)} = {branch.parent_column}"
     tag_fragment: tuple[str, ...] = ()
     tag_binds: tuple[object, ...] = ()

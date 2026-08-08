@@ -49,6 +49,7 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
+    entity_by_name,
 )
 from parallax.core.op_algebra import QueryDefinitionError
 from parallax.core.sql_gen import Statement, compile_read
@@ -128,18 +129,22 @@ def buffer_predicate(
        ``validate_instruction``'s own bare-predicate rule. What it answers is the
        ephemeral Predicate Selection the rest of this function reads, which never
        leaves this lane.
-    2. **Assignment-list and exact-target composition** — an assignment-bearing
-       mutation needs at least one Assignment, no two naming one member, and
-       every one addressing the query's exact target Entity
-       (``query-assignment-target-mismatch``). Typed-only: only this ingress
-       COMPOSES independently authored Assignments with a query, and it is
-       refused before anything is built from either.
-    3. **Target resolution** — the write-side spelling of a read's preflight
+    2. **Target resolution** — the write-side spelling of a read's preflight
        (:func:`entity_of`, ``query-target-not-in-model``): a Find Query the
        connected model declares no Entity for is refused as a query, before
        anything is built from it. The query retains its Entity Identity, so the
        lookup is by exact spelling rather than by a bare name two namespaces
        could share.
+    3. **Assignment-list and exact-target composition** — an assignment-bearing
+       mutation needs at least one Assignment, no two naming one member, and
+       every one addressing the query's exact target Entity
+       (``query-assignment-target-mismatch``). Typed-only: only this ingress
+       COMPOSES independently authored Assignments with a query, and it is
+       refused before anything is built from either. It follows target resolution
+       because the exact-target rule resolves each Assignment's Entity spelling
+       against the connected model, so a query whose own target that model does
+       not declare is named as the target failure it is rather than as a
+       composition failure of every Assignment addressing it.
     4. **Valid-Time-bound validation and rendering** — a Bitemporal target
        requires ``valid_from``; a Transaction-Time-Only or non-temporal target
        takes none; the ``*Until`` forms additionally require ``until``, with
@@ -174,8 +179,8 @@ def buffer_predicate(
     never constructing a non-canonical instruction.
     """
     selection = mutation_selection(query)
-    _reject_uncomposable_assignments(selection.target, mutation, assignments)
     entity = entity_of(meta, selection.target.canonical)
+    _reject_uncomposable_assignments(meta, selection.target, mutation, assignments)
     declaring_entity = declaring(meta, entity)
     valid_from_literal = validate_valid_from(declaring_entity, mutation, valid_from)
     until_literal: str | None = None
@@ -203,6 +208,7 @@ def buffer_predicate(
 
 
 def _reject_uncomposable_assignments(
+    meta: Metamodel,
     target: EntityIdentity,
     mutation: PredicateMutation,
     assignments: Sequence[AttributeAssignment[Any]],
@@ -219,6 +225,11 @@ def _reject_uncomposable_assignments(
     family is unsupported outright — which the canonical instruction's own
     validation states, one step later and for both ingresses.
 
+    The exact-target rule compares IDENTITIES: an Assignment's Entity spelling is
+    resolved against ``meta`` before it is measured, so a canonical spelling names
+    the Entity it denotes while a bare one two namespaces share resolves nowhere
+    and is refused rather than silently matched against the target's local name.
+
     Delete and terminate forms take no Assignments at all, which their signatures
     already state; the emptiness rule is therefore asked only of the mutations
     that carry them.
@@ -231,12 +242,13 @@ def _reject_uncomposable_assignments(
     seen: set[str] = set()
     for assignment in assignments:
         ref = assignment.attr
-        if ref.entity != target.name:
+        owner = entity_by_name(meta, ref.entity)
+        if owner is None or owner.identity != target:
             raise QueryDefinitionError(
                 code="query-assignment-target-mismatch",
                 message=(
                     f"{ref}: a predicate-selected write assigns members of its exact target "
-                    f"{target.name}, and this assignment addresses {ref.entity}"
+                    f"{target.canonical}, and this assignment addresses {ref.entity}"
                 ),
             )
         if ref.attribute in seen:

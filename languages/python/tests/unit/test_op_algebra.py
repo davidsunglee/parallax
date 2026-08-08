@@ -10,11 +10,15 @@ the canonical single-key encoding. Structural rejection branches are pinned too.
 
 from __future__ import annotations
 
+import json
+import re
+from collections.abc import Callable
 from typing import Any, cast
 
 import pytest
 
 from _support.corpus import case_document
+from _support.repo import REPO_ROOT
 from parallax.conformance import case_format
 from parallax.core import op_algebra
 from parallax.core.op_algebra import (
@@ -57,6 +61,97 @@ _OPERATIONS = _operations()
 def test_operation_serde_round_trip(case_id: str, doc: dict[str, Any]) -> None:
     node = op_algebra.deserialize(doc)
     assert op_algebra.serialize(node) == doc
+
+
+_IDENTITY_DEFS = cast(
+    "dict[str, Any]",
+    json.loads((REPO_ROOT / "core" / "schemas" / "identity.schema.json").read_text()),
+)["$defs"]
+
+
+# One operation node per reference grammar, each carrying the reference under test
+# at the position that grammar governs and nothing else that could fail. The
+# element-relative slot is a scoped `where`'s own path, so its node fixes a valid
+# outer `nestedExists` path and varies only the inner one.
+_REFERENCE_POSITIONS: dict[str, Callable[[str], dict[str, Any]]] = {
+    "attributeRef": lambda ref: {"eq": {"attr": ref, "value": 1}},
+    "relationshipRef": lambda ref: {"exists": {"rel": ref}},
+    "entityName": lambda ref: {"narrow": {"entity": ref, "to": [ref], "operand": {"all": {}}}},
+    "nestedRef": lambda ref: {"nestedEq": {"path": ref, "value": 1}},
+    "valueObjectRef": lambda ref: {"nestedExists": {"path": ref}},
+    "elementRef": lambda ref: {
+        "nestedExists": {"path": "Order.lines", "where": {"nestedEq": {"path": ref, "value": 1}}}
+    },
+}
+
+# Spellings spanning every distinction the grammars draw: bare and canonical, an
+# Entity-only spelling, a member path of each depth, no Entity segment at all, the
+# underscored member class the schemas admit, a lowercase Entity segment, a
+# capitalized namespace segment, and two capitalized segments.
+_REFERENCE_VECTORS = [
+    "Order.id",
+    "parallax.compatibility.Order.id",
+    "Order",
+    "catalog.SharedVariant",
+    "Order.address.city",
+    "catalog.SharedVariant.address.geo.lat",
+    "address.city",
+    "type",
+    "Order.legacy_ID",
+    "order.id",
+    "Parallax.Order.id",
+    "Order.Address",
+]
+
+
+@pytest.mark.parametrize("definition", sorted(_REFERENCE_POSITIONS))
+@pytest.mark.parametrize("spelling", _REFERENCE_VECTORS)
+def test_the_serde_accepts_exactly_what_the_shared_grammar_accepts(
+    definition: str, spelling: str
+) -> None:
+    # `identity.schema.json` is the contract and the serde carries this target's
+    # copy of it, so the two are pinned to the same accept set rather than merely
+    # to compatible ones: they drifted once already, when the schemas gained the
+    # underscored member class and the mirrors did not.
+    admitted = re.fullmatch(_IDENTITY_DEFS[definition]["pattern"], spelling) is not None
+    document = _REFERENCE_POSITIONS[definition](spelling)
+    try:
+        op_algebra.deserialize(document)
+    except OperationError:
+        accepted = False
+    else:
+        accepted = True
+    assert accepted == admitted
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param({"eq": {"attr": "parallax.compatibility.Order.id", "value": 1}}, id="attr"),
+        pytest.param({"exists": {"rel": "archive.SharedVariant.notes"}}, id="rel"),
+        pytest.param(
+            {
+                "narrow": {
+                    "entity": "catalog.Record",
+                    "to": ["archive.SharedVariant"],
+                    "operand": {"all": {}},
+                }
+            },
+            id="narrow",
+        ),
+        pytest.param(
+            {"nestedEq": {"path": "parallax.compatibility.Customer.address.city", "value": "US"}},
+            id="nested",
+        ),
+        pytest.param({"nestedExists": {"path": "catalog.Record.tags"}}, id="valueObject"),
+        pytest.param({"eq": {"attr": "Order.legacy_ID", "value": 1}}, id="underscored-member"),
+    ],
+)
+def test_a_canonical_or_underscored_reference_round_trips(document: dict[str, Any]) -> None:
+    # The serde is structural: it re-emits the spelling it read, so accepting the
+    # canonical form at every reference position is the whole of what the widened
+    # mirrors buy. Which Entity the spelling names is resolution's question.
+    assert op_algebra.serialize(op_algebra.deserialize(document)) == document
 
 
 def test_node_round_trip_from_python() -> None:
