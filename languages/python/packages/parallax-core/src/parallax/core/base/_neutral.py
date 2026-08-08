@@ -19,9 +19,9 @@ from __future__ import annotations
 import datetime as _dt
 import decimal as _decimal
 import math as _math
+import re as _re
 import struct as _struct
 import uuid as _uuid
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, TypeGuard, cast
 
@@ -180,6 +180,23 @@ _INT64_BOUNDS: Final[tuple[int, int]] = (-(2**63), 2**63 - 1)
 
 _HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
 
+# The portable literal grammar of each string-carried space (`m-document-codec`
+# leaf encodings, widened by the case format's own enumerated variations: either
+# digit case, a UUID's optional hyphens, an omitted seconds field, any UTC
+# offset). Written out because a host parser's incidental surface would otherwise
+# become the cross-language contract (ADR 0016).
+_DATE_LITERAL: Final = _re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_TIME_LITERAL: Final = _re.compile(r"^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$")
+_TIMESTAMP_LITERAL: Final = _re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$"
+)
+_UUID_HYPHENATED: Final = _re.compile(r"^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
+_UUID_BARE: Final = _re.compile(r"^[0-9a-fA-F]{32}$")
+_DECIMAL_LITERAL: Final = _re.compile(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?$")
+
+# The temporal spaces hold microseconds (`m-core`).
+_MICROSECOND_DIGITS: Final[int] = 6
+
 
 def matches_neutral_type(value: object, declared: NeutralType) -> bool:
     """Whether ``value`` is a member of ``declared``'s logical value space.
@@ -241,10 +258,16 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     while every spelling that names it decodes here. A JSON number spells a
     :class:`Decimal` and, when some float of the target width carries it
     exactly, a :class:`Float32` or :class:`Float64`; an ISO-8601 string spells a
-    :class:`Date`, :class:`Time`, or :class:`Timestamp` whatever its offset and
-    however its optional fields are spelled; a UUID string spells a
-    :class:`Uuid` in either digit case; and a hexadecimal string spells
-    :class:`Bytes` in either digit case, two digits per octet with no separator.
+    :class:`Date`, :class:`Time`, or :class:`Timestamp` at whatever UTC offset
+    and with whatever optional fields the portable grammar admits; a UUID string
+    spells a :class:`Uuid` in either digit case, hyphenated or bare; and a
+    hexadecimal string spells :class:`Bytes` in either digit case, two digits per
+    octet with no separator.
+
+    That grammar is stated here, never delegated to a host parser: the spellings
+    ``decimal.Decimal``, ``datetime.fromisoformat``, and ``uuid.UUID``
+    additionally take are their own surface, and adopting them would make a
+    second language reproduce Python instead of the neutral contract (ADR 0016).
     A :class:`Decimal` additionally spells as an exact digit STRING, which is the
     one literal a JSON number cannot carry — no JSON number declares a scale, so
     that is the form a structured document stores
@@ -264,11 +287,11 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     space and decodes to itself.
 
     Total and nonthrowing: a value that is not a literal of ``declared`` — a
-    malformed spelling, a truth value where a number belongs, an integer no
-    float of the width represents exactly, a hexadecimal string carrying a
-    separator or an odd digit count, a :class:`Time` or :class:`Timestamp`
-    literal carrying non-zero sub-microsecond precision, or an unrelated
-    object — is returned unchanged, so :func:`matches_neutral_type` alone decides
+    spelling outside the grammar, a truth value where a number belongs, an
+    integer no float of the width represents exactly, a hexadecimal string
+    carrying a separator or an odd digit count, a :class:`Time` or
+    :class:`Timestamp` literal carrying non-zero sub-microsecond precision, or an
+    unrelated object — is returned unchanged, so :func:`matches_neutral_type` alone decides
     membership and this function never truncates, overflows, or classifies a
     defect on its own.
     """
@@ -291,13 +314,13 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
         case Bytes() if isinstance(value, str):
             return _decoded_octets(value)
         case Date() if isinstance(value, str):
-            return _decoded(_dt.date.fromisoformat, value)
+            return _decoded_date(value)
         case Time() if isinstance(value, str):
-            return _decoded_temporal(_dt.time.fromisoformat, value)
+            return _decoded_time(value)
         case Timestamp() if isinstance(value, str):
-            return _decoded_temporal(_dt.datetime.fromisoformat, value)
+            return _decoded_timestamp(value)
         case Uuid() if isinstance(value, str):
-            return _decoded(_uuid.UUID, value)
+            return _decoded_uuid(value)
         case _:
             return value
 
@@ -343,12 +366,12 @@ def coerce_neutral_input(value: object, declared: NeutralType) -> object:
 def _canonical_uuid_input(value: str) -> object:
     """``value`` as a :class:`~uuid.UUID`, only when it is ALREADY the
     canonical lowercase-hyphenated spelling — the narrower str the input
-    policy admits, as opposed to :func:`decode_neutral_literal`'s permissive
-    serde parse (hyphenless, braced, uppercase, and URN forms all parse to the
-    same :class:`~uuid.UUID` but are not this spelling). A non-canonical
-    string is returned unchanged, so :func:`matches_neutral_type` rejects it.
+    policy admits, as opposed to :func:`decode_neutral_literal`'s serde parse
+    (the hyphenless and uppercase forms decode to the same
+    :class:`~uuid.UUID` but are not this spelling). A non-canonical string is
+    returned unchanged, so :func:`matches_neutral_type` rejects it.
     """
-    decoded = _decoded(_uuid.UUID, value)
+    decoded = _decoded_uuid(value)
     return decoded if isinstance(decoded, _uuid.UUID) and str(decoded) == value else value
 
 
@@ -383,85 +406,143 @@ def _integer_as_float(value: int, *, binary32: bool) -> float | int:
     return widened if widened == value else value
 
 
-def _decoded[T](decode: Callable[[str], T], literal: str) -> T | str:
-    """``literal`` decoded, or the literal itself when it is not well formed."""
-    try:
-        return decode(literal)
-    except ValueError:
-        return literal
-
-
 def _decoded_octets(literal: str) -> bytes | str:
     """A hexadecimal octet literal decoded, or the literal itself when it is not one.
 
-    Separate from :func:`_decoded` because ``bytes.fromhex`` additionally skips ASCII
-    whitespace, and a separator is no part of the spelling: the portable literal is
-    two hexadecimal digits per octet with no prefix and no separator, so ``"0a 1b"``
-    names no octet sequence and decodes to itself for
-    :func:`matches_neutral_type` to refuse. Digit CASE does carry no information, so
+    The digit set is checked before ``bytes.fromhex``, which additionally skips
+    ASCII whitespace: a separator is no part of the spelling — the portable literal
+    is two hexadecimal digits per octet with no prefix and no separator — so
+    ``"0a 1b"`` names no octet sequence and decodes to itself for
+    :func:`matches_neutral_type` to refuse. Digit CASE carries no information, so
     ``"0A1B"`` and ``"0a1b"`` decode to the same octets and encode back to the
     lowercase spelling.
     """
-    if any(character not in _HEX_DIGITS for character in literal):
+    if len(literal) % 2 != 0 or any(character not in _HEX_DIGITS for character in literal):
         return literal
-    return _decoded(bytes.fromhex, literal)
+    return bytes.fromhex(literal)
 
 
 def _decoded_decimal(literal: str) -> _decimal.Decimal | str:
     """An exact decimal string decoded, or the literal itself when it is not one.
 
-    Separate from :func:`_decoded` because a malformed decimal raises
-    :class:`decimal.InvalidOperation`, an :class:`ArithmeticError` rather than a
-    :class:`ValueError`. ``nan`` and ``infinity`` parse here and are refused by
-    :func:`matches_neutral_type`, which is where value-space membership is decided.
+    The grammar is written out rather than delegated to :class:`decimal.Decimal`,
+    which additionally takes digit separators (``1_0``), a leading ``+``,
+    surrounding whitespace, an exponent, and ``nan`` / ``infinity``. None of those
+    is a portable literal, and delegating would make Python's parser the contract
+    a second language has to reproduce.
     """
+    if _DECIMAL_LITERAL.match(literal) is None:
+        return literal
+    return _decimal.Decimal(literal)
+
+
+def _decoded_date(literal: str) -> _dt.date | str:
+    """An ISO-8601 ``YYYY-MM-DD`` literal decoded, or the literal itself.
+
+    The extended calendar-date form alone. ``date.fromisoformat`` also takes the
+    basic (hyphenless) form, week dates, and ordinal dates; each names a day, but
+    none is a spelling `m-document-codec` gives the space.
+    """
+    match = _DATE_LITERAL.match(literal)
+    if match is None:
+        return literal
+    year, month, day = (int(group) for group in match.groups())
     try:
-        return _decimal.Decimal(literal)
-    except _decimal.InvalidOperation:
+        return _dt.date(year, month, day)
+    except ValueError:
         return literal
 
 
-def _decoded_temporal[T](decode: Callable[[str], T], literal: str) -> T | str:
-    """A microsecond-precision temporal literal decoded, unless it carries
-    non-zero sub-microsecond precision.
+def _decoded_time(literal: str) -> _dt.time | str:
+    """An ISO-8601 wall-clock literal decoded, or the literal itself.
 
-    ``datetime.fromisoformat`` / ``time.fromisoformat`` silently truncate any
-    fractional field past the sixth digit, so a literal whose seventh or later
-    fractional digit is non-zero — in the fractional second or in a fractional
-    timezone offset — would decode to a value that is not the value written: a
-    truncated fractional second, or an instant shifted by a sub-microsecond
-    offset. Such a literal names no member of a microsecond-precision space and
-    decodes to itself so membership fails; a literal whose extra digits are all
-    trailing zeros still spells an exact microsecond value and decodes normally.
+    ``hh:mm:ss`` with an optional fractional second, and — the one variation the
+    case format admits — with the seconds omitted. A `Time` names a wall clock,
+    so an offset is no part of the spelling, and a fractional field carrying a
+    non-zero digit past the sixth names no microsecond-precision value.
     """
-    if not _within_microsecond_precision(literal):
+    match = _TIME_LITERAL.match(literal)
+    if match is None:
         return literal
-    return _decoded(decode, literal)
+    hour, minute, second, fraction = match.groups()
+    microsecond = _microseconds(fraction)
+    if microsecond is None:
+        return literal
+    try:
+        return _dt.time(int(hour), int(minute), int(second or 0), microsecond)
+    except ValueError:
+        return literal
 
 
-def _within_microsecond_precision(literal: str) -> bool:
-    """Whether every fractional field in a temporal literal has no non-zero digit
-    past the sixth.
+def _decoded_timestamp(literal: str) -> _dt.datetime | str:
+    """An ISO-8601 instant literal decoded, or the literal itself.
 
-    A temporal literal may spell more than one fractional field — a fractional
-    second and a fractional timezone offset — and ``.`` also serves as an
-    alternate date-time separator, so each ``.``/``,``-initiated digit run is
-    inspected rather than only the first. A run of at most six digits, or one
-    whose digits beyond the sixth are all zero, spells an exact microsecond
-    value; any run with a non-zero digit past the sixth carries sub-microsecond
-    precision and rejects the literal. A ``.`` used as the date-time separator
-    introduces the two-digit hour, a short run that passes on its own.
+    ``YYYY-MM-DDThh:mm:ss`` with an optional fractional second, closed by ``Z`` or
+    an ``±hh:mm`` offset. ``datetime.fromisoformat`` also takes basic-format runs,
+    week dates, a bare date, a fractional offset, and ANY character where the
+    ``T`` belongs — ``2024-01-01X00:00:00+00:00`` parses there — so the grammar is
+    stated here instead.
     """
-    for index, char in enumerate(literal):
-        if char in ".,":
-            digits = ""
-            for following in literal[index + 1 :]:
-                if following not in "0123456789":
-                    break
-                digits += following
-            if len(digits) > 6 and any(digit != "0" for digit in digits[6:]):
-                return False
-    return True
+    match = _TIMESTAMP_LITERAL.match(literal)
+    if match is None:
+        return literal
+    year, month, day, hour, minute, second, fraction, zone = match.groups()
+    microsecond = _microseconds(fraction)
+    offset = _utc_offset(zone)
+    if microsecond is None or offset is None:
+        return literal
+    try:
+        return _dt.datetime(
+            int(year),
+            int(month),
+            int(day),
+            int(hour),
+            int(minute),
+            int(second),
+            microsecond,
+            tzinfo=offset,
+        )
+    except ValueError:
+        return literal
+
+
+def _decoded_uuid(literal: str) -> _uuid.UUID | str:
+    """A UUID literal decoded, or the literal itself.
+
+    Thirty-two hexadecimal digits in either case, grouped 8-4-4-4-12 or written
+    with no hyphens at all. ``uuid.UUID`` also takes brace-wrapped and
+    ``urn:uuid:``-prefixed spellings and ignores hyphen POSITION entirely; those
+    are its own surface, not the value space's.
+    """
+    if _UUID_HYPHENATED.match(literal) is None and _UUID_BARE.match(literal) is None:
+        return literal
+    return _uuid.UUID(literal.replace("-", ""))
+
+
+def _microseconds(fraction: str | None) -> int | None:
+    """A fractional-second field as whole microseconds, or ``None``.
+
+    A digit past the sixth may only be zero: the temporal spaces hold
+    microseconds, so a literal carrying finer precision names a value they have no
+    member for, and truncating it — which the host parsers do silently — would
+    answer a different instant than the one written.
+    """
+    if fraction is None:
+        return 0
+    if any(digit != "0" for digit in fraction[_MICROSECOND_DIGITS:]):
+        return None
+    return int(fraction[:_MICROSECOND_DIGITS].ljust(_MICROSECOND_DIGITS, "0"))
+
+
+def _utc_offset(zone: str) -> _dt.timezone | None:
+    """A ``Z`` / ``±hh:mm`` designator as its offset, or ``None`` when out of range."""
+    if zone == "Z":
+        return _dt.UTC
+    sign = -1 if zone[0] == "-" else 1
+    hours, minutes = (int(part) for part in zone[1:].split(":"))
+    if hours > 23 or minutes > 59:
+        return None
+    return _dt.timezone(sign * _dt.timedelta(hours=hours, minutes=minutes))
 
 
 def _is_integer(value: object) -> TypeGuard[int]:

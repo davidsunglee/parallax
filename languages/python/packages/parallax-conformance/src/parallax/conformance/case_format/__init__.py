@@ -33,26 +33,62 @@ __all__ = [
 ]
 
 
-class _Yaml12BoolLoader(yaml.SafeLoader):
-    """A ``yaml.SafeLoader`` restricted to the YAML 1.2 core schema's own
-    boolean literal set (``true``/``false``, any casing) — never PyYAML's
-    default YAML 1.1 resolver, which ALSO folds ``yes``/``no``/``on``/``off``
-    into booleans. The corpus authors ISO country codes as bare scalars
-    (``country: NO`` for Norway, ``core/compatibility/fixtures/
-    customer.yaml``) — a genuine string under any modern YAML reading, but
-    silently ``False`` under PyYAML's own default resolver (empirically
-    confirmed): every compatibility-corpus YAML read (models/cases/fixtures)
-    — the package's own loaders AND the test-side verification reads alike —
-    routes through :func:`safe_load_yaml` below, so an ISO code (or any
-    other bare corpus scalar) that happens to collide with the YAML 1.1
-    yes/no/on/off vocabulary parses as the STRING the corpus author wrote,
-    never a silently-wrong boolean."""
+# The YAML 1.2 core schema's four implicit resolvers — the schema `m-case-format`
+# fixes for every compatibility-corpus document — keyed by the first character a
+# matching plain scalar can start with (PyYAML's own resolver-table shape).
+_CORE_SCHEMA: Final[tuple[tuple[str, str, str], ...]] = (
+    ("tag:yaml.org,2002:null", r"^(?:null|Null|NULL|~|)$", "~nN\0"),
+    ("tag:yaml.org,2002:bool", r"^(?:true|True|TRUE|false|False|FALSE)$", "tTfF"),
+    ("tag:yaml.org,2002:int", r"^(?:[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$", "-+0123456789"),
+    (
+        "tag:yaml.org,2002:float",
+        r"^(?:[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?"
+        r"|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$",
+        "-+0123456789.",
+    ),
+)
 
 
-_Yaml12BoolLoader.yaml_implicit_resolvers = {
-    first_char: [(tag, regexp) for tag, regexp in resolvers if tag != "tag:yaml.org,2002:bool"]
-    for first_char, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
-}
+class _Yaml12CoreLoader(yaml.SafeLoader):
+    """A ``yaml.SafeLoader`` whose implicit resolvers are exactly the YAML 1.2
+    core schema's four — null, boolean, integer, float — so every other plain
+    scalar in a corpus document is the STRING its author wrote.
+
+    PyYAML's own default resolvers are the YAML 1.1 set, which is a different
+    document language: it folds ``yes``/``no``/``on``/``off`` into booleans (so
+    the ISO country code ``NO`` reads as ``False``), reads ``1_000`` and the
+    sexagesimal ``1:30`` as integers, and resolves a bare ``2024-01-01`` to a
+    host date object rather than to the portable ISO literal `m-document-codec`
+    defines. Leaving the schema to the host library makes a corpus file's
+    meaning a property of that library, which is what `m-case-format` fixes the
+    schema to stop.
+
+    Both halves are replaced. The implicit RESOLVERS decide which plain scalars
+    carry a type at all; the CONSTRUCTORS decide what each resolved scalar means,
+    and PyYAML's own are YAML 1.1 there too — its integer constructor reads a
+    leading zero as octal, so ``017`` would be ``15`` where the core schema's
+    decimal integer is ``17``, and both would still call it an integer."""
+
+
+def _construct_core_int(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> int:
+    """A resolved core-schema integer: decimal, or ``0o`` / ``0x`` based."""
+    text = str(loader.construct_scalar(node))
+    if text[:2].lower() in ("0o", "0x") or text[:3].lower() in ("-0o", "-0x", "+0o", "+0x"):
+        return int(text, 0)
+    return int(text, 10)
+
+
+def _construct_core_float(loader: yaml.SafeLoader, node: yaml.ScalarNode) -> float:
+    """A resolved core-schema float: a decimal number, an infinity, or a NaN."""
+    text = str(loader.construct_scalar(node))
+    if text.lower().lstrip("-+").startswith(".inf"):
+        return float("-inf") if text.startswith("-") else float("inf")
+    if text.lower().startswith(".nan"):
+        return float("nan")
+    return float(text)
+
+
+_Yaml12CoreLoader.yaml_implicit_resolvers = {}
 # Reimplements `BaseResolver.add_implicit_resolver`'s own body directly (its
 # classmethod signature carries no type annotations in the `types-PyYAML`
 # stub, so calling it through the class reports `reportUnknownMemberType`;
@@ -60,17 +96,22 @@ _Yaml12BoolLoader.yaml_implicit_resolvers = {
 # appending to it directly — PyYAML's own registration logic, verified
 # against `yaml.resolver.BaseResolver.add_implicit_resolver`'s source — needs
 # no suppression).
-for _first_char in "tTfF":
-    _Yaml12BoolLoader.yaml_implicit_resolvers.setdefault(_first_char, []).append(
-        ("tag:yaml.org,2002:bool", re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"))
-    )
+for _tag, _pattern, _first_chars in _CORE_SCHEMA:
+    _compiled = re.compile(_pattern)
+    for _first_char in _first_chars:
+        _Yaml12CoreLoader.yaml_implicit_resolvers.setdefault(_first_char, []).append(
+            (_tag, _compiled)
+        )
+
+_Yaml12CoreLoader.add_constructor("tag:yaml.org,2002:int", _construct_core_int)
+_Yaml12CoreLoader.add_constructor("tag:yaml.org,2002:float", _construct_core_float)
 
 
 def safe_load_yaml(text: str) -> object:
-    """Parse one YAML document with the corpus-wide :class:`_Yaml12BoolLoader`
+    """Parse one YAML document with the corpus-wide :class:`_Yaml12CoreLoader`
     (the single seam every compatibility-corpus YAML read shares — models,
     cases, and fixtures alike, see that loader's own docstring)."""
-    return yaml.load(text, Loader=_Yaml12BoolLoader)
+    return yaml.load(text, Loader=_Yaml12CoreLoader)
 
 
 # A ``tags`` entry matching this grammar names a module (m-case-format reserved

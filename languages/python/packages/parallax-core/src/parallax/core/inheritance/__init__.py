@@ -191,8 +191,10 @@ def validate_subtype_write(
     set-based write), **metadata** (``subtype-write-metadata-field`` -- ``row``
     carries the framework-owned tag column / ``tag`` / ``tagValue`` /
     ``familyVariant``), **sibling** (``subtype-write-sibling-attribute`` -- no
-    single concrete subtype in ``entity``'s effective set accepts every field
-    ``row`` carries), then **target-validity**
+    single concrete subtype in ``entity``'s effective set accepts every
+    FAMILY-DECLARED field ``row`` carries; a name the family declares nowhere sits
+    on no branch, so it belongs to the caller's own member-honesty check and is
+    excluded here rather than failing every ancestry chain), then **target-validity**
     (``abstract-write-target`` -- ``entity`` itself is not a concrete subtype).
     A payload tripping more than one defect pins the earliest, most specific one.
     """
@@ -229,7 +231,7 @@ def validate_subtype_write(
         )
     effective = tuple(concrete.name for concrete in position.concrete_subtypes)
     accepted = _concrete_accepted_field_names(facet, position.concrete_subtypes)
-    candidate_fields = frozenset(row)
+    candidate_fields = frozenset(row) & frozenset[str]().union(*accepted, frozenset())
     if not any(candidate_fields <= names for names in accepted):
         raise InheritanceError(
             "subtype-write-sibling-attribute",
@@ -355,7 +357,8 @@ def _concrete_accepted_field_names(
 
     A concrete position's applicable members are exactly its own ancestry chain's
     declarations, which is the set a write targeting it may name; a sibling
-    branch's member is absent from every one of them.
+    branch's member is absent from every one of them, and their UNION is every
+    name the family declares anywhere — the domain the sibling rule is about.
     """
     return tuple(
         frozenset(

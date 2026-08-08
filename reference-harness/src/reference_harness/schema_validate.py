@@ -22,12 +22,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 from referencing import Registry
 
 from .case import Entity
+from .corpus_yaml import read_corpus_yaml
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
 from .keyed_write_validate import undeclared_row_members, validate_keyed_write
 from .metamodel import validate_index_identities
@@ -48,8 +48,7 @@ class ValidationFailure(Exception):
 
 
 def _load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+    return read_corpus_yaml(path)
 
 
 def validation_error(

@@ -339,26 +339,54 @@ def _runtime_member(value: object, declared: base.NeutralType) -> bool:
         ("dead beef", base.BYTES, False),
         ("deadbee", base.BYTES, False),
         ("2026-01-01", base.DATE, True),
+        ("2026-01-01T00:00:00Z", base.TIMESTAMP, True),
         ("2026-01-01T00:00:00+00:00", base.TIMESTAMP, True),
         ("2026-01-01T00:00:00.123456+00:00", base.TIMESTAMP, True),
         ("2026-01-01T00:00:00.1234560+00:00", base.TIMESTAMP, True),
         ("2026-01-01T00:00:00.1234567+00:00", base.TIMESTAMP, False),
         ("2026-01-01T00:00:00.12345678+00:00", base.TIMESTAMP, False),
         ("2026-01-01T00:00:00,1234567+00:00", base.TIMESTAMP, False),
-        # A '.' date-time separator introduces the hour, so the fractional
-        # second is a later run, and a fractional timezone offset is another;
-        # sub-microsecond precision in any fractional field is rejected.
-        ("2026-01-01.00:00:00.1234567+00:00", base.TIMESTAMP, False),
-        ("2026-01-01.00:00:00,1234567+00:00", base.TIMESTAMP, False),
-        ("2026-01-01.00:00:00.1234560+00:00", base.TIMESTAMP, True),
-        ("2026-01-01T00:00:00.123456+01:02:03.1234567", base.TIMESTAMP, False),
-        ("2026-01-01T00:00:00.123456+01:02:03.1234560", base.TIMESTAMP, True),
+        # The portable grammar is bounded ABOVE by the spellings the neutral
+        # specification states, not by what `fromisoformat` happens to take: it
+        # also reads a comma fraction, any character where the `T` belongs, a
+        # basic-format run, a week date, and an offset carrying seconds and a
+        # fraction. None of those is a document spelling of an instant.
+        ("2026-01-01.00:00:00.1234560+00:00", base.TIMESTAMP, False),
+        ("2026-01-01 00:00:00+00:00", base.TIMESTAMP, False),
+        ("20260101T000000Z", base.TIMESTAMP, False),
+        ("2026-W01-1T00:00:00Z", base.TIMESTAMP, False),
+        ("2026-01-01T00:00:00.123456+01:02:03.1234560", base.TIMESTAMP, False),
+        ("2026-01-01T00:00:00", base.TIMESTAMP, False),
+        ("20260101", base.DATE, False),
+        ("2026-W01-1", base.DATE, False),
+        ("2026-1-1", base.DATE, False),
+        ("2026-02-30", base.DATE, False),
+        ("25:00:00", base.TIME, False),
+        ("00:60:00", base.TIME, False),
+        ("2026-01-01T25:00:00Z", base.TIMESTAMP, False),
+        ("2026-01-01T00:00:00+25:00", base.TIMESTAMP, False),
+        ("2026-01-01T00:00:00-25:00", base.TIMESTAMP, False),
+        ("2026-01-01T00:00:00-05:00", base.TIMESTAMP, True),
         ("00:00:00", base.TIME, True),
+        ("00:00", base.TIME, True),
         ("00:00:00.123456", base.TIME, True),
         ("00:00:00.1234560", base.TIME, True),
         ("00:00:00.1234567", base.TIME, False),
         ("00:00:00,1234567", base.TIME, False),
-        ("00:00:00.123456+01:02:03.1234567", base.TIME, False),
+        ("00:00:00+00:00", base.TIME, False),
+        ("T00:00:00", base.TIME, False),
+        ("000000", base.TIME, False),
+        ("123E4567-E89B-12D3-A456-426614174000", base.UUID, True),
+        ("123e4567e89b12d3a456426614174000", base.UUID, True),
+        ("{123e4567-e89b-12d3-a456-426614174000}", base.UUID, False),
+        ("urn:uuid:123e4567-e89b-12d3-a456-426614174000", base.UUID, False),
+        ("123e4567-e89b12d3-a456-426614174000", base.UUID, False),
+        ("1_2.34", base.Decimal(4, 2), False),
+        ("+12.34", base.Decimal(4, 2), False),
+        (" 12.34 ", base.Decimal(4, 2), False),
+        ("1.234e1", base.Decimal(4, 2), False),
+        ("012.34", base.Decimal(4, 2), False),
+        ("-12.34", base.Decimal(4, 2), True),
     ],
 )
 def test_runtime_neutral_membership_is_exact_lossless_and_total(
@@ -383,16 +411,17 @@ def test_a_hexadecimal_literal_carries_no_separator() -> None:
 def test_an_exact_decimal_string_is_a_decimal_literal_too() -> None:
     # The one literal a JSON number cannot carry: no JSON number declares a scale, so
     # a structured document stores an exact decimal as a digit STRING, and this is the
-    # inverse it decodes through. Totality is unchanged — a malformed spelling decodes
-    # to itself and fails membership rather than raising, even though a bad decimal
-    # raises an ArithmeticError where every other spelling raises a ValueError.
+    # inverse it decodes through. Totality is unchanged — a spelling outside the
+    # grammar decodes to itself and fails membership rather than raising.
     assert _runtime_member("1.50", base.Decimal(18, 2)) is True
     assert base.decode_neutral_literal("1.50", base.Decimal(18, 2)) == decimal.Decimal("1.50")
     assert base.decode_neutral_literal("not a decimal", base.Decimal(18, 2)) == "not a decimal"
     assert _runtime_member("not a decimal", base.Decimal(18, 2)) is False
-    # `nan` and `infinity` parse as decimals and are refused by membership, which is
-    # where value-space membership is decided.
+    # `nan` and `infinity` are spellings `decimal.Decimal` takes and the portable
+    # grammar does not, so they decode to themselves and are refused.
+    assert base.decode_neutral_literal("nan", base.Decimal(18, 2)) == "nan"
     assert _runtime_member("nan", base.Decimal(18, 2)) is False
+    assert _runtime_member("Infinity", base.Decimal(18, 2)) is False
 
 
 @pytest.mark.parametrize("declared", [base.FLOAT32, base.FLOAT64])

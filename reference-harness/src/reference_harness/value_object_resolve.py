@@ -26,15 +26,14 @@ each language implementation must.
 
 from __future__ import annotations
 
-import datetime
 import decimal
 import math
 import re
 import struct
-import uuid
 from typing import Any
 
 from .case import Entity
+from .portable_literal import decode_decimal, decoded_as
 
 # --- rule vocabulary --------------------------------------------------------
 #
@@ -104,8 +103,6 @@ _INT_BOUNDS: dict[str, tuple[int, int]] = {
 
 _DECIMAL_TYPE = re.compile(r"^decimal\((\d+),(\d+)\)$")
 
-_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
-
 
 def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     """Whether a literal / document value spells a member of a declared neutral type.
@@ -120,17 +117,14 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     `m-document-codec`, `m-case-format` "What decides a bare write row"). Decoding is
     many-to-one where encoding is one-to-one: the document form a value is STORED in
     is its single canonical spelling, while several authored spellings name the same
-    value. So a `bytes` literal is hexadecimal in either case, a `uuid` literal is
-    hexadecimal in either case with its hyphens optional, a `time` needs no
-    zero-padded seconds, and a `timestamp` may carry any UTC offset — each decodes to
-    a member and stores as the canonical form.
+    value. :mod:`portable_literal` writes out the whole admitted grammar of the
+    string-carried spaces, so what is in space is a stated contract rather than
+    whatever a host parser happens to take.
 
     A literal that decodes to no member is out of space: an integer beyond its
     declared width, a number no float of the declared width represents exactly, a
     decimal the declared precision and scale cannot hold exactly, text with no UTF-8
-    encoding, a hexadecimal string with an odd digit count or a separator, a
-    malformed ISO-8601 or UUID spelling, and a temporal literal carrying non-zero
-    sub-microsecond precision.
+    encoding, and any spelling outside the portable grammar.
 
     A type spelling the closed vocabulary does not carry is accepted rather than
     guessed at — such a descriptor never passed schema validation, so refusing it
@@ -152,12 +146,8 @@ def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
         return _matches_float(value, binary32=kind == "float32")
     if kind == "string":
         return isinstance(value, str) and _is_utf8_encodable(value)
-    if kind == "bytes":
-        return isinstance(value, str) and _spells_octets(value)
-    if kind in ("date", "time", "timestamp"):
-        return isinstance(value, str) and _is_iso_temporal(value, kind)
-    if kind == "uuid":
-        return isinstance(value, str) and _parses_as_uuid(value)
+    if kind in ("bytes", "date", "time", "timestamp", "uuid"):
+        return decoded_as(value, kind) is not None
     if kind == "json":
         return True
     return True
@@ -219,18 +209,17 @@ def _matches_decimal(value: Any, precision: int, scale: int) -> bool:
     spells one directly, which is the form a structured document stores.
     """
     if _is_integer(value):
-        spelling = str(value)
+        decimal_value = decimal.Decimal(value)
     elif isinstance(value, float):
-        spelling = repr(value) if math.isfinite(value) else ""
+        if not math.isfinite(value):
+            return False
+        decimal_value = decimal.Decimal(repr(value))
     elif isinstance(value, str):
-        spelling = value
+        decoded = decode_decimal(value)
+        if decoded is None:
+            return False
+        decimal_value = decoded
     else:
-        return False
-    try:
-        decimal_value = decimal.Decimal(spelling)
-    except decimal.InvalidOperation:
-        return False
-    if not decimal_value.is_finite():
         return False
     _sign, digits, exponent = decimal_value.as_tuple()
     if not isinstance(exponent, int):
@@ -244,66 +233,6 @@ def _matches_decimal(value: Any, precision: int, scale: int) -> bool:
     if exponent < -scale:
         return False
     return len(str(coefficient)) + exponent + scale <= precision
-
-
-def _spells_octets(value: str) -> bool:
-    """Whether *value* spells whole octets in hexadecimal, in either case.
-
-    Two hexadecimal digits per octet, no prefix and no separator
-    (`m-document-codec`), so an odd digit count, a non-hexadecimal digit, and an
-    embedded space each name no octet sequence. Case carries no information in the
-    DECODE — the canonical stored spelling is lowercase, which is the direction
-    `m-document-codec-001` writes `0A1B` and reads back as `0a1b`.
-    """
-    return len(value) % 2 == 0 and all(character in _HEX_DIGITS for character in value)
-
-
-def _is_iso_temporal(value: str, kind: str) -> bool:
-    """Whether *value* is a microsecond-precision ISO-8601 literal of *kind*.
-
-    A `timestamp` carries a UTC offset (it names an instant); a `time` carries none
-    (it names a wall clock). A fractional field with a non-zero digit past the sixth
-    names no member of a microsecond-precision space.
-    """
-    if not _within_microsecond_precision(value):
-        return False
-    try:
-        if kind == "date":
-            datetime.date.fromisoformat(value)
-            return True
-        if kind == "time":
-            return datetime.time.fromisoformat(value).tzinfo is None
-        return datetime.datetime.fromisoformat(value).utcoffset() is not None
-    except ValueError:
-        return False
-
-
-def _within_microsecond_precision(value: str) -> bool:
-    """Whether no fractional field carries a non-zero digit past the sixth.
-
-    A temporal literal may spell more than one fractional field — a fractional
-    second and a fractional offset — so every ``.`` / ``,``-initiated digit run is
-    inspected, not just the first.
-    """
-    return all(set(fraction[6:]) <= {"0"} for fraction in re.findall(r"[.,](\d+)", value))
-
-
-def _parses_as_uuid(value: str) -> bool:
-    """Whether *value* spells one of the 128-bit UUID values.
-
-    Case carries no information (`m-core`), so the decode is CASE-INSENSITIVE and
-    accepts more spellings than the canonical lowercase 8-4-4-4-12 form a value is
-    stored as: `123E4567-E89B-12D3-A456-426614174000` and its hyphenless,
-    brace-wrapped, and `urn:uuid:`-prefixed spellings all name one value.
-    `m-document-codec-001` authors the uppercase form and reads back the canonical
-    one, which is the distinction between decoding a literal and encoding a value.
-    A spelling carrying other than 32 hexadecimal digits names no value.
-    """
-    try:
-        uuid.UUID(value)
-    except ValueError:
-        return False
-    return True
 
 
 def is_string_member(neutral_type: str | None) -> bool:

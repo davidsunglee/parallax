@@ -22,8 +22,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-import yaml
-
+from .corpus_yaml import read_corpus_yaml
 from .naming import default_column_name
 from .temporality import derive_temporal_structure, temporal_axes
 
@@ -1016,8 +1015,7 @@ class Case:
 
 
 def _load_yaml(path: Path) -> Any:
-    with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+    return read_corpus_yaml(path)
 
 
 # One parsed template per corpus artifact, for the life of the process.

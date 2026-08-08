@@ -26,6 +26,30 @@ conformance-adapter contract.
 A case is a YAML document under `core/compatibility/cases/`, validated against
 [`core/schemas/compatibility-case.schema.json`](../schemas/compatibility-case.schema.json).
 
+### The corpus YAML schema
+
+Every compatibility-corpus document — case, model descriptor, and fixture alike —
+is read under the **YAML 1.2 core schema**. A plain scalar resolves to one of
+exactly four implicit types — `null`, boolean, integer, float, in the core schema's
+own spellings — and **every other plain scalar is a string**.
+
+Naming the schema is load-bearing, because "a YAML document" alone selects none and
+the readers do not agree by default. Under the YAML 1.1 types most host libraries
+still resolve, `yes` / `no` / `on` / `off` are booleans, so the ISO country code
+`NO` reads as `false`; `1_000` and the sexagesimal `1:30` are integers; and a bare
+`2024-01-01` becomes a host *date object* rather than the ISO string
+`m-document-codec` defines as that value's document spelling. Each is a different
+document, so two implementations reading one corpus file through two host defaults
+grade two different inputs — an `owner: on` at a `string` Attribute is a
+`write-value-type-mismatch` for one reader and an accepted string for the other,
+and neither is wrong about the file it was handed.
+
+The corollary is that a corpus temporal, UUID, decimal, or `bytes` value is always
+its **portable literal** (`m-document-codec`), read as text and decoded against the
+declared type — never a value some loader happened to construct. Quoting such a
+scalar remains optional and changes nothing; under this schema it is a string
+either way.
+
 A case's identity is its **filename**, `<module>-NNN-<slug>.yaml`: `<module>` is the
 primary module slug the case chiefly proves (the first module tag in its `tags`),
 `NNN` is a 3-digit sequence number unique **within that module** (not globally), and
@@ -1517,6 +1541,17 @@ not a member is `observedVersion`, which the shared row vocabulary admits as
 flush-time context. The refusal is asked **after** the Subtype-write rules below,
 which own the family-specific names a row may not carry and classify them.
 
+That ordering only works because the two checks divide the names between them
+rather than both claiming every name. The Subtype-write rules are about names the
+**family declares**: the tag column and the `tag` / `tagValue` / `familyVariant`
+handles are `subtype-write-metadata-field`, and a member declared on a sibling or
+unrelated branch is `subtype-write-sibling-attribute`. A name the family declares
+**nowhere** sits on no branch at all, so it is no part of the sibling comparison —
+including it would make every candidate ancestry chain fail and report a sibling
+attribute for a name that is simply not real. Restricted that way, a payload
+carrying a globally undeclared key falls through to the member-honesty refusal
+above, which is the judgement that key actually needs.
+
 Each position is one of six declared kinds, and the value authored at it falls in
 one of five classes. The cells are the complete enumeration:
 
@@ -1539,19 +1574,38 @@ Reading the columns:
   **portable literal** the case authors: the literal is in space when it *decodes* to
   a member (`m-core`, `m-document-codec`). Decoding is **many-to-one** where the
   document encoding is one-to-one — a value is stored in exactly one canonical
-  spelling, while every spelling naming that value decodes to it — so a
-  non-canonical but unambiguous literal is in space and stores as the canonical
-  form. A `bytes` and a `uuid` literal are hexadecimal in **either digit case**, a
-  `uuid`'s hyphens are optional, a `time` needs no zero-padded seconds, and a
-  `timestamp` may carry any UTC offset.
+  spelling, while every spelling the grammar below names that value with decodes to
+  it — so a non-canonical but admitted literal is in space and stores as the
+  canonical form.
+- The **portable literal grammar** of each string-carried type is exactly the
+  document spelling `m-document-codec` fixes, widened by these variations and no
+  others. It is enumerated rather than left to a host parser: every mainstream
+  language ships an ISO-8601, UUID, and decimal parser with its own incidental
+  extensions, and adopting one implementation's would make the others reproduce
+  *it* rather than this contract.
+
+  | type | admitted spellings |
+  | --- | --- |
+  | `bytes` | hexadecimal in **either digit case**, two digits per octet, no prefix and no separator |
+  | `uuid` | 32 hexadecimal digits in **either digit case**, grouped 8-4-4-4-12 or with **no hyphens at all** |
+  | `date` | `YYYY-MM-DD`, and a valid calendar date |
+  | `time` | `hh:mm:ss` with an optional `.` fraction, or with the **seconds omitted**; no offset |
+  | `timestamp` | `YYYY-MM-DDThh:mm:ss` with an optional `.` fraction, closed by `Z` or by **any** `±hh:mm` offset |
+  | `decimal(p,s)` | a JSON number, or the exact spelling: a `-` only below zero, integer digits with no leading zero, an optional `.` fraction |
+
+  So a brace-wrapped or `urn:uuid:` UUID, a hyphen in any other position, a week or
+  ordinal or basic-format date, a space or any other character where the `T`
+  belongs, an offset carrying seconds, and a decimal carrying a digit separator, a
+  leading `+`, surrounding whitespace, an exponent, or `nan` / `infinity` are each
+  **out of space**, however readily some host parser takes them.
 - **Out of space** is a literal that decodes to no member: an integer beyond its
   declared width; a number no float of the declared width represents **exactly** —
   an integer literal names a value, so `16777217` is no `float32` and
   `9007199254740993` no `float64`, and a magnitude the width cannot hold, such as
   `1e100` at a `float32`, is no member either; a decimal the declared precision and
-  scale cannot hold exactly; text with no UTF-8 encoding; a hexadecimal string with
-  an odd digit count or a separator; a malformed ISO-8601 or UUID spelling; and a
-  temporal literal carrying non-zero sub-microsecond precision.
+  scale cannot hold exactly; text with no UTF-8 encoding; a temporal literal
+  carrying non-zero sub-microsecond precision; and any spelling outside the grammar
+  above.
 - A **DB-computed marker** (`{computed: …}` / `{increment: …}`) is admitted at a
   scalar Attribute and is a value no other position can hold. The disambiguation is
   by the position's declared metamodel ROLE, never by the value's shape, so a
