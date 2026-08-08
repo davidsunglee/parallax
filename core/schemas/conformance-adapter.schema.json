@@ -175,7 +175,7 @@
       }
     },
     "stateCheck": {
-      "description": "A lifecycle-state observation (m-conformance-adapter, COR-30): the object at case position `at` was observed in a given lifecycle state, and `pass` records whether that matched the case's `expectState`. `at` is a JSON Pointer into the case (a scenario step index). Mirrors `identityCheck`'s explicit-verdict shape so the runner grades an assertion the wire golden SQL cannot see.",
+      "description": "A lifecycle-state observation (m-conformance-adapter): the object at case position `at` was observed in a given lifecycle state, and `pass` records whether that matched the case's `expectState`. `at` is a JSON Pointer into the case (a scenario step index). Mirrors `identityCheck`'s explicit-verdict shape so the runner grades an assertion the wire golden SQL cannot see.",
       "type": "object",
       "additionalProperties": false,
       "required": ["at", "expected", "observed", "pass"],
@@ -196,7 +196,7 @@
       }
     },
     "errorObservation": {
-      "description": "A raised-application-error observation (m-conformance-adapter, COR-30): the verb at case position `at` raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-detach / m-identity-map / m-unit-work). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
+      "description": "A raised-application-error observation (m-conformance-adapter): the verb at case position `at` raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-detach / m-identity-map / m-unit-work). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
       "type": "object",
       "additionalProperties": false,
       "required": ["at", "errorClass"],
