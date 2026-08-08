@@ -1014,8 +1014,8 @@ the keyed `writeSequence` shape — is **hosted in
 references that canonical shape rather than redefining it. `validFrom` is the
 Valid-Time lower bound and `until` the bounded operation's exclusive Valid-Time
 upper bound. `at` is harness/Clock-supplied Transaction-Time context, never an
-instruction field or alias. The schema and corpus must adopt these final spellings
-before COR-40 runtime work begins; no translation alias is conforming.
+instruction field or alias. The schema and corpus adopt these final spellings;
+no translation alias is conforming.
 
 ```yaml
 - write:
