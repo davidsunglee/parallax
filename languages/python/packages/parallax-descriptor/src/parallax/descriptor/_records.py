@@ -384,7 +384,7 @@ class Entity:
         return self.name if self.namespace is None else f"{self.namespace}.{self.name}"
 
 
-def _parent_identity(entity: Entity, parent: str | None) -> str | None:
+def parent_identity(entity: Entity, parent: str | None) -> str | None:
     """The CANONICAL name a ``parent`` reference authored on ``entity`` names,
     or ``None`` when it names nothing.
 
@@ -419,7 +419,7 @@ def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
     write/read seams — composes with this rather than re-deriving it.
 
     Every step of the walk is by CANONICAL identity: each ``parent`` resolves
-    under the exact/relative reference rule (:func:`_parent_identity`) against
+    under the exact/relative reference rule (:func:`parent_identity`) against
     the canonical spellings alone, and the cycle guard remembers canonical
     names. A local name may repeat across namespaces, so a bare one identifies
     neither the position reached nor the positions already visited — a family
@@ -437,7 +437,7 @@ def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
         current_inheritance = current.inheritance
         if current_inheritance is None or current_inheritance.role == "root":
             return current
-        ancestor = _parent_identity(current, current_inheritance.parent)
+        ancestor = parent_identity(current, current_inheritance.parent)
         if ancestor is None or current.canonical_name in seen or ancestor not in by_canonical:
             return entity
         seen.add(current.canonical_name)

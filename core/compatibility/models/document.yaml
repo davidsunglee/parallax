@@ -64,7 +64,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: abstract-subtype
-      parent: Document
+      parent: parallax.compatibility.Document
     attributes:
       # REQUIRED (non-null): a financial document without a currency is meaningless, so
       # currency is a real, settled model constraint on the FinancialDocument branch.
@@ -85,7 +85,7 @@ entities:
     table: invoice
     inheritance:
       role: concrete-subtype
-      parent: FinancialDocument
+      parent: parallax.compatibility.FinancialDocument
     attributes:
       - name: amountDue
         type: decimal(18,2)
@@ -94,7 +94,7 @@ entities:
     table: receipt
     inheritance:
       role: concrete-subtype
-      parent: FinancialDocument
+      parent: parallax.compatibility.FinancialDocument
     attributes:
       - name: paidAmount
         type: decimal(18,2)
@@ -103,7 +103,7 @@ entities:
     table: memo
     inheritance:
       role: concrete-subtype
-      parent: Document
+      parent: parallax.compatibility.Document
     attributes:
       - name: body
         type: string

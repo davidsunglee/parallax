@@ -279,7 +279,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Payment
+      parent: parallax.compatibility.Payment
       tagValue: card
     attributes:
       - name: detail
@@ -292,7 +292,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Payment
+      parent: parallax.compatibility.Payment
       tagValue: cash
     attributes:
       - name: detail
@@ -319,7 +319,7 @@ entities:
     table: publication_book
     inheritance:
       role: concrete-subtype
-      parent: Publication
+      parent: parallax.compatibility.Publication
     attributes:
       - name: detail
         type: string
@@ -331,7 +331,7 @@ entities:
     table: publication_film
     inheritance:
       role: concrete-subtype
-      parent: Publication
+      parent: parallax.compatibility.Publication
     attributes:
       - name: detail
         type: int32

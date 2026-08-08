@@ -20,7 +20,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core.inheritance import InheritanceError
-from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel, family_root_name
+from parallax.descriptor._records import (
+    Attribute,
+    Entity,
+    Inheritance,
+    Metamodel,
+    family_root_name,
+    parent_identity,
+)
 
 __all__ = ["Family", "family_attributes", "family_of", "family_primary_key", "validate"]
 
@@ -47,6 +54,18 @@ def _inh(entity: Entity) -> Inheritance:
     if entity.inheritance is None:  # pragma: no cover - callers guard on participation
         raise ValueError(f"{entity.name} is not an inheritance participant")
     return entity.inheritance
+
+
+def _parent_of(entity: Entity) -> str | None:
+    """The canonical name ``entity``'s ``parent`` reference names, or ``None``.
+
+    A parent is a declaration-site Entity Reference, so a bare spelling adopts
+    the declaring entity's own namespace and a dot-qualified one is exact. Every
+    walk below keys on canonical names for that reason: a local name may repeat
+    across namespaces, so it identifies neither the position a parent reaches nor
+    the positions a cycle guard has already visited.
+    """
+    return parent_identity(entity, _inh(entity).parent)
 
 
 def _participants(metamodel: Metamodel) -> tuple[Entity, ...]:
@@ -112,18 +131,18 @@ def validate(metamodel: Metamodel) -> None:
     participants = _participants(metamodel)
     if not participants:
         return
-    by_name = {entity.name: entity for entity in metamodel.entities}
+    by_canonical = {entity.canonical_name: entity for entity in metamodel.entities}
 
-    _reject_unknown_parent(participants, by_name)
+    _reject_unknown_parent(participants, by_canonical)
     _reject_cycles(participants)
     _reject_strategy_redeclared(participants)
     _reject_descendant_temporality(participants)
     _reject_descendant_optimistic_locking(participants)
     _reject_descendant_layout(participants)
-    _reject_concrete_without_root(participants, by_name)
+    _reject_concrete_without_root(participants, by_canonical)
     rooted = [
         (_reject_missing_root(root, members), members)
-        for root, members in _families(participants, by_name)
+        for root, members in _families(participants, by_canonical)
     ]
     for root, members in rooted:
         _reject_missing_concrete_subtype(root, members)
@@ -134,7 +153,7 @@ def validate(metamodel: Metamodel) -> None:
 
 
 def _families(
-    participants: tuple[Entity, ...], by_name: dict[str, Entity]
+    participants: tuple[Entity, ...], by_canonical: dict[str, Entity]
 ) -> list[tuple[Entity | None, tuple[Entity, ...]]]:
     """Each independent inheritance family of ``participants``: the topmost
     position its members' parent links reach (``None`` when that position is not
@@ -147,33 +166,35 @@ def _families(
     """
     grouped: dict[str, list[Entity]] = {}
     for entity in participants:
-        grouped.setdefault(_family_top(entity, by_name).name, []).append(entity)
+        grouped.setdefault(_family_top(entity, by_canonical).canonical_name, []).append(entity)
     families: list[tuple[Entity | None, tuple[Entity, ...]]] = []
     for name, members in grouped.items():
-        top = by_name[name]
+        top = by_canonical[name]
         families.append((top if _inh(top).role == "root" else None, tuple(members)))
     return families
 
 
-def _family_top(entity: Entity, by_name: dict[str, Entity]) -> Entity:
+def _family_top(entity: Entity, by_canonical: dict[str, Entity]) -> Entity:
     """The highest participant ``entity``'s parent links reach — itself when it
     declares no parent, and the last participant on the chain when the chain
     leaves the family (a parent that declares no inheritance of its own)."""
     top = entity
     while True:
-        parent = _inh(top).parent
+        parent = _parent_of(top)
         if parent is None:
             return top
-        ancestor = by_name.get(parent)
+        ancestor = by_canonical.get(parent)
         if ancestor is None or ancestor.inheritance is None:
             return top
         top = ancestor
 
 
-def _reject_unknown_parent(participants: tuple[Entity, ...], by_name: dict[str, Entity]) -> None:
+def _reject_unknown_parent(
+    participants: tuple[Entity, ...], by_canonical: dict[str, Entity]
+) -> None:
     for entity in participants:
-        parent = _inh(entity).parent
-        if parent is not None and parent not in by_name:
+        parent = _parent_of(entity)
+        if parent is not None and parent not in by_canonical:
             raise InheritanceError(
                 "inheritance-unknown-parent",
                 f"{entity.name} names parent {parent!r}, which the descriptor does not declare",
@@ -182,19 +203,19 @@ def _reject_unknown_parent(participants: tuple[Entity, ...], by_name: dict[str, 
 
 
 def _reject_cycles(participants: tuple[Entity, ...]) -> None:
-    by_name = {entity.name: entity for entity in participants}
+    by_canonical = {entity.canonical_name: entity for entity in participants}
     for start in participants:
         seen: set[str] = set()
-        current: str | None = start.name
-        while current is not None and current in by_name:
+        current: str | None = start.canonical_name
+        while current is not None and current in by_canonical:
             if current in seen:
                 raise InheritanceError(
                     "inheritance-cycle",
                     f"parent links form a cycle through {current!r}",
-                    entity=current,
+                    entity=by_canonical[current].name,
                 )
             seen.add(current)
-            current = _inh(by_name[current]).parent
+            current = _parent_of(by_canonical[current])
 
 
 def _reject_strategy_redeclared(participants: tuple[Entity, ...]) -> None:
@@ -280,21 +301,21 @@ def _reject_descendant_layout(participants: tuple[Entity, ...]) -> None:
 
 
 def _reject_concrete_without_root(
-    participants: tuple[Entity, ...], by_name: dict[str, Entity]
+    participants: tuple[Entity, ...], by_canonical: dict[str, Entity]
 ) -> None:
     for entity in participants:
         if _inh(entity).role != "concrete-subtype":
             continue
-        current: str | None = entity.name
+        current: str | None = entity.canonical_name
         reached_root = False
         while current is not None:
-            node = by_name.get(current)
+            node = by_canonical.get(current)
             if node is None or node.inheritance is None:
                 break
             if node.inheritance.role == "root":
                 reached_root = True
                 break
-            current = node.inheritance.parent
+            current = _parent_of(node)
         if not reached_root:
             raise InheritanceError(
                 "inheritance-concrete-without-abstract-root",

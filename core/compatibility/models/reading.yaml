@@ -43,5 +43,5 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Reading
+      parent: parallax.compatibility.Reading
       tagValue: meter

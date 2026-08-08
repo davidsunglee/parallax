@@ -17,7 +17,7 @@
 #   Latest (default)     -> current rows only: (1, 150.00), (2, 200.00).
 #   as-of 2024-04-01     -> (1, 100.00), (2, 200.00), (3, 50.00).
 #   history(transaction-time) of id 1 -> both id-1 milestones.
-Balance:
+parallax.compatibility.Balance:
   - id: 1
     acctNum: A
     value: 100.00

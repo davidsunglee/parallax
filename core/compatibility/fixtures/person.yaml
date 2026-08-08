@@ -7,14 +7,14 @@
 #   person 1 Alan  -> passport 101 (P-AAA)
 #   person 2 Grace -> passport 102 (P-BBB)
 #   person 3 Ada   -> (no passport)
-Person:
+parallax.compatibility.Person:
   - id: 1
     name: Alan
   - id: 2
     name: Grace
   - id: 3
     name: Ada
-Passport:
+parallax.compatibility.Passport:
   - id: 101
     personId: 1
     number: P-AAA

@@ -47,7 +47,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Instrument
+      parent: parallax.compatibility.Instrument
       tagValue: bond
     attributes:
       - name: coupon
@@ -57,7 +57,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Instrument
+      parent: parallax.compatibility.Instrument
       tagValue: stock
     attributes:
       - name: ticker

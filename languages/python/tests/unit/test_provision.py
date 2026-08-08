@@ -203,6 +203,35 @@ def test_fixture_statements_map_names_to_columns() -> None:
     assert binds == [1, 1, "low"]
 
 
+def test_fixture_statements_key_shipped_rows_by_their_canonical_spelling() -> None:
+    # The shipped corpus keys every fixture block by the Entity's canonical
+    # spelling, so the loader's first lookup is the one that hits.
+    fixtures = provision.load_fixtures("models/grade.yaml")
+    assert set(fixtures) == {"parallax.compatibility.Grade"}
+    assert len(provision.fixture_statements(_MODELS["grade"], fixtures)) == 3
+
+
+def test_fixture_statements_still_accept_an_unambiguous_bare_key() -> None:
+    # Input stays permissive: a bare key naming exactly one Entity of the model
+    # loads its rows, which is what lets a hand-authored fixture stay terse. The
+    # shipped corpus does not rely on this; only the loader's contract does.
+    fixtures = {"Grade": [{"id": 1, "ordinal": 1, "label": "low"}]}
+    (sql, binds) = provision.fixture_statements(_MODELS["grade"], fixtures)[0]
+    assert sql == 'insert into grade (id, "order", label) values (?, ?, ?)'
+    assert binds == [1, 1, "low"]
+
+
+def test_fixture_statements_prefer_the_canonical_key_to_a_bare_one() -> None:
+    # A document spelling the same Entity both ways is answered by the exact
+    # spelling — the bare key is a fallback, never a competing block.
+    fixtures = {
+        "parallax.compatibility.Grade": [{"id": 1, "ordinal": 1, "label": "low"}],
+        "Grade": [{"id": 2, "ordinal": 2, "label": "mid"}],
+    }
+    statements = provision.fixture_statements(_MODELS["grade"], fixtures)
+    assert [binds for _sql, binds in statements] == [[1, 1, "low"]]
+
+
 def test_fixture_statements_follow_the_entity_layout_order_not_mapping_order() -> None:
     # Re-spelling a fixture row with permuted keys must emit byte-identical SQL:
     # columns and binds follow the Entity Layout's slot order, never `row.items()`.

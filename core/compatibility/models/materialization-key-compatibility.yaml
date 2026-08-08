@@ -37,10 +37,10 @@ entities:
       tag: { column: kind }
   - name: VariantNote
     namespace: compatibility.overlap
-    inheritance: { role: concrete-subtype, parent: VariantRecord, tagValue: note }
+    inheritance: { role: concrete-subtype, parent: compatibility.overlap.VariantRecord, tagValue: note }
   - name: VariantMemo
     namespace: compatibility.overlap
-    inheritance: { role: concrete-subtype, parent: VariantRecord, tagValue: memo }
+    inheritance: { role: concrete-subtype, parent: compatibility.overlap.VariantRecord, tagValue: memo }
   - name: Record
     namespace: catalog
     attributes:
@@ -58,4 +58,4 @@ entities:
     table: catalog_shared
     attributes:
       - { name: catalogLabel, type: string, maxLength: 64, column: parallax_attr_0 }
-    inheritance: { role: concrete-subtype, parent: Record }
+    inheritance: { role: concrete-subtype, parent: catalog.Record }

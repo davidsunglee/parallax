@@ -17,7 +17,7 @@
 # open at infinity. A defaulted-Latest read therefore observes exactly one row and
 # the physical key spans the model key plus the Transaction-Time end, which the two
 # rows separate as 2024-02-01 and infinity.
-LayoutProfile:
+parallax.compatibility.LayoutProfile:
   - id: 1
     label: Primary
     note: preferred contact
@@ -28,23 +28,23 @@ LayoutProfile:
     label: Secondary
     contact:
       email: kari@example.test
-LayoutCardPayment:
+parallax.compatibility.LayoutCardPayment:
   - id: 1
     amount: 100.00
     cardNetwork: Visa
-LayoutCashPayment:
+parallax.compatibility.LayoutCashPayment:
   - id: 2
     amount: 20.00
     tendered: 25.00
-LayoutAudit:
+parallax.compatibility.LayoutAudit:
   - id: 1
     title: Quarterly audit
     auditor: Ingrid
-LayoutSurvey:
+parallax.compatibility.LayoutSurvey:
   - id: 1
     title: Annual survey
     respondent: Bjorn
-LayoutMeterReading:
+parallax.compatibility.LayoutMeterReading:
   - id: 1
     sensor: north
     celsius: 20.00

@@ -59,6 +59,12 @@ The pre-ADR `discriminator` / `discriminatorValue` vocabulary is **strictly
 replaced** by `tag` / `tagValue`; the inheritance block is closed, so the retired
 keys fail validation.
 
+`parent` is an Entity Reference (`m-descriptor`): a bare name resolves relative
+to the declaring Entity's own namespace, and canonical export spells the
+resolved Entity Identity exactly. The blocks below show the inheritance property
+alone, so their bare parents are canonical only for an ownerless family; a
+namespaced family spells `parent: <namespace>.<LocalName>`.
+
 ### Canonical descriptor blocks
 
 Table-per-hierarchy root (abstract and rowless, but mapping owner):

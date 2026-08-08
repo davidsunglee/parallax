@@ -9,7 +9,7 @@
 #   id 1 (Ada)   balance 100.00
 #   id 2 (Linus) balance 250.00
 #   id 3 (Grace) balance  10.00
-Account:
+parallax.compatibility.Account:
   - id: 1
     owner: Ada
     balance: 100.00

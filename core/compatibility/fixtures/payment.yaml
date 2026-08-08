@@ -9,14 +9,14 @@
 #   id 1 CardPayment  amount 100.00  network Visa   (kind=card, derived)
 #   id 2 CardPayment  amount  50.00  network Amex   (kind=card, derived)
 #   id 3 CashPayment  amount  20.00  tendered 25.00 (kind=cash, derived)
-CardPayment:
+parallax.compatibility.CardPayment:
   - id: 1
     amount: 100.00
     cardNetwork: Visa
   - id: 2
     amount: 50.00
     cardNetwork: Amex
-CashPayment:
+parallax.compatibility.CashPayment:
   - id: 3
     amount: 20.00
     tendered: 25.00

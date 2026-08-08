@@ -731,13 +731,13 @@ def _index_to_json(index: Index) -> dict[str, object]:
     return out
 
 
-def _inheritance_to_json(inh: Inheritance) -> dict[str, object]:
+def _inheritance_to_json(inh: Inheritance, namespace: str | None) -> dict[str, object]:
     out: dict[str, object] = {}
     if inh.strategy is not None:
         out["strategy"] = inh.strategy
     out["role"] = inh.role
     if inh.parent is not None:
-        out["parent"] = inh.parent
+        out["parent"] = _qualified_reference(inh.parent, namespace)
     if inh.tag_column is not None:
         out["tag"] = {"column": inh.tag_column}
     if inh.tag_value is not None:
@@ -831,7 +831,7 @@ def _entity_to_json(entity: Entity) -> dict[str, object]:
     if entity.value_objects:
         out["valueObjects"] = [_value_object_to_json(v) for v in entity.value_objects]
     if entity.inheritance is not None:
-        out["inheritance"] = _inheritance_to_json(entity.inheritance)
+        out["inheritance"] = _inheritance_to_json(entity.inheritance, entity.namespace)
     return out
 
 

@@ -195,11 +195,47 @@ def test_export_writes_the_resolved_structured_column_only_where_the_root_owns_i
     assert "layout" not in exported[(None, "CardRecord")]
 
 
+def test_export_qualifies_a_same_namespace_parent_and_bares_an_ownerless_one() -> None:
+    # An inheritance parent exports as exact Entity Identity wherever the child
+    # sits, so a parent sharing the child's namespace is qualified exactly like a
+    # cross-namespace one — the asymmetry canonical form used to carry. An
+    # ownerless parent has no namespace to spell, so its canonical form is the
+    # local name itself; that is the identity degenerating, not a second rule.
+    owned = EntityIdentity("family.ns", "Child")
+    ownerless = EntityIdentity(None, "Child")
+    exported = _by_identity(
+        export_document(
+            fake_metamodel.FakeMetamodel(
+                (
+                    fake_metamodel.FakeEntity(
+                        owned,
+                        declared_container=Table("child"),
+                        inheritance=AbstractSubtype(EntityIdentity("family.ns", "Parent")),
+                    ),
+                    fake_metamodel.FakeEntity(
+                        ownerless,
+                        declared_container=Table("orphan"),
+                        inheritance=AbstractSubtype(EntityIdentity(None, "Parent")),
+                    ),
+                )
+            )
+        )
+    )
+    assert exported[("family.ns", "Child")]["inheritance"] == {
+        "role": "abstract-subtype",
+        "parent": "family.ns.Parent",
+    }
+    assert exported[(None, "Child")]["inheritance"] == {
+        "role": "abstract-subtype",
+        "parent": "Parent",
+    }
+
+
 def test_export_spells_read_only_cross_namespace_parent_and_a_many_value_object() -> None:
     # Three formatting branches no corpus model exercises: a read-only attribute,
-    # a cross-namespace inheritance parent (spelled fully qualified rather than
-    # bare), and a top-level cardinality-many Value Object. Export renews no
-    # validation, so a lone position with an out-of-model parent still formats.
+    # a cross-namespace inheritance parent, and a top-level cardinality-many Value
+    # Object. Export renews no validation, so a lone position with an out-of-model
+    # parent still formats.
     child = EntityIdentity("child.ns", "Child")
     tags = ValueObjectIdentity(child, ("tags",))
     entity = fake_metamodel.FakeEntity(

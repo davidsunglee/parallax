@@ -34,7 +34,7 @@ BENCHMARKS_ROOT = _REPO_ROOT / "core" / "compatibility" / "benchmarks"
 
 def test_accounts_sequential_is_deterministic_and_sized() -> None:
     rows = _generate_accounts_sequential(1000)
-    accounts = rows["Account"]
+    accounts = rows["parallax.compatibility.Account"]
     assert len(accounts) == 1000
     assert accounts[0] == {"id": 1, "owner": "owner-1", "balance": "100.00", "version": 1}
     assert accounts[-1]["id"] == 1000
@@ -44,11 +44,11 @@ def test_accounts_sequential_is_deterministic_and_sized() -> None:
 
 def test_orders_tree_fans_out() -> None:
     rows = _generate_orders_tree(rows=10, fanout=5)
-    assert len(rows["Order"]) == 10
-    assert len(rows["OrderItem"]) == 10 * 5
-    assert len(rows["OrderStatus"]) == 10 * 5 * 5
+    assert len(rows["parallax.compatibility.Order"]) == 10
+    assert len(rows["parallax.compatibility.OrderItem"]) == 10 * 5
+    assert len(rows["parallax.compatibility.OrderStatus"]) == 10 * 5 * 5
     # The first five items belong to order 1 (so the deep-fetch IN-list lines up).
-    first_order_items = [i for i in rows["OrderItem"] if i["orderId"] == 1]
+    first_order_items = [i for i in rows["parallax.compatibility.OrderItem"] if i["orderId"] == 1]
     assert [i["id"] for i in first_order_items] == [1, 2, 3, 4, 5]
 
 
@@ -57,14 +57,16 @@ def test_document_milestones_opens_one_current_row_per_id() -> None:
     # `$i` index, so ids must be contiguous per entity and every row must be left
     # open on Transaction Time for a close to address it.
     rows = _generate_document_milestones(50)
-    assert {v["id"] for v in rows["Voyage"]} == set(range(1, 51))
-    assert {c["id"] for c in rows["Charter"]} == set(range(1, 51))
-    assert all(v["txEnd"] == "infinity" for v in rows["Voyage"])
-    assert all(c["txEnd"] == "infinity" and c["validEnd"] == "infinity" for c in rows["Charter"])
+    voyages = rows["parallax.compatibility.Voyage"]
+    charters = rows["parallax.compatibility.Charter"]
+    assert {v["id"] for v in voyages} == set(range(1, 51))
+    assert {c["id"] for c in charters} == set(range(1, 51))
+    assert all(v["txEnd"] == "infinity" for v in voyages)
+    assert all(c["txEnd"] == "infinity" and c["validEnd"] == "infinity" for c in charters)
     # Both are document-mapped, so each row carries an occurrence the Structured
     # Column composes rather than a column of its own.
-    assert rows["Voyage"][0]["manifest"] == {"cargo": "timber"}
-    assert rows["Charter"][0]["terms"] == {"clause": "standard"}
+    assert voyages[0]["manifest"] == {"cargo": "timber"}
+    assert charters[0]["terms"] == {"clause": "standard"}
 
 
 def test_build_dataset_dispatches_recipes() -> None:

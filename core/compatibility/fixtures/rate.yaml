@@ -24,7 +24,7 @@
 # transaction [2024-01-01, infinity)) — an abstract read pinned Valid-Time-past 2024-06-01 /
 # Transaction-Time Latest returns both branches' current rows, each carrying its per-branch
 # familyVariant literal (DepositRate / LoanRate).
-DepositRate:
+parallax.compatibility.DepositRate:
   - id: 1
     amount: 2.25
     grade: B
@@ -39,7 +39,7 @@ DepositRate:
     validEnd: infinity
     txStart: "2024-02-01T00:00:00+00:00"
     txEnd: infinity
-LoanRate:
+parallax.compatibility.LoanRate:
   - id: 2
     amount: 6.75
     spread: 1.25

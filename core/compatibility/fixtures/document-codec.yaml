@@ -39,7 +39,7 @@
 # `active`, so a same-element candidate constraining all four matches Ada alone; drop
 # the boolean from the candidate, or spell it as MariaDB's `1`, and the answer changes.
 # Ada's second element carries `work`/`false`, so no cross-element pairing satisfies it.
-Sample:
+parallax.compatibility.Sample:
   - id: 1
     label: Ada
     profile:

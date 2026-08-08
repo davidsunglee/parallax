@@ -49,7 +49,7 @@ class BenchmarkError(Exception):
 def _generate_accounts_sequential(rows: int) -> dict[str, list[dict[str, Any]]]:
     """``id = 1..rows``; ``owner = owner-<id>``; ``balance = id*100``; ``version = 1``."""
     return {
-        "Account": [
+        "parallax.compatibility.Account": [
             {
                 "id": i,
                 "owner": f"owner-{i}",
@@ -104,7 +104,11 @@ def _generate_orders_tree(rows: int, fanout: int) -> dict[str, list[dict[str, An
                         "code": "OPEN",
                     }
                 )
-    return {"Order": orders, "OrderItem": items, "OrderStatus": statuses}
+    return {
+        "parallax.compatibility.Order": orders,
+        "parallax.compatibility.OrderItem": items,
+        "parallax.compatibility.OrderStatus": statuses,
+    }
 
 
 def _generate_document_milestones(rows: int) -> dict[str, list[dict[str, Any]]]:
@@ -120,7 +124,7 @@ def _generate_document_milestones(rows: int) -> dict[str, list[dict[str, Any]]]:
     one Structured Column and its axis bounds keep Columns of their own.
     """
     return {
-        "Voyage": [
+        "parallax.compatibility.Voyage": [
             {
                 "id": index,
                 "title": f"voyage-{index}",
@@ -131,7 +135,7 @@ def _generate_document_milestones(rows: int) -> dict[str, list[dict[str, Any]]]:
             }
             for index in range(1, rows + 1)
         ],
-        "Charter": [
+        "parallax.compatibility.Charter": [
             {
                 "id": index,
                 "route": f"route-{index}",
@@ -147,12 +151,15 @@ def _generate_document_milestones(rows: int) -> dict[str, list[dict[str, Any]]]:
 
 
 def _build_dataset(fixture: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-    """Return the rows (keyed by class name) the benchmark loads, per its ``dataset``."""
+    """Return the rows the benchmark loads, per its ``dataset``.
+
+    Keys are canonical Entity spellings (m-perf-bench); the loader below still
+    accepts an unambiguous bare key.
+    """
     dataset = fixture.get("dataset", {})
     if dataset.get("empty"):
         return {}
     if "rows" in dataset and isinstance(dataset["rows"], dict):
-        # Inline rows keyed by class name.
         return dataset["rows"]
     generate = dataset.get("generate")
     if not generate:

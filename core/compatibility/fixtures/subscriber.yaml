@@ -3,7 +3,7 @@
 # One version-1 row the optimistic value-object write case (m-value-object-046)
 # reads and updates: a versioned document UPDATE replaces the whole `address`
 # document and advances `version` 1 -> 2, gated on the observed version 1.
-Subscriber:
+parallax.compatibility.Subscriber:
   - id: 1
     version: 1
     address:

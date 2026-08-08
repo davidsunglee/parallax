@@ -32,7 +32,7 @@ tags: [m-perf-bench, m-storage-layout, document-layout]
 model: models/document-layout.yaml
 dataset:
   rows:
-    Traveler:
+    parallax.compatibility.Traveler:
       - id: 1
         displayName: Ada
         score: 7

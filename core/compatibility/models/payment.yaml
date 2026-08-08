@@ -41,7 +41,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Payment
+      parent: parallax.compatibility.Payment
       tagValue: card
     attributes:
       - name: cardNetwork
@@ -52,7 +52,7 @@ entities:
     namespace: parallax.compatibility
     inheritance:
       role: concrete-subtype
-      parent: Payment
+      parent: parallax.compatibility.Payment
       tagValue: cash
     attributes:
       - name: tendered

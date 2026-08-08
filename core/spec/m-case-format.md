@@ -50,6 +50,15 @@ declared type — never a value some loader happened to construct. Quoting such 
 scalar remains optional and changes nothing; under this schema it is a string
 either way.
 
+A fixture document sits beside its model as `fixtures/<model-stem>.yaml` and maps
+each row-owning Entity to its rows. Its top-level keys are **canonical Entity
+spellings** (`m-metamodel`) — `parallax.compatibility.Grade`, not `Grade` — so a
+fixture names its Entity by the same identity every other shipped document does,
+and a model declaring one local name in two namespaces keys each twin's rows
+without ambiguity. A loader **MAY** additionally accept an unambiguous bare local
+name, matching the permissive input every reference position allows; shipped
+fixtures do not rely on it.
+
 A case's identity is its **filename**, `<module>-NNN-<slug>.yaml`: `<module>` is the
 primary module slug the case chiefly proves (the first module tag in its `tags`),
 `NNN` is a 3-digit sequence number unique **within that module** (not globally), and
