@@ -447,6 +447,16 @@ def _rejected_operation_case() -> dict[str, Any]:
     }
 
 
+def _rejected_case_declaring_zero_round_trips() -> dict[str, Any]:
+    """A rejected case declaring the zero round trips it actually costs.
+
+    The count a pre-SQL refusal can accurately state, which the property's own
+    default of one — written for the shapes that reach the database — cannot."""
+    doc = _rejected_operation_case()
+    doc["then"]["roundTrips"] = 0
+    return doc
+
+
 def _rejected_write_case() -> dict[str, Any]:
     """A rejected case carrying an invalid WRITE input and the violated rule."""
     return {
@@ -625,6 +635,7 @@ VALID_CASES = {
     "read-graphs": _graphs_read_case,
     "read-identity-checks": _identity_checks_read_case,
     "rejected-operation": _rejected_operation_case,
+    "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_round_trips,
     "rejected-write": _rejected_write_case,
     "rejected-keyed-write": _rejected_keyed_write_case,
 }
@@ -1109,11 +1120,22 @@ def _write_value_step_costing_a_round_trip() -> dict[str, Any]:
 def _read_case_with_zero_round_trips() -> dict[str, Any]:
     """A read case declaring `then.roundTrips: 0`.
 
-    Zero is legal only for a scenario, whose total is the sum of its steps'; a
-    read executes the golden SQL it asserts, so an all-zero total is impossible
-    and is refused here rather than in a later harness check."""
+    Zero is legal only for the two shapes that can cost nothing — a scenario
+    whose steps all cost none, and a pre-SQL `rejected` refusal; a read executes
+    the golden SQL it asserts, so an all-zero total is impossible and is refused
+    here rather than in a later harness check."""
     doc = _read_case()
     doc["then"]["roundTrips"] = 0
+    return doc
+
+
+def _rejected_case_costing_a_round_trip() -> dict[str, Any]:
+    """A rejected case declaring `then.roundTrips: 1`.
+
+    A rejected case's input is refused before any statement is composed, so one
+    round trip is not merely unasserted but impossible."""
+    doc = _rejected_operation_case()
+    doc["then"]["roundTrips"] = 1
     return doc
 
 
@@ -1121,6 +1143,7 @@ REJECTED_CASES = {
     "write-value-step-with-golden-statements": _write_value_step_with_golden_statements,
     "write-value-step-costing-a-round-trip": _write_value_step_costing_a_round_trip,
     "read-with-zero-round-trips": _read_case_with_zero_round_trips,
+    "rejected-costing-a-round-trip": _rejected_case_costing_a_round_trip,
     "legacy-layout": _legacy_layout,
     "mislabeled-shape": _mislabeled_shape,
     "string-sql-at-golden-location": _string_sql_at_golden_location,

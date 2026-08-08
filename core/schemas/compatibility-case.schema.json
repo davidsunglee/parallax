@@ -217,13 +217,23 @@
       }
     },
     {
-      "description": "`then.roundTrips` may declare ZERO only for a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way). Every other shape asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
+      "description": "`then.roundTrips` may declare ZERO only for the two shapes that can cost nothing: a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way), and a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero. Every other shape asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
       "if": {
         "required": ["shape"],
-        "properties": { "shape": { "not": { "const": "scenario" } } }
+        "properties": { "shape": { "not": { "enum": ["scenario", "rejected"] } } }
       },
       "then": {
         "properties": { "then": { "properties": { "roundTrips": { "minimum": 1 } } } }
+      }
+    },
+    {
+      "description": "A `rejected` case declares the round trips it actually costs, and a pre-SQL refusal costs NONE: the validator refuses the input before any statement is composed, so `then.roundTrips` is pinned to `0` where it is declared at all rather than merely permitted to be. The property's own default of `1` describes the shapes that reach the database and is inapplicable here, which is why every rejected case in the corpus omits it.",
+      "if": {
+        "required": ["shape"],
+        "properties": { "shape": { "const": "rejected" } }
+      },
+      "then": {
+        "properties": { "then": { "properties": { "roundTrips": { "const": 0 } } } }
       }
     }
   ],
@@ -1028,7 +1038,7 @@
           ]
         },
         "roundTrips": {
-          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way), the one shape whose declared total is legitimately 0 and the only one this floor is relaxed for (the top-level `allOf` keeps the minimum of 1 everywhere else).",
+          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way). A `rejected` case costs zero too: its input is refused pre-SQL, so the top-level `allOf` pins it to 0 rather than merely admitting it. Those two shapes are the whole of the relaxation — the same `allOf` keeps the minimum of 1 everywhere else — and the default of 1 below describes the shapes that reach the database.",
           "type": "integer",
           "minimum": 0,
           "default": 1
