@@ -1191,9 +1191,16 @@ closed partition `m-unit-work` *Write value provenance* fixes:
   produced it, the same store or not.
 
 A case states the provenance and never how to obtain it. How an implementation
-retains which source produced a value is its own affair, so an adapter arranges a
-value of the stated provenance through its own managed reads — the same reason
-the vocabulary names sources rather than markers.
+retains which source produced a value is its own affair, so an adapter arranges
+each token by whatever makes its own classifier answer that token — the same
+reason the vocabulary names sources rather than markers. `thisSource` is a read
+through the source under test, which every implementation has. `anotherSource` is
+a value some **other** managed lifecycle produced, and an implementation shipping
+exactly one lifecycle cannot obtain one from a read at all; it arranges the value
+under a second lifecycle's own state instead. What the step observes is unchanged
+either way, and one requirement holds for every arrangement: the value MUST be
+one the implementation's own provenance classifier genuinely answers the stated
+token for, never a marker, a stub, or a substituted classifier.
 
 Such a step carries **no golden SQL** and declares `roundTrips: 0`: an accepted
 value's write is buffered rather than emitted, and a refused one reaches no
