@@ -217,6 +217,29 @@
       }
     },
     {
+      "description": "A scenario carrying a KEYED WRITE action step (`insert` / `update`) is `lane: api-conformance` throughout. What such a step observes is which verbs accept a live client-held VALUE of a stated provenance, which the wire harness can neither construct nor arrange, so it cannot execute the step at all — and a scenario is ONE ordered execution, not a set of steps to divide between executors. Assigning the whole case to the API Conformance Suite is therefore the only routing under which every step of it runs: a `harness` lane would leave the keyed step unexecuted while the rest ran, and an accepted keyed step's buffered write would go missing from the DML the later steps expect.",
+      "if": {
+        "required": ["when"],
+        "properties": {
+          "when": {
+            "required": ["scenario"],
+            "properties": {
+              "scenario": {
+                "contains": {
+                  "required": ["action"],
+                  "properties": { "action": { "enum": ["insert", "update"] } }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": ["lane"],
+        "properties": { "lane": { "const": "api-conformance" } }
+      }
+    },
+    {
       "description": "`then.roundTrips` may declare ZERO only for the two shapes that can cost nothing: a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way), and a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero. Every other shape asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
       "if": {
         "required": ["shape"],
@@ -601,7 +624,7 @@
                 ]
               },
               "value": {
-                "description": "insert / update action only (enforced by the sibling `allOf`, which also REQUIRES it there). The PROVENANCE of the value the step hands its keyed write verb, as m-unit-work *Write value provenance* partitions it: `unmanaged` — no managed read produced the value; `thisSource` — a read through the very source this verb writes through produced it; `anotherSource` — a read through some OTHER framework-managed source produced it, the same store or not. The case states the provenance and never how to obtain it: how an implementation retains which source produced a value is its own affair, so the adapter arranges a value of the stated provenance through its own managed reads.",
+                "description": "insert / update action only (enforced by the sibling `allOf`, which also REQUIRES it there). The PROVENANCE of the value the step hands its keyed write verb, as m-unit-work *Write value provenance* partitions it: `unmanaged` — no managed read produced the value; `thisSource` — a read through the very source this verb writes through produced it; `anotherSource` — a read through some OTHER framework-managed source produced it, the same store or not. The case states the provenance and never how to obtain it: how an implementation retains which source produced a value is its own affair, so the adapter arranges a value of the stated provenance through its own managed reads — a read through the source under test for `thisSource`, a read through a second framework-managed source it supplies for `anotherSource`, and no read at all for `unmanaged`.",
                 "enum": ["unmanaged", "thisSource", "anotherSource"]
               },
               "set": {
@@ -1038,7 +1061,7 @@
           ]
         },
         "roundTrips": {
-          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way). A `rejected` case costs zero too: its input is refused pre-SQL, so the top-level `allOf` pins it to 0 rather than merely admitting it. Those two shapes are the whole of the relaxation — the same `allOf` keeps the minimum of 1 everywhere else — and the default of 1 below describes the shapes that reach the database.",
+          "description": "Declared number of SQL statements for the operation. For a deep-fetch read case this MUST equal the number of authored/executed `then.statements` for each dialect; child SQL is omitted when an earlier level gathers no parent keys. For a writeSequence case it MUST equal the number of ordered DML statements; for a scenario case it MUST equal the SUM of the steps' per-step roundTrips — which is ZERO for a scenario whose every step costs none (a keyed write action step observes a value's provenance and emits no statement either way). A `rejected` case costs zero too: its input is refused pre-SQL, so the top-level `allOf` pins it to 0 rather than merely admitting it. Those two shapes are the whole of the relaxation — the same `allOf` keeps the minimum of 1 everywhere else — and the default of 1 below describes the shapes that reach the database, so a consumer deriving an effective count for an undeclared `rejected` case reads ZERO rather than that default.",
           "type": "integer",
           "minimum": 0,
           "default": 1

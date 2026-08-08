@@ -22,8 +22,9 @@ for the loop-mechanics branches.
   own `mutate` grading uses — an undeclared refusal and a declared expectation
   the verb never raised are both failures, never silently dropped observations.
 
-Every function here takes the live :class:`~parallax.snapshot.handle.Transaction`
-it drives and reaches no adapter of its own, so the same runner grades a case
+Every function here drives the live :class:`~parallax.snapshot.handle.Transaction`
+and the second source (:class:`~parallax.conformance.another_source.AnotherSource`)
+it is handed, and opens no connection of its own, so the same runner grades a case
 against a real database and against a fake port alike.
 """
 
@@ -35,14 +36,8 @@ from decimal import Decimal
 from typing import Any, Final, cast
 
 from parallax.conformance import case_format
-from parallax.conformance.story_models import ACCOUNT_MODEL, Account
-from parallax.core.entity import (
-    EntityAttributeInput,
-    EntityGraphWriter,
-    NodeHandle,
-    graph_construction_of,
-)
-from parallax.core.metamodel import AttributeIdentity
+from parallax.conformance.another_source import AnotherSource
+from parallax.conformance.story_models import Account
 from parallax.snapshot.handle import KeyedWriteValueError, Transaction
 
 __all__ = [
@@ -68,17 +63,6 @@ TARGET_ID: Final[int] = 2
 # Outside the fixture range, so a value no managed read produced cannot be
 # mistaken for one that was.
 UNMANAGED_ID: Final[int] = 91
-
-
-class _AnotherLifecycleState:
-    """The whole of another framework-managed source's per-node state, as far as
-    the provenance rule is concerned: state this Snapshot lifecycle did not
-    attach.
-
-    Empty because the rule asks nothing else of it. What distinguishes a foreign
-    value is that its lifecycle slot is occupied by something this Snapshot did
-    not put there, so the class needs no members to make the classifier answer
-    `anotherSource` — and giving it any would suggest the rule reads them."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +92,14 @@ def reachable_write_value_cases(
 
 
 def _is_write_value_case(case: case_format.Case) -> bool:
+    """Whether this runner grades ``case``, raising where nothing could.
+
+    A scenario carrying a keyed write action step is `api-conformance` throughout
+    (`m-case-format` *Keyed write action steps*), so this suite is the only
+    executor of every step in it. A neighbour this runner cannot drive therefore
+    leaves the case gradeable neither whole — nothing here runs a `find` — nor in
+    part, since a partial grade would report a pass for steps no executor ran.
+    """
     steps = _scenario_steps(case)
     keyed = [step for step in steps if step.get("action") in _WRITE_VALUE_ACTIONS]
     if not keyed:
@@ -115,8 +107,8 @@ def _is_write_value_case(case: case_format.Case) -> bool:
     if len(keyed) != len(steps):
         raise ValueError(
             f"{case.case_id}: a keyed write action step shares this scenario with a step no "
-            "keyed-write-value runner drives, so the case can be graded neither whole nor in "
-            "part"
+            "keyed-write-value runner drives; the case is api-conformance throughout, so no "
+            "other executor grades the rest and it can be graded neither whole nor in part"
         )
     return True
 
@@ -148,58 +140,31 @@ def write_value_steps(case: case_format.Case) -> list[WriteValueStep]:
     ]
 
 
-def value_of(provenance: str, tx: Transaction) -> Account:
-    """A value of the stated provenance, arranged through this runner's own
-    sources (`m-case-format` *Keyed write action steps*).
+def value_of(provenance: str, tx: Transaction, another: AnotherSource) -> Account:
+    """A value of the stated provenance, arranged through the source that
+    produces it (`m-case-format` *Keyed write action steps*).
 
-    ``unmanaged`` is a plainly constructed instance — no managed read produced
-    it. ``thisSource`` is read through ``tx`` itself, the very source the verb
-    under test writes through.
+    ``unmanaged`` is a plainly constructed instance — the one token no managed
+    read produced. ``thisSource`` is read through ``tx`` itself, the very source
+    the verb under test writes through. ``anotherSource`` is read through
+    ``another``, a second framework-managed source with its own materialization
+    and its own lifecycle state
+    (:mod:`~parallax.conformance.another_source`), because the Snapshot runtime
+    is one source and no read of it produces a foreign value (ADR 0010).
 
-    ``anotherSource`` is SYNTHESIZED rather than read: this runtime ships exactly
-    one managed lifecycle (ADR 0010), so no read it can perform produces a value
-    of another one. The value is a real ``Account`` materialized through the
-    core's own Entity Graph Construction seam under a lifecycle state of this
-    module's own — a second lifecycle's state, not a second lifecycle — which is
-    the whole of what the provenance classifier reads. Its members are literals
-    matching the fixture row, and nothing here decides what any of it means: the
-    production validator does.
+    Nothing here decides what any of it means: the production validator does.
     """
     if provenance == "unmanaged":
         return Account(id=UNMANAGED_ID, owner="Unmanaged", balance=Decimal("0.00"))
     if provenance == "thisSource":
         return tx.find(Account.where(Account.id == TARGET_ID)).result()
     if provenance == "anotherSource":
-        return _another_source_value()
+        (value,) = another.find(Account.where(Account.id == TARGET_ID))
+        return value
     raise ValueError(f"unrecognized value provenance {provenance!r}")
 
 
-def _another_source_value() -> Account:
-    def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        handle = writer.allocate(Account.identity)
-        writer.populate(
-            handle,
-            tuple(
-                EntityAttributeInput(AttributeIdentity(Account.identity, name), value)
-                for name, value in (
-                    ("id", TARGET_ID),
-                    ("owner", "Linus"),
-                    ("balance", Decimal("250.00")),
-                    ("version", 1),
-                )
-            ),
-            (),
-            (),
-        )
-        return (handle,)
-
-    (node,) = graph_construction_of(ACCOUNT_MODEL).construct(
-        build, state_factory=lambda _view, _handle: _AnotherLifecycleState()
-    )
-    return cast("Account", node)
-
-
-def grade_step(tx: Transaction, step: WriteValueStep) -> str | None:
+def grade_step(tx: Transaction, step: WriteValueStep, another: AnotherSource) -> str | None:
     """Drive ``step``'s verb over a value of its stated provenance and grade what
     the verb answered.
 
@@ -208,7 +173,7 @@ def grade_step(tx: Transaction, step: WriteValueStep) -> str | None:
     a declared expectation the verb never raised — is loud, never a silently
     dropped observation.
     """
-    value = value_of(step.provenance, tx)
+    value = value_of(step.provenance, tx, another)
     try:
         _apply(tx, step.action, value)
     except KeyedWriteValueError as refusal:
@@ -237,7 +202,9 @@ def _apply(tx: Transaction, action: str, value: Account) -> None:
         tx.update(value)
 
 
-def graded_outcomes(tx: Transaction, steps: Sequence[WriteValueStep]) -> list[str | None]:
+def graded_outcomes(
+    tx: Transaction, steps: Sequence[WriteValueStep], another: AnotherSource
+) -> list[str | None]:
     """Every step's graded outcome, in authored order — the observation a case
     run reports."""
-    return [grade_step(tx, step) for step in steps]
+    return [grade_step(tx, step, another) for step in steps]

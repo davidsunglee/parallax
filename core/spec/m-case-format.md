@@ -1191,24 +1191,38 @@ closed partition `m-unit-work` *Write value provenance* fixes:
   produced it, the same store or not.
 
 A case states the provenance and never how to obtain it. How an implementation
-retains which source produced a value is its own affair, so an adapter arranges
-each token by whatever makes its own classifier answer that token — the same
-reason the vocabulary names sources rather than markers. `thisSource` is a read
-through the source under test, which every implementation has. `anotherSource` is
-a value some **other** managed lifecycle produced, and an implementation shipping
-exactly one lifecycle cannot obtain one from a read at all; it arranges the value
-under a second lifecycle's own state instead. What the step observes is unchanged
-either way, and one requirement holds for every arrangement: the value MUST be
-one the implementation's own provenance classifier genuinely answers the stated
-token for, never a marker, a stub, or a substituted classifier.
+retains which source produced a value is its own affair, so an adapter arranges a
+value of the stated provenance through its own managed reads — the same reason
+the vocabulary names sources rather than markers. `thisSource` is a read through
+the source under test, which every implementation has. `anotherSource` is a read
+through a **second** framework-managed source; an implementation whose runtime is
+one lifecycle **supplies** that second source for the arrangement — the source
+being machinery that materializes values from reads and recognizes its own
+(`m-unit-work`), not a shipped product. `unmanaged` is the one token no read
+arranges, being the absence of one.
+
+A value the named read did not produce witnesses nothing, however the
+implementation's own classifier answers for it: a marker, a stub, a synthesized
+lifecycle state, and a substituted classifier all arrange the **token** rather
+than the value. An implementation that can arrange no second source therefore
+does not witness `anotherSource` at all, and says so, rather than presenting a
+value it built to be classified.
 
 Such a step carries **no golden SQL** and declares `roundTrips: 0`: an accepted
 value's write is buffered rather than emitted, and a refused one reaches no
-statement at all. Its observable is the per-step `expectError`, which makes every
-keyed write action step **adapter-delegated** — the wire harness validates the
-step and skips grading it, exactly as it skips a whole `api-conformance`-lane
-case. A step that declares no `expectError` asserts the value is **accepted**:
-the verb takes it, raises nothing, and the write joins the unit of work's buffer.
+statement at all. Its observable is the per-step `expectError`, and a step that
+declares no `expectError` asserts the value is **accepted**: the verb takes it,
+raises nothing, and the write joins the unit of work's buffer.
+
+A scenario carrying one is `lane: api-conformance` **throughout**, and the schema
+requires it. The wire harness holds no client value to hand a verb, so it can
+neither arrange the step's provenance nor execute the step; and a scenario is
+**one ordered execution**, not a set of steps to divide between executors — a
+`harness` lane would run the neighbours while this step never ran, and an
+accepted keyed step's buffered write would go missing from the DML those
+neighbours expect. So the API Conformance Suite runs the whole case
+(`m-conformance-adapter`, `m-api-conformance`), which is what makes grading it in
+part a reported pass for steps that never ran.
 
 ```yaml
 - action: update

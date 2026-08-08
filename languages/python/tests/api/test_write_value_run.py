@@ -20,6 +20,7 @@ import pytest
 
 from _support.corpus import case_fixtures
 from parallax.conformance import case_format, engine, write_value_runner
+from parallax.conformance.another_source import AnotherSource
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Account
 from parallax.snapshot import connect
@@ -34,11 +35,16 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     case: case_format.Case, provisioner: Any
 ) -> None:
     provisioner.reset(engine.load_case_metamodel(case), case_fixtures(case))
-    db = connect(provisioner.port, MODELS[Path(case.model).stem])
+    model = MODELS[Path(case.model).stem]
+    db = connect(provisioner.port, model)
+    # A `anotherSource` value is read through this second managed source, which
+    # materializes and recognizes its own independently of the Snapshot lifecycle
+    # the verbs under test write through.
+    another = AnotherSource(model, provisioner.port)
     steps = write_value_runner.write_value_steps(case)
 
     def fn(tx: Transaction) -> list[str | None]:
-        return write_value_runner.graded_outcomes(tx, steps)
+        return write_value_runner.graded_outcomes(tx, steps, another)
 
     assert db.transact(fn) == [step.expect_error for step in steps]
     # The fixture row stands exactly as it was loaded whatever the case's steps

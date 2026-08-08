@@ -1041,13 +1041,14 @@ def test_the_keyed_entity_class_guard_still_accepts_its_own_models_instance() ->
 # unchanged stored value that is no refusal at all.                            #
 # --------------------------------------------------------------------------- #
 def _foreign_lifecycle_account() -> mm.Account:
-    """An `Account` carrying ANOTHER framework-managed source's lifecycle state.
+    """An `Account` carrying lifecycle state this Snapshot did not attach.
 
-    Synthesized rather than read: this runtime ships one managed lifecycle (ADR
-    0010), so the value is built through the core's own Entity Graph Construction
-    seam under a state factory of its own. That gives it a second lifecycle's
-    state, which is the whole of what the provenance classifier reads, and not a
-    second lifecycle.
+    Built rather than read, because the seam under test asks one question and the
+    value's members are not part of it: is there managed state, and is it this
+    lifecycle's? What a value with a foreign answer is refused for is pinned here;
+    that a value ANOTHER framework-managed source actually produced is refused is
+    pinned by the corpus (`m-unit-work-019`, arranged through
+    `parallax.conformance.another_source`).
     """
 
     def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
@@ -1074,7 +1075,7 @@ def _foreign_lifecycle_account() -> mm.Account:
 
 
 class _OtherLifecycleState:
-    """The whole of another lifecycle's per-node state, as far as this rule is
+    """The whole of another source's per-node state, as far as this rule is
     concerned: something this Snapshot did not attach."""
 
 
@@ -1109,7 +1110,7 @@ def test_insert_of_a_value_this_store_produced_names_the_update_verb() -> None:
 
 
 @pytest.mark.parametrize("verb", ["insert", "update"], ids=["insert", "update"])
-def test_a_value_another_lifecycle_produced_is_refused_by_both_families(verb: str) -> None:
+def test_a_value_carrying_another_sources_state_is_refused_by_both_families(verb: str) -> None:
     # A value's stored counterpart is only the one the writing source itself
     # produced, so neither family accepts another source's value — and the
     # raising port proves the refusal precedes every adapter call.
