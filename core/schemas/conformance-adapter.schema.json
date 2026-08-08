@@ -196,7 +196,7 @@
       }
     },
     "errorObservation": {
-      "description": "A raised-application-error observation (m-conformance-adapter, COR-30): the verb at case position `at` raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-detach / m-identity-map). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
+      "description": "A raised-application-error observation (m-conformance-adapter, COR-30): the verb at case position `at` raised the neutral application-lifecycle error `errorClass`, from the closed vocabulary the case's `expectError` names (m-detach / m-identity-map / m-unit-work). Distinct from the m-db-error taxonomy; `native` optionally carries the implementation's raw error payload as an unconstrained witness.",
       "type": "object",
       "additionalProperties": false,
       "required": ["at", "errorClass"],
@@ -206,7 +206,13 @@
         },
         "errorClass": {
           "type": "string",
-          "enum": ["detached-relationship-load", "transaction-time-pin-read-only"]
+          "enum": [
+            "detached-relationship-load",
+            "transaction-time-pin-read-only",
+            "write-value-not-stored",
+            "write-value-already-stored",
+            "write-value-foreign-lifecycle"
+          ]
         },
         "native": {}
       }
