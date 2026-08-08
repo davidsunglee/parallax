@@ -34,6 +34,7 @@ what the `rejected` cases pin — the refusal each language implementation must 
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from .case import Entity
@@ -85,6 +86,26 @@ def framework_owned_names(entity: Entity) -> frozenset[str]:
     if tag is not None:
         names.add(tag[0])
     return frozenset(names)
+
+
+# The framework control keys a case-format write row may carry beside its members
+# (`compatibility-case.schema.json` `$defs/writeRow`): flush-time observation
+# context, not a declared member. The canonical durable instruction forbids them
+# outright, so a row that may not carry one is already refused at schema validation.
+_ROW_CONTROL_KEYS = frozenset({"observedVersion"})
+
+
+def undeclared_members(entity: Entity, row: Mapping[str, Any]) -> list[str]:
+    """The keys *row* names that *entity* declares no member for, sorted.
+
+    Read from the same declarations :func:`validate_write` walks — *entity*'s
+    ancestry-effective Attributes and Value Objects — so the names a row may carry
+    and the positions a row is graded against are provably one set, and a concrete
+    subtype's row may name an inherited member (`m-inheritance`).
+    """
+    declared = {attribute["name"] for attribute in entity.attributes}
+    declared.update(value_object["name"] for value_object in entity.value_objects)
+    return sorted(key for key in row if key not in declared and key not in _ROW_CONTROL_KEYS)
 
 
 def validate_write(entity: Entity, row: dict[str, Any]) -> None:

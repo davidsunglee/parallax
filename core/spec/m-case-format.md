@@ -1505,39 +1505,63 @@ in **declaration order** — every declared Attribute, then every declared Value
 Object, each document depth-first. Declaration order is normative: it makes the rule
 a row of two defects violates a property of the *model* rather than of the row's
 authoring order, so two implementations classify one row identically. The row is
-graded as a **full document** — it carries no mutation to make it sparse — and every
-key it names that the target does not declare is ignored, since an undeclared name
-resolves to no position with a rule to violate.
+graded as a **full document** — it carries no mutation to make it sparse.
+
+Every key it names must name a declared member. A key that names none resolves to no
+position, so no rule of the closed vocabulary is *about* it, and grading the row
+regardless would report whichever rule some other member happens to violate — the
+case would pass while testing something it never claimed. Such a row is therefore a
+**case-authoring failure**, refused before the walk and never classified as a
+`rejectedRule`, exactly as the keyed instruction form's rows are. The one key that is
+not a member is `observedVersion`, which the shared row vocabulary admits as
+flush-time context. The refusal is asked **after** the Subtype-write rules below,
+which own the family-specific names a row may not carry and classify them.
 
 Each position is one of six declared kinds, and the value authored at it falls in
 one of five classes. The cells are the complete enumeration:
 
-| declared position | absent | explicit `null` | in-space literal | out-of-space value | non-scalar where a document is declared, or the converse |
+| declared position | absent | explicit `null` | admitted value | out-of-space scalar | value the position cannot hold |
 | --- | --- | --- | --- | --- | --- |
-| Attribute, `nullable: false` | `write-required-attribute-missing` | `write-required-attribute-missing` | accepted | `write-value-type-mismatch` | `write-value-type-mismatch` |
-| Attribute, `nullable: true` | accepted | accepted | accepted | `write-value-type-mismatch` | `write-value-type-mismatch` |
-| Value Object `one`, `nullable: false` | `write-required-value-object-missing` | `write-required-value-object-missing` | — | — | `write-value-type-mismatch` |
-| Value Object `one`, `nullable: true` | accepted | accepted | — | — | `write-value-type-mismatch` |
-| Value Object `many` | accepted (the empty collection) | `write-required-value-object-missing` | — | — | `write-value-type-mismatch` |
+| Attribute, `nullable: false` | `write-required-attribute-missing` | `write-required-attribute-missing` | accepted — an in-space scalar literal | `write-value-type-mismatch` | `write-value-type-mismatch` |
+| Attribute, `nullable: true` | accepted | accepted | accepted — an in-space scalar literal | `write-value-type-mismatch` | `write-value-type-mismatch` |
+| Value Object `one`, `nullable: false` | `write-required-value-object-missing` | `write-required-value-object-missing` | accepted — a document | — | `write-value-type-mismatch` |
+| Value Object `one`, `nullable: true` | accepted | accepted | accepted — a document | — | `write-value-type-mismatch` |
+| Value Object `many` | accepted (the empty collection) | `write-required-value-object-missing` | accepted — a list of documents, `[]` included | — | `write-value-type-mismatch` |
 | framework-owned Attribute | accepted | accepted | accepted | accepted | accepted |
 
 Reading the columns:
 
-- **In-space** is membership of the declared neutral type's value space as its
-  **portable literal** spells it (`m-core`, `m-document-codec`) — the closed
-  vocabulary the metamodel schema fixes, with nothing outside it. An integer beyond
-  its declared width, a decimal the declared precision and scale cannot hold
-  exactly, a malformed ISO-8601 or UUID or hex spelling, and a sub-microsecond
-  temporal literal are all **out of space**, not merely of the wrong shape.
-- A **DB-computed marker** (`{computed: …}` / `{increment: …}`) is in-space at a
-  scalar Attribute and out of space anywhere else. The disambiguation is by the
-  position's declared metamodel ROLE, never by the value's shape, so a marker-shaped
-  value inside a value-object document is a document field like any other.
-- The last column is the multiplicity and document rules: a `one` occurrence binds a
-  document, a `many` occurrence binds a list **of documents**, and a scalar standing
-  at either — or a non-document element inside a `many` list — is a value the
-  position cannot hold. It is a **type mismatch**, not an absence: the member was
-  named, so no required-ness rule is what it violates.
+- **Admitted value** is what the position holds: an in-space scalar literal at an
+  Attribute, one document at a `one` occurrence, a list of documents at a `many` one.
+  A present document is not a leaf verdict — each member inside it answers its own
+  row of this table, which is how the three rules hold at any depth.
+- **In-space** is membership of the declared neutral type's value space, asked of the
+  **portable literal** the case authors: the literal is in space when it *decodes* to
+  a member (`m-core`, `m-document-codec`). Decoding is **many-to-one** where the
+  document encoding is one-to-one — a value is stored in exactly one canonical
+  spelling, while every spelling naming that value decodes to it — so a
+  non-canonical but unambiguous literal is in space and stores as the canonical
+  form. A `bytes` and a `uuid` literal are hexadecimal in **either digit case**, a
+  `uuid`'s hyphens are optional, a `time` needs no zero-padded seconds, and a
+  `timestamp` may carry any UTC offset.
+- **Out of space** is a literal that decodes to no member: an integer beyond its
+  declared width; a number no float of the declared width represents **exactly** —
+  an integer literal names a value, so `16777217` is no `float32` and
+  `9007199254740993` no `float64`, and a magnitude the width cannot hold, such as
+  `1e100` at a `float32`, is no member either; a decimal the declared precision and
+  scale cannot hold exactly; text with no UTF-8 encoding; a hexadecimal string with
+  an odd digit count or a separator; a malformed ISO-8601 or UUID spelling; and a
+  temporal literal carrying non-zero sub-microsecond precision.
+- A **DB-computed marker** (`{computed: …}` / `{increment: …}`) is admitted at a
+  scalar Attribute and is a value no other position can hold. The disambiguation is
+  by the position's declared metamodel ROLE, never by the value's shape, so a
+  marker-shaped value inside a value-object document is a document field like any
+  other.
+- **A value the position cannot hold** is the multiplicity and document rules: a
+  non-document at a `one` occurrence, a non-list at a `many` one, a non-document
+  element inside a `many` list, and a document or list at a scalar Attribute. It is a
+  **type mismatch**, not an absence: the member was named, so no required-ness rule
+  is what it violates.
 - A **framework-owned** Attribute (the optimistic-lock version, an As-Of Axis
   endpoint, a table-per-hierarchy tag column) is outside the walk entirely: the
   framework supplies its value, so its absence is no caller omission. A payload that

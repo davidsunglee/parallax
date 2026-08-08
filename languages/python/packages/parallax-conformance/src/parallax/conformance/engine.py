@@ -4723,6 +4723,11 @@ def run_rejected_case(case: case_format.Case) -> str:
         return _rejected_keyed_write(case, row, model)
     target = case_entity(model, meta.entity(_rejected_target(meta)))
     try:
+        inheritance.validate_subtype_write(model, target, row)
+    except inheritance.InheritanceError as exc:
+        return exc.rule
+    _reject_undeclared_bare_row_members(case, target, row, model)
+    try:
         validate_write(target, decode_write_row(target, row, model), model)
     except WriteRejectedError as exc:
         return exc.rule
@@ -4730,6 +4735,52 @@ def run_rejected_case(case: case_format.Case) -> str:
         f"{case.path.name}: the model-aware validator accepted a write the case expects "
         "rejected pre-SQL"
     )
+
+
+# The framework control key a case-format write row may carry beside its members
+# (`compatibility-case.schema.json` `$defs/writeRow`): flush-time observation
+# context, never a declared member. The canonical durable instruction forbids it, so
+# a row that may not carry one is already refused at schema validation.
+_ROW_CONTROL_KEYS: Final[frozenset[str]] = frozenset({"observedVersion"})
+
+
+def _reject_undeclared_bare_row_members(
+    case: case_format.Case,
+    target: EntityMetadata,
+    row: Mapping[str, object],
+    model: AcceptedMetamodel,
+) -> None:
+    """Refuse a bare `when.write` row naming members ``target`` does not declare.
+
+    Member honesty is a case-authoring judgement, not a violated normative MUST: an
+    undeclared name resolves to no declared position, so no rule of the closed
+    `then.rejectedRule` vocabulary is about it, and grading the row anyway reports
+    whichever rule some OTHER member happens to violate — a case that passes while
+    testing something it never claimed. The keyed instruction lane refuses the same
+    way (`instructions.validate_instruction`), so one neutral write row is judged one
+    way whichever form carries it.
+
+    Asked AFTER the concrete-subtype protocol (run just above, which is why this lane
+    calls it explicitly rather than leaving it to `validate_write`'s own first pass):
+    `m-inheritance` orders those rules first, and they own the family-specific names
+    a row may not carry — the tag column and the `tag` / `tagValue` / `familyVariant`
+    handles as `subtype-write-metadata-field`, a sibling branch's attribute as
+    `subtype-write-sibling-attribute` — which are classified rules rather than
+    authoring defects. It is asked BEFORE the declared-member walk so that a row
+    carrying both an undeclared name and a real defect is refused rather than graded
+    on the defect.
+    """
+    view = inheritance.view(model).entity(target.identity)
+    if view is None:  # pragma: no cover - the facet covers every accepted Entity
+        return
+    declared = {attribute.identity.name for attribute in view.applicable_attributes}
+    declared.update(vo.identity.path[-1] for vo in view.applicable_value_objects)
+    unknown = sorted(key for key in row if key not in declared and key not in _ROW_CONTROL_KEYS)
+    if unknown:
+        raise EngineError(
+            f"{case.path.name}: the bare write row names {unknown}, which are not "
+            f"attributes or value objects of {target.identity.name}"
+        )
 
 
 def _rejected_keyed_write(

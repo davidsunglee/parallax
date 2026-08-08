@@ -178,6 +178,8 @@ JSON: Final[Json] = Json()
 _INT32_BOUNDS: Final[tuple[int, int]] = (-(2**31), 2**31 - 1)
 _INT64_BOUNDS: Final[tuple[int, int]] = (-(2**63), 2**63 - 1)
 
+_HEX_DIGITS: Final[frozenset[str]] = frozenset("0123456789abcdefABCDEF")
+
 
 def matches_neutral_type(value: object, declared: NeutralType) -> bool:
     """Whether ``value`` is a member of ``declared``'s logical value space.
@@ -234,11 +236,15 @@ def matches_neutral_type(value: object, declared: NeutralType) -> bool:
 def decode_neutral_literal(value: object, declared: NeutralType) -> object:
     """``value`` as a carrier of ``declared``'s value space, when it spells one.
 
-    The inverse of the portable literal encoding: a JSON number spells a
+    The inverse of the portable literal encoding, and MANY-TO-ONE where the
+    encoding is one-to-one: a value is stored in exactly one canonical spelling,
+    while every spelling that names it decodes here. A JSON number spells a
     :class:`Decimal` and, when some float of the target width carries it
     exactly, a :class:`Float32` or :class:`Float64`; an ISO-8601 string spells a
-    :class:`Date`, :class:`Time`, or :class:`Timestamp`, a canonical UUID string
-    spells a :class:`Uuid`, and a lowercase-hex string spells :class:`Bytes`.
+    :class:`Date`, :class:`Time`, or :class:`Timestamp` whatever its offset and
+    however its optional fields are spelled; a UUID string spells a
+    :class:`Uuid` in either digit case; and a hexadecimal string spells
+    :class:`Bytes` in either digit case, two digits per octet with no separator.
     A :class:`Decimal` additionally spells as an exact digit STRING, which is the
     one literal a JSON number cannot carry — no JSON number declares a scale, so
     that is the form a structured document stores
@@ -259,7 +265,8 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
 
     Total and nonthrowing: a value that is not a literal of ``declared`` — a
     malformed spelling, a truth value where a number belongs, an integer no
-    float of the width represents exactly, a :class:`Time` or :class:`Timestamp`
+    float of the width represents exactly, a hexadecimal string carrying a
+    separator or an odd digit count, a :class:`Time` or :class:`Timestamp`
     literal carrying non-zero sub-microsecond precision, or an unrelated
     object — is returned unchanged, so :func:`matches_neutral_type` alone decides
     membership and this function never truncates, overflows, or classifies a
@@ -282,7 +289,7 @@ def decode_neutral_literal(value: object, declared: NeutralType) -> object:
         case Decimal() if isinstance(value, str):
             return _decoded_decimal(value)
         case Bytes() if isinstance(value, str):
-            return _decoded(bytes.fromhex, value)
+            return _decoded_octets(value)
         case Date() if isinstance(value, str):
             return _decoded(_dt.date.fromisoformat, value)
         case Time() if isinstance(value, str):
@@ -382,6 +389,22 @@ def _decoded[T](decode: Callable[[str], T], literal: str) -> T | str:
         return decode(literal)
     except ValueError:
         return literal
+
+
+def _decoded_octets(literal: str) -> bytes | str:
+    """A hexadecimal octet literal decoded, or the literal itself when it is not one.
+
+    Separate from :func:`_decoded` because ``bytes.fromhex`` additionally skips ASCII
+    whitespace, and a separator is no part of the spelling: the portable literal is
+    two hexadecimal digits per octet with no prefix and no separator, so ``"0a 1b"``
+    names no octet sequence and decodes to itself for
+    :func:`matches_neutral_type` to refuse. Digit CASE does carry no information, so
+    ``"0A1B"`` and ``"0a1b"`` decode to the same octets and encode back to the
+    lowercase spelling.
+    """
+    if any(character not in _HEX_DIGITS for character in literal):
+        return literal
+    return _decoded(bytes.fromhex, literal)
 
 
 def _decoded_decimal(literal: str) -> _decimal.Decimal | str:

@@ -1211,10 +1211,14 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
     assert exc.value.rule == WRITE_VALUE_TYPE_MISMATCH
 
 
-# The neutral type vocabulary is CLOSED, and membership is of the PORTABLE literal
-# each space encodes to. A value of the right JSON kind but outside the space —
-# an integer beyond its width, a decimal the scale cannot hold, a malformed
-# spelling, a sub-microsecond instant — is a mismatch, not an accepted near-miss.
+# The neutral type vocabulary is CLOSED, and membership asks whether the authored
+# PORTABLE literal decodes to a value of the space. Decoding is many-to-one where the
+# document encoding is one-to-one, so the two directions are pinned together: a
+# non-canonical spelling that names a value is a member (uppercase hex, a hyphenless
+# or wrapped UUID, an unpadded time, a non-UTC offset), while a literal that names no
+# value is not (an integer beyond its width, a number no float of the width holds
+# exactly, a decimal the scale cannot hold, text with no UTF-8 encoding, a separator
+# inside a hex spelling, a malformed spelling, a sub-microsecond instant).
 @pytest.mark.parametrize(
     ("neutral_type", "value", "matches"),
     [
@@ -1227,31 +1231,68 @@ def test_db_computed_marker_is_exempt_at_a_scalar_and_refused_in_a_document() ->
         ("int64", 2**63, False),
         ("float64", 1.5, True),
         ("float64", "1.5", False),
+        ("float64", True, False),
+        ("float64", 9007199254740992, True),
+        ("float64", 9007199254740993, False),
+        ("float64", 1.7976931348623157e308, True),
+        ("float32", 1.5, True),
+        ("float32", 16777216, True),
+        ("float32", 16777217, False),
+        ("float32", 2**31 - 1, False),
+        ("float32", 1e100, False),
+        ("float32", 1.7976931348623157e308, False),
         ("string", "s", True),
         ("string", 1, False),
+        ("string", "\ud800", False),
         ("decimal(4,2)", "12.34", True),
         ("decimal(4,2)", 12, True),
         ("decimal(4,2)", "12.345", False),
         ("decimal(4,2)", "123.45", False),
         ("decimal(4,2)", "not-a-decimal", False),
         ("bytes", "00ff", True),
+        ("bytes", "00FF", True),
+        ("bytes", "0a1B", True),
+        ("bytes", "", True),
         ("bytes", "0f0", False),
-        ("bytes", "00FF", False),
+        ("bytes", "00 ff", False),
+        ("bytes", "0z", False),
         ("date", "2024-01-01", True),
         ("date", "not-a-date", False),
         ("time", "12:00:00", True),
+        ("time", "12:00", True),
         ("time", "12:00:00+00:00", False),
         ("timestamp", "2024-01-01T00:00:00+00:00", True),
+        ("timestamp", "2024-01-01T00:00:00+02:00", True),
         ("timestamp", "2024-01-01T00:00:00", False),
         ("timestamp", "2024-01-01T00:00:00.1234567+00:00", False),
         ("timestamp", "2024-01-01T00:00:00.1234560+00:00", True),
         ("uuid", "123e4567-e89b-12d3-a456-426614174000", True),
+        ("uuid", "123E4567-E89B-12D3-A456-426614174000", True),
+        ("uuid", "123e4567e89b12d3a456426614174000", True),
+        ("uuid", "urn:uuid:123e4567-e89b-12d3-a456-426614174000", True),
         ("uuid", "not-a-uuid", False),
         ("json", {"any": "value"}, True),
     ],
 )
 def test_portable_literal_membership(neutral_type: str, value: Any, matches: bool) -> None:
     assert literal_matches_type(value, neutral_type) is matches
+
+
+def test_the_case_format_leaf_encoding_witness_authors_decodable_spellings() -> None:
+    # Every spelling `m-document-codec-001` authors is a member of its declared type
+    # even though the document stores a different, canonical spelling for four of
+    # them. Grading membership against the STORED form instead would refuse the one
+    # case whose whole subject is that the two differ.
+    authored = {
+        "bytes": "0A1B",
+        "uuid": "123E4567-E89B-12D3-A456-426614174000",
+        "time": "09:30",
+        "timestamp": "2026-01-15T11:30:00+02:00",
+        "decimal(6,2)": 5,
+    }
+    assert all(
+        literal_matches_type(value, neutral_type) for neutral_type, value in authored.items()
+    )
 
 
 # --- the runner FAILS on a mis-authored rejected case -----------------------
@@ -1315,6 +1356,64 @@ def test_runner_fails_a_handleless_input_against_a_multi_family_model() -> None:
     case = Case(path=Path("m-value-object-998-x.yaml"), raw=raw, model=model)
     with pytest.raises(CaseFailure, match="no default write root"):
         run_case(case, None)  # type: ignore[arg-type]
+
+
+def _bare_row_case(model_rel: str, row: dict[str, Any], rule: str) -> Case:
+    from reference_harness.case import Model
+
+    model = load_model(_COMPATIBILITY_ROOT, model_rel)
+    assert isinstance(model, Model)
+    raw = {
+        "model": model_rel,
+        "tags": ["m-value-object"],
+        "shape": "rejected",
+        "when": {"write": row},
+        "then": {"rejectedRule": rule},
+    }
+    return Case(path=Path("m-value-object-997-x.yaml"), raw=raw, model=model)
+
+
+def test_runner_fails_a_bare_row_naming_an_undeclared_member() -> None:
+    # An undeclared name resolves to no declared position, so no rule of the closed
+    # vocabulary is about it. Grading the row anyway reports whichever rule some OTHER
+    # member violates — here the missing required `owner` — and the case passes while
+    # testing a member it never named. The keyed instruction form refuses the same
+    # way, so one neutral write row is judged one way whichever form carries it.
+    case = _bare_row_case(
+        "models/account.yaml",
+        {"id": 1, "balance": "10.00", "bogus": 1},
+        WRITE_REQUIRED_ATTRIBUTE_MISSING,
+    )
+    with pytest.raises(CaseFailure, match=r"names \['bogus'\]"):
+        run_case(case, None)  # type: ignore[arg-type]
+
+
+def test_a_bare_row_carries_the_shared_observation_control_key() -> None:
+    # `observedVersion` is flush-time context the shared row vocabulary admits at
+    # every row position, so it is not a member name to refuse. The row below is
+    # graded on its declared members alone, which is why the missing `owner` is what
+    # the runner reports.
+    case = _bare_row_case(
+        "models/account.yaml",
+        {"id": 1, "balance": "10.00", "observedVersion": 3},
+        WRITE_REQUIRED_ATTRIBUTE_MISSING,
+    )
+    run_case(case, None)  # type: ignore[arg-type]
+
+
+def test_the_subtype_protocol_classifies_the_family_names_member_honesty_would_claim() -> None:
+    # `tagValue` names no declared member either, but `m-inheritance` orders the
+    # payload-shape rules first and gives it a rule of its own. Asking member honesty
+    # before them would report a case-authoring failure for an input the corpus grades
+    # as `subtype-write-metadata-field` (m-inheritance-087).
+    from reference_harness.inheritance import SUBTYPE_WRITE_METADATA_FIELD
+
+    case = _bare_row_case(
+        "models/payment.yaml",
+        {"id": 1, "amount": "10.00", "tagValue": "card"},
+        SUBTYPE_WRITE_METADATA_FIELD,
+    )
+    run_case(case, None)  # type: ignore[arg-type]
 
 
 # --- the _assert_schema XOR guard: EXACTLY ONE of operation/write ------------

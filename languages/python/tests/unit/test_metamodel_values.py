@@ -332,7 +332,12 @@ def _runtime_member(value: object, declared: base.NeutralType) -> bool:
         ("123e4567-e89b-12d3-a456-426614174000", base.UUID, True),
         ("not-a-uuid", base.UUID, False),
         ("deadbeef", base.BYTES, True),
+        ("DEADBEEF", base.BYTES, True),
+        ("dEaDbEeF", base.BYTES, True),
+        ("", base.BYTES, True),
         ("not-hex", base.BYTES, False),
+        ("dead beef", base.BYTES, False),
+        ("deadbee", base.BYTES, False),
         ("2026-01-01", base.DATE, True),
         ("2026-01-01T00:00:00+00:00", base.TIMESTAMP, True),
         ("2026-01-01T00:00:00.123456+00:00", base.TIMESTAMP, True),
@@ -360,6 +365,19 @@ def test_runtime_neutral_membership_is_exact_lossless_and_total(
     value: object, declared: base.NeutralType, expected: bool
 ) -> None:
     assert _runtime_member(value, declared) is expected
+
+
+def test_a_hexadecimal_literal_carries_no_separator() -> None:
+    # `bytes.fromhex` additionally skips ASCII whitespace, which the portable literal
+    # is not: two hexadecimal digits per octet, no prefix and no separator. A spelling
+    # carrying one names no octet sequence, so it decodes to itself and membership
+    # refuses it rather than silently reading it as the octets around the separator.
+    assert base.decode_neutral_literal("0a 1b", base.BYTES) == "0a 1b"
+    assert base.decode_neutral_literal("0a1b", base.BYTES) == b"\x0a\x1b"
+    # Digit case carries no information in the DECODE, and the encoding stores the
+    # lowercase spelling — the direction `m-document-codec-001` writes `0A1B` and
+    # reads back as `0a1b`.
+    assert base.decode_neutral_literal("0A1B", base.BYTES) == b"\x0a\x1b"
 
 
 def test_an_exact_decimal_string_is_a_decimal_literal_too() -> None:
