@@ -9,6 +9,7 @@ any execution.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, cast
 
 import pytest
@@ -16,6 +17,7 @@ import pytest
 from parallax.conformance import engine
 from parallax.core.db_error import DatabaseError
 from parallax.core.execution_log import (
+    DatabaseCall,
     ExecutionLogBuilder,
     ReadCompleted,
     ReadTrace,
@@ -89,7 +91,8 @@ def test_a_rolled_back_attempt_renders_its_failure_and_the_call_it_names() -> No
         builder.current.write_batch("finalization") as batch,
     ):
         batch.completed(_WRITE, "write", 1, WriteCompleted(0))
-        raise RuntimeError("the enforcement rejected it")
+        with batch.enforcing():
+            raise RuntimeError("the enforcement rejected it")
     builder.current.failed(RuntimeError("the enforcement rejected it"))
     builder.attempt_failed(RuntimeError("the enforcement rejected it"), retry_eligible=True)
     builder.seal()
@@ -103,6 +106,31 @@ def test_a_rolled_back_attempt_renders_its_failure_and_the_call_it_names() -> No
         "retryEligible": True,
         "databaseCall": 0,
     }
+
+
+def test_the_call_a_failure_names_is_found_by_identity_rather_than_by_equality() -> None:
+    # An EQUAL call is not the referenced call: two runs of one statement whose
+    # durations tied would otherwise render the first call's index for a failure
+    # about the second, naming the wrong statement while staying in range.
+    builder = _builder()
+    builder.attempt_opened()
+    with builder.current.write_batch("finalization") as batch:
+        batch.completed(_WRITE, "write", 1, WriteCompleted(1))
+    builder.current.failed(RuntimeError("planning the next batch failed"))
+    state = _attempt_state(builder.view().final_attempt)
+    state.failure = replace(
+        state.failure, database_call=DatabaseCall(_WRITE, "write", 1, WriteCompleted(1))
+    )
+    builder.seal()
+
+    with pytest.raises(engine.EngineError, match="`databaseCall` index would"):
+        engine.execution_observation(builder.view(), _emissions(1))
+
+
+def _attempt_state(attempt: Any) -> Any:
+    # The view and its recorder share one state object, which is module-private
+    # by construction; this reaches it the way the module's own builder does.
+    return attempt._state
 
 
 def test_a_failure_carrying_a_provider_code_renders_it_beside_the_phase() -> None:
@@ -162,9 +190,9 @@ def test_an_attempt_the_run_left_active_is_refused_rather_than_rendered() -> Non
         engine.execution_observation(builder.view(), _emissions(1))
 
 
-def test_an_empty_read_trace_renders_a_zero_round_trip_record() -> None:
-    # The non-empty invariant governs what a LOG holds; the renderer states
-    # whatever it is handed, so a caller cannot smuggle an empty trace past it
-    # by looking like a full one.
-    observed = cast("dict[str, Any]", engine.execution_observation(ReadTrace(()), []))
-    assert observed["readTrace"] == {"calls": [], "roundTrips": 0}
+def test_the_renderer_can_never_be_handed_an_empty_read_trace() -> None:
+    # The non-empty invariant is a construction-time refusal rather than a rule
+    # the renderer restates, so a zero-round-trip trace that looked structurally
+    # like a full one can never reach an observation at all.
+    with pytest.raises(ValueError, match="Read Trace proves work"):
+        ReadTrace(())

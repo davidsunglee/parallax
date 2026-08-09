@@ -73,6 +73,17 @@ class RolledBackJoin:
 
 
 def a_joined_unit_of_work_appends_to_the_outer_live_log(db: Database) -> JoinedLog:
+    """A joined write reaches the database under the OUTER boundary's own
+    finalization, and the joined result reads the outer transaction's live log.
+
+    ``db`` is connected to the story model and holds the seeded account row the
+    joined body bumps. The returned ``JoinedLog`` carries what the terminal
+    oracle cannot state — the attempt's status before any work completed, the
+    trace count either side of the join, that the joined result exposed the same
+    log OBJECT rather than a copy, that the log was still unsealed, and the name
+    of the refusal its execution view raised while the outer boundary ran —
+    beside the committed invocation's own result.
+    """
     seen: list[LiveJoin] = []
 
     def outer(tx: Transaction) -> ExecutionLog:
@@ -116,6 +127,15 @@ def a_joined_unit_of_work_appends_to_the_outer_live_log(db: Database) -> JoinedL
 def a_joined_result_of_a_rolled_back_transaction_has_no_execution(
     db: Database,
 ) -> RolledBackJoin:
+    """A joined result retained past an outer transaction that rolled back keeps
+    refusing its execution view, under a refusal DISTINCT from the running one.
+
+    ``db`` carries the same requirement as the committed story. The outer body
+    aborts AFTER the joined body returned normally, which is the only arrangement
+    that reaches this state: the join produced a result, yet the transaction it
+    joined never committed. The returned ``RolledBackJoin`` carries that retained
+    result and the refusal name; the outer abort itself is swallowed here.
+    """
     retained: list[TransactionResult[None]] = []
 
     def outer(tx: Transaction) -> None:

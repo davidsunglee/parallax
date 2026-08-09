@@ -432,8 +432,7 @@ def run_read_case(
     dialect = dialect_for(dialect_name)
     # The call is bracketed into a production Read Trace rather than counted
     # locally, so the round trips this lane reports and the provenance it reports
-    # are one record (`m-execution-log`). Phase C moves the whole lane onto
-    # `read_neutral`, which hands the trace back already sealed.
+    # are one record (`m-execution-log`).
     trace = TraceRecorder()
     managed = _execute_reads(port, dialect, (statement,), trace)
     emission = Emission("/operation", statement.sql, statement.binds)
@@ -5078,9 +5077,28 @@ def _wire_attempt(attempt: TransactionAttempt, indexer: _StatementIndexer) -> di
         if failure.code is not None:
             entry["code"] = failure.code
         if failure.database_call is not None:
-            entry["databaseCall"] = calls.index(failure.database_call)
+            entry["databaseCall"] = _call_position(calls, failure.database_call)
         wire["failure"] = entry
     return wire
+
+
+def _call_position(calls: Sequence[DatabaseCall], call: DatabaseCall) -> int:
+    """Where ``call`` sits in an attempt's flattened calls, by IDENTITY.
+
+    A failure references the one call OBJECT the attempt already recorded
+    (`m-execution-log`), so the index is that object's position. Equality would
+    answer the position of the first call that merely LOOKS the same — two runs
+    of one statement whose durations happened to tie — and name the wrong
+    statement while staying in range.
+    """
+    for position, candidate in enumerate(calls):
+        if candidate is call:
+            return position
+    raise EngineError(
+        "execution provenance reports an attempt failure referencing a Database Call "
+        "the attempt does not hold, so the observation's `databaseCall` index would "
+        "name nothing (m-conformance-adapter)"
+    )
 
 
 def _wire_trace(

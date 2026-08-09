@@ -29,9 +29,10 @@ from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.entity import FindQuery, GraphConstructionError
 from parallax.core.entity._query import LoweredFindQuery, lower_find_query
-from parallax.core.execution_log import ReadTrace
+from parallax.core.execution_log import DatabaseCall, ReadCompleted, ReadTrace
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.op_algebra import deserialize
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin, TemporalReadError
 from parallax.snapshot import (
     DeferredFeatureError,
@@ -633,8 +634,13 @@ def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> 
 # Snapshot[T]'s own arity accessors, over roots this executor's result surface  #
 # publishes.                                                                   #
 # --------------------------------------------------------------------------- #
+_ONE_CALL = ReadTrace(
+    (DatabaseCall(LoweredStatement("select 1", ()), "read", 1, ReadCompleted(1)),)
+)
+
+
 def _snapshot(roots: tuple[object, ...]) -> handle.Snapshot[object]:
-    return handle.Snapshot(roots, Pin(), ReadTrace(()))
+    return handle.Snapshot(roots, Pin(), _ONE_CALL)
 
 
 def test_result_raises_on_zero_and_on_more_than_one() -> None:
@@ -668,9 +674,9 @@ def test_snapshot_has_no_iteration_len_or_indexing() -> None:
 
 def test_snapshot_pin_and_execution_and_repr() -> None:
     pin = Pin(tx_time=dt.datetime(2024, 1, 1, tzinfo=_UTC))
-    snapshot = handle.Snapshot((1,), pin, ReadTrace(()))
+    snapshot = handle.Snapshot((1,), pin, _ONE_CALL)
     assert snapshot.pin is pin
-    assert snapshot.execution.round_trips == 0
+    assert snapshot.execution.round_trips == 1
     assert "Snapshot(roots=1" in repr(snapshot)
 
 

@@ -526,9 +526,10 @@ non-empty Database Calls and derived round-trip count.
 _Avoid_: Execution Record, query log, profiler output
 
 **Write Batch Trace**:
-The immutable provenance of one production-triggered write batch: its ordered,
-non-empty materializing-read and DML Database Calls, plus whether Read
-Dependency or Finalization triggered it.
+The immutable provenance of one flushed write batch: its ordered, non-empty DML
+Database Calls, plus whether Read Dependency or Finalization triggered it. A read
+that resolved rows for one of those writes is its own Read Trace, not part of
+this one.
 _Avoid_: Write Execution, flush result, plan log, statement prediction
 
 **Transaction Attempt**:

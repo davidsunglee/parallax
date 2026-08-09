@@ -32,7 +32,11 @@ call is bracketed into a
 :class:`~parallax.core.execution_log.TraceRecorder`, whose sealed Read Trace is
 the result's own execution record. A participating read is handed the recorder
 the active attempt already opened, so the Snapshot and the attempt reference one
-trace rather than two equal ones.
+trace rather than two equal ones. :func:`execute_read` is where that bracketing
+actually happens, and it is deliberately the package's ONE of them: the
+materializing predicate write's resolving read (`_predicate_writes`) is a read
+that reaches the database too, so it records through this same function rather
+than through a second copy of the timing and failed-call rules.
 """
 
 from __future__ import annotations
@@ -543,17 +547,20 @@ def _execute_compiled(
     exactly as long as its consumer takes to convert it, and the level never
     holds a second copy of its result set.
     """
-    return map(compiled.materialize_row, _execute(port, dialect, compiled.statement, recorder))
+    return map(compiled.materialize_row, execute_read(port, dialect, compiled.statement, recorder))
 
 
-def _execute(
+def execute_read(
     port: DbPort, dialect: Dialect, statement: LoweredStatement, recorder: CallRecorder
 ) -> list[Row]:
-    """Run one statement, recording the Database Call either way.
+    """Run one read statement, recording the Database Call either way.
 
     A FAILED call is timed and recorded too, and the failure then propagates
     untouched: a call that reached the port and came back is work the log owes an
-    account of, whatever it came back with.
+    account of, whatever it came back with. Every read this package issues —
+    a find level, and the resolving read a materializing predicate write runs —
+    goes through here, so the duration and failed-call semantics of a `read` call
+    have exactly one definition.
     """
     started = time.perf_counter_ns()
     try:
