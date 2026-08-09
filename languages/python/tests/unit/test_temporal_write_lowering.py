@@ -48,7 +48,7 @@ from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
-from parallax.core.sql_gen import Statement
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     INFINITY,
@@ -143,7 +143,7 @@ def _lower_full(
     observation: WriteObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
-) -> list[Statement]:
+) -> list[LoweredStatement]:
     return lower_instruction(
         instruction,
         models.accepted_model(meta),
@@ -162,7 +162,7 @@ def _lower_steps(
     observation: WriteObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
-) -> list[tuple[PlannedStep, Statement]]:
+) -> list[tuple[PlannedStep, LoweredStatement]]:
     """The same statements, paired with the settled step each came from."""
     return lower_instruction_steps(
         instruction,

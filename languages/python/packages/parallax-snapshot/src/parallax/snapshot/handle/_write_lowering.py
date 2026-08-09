@@ -23,7 +23,7 @@ from collections.abc import Iterator
 
 from parallax.core.dialect import Dialect
 from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import Statement
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import WritePlan
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.snapshot.handle._step_lowering import lower_step
@@ -33,7 +33,7 @@ __all__ = ["stream_lowered"]
 
 def stream_lowered(
     plan: WritePlan, meta: Metamodel, dialect: Dialect
-) -> Iterator[tuple[PlannedStep, Statement]]:
+) -> Iterator[tuple[PlannedStep, LoweredStatement]]:
     """Each of ``plan``'s steps paired with the statement it lowers to, in
     execution order.
 

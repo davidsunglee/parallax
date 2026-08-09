@@ -61,7 +61,7 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
-from parallax.core.sql_gen import Statement, compile_write_predicate
+from parallax.core.sql_gen import LoweredStatement, compile_write_predicate
 from parallax.core.storage_layout import DocumentPath, EntityLayoutView, RelationalDocument
 from parallax.core.unit_work import PredecessorRow
 from parallax.core.unit_work.planned import (
@@ -121,7 +121,7 @@ type _Cell = tuple[str, object]
 type _Predicate = tuple[str, tuple[object, ...]]
 
 
-def lower_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> Statement:
+def lower_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
     """Lower one finalized step to its single DML statement."""
     match step:
         case PlannedInsert():
@@ -134,7 +134,7 @@ def lower_step(step: PlannedWrite, meta: Metamodel, dialect: Dialect) -> Stateme
             return _lower_delete(step, meta, dialect)
 
 
-def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Statement:
+def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
     """`insert into <table>(<participating columns in Table Layout order>) values
     (?, …)[, (?, …)…]`, or the pk-gen `max` INSERT…SELECT form when a cell
     carries a generated-value expression.
@@ -177,7 +177,7 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Sta
     if not any(isinstance(value, MaxPlusOne) for _, value in rows[0]):
         binds = tuple(value for row in rows for _, value in row)
         tuples = ", ".join(f"({', '.join('?' for _ in row)})" for row in rows)
-        return Statement(f"insert into {table}({columns}) values {tuples}", binds)
+        return LoweredStatement(f"insert into {table}({columns}) values {tuples}", binds)
     if len(rows) > 1:
         raise WriteLoweringError(
             f"multi-entry insert on {entity.identity.name!r}: a generated-value expression "
@@ -192,13 +192,13 @@ def _lower_insert(step: PlannedInsert, meta: Metamodel, dialect: Dialect) -> Sta
         else:
             select_parts.append("?")
             select_binds.append(value)
-    return Statement(
+    return LoweredStatement(
         f"insert into {table}({columns}) select {', '.join(select_parts)} from {table} t0",
         tuple(select_binds),
     )
 
 
-def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Statement:
+def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
     """`update <table> set <assigned columns> = ?, … where <target>[ and <gate>]`.
 
     The assigned columns follow the Table Layout's slot order, with one
@@ -216,13 +216,13 @@ def _lower_update(step: PlannedUpdate, meta: Metamodel, dialect: Dialect) -> Sta
     )
     where_sql, where_binds = _target_predicate(view, step.target, entity, meta, dialect)
     gate_sql, gate_binds = _gate(view, step.concurrency, dialect)
-    return Statement(
+    return LoweredStatement(
         f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}",
         (*assignment_binds, *where_binds, *gate_binds),
     )
 
 
-def _lower_close(step: PlannedClose, meta: Metamodel, dialect: Dialect) -> Statement:
+def _lower_close(step: PlannedClose, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
     """`update <table> set <axis end> = ? where <milestone target>[ and <gate>]`.
 
     Physically this is an update whose target happens to be a milestone slot:
@@ -238,19 +238,19 @@ def _lower_close(step: PlannedClose, meta: Metamodel, dialect: Dialect) -> State
     )
     where_sql, where_binds = _target_predicate(view, step.target, entity, meta, dialect)
     gate_sql, gate_binds = _temporal_gate(view, step.concurrency, entity, dialect)
-    return Statement(
+    return LoweredStatement(
         f"update {view.layout.table.name} set {assignment_sql} where {where_sql}{gate_sql}",
         (*assignment_binds, *where_binds, *gate_binds),
     )
 
 
-def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> Statement:
+def _lower_delete(step: PlannedDelete, meta: Metamodel, dialect: Dialect) -> LoweredStatement:
     """`delete from <table> where <target>[ and <gate>]`."""
     entity = _entity(meta, step.entity)
     view = _layout(meta, entity)
     where_sql, where_binds = _target_predicate(view, step.target, entity, meta, dialect)
     gate_sql, gate_binds = _gate(view, step.concurrency, dialect)
-    return Statement(
+    return LoweredStatement(
         f"delete from {view.layout.table.name} where {where_sql}{gate_sql}",
         (*where_binds, *gate_binds),
     )

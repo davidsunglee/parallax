@@ -26,7 +26,7 @@ from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, DocumentManyAssignment
 from parallax.core.document_codec import DocumentShape, Leaf, LeafEncodingError, Occurrence
 from parallax.core.metamodel import Metamodel, Multiplicity
-from parallax.core.sql_gen import Statement
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import KeyedWrite, PredecessorRow, WriteInstruction
 from parallax.core.unit_work.planned import (
     NEW_LINEAGE,
@@ -45,11 +45,11 @@ DOCUMENT = document_model()
 COLUMNS = columns_model()
 
 
-def _lower(instruction: WriteInstruction, model: Metamodel = DOCUMENT) -> list[Statement]:
+def _lower(instruction: WriteInstruction, model: Metamodel = DOCUMENT) -> list[LoweredStatement]:
     return lower_instruction(instruction, model)
 
 
-def _document(statement: Statement, index: int = -1) -> object:
+def _document(statement: LoweredStatement, index: int = -1) -> object:
     return cast("JsonDocument", statement.binds[index]).value
 
 

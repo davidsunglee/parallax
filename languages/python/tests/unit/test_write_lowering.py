@@ -64,7 +64,7 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel import Column as CoreColumn
 from parallax.core.metamodel import Table as CoreTable
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.sql_gen import Statement
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     ANY_COUNT,
     MAX_PLUS_ONE,
@@ -125,7 +125,7 @@ def _lower(
     observation: WriteObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
-) -> list[Statement]:
+) -> list[LoweredStatement]:
     model = models.accepted_model(meta)
     return lower_instruction(instruction, model, dialect, concurrency, observation=observation)
 
@@ -136,7 +136,7 @@ def _flush_and_lower(
     *,
     concurrency: Concurrency = "locking",
     observations: Mapping[ObjectKey, WriteObservation] | None = None,
-) -> list[Statement]:
+) -> list[LoweredStatement]:
     model = models.accepted_model(meta)
     instant = inert_instant()
     plan = build_write_planner(model).plan(
@@ -160,7 +160,7 @@ def _layout_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
     return tuple(slot.column.name for slot in view.columns)
 
 
-def _insert_columns(statement: Statement) -> tuple[str, ...]:
+def _insert_columns(statement: LoweredStatement) -> tuple[str, ...]:
     columns = statement.sql.split("(", 1)[1].split(")", 1)[0]
     return tuple(column.strip() for column in columns.split(","))
 
