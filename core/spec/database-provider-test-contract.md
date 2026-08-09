@@ -54,6 +54,14 @@ When a transient proof would be impractical for a specific database in local
 tooling, the language spec must record the gap and name the deeper suite that
 proves the same classification.
 
+Each adapter must also prove the port's failure-instance identity rule
+(`m-db-port`): two failed invocations yield two error objects that are distinct
+while carrying the same category, native code, and message. This obligation needs
+no database and belongs wherever the language can drive the adapter over a driver
+that raises one reused exception object for every statement — the input the rule
+exists to stop an adapter from passing on — so a Docker-free structural test
+discharges it, and the language spec names where that proof lives.
+
 ## 3. Provider and matrix contract
 
 The `m-case-format` database provider is the case-runner provisioning surface. It

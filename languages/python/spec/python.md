@@ -3415,7 +3415,11 @@ remains observable rather than making Python its own oracle.
   types never cross above the port. The translation constructs that error at the
   failing call and caches nothing, satisfying the `m-db-port` rule that no two
   invocations share an error instance — which is what lets the Execution Log
-  attribute an attempt failure to the call whose error escaped. The
+  attribute an attempt failure to the call whose error escaped. The provider test
+  contract's failure-instance obligation is discharged Docker-free in
+  `tests/unit/test_postgres_adapter.py`, which drives two failed writes over a
+  connection stub that raises one reused psycopg exception and asserts the adapter
+  hands back two distinct errors of the same category and native code. The
   SQLSTATE→category table (`40P01`,
   `40001` → deadlock; `55P03` → lock-wait timeout; `23505` → unique violation;
   …) lives in the pure dialect strategy where the Docker-free contract suite

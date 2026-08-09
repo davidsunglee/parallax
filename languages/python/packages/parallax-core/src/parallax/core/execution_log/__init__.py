@@ -196,12 +196,13 @@ one — a later unrelated callback error, a commit failure after the caller swal
 a failed call — names no call however recently a call failed.
 
 Exception identity is occurrence identity here because the Database Port contract
-(m-db-port) requires a failed invocation to raise an error instance shared with no
-other invocation. A port that reused one instance across two failed calls would be
-matched to whichever of them was attributed first, and nothing above the port could
-tell the two occurrences apart; the contract, not this lookup, is what forbids it.
-The other attributable family holds by construction: the Affected Rows Policy
-raises its verdict at the rejection it is about.
+(m-db-port) requires every error the port raises itself to be an instance shared
+with no other invocation. A port that reused one instance across two failed calls
+would be matched to whichever of them was attributed first, and nothing above the
+port could tell the two occurrences apart; the contract, not this lookup, is what
+forbids it. The other attributable family holds by construction: the Affected Rows
+Policy raises its verdict at the rejection it is about. A callback's own exception
+is neither family — it is governed by no such rule and attributes to no call.
 
 The reference is weak because the log is reachable while the transaction body is
 still running: a caller that catches a failed call and keeps reading its log must

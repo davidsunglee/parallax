@@ -28,9 +28,11 @@ returns the concrete driver's native affected-row count and no rows.
 
 ## One error instance per failed invocation
 
-A failed invocation raises an error instance **shared with no other invocation**.
-An implementation MUST build the error where the failure occurs and MUST NOT
-raise a cached, pooled, or otherwise reused error object, however identical two
+An error the port *itself raises* to report a failure — a statement failure
+surfaced by `execute` or `executeWrite`, a commit failure surfaced by
+`transaction` — is an instance **shared with no other invocation**. An
+implementation MUST build that error where the failure occurs and MUST NOT raise
+a cached, pooled, or otherwise reused error object, however identical two
 failures' category, native code, and message are (`m-db-error` constrains what a
 raised error *carries*; this constrains its *identity*).
 
@@ -41,10 +43,20 @@ several failures can occur in one transaction and only one of them unwinds — a
 a consumer that must name the failing call, as `m-execution-log` does for an
 attempt failure, therefore has only the raised object to distinguish them. One
 instance raised twice makes those occurrences indistinguishable, and the failure
-is recorded against a sibling invocation's call.
+is recorded against a sibling invocation's call. A commit failure names no call,
+but a reused instance would let one resurface carrying the identity of the
+failed call it stood for earlier, so the rule covers every error the port makes.
 
-It binds the raise site alone. No layer above can detect a violation — a reused
-instance is indistinguishable from the occurrence it impersonates — so an
+The rule reaches exactly the errors the port makes. An exception raised by the
+caller's own `transaction` body is not one of them: it propagates through the
+seam unchanged, and the port could only govern its identity by replacing the
+caller's own failure with an error of its own. Nothing needs that — such an
+exception is a callback failure, which `m-execution-log` attributes to no
+Database Call — and two bodies that raise one shared object are two occurrences
+the caller chose not to distinguish.
+
+The rule binds the raise site alone. No layer above can detect a violation — a
+reused instance is indistinguishable from the occurrence it impersonates — so an
 adapter that classifies each failure into a fresh error at the point of failure
 satisfies it structurally, and nothing above the port need check.
 
