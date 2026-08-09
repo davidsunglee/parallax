@@ -523,8 +523,8 @@ def test_the_transition_query_statement_module_stays_absent() -> None:
 def test_an_un_exported_entity_view_is_absent_from_the_package_surface(unexported: str) -> None:
     # Each name survives as implementation detail — two are metaclasses that
     # cannot be deleted — so the guard is that the package module neither
-    # imports nor lists it. The published inventory itself is `tests/api/`'s
-    # subject, against `public_api.json`.
+    # imports nor lists it. What the package actually publishes is the API
+    # snapshot's subject rather than this module's.
     assert _hits(_word(unexported), _sources(_ENTITY_SRC / "__init__.py")) == []
 
 
