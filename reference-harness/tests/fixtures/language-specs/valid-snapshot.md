@@ -57,12 +57,12 @@ shared-node states remain distinct without issuing later SQL.
 | `m-core` | src/core | core | none | depcheck.toml |
 | `m-db-error` | src/db-error | db-error | `m-db-port`, `m-dialect` | depcheck.toml |
 | `m-db-port` | src/db-port | db-port | `m-core` | depcheck.toml |
-| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-op-list` | depcheck.toml |
-| `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel` | depcheck.toml |
+| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship` | depcheck.toml |
+| `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
 | `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel` | depcheck.toml |
 | `m-execution-log` | src/execution-log | execution-log | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | depcheck.toml |
-| `m-inheritance` | src/inheritance | inheritance | `m-descriptor`, `m-metamodel`, `m-model-formation` | depcheck.toml |
+| `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
 | `m-model-formation` | src/model-formation | model-formation | `m-metamodel` | depcheck.toml |

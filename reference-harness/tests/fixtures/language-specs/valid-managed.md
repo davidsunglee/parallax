@@ -57,13 +57,13 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-core` | src/core | core | none | depcheck.toml |
 | `m-db-error` | src/db-error | db-error | `m-db-port`, `m-dialect` | depcheck.toml |
 | `m-db-port` | src/db-port | db-port | `m-core` | depcheck.toml |
-| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-op-list` | depcheck.toml |
-| `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel` | depcheck.toml |
+| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship` | depcheck.toml |
+| `m-descriptor` | src/descriptor | descriptor | `m-core`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-detach` | src/detach | detach | `m-unit-work`, `m-identity-map` | depcheck.toml |
 | `m-dialect` | src/dialect | dialect | `m-core` | depcheck.toml |
 | `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel` | depcheck.toml |
 | `m-identity-map` | src/identity-map | identity-map | `m-unit-work`, `m-temporal-read` | depcheck.toml |
-| `m-inheritance` | src/inheritance | inheritance | `m-descriptor`, `m-metamodel`, `m-model-formation` | depcheck.toml |
+| `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
 | `m-model-formation` | src/model-formation | model-formation | `m-metamodel` | depcheck.toml |

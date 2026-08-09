@@ -28,6 +28,7 @@ from referencing import Registry
 
 from .case import Entity
 from .corpus_yaml import read_corpus_yaml
+from .execution_validate import validate_execution
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
 from .keyed_write_validate import undeclared_row_members, validate_keyed_write
 from .metamodel import validate_index_identities
@@ -405,6 +406,10 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         family = families.get(model_name) if model_name is not None else None
         _validate(case, case_schema, f"case {case_path.name}", errors, registry)
         _check_compile_eligibility(case, f"case {case_path.name}", errors)
+        if isinstance(case, dict):
+            errors.extend(
+                f"case {case_path.name}: {problem}" for problem in validate_execution(case)
+            )
         # The action under test lives under `when`; a read case's operation and a
         # scenario/coherence step's `find` are canonical m-op-algebra nodes that
         # must also validate against the operation algebra schema.
