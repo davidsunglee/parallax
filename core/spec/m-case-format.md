@@ -1211,8 +1211,8 @@ value it built to be classified.
 Such a step carries **no golden SQL** and declares `roundTrips: 0`: an accepted
 value's write is buffered rather than emitted, and a refused one reaches no
 statement at all. Its observable is the per-step `expectError`, and a step that
-declares no `expectError` asserts the value is **accepted**: the verb takes it,
-raises nothing, and the write joins the unit of work's buffer.
+declares no `expectError` asserts the value is **accepted**: the verb takes it
+and raises nothing.
 
 A scenario carrying one is `lane: api-conformance` **throughout**, and the schema
 requires it. The wire harness holds no client value to hand a verb, so it can
@@ -1235,9 +1235,13 @@ statements the steps' own verbs cost, never the reads that arrange a value of th
 stated provenance, which are the adapter's own affair. The suite verifies it the
 only way this lane can, as the absence of any durable effect: a statement that ran
 would have left one. So an accepted step here is one whose write **materializes
-nothing** — an `update` of a value no author changed — and a keyed write whose
-acceptance is meant to be observed as an emitted statement has no oracle in this
-shape and is not authored in it.
+nothing** — an `update` of a value no author changed, which buffers nothing. An
+accepted `insert` is never that: it opens a row, so the verb buffers a write the
+committing unit of work flushes, and the step emits DML the declared zero denies.
+An `insert` step therefore **MUST** declare an `expectError` — the refusal its
+value's provenance earns — and the schema requires it. A keyed write whose
+acceptance is observable as an emitted statement is authored where that statement
+has an oracle, never in this shape.
 
 ```yaml
 - action: update

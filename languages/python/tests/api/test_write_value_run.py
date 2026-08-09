@@ -55,6 +55,10 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     # loaded (a flushed `update` would bump `version` even carrying no change),
     # and `UNMANAGED_ID` — outside the fixture range precisely so a value no
     # managed read produced cannot address a row one did — holds no row at all.
+    # The grammar is what makes that an oracle rather than a wish: an accepted
+    # `insert` opens a row and would flush here, so the case schema admits no
+    # `insert` step without an `expectError`, leaving the `update` that
+    # materializes nothing as the only acceptance a case can declare.
     assert write_value_runner.declared_round_trips(case) == 0
     stored, unmanaged = db.transact(
         lambda tx: (

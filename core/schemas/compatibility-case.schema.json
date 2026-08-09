@@ -566,6 +566,14 @@
                 "else": { "not": { "required": ["value"] } }
               },
               {
+                "description": "An `insert` keyed write action step REQUIRES `expectError`. Such a step declares `roundTrips: 0` and carries no golden SQL, so the only ACCEPTED write it can express is one that MATERIALIZES NOTHING (`m-case-format` *Keyed write action steps*) — the `update` of a value no author changed, which buffers nothing. An accepted `insert` is never that: it opens a row, so the verb buffers a write the committing unit of work flushes, and the step emits DML. A step declaring acceptance (no `expectError`) beside that zero would assert two things that cannot both hold, and nothing could catch it: the wire harness never runs the case, the API Conformance Suite asserts no golden SQL, and it grades the zero as the absence of the very durable effect the acceptance produces. So an `insert` step states the refusal its value's provenance earns, and a keyed write whose acceptance is observable as an emitted statement is authored where that statement has an oracle, never here.",
+                "if": {
+                  "required": ["action"],
+                  "properties": { "action": { "const": "insert" } }
+                },
+                "then": { "required": ["expectError"] }
+              },
+              {
                 "description": "A scenario-step `referenceSql` is a naive oracle for a read (`find`) only; writes and lifecycle actions do not produce rows to compare.",
                 "if": { "required": ["referenceSql"] },
                 "then": { "required": ["find"] }
