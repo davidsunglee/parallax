@@ -185,6 +185,27 @@
   code: missing-aggregate-command
   message: "no complete verification command over every scheduling class"
 
+- name: reversed-source-dependency
+  base: valid-snapshot.md
+  old: "| `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |"
+  new: "| `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation`, `m-descriptor` | depcheck.toml |"
+  code: reversed-source-dependency
+  message: "allows m-inheritance --> m-descriptor, which the module DAG runs the other way"
+
+- name: undeclared-source-dependency
+  base: valid-snapshot.md
+  old: "| `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |"
+  new: "| `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel`, `m-dialect` | depcheck.toml |"
+  code: undeclared-source-dependency
+  message: "allows m-pk-gen --> m-dialect, which the module DAG does not declare"
+
+- name: missing-source-dependency
+  base: valid-snapshot.md
+  old: "| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship` | depcheck.toml |"
+  new: "| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate` | depcheck.toml |"
+  code: missing-source-dependency
+  message: "omits the declared dependency m-deep-fetch --> m-relationship"
+
 - name: stray-lifecycle-extension
   base: valid-snapshot.md
   old: "| example snapshot lifecycle extension | production | snapshot | none | common runtime | snapshot API |"
