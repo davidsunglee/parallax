@@ -29,10 +29,13 @@ from parallax.core.sql_gen import LoweredStatement
 
 _READ = LoweredStatement("select 1", (1,))
 _WRITE = LoweredStatement("update account set balance = ?", (2,))
+_DELETE = LoweredStatement("delete from account where id = ?", (3,))
 
 
-def _emissions(count: int) -> list[engine.Emission]:
-    return [engine.Emission("/operation", f"sql-{index}", ()) for index in range(count)]
+def _emissions(*statements: LoweredStatement) -> list[engine.Emission]:
+    """The envelope a run's calls correspond to: one emission per call, in
+    execution order, carrying the SQL that call ran."""
+    return [engine.Emission("/operation", stmt.sql, stmt.binds) for stmt in statements]
 
 
 def _builder(*, concurrency: str = "locking", retries: int = 10) -> ExecutionLogBuilder:
@@ -45,7 +48,7 @@ def _builder(*, concurrency: str = "locking", retries: int = 10) -> ExecutionLog
 def test_a_standalone_read_renders_the_bare_read_trace_arm() -> None:
     recorder = TraceRecorder()
     recorder.completed(_READ, "read", 5, ReadCompleted(1))
-    observed = engine.execution_observation(recorder.read_trace(), _emissions(1))
+    observed = engine.execution_observation(recorder.read_trace(), _emissions(_READ))
     assert observed == {
         "readTrace": {
             "calls": [
@@ -70,7 +73,7 @@ def test_a_transactional_run_renders_the_whole_log_with_wire_spellings() -> None
     builder.current.committed()
     builder.seal()
 
-    observed = engine.execution_observation(builder.view(), _emissions(2))
+    observed = engine.execution_observation(builder.view(), _emissions(_WRITE, _READ))
     log = cast("dict[str, Any]", observed["transactionLog"])
     assert log["concurrency"] == "locking"
     assert log["retryPolicy"] == {"maxRetries": 10, "retryOptimisticConflicts": False}
@@ -97,7 +100,7 @@ def test_a_rolled_back_attempt_renders_its_failure_and_the_call_it_names() -> No
     builder.attempt_failed(RuntimeError("the enforcement rejected it"), retry_eligible=True)
     builder.seal()
 
-    log = cast("dict[str, Any]", engine.execution_observation(builder.view(), _emissions(1)))
+    log = cast("dict[str, Any]", engine.execution_observation(builder.view(), _emissions(_WRITE)))
     attempt = cast("list[dict[str, Any]]", log["transactionLog"]["attempts"])[0]
     assert attempt["status"] == "rolled-back"
     # No `code`: the failure carries none, and an absent key is the honest report.
@@ -124,7 +127,7 @@ def test_the_call_a_failure_names_is_found_by_identity_rather_than_by_equality()
     builder.seal()
 
     with pytest.raises(engine.EngineError, match="`databaseCall` index would"):
-        engine.execution_observation(builder.view(), _emissions(1))
+        engine.execution_observation(builder.view(), _emissions(_WRITE))
 
 
 def _attempt_state(attempt: Any) -> Any:
@@ -146,7 +149,7 @@ def test_a_failure_carrying_a_provider_code_renders_it_beside_the_phase() -> Non
     builder.attempt_failed(error, retry_eligible=True)
     builder.seal()
 
-    log = cast("dict[str, Any]", engine.execution_observation(builder.view(), _emissions(1)))
+    log = cast("dict[str, Any]", engine.execution_observation(builder.view(), _emissions(_WRITE)))
     attempt = cast("list[dict[str, Any]]", log["transactionLog"]["attempts"])[0]
     assert attempt["failure"]["code"] == "40P01"
 
@@ -178,7 +181,7 @@ def test_more_calls_than_emissions_is_named_loudly_rather_than_indexed_past_the_
     recorder.completed(_READ, "read", 1, ReadCompleted(1))
     recorder.completed(_READ, "read", 1, ReadCompleted(1))
     with pytest.raises(engine.EngineError, match="statement index would name nothing"):
-        engine.execution_observation(recorder.read_trace(), _emissions(1))
+        engine.execution_observation(recorder.read_trace(), _emissions(_READ))
 
 
 def test_an_attempt_the_run_left_active_is_refused_rather_than_rendered() -> None:
@@ -187,7 +190,24 @@ def test_an_attempt_the_run_left_active_is_refused_rather_than_rendered() -> Non
     with builder.current.read_trace() as read:
         read.completed(_READ, "read", 1, ReadCompleted(1))
     with pytest.raises(engine.EngineError, match="'active' attempt"):
-        engine.execution_observation(builder.view(), _emissions(1))
+        engine.execution_observation(builder.view(), _emissions(_READ))
+
+
+def test_a_statement_index_naming_a_different_statement_is_refused() -> None:
+    # The emissions and the executed calls are built independently on the
+    # grouped-scenario and conflict lanes, so a reordering inside the executed
+    # plan leaves the k-th index naming the wrong statement while the
+    # observation stays structurally valid. Only comparing the SQL catches it.
+    builder = _builder()
+    builder.attempt_opened()
+    with builder.current.write_batch("finalization") as batch:
+        batch.completed(_WRITE, "write", 1, WriteCompleted(1))
+        batch.completed(_DELETE, "write", 1, WriteCompleted(1))
+    builder.current.committed()
+    builder.seal()
+
+    with pytest.raises(engine.EngineError, match="would name a different statement"):
+        engine.execution_observation(builder.view(), _emissions(_DELETE, _WRITE))
 
 
 def test_the_renderer_can_never_be_handed_an_empty_read_trace() -> None:

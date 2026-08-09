@@ -387,6 +387,7 @@ class Database:
                 clock=active.clock,
                 meta=active.meta,
                 flush_executor=active.flush_executor,
+                write_batch_starting=active.write_batch_starting,
                 planner=self._planner,
                 subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
             )
@@ -446,6 +447,11 @@ class Database:
                     clock=self._clock,
                     meta=model,
                     flush_executor=_flush_executor(conn, model, self._dialect, recorder),
+                    # The unit of work's other injection point: the executor is
+                    # handed a settled plan, so only this notification can reach
+                    # the attempt while a flush is still planning — which is
+                    # where the boundary-owned final batch most often fails.
+                    write_batch_starting=recorder.write_batch_starting,
                     # The injected Write Planner — `parallax.snapshot.handle`
                     # is the sole module cleared to import both `batch_write`
                     # and `m-unit-work`, so it alone builds the strategy

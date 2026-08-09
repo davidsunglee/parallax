@@ -39,8 +39,10 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     VersionObservation,
+    WriteBatchStarting,
     WriteBatchTrigger,
     WritePlan,
+    WritePlanningError,
     active_unit_of_work,
     buffered_write,
     run_unit_of_work,
@@ -77,6 +79,7 @@ def _run[T](
     executor: FlushExecutor | None = None,
     settings: TransactionSettings | None = None,
     meta: Metamodel | None = None,
+    starting: WriteBatchStarting | None = None,
 ) -> T:
     resolved_meta = meta or _ACCOUNT
     return run_unit_of_work(
@@ -87,6 +90,7 @@ def _run[T](
         flush_executor=executor or _noop,
         planner=build_write_planner(resolved_meta),
         subject_identity=TEST_SUBJECT_IDENTITY,
+        write_batch_starting=starting,
     )
 
 
@@ -420,6 +424,58 @@ def test_reentry_into_a_rollback_only_transaction_is_refused() -> None:
     with pytest.raises(RollbackOnlyError):
         _run(outer)
     assert ran["inner"] is False
+
+
+# --------------------------------------------------------------------------- #
+# The batch-starting notification.                                             #
+# --------------------------------------------------------------------------- #
+def test_each_batch_is_announced_with_its_own_trigger_before_it_is_planned() -> None:
+    order: list[str] = []
+
+    def starting(trigger: WriteBatchTrigger) -> None:
+        order.append(f"starting:{trigger}")
+
+    def executor(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+        order.append(f"executed:{trigger}")
+
+    def body(tx: UnitOfWork) -> None:
+        tx.buffer(_account_insert(1))
+        tx.read(lambda: None)
+        tx.buffer(_account_insert(2))
+
+    _run(body, executor=executor, starting=starting)
+    assert order == [
+        "starting:read_dependency",
+        "executed:read_dependency",
+        "starting:finalization",
+        "executed:finalization",
+    ]
+
+
+def test_a_flush_that_fails_in_planning_is_announced_and_never_executed() -> None:
+    # The whole reason the notification is not folded into the executor: the
+    # executor receives a settled plan, so a flush that dies while planning
+    # would otherwise be invisible to an observer of the transaction.
+    announced: list[WriteBatchTrigger] = []
+    recorder = _Recorder()
+
+    def body(tx: UnitOfWork) -> None:
+        tx.buffer(KeyedWrite("insert", "Gadget", ({"id": 1, "name": "G"},)))
+
+    with pytest.raises(WritePlanningError, match="Gadget"):
+        _run(body, executor=recorder, starting=announced.append)
+    assert announced == ["finalization"]
+    assert recorder.plans == []
+
+
+def test_a_unit_of_work_without_the_notification_still_flushes() -> None:
+    recorder = _Recorder()
+
+    def body(tx: UnitOfWork) -> None:
+        tx.buffer(_account_insert(3))
+
+    _run(body, executor=recorder)
+    assert recorder.triggers == ["finalization"]
 
 
 # --------------------------------------------------------------------------- #

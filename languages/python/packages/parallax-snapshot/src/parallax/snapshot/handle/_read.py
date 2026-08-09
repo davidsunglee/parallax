@@ -20,8 +20,11 @@ a materialized row is reachable only until its conversion, and no level
 accumulates them. Nothing below this module holds a row, and no row survives into
 the graph input, the Snapshot, or the observation record.
 
-The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`)
-stay co-located with it, together with the developer-facing :class:`Snapshot`
+The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`) are
+`m-snapshot-read`'s own carriers — a graph input paired with the Read Trace that
+produced it — so they are defined in
+:mod:`~parallax.snapshot._read_result` and re-exported here beside the
+executor that builds them, together with the developer-facing :class:`Snapshot`
 surface they convert into and the pin helpers that carry a query's or a
 milestone's as-of coordinates across that conversion. Those helpers stay here
 rather than moving to the write side: `_write_inputs` imports this module, so
@@ -63,13 +66,13 @@ from parallax.core.metamodel import (
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
+from parallax.snapshot._read_result import FindResult, HistoryFindResult
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.materialize import (
     LevelContext,
     MergeScope,
     RelationshipViewKey,
-    SnapshotGraphInput,
     SnapshotNodeRef,
     attribute_value,
     convert_row,
@@ -194,28 +197,6 @@ class ObservationCollector(Protocol):
         `Columns` layout.
         """
         ...
-
-
-@dataclass(frozen=True, slots=True)
-class FindResult:
-    """A single-graph find's Snapshot Graph Input plus its Read Trace."""
-
-    graph: SnapshotGraphInput
-    execution: ReadTrace
-
-
-@dataclass(frozen=True, slots=True)
-class HistoryFindResult:
-    """A milestone-set find's ordered per-milestone graph inputs plus its
-    (single-call) Read Trace.
-
-    Each entry is a root-only graph pinned at its own milestone's from-instant
-    (m-snapshot-read "The whole-graph pin"); a v1 milestone-set graph carries no
-    includes (m-case-format).
-    """
-
-    graphs: tuple[SnapshotGraphInput, ...]
-    execution: ReadTrace
 
 
 def _new_roots() -> list[SnapshotNodeRef]:

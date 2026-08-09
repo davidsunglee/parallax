@@ -1,4 +1,5 @@
-"""``parallax.snapshot.materialize`` enforcement scope (m-snapshot-read).
+"""``parallax.snapshot.materialize`` enforcement scope (the row-to-graph half of
+m-snapshot-read).
 
 The two-layer read seam below the developer surface: an immutable **Snapshot
 Graph Input** carrier layer, and the per-row conversion and projection merge that
@@ -24,7 +25,11 @@ structurally enforced rather than asserted. Its consumer —
 It never imports ``m-sql`` / ``m-dialect``: `familyVariant` materialization and
 each row's resolved concrete Entity are `m-sql`-owned, carried by the compiled
 read itself and handed here as a level's own context, so this scope only ever
-sees rows whose keys are already the projected physical ones.
+sees rows whose keys are already the projected physical ones. That is a
+structural fact rather than a habit: `m-snapshot-read`'s own edge to
+`m-execution-log` — which reaches `m-sql` — belongs to the separate
+:mod:`~parallax.snapshot._read_result` scope, so no grant of this one reaches
+SQL generation.
 """
 
 from __future__ import annotations
