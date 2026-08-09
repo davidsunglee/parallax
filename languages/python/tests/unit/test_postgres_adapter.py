@@ -199,7 +199,11 @@ def test_each_failed_call_raises_its_own_error_instance() -> None:
         raised.append(exc_info.value)
     first, second = raised
     assert first is not second
-    assert (first.category, first.native_code) == (second.category, second.native_code)
+    assert (first.category, first.native_code, first.message) == (
+        second.category,
+        second.native_code,
+        second.message,
+    )
 
 
 def test_transaction_reraises_a_commit_time_driver_error() -> None:

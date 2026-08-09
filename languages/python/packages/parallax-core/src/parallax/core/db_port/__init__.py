@@ -8,8 +8,8 @@ application-specific (no driver, no concrete database), so any layer may hold it
 without acquiring a database dependency. Concrete adapters (`parallax.postgres`)
 implement it at the composition root and carry the normalize-at-boundary contract:
 rows come back as managed values, never raw driver representations. They carry the
-failure-identity contract too: a failed invocation raises an error instance shared
-with no other invocation. ``m-db-port`` depends only on ``m-core``.
+failure-identity contract too: an error the port raises to report a failure is an
+instance shared with no other invocation. ``m-db-port`` depends only on ``m-core``.
 """
 
 from __future__ import annotations
@@ -45,15 +45,19 @@ class JsonDocument:
 class DbPort(Protocol):
     """The abstract database execution port (m-db-port).
 
-    An implementation raises, for each failed invocation of any method here, an
-    error instance SHARED WITH NO OTHER INVOCATION — built where the failure
-    occurs, never cached or pooled, however identical two failures' category,
-    native code, and message are. Above the seam a failure is recognized by the
-    object caught, and a caller may catch one failed call and keep going, so the
-    raised object is the only thing that says which invocation is unwinding; one
-    instance raised twice makes the execution log name a sibling call. Nothing
+    Every error an implementation RAISES ITSELF to report a failure — a statement
+    failure from ``execute`` or ``execute_write``, a commit failure from
+    ``transaction`` — is an instance SHARED WITH NO OTHER INVOCATION, built where
+    the failure occurs, never cached or pooled, however identical two failures'
+    category, native code, and message are. Above the seam a failure is recognized
+    by the object caught, and a caller may catch one failed call and keep going, so
+    the raised object is the only thing that says which invocation is unwinding;
+    one instance raised twice makes the execution log name a sibling call. Nothing
     above the port can detect a violation, so this holds at the raise site or
     nowhere.
+
+    An exception raised by ``body`` is not the port's error: ``transaction`` lets
+    it propagate unchanged and governs nothing about its identity.
     """
 
     def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
