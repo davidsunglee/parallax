@@ -18,6 +18,11 @@ it appears. `description` is the one licensed difference: each side describes it
 own context, and the statement index in particular points at different things.
 :data:`MIRRORED_DEFS` is a floor beneath that derivation, not the scope itself;
 it fails when a rename on one side silently shrinks the intersection.
+
+Name-derivation reaches every mirrored pair the two files spell alike. The union
+wrapper is the one they do not: the case authors it INLINE at `then.execution`
+and the adapter names it `$defs.executionObservation`, so :data:`RENAMED_MIRRORS`
+registers that pair explicitly and it is compared the same way.
 """
 
 from __future__ import annotations
@@ -31,7 +36,8 @@ from reference_harness.schemas import load_schemas
 _CORE = Path(__file__).resolve().parents[2] / "core"
 _SCHEMAS = load_schemas(_CORE)
 
-_CASE_DEFS: dict[str, Any] = _SCHEMAS["compatibility-case.schema.json"]["$defs"]
+_CASE_SCHEMA: dict[str, Any] = _SCHEMAS["compatibility-case.schema.json"]
+_CASE_DEFS: dict[str, Any] = _CASE_SCHEMA["$defs"]
 _ADAPTER_DEFS: dict[str, Any] = _SCHEMAS["conformance-adapter.schema.json"]["$defs"]
 
 MIRRORED_DEFS = frozenset(
@@ -48,6 +54,10 @@ MIRRORED_DEFS = frozenset(
         "jsonPointer",
     }
 )
+
+RENAMED_MIRRORS: dict[str, Any] = {
+    "executionObservation": _CASE_SCHEMA["properties"]["then"]["properties"]["execution"],
+}
 
 
 def _shared_def_names() -> list[str]:
@@ -75,6 +85,14 @@ def test_every_definition_the_two_schemas_share_is_structurally_identical() -> N
         assert _without_descriptions(_CASE_DEFS[name]) == _without_descriptions(
             _ADAPTER_DEFS[name]
         ), f"{name} has drifted between the case oracle and the adapter envelope"
+
+
+def test_the_wrapper_the_two_files_name_differently_still_mirrors() -> None:
+    """The union itself is the one pair name derivation cannot see."""
+    for adapter_name, case_node in RENAMED_MIRRORS.items():
+        assert _without_descriptions(case_node) == _without_descriptions(
+            _ADAPTER_DEFS[adapter_name]
+        ), f"{adapter_name} has drifted from the case oracle's own wrapper"
 
 
 # --- what the comparison is blind to, and what it is not ------------------------

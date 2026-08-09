@@ -239,7 +239,7 @@
       }
     },
     "databaseCall": {
-      "description": "One attempted database round trip an adapter observed (m-execution-log Database Call). Mirrors the compatibility case's `databaseCall`: `statement` is the zero-based index into this envelope's own `emissions` array, so the observation names the statement a call ran instead of repeating its SQL and binds, and is omitted where the adapter reports no emission for the call. `kind` keeps a failed call classifiable without parsing SQL.",
+      "description": "One attempted database round trip an adapter observed (m-execution-log Database Call). Mirrors the compatibility case's `databaseCall`: `statement` is the zero-based index into this envelope's own `emissions` array, so the observation names the statement a call ran instead of repeating its SQL and binds, and is omitted only where the envelope reports no emissions at all (a case on the `api-conformance` lane), where `kind` and `completion` are the whole observation. `kind` keeps a failed call classifiable without parsing SQL.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "completion"],
@@ -373,13 +373,13 @@
       ]
     },
     "transactionAttempt": {
-      "description": "One observed physical attempt of the logical invocation. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. A `failure` belongs to a rolled-back attempt alone, mirroring the case oracle's own conditional.",
+      "description": "One observed physical attempt of the logical invocation. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. `status` omits the live `active` value: an adapter reports once the invocation has terminated, so every attempt it observes has already transitioned. A `failure` belongs to a rolled-back attempt alone, mirroring the case oracle's own conditional.",
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "traces", "roundTrips"],
       "properties": {
         "status": {
-          "enum": ["active", "committed", "rolled-back"]
+          "enum": ["committed", "rolled-back"]
         },
         "traces": {
           "type": "array",
@@ -390,7 +390,7 @@
       },
       "allOf": [
         {
-          "description": "Only a rolled-back attempt carries a failure: reporting one beside `committed` states two outcomes for one attempt, and beside `active` an outcome the attempt has not reached.",
+          "description": "Only a rolled-back attempt carries a failure: reporting one beside `committed` states two outcomes for one attempt.",
           "if": {
             "required": ["status"],
             "properties": { "status": { "const": "rolled-back" } }
