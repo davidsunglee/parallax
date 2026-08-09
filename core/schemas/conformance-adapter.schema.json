@@ -238,6 +238,178 @@
         }
       }
     },
+    "databaseCall": {
+      "description": "One attempted database round trip an adapter observed (m-execution-log Database Call). Mirrors the compatibility case's `databaseCall`: `statement` is the zero-based index into this envelope's own `emissions` array, so the observation names the statement a call ran instead of repeating its SQL and binds, and is omitted where the adapter reports no emission for the call. `kind` keeps a failed call classifiable without parsing SQL.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "completion"],
+      "properties": {
+        "statement": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["read", "write"]
+        },
+        "completion": { "$ref": "#/$defs/callCompletion" }
+      }
+    },
+    "callCompletion": {
+      "description": "How an observed Database Call ended — a closed union of exactly one member, mirroring the case oracle. `readCompleted.returnedRows` is the physical row count the statement returned; `writeCompleted.affectedRows` the affected count; `failed.category` the neutral m-db-error category the failure classified to, null where it classified to none.",
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["readCompleted"], "propertyNames": { "enum": ["readCompleted"] } },
+        { "required": ["writeCompleted"], "propertyNames": { "enum": ["writeCompleted"] } },
+        { "required": ["failed"], "propertyNames": { "enum": ["failed"] } }
+      ],
+      "properties": {
+        "readCompleted": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["returnedRows"],
+          "properties": { "returnedRows": { "type": "integer", "minimum": 0 } }
+        },
+        "writeCompleted": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["affectedRows"],
+          "properties": { "affectedRows": { "type": "integer", "minimum": 0 } }
+        },
+        "failed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["category"],
+          "properties": {
+            "category": { "enum": ["uniqueViolation", "deadlock", "lockWaitTimeout", null] }
+          }
+        }
+      }
+    },
+    "readTrace": {
+      "description": "The calls one observed read issued (m-execution-log Read Trace); non-empty by invariant.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calls", "roundTrips"],
+      "properties": {
+        "calls": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/databaseCall" }
+        },
+        "roundTrips": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "writeBatchTrace": {
+      "description": "The calls one observed write batch issued, naming the closed m-unit-work trigger that produced it (`read-dependency` / `finalization`); non-empty by invariant.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger", "calls", "roundTrips"],
+      "properties": {
+        "trigger": {
+          "type": "string",
+          "enum": ["read-dependency", "finalization"]
+        },
+        "calls": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/databaseCall" }
+        },
+        "roundTrips": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "attemptTrace": {
+      "description": "One entry in an observed attempt's ordered traces: exactly one `readTrace` or `writeBatch`.",
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["readTrace"], "propertyNames": { "enum": ["readTrace"] } },
+        { "required": ["writeBatch"], "propertyNames": { "enum": ["writeBatch"] } }
+      ],
+      "properties": {
+        "readTrace": { "$ref": "#/$defs/readTrace" },
+        "writeBatch": { "$ref": "#/$defs/writeBatchTrace" }
+      }
+    },
+    "attemptFailure": {
+      "description": "The detached diagnostic an observed rolled-back attempt retained. `phase` locates a failure with no call; `retryEligible` is the classifier's verdict under the effective policy, independent of the remaining budget; `databaseCall` indexes this attempt's own flattened calls. The implementation-level error type name and message are not portable and are absent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "retryEligible"],
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": ["body", "finalization", "commit"]
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryEligible": { "type": "boolean" },
+        "databaseCall": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "transactionAttempt": {
+      "description": "One observed physical attempt of the logical invocation. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "traces", "roundTrips"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["active", "committed", "rolled-back"]
+        },
+        "traces": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attemptTrace" }
+        },
+        "roundTrips": { "type": "integer", "minimum": 0 },
+        "failure": { "$ref": "#/$defs/attemptFailure" }
+      }
+    },
+    "retryPolicy": {
+      "description": "The resolved effective Retry Policy the observed Execution Log retained once.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxRetries", "retryOptimisticConflicts"],
+      "properties": {
+        "maxRetries": { "type": "integer", "minimum": 0 },
+        "retryOptimisticConflicts": { "type": "boolean" }
+      }
+    },
+    "transactionLog": {
+      "description": "The whole observed Execution Log of one logical transaction invocation, spanning every physical attempt including a joined body's.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concurrency", "retryPolicy", "attempts", "roundTrips"],
+      "properties": {
+        "concurrency": {
+          "type": "string",
+          "enum": ["locking", "optimistic"]
+        },
+        "retryPolicy": { "$ref": "#/$defs/retryPolicy" },
+        "attempts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/transactionAttempt" }
+        },
+        "roundTrips": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "executionObservation": {
+      "description": "The execution provenance an adapter observed (m-execution-log), in the same closed-union shape the case's `then.execution` oracle authors: exactly one `readTrace` for a standalone read, or one `transactionLog` for a transactional run. A runner compares it structurally against `then.execution`, which is why the two shapes mirror each other rather than each choosing its own spelling.",
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["readTrace"], "propertyNames": { "enum": ["readTrace"] } },
+        { "required": ["transactionLog"], "propertyNames": { "enum": ["transactionLog"] } }
+      ],
+      "properties": {
+        "readTrace": { "$ref": "#/$defs/readTrace" },
+        "transactionLog": { "$ref": "#/$defs/transactionLog" }
+      }
+    },
     "observations": {
       "type": "object",
       "additionalProperties": false,
@@ -293,6 +465,10 @@
         "nativeCode": {
           "description": "The preserved native code witness paired with `errorClass` (Postgres SQLSTATE string / MariaDB vendor errno integer), compared against the case's per-dialect `then.nativeCode`.",
           "type": ["string", "integer"]
+        },
+        "execution": {
+          "description": "The execution provenance the run produced (m-execution-log), compared against the case's `then.execution`. Optional and additive — an adapter that reports no provenance omits it, and existing run outputs stay valid — but an adapter claiming `m-execution-log` MUST report it for every case authoring the oracle.",
+          "$ref": "#/$defs/executionObservation"
         },
         "rejectedRule": {
           "description": "The classified normative rule identifier a rejected-case run refused the input with (m-op-algebra / m-navigate / m-value-object / m-inheritance), compared against the case's `then.rejectedRule`. An adapter whose claim includes the `rejected` caseShape MUST report this observation on a rejected-case run, with `roundTrips: 0` and no provisioning or dialect. Optional and additive at the schema layer — only rejected-shape runs report it, and existing run outputs stay valid.",

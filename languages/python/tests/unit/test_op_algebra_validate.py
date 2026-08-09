@@ -62,6 +62,7 @@ from parallax.core.op_algebra import (
     referenced_entities,
     validate_operation,
 )
+from parallax.descriptor._family import family_of
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -216,8 +217,6 @@ _REJECTED_CASE_IDS = (
 
 
 def _rejected_target(meta: Metamodel) -> str:
-    from parallax.conformance._descriptor_family import family_of
-
     root = family_of(meta).root
     return root.name if root is not None else meta.entities[0].name
 

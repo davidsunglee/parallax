@@ -826,7 +826,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # root-ownership witnesses 098/099/129, plus the optimistic-
 # locking root-ownership witnesses 102/103): a DIFFERENT validation surface
 # than the operation-level rejected lane.
-# `_descriptor_family.validate` classifies these exact rules for a raw
+# `parallax.descriptor.validate_inheritance_families` classifies these exact rules for a raw
 # descriptor, and the class grammar reaches most of them through a different
 # surface: hierarchy-derived `parent`/`role` makes most of these shapes
 # unspellable at all (Python's own class system additionally forbids a literal
@@ -841,7 +841,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # this group can therefore reproduce `then.rejectedRule` through the public
 # class surface.
 _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
-    "a `when.model` raw-descriptor invariant `_descriptor_family.validate` "
+    "a `when.model` raw-descriptor invariant `descriptor.validate_inheritance_families` "
     "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership/optimistic-"
     "locking-ownership/layout-ownership shape) — the class metaclass never calls this "
     "validator (DQ2: "
@@ -1132,7 +1132,24 @@ _WRITE_VALUE_PROVENANCE_REASON: Final[str] = (
     "value the other verb accepts"
 )
 
+_EXECUTION_LOG_UNIMPLEMENTED_REASON: Final[str] = (
+    "the m-execution-log spine: this target claims the module because the slice does, "
+    "but its runtime provenance — the Execution Log, its Transaction Attempts, and the "
+    "Read / Write Batch Traces beneath them — is not built yet, so there is no observable "
+    "for a story to assert and no `then.execution` for the sweep to grade. A temporary "
+    "registration skip, not a reasoned non-fit: each of the seven becomes an exercised "
+    "story or a sweep-graded case the moment the provenance lands"
+)
+
 CASE_SKIP_REASONS: Final[dict[str, str]] = {
+    # -- m-execution-log: registered ahead of its runtime provenance --------- #
+    "m-execution-log-001": _EXECUTION_LOG_UNIMPLEMENTED_REASON,
+    "m-execution-log-002": _EXECUTION_LOG_UNIMPLEMENTED_REASON,
+    "m-execution-log-003": _EXECUTION_LOG_UNIMPLEMENTED_REASON,
+    "m-execution-log-004": _EXECUTION_LOG_UNIMPLEMENTED_REASON,
+    "m-execution-log-005": _EXECUTION_LOG_UNIMPLEMENTED_REASON,
+    "m-execution-log-006": _EXECUTION_LOG_UNIMPLEMENTED_REASON,
+    "m-execution-log-007": _EXECUTION_LOG_UNIMPLEMENTED_REASON,
     "m-unit-work-008": _COALESCING_WITNESS_REASON,
     "m-unit-work-010": _COALESCING_WITNESS_REASON,
     "m-unit-work-017": _WRITE_VALUE_PROVENANCE_REASON,

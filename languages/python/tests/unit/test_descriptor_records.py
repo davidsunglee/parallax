@@ -109,7 +109,7 @@ def test_pk_generator_generates_flags_max_and_sequence() -> None:
 # every descendant — abstract-subtype or concrete-subtype — inherits exactly  #
 # the axes the root's profile derives. `declaring_entity` always resolves to  #
 # the family root; a non-root participant that declares its own profile is    #
-# rejected pre-SQL (`parallax.conformance._descriptor_family.validate`).      #
+# rejected pre-SQL (`parallax.descriptor.validate_inheritance_families`).     #
 # --------------------------------------------------------------------------- #
 def _synthetic_temporal_family() -> Metamodel:
     """A THREE-level TPH family — Root (temporal) -> Mid (abstract-subtype) ->

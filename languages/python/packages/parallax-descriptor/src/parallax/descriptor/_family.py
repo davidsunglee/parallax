@@ -1,22 +1,29 @@
 """The raw-descriptor inheritance-family walk and invariant validator.
 
-Every production frontend forms a descriptor into an accepted Metamodel before
-asking any inheritance-family question, and answers it through the formed
-model's Inheritance Facet (`parallax.core.inheritance.view`). This module is
-the one exception: the corpus `rejected` grading path (`engine.run_rejected_case`)
-must classify an inline `when.model` document that is EXPECTED to never form —
-the descriptor documents `core/compatibility/cases/m-inheritance-*-rejected-*.yaml`
-encode a malformed family on purpose, so grading it needs a validator that
-walks the raw descriptor record graph directly, before and independently of
-formation. The engine's other descriptor-level family reads (the version
-column's declaring entity, the family-effective primary key for object-key
-derivation, the default conflict/rejected target) share the same raw-descriptor
-vocabulary and live here for the same reason: none of them can wait for a
-model that may never form.
+Every other frontend forms a descriptor into an accepted Metamodel before asking
+any inheritance-family question, and answers it through the formed model's
+Inheritance Facet (:func:`parallax.core.inheritance.view`). This module is the one
+exception, and the reason is structural rather than convenient: a descriptor MAY
+declare a family that never forms — an unknown parent never resolves, a parent
+cycle never terminates, and a non-root's own ``strategy`` is discarded during
+adaptation — so those defects are observable on the raw record graph and nowhere
+after it. Classifying such a document therefore needs a walk that runs before and
+independently of formation.
+
+The rejection vocabulary stays single-sourced: every refusal here raises
+:class:`~parallax.core.inheritance.InheritanceError` with the same rule string
+``m-inheritance``'s own Rule Set uses, so a family defect reads identically
+whichever side observed it. That is the whole of this package's
+``m-inheritance`` dependency.
+
+The family read helpers beside the validator answer the same
+never-forming-descriptor question — which attributes and which primary key a
+position inherits — over the same raw records.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from parallax.core.inheritance import InheritanceError
@@ -28,8 +35,38 @@ from parallax.descriptor._records import (
     family_root_name,
     parent_identity,
 )
+from parallax.descriptor._serde import parse_document
 
-__all__ = ["Family", "family_attributes", "family_of", "family_primary_key", "validate"]
+__all__ = [
+    "Family",
+    "family_attributes",
+    "family_of",
+    "family_primary_key",
+    "validate_families",
+    "validate_inheritance_families",
+]
+
+
+def validate_inheritance_families(document: Mapping[str, object]) -> None:
+    """Validate ``document``'s inheritance-family invariants before formation.
+
+    The public door onto the walk below. It parses ``document`` into records and
+    checks every family invariant that must hold for the model to form at all,
+    raising :class:`~parallax.core.inheritance.InheritanceError` naming the
+    violated rule, or :class:`~parallax.descriptor.DescriptorError` for a
+    document whose shape is not a descriptor at all. It returns ``None`` for a
+    document whose families are well formed — including one declaring no
+    inheritance at all — and says nothing about any other model rule: every
+    non-family defect is Model Formation's to report.
+
+    Parsing here is deliberately shape-only, without the canonical-schema and
+    value phases the ``hub_from_*`` doors run first. A caller reaches this door
+    precisely for a document expected NOT to form, and gating the family
+    classification behind schema validation would answer a different question —
+    whether the document is well formed — for an input whose family defect is
+    the subject.
+    """
+    validate_families(parse_document(document))
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,7 +155,7 @@ def family_primary_key(meta: Metamodel, entity: Entity) -> tuple[Attribute, ...]
     return tuple(attr for attr in family_attributes(meta, entity) if attr.primary_key)
 
 
-def validate(metamodel: Metamodel) -> None:
+def validate_families(metamodel: Metamodel) -> None:
     """Validate every inheritance family invariant, raising :class:`InheritanceError`.
 
     The check order pins each corpus ``rejectedRule``: parent resolution,

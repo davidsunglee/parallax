@@ -451,7 +451,7 @@ _FRONTEND_OWNED: Final[tuple[str, ...]] = (
 carries derived As-Of Axes rather than the authored Temporality Profile, so a
 descendant declaring `nontemporal` — the one profile deriving no axis — reaches
 formation carrying nothing to reject. The raw-descriptor family validator
-(`parallax.conformance._descriptor_family`) owns that refusal, which is why it
+(`parallax.descriptor._family`) owns that refusal, which is why it
 runs before formation for a `when.model` rejected case."""
 
 

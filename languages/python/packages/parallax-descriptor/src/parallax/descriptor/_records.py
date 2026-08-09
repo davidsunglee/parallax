@@ -409,14 +409,11 @@ def declaring_entity(metamodel: Metamodel, entity: Entity) -> Entity:
     descriptor already carries: never raises. An ancestry that does not resolve
     to a root (a cycle, an unresolvable parent) falls back to ``entity``
     unchanged — a deliberate "resolve to what it can reach" posture; the
-    raw-descriptor family-invariant validator
-    (``parallax.conformance._descriptor_family.validate``) is the sole authority
-    on REJECTING a malformed family, not this lookup.
-    ``m-descriptor`` MUST NOT depend on ``m-inheritance``
-    (`core/spec/modules.md` §7 dependency graph), so this is the one place the
-    ancestry-to-root walk is implemented; every caller needing a raw descriptor
-    record's own declaring entity — the conformance engine's case-format
-    write/read seams — composes with this rather than re-deriving it.
+    pre-formation family validator (:mod:`parallax.descriptor._family`) is the
+    sole authority on REJECTING a malformed family, not this lookup. This is the
+    one place the ancestry-to-root walk is implemented; every caller needing a
+    raw descriptor record's own declaring entity composes with this rather than
+    re-deriving it.
 
     Every step of the walk is by CANONICAL identity: each ``parent`` resolves
     under the exact/relative reference rule (:func:`parent_identity`) against

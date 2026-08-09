@@ -389,6 +389,8 @@ assert different things:
   (`m-case-format`), which the single-connection `run` command cannot drive —
   the harness's provider choreography proves it instead, and an adapter asked
   to `run` one returns `error` with a diagnostic naming that lane.
+- any case authoring `then.execution` additionally reports `execution` — the
+  observed Read Trace or Execution Log (see *Execution provenance*, below)
 - a rejected case executes **no SQL** and requires **no provisioning or
   dialect**: an adapter whose claim includes the `rejected` caseShape **MUST**
   report `rejectedRule` — the classified normative rule identifier
@@ -397,6 +399,29 @@ assert different things:
   unconditional for every claimant of the shape; the schema field itself stays
   optional and additive, exactly like `errorClass` before it, so an existing
   run output that never claims `rejected` stays valid unchanged.
+
+### Execution provenance (`execution`)
+
+A case may author the `m-execution-log` oracle `then.execution` (`m-case-format`).
+The adapter answers it with a matching optional `execution` observation in the
+**same closed-union shape**: exactly one `readTrace` for a case whose whole
+observable is a standalone read, or one `transactionLog` for a transactional
+case. Mirroring the oracle's shape rather than inventing a second one is what
+lets a runner compare the two structurally.
+
+The observation reports the provenance the *implementation's own* execution
+produced — never a re-derivation from the case. A call names the statement it ran
+by **index into this envelope's own `emissions` array**, exactly as the oracle
+names it by index into the case's flattened authored golden statements, so
+neither side repeats SQL or binds and `emissions` stays the single record of what
+was emitted. `roundTrips` remains the count oracle: the log's own `roundTrips`
+counts the same calls, so the two agree or the case fails.
+
+The key is optional and additive — an adapter reporting no provenance omits it
+and every existing `run` output stays valid — but an adapter whose claim includes
+`m-execution-log` **MUST** report it for every case authoring the oracle. An
+adapter **MUST NOT** synthesize the observation from the authored golden: a
+provenance report re-derived from the case asserts nothing about what ran.
 
 ### Lifecycle observations (`stateChecks`, `errors`)
 

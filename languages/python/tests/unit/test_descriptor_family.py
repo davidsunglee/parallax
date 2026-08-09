@@ -1,6 +1,6 @@
-"""``parallax.conformance._descriptor_family``: the raw-descriptor family walk
-and the raw-descriptor family-invariant validator the corpus `rejected`
-grading path uses to classify an inline `when.model` document."""
+"""``parallax.descriptor._family``: the raw-descriptor inheritance-family walk,
+and the pre-formation family validator a caller reaches through the public
+:func:`~parallax.descriptor.validate_inheritance_families` door."""
 
 from __future__ import annotations
 
@@ -11,13 +11,14 @@ import pytest
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models
-from parallax.conformance._descriptor_family import (
+from parallax.core.inheritance import InheritanceError
+from parallax.descriptor import validate_inheritance_families
+from parallax.descriptor._family import (
     family_attributes,
     family_of,
     family_primary_key,
-    validate,
+    validate_families,
 )
-from parallax.core.inheritance import InheritanceError
 from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamodel
 from parallax.descriptor._serde import deserialize
 
@@ -95,25 +96,25 @@ def test_rejected_descriptor_classifies_with_its_corpus_rule(
     stem: str, model: dict[str, Any], rule: str
 ) -> None:
     with pytest.raises(InheritanceError) as caught:
-        validate(deserialize(model))
+        validate_inheritance_families(model)
     assert caught.value.rule == rule
 
 
 def test_valid_inheritance_family_passes_validation() -> None:
-    validate(_MODELS["animal"])  # no raise
-    validate(_MODELS["document"])
-    validate(_MODELS["vehicle"])
+    validate_families(_MODELS["animal"])  # no raise
+    validate_families(_MODELS["document"])
+    validate_families(_MODELS["vehicle"])
 
 
 def test_non_inheritance_descriptor_validates_trivially() -> None:
-    validate(_MODELS["account"])  # no participants, no raise
+    validate_families(_MODELS["account"])  # no participants, no raise
 
 
 def test_independent_families_in_one_descriptor_pass_validation() -> None:
     # `workshop` declares two families that share no ancestry, each under its own
     # strategy: resolving one strategy for the whole descriptor would apply the
     # table-per-hierarchy shared-table rule to the table-per-concrete-subtype family.
-    validate(_MODELS["workshop"])  # no raise
+    validate_families(_MODELS["workshop"])  # no raise
 
 
 def test_a_rootless_family_beside_a_rooted_one_is_rejected() -> None:
@@ -137,7 +138,7 @@ def test_a_rootless_family_beside_a_rooted_one_is_rejected() -> None:
         }
     )
     with pytest.raises(InheritanceError) as caught:
-        validate(descriptor)
+        validate_families(descriptor)
     assert caught.value.rule == "inheritance-missing-root"
 
 
@@ -311,7 +312,7 @@ def test_reject_descendant_temporality_under_a_non_temporal_root() -> None:
     )
     meta = Metamodel(entities=(root, pet, dog))
     with pytest.raises(InheritanceError) as caught:
-        validate(meta)
+        validate_families(meta)
     assert caught.value.rule == "inheritance-temporality-not-root-owned"
     assert caught.value.entity == "Pet"
 
@@ -333,7 +334,7 @@ def test_reject_descendant_temporality_under_a_temporal_root() -> None:
     )
     meta = Metamodel(entities=(root, deposit))
     with pytest.raises(InheritanceError) as caught:
-        validate(meta)
+        validate_families(meta)
     assert caught.value.rule == "inheritance-temporality-not-root-owned"
     assert caught.value.entity == "DepositRate"
 
@@ -341,8 +342,8 @@ def test_reject_descendant_temporality_under_a_temporal_root() -> None:
 def test_temporal_root_and_root_owned_profile_still_validate_cleanly() -> None:
     # A well-formed family (the profile declared ONLY on the root) passes
     # validation — the invariant must not reject the corpus's own families.
-    validate(_MODELS["rate"])
-    validate(_MODELS["instrument"])
+    validate_families(_MODELS["rate"])
+    validate_families(_MODELS["instrument"])
 
 
 def test_reject_descendant_optimistic_locking_under_a_non_versioned_root() -> None:
@@ -368,7 +369,7 @@ def test_reject_descendant_optimistic_locking_under_a_non_versioned_root() -> No
     )
     meta = Metamodel(entities=(root, pet, dog))
     with pytest.raises(InheritanceError) as caught:
-        validate(meta)
+        validate_families(meta)
     assert caught.value.rule == "inheritance-optimistic-locking-not-root-owned"
     assert caught.value.entity == "Pet"
 
@@ -394,7 +395,7 @@ def test_reject_descendant_optimistic_locking_under_a_versioned_root() -> None:
     )
     meta = Metamodel(entities=(root, fridge))
     with pytest.raises(InheritanceError) as caught:
-        validate(meta)
+        validate_families(meta)
     assert caught.value.rule == "inheritance-optimistic-locking-not-root-owned"
     assert caught.value.entity == "Fridge"
 
@@ -403,5 +404,5 @@ def test_versioned_root_and_root_owned_version_still_validates_cleanly() -> None
     # A well-formed family (the version declared ONLY on the root) passes
     # validation — the new invariant must not reject the corpus's own
     # root-declared versioned families.
-    validate(_MODELS["vehicle"])
-    validate(_MODELS["appliance"])
+    validate_families(_MODELS["vehicle"])
+    validate_families(_MODELS["appliance"])

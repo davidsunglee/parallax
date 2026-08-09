@@ -94,7 +94,8 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   `referenceSql`, the observed data (`rows` / `graph` / the per-milestone `graphs` /
   `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` /
   `roundTrips`), the reference-identity `identityChecks`, the portable boundary
-  `outcome`, and the numeric-comparison `tolerance`.
+  `outcome`, the execution-provenance `execution`, and the numeric-comparison
+  `tolerance`.
 
 `model` / `tags` / `lane` stay top-level because they are routing/discovery fields
 read by the coverage gate and the language gate; grouping them buys no readability.
@@ -288,7 +289,7 @@ keeps the assertion honest across engines.
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements`; a `uow`-grouped write step MAY additionally carry `on`, naming the find it settles against (see *Settling against a grouped find*, below) |
 | `when.coherence` | `when` | coherence | a two-node (A / B) operation sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
-| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`) |
+| `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary) |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
@@ -309,6 +310,7 @@ keeps the assertion honest across engines.
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
+| `then.execution` | `then` | no | the execution-provenance oracle (`m-execution-log`) — exactly one `readTrace` or `transactionLog` describing the attempts, traces, calls, and completions the run produced (see *The execution oracle*, below); disallowed on a `rejected` case, which reaches no database |
 | `then.roundTrips` | `then` | no | declared statement count (default `1` for the shapes that reach the database, `0` for a `rejected` case); for a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count; for a scenario the SUM of per-step round trips — `0` where every step costs none. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
@@ -1359,6 +1361,46 @@ a surfaced error kind), and its retry configuration under `when.uow` (`retries` 
 `retryOptimisticConflicts`). It carries **no** golden SQL — the concrete DML and
 error types stay per-language. Every boundary case is on the `api-conformance`
 lane.
+
+The action list also spells the **joined** boundary (`m-unit-work`): a `join`
+action opens a unit of work that shares the current one rather than a nested
+boundary of its own, and every action after it runs inside that joined scope.
+The list stays flat because the arrangement is one linear body; what a case
+asserts about the sharing rides `then.outcome` and `then.execution`, never the
+list's shape.
+
+### The execution oracle (`m-execution-log`)
+
+`then.execution` states what the run's **execution provenance** looks like. It is
+optional on every shape that reaches the database and disallowed on a `rejected`
+case, which reaches none. It is a closed union of exactly one wrapper:
+
+- **`readTrace`** — for a case whose whole observable is one read: `calls` plus
+  `roundTrips`.
+- **`transactionLog`** — for a transactional case: the resolved `concurrency`
+  and `retryPolicy`, the ordered `attempts` (each with its `status`, its ordered
+  `traces`, its own `roundTrips`, and — when it rolled back — its detached
+  `failure`), and the log's own `roundTrips`. A trace entry is itself exactly one
+  `readTrace` or `writeBatch`, and a `writeBatch` names its closed `trigger`.
+
+A **call** names its statement by **index** into the case's flattened authored
+golden-statement order and never repeats SQL or binds: `then.statements` and the
+per-step / per-attempt `statements` stay the sole SQL and bind oracles, and
+`then.roundTrips` stays the sole count oracle. On the `api-conformance` lane,
+where a case authors no golden SQL, the index is simply omitted and the call's
+`kind` and `completion` are the whole portable oracle. An attempt failure's
+`databaseCall` is likewise an index — into that **attempt's own** flattened
+calls.
+
+Duration and the implementation-level error type name are deliberately **absent**
+from the oracle: neither is portable, and both are checked against their general
+API contracts instead. The shape is a **case assertion format, not a public
+serialization contract**; an implementation is free to expose provenance in
+whatever surface its language makes idiomatic.
+
+The compatibility harness **validates `then.execution` and does not grade it**;
+each language implementation grades it through the conformance adapter's
+matching `execution` observation (`m-conformance-adapter`).
 
 ### Rejected cases (`m-value-object` / `m-op-algebra` / `m-inheritance` / `m-storage-layout` / `m-unit-work`)
 

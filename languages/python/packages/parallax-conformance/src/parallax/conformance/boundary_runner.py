@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final, cast
 
-from parallax.conformance import case_format
+from parallax.conformance import case_format, sweep
 from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
@@ -78,11 +78,18 @@ class BoundaryAbort(RuntimeError):
 
 
 def reachable_boundary_cases(cases: list[case_format.Case] | None = None) -> list[case_format.Case]:
-    """Every `boundary`-shape case in the corpus (parametrized at runtime,
-    never a hand list — `m-case-format`: every boundary case is
-    `lane: api-conformance`)."""
-    corpus = cases if cases is not None else case_format.load_cases()
-    return [case for case in corpus if case.shape == "boundary"]
+    """Every `boundary`-shape case this implementation can drive (parametrized
+    at runtime, never a hand list — `m-case-format`: every boundary case is
+    `lane: api-conformance`).
+
+    Reachability is the same intersection every other lane uses
+    (:func:`~parallax.conformance.sweep.reachable_cases`): the active slice's
+    own selection, narrowed to cases whose every module tag is implemented. A
+    boundary case tagged for an unbuilt module has no verb sequence to drive
+    and no outcome to grade, so admitting it here would fail the runner rather
+    than report the gap — which the API-suite coverage partition already does.
+    """
+    return [case for case in sweep.reachable_cases(cases=cases) if case.shape == "boundary"]
 
 
 @dataclass(frozen=True, slots=True)

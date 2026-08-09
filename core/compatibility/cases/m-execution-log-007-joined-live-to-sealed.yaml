@@ -1,0 +1,71 @@
+# Joined live-to-sealed (m-execution-log): a joined unit of work appends to the
+# OUTER log, and that one log seals at the outer boundary.
+#
+# The body reads, then opens a joined unit of work (`action: join`) and writes
+# inside it. A joined boundary shares the outer transaction rather than opening a
+# nested one (m-unit-work), so the semantic distinction this case pins down is
+# that the joined write produces no second Execution Log and no second Transaction
+# Attempt: the log holds ONE attempt whose traces span both bodies, and the
+# joined write reaches the database under the OUTER boundary's `finalization`
+# trigger because that boundary is the one that finalizes the shared buffer.
+# A log showing two attempts, or two logs, would describe a fictitious nested
+# transaction that never existed physically.
+#
+# "Live to sealed" is the second half. While the outer boundary is active the log
+# is reachable and its attempt is `active`, so a joined result cannot yet name a
+# committed execution; the attempt reaches `committed` — and the graph seals —
+# only when the OUTER invocation terminates. The authored status is therefore the
+# terminal one, and a language surfaces the two intermediate states (outer still
+# active, outer later rolled back) as distinct errors on the joined result rather
+# than as a third status here.
+#
+# `lane: api-conformance`: a joined boundary is an API arrangement with no wire
+# spelling, so no golden SQL is authored and each Database Call omits its
+# `statement` index. Satisfied by each language's API Conformance Suite.
+model: models/account.yaml
+tags: [m-execution-log, m-unit-work, m-api-conformance, joined, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
+compileEligibility:
+  mode: run-only
+  reason: single-connection
+  note: "single-connection unit-of-work boundary intent (shape:boundary)"
+when:
+  uow:
+    concurrency: locking
+  boundary:
+    - action: read
+      note: the OUTER body observes the row it will write
+    - action: join
+      note: open a joined unit of work — it shares the outer transaction, not a nested boundary
+    - action: update
+      note: the joined body writes; the OUTER boundary finalizes the shared buffer
+then:
+  outcome: committed
+  roundTrips: 2
+  execution:
+    transactionLog:
+      concurrency: locking
+      retryPolicy:
+        maxRetries: 10
+        retryOptimisticConflicts: false
+      attempts:
+        - status: committed
+          traces:
+            - readTrace:
+                calls:
+                  - kind: read
+                    completion:
+                      readCompleted:
+                        returnedRows: 1
+                roundTrips: 1
+            - writeBatch:
+                trigger: finalization
+                calls:
+                  - kind: write
+                    completion:
+                      writeCompleted:
+                        affectedRows: 1
+                roundTrips: 1
+          roundTrips: 2
+      roundTrips: 2
