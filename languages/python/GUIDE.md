@@ -137,7 +137,8 @@ self-contained without a system `libpq`.
     read-your-own-writes force-flush), the write-instruction IR (`KeyedWrite` /
     `PredicateWrite`, serde against `write-instruction.schema.json`, and
     member-name honesty), the Clock Strategy, and the pure planner
-    (coalesce → FK-order → elide) producing a neutral `FlushPlan`. The DAG pins
+    (coalesce → elide no-ops → batch → order → settle → decorate) producing a
+    neutral `WritePlan`. The DAG pins
     `m-unit-work → m-op-algebra` and `m-unit-work → m-db-port` only (no
     `m-sql` / `m-dialect` edge), so the planner emits no SQL; the write-DML → SQL
     lowering is deferred to the composition surface (M4). Docker-free unit tests
