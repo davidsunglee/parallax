@@ -54,14 +54,14 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
 
     outcomes = _db(port).transact(fn)
     assert outcomes == [step.expect_error for step in steps]
-    # What reaches DML is derived from the case rather than assumed of the
-    # corpus: an accepted `insert` step buffers a row the enclosing transaction
-    # flushes, while a refusal buffers nothing and an accepted `update` carries
-    # no change (this runner never edits the value it arranges). The recorded
-    # operations are what makes either claim provable with no database at all.
-    assert any(op[0] == "write" for op in port.ops) == any(
-        step.expect_error is None and step.action == "insert" for step in steps
-    )
+    # The case's own round-trip oracle, graded against the DML the enclosing
+    # transaction actually flushed: a refusal reaches no statement and an
+    # accepted step here materializes nothing (m-case-format *Keyed write action
+    # steps*), so the count the case declares is the count the port recorded.
+    # The recorded operations are what makes that provable with no database at
+    # all.
+    flushed = [op for op in port.ops if op[0] == "write"]
+    assert len(flushed) == write_value_runner.declared_round_trips(case)
 
 
 def test_the_corpus_witnesses_every_code_of_the_closed_vocabulary() -> None:
@@ -124,10 +124,10 @@ def test_the_second_source_refuses_a_deep_fetch_before_reading() -> None:
 
 
 def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
-    # Selection by containment, not by uniformity: such a case is
-    # api-conformance throughout, so this suite is its only executor and a
-    # neighbour this runner cannot drive must not let the keyed step drop out of
-    # the graded set silently.
+    # The schema admits no such case, so this document is one that never
+    # validated; selection is still by containment rather than by uniformity, so
+    # the keyed step cannot drop out of the graded set silently on the way to
+    # the executor that is the case's only one.
     steps: list[dict[str, Any]] = [
         {"action": "update", "value": "unmanaged", "roundTrips": 0},
         {"find": {}, "targetEntity": "parallax.compatibility.Account", "roundTrips": 1},
@@ -143,6 +143,26 @@ def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
 
     with pytest.raises(ValueError, match="graded neither whole nor in part"):
         write_value_runner.reachable_write_value_cases([mixed])
+
+
+def test_a_case_whose_total_disagrees_with_its_steps_is_loud() -> None:
+    # A scenario's `then.roundTrips` is the sum of its steps' own counts, and
+    # this suite is where that is checked at all: the compatibility harness
+    # executes no api-conformance case.
+    miscounted = case_format.Case(
+        path=Path("m-unit-work-999-miscounted.yaml"),
+        case_id="m-unit-work-999",
+        shape="scenario",
+        tags=("m-unit-work",),
+        model="models/account.yaml",
+        document={
+            "when": {"scenario": [{"action": "update", "value": "unmanaged", "roundTrips": 0}]},
+            "then": {"roundTrips": 1},
+        },
+    )
+
+    with pytest.raises(ValueError, match="sum of its steps"):
+        write_value_runner.declared_round_trips(miscounted)
 
 
 def test_an_unrecognized_provenance_token_is_loud() -> None:

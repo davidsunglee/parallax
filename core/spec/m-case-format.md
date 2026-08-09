@@ -309,7 +309,7 @@ keeps the assertion honest across engines.
 | `then.nativeCode` | `then` | error | the per-dialect native code each driver must surface (Postgres SQLSTATE string, MariaDB vendor errno) |
 | `then.outcome` | `then` | boundary | the portable expected outcome (`committed` / `aborted` / a surfaced error kind) |
 | `then.rejectedRule` | `then` | rejected | the normative rule the input violates, from the closed vocabulary a model-aware pre-SQL validator MUST enforce (see *Rejected cases*) |
-| `then.roundTrips` | `then` | no | declared statement count (default `1`); for a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count; for a scenario the SUM of per-step round trips — `0` where every step costs none. A `rejected` case is refused pre-SQL and so costs `0` whenever it declares a count at all. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
+| `then.roundTrips` | `then` | no | declared statement count (default `1` for the shapes that reach the database, `0` for a `rejected` case); for a deep-fetch case it MUST equal the authored/executed `then.statements` count (child SQL is omitted after an empty parent-key level); for a write sequence it MUST equal the ordered DML statement count; for a scenario the SUM of per-step round trips — `0` where every step costs none. A `rejected` case is refused pre-SQL and so costs `0` declared or not: the count a consumer derives for one that omits the field is `0`, not the global default, which is why every rejected case in the corpus omits it. Those two are the only shapes admitting `0`: every other shape asserts one operation that reaches the database |
 | `then.tolerance` | `then` | no | absolute numeric comparison tolerance; omit for exact comparison (the default). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) |
 
 #### How a case spells an Entity
@@ -1223,6 +1223,21 @@ accepted keyed step's buffered write would go missing from the DML those
 neighbours expect. So the API Conformance Suite runs the whole case
 (`m-conformance-adapter`, `m-api-conformance`), which is what makes grading it in
 part a reported pass for steps that never ran.
+
+Every step of such a scenario is a keyed write action step, and the schema
+requires that too. The suite that runs the case asserts no golden SQL
+(`m-api-conformance`) and a scenario asserts no `then.tableState`, so a
+neighbouring read / write / lifecycle step would carry an oracle nobody here can
+grade: the harness that owns golden SQL never runs the case, and the suite that
+runs it may not assert that SQL. The case's total is therefore the sum of its
+steps' zeros — **zero round trips end to end** — and that zero counts the
+statements the steps' own verbs cost, never the reads that arrange a value of the
+stated provenance, which are the adapter's own affair. The suite verifies it the
+only way this lane can, as the absence of any durable effect: a statement that ran
+would have left one. So an accepted step here is one whose write **materializes
+nothing** — an `update` of a value no author changed — and a keyed write whose
+acceptance is meant to be observed as an emitted statement has no oracle in this
+shape and is not authored in it.
 
 ```yaml
 - action: update

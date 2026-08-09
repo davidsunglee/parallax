@@ -240,6 +240,39 @@
       }
     },
     {
+      "description": "A scenario carrying a KEYED WRITE action step carries ONLY keyed write action steps. Because such a case is `api-conformance` throughout, the API Conformance Suite is its ONLY executor — and that suite asserts no golden SQL (`m-api-conformance`), while a `scenario` asserts no `then.tableState` either. A neighbouring read / write / lifecycle step brings an oracle no one here can grade: the wire harness that owns golden SQL never runs the case, and the suite that runs it may not assert that SQL. Admitting the mixture would therefore admit a case gradeable neither whole nor in part, which is why the uniformity is a grammar rule rather than an executor's complaint.",
+      "if": {
+        "required": ["when"],
+        "properties": {
+          "when": {
+            "required": ["scenario"],
+            "properties": {
+              "scenario": {
+                "contains": {
+                  "required": ["action"],
+                  "properties": { "action": { "enum": ["insert", "update"] } }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "when": {
+            "properties": {
+              "scenario": {
+                "items": {
+                  "required": ["action"],
+                  "properties": { "action": { "enum": ["insert", "update"] } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "description": "`then.roundTrips` may declare ZERO only for the two shapes that can cost nothing: a `scenario`, whose total is the SUM of its steps' own counts and is therefore zero exactly when every step costs nothing (a keyed write action step observes a value's provenance and emits no statement either way), and a `rejected` case, which a validator refuses PRE-SQL and which therefore always costs zero. Every other shape asserts one operation that reaches the database — a read's golden SQL, a writeSequence's ordered DML, a conflict attempt, the statement an error case raises — so zero states an impossible total there and stays a schema violation rather than a later harness failure.",
       "if": {
         "required": ["shape"],
@@ -250,7 +283,7 @@
       }
     },
     {
-      "description": "A `rejected` case declares the round trips it actually costs, and a pre-SQL refusal costs NONE: the validator refuses the input before any statement is composed, so `then.roundTrips` is pinned to `0` where it is declared at all rather than merely permitted to be. The property's own default of `1` describes the shapes that reach the database and is inapplicable here, which is why every rejected case in the corpus omits it.",
+      "description": "A `rejected` case declares the round trips it actually costs, and a pre-SQL refusal costs NONE: the validator refuses the input before any statement is composed, so `then.roundTrips` is pinned to `0` where it is declared at all rather than merely permitted to be. The property's own default of `1` describes the shapes that reach the database; this shape's effective default is `0`, the same number a declaration would carry, which is why every rejected case in the corpus omits it.",
       "if": {
         "required": ["shape"],
         "properties": { "shape": { "const": "rejected" } }

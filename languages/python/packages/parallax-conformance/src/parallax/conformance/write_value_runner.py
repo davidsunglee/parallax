@@ -21,6 +21,9 @@ for the loop-mechanics branches.
   against what the step declared, in the loud-mismatch discipline the engine's
   own `mutate` grading uses — an undeclared refusal and a declared expectation
   the verb never raised are both failures, never silently dropped observations.
+- :func:`declared_round_trips` is the case's own round-trip oracle, which this
+  suite is the only place to grade: the compatibility harness never executes an
+  `api-conformance` case, so nothing else reads it.
 
 Every function here drives the live :class:`~parallax.snapshot.handle.Transaction`
 and the second source (:class:`~parallax.conformance.another_source.AnotherSource`)
@@ -44,6 +47,7 @@ __all__ = [
     "TARGET_ID",
     "UNMANAGED_ID",
     "WriteValueStep",
+    "declared_round_trips",
     "grade_step",
     "graded_outcomes",
     "reachable_write_value_cases",
@@ -94,11 +98,15 @@ def reachable_write_value_cases(
 def _is_write_value_case(case: case_format.Case) -> bool:
     """Whether this runner grades ``case``, raising where nothing could.
 
-    A scenario carrying a keyed write action step is `api-conformance` throughout
-    (`m-case-format` *Keyed write action steps*), so this suite is the only
-    executor of every step in it. A neighbour this runner cannot drive therefore
-    leaves the case gradeable neither whole — nothing here runs a `find` — nor in
+    A scenario carrying a keyed write action step carries only keyed write action
+    steps, and the case schema requires it (`m-case-format` *Keyed write action
+    steps*): the case is `api-conformance` throughout, so this suite is the only
+    executor of every step in it, and a neighbour this runner cannot drive would
+    leave the case gradeable neither whole — nothing here runs a `find` — nor in
     part, since a partial grade would report a pass for steps no executor ran.
+    The raise backstops that rule for a document the schema never admitted, so a
+    keyed write step cannot leave the graded set silently by acquiring a
+    neighbour.
     """
     steps = _scenario_steps(case)
     keyed = [step for step in steps if step.get("action") in _WRITE_VALUE_ACTIONS]
@@ -138,6 +146,31 @@ def write_value_steps(case: case_format.Case) -> list[WriteValueStep]:
         )
         for step in _scenario_steps(case)
     ]
+
+
+def declared_round_trips(case: case_format.Case) -> int:
+    """The statements the case declares it costs, from its own oracle.
+
+    A scenario's `then.roundTrips` is the SUM of its steps' own counts
+    (`m-case-format`), so the two are read together and a case whose total
+    disagrees with its steps is loud here — the compatibility harness executes no
+    `api-conformance` case, so this is where that consistency is checked at all.
+    An absent total is that sum, which is what the steps already declare.
+
+    The count is the statements the steps' own verbs cost. Reads that arrange a
+    value of the stated provenance are the adapter's own affair and are not the
+    case's cost.
+    """
+    steps = _scenario_steps(case)
+    total = sum(cast("int", step["roundTrips"]) for step in steps)
+    then = cast("dict[str, Any]", case.document.get("then") or {})
+    declared = cast("int", then.get("roundTrips", total))
+    if declared != total:
+        raise ValueError(
+            f"{case.case_id}: then.roundTrips is {declared} but its steps declare {total} "
+            "between them; a scenario's total is the sum of its steps' own counts"
+        )
+    return total
 
 
 def value_of(provenance: str, tx: Transaction, another: AnotherSource) -> Account:

@@ -1139,6 +1139,32 @@ def _write_value_scenario_without_a_lane() -> dict[str, Any]:
     return doc
 
 
+def _write_value_scenario_mixing_another_step() -> dict[str, Any]:
+    """A keyed-write-value scenario carrying a find step beside its keyed steps.
+
+    The case is api-conformance throughout, so the API Conformance Suite is its
+    only executor — and that suite asserts no golden SQL, while a scenario
+    asserts no `then.tableState`. The neighbour's oracle is therefore gradeable
+    by nobody, which is why the mixture is refused here rather than left to an
+    executor to discover."""
+    doc = _write_value_scenario_case()
+    doc["when"]["scenario"].append(
+        {
+            "targetEntity": "parallax.compatibility.Account",
+            "find": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 2}},
+            "roundTrips": 1,
+            "statements": [
+                {
+                    "sql": {"postgres": "select t0.id from account t0 where t0.id = ?"},
+                    "binds": [2],
+                }
+            ],
+        }
+    )
+    doc["then"]["roundTrips"] = 1
+    return doc
+
+
 def _read_case_with_zero_round_trips() -> dict[str, Any]:
     """A read case declaring `then.roundTrips: 0`.
 
@@ -1166,6 +1192,7 @@ REJECTED_CASES = {
     "write-value-step-costing-a-round-trip": _write_value_step_costing_a_round_trip,
     "write-value-scenario-on-the-harness-lane": _write_value_scenario_on_the_harness_lane,
     "write-value-scenario-without-a-lane": _write_value_scenario_without_a_lane,
+    "write-value-scenario-mixing-another-step": _write_value_scenario_mixing_another_step,
     "read-with-zero-round-trips": _read_case_with_zero_round_trips,
     "rejected-costing-a-round-trip": _rejected_case_costing_a_round_trip,
     "legacy-layout": _legacy_layout,

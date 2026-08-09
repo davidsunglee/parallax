@@ -47,15 +47,23 @@ def test_write_value_case_runs_through_the_shipped_verbs(
         return write_value_runner.graded_outcomes(tx, steps, another)
 
     assert db.transact(fn) == [step.expect_error for step in steps]
-    # The fixture row stands exactly as it was loaded whatever the case's steps
-    # declare: a refusal writes nothing, an accepted `update` carries no change
-    # (this runner never edits the value it arranges), and an accepted `insert`
-    # writes `UNMANAGED_ID`, which is outside the fixture range precisely so a
-    # value no managed read produced cannot address a row one did.
-    stored = db.transact(
-        lambda tx: tx.find(Account.where(Account.id == write_value_runner.TARGET_ID)).result()
+    # The case's `then.roundTrips` graded through the developer surface: this
+    # suite asserts no SQL text (m-api-conformance), so a declared count of zero
+    # is graded as the absence of any durable effect after the transaction
+    # committed — a statement that ran would have left one, on one of the only
+    # two rows a keyed write here can address. The fixture row stands exactly as
+    # loaded (a flushed `update` would bump `version` even carrying no change),
+    # and `UNMANAGED_ID` — outside the fixture range precisely so a value no
+    # managed read produced cannot address a row one did — holds no row at all.
+    assert write_value_runner.declared_round_trips(case) == 0
+    stored, unmanaged = db.transact(
+        lambda tx: (
+            tx.find(Account.where(Account.id == write_value_runner.TARGET_ID)).result(),
+            tx.find(Account.where(Account.id == write_value_runner.UNMANAGED_ID)).results(),
+        )
     )
     assert (stored.owner, stored.balance, stored.version) == ("Linus", Decimal("250.00"), 1)
+    assert unmanaged == []
 
 
 def test_reachable_write_value_cases_cover_the_closed_vocabulary() -> None:
