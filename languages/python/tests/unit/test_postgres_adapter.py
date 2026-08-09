@@ -186,6 +186,22 @@ def test_execute_write_reraises_a_driver_error_at_the_boundary() -> None:
     assert exc_info.value.native_code == "40P01"
 
 
+def test_each_failed_call_raises_its_own_error_instance() -> None:
+    # m-db-port failure identity: a driver may hand the same exception object to
+    # every failed statement, but the port translates at the failing call, so two
+    # invocations never share an error instance -- which is what lets a caller (the
+    # Execution Log) tell which invocation the error it caught came from.
+    adapter = _adapter(_FakeConnection(cursor_error=errors.UniqueViolation("dup")))
+    raised: list[DatabaseError] = []
+    for _ in range(2):
+        with pytest.raises(DatabaseError) as exc_info:
+            adapter.execute_write("insert into gauge (v) values (%s)", [1])
+        raised.append(exc_info.value)
+    first, second = raised
+    assert first is not second
+    assert (first.category, first.native_code) == (second.category, second.native_code)
+
+
 def test_transaction_reraises_a_commit_time_driver_error() -> None:
     adapter = _adapter(_FakeConnection(commit_error=errors.SerializationFailure("serialize")))
     with pytest.raises(DatabaseError) as exc_info:

@@ -26,6 +26,28 @@ functions), never raw driver representations. Nothing above the seam ever sees a
 driver's `Date`, a binary-float `numeric`, or a raw byte buffer. `executeWrite`
 returns the concrete driver's native affected-row count and no rows.
 
+## One error instance per failed invocation
+
+A failed invocation raises an error instance **shared with no other invocation**.
+An implementation MUST build the error where the failure occurs and MUST NOT
+raise a cached, pooled, or otherwise reused error object, however identical two
+failures' category, native code, and message are (`m-db-error` constrains what a
+raised error *carries*; this constrains its *identity*).
+
+The rule exists because the port hands back no call handle a failure could be
+tied to: the raised error is the whole of what a caller learns about which
+invocation failed. A caller MAY catch one failed call and keep working — so
+several failures can occur in one transaction and only one of them unwinds — and
+a consumer that must name the failing call, as `m-execution-log` does for an
+attempt failure, therefore has only the raised object to distinguish them. One
+instance raised twice makes those occurrences indistinguishable, and the failure
+is recorded against a sibling invocation's call.
+
+It binds the raise site alone. No layer above can detect a violation — a reused
+instance is indistinguishable from the occurrence it impersonates — so an
+adapter that classifies each failure into a fresh error at the point of failure
+satisfies it structurally, and nothing above the port need check.
+
 ## Concrete adapter artifacts — one per database type
 
 Each adapter implements the port over exactly one driver. Its only Parallax

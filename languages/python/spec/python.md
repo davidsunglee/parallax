@@ -3412,7 +3412,11 @@ remains observable rather than making Python its own oracle.
 - **Database Error mapping.** At the port boundary every driver exception is
   re-raised as a Parallax Error carrying the neutral `m-db-error` category,
   the preserved native SQLSTATE, and the driver message; driver exception
-  types never cross above the port. The SQLSTATE→category table (`40P01`,
+  types never cross above the port. The translation constructs that error at the
+  failing call and caches nothing, satisfying the `m-db-port` rule that no two
+  invocations share an error instance — which is what lets the Execution Log
+  attribute an attempt failure to the call whose error escaped. The
+  SQLSTATE→category table (`40P01`,
   `40001` → deadlock; `55P03` → lock-wait timeout; `23505` → unique violation;
   …) lives in the pure dialect strategy where the Docker-free contract suite
   tests it.
