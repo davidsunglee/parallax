@@ -1,5 +1,5 @@
 # Joined live-to-sealed (m-execution-log): a joined unit of work appends to the
-# OUTER log, and that one log seals at the outer boundary.
+# OUTER log — one log, one attempt, spanning both bodies.
 #
 # The body reads, then opens a joined unit of work (`action: join`) and writes
 # inside it. A joined boundary shares the outer transaction rather than opening a
@@ -11,17 +11,20 @@
 # A log showing two attempts, or two logs, would describe a fictitious nested
 # transaction that never existed physically.
 #
-# "Live to sealed" is the second half. While the outer boundary is active the log
-# is reachable and its attempt is `active`, so a joined result cannot yet name a
-# committed execution; the attempt reaches `committed` — and the graph seals —
-# only when the OUTER invocation terminates. The authored status is therefore the
-# terminal one, and a language surfaces the two intermediate states (outer still
-# active, outer later rolled back) as distinct errors on the joined result rather
-# than as a third status here.
+# That terminal value graph is the whole of what `then.execution` asserts here,
+# and this case must not be read as proving the lifecycle that reaches it. The
+# log being reachable and `active` while the outer boundary still runs, the
+# joined result exposing the same log OBJECT rather than a copy, a trace appended
+# after the join becoming visible on it, the seal at the outer boundary, and the
+# two intermediate states (outer still active, outer later rolled back) surfacing
+# as distinct errors on the joined result are observations taken DURING an
+# invocation, which a terminal oracle cannot express. Each language proves them
+# in the API Conformance story this case maps to, not from anything portable in
+# this file.
 #
 # `lane: api-conformance`: a joined boundary is an API arrangement with no wire
 # spelling, so no golden SQL is authored and each Database Call omits its
-# `statement` index. Satisfied by each language's API Conformance Suite.
+# `statement` index, so that story grades the whole case.
 model: models/account.yaml
 tags: [m-execution-log, m-unit-work, m-api-conformance, joined, slice-snapshot-1]
 lane: api-conformance

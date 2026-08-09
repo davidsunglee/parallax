@@ -249,7 +249,6 @@
           "minimum": 0
         },
         "kind": {
-          "type": "string",
           "enum": ["read", "write"]
         },
         "completion": { "$ref": "#/$defs/callCompletion" }
@@ -323,7 +322,6 @@
       "required": ["trigger", "calls", "roundTrips"],
       "properties": {
         "trigger": {
-          "type": "string",
           "enum": ["read-dependency", "finalization"]
         },
         "calls": {
@@ -354,7 +352,6 @@
       "required": ["phase", "retryEligible"],
       "properties": {
         "phase": {
-          "type": "string",
           "enum": ["body", "finalization", "commit"]
         },
         "code": {
@@ -382,7 +379,6 @@
       "required": ["status", "traces", "roundTrips"],
       "properties": {
         "status": {
-          "type": "string",
           "enum": ["active", "committed", "rolled-back"]
         },
         "traces": {
@@ -420,7 +416,6 @@
       "required": ["concurrency", "retryPolicy", "attempts", "roundTrips"],
       "properties": {
         "concurrency": {
-          "type": "string",
           "enum": ["locking", "optimistic"]
         },
         "retryPolicy": { "$ref": "#/$defs/retryPolicy" },

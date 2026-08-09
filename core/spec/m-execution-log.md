@@ -177,7 +177,7 @@ data.
 | retry then commit | one log spans both attempts — the rolled-back one keeps its zero-row failure, the committed one its successful write |
 | retry exhaustion | every attempt rolls back, each carrying a retry-eligible failure, and the bound stops the loop rather than the classifier |
 | zero-row enforcement | a *completed* call whose affected-row count fell short still records Write Completed, and the attempt failure references that call |
-| joined live-to-sealed | a joined body appends to the outer log rather than opening a second one, and the single attempt seals at the outer boundary |
+| joined live-to-sealed | a joined body appends to the outer log rather than opening a second one: one attempt whose traces span both bodies, the joined write reaching the database under the outer boundary's `finalization` trigger |
 
 The oracle is `then.execution` (`m-case-format`), a closed union of exactly one
 `readTrace` or `transactionLog`. It states attempt, trace, call, and completion
@@ -192,6 +192,16 @@ Two of the seven — retry exhaustion and joined live-to-sealed — turn on inje
 faults and a nested boundary that a single-connection harness cannot provoke, so
 they are authored on the `api-conformance` lane and satisfied by each language's
 API Conformance Suite (`m-api-conformance`).
+
+The oracle states a **terminal** value graph, which bounds what the spine proves
+about the live half of the joined lifecycle. That the outer transaction's log is
+reachable and `active` before the invocation terminates, that a joined result
+exposes the same log object rather than a copy, that a trace appended after the
+join becomes visible on it, that the graph seals at the outer boundary, and that
+the two intermediate states surface as distinct errors are each an observation
+taken *during* an invocation. They are normative above and are proven by each
+language's API Conformance Suite against the story the joined case maps to, not
+by the portable oracle.
 
 `then.execution` is presently graded by the language implementations alone: the
 compatibility harness validates the key and ignores it. Until a second grader
