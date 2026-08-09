@@ -195,6 +195,14 @@ Causality is held against the PARTICULAR exception, so a failure that is not tha
 one — a later unrelated callback error, a commit failure after the caller swallowed
 a failed call — names no call however recently a call failed.
 
+Exception identity is occurrence identity here because the Database Port contract
+(m-db-port) requires a failed invocation to raise an error instance shared with no
+other invocation. A port that reused one instance across two failed calls would be
+matched to whichever of them was attributed first, and nothing above the port could
+tell the two occurrences apart; the contract, not this lookup, is what forbids it.
+The other attributable family holds by construction: the Affected Rows Policy
+raises its verdict at the rejection it is about.
+
 The reference is weak because the log is reachable while the transaction body is
 still running: a caller that catches a failed call and keeps reading its log must
 not thereby pin that exception, its traceback, and every frame and local they

@@ -7,8 +7,9 @@ seam call to run compiled SQL and demarcate transactions. It names
 application-specific (no driver, no concrete database), so any layer may hold it
 without acquiring a database dependency. Concrete adapters (`parallax.postgres`)
 implement it at the composition root and carry the normalize-at-boundary contract:
-rows come back as managed values, never raw driver representations.
-``m-db-port`` depends only on ``m-core``.
+rows come back as managed values, never raw driver representations. They carry the
+failure-identity contract too: a failed invocation raises an error instance shared
+with no other invocation. ``m-db-port`` depends only on ``m-core``.
 """
 
 from __future__ import annotations
@@ -42,7 +43,18 @@ class JsonDocument:
 
 @runtime_checkable
 class DbPort(Protocol):
-    """The abstract database execution port (m-db-port)."""
+    """The abstract database execution port (m-db-port).
+
+    An implementation raises, for each failed invocation of any method here, an
+    error instance SHARED WITH NO OTHER INVOCATION — built where the failure
+    occurs, never cached or pooled, however identical two failures' category,
+    native code, and message are. Above the seam a failure is recognized by the
+    object caught, and a caller may catch one failed call and keep going, so the
+    raised object is the only thing that says which invocation is unwinding; one
+    instance raised twice makes the execution log name a sibling call. Nothing
+    above the port can detect a violation, so this holds at the raise site or
+    nowhere.
+    """
 
     def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
         """Run a row-returning statement and return managed rows."""

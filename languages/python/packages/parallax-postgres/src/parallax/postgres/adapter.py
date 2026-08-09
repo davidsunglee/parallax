@@ -64,6 +64,10 @@ def translate_driver_error(exc: psycopg.Error) -> DatabaseError:
     dialect code table). This module-internal seam is the psycopg half of the
     normalize-at-boundary contract; it is not part of the ``parallax.postgres``
     public export (``PostgresAdapter`` alone — §8).
+
+    Each call builds its own error, which is what satisfies the port's
+    failure-identity rule (``m-db-port``): no two invocations share an instance,
+    so the object a caller catches names the invocation that raised it.
     """
     return classify_error(POSTGRES, exc.sqlstate, str(exc))
 
