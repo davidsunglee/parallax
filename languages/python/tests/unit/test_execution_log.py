@@ -40,6 +40,7 @@ from parallax.core.execution_log import (
     ReadCompleted,
     ReadTrace,
     RetryPolicy,
+    SealedExecutionLogError,
     TraceRecorder,
     TransactionInProgressError,
     TransactionNotCommittedError,
@@ -139,7 +140,8 @@ def test_a_completed_call_that_fell_short_stays_a_completion() -> None:
     shortfall = MissingTargetError(_ACCOUNT_IDENTITY, _key_target(), 1, 0)
     with pytest.raises(MissingTargetError), builder.current.write_batch("finalization") as batch:
         batch.completed(_STATEMENT, "write", 2, WriteCompleted(0))
-        raise shortfall
+        with batch.enforcing():
+            raise shortfall
     builder.current.failed(shortfall)
     attempt = builder.view().final_attempt
     assert attempt.calls[0].completion == WriteCompleted(0)
@@ -147,6 +149,38 @@ def test_a_completed_call_that_fell_short_stays_a_completion() -> None:
     assert failure is not None
     assert failure.code == "missing-target"
     assert failure.database_call is attempt.calls[0]
+
+
+def test_only_a_call_the_failure_is_about_is_the_call_the_failure_names() -> None:
+    # A dependency batch fails and the read that forced it out unwinds through
+    # its own bracket, which recorded nothing: the empty bracket must not erase
+    # the write call that actually failed.
+    builder = _opened()
+    error = deadlock()
+    with (
+        pytest.raises(DatabaseError),
+        builder.current.read_trace(),
+        builder.current.write_batch("read_dependency") as batch,
+    ):
+        batch.failed(_STATEMENT, "write", 1, error)
+        raise error
+    builder.current.failed(error)
+    attempt = builder.view().final_attempt
+    failure = attempt.failure
+    assert failure is not None
+    assert failure.database_call is attempt.calls[0]
+
+    # The mirror image: a conversion failure after a call the port completed is
+    # not about that call, so it names none.
+    other = _opened()
+    conversion = RuntimeError("the row could not be materialized")
+    with pytest.raises(RuntimeError), other.current.read_trace() as read:
+        read.completed(_STATEMENT, "read", 1, ReadCompleted(1))
+        raise conversion
+    other.current.failed(conversion)
+    conversion_failure = other.view().final_attempt.failure
+    assert conversion_failure is not None
+    assert conversion_failure.database_call is None
 
 
 def _key_target() -> Any:
@@ -212,8 +246,11 @@ def test_the_flattened_calls_are_a_derived_view_over_the_ordered_traces() -> Non
     assert calls[-1] is calls[2]
     assert [call.kind for call in calls] == ["write", "write", "read"]
     assert calls[1:] == (calls[1], calls[2])
+    assert calls[-3] is calls[0]
     with pytest.raises(IndexError):
         _ = calls[3]
+    with pytest.raises(IndexError):
+        _ = calls[-4]
     # Derived, not stored: the view holds the traces themselves, so it retains no
     # per-call collection of its own.
     assert not any(isinstance(value, tuple) and value and value[0] is calls[0] for value in ())
@@ -246,13 +283,55 @@ def test_a_transaction_result_refuses_its_execution_view_in_two_distinct_states(
 
 def test_a_trace_recorder_seals_once_and_answers_the_same_object() -> None:
     recorder = TraceRecorder()
-    assert recorder.last_call is None
+    assert not recorder.has_calls
     recorder.completed(_STATEMENT, "read", 1, ReadCompleted(0))
     assert recorder.read_trace() is recorder.read_trace()
     batch = TraceRecorder()
     batch.completed(_STATEMENT, "write", 1, WriteCompleted(1))
     assert batch.write_batch_trace("finalization") is batch.write_batch_trace("finalization")
-    assert batch.last_call is batch.write_batch_trace("finalization").calls[0]
+
+
+def test_a_sealed_trace_recorder_refuses_a_later_call_rather_than_dropping_it() -> None:
+    recorder = TraceRecorder()
+    recorder.completed(_STATEMENT, "read", 1, ReadCompleted(0))
+    trace = recorder.read_trace()
+    with pytest.raises(SealedExecutionLogError):
+        recorder.completed(_STATEMENT, "read", 1, ReadCompleted(1))
+    assert trace.round_trips == 1
+
+
+def test_a_sealed_log_refuses_every_further_write_to_itself_and_its_attempts() -> None:
+    builder = _opened()
+    recorder = builder.current
+    builder.seal()
+    with pytest.raises(SealedExecutionLogError):
+        builder.attempt_opened()
+    with pytest.raises(SealedExecutionLogError):
+        recorder.committed()
+    with pytest.raises(SealedExecutionLogError):
+        recorder.entering_commit()
+    with pytest.raises(SealedExecutionLogError):
+        recorder.failed(RuntimeError("late"))
+    with pytest.raises(SealedExecutionLogError), recorder.read_trace():
+        pass  # pragma: no cover - the bracket is refused before it opens
+    assert builder.view().final_attempt.status == "active"
+
+
+def test_an_impossible_kind_and_completion_pair_is_refused_at_construction() -> None:
+    with pytest.raises(ValueError, match="'read' Database Call admits"):
+        DatabaseCall(_STATEMENT, "read", 1, WriteCompleted(1))
+    with pytest.raises(ValueError, match="'write' Database Call admits"):
+        DatabaseCall(_STATEMENT, "write", 1, ReadCompleted(1))
+    failed = DatabaseCallFailed(None, None, "either kind admits a failed call")
+    assert DatabaseCall(_STATEMENT, "read", 1, failed).completion is failed
+    assert DatabaseCall(_STATEMENT, "write", 1, failed).completion is failed
+
+
+def test_an_empty_trace_is_refused_because_a_trace_proves_work_that_happened() -> None:
+    with pytest.raises(ValueError, match="Read Trace proves work"):
+        ReadTrace(())
+    with pytest.raises(ValueError, match="Write Batch Trace proves work"):
+        WriteBatchTrace("finalization", ())
 
 
 def test_an_attempt_recorder_writes_through_the_view_it_was_built_from() -> None:

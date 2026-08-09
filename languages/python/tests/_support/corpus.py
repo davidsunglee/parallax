@@ -6,6 +6,7 @@ so the comparators are surface-neutral rather than owned by either.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
@@ -214,23 +215,49 @@ def compare_graph(observed: Mapping[str, Any], expected: Mapping[str, Any]) -> N
     )
 
 
+_CALL_PATH = re.compile(r"/calls/\d+$")
+
+
+def _unasserted_licence(path: str) -> frozenset[str]:
+    """The observation keys the oracle at ``path`` may legitimately leave unsaid.
+
+    The list is closed and comes from `m-case-format`: a call's `statement` index
+    is omitted on a lane that authors no golden SQL, and a failure's `code` is an
+    optional implementation-level value. Nothing else is a don't-care — the
+    oracle states attempt, trace, call, completion, and (for a rolled-back
+    attempt) failure structure, so a key the observation carries and the oracle
+    never mentions is an UNASSERTED claim rather than a permitted omission.
+    """
+    if path.endswith("/failure"):
+        return frozenset({"code"})
+    if _CALL_PATH.search(path):
+        return frozenset({"statement"})
+    return frozenset()
+
+
 def _execution_mismatch(observed: object, expected: object, path: str) -> str | None:
     """The first place ``observed`` fails to satisfy the ``expected`` oracle, or
     ``None``.
 
-    The `then.execution` oracle is a PARTIAL specification (`m-execution-log`):
-    it states attempt, trace, call, and completion structure, and deliberately
-    omits what is not portable — a call's `statement` index on a lane with no
-    golden SQL, a failure's implementation-level `code`. An omitted key is
-    therefore a don't-care, while every authored one must match exactly, and a
-    sequence must match element for element with no length slack: the ORDER
-    traces reached the database in is the assertion.
+    Every authored key must match exactly, a sequence must match element for
+    element with no length slack — the ORDER traces reached the database in is
+    the assertion — and an observed key the oracle never states is a mismatch
+    unless :func:`_unasserted_licence` names it. That last rule is what stops a
+    run from passing while it reports, say, a failure on an attempt the oracle
+    describes as carrying none.
     """
     if isinstance(expected, Mapping):
         if not isinstance(observed, Mapping):
             return f"{path}: expected an object, observed {observed!r}"
         observed_map = cast("Mapping[str, Any]", observed)
-        for key, value in cast("Mapping[str, Any]", expected).items():
+        expected_map = cast("Mapping[str, Any]", expected)
+        unasserted = sorted(set(observed_map) - set(expected_map) - _unasserted_licence(path))
+        if unasserted:
+            return (
+                f"{path}: the observed provenance carries {', '.join(unasserted)}, "
+                "which the oracle does not state"
+            )
+        for key, value in expected_map.items():
             if key not in observed_map:
                 return f"{path}/{key}: absent from the observed provenance"
             mismatch = _execution_mismatch(observed_map[key], value, f"{path}/{key}")

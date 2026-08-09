@@ -22,9 +22,12 @@ module buffers through ``uow.buffer`` directly and never reaches back into
 ``Transaction``.
 
 Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
-attribute, and the layout member-to-column map) and
+attribute, and the layout member-to-column map),
 :mod:`parallax.snapshot.handle._write_inputs` (window validation and the per-row
-column contributions).
+column contributions), and :mod:`parallax.snapshot.handle._read` for
+:func:`~parallax.snapshot.handle._read.execute_read` alone — the resolving read
+is a read, so it records its Database Call through the package's one read-call
+seam instead of restating the timing and failed-call rules here.
 
 Names crossing a module boundary are spelled bare; a helper whose every caller
 lives here keeps its underscore. Privacy is carried by this MODULE's leading
@@ -35,17 +38,15 @@ underscores.
 from __future__ import annotations
 
 import datetime as dt
-import time
 from collections.abc import Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
-from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment, FindQuery
 from parallax.core.entity._query import mutation_selection
-from parallax.core.execution_log import AttemptRecorder, CallRecorder, ReadCompleted
+from parallax.core.execution_log import AttemptRecorder
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -55,7 +56,7 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.op_algebra import QueryDefinitionError
-from parallax.core.sql_gen import LoweredStatement, compile_read
+from parallax.core.sql_gen import compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.unit_work import (
     ChunkedColumnBuilder,
@@ -83,6 +84,7 @@ from parallax.snapshot.handle._family import (
     slot_column,
     version_attribute,
 )
+from parallax.snapshot.handle._read import execute_read
 from parallax.snapshot.handle._write_inputs import (
     is_no_op_assignment,
     key_column_values,
@@ -485,10 +487,13 @@ def _materialize_predicate_write(
         include_value_objects=needs_documents,
     )
     structured_column = compiled.structured_column
+    # The resolving read reaches the database, so it is bracketed and recorded
+    # like any other read (`m-execution-log`) — through the package's one
+    # read-call seam, never a second copy of its rules.
     with attempt.read_trace() as recorder:
         resolved = [
             compiled.materialize_row(row)
-            for row in uow.read(lambda: _resolve_rows(conn, dialect, compiled.statement, recorder))
+            for row in uow.read(lambda: execute_read(conn, dialect, compiled.statement, recorder))
         ]
     if not resolved:
         return
@@ -566,21 +571,3 @@ def _materialize_predicate_write(
             observations=TemporalColumns(predecessors=predecessors),
         )
     )
-
-
-def _resolve_rows(
-    conn: DbPort, dialect: Dialect, statement: LoweredStatement, recorder: CallRecorder
-) -> list[Row]:
-    """The resolving read's own Database Call, recorded like any other: a
-    materializing predicate write reaches the database, so the Execution Log
-    accounts for it rather than leaving a round trip nothing explains."""
-    started = time.perf_counter_ns()
-    try:
-        rows = conn.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
-    except DatabaseError as exc:
-        recorder.failed(statement, "read", time.perf_counter_ns() - started, exc)
-        raise
-    recorder.completed(
-        statement, "read", time.perf_counter_ns() - started, ReadCompleted(len(rows))
-    )
-    return rows

@@ -566,10 +566,11 @@ def _flush_executor(
 
     One flush is ONE Write Batch Trace (`m-execution-log`) carrying the unit of
     work's own trigger, however many statements the plan lowers to — a batch is a
-    flush, not a statement. A shortfall raised by the enforcer therefore fails
-    INSIDE the batch's own bracket, which is what lets the attempt's failure name
-    the completed call the enforcement rejected: the call reached the database
-    and reported a count, so it stays a completion.
+    flush, not a statement. The enforcer runs inside the recorder's own
+    ``enforcing`` bracket, which is what lets the attempt's failure name the
+    completed call the enforcement rejected: the call reached the database and
+    reported a count, so it stays a completion, and the rejection is the only
+    post-call failure entitled to claim it.
     """
 
     def execute(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
@@ -589,6 +590,7 @@ def _flush_executor(
                     time.perf_counter_ns() - started,
                     WriteCompleted(affected),
                 )
-                enforce_affected_rows(step, affected)
+                with recorder.enforcing():
+                    enforce_affected_rows(step, affected)
 
     return execute

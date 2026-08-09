@@ -206,6 +206,13 @@
   code: missing-source-dependency
   message: "omits the declared dependency m-deep-fetch --> m-relationship"
 
+- name: combined-source-module-row
+  base: valid-snapshot.md
+  old: "| `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |"
+  new: "| `m-pk-gen`, `m-value-object` | src/pk-gen | pk-gen | `m-metamodel`, `m-model-formation` | depcheck.toml |"
+  code: combined-source-module-row
+  message: "combines m-pk-gen, m-value-object in one row"
+
 - name: stray-lifecycle-extension
   base: valid-snapshot.md
   old: "| example snapshot lifecycle extension | production | snapshot | none | common runtime | snapshot API |"

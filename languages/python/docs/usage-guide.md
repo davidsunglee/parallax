@@ -137,6 +137,17 @@ Corpus case: `m-execution-log-007`
 
 ```python
 def a_joined_unit_of_work_appends_to_the_outer_live_log(db: Database) -> JoinedLog:
+    """A joined write reaches the database under the OUTER boundary's own
+    finalization, and the joined result reads the outer transaction's live log.
+
+    ``db`` is connected to the story model and holds the seeded account row the
+    joined body bumps. The returned ``JoinedLog`` carries what the terminal
+    oracle cannot state — the attempt's status before any work completed, the
+    trace count either side of the join, that the joined result exposed the same
+    log OBJECT rather than a copy, that the log was still unsealed, and the name
+    of the refusal its execution view raised while the outer boundary ran —
+    beside the committed invocation's own result.
+    """
     seen: list[LiveJoin] = []
 
     def outer(tx: Transaction) -> ExecutionLog:

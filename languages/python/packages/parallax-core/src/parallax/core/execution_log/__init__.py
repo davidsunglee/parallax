@@ -14,24 +14,31 @@ is m-unit-work's own closed flush-trigger set and
 :class:`~parallax.core.auto_retry.AttemptObserver` is the retry loop's own
 publication point — so the observed keeps one spelling of each fact.
 
-Reading and writing are separated by construction. Every published type is a
-read-only value or view; every mutation goes through a **builder** the
-composition root holds and no consumer ever sees. A view and its builder share
-one private state object rather than reaching into each other, which is what
-lets the view be handed out while the invocation is still running:
+Reading and writing are separated by construction. Every **published** type is a
+read-only value or view; every mutation goes through a builder that is
+deliberately absent from ``__all__``, so the surface a consumer imports carries
+no mutator at all and only the composition root threading them down names one. A
+view and its builder share one private state object rather than reaching into
+each other, which is what lets the view be handed out while the invocation is
+still running:
 
-* :class:`ExecutionLogBuilder` — one per logical `transact` invocation,
-  constructed BEFORE the retry loop because the log outlives any single attempt.
-  It is the loop's :class:`~parallax.core.auto_retry.AttemptObserver`.
-* :class:`AttemptRecorder` — one per physical attempt; brackets each Read Trace
-  and Write Batch Trace, and records the attempt's terminal status.
-* :class:`TraceRecorder` — the Database Call sink one trace is built from,
-  and the concrete :class:`CallRecorder` an executor is handed.
+* ``ExecutionLogBuilder`` — one per logical `transact` invocation, constructed
+  BEFORE the retry loop because the log outlives any single attempt. It is the
+  loop's :class:`~parallax.core.auto_retry.AttemptObserver`.
+* ``AttemptRecorder`` — one per physical attempt; brackets each Read Trace and
+  Write Batch Trace, and records the attempt's terminal status.
+* ``TraceRecorder`` — the Database Call sink one trace is built from, and the
+  concrete :class:`CallRecorder` an executor is handed.
+
+Sealing is enforced, not merely announced: once the invocation terminates, every
+builder over that record refuses further writes
+(:class:`SealedExecutionLogError`), so a retained log describes what the
+transaction did rather than whatever a stray reference appended afterwards.
 """
 
 from __future__ import annotations
 
-from collections.abc import Generator, Iterator, Sequence
+from collections.abc import Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Final, Literal, Protocol, overload
@@ -52,7 +59,6 @@ from parallax.core.unit_work import (
 __all__ = [
     "AttemptFailure",
     "AttemptObserver",
-    "AttemptRecorder",
     "AttemptStatus",
     "CallCompletion",
     "CallKind",
@@ -60,13 +66,12 @@ __all__ = [
     "DatabaseCall",
     "DatabaseCallFailed",
     "ExecutionLog",
-    "ExecutionLogBuilder",
     "FailurePhase",
     "ReadCompleted",
     "ReadTrace",
     "RetryPolicy",
+    "SealedExecutionLogError",
     "Trace",
-    "TraceRecorder",
     "TransactionAttempt",
     "TransactionInProgressError",
     "TransactionNotCommittedError",
@@ -128,10 +133,21 @@ class DatabaseCallFailed:
 type CallCompletion = ReadCompleted | WriteCompleted | DatabaseCallFailed
 """How a Database Call ended, a closed union of exactly one member."""
 
+_ADMITTED_COMPLETION: Final[dict[CallKind, type[ReadCompleted] | type[WriteCompleted]]] = {
+    "read": ReadCompleted,
+    "write": WriteCompleted,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class DatabaseCall:
     """One ATTEMPTED round trip to the database.
+
+    ``kind`` and ``completion`` are ONE closed algebra rather than two
+    independent values: a ``read`` admits Read Completed or Database Call
+    Failed and a ``write`` admits Write Completed or Database Call Failed, so
+    the impossible pairs are refused at construction rather than reaching a
+    reader that has no way to interpret them.
 
     ``statement`` is retained BY REFERENCE — its binds are not copied, so a
     retained log retains and exposes whatever sensitive domain values they carry.
@@ -145,18 +161,39 @@ class DatabaseCall:
     duration_ns: int
     completion: CallCompletion
 
+    def __post_init__(self) -> None:
+        admitted = _ADMITTED_COMPLETION[self.kind]
+        if isinstance(self.completion, (ReadCompleted, WriteCompleted)) and not isinstance(
+            self.completion, admitted
+        ):
+            raise ValueError(
+                f"a {self.kind!r} Database Call admits {admitted.__name__} or "
+                f"DatabaseCallFailed, not {type(self.completion).__name__}"
+            )
+
+
+def _non_empty(calls: tuple[DatabaseCall, ...], trace: str) -> None:
+    if not calls:
+        raise ValueError(
+            f"a {trace} proves work that reached the database, so it holds at least one "
+            "Database Call; a failure before the first call produces no trace at all"
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ReadTrace:
     """The calls one read issued.
 
-    NON-EMPTY by invariant: a trace proves work that reached the database, so
-    planning that fails before its first call creates no trace at all. A read
-    surfaced to a caller SHARES this object with the attempt that issued it —
-    there is never a second record of the same call.
+    NON-EMPTY by invariant, refused at construction: a trace proves work that
+    reached the database, so planning that fails before its first call creates no
+    trace at all. A read surfaced to a caller SHARES this object with the attempt
+    that issued it — there is never a second record of the same call.
     """
 
     calls: tuple[DatabaseCall, ...]
+
+    def __post_init__(self) -> None:
+        _non_empty(self.calls, "Read Trace")
 
     @property
     def round_trips(self) -> int:
@@ -177,6 +214,9 @@ class WriteBatchTrace:
 
     trigger: WriteBatchTrigger
     calls: tuple[DatabaseCall, ...]
+
+    def __post_init__(self) -> None:
+        _non_empty(self.calls, "Write Batch Trace")
 
     @property
     def round_trips(self) -> int:
@@ -225,6 +265,16 @@ class TransactionInProgressError(RuntimeError):
     """
 
 
+class SealedExecutionLogError(RuntimeError):
+    """A builder was driven after the record it writes to had sealed.
+
+    The log seals when the invocation terminates, so anything appended
+    afterwards would belong to a graph every reader has already been handed.
+    Refusing turns a silently lost Database Call — or a sealed view that changes
+    under a caller — into the defect it is.
+    """
+
+
 class TransactionNotCommittedError(RuntimeError):
     """A Transaction Result's common execution view was asked for after the
     outer transaction rolled back.
@@ -266,13 +316,24 @@ class TraceRecorder:
     :meth:`read_trace` and :meth:`write_batch_trace` seal the recorder and are
     idempotent: a second call answers the SAME object, which is what lets a read
     result and the attempt that issued it reference one trace rather than two
-    equal ones.
+    equal ones. A call recorded after that sealing would belong to a trace
+    already handed out, so it is refused rather than silently dropped.
+
+    The recorder also remembers which of its calls an escaping failure is ABOUT,
+    and only where that call is the cause: a call the port could not complete
+    names itself, and post-call enforcement of a completed call names it through
+    :meth:`enforcing`. Nothing else does, so a conversion or planning failure
+    that merely unwinds past recorded calls attributes to none — an attempt
+    failure states call causality it was told, never causality inferred from an
+    exception passing a bracket that happens to hold calls.
     """
 
-    __slots__ = ("_calls", "_read_trace", "_write_batch_trace")
+    __slots__ = ("_calls", "_offending_call", "_read_trace", "_sealed", "_write_batch_trace")
 
     def __init__(self) -> None:
         self._calls: list[DatabaseCall] = []
+        self._offending_call: DatabaseCall | None = None
+        self._sealed = False
         self._read_trace: ReadTrace | None = None
         self._write_batch_trace: WriteBatchTrace | None = None
 
@@ -283,37 +344,69 @@ class TraceRecorder:
         duration_ns: int,
         completion: CallCompletion,
     ) -> None:
-        self._calls.append(DatabaseCall(statement, kind, duration_ns, completion))
+        self._append(DatabaseCall(statement, kind, duration_ns, completion))
 
     def failed(
         self, statement: LoweredStatement, kind: CallKind, duration_ns: int, error: DatabaseError
     ) -> None:
-        self._calls.append(
-            DatabaseCall(
-                statement,
-                kind,
-                duration_ns,
-                DatabaseCallFailed(error.category, error.native_code, error.message),
-            )
+        call = DatabaseCall(
+            statement,
+            kind,
+            duration_ns,
+            DatabaseCallFailed(error.category, error.native_code, error.message),
         )
+        self._append(call)
+        self._offending_call = call
+
+    @contextmanager
+    def enforcing(self) -> Generator[None]:
+        """Bracket post-call enforcement of the call just recorded.
+
+        A shortfall the enforcer rejects leaves the call itself a COMPLETION —
+        it reached the database and reported a count — while the rejection is the
+        attempt's failure, so the failure must still name that call.
+        """
+        try:
+            yield
+        except BaseException:
+            if self._calls:
+                self._offending_call = self._calls[-1]
+            raise
 
     @property
-    def last_call(self) -> DatabaseCall | None:
-        """The most recently recorded call — the one an enclosing failure
-        references when it was that call, or the enforcement of it, that failed."""
-        return self._calls[-1] if self._calls else None
+    def has_calls(self) -> bool:
+        """Whether anything reached the database; a bracket that recorded nothing
+        appends no trace."""
+        return bool(self._calls)
+
+    @property
+    def offending_call(self) -> DatabaseCall | None:
+        """The call an escaping failure references, absent when the failure was
+        not about a call at all."""
+        return self._offending_call
 
     def read_trace(self) -> ReadTrace:
-        """This recorder's calls as a Read Trace."""
+        """This recorder's calls as a Read Trace, sealing the recorder."""
+        self._sealed = True
         if self._read_trace is None:
             self._read_trace = ReadTrace(tuple(self._calls))
         return self._read_trace
 
     def write_batch_trace(self, trigger: WriteBatchTrigger) -> WriteBatchTrace:
-        """This recorder's calls as a Write Batch Trace with its own trigger."""
+        """This recorder's calls as a Write Batch Trace with its own trigger,
+        sealing the recorder."""
+        self._sealed = True
         if self._write_batch_trace is None:
             self._write_batch_trace = WriteBatchTrace(trigger, tuple(self._calls))
         return self._write_batch_trace
+
+    def _append(self, call: DatabaseCall) -> None:
+        if self._sealed:
+            raise SealedExecutionLogError(
+                "this trace has been sealed and handed out; the call recorded now would "
+                "belong to a record no reader can reach"
+            )
+        self._calls.append(call)
 
 
 class _CallsView(Sequence[DatabaseCall]):
@@ -342,6 +435,8 @@ class _CallsView(Sequence[DatabaseCall]):
         if isinstance(index, slice):
             return tuple(self)[index]
         position = index + len(self) if index < 0 else index
+        if position < 0:
+            raise IndexError(index)
         for trace in self._traces:
             if position < len(trace.calls):
                 return trace.calls[position]
@@ -362,6 +457,7 @@ class _AttemptState:
     failure: AttemptFailure | None = None
     phase: FailurePhase = "body"
     offending_call: DatabaseCall | None = None
+    sealed: bool = False
 
 
 class TransactionAttempt:
@@ -407,11 +503,14 @@ class AttemptRecorder:
     """The append-only writer for one Transaction Attempt.
 
     The two bracketing helpers own the causality rules so no caller restates
-    them: a trace is appended once its work has succeeded OR raised, an empty
-    one is never appended at all, and an exception escaping a bracket marks that
-    bracket's last call as the one an attempt failure references. Opening a
-    ``finalization`` batch also moves the attempt's failure phase, because
-    nothing an attempt records follows that batch.
+    them: a trace is sealed and appended once its work has succeeded OR raised,
+    a bracket that reached the database not at all appends nothing and seals
+    nothing, and an escaping exception carries forward only the call the trace
+    recorder ATTRIBUTED it to. That last part is why an empty bracket unwinding
+    around a failed one cannot erase the call that failed, and why a conversion
+    failure after a successful call cannot claim it. Opening a ``finalization``
+    batch also moves the attempt's failure phase, because nothing an attempt
+    records follows that batch.
     """
 
     __slots__ = ("_state",)
@@ -422,6 +521,7 @@ class AttemptRecorder:
     @contextmanager
     def read_trace(self) -> Generator[TraceRecorder]:
         """Bracket one read, appending its Read Trace when it issued any call."""
+        self._ensure_open()
         recorder = TraceRecorder()
         errored = False
         try:
@@ -430,12 +530,13 @@ class AttemptRecorder:
             errored = True
             raise
         finally:
-            self._close(recorder, recorder.read_trace(), errored=errored)
+            self._close(recorder, recorder.read_trace, errored=errored)
 
     @contextmanager
     def write_batch(self, trigger: WriteBatchTrigger) -> Generator[TraceRecorder]:
         """Bracket one flushed write batch, appending its Write Batch Trace when
         it issued any call."""
+        self._ensure_open()
         if trigger == "finalization":
             self._state.phase = "finalization"
         recorder = TraceRecorder()
@@ -446,20 +547,22 @@ class AttemptRecorder:
             errored = True
             raise
         finally:
-            self._close(recorder, recorder.write_batch_trace(trigger), errored=errored)
+            self._close(recorder, lambda: recorder.write_batch_trace(trigger), errored=errored)
 
-    def _close(self, recorder: TraceRecorder, trace: Trace, *, errored: bool) -> None:
-        if trace.calls:
-            self._state.traces.append(trace)
-        if errored:
-            self._state.offending_call = recorder.last_call
+    def _close(self, recorder: TraceRecorder, seal: Callable[[], Trace], *, errored: bool) -> None:
+        if recorder.has_calls:
+            self._state.traces.append(seal())
+        if errored and recorder.offending_call is not None:
+            self._state.offending_call = recorder.offending_call
 
     def entering_commit(self) -> None:
         """The body and its finalization batch are done; what remains is the
         durability boundary, which records no call of its own."""
+        self._ensure_open()
         self._state.phase = "commit"
 
     def committed(self) -> None:
+        self._ensure_open()
         self._state.status = "committed"
 
     def failed(self, exc: BaseException) -> None:
@@ -469,6 +572,7 @@ class AttemptRecorder:
         failure where it knows the phase, and the retry loop only classifies it
         afterwards (:meth:`classify`).
         """
+        self._ensure_open()
         if self._state.failure is not None:
             return
         self._state.status = "rolled_back"
@@ -483,6 +587,7 @@ class AttemptRecorder:
 
     def classify(self, *, retry_eligible: bool) -> None:
         """Apply the retry classifier's verdict to the recorded failure."""
+        self._ensure_open()
         failure = self._state.failure
         if failure is None:  # pragma: no cover - the raiser records before the loop classifies
             return
@@ -494,6 +599,13 @@ class AttemptRecorder:
             retry_eligible=retry_eligible,
             database_call=failure.database_call,
         )
+
+    def _ensure_open(self) -> None:
+        if self._state.sealed:
+            raise SealedExecutionLogError(
+                "the invocation this attempt belongs to has terminated and its log has "
+                "sealed; the attempt's record is what it did and cannot change"
+            )
 
 
 _WRITE_EFFECT_CODES: Final[dict[type[BaseException], str]] = {
@@ -613,6 +725,7 @@ class ExecutionLogBuilder:
 
     def attempt_opened(self) -> None:
         """Open an attempt, visible as ``active`` before its body runs."""
+        self._ensure_open()
         self._state.attempts.append(TransactionAttempt(_AttemptState()))
 
     def attempt_failed(self, exc: BaseException, *, retry_eligible: bool) -> None:
@@ -625,13 +738,27 @@ class ExecutionLogBuilder:
         return AttemptRecorder(self._current_state())
 
     def seal(self) -> None:
-        """Terminate the invocation's record."""
+        """Terminate the invocation's record.
+
+        Sealing reaches every attempt the log holds, not the log alone: a
+        recorder handed out while the invocation ran would otherwise keep writing
+        into a graph its readers have already been given.
+        """
         self._state.sealed = True
+        for attempt in self._state.attempts:
+            _attempt_state(attempt).sealed = True
 
     def _current_state(self) -> _AttemptState:
         if not self._state.attempts:  # pragma: no cover - the loop opens one before the body runs
             raise TransactionInProgressError("no transaction attempt has opened yet")
         return _attempt_state(self._state.attempts[-1])
+
+    def _ensure_open(self) -> None:
+        if self._state.sealed:
+            raise SealedExecutionLogError(
+                "this invocation's Execution Log has sealed; it describes one terminated "
+                "invocation and no further attempt can join it"
+            )
 
 
 def _attempt_state(attempt: TransactionAttempt) -> _AttemptState:

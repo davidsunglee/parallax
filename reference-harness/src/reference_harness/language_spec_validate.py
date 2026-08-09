@@ -370,6 +370,12 @@ def _check_source_dependencies(
     outside the rule; so is the conformance family's reach over whatever it
     harnesses, which modules.md grants by construction rather than as edges a
     row could enumerate.
+
+    A row naming SEVERAL behavioral modules is rejected outright rather than
+    checked. One dependency cell cannot restate two modules' outgoing edges
+    unless those edge sets are identical, so a combined row would otherwise
+    satisfy the presence rule for each of its subjects while its cell was
+    validated against none of them.
     """
     header = [_normalize(cell) for cell in table.header]
     normalized_column = _normalize(_SOURCE_DEPENDENCY_COLUMN)
@@ -385,8 +391,18 @@ def _check_source_dependencies(
     for _line, row in table.rows:
         if not row or column >= len(row):
             continue
-        subjects = _MODULE_RE.findall(row[0])
-        if len(subjects) != 1 or subjects[0] not in declared:
+        subjects = [subject for subject in _MODULE_RE.findall(row[0]) if subject in declared]
+        if len(subjects) > 1:
+            issues.append(
+                Diagnostic(
+                    "combined-source-module-row",
+                    "source-enforcement topology combines "
+                    f"{', '.join(sorted(subjects))} in one row, so no dependency cell "
+                    "states either module's own allowed direct dependencies",
+                )
+            )
+            continue
+        if not subjects:
             continue
         module = subjects[0]
         stated = set(_MODULE_RE.findall(row[column]))
