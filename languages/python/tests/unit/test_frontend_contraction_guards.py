@@ -394,12 +394,12 @@ def test_no_snapshot_module_catches_the_codecs_own_refusal() -> None:
     # Exception` is legitimate wherever no codec call can reach it — the read
     # path's materialization boundary is one — so rejecting broad handlers
     # rejects working code, and whether a codec call reaches one is a question
-    # about paths rather than about spellings. Two earlier approximations both
-    # failed as approximations: matching codec operation NAMES inside a `try`
-    # body reads receivers it cannot resolve, in both directions. That no
-    # refusal is swallowed is decided by watching one leave a transaction and
-    # reach its caller, which is a behavioral assertion and lives with the
-    # write verbs.
+    # about paths rather than about spellings. Approximating the reach by
+    # matching codec operation NAMES inside a `try` body answers it in neither
+    # direction: an unrelated object's `full_row()` is not the codec, and a
+    # local alias or one helper call away still is. That no refusal is swallowed
+    # is decided by watching one leave a transaction and reach its caller, which
+    # is behavioral and belongs with the write verbs.
     #
     # A handler whose type this module cannot resolve to a class is a handler it
     # cannot judge, so those fail here rather than passing quietly.
