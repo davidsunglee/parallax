@@ -59,7 +59,9 @@ from parallax.core.dialect import POSTGRES
 from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
+    OptimisticLockConflictError,
     PredicateWrite,
+    StaleWriteError,
     WriteRejectedError,
     instructions,
 )
@@ -1622,3 +1624,86 @@ def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
 class _Abandon(Exception):
     """Abandons the transaction once the ordering above is proven, so the
     pending insert never has to be a valid committed write."""
+
+
+# --------------------------------------------------------------------------- #
+# Both closed predicate refusals precede adapter access, proven by a port that #
+# raises on any call rather than by a recorded absence. `RecordingPort` above  #
+# proves an op was never appended; `NoIoPort` proves the connection was never  #
+# touched, which is the stronger reading of "before Unit of Work or adapter    #
+# access" and the one the refusals' own contract states.                       #
+# --------------------------------------------------------------------------- #
+def test_query_not_mutation_compatible_precedes_every_adapter_call() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.delete_where(mm.Person.where(mm.Person.id == 1).limit(1))
+
+    with pytest.raises(QueryDefinitionError) as caught:
+        Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-not-mutation-compatible"
+
+
+def test_query_assignment_target_mismatch_precedes_every_adapter_call() -> None:
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            im.CardPayment.where(im.CardPayment.id == 1), im.Payment.amount.set(Decimal("1.00"))
+        )
+
+    with pytest.raises(QueryDefinitionError) as caught:
+        Database.connect(NoIoPort(), PAYMENT, clock=FixedClock(FIXED)).transact(fn)
+    assert caught.value.code == "query-assignment-target-mismatch"
+
+
+# --------------------------------------------------------------------------- #
+# Stale-write detection and the optimistic-conflict retry loop, reached        #
+# through a TYPED `_where` call. Both behaviors were previously witnessed only #
+# from the conformance ingress and by their keyed analogues, so nothing pinned #
+# that a materialized group's per-row shortfall classifies and retries the     #
+# same way the keyed path's does.                                              #
+# --------------------------------------------------------------------------- #
+def _update_balance_where(tx: Transaction) -> None:
+    tx.update_where(
+        mm.Account.where(mm.Account.balance < 200), mm.Account.balance.set(Decimal("175.00"))
+    )
+
+
+def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> None:
+    # The `_where` counterpart of the keyed locking-mode shortfall: the UPDATE a
+    # materialized group emits under locking concurrency is ungated, so a
+    # zero-row shortfall is the non-retriable stale write and the whole unit of
+    # work rolls back.
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
+        write_affected=0,
+    )
+
+    with pytest.raises(StaleWriteError, match="Account"):
+        account_db(port).transact(_update_balance_where)
+    assert ("rollback",) in port.ops
+    assert len([op for op in port.ops if op[0] == "write"]) == 1
+
+
+def test_materializing_where_shortfall_in_optimistic_mode_is_a_lock_conflict() -> None:
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}],
+        write_affected=0,
+    )
+
+    with pytest.raises(OptimisticLockConflictError):
+        account_db(port).transact(_update_balance_where, concurrency="optimistic")
+    assert port.begins == 1
+
+
+def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
+    # The `0`-then-`1` affected-rows transition, driven through the typed
+    # `update_where` verb: the retried attempt re-runs the resolving read and
+    # the gated write inside a second transaction.
+    port = RecordingPort(
+        rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+    )
+    port.write_affected_queue = [0, 1]
+
+    account_db(port).transact(
+        _update_balance_where, concurrency="optimistic", retry_optimistic_conflicts=True
+    )
+    assert port.begins == 2
+    assert ("commit",) in port.ops
