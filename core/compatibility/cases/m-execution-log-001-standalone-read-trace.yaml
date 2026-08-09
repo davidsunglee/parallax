@@ -1,0 +1,45 @@
+# Standalone Read Trace (m-execution-log): a read outside any transaction still
+# reports what it did.
+#
+# The smallest witness in the execution-provenance spine, and the only one whose
+# oracle is a bare `readTrace` rather than a whole `transactionLog`: a read issued
+# outside a unit of work has no attempt to belong to, so its provenance is the
+# Read Trace itself. One statement, therefore one Database Call, whose `read` kind
+# and `readCompleted` completion carry the PHYSICAL row count the statement
+# returned — one row for account 3 (Grace) — never a count of result roots or
+# graph nodes, which for this flat single-table read happen to coincide and
+# therefore prove nothing on their own. The trace's `roundTrips` restates the
+# count `then.roundTrips` already asserts, so the two oracles agree by
+# construction or the case fails.
+#
+# The Database Call names its statement by INDEX (`statement: 0`) into the
+# authored golden order rather than repeating the SQL or the bind: `then.statements`
+# stays the single SQL and bind oracle. No lock suffix appears — the read runs on
+# no transaction, so the m-read-lock in-transaction rule never applies.
+model: models/account.yaml
+tags: [m-execution-log, m-snapshot-read, read-trace, slice-snapshot-1]
+shape: read
+when:
+  targetEntity: parallax.compatibility.Account
+  operation:
+    eq:
+      attr: parallax.compatibility.Account.id
+      value: 3
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
+      binds: [3]
+  referenceSql: select id, owner, balance, version from account where id = 3
+  rows:
+    - { id: 3, owner: Grace, balance: 10.00, version: 1 }
+  roundTrips: 1
+  execution:
+    readTrace:
+      calls:
+        - statement: 0
+          kind: read
+          completion:
+            readCompleted:
+              returnedRows: 1
+      roundTrips: 1

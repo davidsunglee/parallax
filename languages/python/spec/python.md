@@ -19,7 +19,7 @@ never something an application developer hand-writes.
 |---|---|
 | Conformance Slice | `slice-snapshot-1` — tag `slice-snapshot-1`, plain-value **snapshot** lifecycle profile, defined in [`core/spec/slices.md`](../../../core/spec/slices.md). |
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
-| Claimed capability coverage | Copied verbatim from the canonical claim: the 28 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
+| Claimed capability coverage | Copied verbatim from the canonical claim: the 29 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
 | Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
@@ -29,7 +29,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -48,6 +48,13 @@ never something an application developer hand-writes.
   `unsupported-module`; a case not carrying `slice-snapshot-1` →
   `unsupported-case-tag`. Each response carries a diagnostic naming the first
   failed filter.
+- **Single-witness execution provenance.** `m-execution-log`'s `then.execution`
+  oracle is graded by this target alone: the compatibility harness validates the
+  key and ignores it, so a disagreement between Python and the specification has
+  no second reader. Every other claimed module's runtime observables are
+  double-witnessed, and this one is a deliberate, recorded exception — it is
+  carried as an open entry in [`docs/deferred-ledger.md`](../docs/deferred-ledger.md)
+  until a second grader exists, not as a permanent property of the module.
 - **Case-selection expression.** Verification selects
   `("slice-snapshot-1" ∈ case.tags) ∧ (dialect = postgres) ∧ (case.shape ∈ claimed caseShapes) ∧ (case module-tags ⊆ claimed modules)`;
   milestone-scoped runs intersect further with capability tags via
@@ -1494,6 +1501,21 @@ conversion or serialization defects raise
 `document`, `json`, or `yaml` and the original cause, return no partial output,
 and leave the model unchanged.
 
+A seventh door answers a question the six above structurally cannot.
+`validate_inheritance_families(document) -> None` classifies the
+inheritance-family defects that keep a document from forming at all — an unknown
+parent, a parent cycle, a non-root redeclaring a family-owned fact, a strategy's
+table or tag rules — raising
+`parallax.core.inheritance.InheritanceError` whose `rule` is the same
+`m-inheritance` identifier the accepted model's own Rule Set reports, so a family
+defect reads identically whichever side observed it. It is the ONLY door that
+answers for a document expected never to form: `hub_from_*` can report such a
+document only as a refusal to build a model, and a defect the adaptation discards
+— a non-root's own `strategy` — is unobservable past that point. It therefore
+parses shape only, without the canonical-schema and value phases the `hub_from_*`
+doors gate on, and says nothing about any non-family rule; a document whose shape
+is not a descriptor at all still raises `DescriptorError`.
+
 The separately distributed Descriptor Frontend reads the model through the
 durable first-party collaboration seam
 `parallax.core.entity.model_of(model) -> Metamodel`. It returns the same accepted
@@ -1832,8 +1854,9 @@ or descriptor authoring form and performs no audit stamping.
   `parallax.descriptor`, shipped in the separately installable
   `parallax-descriptor` artifact. Its complete public surface is
   `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`,
-  `export_json`, `export_yaml`, and the descriptor error/violation types listed
-  above; descriptor records, serde, schema machinery, and adapters are private.
+  `export_json`, `export_yaml`, `validate_inheritance_families`, and the
+  descriptor error/violation types listed above; descriptor records, serde,
+  schema machinery, and adapters are private.
   JSON and YAML canonicalization tests run under the internal-behavior
   surface (`uv run pytest tests/unit`), and every corpus descriptor must import, export
   deterministically, and re-export structurally equal to its canonical corpus
@@ -3430,8 +3453,11 @@ module whose Formation Manifest row supplies a Rule Set or compiler, and
 `m-pk-gen` supplies neither and is not imported. Every behavioral scope reaches
 the metamodel it needs through `m-metamodel` and the typed owner facets.
 `m-descriptor` maps to the separate `parallax.descriptor` scope and imports the
-common runtime only through its language-neutral `m-core` and `m-metamodel`
-edges. Its private child support scope `parallax.descriptor._hub` alone imports
+common runtime only through its language-neutral `m-core`, `m-metamodel`, and
+`m-inheritance` edges — the last because a descriptor document may declare an
+inheritance family that never forms, and the pre-formation walk that classifies
+such a family reports it in `m-inheritance`'s own rule vocabulary rather than
+minting a second one. Its private child support scope `parallax.descriptor._hub` alone imports
 the Python-specific Domain Model construction and accepted-model read seams in
 `parallax.core.entity`. This direct support edge is required because the class
 and Descriptor Frontends deliberately return one concrete `DomainModel` type,
@@ -3471,7 +3497,7 @@ legalizes a forbidden edge.
 | `m-metamodel` | `parallax.core.metamodel` | `parallax.core.metamodel` | `m-core` | generated forbidden contracts |
 | `m-model-formation` | `parallax.core.model_formation` | `parallax.core.model_formation` | `m-metamodel` | generated forbidden contracts |
 | Model formation composition root (support) | `parallax.core._formation_profile` | `parallax.core._formation_profile` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-storage-layout`, `m-value-object`, `m-relationship`, `m-temporal-read`, `m-opt-lock` | generated forbidden contracts |
-| `m-descriptor` | `parallax.descriptor` | `parallax.descriptor` | `m-core`, `m-metamodel` | generated forbidden contracts + cross-package contract |
+| `m-descriptor` | `parallax.descriptor` | `parallax.descriptor` | `m-core`, `m-metamodel`, `m-inheritance` | generated forbidden contracts + cross-package contract |
 | `m-pk-gen` | `parallax.core.pk_gen` | `parallax.core.pk_gen` | `m-metamodel` | generated forbidden contracts |
 | `m-inheritance` | `parallax.core.inheritance` | `parallax.core.inheritance` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-storage-layout` | `parallax.core.storage_layout` | `parallax.core.storage_layout` | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
@@ -3486,6 +3512,7 @@ legalizes a forbidden edge.
 | `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-op-algebra`, `m-db-port`, `m-temporal-read` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
+| `m-execution-log` | `parallax.core.execution_log` | `parallax.core.execution_log` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
 | `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-op-algebra`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-txtime-write` | `parallax.core.txtime_write` | `parallax.core.txtime_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
@@ -3825,7 +3852,7 @@ hatchling.
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Find Query authoring vocabulary — `FindQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
-| `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
+| `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |

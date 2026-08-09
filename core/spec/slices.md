@@ -43,7 +43,10 @@ to the bitemporal rectangle split.
   snapshot graphs (`m-snapshot-read`); writes are explicit only. No managed
   lifecycle: the slice claims neither `m-identity-map` nor `m-detach`, and not
   `m-op-list` (a snapshot read is not an operation-backed lazy list; its
-  round-trip observability is pinned by `m-snapshot-read`).
+  round-trip observability is pinned by `m-snapshot-read`). It is also the only
+  slice claiming `m-execution-log`: transaction execution provenance is
+  lifecycle-neutral, but its dedicated case spine is authored over the
+  plain-value surface, so the managed slice claims it once cases carry that tag.
 - **`slice-managed-1`** — the **managed-object** surface: reads materialize
   managed objects interned in the transaction-scoped identity map
   (`m-identity-map`), mutation buffers through the unit of work, objects detach
@@ -65,7 +68,7 @@ The canonical `describe` claim for `slice-snapshot-1`:
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "reference", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },

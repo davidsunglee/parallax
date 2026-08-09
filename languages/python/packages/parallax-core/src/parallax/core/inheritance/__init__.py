@@ -136,7 +136,7 @@ __all__ = [
 
 class InheritanceError(ValueError):
     """An inheritance family invariant is violated: either a raw descriptor's
-    structural family shape (``parallax.conformance._descriptor_family.validate``)
+    structural family shape (``parallax.descriptor.validate_inheritance_families``)
     or an accepted model's concrete-subtype write-payload shape
     (:func:`validate_subtype_write` / :func:`reject_predicate_write`).
 

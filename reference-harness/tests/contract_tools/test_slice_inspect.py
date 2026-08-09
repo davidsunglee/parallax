@@ -28,6 +28,7 @@ _EXPECTED_MODULE_UNIONS = {
         "m-descriptor",
         "m-dialect",
         "m-document-codec",
+        "m-execution-log",
         "m-inheritance",
         "m-metamodel",
         "m-model-formation",

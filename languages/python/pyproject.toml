@@ -1094,8 +1094,6 @@ forbidden_modules = [
     "parallax.core.dialect",
     "parallax.core.document_codec",
     "parallax.core.entity",
-    "parallax.core.inheritance",
-    "parallax.core.model_formation",
     "parallax.core.navigate",
     "parallax.core.op_algebra",
     "parallax.core.opt_lock",

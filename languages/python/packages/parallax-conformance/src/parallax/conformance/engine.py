@@ -28,7 +28,6 @@ from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import (
     _assembly,
-    _descriptor_family,
     case_format,
     models,
     provision,
@@ -100,7 +99,8 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.write_planner import reject_readless_document_many
-from parallax.descriptor._errors import DescriptorError
+from parallax.descriptor import DescriptorError, validate_inheritance_families
+from parallax.descriptor._family import family_of, family_primary_key
 from parallax.descriptor._records import Attribute, Entity, Metamodel, declaring_entity
 from parallax.descriptor._serde import deserialize as deserialize_metamodel
 from parallax.snapshot import handle
@@ -940,7 +940,7 @@ def _row_object_key(
     ``node.fields[attr.column]``). ``None`` when the (family-effective) primary
     key is absent from ``row`` — never reachable for a well-formed corpus find,
     but this seam takes no data on faith."""
-    pk_attrs = _descriptor_family.family_primary_key(meta, meta.entity(entity.canonical))
+    pk_attrs = family_primary_key(meta, meta.entity(entity.canonical))
     if not pk_attrs:  # pragma: no cover - defends a malformed model
         return None
     pairs: list[tuple[str, object]] = []
@@ -3920,7 +3920,7 @@ def _default_family_root(meta: Metamodel) -> Entity | None:
     say "the family root", singular, and a case over such a model must name its
     target explicitly.
     """
-    family = _descriptor_family.family_of(meta)
+    family = family_of(meta)
     if not family.participants:
         return None
     if family.root is None:
@@ -3948,7 +3948,7 @@ def _conflict_target(meta: Metamodel) -> str:
         return meta.entities[0].name
     concretes = sorted(
         entity.name
-        for entity in _descriptor_family.family_of(meta).participants
+        for entity in family_of(meta).participants
         if entity.inheritance is not None and entity.inheritance.role == "concrete-subtype"
     )
     if len(concretes) != 1:
@@ -4638,10 +4638,11 @@ def run_rejected_case(case: case_format.Case) -> str:
     every read uses, then checked by the shared `validate_operation`
     (`m-op-algebra` / `m-navigate` / `m-value-object`) — the same validator an
     idiomatic statement frontend calls at build time, so the two paths cannot
-    drift. A `model` input first passes the raw-descriptor family-invariant
-    validator (:func:`_descriptor_family.validate`) for descriptor spellings the
-    accepted algebra cannot represent, then runs through the same complete Model
-    Formation profile as every reusable model.
+    drift. A `model` input first passes the descriptor frontend's own
+    pre-formation family validator
+    (:func:`~parallax.descriptor.validate_inheritance_families`) for descriptor
+    spellings the accepted algebra cannot represent, then runs through the same
+    complete Model Formation profile as every reusable model.
 
     A `write` input is one of three, dispatched on the members the input itself
     carries (`m-case-format` Rejected cases) — never on the case's tags or
@@ -4696,7 +4697,7 @@ def run_rejected_case(case: case_format.Case) -> str:
         except DescriptorError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         try:
-            _descriptor_family.validate(inline_meta)
+            validate_inheritance_families(inline_model)
         except inheritance.InheritanceError as exc:
             return exc.rule
         try:

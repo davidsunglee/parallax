@@ -1,0 +1,84 @@
+# Read-dependency ordering (m-execution-log): the batch a dependent read forced
+# carries the `read-dependency` trigger and stands immediately BEFORE the Read
+# Trace it enabled.
+#
+# The two steps share one `uow` group, so the insert is still buffered when the
+# find that depends on it runs. Read-your-own-writes (m-unit-work) forces the
+# buffer out first, and the Execution Log records that causality positionally:
+# the attempt's ordered traces are the Write Batch Trace, then the Read Trace —
+# never the reverse, and never one merged record. The trigger names WHICH of
+# m-unit-work's two flush triggers produced the batch, which is the semantic
+# distinction against m-execution-log-002, where the very same insert reaches the
+# database under `finalization` because no read depends on it.
+#
+# The boundary contributes no second batch: the dependency flush emptied the
+# buffer, so finalization has nothing left to write and appends no trace. That is
+# why the attempt holds exactly two traces for two round trips, and why a log
+# that showed a third — an empty finalization batch — would be wrong: a trace
+# proves work that reached the database, so a flush with nothing to write creates
+# none.
+#
+# The find runs inside the group's default `locking` unit of work, so it carries
+# the m-read-lock shared-row-lock suffix, and its Database Call's `readCompleted`
+# reports the one row the just-flushed insert made visible.
+model: models/account.yaml
+tags: [m-execution-log, m-unit-work, write-batch, read-dependency, slice-snapshot-1]
+shape: scenario
+when:
+  scenario:
+    - uow: dependency
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.Account
+          rows:
+            - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+      roundTrips: 1
+      note: buffer an insert of a brand-new account 7 inside the group; nothing flushes yet
+      statements:
+        - sql:
+            postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
+          binds: [7, Newton, 5.00, 1]
+    - uow: dependency
+      targetEntity: parallax.compatibility.Account
+      find:
+        eq:
+          attr: parallax.compatibility.Account.id
+          value: 7
+      roundTrips: 1
+      note: the dependent find forces the buffered insert out as a read-dependency batch, then observes it; the group COMMITS after this, its last step
+      statements:
+        - sql:
+            postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ? for share of t0
+          binds: [7]
+      expectRows:
+        - { id: 7, owner: Newton, balance: 5.00, version: 1 }
+then:
+  roundTrips: 2
+  execution:
+    transactionLog:
+      concurrency: locking
+      retryPolicy:
+        maxRetries: 10
+        retryOptimisticConflicts: false
+      attempts:
+        - status: committed
+          traces:
+            - writeBatch:
+                trigger: read-dependency
+                calls:
+                  - statement: 0
+                    kind: write
+                    completion:
+                      writeCompleted:
+                        affectedRows: 1
+                roundTrips: 1
+            - readTrace:
+                calls:
+                  - statement: 1
+                    kind: read
+                    completion:
+                      readCompleted:
+                        returnedRows: 1
+                roundTrips: 1
+          roundTrips: 2
+      roundTrips: 2

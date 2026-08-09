@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-59**.
+Entry numbering is continuous and never reused. The next new number is **D-61**.
 
 ## Standing notes
 
@@ -96,10 +96,10 @@ re-litigating this bullet.
 
 *Low — off every production path, recorded so the sweep is not re-run from
 scratch.* Relates to `parallax.descriptor._records.concrete_descendant_names`,
-`parallax.conformance._descriptor_family.validate`, `parallax.conformance.engine`.
+`parallax.conformance.engine`.
 
 **What.** One defect class — an exact `EntityIdentity` reduced to a bare local
-name — was chased through five call sites and fixed at all five. Three further
+name — was chased through five call sites and fixed at all five. Two further
 sites of the same class were found, verified off-path, and left:
 
 - `_records.concrete_descendant_names` keys `by_name` on `candidate.name` and
@@ -107,25 +107,21 @@ sites of the same class were found, verified off-path, and left:
   entities overwrite each other and a model mixing qualified and relative parent
   spellings splits the child index. It has **no production caller at all** — only
   its own `__all__`, the module docstring, and a unit suite.
-- `_descriptor_family.validate` builds a bare `by_name` map, and everything it
-  feeds inherits the defect: a legal qualified cross-namespace parent is rejected
-  as `inheritance-unknown-parent`, a chain crossing two namespaces sharing a
-  local name is reported as `inheritance-cycle`, and two same-local-name roots
-  merge into one family. It runs from exactly one place —
-  `engine.run_rejected_case` grading an inline `when.model` — and never from the
-  observation-keying path.
 - The conformance engine's default-target convention returns bare names
   (`_rejected_target`, `_conflict_target`), which feed `meta.entity(...)` and
   would raise `KeyError` on a duplicated local name.
 
+The pre-formation family walk carried a third instance of the same defect and no
+longer does: `parallax.descriptor._family` keys every walk on
+`Entity.canonical_name` and resolves a bare `parent` through
+`_records.parent_identity`, with the two namespace shapes pinned by
+`tests/unit/test_descriptor_family.py`.
+
 **Why it is deferred rather than fixed.** Each repair changes an exported
 contract with no caller to validate it against. `concrete_descendant_names`'s fix
 makes both `position` and the returned names canonical, and the prior question is
-whether an unused export should exist at all. `_descriptor_family`'s fix needs
-the relative-reference resolution `_records._parent_identity` implements, which
-means exporting it across a module boundary — legal in direction, but a contract
-decision — and its diagnostics all quote `entity.name`. All three are
-unwitnessed: no `rejected` corpus model declares a namespace.
+whether an unused export should exist at all. Both are unwitnessed: no `rejected`
+corpus model declares a namespace.
 
 ### D-54 — Every inherited Pydantic field on an Entity subtype defaults to the ancestor descriptor's class-access expression, so a subtype constructs with no arguments
 
@@ -216,6 +212,50 @@ compatibility graph oracles, Python typed and neutral results, cycle rendering,
 wire shape, and bounded-memory streaming. It needs its own grilling session and
 ticket after conformance has been reduced to the production path; COR-93 must not
 combine that semantic migration with deleting the duplicate engine.
+
+### D-59 — `then.execution` has one grader, so an `m-execution-log` disagreement has no second reader
+
+*Medium — a claimed module's runtime observables are single-witness.* Relates to
+`core/spec/m-execution-log.md`, `core/schemas/compatibility-case.schema.json`,
+`parallax.conformance`. True owner:
+[COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution).
+
+**What.** Every other claimed module's runtime behavior is graded twice — by the
+reference harness and by this target — so a disagreement between them is a
+finding rather than a silent agreement with a defect. `then.execution` is graded
+by this target alone: the harness validates the key against the case schema and
+ignores it. The seven `m-execution-log` cases therefore prove that Python matches
+*Python's own reading* of the specification, and nothing cross-checks that
+reading.
+
+**Why it is deferred rather than fixed.** Teaching the harness to grade the
+oracle is harness work of its own size — it has an attempt-count oracle but no
+per-call trace, no read-versus-write-batch distinction, and no batch trigger — and
+it belongs to the harness's own executor rather than to this target. COR-95 owns
+it; this entry exists so the gap stays visible from the Python side while it is
+open.
+
+### D-60 — The `m-execution-log` enforcement scope is declared in `python.md` §7 but generates no import-linter contract
+
+*Low — a declared scope with nothing under it yet.* Relates to
+`languages/python/spec/python.md` §7, `languages/python/tools/check_dag_sync.py`,
+`core/spec/modules.md`.
+
+**What.** §7 maps `m-execution-log` onto `parallax.core.execution_log`, but
+`MODULE_SCOPE` does not carry the entry and the generated
+`[tool.importlinter]` block therefore has no contract for it. Two consequences
+follow while that holds: nothing enforces what the scope may import, and
+`core/spec/modules.md` cannot yet carry the `m-snapshot-read --> m-execution-log`
+edge — `check_dag_sync.build_adjacency` refuses an edge from a mapped module to
+an unmapped one, so declaring it would fail generation.
+
+**Why it is deferred rather than fixed.** import-linter refuses a `forbidden`
+contract whose `source_modules` names a module that does not exist
+(`Module 'parallax.core.execution_log' does not exist.`), so the mapping cannot
+be registered before the module has source. Registering it early would mean
+committing an empty package purely to satisfy a generator. Both the
+`MODULE_SCOPE` entry and the incoming `m-snapshot-read` edge land with the
+module's own source, at which point this entry closes.
 
 ## Forwarding pointers
 

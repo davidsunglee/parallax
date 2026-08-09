@@ -119,6 +119,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-unit-work` | Transactions & unit of work | active | cases |
 | `m-read-lock` | In-transaction shared read lock | active | cases |
 | `m-auto-retry` | Bounded retry on transient conflict | active | cases |
+| `m-execution-log` | Transaction execution provenance | active | cases |
 | `m-identity-map` | Transaction-scoped identity map (managed-object interning) | active | cases |
 | `m-process-cache` | Process-wide identity & query cache | deferred | cases |
 | `m-temporal-read` | As-of temporal reads (all flavors) | active | cases |
@@ -154,6 +155,7 @@ m-metamodel --> m-core
 m-model-formation --> m-metamodel
 m-descriptor --> m-core
 m-descriptor --> m-metamodel
+m-descriptor --> m-inheritance
 m-pk-gen --> m-metamodel
 m-inheritance --> m-metamodel
 m-inheritance --> m-model-formation
@@ -190,6 +192,11 @@ m-read-lock --> m-unit-work
 m-read-lock --> m-dialect
 m-auto-retry --> m-unit-work
 m-auto-retry --> m-db-error
+m-execution-log --> m-sql
+m-execution-log --> m-db-port
+m-execution-log --> m-db-error
+m-execution-log --> m-unit-work
+m-execution-log --> m-auto-retry
 m-identity-map --> m-unit-work
 m-identity-map --> m-temporal-read
 m-process-cache --> m-unit-work
@@ -255,6 +262,16 @@ construction it may reference any behavioral module it harnesses.
   (the resolved `to` list must be a non-empty subset of the position's **effective
   concrete-subtype set**) is stated in `m-inheritance`'s vocabulary. The algebra
   therefore references the inheritance family model, not the reverse.
+- **`m-descriptor --> m-inheritance`.** A descriptor document may declare an
+  inheritance family that never forms — an unknown parent, a parent cycle, a
+  non-root redeclaring a family-owned fact — and those defects are only
+  observable on the raw records, before resolution discards or normalizes the
+  authored spelling. The interchange module therefore validates the family
+  invariants it can see and reports them in `m-inheritance`'s own rule
+  vocabulary rather than minting a second one. The edge runs the direction
+  descriptor already travels (`--> m-core`, `--> m-metamodel`) and stays
+  one-way: `m-inheritance` reaches only `m-metamodel` and `m-model-formation`,
+  neither of which names a descriptor record.
 - **`m-storage-layout --> m-metamodel`, `m-storage-layout -->
   m-model-formation`, `m-storage-layout --> m-inheritance`.** Storage Layout
   validates Candidate Metamodel physical claims through Inheritance's pure
@@ -332,6 +349,15 @@ construction it may reference any behavioral module it harnesses.
   an opaque parallel one. The edge is to the read *model* only: nothing here
   reaches as-of lowering, and the direction stays one-way, since
   `m-temporal-read` names no unit-of-work construct.
+- **`m-execution-log --> m-unit-work`, `--> m-auto-retry`, `--> m-db-port`,
+  `--> m-db-error`, `--> m-sql`.** Execution provenance is a **composition-level
+  observer**: it records the statement a call executed, the call boundary
+  itself, the category a failed call classified to, the transaction and its two
+  write-batch triggers, and the retry policy and classifier verdict — so it
+  names all five, and none of them names it. A composition root threads the
+  recorder down as an ordinary parameter, which is what keeps the observed from
+  depending on its observer and the vocabulary in the common runtime rather than
+  in a lifecycle surface.
 - **`m-identity-map --> m-temporal-read`.** A temporal object's identity key
   includes its **lowered as-of coordinates** — a managed temporal object is a
   view pinned at a coordinate, so the identity module references the as-of read

@@ -145,7 +145,8 @@
     "export_yaml",
     "hub_from_document",
     "hub_from_json",
-    "hub_from_yaml"
+    "hub_from_yaml",
+    "validate_inheritance_families"
   ],
   "parallax.core.metamodel": [
     "APPLICATION_ASSIGNED",

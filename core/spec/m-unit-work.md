@@ -38,6 +38,12 @@ writes are coherent. Within one unit of work:
 - A read that depends on a not-yet-flushed write **MUST** observe that write: the
   unit of work flushes pending writes before serving a dependent read
   (read-your-own-writes), so a query never returns stale in-transaction state.
+- Those two are the **whole** trigger vocabulary: a **read dependency** and the
+  boundary's **finalization**. There is no size threshold, no periodic flush,
+  and no caller-invoked one — physical write timing stays encapsulated, and a
+  batch that reached the database is therefore attributable to exactly one of
+  the two. The joined (nested) boundary adds no third trigger: it shares the
+  outer unit of work's buffer and the outer boundary finalizes it.
 
 > **The transaction boundary is user-specified, per-language.** How a unit of
 > work is opened and committed — a closure, a context manager, a decorator, an

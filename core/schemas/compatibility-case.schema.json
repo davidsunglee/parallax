@@ -167,7 +167,10 @@
         },
         "then": {
           "required": ["rejectedRule"],
-          "not": { "required": ["statements"] }
+          "allOf": [
+            { "not": { "required": ["statements"] } },
+            { "not": { "required": ["execution"] } }
+          ]
         }
       },
       "oneOf": [
@@ -796,8 +799,8 @@
             "required": ["action"],
             "properties": {
               "action": {
-                "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language).",
-                "enum": ["read", "create", "update", "terminate", "delete"]
+                "description": "The unit-of-work action this step performs, portably named (the concrete API is per-language). `join` opens a JOINED unit of work that shares the current one rather than a nested boundary of its own (m-unit-work), so every action after it runs inside that joined scope; the list stays FLAT because the body is one linear sequence, and what a case asserts about the sharing rides `then.outcome` and `then.execution` rather than the list's shape.",
+                "enum": ["read", "create", "update", "terminate", "delete", "join"]
               },
               "note": {
                 "description": "Optional human-readable description of the action's role in the loop scenario.",
@@ -944,7 +947,7 @@
       ]
     },
     "then": {
-      "description": "Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the portable boundary `outcome`, and the numeric-comparison `tolerance`.",
+      "description": "Everything the case asserts after the action runs: the golden SQL an implementation is expected to emit (`statements`), the naive oracle (`referenceSql`), the observed data (`rows` / `graph` / `tableState`), the counts and codes (`affectedRows` / `errorClass` / `nativeCode` / `roundTrips`), the portable boundary `outcome`, the execution-provenance `execution`, and the numeric-comparison `tolerance`.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1107,6 +1110,19 @@
           "minimum": 0,
           "default": 1
         },
+        "execution": {
+          "description": "The execution-provenance oracle (m-execution-log): what the run's Execution Log or Read Trace looks like. A CLOSED union of exactly one wrapper — `readTrace` for a case whose whole observable is one read, `transactionLog` for a transactional one — narrowed by the same `propertyNames` enum idiom the `when` branches use. Calls name their statement by INDEX into the case's flattened authored golden-statement order and never repeat SQL or binds: `then.statements` (and the per-step / per-attempt `statements`) stay the sole SQL and bind oracles, `then.roundTrips` the sole count oracle. Duration and the implementation-level error type name are omitted because neither is portable; they are checked against their general API contracts instead. This is a CASE ASSERTION FORMAT, not a public serialization contract, and the compatibility harness validates it without grading it — each language grades it through the conformance adapter's matching `execution` observation.",
+          "type": "object",
+          "additionalProperties": false,
+          "oneOf": [
+            { "required": ["readTrace"], "propertyNames": { "enum": ["readTrace"] } },
+            { "required": ["transactionLog"], "propertyNames": { "enum": ["transactionLog"] } }
+          ],
+          "properties": {
+            "readTrace": { "$ref": "#/$defs/readTrace" },
+            "transactionLog": { "$ref": "#/$defs/transactionLog" }
+          }
+        },
         "tolerance": {
           "description": "Absolute tolerance for numeric row comparison. Omit for exact comparison (the default; money/counts/exact aggregates compare exactly in Decimal space). Declare ONLY for inherently inexact results (stddev/variance, repeating-decimal avg) that cannot be authored exactly and differ in scale across dialects; comparison then becomes abs(actual - expected) <= tolerance.",
           "type": "number",
@@ -1116,6 +1132,169 @@
     }
   },
   "$defs": {
+    "databaseCall": {
+      "description": "One ATTEMPTED database round trip (m-execution-log Database Call). `statement` is the zero-based index into the case's flattened authored golden-statement order — the call names the statement it ran rather than repeating its SQL or binds — and is OMITTED on a lane that authors no golden SQL (`api-conformance`), where `kind` and `completion` are the whole portable oracle. `kind` keeps a failed call classifiable without parsing SQL.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "completion"],
+      "properties": {
+        "statement": { "type": "integer", "minimum": 0 },
+        "kind": { "enum": ["read", "write"] },
+        "completion": { "$ref": "#/$defs/callCompletion" }
+      },
+      "allOf": [
+        {
+          "description": "A `read` call admits Read Completed or Database Call Failed; a `write` call admits Write Completed or Database Call Failed. Keying the completion on the call's own kind is what makes the pair a closed algebra rather than two independent enums.",
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "read" } }
+          },
+          "then": {
+            "properties": { "completion": { "not": { "required": ["writeCompleted"] } } }
+          },
+          "else": {
+            "properties": { "completion": { "not": { "required": ["readCompleted"] } } }
+          }
+        }
+      ]
+    },
+    "callCompletion": {
+      "description": "How a Database Call ended (m-execution-log), a CLOSED union of exactly one member. `readCompleted` carries the PHYSICAL row count the statement returned — never a count of result roots, unique graph nodes, or projection views. `writeCompleted` carries the affected-row count. `failed` carries the detached diagnostic's portable half alone: the neutral `m-db-error` category the failure classified to, `null` where it classified to none. The message, the native code, and the raised exception are not portable and are absent here.",
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["readCompleted"], "propertyNames": { "enum": ["readCompleted"] } },
+        { "required": ["writeCompleted"], "propertyNames": { "enum": ["writeCompleted"] } },
+        { "required": ["failed"], "propertyNames": { "enum": ["failed"] } }
+      ],
+      "properties": {
+        "readCompleted": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["returnedRows"],
+          "properties": { "returnedRows": { "type": "integer", "minimum": 0 } }
+        },
+        "writeCompleted": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["affectedRows"],
+          "properties": { "affectedRows": { "type": "integer", "minimum": 0 } }
+        },
+        "failed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["category"],
+          "properties": {
+            "category": { "enum": ["uniqueViolation", "deadlock", "lockWaitTimeout", null] }
+          }
+        }
+      }
+    },
+    "readTrace": {
+      "description": "The calls one read issued (m-execution-log Read Trace). NON-EMPTY by invariant: a trace proves work that reached the database, and planning that fails before its first call creates no trace at all — the attempt's `failure` records that instead.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calls", "roundTrips"],
+      "properties": {
+        "calls": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/databaseCall" }
+        },
+        "roundTrips": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "writeBatchTrace": {
+      "description": "The calls one flushed write batch issued (m-execution-log Write Batch Trace), naming the CLOSED `m-unit-work` trigger that produced it: `read-dependency` for the batch a dependent read forced — which appears immediately BEFORE the read trace it enabled — or `finalization` for the boundary-owned final batch. Non-empty by the same invariant as a read trace.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trigger", "calls", "roundTrips"],
+      "properties": {
+        "trigger": { "enum": ["read-dependency", "finalization"] },
+        "calls": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/databaseCall" }
+        },
+        "roundTrips": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "attemptTrace": {
+      "description": "One entry in a Transaction Attempt's ORDERED traces: exactly one `readTrace` or `writeBatch`, narrowed by the same `propertyNames` idiom the top-level union uses. The order is the order the work reached the database, which is what makes a dependency-triggered batch's position in front of its read an assertion rather than a convention.",
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [
+        { "required": ["readTrace"], "propertyNames": { "enum": ["readTrace"] } },
+        { "required": ["writeBatch"], "propertyNames": { "enum": ["writeBatch"] } }
+      ],
+      "properties": {
+        "readTrace": { "$ref": "#/$defs/readTrace" },
+        "writeBatch": { "$ref": "#/$defs/writeBatchTrace" }
+      }
+    },
+    "attemptFailure": {
+      "description": "The DETACHED diagnostic a rolled-back Transaction Attempt retains (m-execution-log Attempt Failure). `phase` locates a failure that has no call at all — `body` (callback work, explicit reads, read-forced write batches), `finalization` (the boundary-owned final batch), `commit` (the durability boundary) — without exposing a stack location or an internal planner stage. `retryEligible` is the CLASSIFIER's verdict under the effective policy, independent of the remaining budget and claiming nothing about whether another attempt occurred. `databaseCall` is the zero-based index into THIS attempt's own flattened calls, present only where a failed port call or post-call enforcement of a completed one caused the failure. The error type name and message are implementation-level and absent here.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "retryEligible"],
+      "properties": {
+        "phase": { "enum": ["body", "finalization", "commit"] },
+        "code": { "type": "string", "minLength": 1 },
+        "retryEligible": { "type": "boolean" },
+        "databaseCall": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "transactionAttempt": {
+      "description": "One PHYSICAL attempt of the logical invocation (m-execution-log Transaction Attempt). `traces` is the ordered Read Traces and Write Batch Traces the attempt produced; it MAY be empty for an attempt that failed before reaching the database. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. A `failure` belongs to a rolled-back attempt: an attempt that committed carries none, which the conditional below states structurally.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "traces", "roundTrips"],
+      "properties": {
+        "status": { "enum": ["active", "committed", "rolled-back"] },
+        "traces": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/attemptTrace" }
+        },
+        "roundTrips": { "type": "integer", "minimum": 0 },
+        "failure": { "$ref": "#/$defs/attemptFailure" }
+      },
+      "allOf": [
+        {
+          "description": "A committed attempt carries no failure — the diagnostic describes the attempt that rolled back, so authoring one beside `committed` states two outcomes for one attempt.",
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "committed" } }
+          },
+          "then": { "not": { "required": ["failure"] } }
+        }
+      ]
+    },
+    "retryPolicy": {
+      "description": "The immutable effective Retry Policy the Execution Log retains once (m-execution-log / m-auto-retry), after defaults and outer-transaction inheritance resolve. It records the RESOLVED values only; whether the caller supplied one explicitly is not retained and has no authored spelling here.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxRetries", "retryOptimisticConflicts"],
+      "properties": {
+        "maxRetries": { "type": "integer", "minimum": 0 },
+        "retryOptimisticConflicts": { "type": "boolean" }
+      }
+    },
+    "transactionLog": {
+      "description": "The whole Execution Log of one logical transaction invocation (m-execution-log), spanning every physical attempt including a joined body's, which shares this log rather than opening a second one. `concurrency` and `retryPolicy` are the resolved effective values the log retains once. `roundTrips` is the sum over the attempts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["concurrency", "retryPolicy", "attempts", "roundTrips"],
+      "properties": {
+        "concurrency": { "enum": ["locking", "optimistic"] },
+        "retryPolicy": { "$ref": "#/$defs/retryPolicy" },
+        "attempts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/transactionAttempt" }
+        },
+        "roundTrips": { "type": "integer", "minimum": 0 }
+      }
+    },
     "jsonPointer": {
       "description": "A JSON Pointer into the case (RFC 6901), naming a graph node position for a `then.identityChecks` entry. Mirrors the m-conformance-adapter `jsonPointer` def: the empty string (whole document) or a `/`-rooted path.",
       "type": "string",
