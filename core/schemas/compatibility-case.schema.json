@@ -217,7 +217,7 @@
       }
     },
     {
-      "description": "A scenario carrying a KEYED WRITE action step (`insert` / `update`) is `lane: api-conformance` throughout. What such a step observes is which verbs accept a live client-held VALUE of a stated provenance, which the wire harness can neither construct nor arrange, so it cannot execute the step at all — and a scenario is ONE ordered execution, not a set of steps to divide between executors. Assigning the whole case to the API Conformance Suite is therefore the only routing under which every step of it runs: a `harness` lane would leave the keyed step unexecuted while the rest ran, and an accepted keyed step's buffered write would go missing from the DML the later steps expect.",
+      "description": "A scenario carrying a KEYED WRITE action step (`insert` / `update`) is `lane: api-conformance` throughout. What such a step observes is which verbs accept a live client-held VALUE of a stated provenance, which the wire harness can neither construct nor arrange, so it cannot execute the step at all — and a scenario is ONE ordered execution, not a set of steps to divide between executors. Assigning the whole case to the API Conformance Suite is therefore the only routing under which every step of it runs: a `harness` lane would report the case as run while the very step it turns on never executed.",
       "if": {
         "required": ["when"],
         "properties": {
@@ -550,7 +550,7 @@
                 "then": { "required": ["on"] }
               },
               {
-                "description": "A keyed write ACTION verb (`insert` / `update`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none. Such a step carries NO golden SQL and declares `roundTrips: 0` (m-case-format *Keyed write action steps*): an accepted value's write is buffered rather than emitted, and a refused one reaches no statement at all, so its whole observable is the per-step `expectError`.",
+                "description": "A keyed write ACTION verb (`insert` / `update`) is handed a value rather than a prior step's result, so it REQUIRES the `value` provenance token and names no `on` (m-unit-work *Write value provenance*). `value` is legal on no other step: provenance is a property of the value a verb is handed, and every other step form is handed none. Such a step carries NO golden SQL and declares `roundTrips: 0` (m-case-format *Keyed write action steps*): a refusal stops the verb before it buffers anything, and the one acceptance this shape admits — the `update` of a value no author changed, per the sibling `insert` rule — buffers nothing either, so its whole observable is the per-step `expectError`.",
                 "if": {
                   "required": ["action"],
                   "properties": { "action": { "enum": ["insert", "update"] } }
