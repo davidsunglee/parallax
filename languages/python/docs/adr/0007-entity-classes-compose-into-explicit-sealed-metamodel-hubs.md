@@ -678,10 +678,12 @@ bound rides on the receiver.
 The Snapshot collaboration this record describes was built by COR-50, and the
 prose above states it in the names it was designed under —
 `is_loaded` / `narrowed`, `EntityGraphResolution`, `EntityRuntime`,
-`snapshot-model-mismatch`. Every one of them is retired, and the shipped name
-for each is tabulated one for one in the closing amendment of
-[the Python Metamodel Hub and Entity frontend design](../../../../docs/architecture/parallax-python-metamodel-hub-design.md).
-The decision itself is unaffected: what moved is spelling, not ownership.
+`snapshot-model-mismatch`. Every one of them is retired. The one-for-one
+tabulation of their shipped replacements lived in a design document that was
+itself retired afterwards, so the shipped spellings are read from
+`parallax.core.entity`'s exports and `languages/python/spec/python.md` §3
+instead. The decision itself is unaffected: what moved is spelling, not
+ownership.
 
 ## Amendment (2026-08, COR-63): capabilities are reached one at a time
 
