@@ -10,11 +10,15 @@ serde, type-spelling conversion, and the Unresolved Metamodel adaptation stay
 private: a descriptor document is the interchange surface, not the records behind
 it.
 
-The seven error types below are the frontend's whole failure vocabulary, none of
-them re-exported from ``parallax.core``. ``m-descriptor`` reaches the common
-runtime through ``m-core``, ``m-metamodel``, and — for the family rule
-vocabulary alone — ``m-inheritance``; the private ``parallax.descriptor._hub``
-child scope alone reaches the Hub-construction seam.
+The seven error types below are the frontend's OWN failure vocabulary, none of
+them re-exported from ``parallax.core``. They are not the whole of what these
+doors raise: the family classifier reports a defect as
+:class:`parallax.core.inheritance.InheritanceError`, so one rule reads
+identically whichever side observed it, and a caller catching that door's
+refusals names both types. ``m-descriptor`` reaches the common runtime through
+``m-core``, ``m-metamodel``, and — for the family rule vocabulary alone —
+``m-inheritance``; the private ``parallax.descriptor._hub`` child scope alone
+reaches the Hub-construction seam.
 """
 
 from __future__ import annotations

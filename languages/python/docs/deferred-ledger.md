@@ -239,23 +239,27 @@ open.
 
 *Low — a declared scope with nothing under it yet.* Relates to
 `languages/python/spec/python.md` §7, `languages/python/tools/check_dag_sync.py`,
-`core/spec/modules.md`.
+`core/spec/modules.md`, `core/spec/m-snapshot-read.md`.
 
 **What.** §7 maps `m-execution-log` onto `parallax.core.execution_log`, but
 `MODULE_SCOPE` does not carry the entry and the generated
-`[tool.importlinter]` block therefore has no contract for it. Two consequences
-follow while that holds: nothing enforces what the scope may import, and
+`[tool.importlinter]` block therefore has no contract for it. Three consequences
+follow while that holds: nothing enforces what the scope may import;
 `core/spec/modules.md` cannot yet carry the `m-snapshot-read --> m-execution-log`
 edge — `check_dag_sync.build_adjacency` refuses an edge from a mapped module to
-an unmapped one, so declaring it would fail generation.
+an unmapped one, so declaring it would fail generation; and `m-snapshot-read.md`
+therefore still names no Read Trace as the record its round-trip count is
+observed through, because naming another module's entity IS that edge and cannot
+precede it.
 
 **Why it is deferred rather than fixed.** import-linter refuses a `forbidden`
 contract whose `source_modules` names a module that does not exist
 (`Module 'parallax.core.execution_log' does not exist.`), so the mapping cannot
 be registered before the module has source. Registering it early would mean
-committing an empty package purely to satisfy a generator. Both the
-`MODULE_SCOPE` entry and the incoming `m-snapshot-read` edge land with the
-module's own source, at which point this entry closes.
+committing an empty package purely to satisfy a generator. All three — the
+`MODULE_SCOPE` entry, the incoming `m-snapshot-read` edge, and the
+`m-snapshot-read.md` amendment that edge carries — land with the module's own
+source, at which point this entry closes.
 
 ## Forwarding pointers
 

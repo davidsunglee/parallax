@@ -253,7 +253,22 @@
           "enum": ["read", "write"]
         },
         "completion": { "$ref": "#/$defs/callCompletion" }
-      }
+      },
+      "allOf": [
+        {
+          "description": "A `read` call admits Read Completed or Database Call Failed; a `write` call admits Write Completed or Database Call Failed. The observation is closed over the same call algebra as the case oracle, so a mirror comparison never has to reject a pair the oracle could not have authored.",
+          "if": {
+            "required": ["kind"],
+            "properties": { "kind": { "const": "read" } }
+          },
+          "then": {
+            "properties": { "completion": { "not": { "required": ["writeCompleted"] } } }
+          },
+          "else": {
+            "properties": { "completion": { "not": { "required": ["readCompleted"] } } }
+          }
+        }
+      ]
     },
     "callCompletion": {
       "description": "How an observed Database Call ended — a closed union of exactly one member, mirroring the case oracle. `readCompleted.returnedRows` is the physical row count the statement returned; `writeCompleted.affectedRows` the affected count; `failed.category` the neutral m-db-error category the failure classified to, null where it classified to none.",
@@ -348,10 +363,20 @@
         },
         "retryEligible": { "type": "boolean" },
         "databaseCall": { "type": "integer", "minimum": 0 }
-      }
+      },
+      "allOf": [
+        {
+          "description": "A `commit` failure references no Database Call: the durability boundary is not a recorded call, so an index reported beside `phase: commit` names an unrelated statement.",
+          "if": {
+            "required": ["phase"],
+            "properties": { "phase": { "const": "commit" } }
+          },
+          "then": { "not": { "required": ["databaseCall"] } }
+        }
+      ]
     },
     "transactionAttempt": {
-      "description": "One observed physical attempt of the logical invocation. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback.",
+      "description": "One observed physical attempt of the logical invocation. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. A `failure` belongs to a rolled-back attempt alone, mirroring the case oracle's own conditional.",
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "traces", "roundTrips"],
@@ -366,7 +391,17 @@
         },
         "roundTrips": { "type": "integer", "minimum": 0 },
         "failure": { "$ref": "#/$defs/attemptFailure" }
-      }
+      },
+      "allOf": [
+        {
+          "description": "Only a rolled-back attempt carries a failure: reporting one beside `committed` states two outcomes for one attempt, and beside `active` an outcome the attempt has not reached.",
+          "if": {
+            "required": ["status"],
+            "properties": { "status": { "const": "rolled-back" } }
+          },
+          "else": { "not": { "required": ["failure"] } }
+        }
+      ]
     },
     "retryPolicy": {
       "description": "The resolved effective Retry Policy the observed Execution Log retained once.",

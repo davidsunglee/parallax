@@ -294,6 +294,23 @@
       "then": {
         "properties": { "then": { "properties": { "roundTrips": { "const": 0 } } } }
       }
+    },
+    {
+      "description": "Which branch of `then.execution` a case may author is decided by its SHAPE, not chosen freely. A `read` case's whole observable is one read issued outside any unit of work, so its provenance is the Read Trace itself and it authors `readTrace`; every other executing shape runs inside a transaction boundary, whose provenance is the Execution Log spanning its attempts, so it authors `transactionLog`. Without this the closed union is closed over its own members only: a transactional case could author a bare `readTrace` — discarding the attempt, status, and retry-policy assertions that are the whole point of a transactional oracle — and a standalone read could author a log describing a boundary it never opened.",
+      "if": {
+        "required": ["shape"],
+        "properties": { "shape": { "const": "read" } }
+      },
+      "then": {
+        "properties": {
+          "then": { "properties": { "execution": { "required": ["readTrace"] } } }
+        }
+      },
+      "else": {
+        "properties": {
+          "then": { "properties": { "execution": { "required": ["transactionLog"] } } }
+        }
+      }
     }
   ],
   "properties": {
@@ -1242,10 +1259,20 @@
         "code": { "type": "string", "minLength": 1 },
         "retryEligible": { "type": "boolean" },
         "databaseCall": { "type": "integer", "minimum": 0 }
-      }
+      },
+      "allOf": [
+        {
+          "description": "A `commit` failure references NO Database Call. The durability boundary is not a recorded call — begin, commit, and rollback count zero round trips and appear in no trace — so an index authored beside `phase: commit` can only name some earlier, unrelated statement.",
+          "if": {
+            "required": ["phase"],
+            "properties": { "phase": { "const": "commit" } }
+          },
+          "then": { "not": { "required": ["databaseCall"] } }
+        }
+      ]
     },
     "transactionAttempt": {
-      "description": "One PHYSICAL attempt of the logical invocation (m-execution-log Transaction Attempt). `traces` is the ordered Read Traces and Write Batch Traces the attempt produced; it MAY be empty for an attempt that failed before reaching the database. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. A `failure` belongs to a rolled-back attempt: an attempt that committed carries none, which the conditional below states structurally.",
+      "description": "One PHYSICAL attempt of the logical invocation (m-execution-log Transaction Attempt). `traces` is the ordered Read Traces and Write Batch Traces the attempt produced; it MAY be empty for an attempt that failed before reaching the database. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. A `failure` belongs to a ROLLED-BACK attempt alone, which the conditional below states structurally.",
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "traces", "roundTrips"],
@@ -1260,12 +1287,12 @@
       },
       "allOf": [
         {
-          "description": "A committed attempt carries no failure — the diagnostic describes the attempt that rolled back, so authoring one beside `committed` states two outcomes for one attempt.",
+          "description": "Only a ROLLED-BACK attempt carries a failure. The diagnostic describes the attempt that rolled back, so authoring one beside `committed` states two outcomes for one attempt, and authoring one beside `active` reports an outcome for an attempt that has reached none.",
           "if": {
             "required": ["status"],
-            "properties": { "status": { "const": "committed" } }
+            "properties": { "status": { "const": "rolled-back" } }
           },
-          "then": { "not": { "required": ["failure"] } }
+          "else": { "not": { "required": ["failure"] } }
         }
       ]
     },
