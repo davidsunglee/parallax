@@ -373,6 +373,26 @@ class _Denoted:
 _Bound = ast.expr | _Imported | _Denoted | None
 """One value a name takes: an expression, an import, objects, or nothing decidable."""
 
+_BEFORE_THE_BODY = (0, 0)
+"""Where a parameter binds: ahead of every statement its scope writes."""
+
+
+@dataclass(frozen=True, slots=True)
+class _Binding:
+    """One value a name takes, and the point in its scope that gives it.
+
+    ``statement`` carries a position only when the binding is one of the
+    scope's own unconditional statements, which is what lets source order
+    decide: the last such binding before a use is the only one that reaches it.
+    A binding made under an `if`, inside a loop body, in a `try`, or by a
+    handler target carries none, because which one a use sees is a question
+    about control flow rather than about source order — so all of them stay in
+    play and the scope answers with everything the name MAY denote.
+    """
+
+    value: _Bound
+    statement: tuple[int, int] | None
+
 
 @dataclass(frozen=True, eq=False, slots=True)
 class _Scope:
@@ -384,12 +404,14 @@ class _Scope:
     of the statements that bind — imports, assignments, parameters and their
     defaults, and loop, `with`, and handler targets. A scope shadows the scope
     enclosing it for every name it binds, so a name bound to something no
-    reading of the source evaluates denotes nothing rather than falling through
-    to a module-level name that happens to share its spelling.
+    reading of the source evaluates denotes an unknown object rather than
+    falling through to a module-level name that happens to share its spelling.
+    An unknown is a value like any other, so it stays in the answer and keeps
+    a guard from reading certainty into a name it cannot follow.
     """
 
     namespace: dict[str, object]
-    bound: dict[str, tuple[_Bound, ...]]
+    bound: dict[str, tuple[_Binding, ...]]
     parent: _Scope | None
     class_body: bool = False
 
@@ -400,16 +422,42 @@ class _Scope:
         return self.parent.binding(name) if self.parent is not None else None
 
 
+def _reaching(bindings: tuple[_Binding, ...], use: tuple[int, int]) -> tuple[_Binding, ...]:
+    """The bindings a use written in the binding scope itself can see.
+
+    Straight-line rebinding is decided by source order alone: when every
+    binding of the name is one of the scope's own statements, the last one
+    before the use is what the name holds there, and the ones it overwrote are
+    dead. Everything else keeps the whole set, so control flow never silently
+    narrows an answer. A use in a scope nested inside the binding one never
+    reaches here: it runs when its own scope is called rather than where it is
+    written, so every binding stays in play for it.
+    """
+    positioned = {
+        binding.statement: binding for binding in bindings if binding.statement is not None
+    }
+    if len(positioned) != len(bindings):
+        return bindings
+    before = sorted(position for position in positioned if position < use)
+    return (positioned[before[-1]],) if before else bindings
+
+
 def _resolves(
     scope: _Scope, expression: ast.expr, seen: frozenset[tuple[int, str]] = frozenset()
 ) -> tuple[object, ...]:
-    """Every runtime object an expression denotes where it is written.
+    """Every runtime object an expression MAY denote where it is written.
 
     Resolution runs in the scope holding the expression and outward through the
     scopes enclosing it, so an alias, a rebinding, a parameter default, a
     function-local import, a destructured target, and a qualified
     ``module.Name`` all answer the same object an inventory of spellings would
     have to guess at.
+
+    The answer is a set because a name under control flow holds one of several
+    values, and it is the set of everything reachable rather than a guess at
+    one of them. A guard therefore has two questions to choose between — whether
+    the target is IN the answer, and whether it is ALL of it — and the choice is
+    what keeps the guard sound in the direction it needs.
     """
     if isinstance(expression, ast.Tuple):
         return tuple(chain.from_iterable(_resolves(scope, item, seen) for item in expression.elts))
@@ -426,16 +474,17 @@ def _resolves(
     mark = (id(holder), expression.id)
     if mark in seen:
         return ()
+    bindings = holder.bound[expression.id]
+    if holder is scope:
+        bindings = _reaching(bindings, (expression.lineno, expression.col_offset))
     return tuple(
-        chain.from_iterable(
-            _denoted(holder, bound, seen | {mark}) for bound in holder.bound[expression.id]
-        )
+        chain.from_iterable(_denoted(holder, binding.value, seen | {mark}) for binding in bindings)
     )
 
 
 def _denoted(scope: _Scope, bound: _Bound, seen: frozenset[tuple[int, str]]) -> tuple[object, ...]:
     if bound is None:
-        return ()
+        return (None,)
     if isinstance(bound, _Imported):
         return bound.denotes()
     if isinstance(bound, _Denoted):
@@ -443,15 +492,47 @@ def _denoted(scope: _Scope, bound: _Bound, seen: frozenset[tuple[int, str]]) -> 
     return _resolves(scope, bound, seen)
 
 
-_NESTED_SCOPE = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda
+_NESTED_SCOPE = (
+    ast.FunctionDef
+    | ast.AsyncFunctionDef
+    | ast.ClassDef
+    | ast.Lambda
+    | ast.ListComp
+    | ast.SetComp
+    | ast.DictComp
+    | ast.GeneratorExp
+)
+
+_ANONYMOUS_SCOPE = {
+    ast.Lambda: "<lambda>",
+    ast.ListComp: "<listcomp>",
+    ast.SetComp: "<setcomp>",
+    ast.DictComp: "<dictcomp>",
+    ast.GeneratorExp: "<genexpr>",
+}
+"""What Python calls the scopes that have no declared name, as it qualifies them."""
 
 
-def _own_nodes(node: ast.AST) -> Iterator[ast.AST]:
-    """Every node the scope headed by ``node`` holds itself, nested scopes aside."""
-    for child in ast.iter_child_nodes(node):
-        yield child
-        if not isinstance(child, _NESTED_SCOPE):
-            yield from _own_nodes(child)
+def _own_nodes(node: ast.AST) -> Iterator[tuple[ast.AST, tuple[int, int] | None]]:
+    """Every node the scope headed by ``node`` holds itself, nested scopes aside.
+
+    Each carries its position when it is one of the scope's own statements, and
+    `None` when something between it and the scope decides whether it runs.
+    """
+    body = (
+        node.body
+        if isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+        else []
+    )
+    statements = {id(one): (one.lineno, one.col_offset) for one in body}
+
+    def within(parent: ast.AST) -> Iterator[tuple[ast.AST, tuple[int, int] | None]]:
+        for child in ast.iter_child_nodes(parent):
+            yield child, statements.get(id(child))
+            if not isinstance(child, _NESTED_SCOPE):
+                yield from within(child)
+
+    yield from within(node)
 
 
 def _bound_by(target: ast.expr, value: ast.expr | None) -> Iterator[tuple[str, ast.expr | None]]:
@@ -492,8 +573,8 @@ def _imports_bound(
         )
 
 
-def _parameter_bindings(taken: ast.arguments, enclosing: _Scope) -> Iterator[tuple[str, _Bound]]:
-    """Each parameter, bound to its default — which the enclosing scope evaluates."""
+def _parameter_bindings(taken: ast.arguments, writing: _Scope) -> Iterator[tuple[str, _Bound]]:
+    """Each parameter, bound to its default — which the scope writing the `def` evaluates."""
     positional = [*taken.posonlyargs, *taken.args]
     defaults: list[ast.expr | None] = [
         *([None] * (len(positional) - len(taken.defaults))),
@@ -503,55 +584,66 @@ def _parameter_bindings(taken: ast.arguments, enclosing: _Scope) -> Iterator[tup
         *zip(positional, defaults, strict=True),
         *zip(taken.kwonlyargs, taken.kw_defaults, strict=True),
     ):
-        yield argument.arg, _Denoted(_resolves(enclosing, default)) if default else None
+        yield argument.arg, _Denoted(_resolves(writing, default)) if default else None
     for argument in (taken.vararg, taken.kwarg):
         if argument is not None:
             yield argument.arg, None
 
 
-def _bindings(node: ast.AST, package: str, enclosing: _Scope) -> dict[str, tuple[_Bound, ...]]:
+def _bindings(node: ast.AST, package: str, writing: _Scope) -> dict[str, tuple[_Binding, ...]]:
     """Every name a scope binds, each to every value its own statements give it."""
-    bound: dict[str, list[_Bound]] = {}
+    bound: dict[str, list[_Binding]] = {}
 
-    def bind(name: str, value: _Bound) -> None:
-        bound.setdefault(name, []).append(value)
+    def bind(name: str, value: _Bound, statement: tuple[int, int] | None) -> None:
+        bound.setdefault(name, []).append(_Binding(value, statement))
 
     if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
-        for name, value in _parameter_bindings(node.args, enclosing):
-            bind(name, value)
-    for child in _own_nodes(node):
+        for name, value in _parameter_bindings(node.args, writing):
+            bind(name, value, _BEFORE_THE_BODY)
+    for child, statement in _own_nodes(node):
         if isinstance(child, ast.Import | ast.ImportFrom):
             for name, imported in _imports_bound(child, package):
-                bind(name, imported)
+                bind(name, imported, statement)
         elif isinstance(child, ast.Assign):
             for target in child.targets:
                 for name, value in _bound_by(target, child.value):
-                    bind(name, value)
+                    bind(name, value, statement)
         elif isinstance(child, ast.AnnAssign | ast.NamedExpr):
             for name, value in _bound_by(child.target, child.value):
-                bind(name, value)
-        elif isinstance(child, ast.AugAssign | ast.For | ast.AsyncFor | ast.comprehension):
+                bind(name, value, statement)
+        elif isinstance(child, ast.AugAssign):
             for name, _ in _bound_by(child.target, None):
-                bind(name, None)
+                bind(name, None, statement)
+        elif isinstance(child, ast.For | ast.AsyncFor | ast.comprehension):
+            for name, _ in _bound_by(child.target, None):
+                bind(name, None, None)
         elif isinstance(child, ast.withitem) and child.optional_vars is not None:
             for name, _ in _bound_by(child.optional_vars, None):
-                bind(name, None)
+                bind(name, None, None)
         elif (
             isinstance(
                 child, ast.ExceptHandler | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
             )
             and child.name is not None
         ):
-            bind(child.name, None)
+            bind(child.name, None, statement)
     return {name: tuple(values) for name, values in bound.items()}
 
 
 def _nested_scope(node: ast.AST, parent: _Scope, package: str) -> _Scope:
+    """The scope ``node`` heads, written inside ``parent``.
+
+    A function or comprehension written in a class body resolves its own names
+    past that body, as Python does. Its parameter defaults do not: they are
+    evaluated where the `def` statement stands, so `class C: P = Planner; def
+    f(make=P)` takes `P` from the class body the same reading of the source
+    that denies the body to `f`.
+    """
     class_body = isinstance(node, ast.ClassDef)
     enclosing = parent
     while not class_body and enclosing.class_body and enclosing.parent is not None:
         enclosing = enclosing.parent
-    return _Scope(parent.namespace, _bindings(node, package, enclosing), enclosing, class_body)
+    return _Scope(parent.namespace, _bindings(node, package, parent), enclosing, class_body)
 
 
 def _in_scopes(
@@ -565,7 +657,11 @@ def _in_scopes(
     ) -> Iterator[tuple[str, _Scope, ast.AST]]:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, _NESTED_SCOPE):
-                declared = child.name if not isinstance(child, ast.Lambda) else "<lambda>"
+                declared = (
+                    child.name
+                    if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+                    else _ANONYMOUS_SCOPE[type(child)]
+                )
                 yield from within(child, (*name, declared), _nested_scope(child, scope, package))
                 continue
             yield ".".join(name), scope, child
@@ -633,8 +729,10 @@ def test_no_snapshot_module_catches_the_codecs_own_refusal() -> None:
     # it for the codec operation and the write path that raised it, since a
     # handler around one write path says nothing about another.
     #
-    # A handler whose type this module cannot resolve to a class is a handler it
-    # cannot judge, so those fail here rather than passing quietly.
+    # A handler is judged over every class its type MAY be, so one whose type a
+    # branch chooses catches a refusal here if any branch does. A handler whose
+    # type this module cannot resolve to a class is a handler it cannot judge,
+    # so those fail here rather than passing quietly.
     assert [
         entry.site for entry in _snapshot_imports() if "EntityRowError" in {entry.name, entry.local}
     ] == []
@@ -769,20 +867,43 @@ def _keyword(call: ast.Call, name: str) -> str | None:
     return None
 
 
-def _calls_to(target: object) -> Iterator[tuple[Path, str, ast.Call]]:
-    """Every first-party call of ``target``, as its file, scope, and call node."""
+@dataclass(frozen=True, slots=True)
+class _CallSite:
+    """A first-party call, and every object its callee may denote where it stands.
+
+    The two questions an inventory can ask of that set point in opposite
+    directions, and each guard below takes the one that makes it fail rather
+    than pass when the source stops deciding.
+    """
+
+    module: str
+    scope: str
+    call: ast.Call
+    denoted: tuple[object, ...]
+
+    def may_reach(self, target: object) -> bool:
+        """Some binding reaching the callee is ``target``, so the call may be one."""
+        return any(denoted is target for denoted in self.denoted)
+
+    def only_reaches(self, target: object) -> bool:
+        """Every binding reaching the callee is ``target``, so the call is one."""
+        return bool(self.denoted) and all(denoted is target for denoted in self.denoted)
+
+
+def _call_sites() -> Iterator[_CallSite]:
+    """Every first-party call, with its module, its scope, and what its callee denotes."""
     for path, tree, namespace in _loaded_modules(_all_sources()):
         for name, scope, node in _in_scopes(tree, namespace):
-            if isinstance(node, ast.Call) and any(
-                denoted is target for denoted in _resolves(scope, node.func)
-            ):
-                yield path, name, node
+            if isinstance(node, ast.Call):
+                yield _CallSite(_dotted(path), name, node, _resolves(scope, node.func))
 
 
 def _write_planner_constructions() -> list[tuple[str, str | None]]:
     """Every construction of the Write Planner, as its module and audit argument."""
     return sorted(
-        (_dotted(path), _keyword(call, "audit")) for path, _, call in _calls_to(WritePlanner)
+        (site.module, _keyword(site.call, "audit"))
+        for site in _call_sites()
+        if site.may_reach(WritePlanner)
     )
 
 
@@ -809,8 +930,14 @@ def _write_planner_descendants() -> list[str]:
 
 
 def _factory_call_sites() -> list[tuple[str, str]]:
-    """Every scope that calls the composition-root factory, as module and scope."""
-    return sorted({(_dotted(path), scope) for path, scope, _ in _calls_to(build_write_planner)})
+    """Every scope whose call reaches the composition-root factory and nothing else."""
+    return sorted(
+        {
+            (site.module, site.scope)
+            for site in _call_sites()
+            if site.only_reaches(build_write_planner)
+        }
+    )
 
 
 def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
@@ -827,11 +954,23 @@ def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
     # has to serve every write path, and a module keeps its entry when one of
     # its write paths stops calling.
     #
-    # What binds a name is lexical and decided here. What a caller passes into a
-    # parameter is not: a class handed to a helper and constructed there is
-    # constructed under a name this module resolves to nothing, and following it
-    # would mean tracing values across call boundaries rather than reading
-    # scopes. The inventory is of names, and says nothing about that.
+    # The two inventories ask opposite questions of one resolution, each the
+    # question that fails rather than passes where the source stops deciding. A
+    # construction is counted wherever the callee MAY be `WritePlanner`, so a
+    # planner built under a name a branch chooses is still counted. A factory
+    # call site is counted only where the callee can be NOTHING BUT the factory,
+    # so a scope keeps its entry only while its call still reaches the
+    # composition root under every binding: rebinding the name, straight-line or
+    # behind a branch, drops the entry and fails this assertion instead of
+    # inheriting it.
+    #
+    # What binds a name is lexical and decided here, source order included — a
+    # scope's own straight-line statements rebind, so the last one before a call
+    # is what the call reaches and what it overwrote is dead. What a caller
+    # passes into a parameter is not: a class handed to a helper and constructed
+    # there is constructed under a name this module resolves to nothing, and
+    # following it would mean tracing values across call boundaries rather than
+    # reading scopes. The inventory is of names, and says nothing about that.
     #
     # The subclass registry answers one question exactly: no first-party class
     # descends from `WritePlanner`. It is not a proof that no second planner
