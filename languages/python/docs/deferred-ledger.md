@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-58**.
+Entry numbering is continuous and never reused. The next new number is **D-59**.
 
 ## Standing notes
 
@@ -194,6 +194,28 @@ table-per-hierarchy family instead; the symptom the proof needed — one read wh
 rows resolve to their own concretes — is the same either way, so nothing was
 lost. Any later work reaching for a TPCS family through a transaction hits the
 same wall and must plan around it or close it.
+
+### D-58 — Neutral Snapshot graph, tree, wire, and streaming shapes need one holistic decision
+
+*Design follow-up — deliberately excluded from COR-93.* Relates to
+`m-snapshot-read`, `m-conformance-adapter`, `parallax.snapshot.handle`, and the
+future streaming work tracked in COR-83.
+
+**What.** COR-93 keeps the current Snapshot graph semantics for its provisional
+Python `NeutralGraph`: roots are views over graph-local uniqued nodes, so cycles,
+diamonds, and shared descendants retain identity without duplicating logical
+nodes. A later representation may instead expose an ordered list of rooted
+trees. That could give eager and streaming reads the same traversal API and let
+neutral results render directly to JSON/wire, at the accepted cost that separate
+roots or branches may materialize distinct in-memory objects for one logical
+node.
+
+**Why it is deferred rather than fixed.** Changing only COR-93's adapter would
+silently fork core Snapshot semantics. The decision crosses core graph identity,
+compatibility graph oracles, Python typed and neutral results, cycle rendering,
+wire shape, and bounded-memory streaming. It needs its own grilling session and
+ticket after conformance has been reduced to the production path; COR-93 must not
+combine that semantic migration with deleting the duplicate engine.
 
 ## Forwarding pointers
 

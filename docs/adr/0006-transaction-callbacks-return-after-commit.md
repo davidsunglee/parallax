@@ -1,3 +1,10 @@
-# Transaction callbacks return after commit
+# Transaction results return after commit
 
-A transaction callback returns its value only after the transaction has successfully committed; if the transaction rolls back or commit fails, the operation fails instead of returning the callback value as if it were durable. A naive implementation returns the value as soon as the callback finishes, before commit. The rule is normative in `core/spec/m-unit-work.md` §Abort.
+An outermost transaction invocation returns a Transaction Result containing the
+Transaction Body's value and Execution Log only after the transaction has
+successfully committed; if rollback or commit fails, the invocation fails
+instead of returning the body value as if it were durable. A joined invocation
+still returns its body value immediately because it owns no commit boundary,
+but its result shares the outer transaction's live read-only Execution Log and
+cannot expose a committed execution until that outer boundary commits. The
+durability rule is normative in `core/spec/m-unit-work.md` §Abort.

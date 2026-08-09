@@ -511,6 +511,52 @@ _Avoid_: manual tag filter, type cast
 A typed path that starts at an entity-owned value object and addresses a nested member inside that value.
 _Avoid_: relationship path, join path, dotted JSON string
 
+### Execution Provenance
+
+**Database Call**:
+One attempted database round trip for a Read or Write Lowered Statement,
+carrying its elapsed duration and a closed completion that distinguishes a
+completed read, completed write, and database failure. A failed call still
+counts as one round trip; transaction demarcation does not.
+_Avoid_: Executed Statement, emission, SQL log entry, operation group
+
+**Read Trace**:
+The immutable provenance of one read that reached the database: its ordered,
+non-empty Database Calls and derived round-trip count.
+_Avoid_: Execution Record, query log, profiler output
+
+**Write Batch Trace**:
+The immutable provenance of one production-triggered write batch: its ordered,
+non-empty materializing-read and DML Database Calls, plus whether Read
+Dependency or Finalization triggered it.
+_Avoid_: Write Execution, flush result, plan log, statement prediction
+
+**Transaction Attempt**:
+One physical database transaction within a logical transaction invocation,
+carrying its ordered Read Traces and Write Batch Traces and an Active, Committed,
+or Rolled Back status. A Rolled Back attempt carries an Attempt Failure.
+_Avoid_: Execution Attempt, retry log, nested transaction, Transaction Result
+
+**Attempt Failure**:
+The immutable diagnostic explaining why one Transaction Attempt rolled back,
+carrying its Body, Finalization, or Commit phase, stable error facts,
+retry-eligibility classification, and any causative Database Call without
+retaining the raised exception or transaction state.
+_Avoid_: caught exception, traceback record, Database Call failure, retry decision
+
+**Execution Log**:
+The production-owned, read-only history of one logical transaction invocation,
+grouping traces by Transaction Attempt across automatic retries and retaining
+the effective concurrency and retry policy. It is live while the boundary is
+active and seals at terminal completion.
+_Avoid_: mutable logger, query log, profiler output, Write Plan history
+
+**Transaction Result**:
+The value returned by a successful transaction invocation, containing the
+Transaction Body's value and its Execution Log while exposing the Committed
+Transaction Attempt as the common execution view.
+_Avoid_: callback value alone, transaction tuple, commit receipt
+
 ### Relationships And Object Graphs
 
 **To-One Relationship**:
@@ -637,6 +683,18 @@ _Avoid_: current-row predicate, temporal gate, key-only target
 The closed value of an As-Of Axis exclusive end in a Milestone Target: either a
 finite normalized Instant or the dialect-neutral Infinity sentinel.
 _Avoid_: nullable instant, database max timestamp, raw infinity string
+
+**Object Key**:
+One object's structured Entity Identity plus its ordered primary-key values,
+used to address that object during write coalescing and observation lookup.
+_Avoid_: object ID, row key, primary-key mapping, entity spelling
+
+**Observation Key**:
+The production-issued address of one Write Observation: an Object Key plus the
+observed milestone's Edge, with no Edge for a versioned Non-Temporal row. It
+names evidence in one active Unit Work and is neither the evidence nor a read
+pin.
+_Avoid_: reconstructed observation address, object key alone, snapshot pin, write observation
 
 **Write Observation**:
 The database evidence retained for a surviving write against existing state: an

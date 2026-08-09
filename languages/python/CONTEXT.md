@@ -166,8 +166,52 @@ _Avoid_: unsupported capability, invalid query, adapter limitation
 **Snapshot**:
 The fully materialized container returned by `find`, reifying one core
 Snapshot Graph: arity accessors over plain frozen nodes, plus the graph's pin
-and execution record. No method touches the database.
+and Read Trace. No method touches the database.
 _Avoid_: result set, lazy list, query result proxy, domain snapshot
+
+**Neutral Read Request**:
+The immutable advanced read input that pairs an exact target Entity Identity
+with one canonical Operation and selects either row or graph materialization,
+without requiring an Entity Class.
+_Avoid_: Find Query, descriptor document, SQL request, neutral query plan
+
+**Neutral Read Result**:
+The immutable advanced read result pairing one Neutral Rows, Neutral Graph, or
+Neutral Graphs output with the exact production Read Trace that formed it.
+_Avoid_: Snapshot, wire response, result builder, execution event stream
+
+**Neutral Row**:
+One immutable, production-transformed, pre-wire physical result mapping,
+including derived family-variant and decoded document values but no raw driver
+columns.
+_Avoid_: driver row, wire row, Entity instance, attribute wrapper
+
+**Neutral Rows**:
+The immutable ordered row-form output of a Neutral Read Result.
+_Avoid_: raw result set, mutable row list, Neutral Graph
+
+**Neutral Graph**:
+The class-free reification of one core Snapshot Graph as an ordered root
+sequence of Neutral Node Views plus the graph's Pin.
+_Avoid_: serialized tree, Domain Snapshot, managed object graph, Neutral Rows
+
+**Neutral Graphs**:
+The immutable ordered milestone-set output of a history or range read, carrying
+one separately pinned Neutral Graph per returned milestone.
+_Avoid_: streaming graph iterator, cross-milestone identity map, root list
+
+**Neutral Node**:
+The shared identity anchor for one logical object in a descriptor-backed
+snapshot result, carrying its resolved Entity Identity, immutable object
+identity, and any production-issued Observation Key but no fields or
+relationships.
+_Avoid_: descriptor object, row wrapper, projection, managed object
+
+**Neutral Node View**:
+One immutable traversal view over a Neutral Node, carrying the fields, Value
+Objects, and loaded relationships selected for that occurrence. Distinct views
+may share one Neutral Node; a back-reference reuses the node's primary view.
+_Avoid_: Neutral Projection View, duplicate node, entity instance, serialized tree
 
 **Pin**:
 A frozen point-coordinate value with one entry per actually pinned temporal
@@ -196,12 +240,6 @@ Dimension wherever the developer surface takes a dimension argument, such as
 `history(...)`; a string dimension spelling is rejected during Find Query
 construction.
 _Avoid_: dimension string literal, axis name argument
-
-**Execution Record**:
-The per-query-execution provenance carried by a Snapshot — placeholder SQL, binds,
-informational duration, and the round-trip count — mirroring the
-conformance-adapter emission convention.
-_Avoid_: query log, debug trace, profiler output
 
 **Deferred Execution Features**:
 The private immutable set of canonical Feature tags for valid, specified query

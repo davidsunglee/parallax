@@ -172,3 +172,19 @@ Everything else about the group is unchanged: the authored mutation, the shared
 primary-key shape, one immutable value column per key attribute, the closed
 observation-column variant, equal positive row counts, no observation-free
 variant, and the compactness invariants that follow.
+
+## Amendment (2026-08): compile-only consumers use the production buffer and lowering seams
+
+The supported advanced compile-only path constructs the same production
+`BufferItem` values Unit Work plans, passes them through
+`build_write_planner(model).plan(PlanningRequest(...))`, and lowers the returned
+Write Plan through `stream_lowered`. It introduces no `plan_neutral_writes`,
+neutral-plan wrapper, parallel planner, or second emission prediction pass.
+
+An `ObservationKey` is intentionally not a compile-only input: it addresses
+evidence in an active Unit Work, which pure planning does not have. A
+compile-only caller pairs explicit evidence through `buffered_write` or supplies
+a bare Write Instruction; a materialized predicate input uses the existing
+Materialized Write Group. The runtime path may resolve an Observation Key before
+constructing that same Buffer Item, so lookup remains transaction-owned while
+planning remains store-free.
