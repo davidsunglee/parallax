@@ -89,15 +89,16 @@ def test_a_transactional_run_renders_the_whole_log_with_wire_spellings() -> None
 def test_a_rolled_back_attempt_renders_its_failure_and_the_call_it_names() -> None:
     builder = _builder(concurrency="optimistic", retries=1)
     builder.attempt_opened()
+    rejection = RuntimeError("the enforcement rejected it")
     with (
         pytest.raises(RuntimeError),
         builder.current.write_batch("finalization") as batch,
     ):
         batch.completed(_WRITE, "write", 1, WriteCompleted(0))
         with batch.enforcing():
-            raise RuntimeError("the enforcement rejected it")
-    builder.current.failed(RuntimeError("the enforcement rejected it"))
-    builder.attempt_failed(RuntimeError("the enforcement rejected it"), retry_eligible=True)
+            raise rejection
+    builder.current.failed(rejection)
+    builder.attempt_failed(rejection, retry_eligible=True)
     builder.seal()
 
     log = cast("dict[str, Any]", engine.execution_observation(builder.view(), _emissions(_WRITE)))
