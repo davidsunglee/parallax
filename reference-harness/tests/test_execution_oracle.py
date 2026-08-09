@@ -409,9 +409,16 @@ def test_an_attempt_claiming_the_live_active_status_is_refused_by_both_schemas()
     )
 
 
-def _attempts_case(statuses: list[str], max_retries: int) -> dict[str, Any]:
-    attempts = [
-        {
+def _attempts_case(
+    statuses: list[str], max_retries: int, licence: bool | None = True
+) -> dict[str, Any]:
+    """A multi-attempt case whose non-final rollbacks carry *licence* as their verdict.
+
+    ``licence=None`` authors those attempts with no failure at all.
+    """
+    attempts: list[dict[str, Any]] = []
+    for index, status in enumerate(statuses):
+        attempt: dict[str, Any] = {
             "status": status,
             "traces": [
                 {
@@ -424,8 +431,13 @@ def _attempts_case(statuses: list[str], max_retries: int) -> dict[str, Any]:
             ],
             "roundTrips": 1,
         }
-        for index, status in enumerate(statuses)
-    ]
+        if status == "rolled-back" and index != len(statuses) - 1 and licence is not None:
+            attempt["failure"] = {
+                "phase": "finalization",
+                "retryEligible": licence,
+                "databaseCall": 0,
+            }
+        attempts.append(attempt)
     case = _case(_log())
     case["then"]["statements"] = [_golden(f"insert {index}") for index in range(len(statuses))]
     case["then"]["roundTrips"] = len(statuses)
@@ -445,6 +457,25 @@ def test_a_rollback_after_the_commit_is_flagged() -> None:
 def test_more_attempts_than_the_retry_bound_allows_are_flagged() -> None:
     assert validate_execution(_attempts_case(["rolled-back", "rolled-back"], 1)) == []
     assert validate_execution(_attempts_case(["rolled-back", "rolled-back"], 0))
+
+
+def test_a_retry_after_a_failure_the_classifier_refused_is_flagged() -> None:
+    assert validate_execution(_attempts_case(["rolled-back", "committed"], 1, licence=False))
+    assert validate_execution(_attempts_case(["rolled-back", "rolled-back"], 1, licence=False))
+
+
+def test_a_re_executed_attempt_recording_no_failure_at_all_is_flagged() -> None:
+    assert validate_execution(_attempts_case(["rolled-back", "committed"], 1, licence=None))
+
+
+def test_the_final_attempts_own_verdict_licenses_nothing_and_is_not_read() -> None:
+    case = _attempts_case(["rolled-back", "rolled-back"], 1)
+    case["then"]["execution"]["transactionLog"]["attempts"][-1]["failure"] = {
+        "phase": "finalization",
+        "retryEligible": False,
+        "databaseCall": 0,
+    }
+    assert validate_execution(case) == []
 
 
 # --- the same relations over the adapter's observation ------------------------

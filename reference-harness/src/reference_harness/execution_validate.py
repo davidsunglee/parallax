@@ -21,8 +21,9 @@ envelope's matching observation alike (`m-execution-log`):
   Trace it enabled, and the ``finalization`` batch is the boundary's own last
   one, so nothing the attempt records follows it;
 - the graph is TERMINAL, so a commit ends the invocation: a committed attempt is
-  the final attempt, and the attempts number at most one more than the retained
-  Retry Policy's maximum re-execution count.
+  the final attempt, the attempts number at most one more than the retained
+  Retry Policy's maximum re-execution count, and every attempt another follows
+  names the retry-eligible failure that licensed the re-execution.
 
 Without these, a record whose numbers are internally consistent but names
 nothing — every index ``999``, every count mirrored wrongly at all four levels —
@@ -200,12 +201,17 @@ def _check_history(log: dict[str, Any], attempts: list[Any], problems: list[str]
     """The attempt history a TERMINAL graph admits (`m-execution-log`)."""
     last = len(attempts) - 1
     for index, attempt in enumerate(attempts):
-        if isinstance(attempt, dict) and attempt.get("status") == "committed" and index != last:
+        if not isinstance(attempt, dict) or index == last:
+            continue
+        status = attempt.get("status")
+        if status == "committed":
             problems.append(
                 f"transactionLog.attempts[{index}] committed but is not the last attempt; a "
                 f"commit ends the invocation, so a terminal graph holds at most one committed "
                 f"attempt and it is the final one"
             )
+        elif status == "rolled-back":
+            _check_retry_licence(attempt, index, problems)
     policy = log.get("retryPolicy")
     bound = policy.get("maxRetries") if isinstance(policy, dict) else None
     if isinstance(bound, int) and len(attempts) > bound + 1:
@@ -213,6 +219,24 @@ def _check_history(log: dict[str, Any], attempts: list[Any], problems: list[str]
             f"transactionLog records {len(attempts)} attempts but its retryPolicy allows "
             f"{bound} re-execution(s); the original execution plus that bound is "
             f"{bound + 1} attempt(s) at most"
+        )
+
+
+def _check_retry_licence(attempt: dict[str, Any], index: int, problems: list[str]) -> None:
+    """What an attempt owes the attempt after it (`m-auto-retry`, `m-execution-log`)."""
+    failure = attempt.get("failure")
+    if not isinstance(failure, dict):
+        problems.append(
+            f"transactionLog.attempts[{index}] rolled back and another attempt follows it, but "
+            f"it records no failure; only a retriable failure licenses a re-execution, so an "
+            f"attempt another follows names the one the classifier admitted"
+        )
+        return
+    if failure.get("retryEligible") is not True:
+        problems.append(
+            f"transactionLog.attempts[{index}] records a failure the classifier judged "
+            f"ineligible for retry, but another attempt follows it; a non-retriable failure "
+            f"surfaces to the caller instead of re-executing the closure"
         )
 
 

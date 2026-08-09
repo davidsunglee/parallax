@@ -209,7 +209,11 @@ already transitioned, so **no attempt is `active`**; a commit ends the
 invocation, so a **committed attempt is the last attempt** and there is at most
 one; and the retained Retry Policy's maximum re-execution count bounds the
 re-executions, so the attempts number at most **`maxRetries + 1`** — the original
-execution plus the bound.
+execution plus the bound. The bound is not what licenses a re-execution, the
+classifier is (`m-auto-retry`), so **every attempt another follows carries an
+Attempt Failure whose retry eligibility is true**: a failure the classifier
+refused surfaces to the caller rather than re-executing, and an attempt that
+records no failure at all states no ground for the attempt after it.
 
 `then.execution` is presently graded by the language implementations alone: the
 compatibility harness validates the key and ignores it. Until a second grader
