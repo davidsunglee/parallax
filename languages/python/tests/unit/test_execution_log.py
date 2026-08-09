@@ -13,6 +13,7 @@ exactly what no unit of the module can state on its own.
 from __future__ import annotations
 
 import gc
+import weakref
 from collections.abc import Callable, Sequence
 from decimal import Decimal
 from typing import Any
@@ -53,6 +54,7 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import MissingTargetError, OptimisticLockConflictError
 
 _STATEMENT = LoweredStatement("select 1", (1,))
+_OTHER_STATEMENT = LoweredStatement("update account set balance = ?", (2,))
 _ACCOUNT_IDENTITY = EntityIdentity(namespace="parallax.compatibility", name="Account")
 # The `m-execution-log-007` target row as the port returns it (account.yaml id 2).
 _LINUS_ROW: Row = {"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}
@@ -257,6 +259,123 @@ def test_a_rollback_only_refusal_names_the_call_the_doomed_failure_was_about() -
     failure = attempt.failure
     assert failure is not None
     assert failure.database_call is attempt.calls[0]
+
+
+def test_a_later_failed_call_does_not_displace_the_one_the_refusal_is_about() -> None:
+    # A joined scope's failed call dooms the transaction and its caller swallows
+    # it; a second call then fails and is swallowed too. The boundary's refusal
+    # reports the decision the FIRST failure made, so the attempt names that
+    # failure's call — recency is not what attribution is held against.
+    from parallax.core.unit_work import RollbackOnlyError
+
+    builder = _opened()
+    doomed = deadlock()
+    with builder.current.write_batch("read_dependency") as batch:
+        try:
+            batch.failed(_STATEMENT, "write", 1, doomed)
+            raise doomed
+        except DatabaseError:
+            pass
+    later = deadlock()
+    with builder.current.write_batch("read_dependency") as batch:
+        try:
+            batch.failed(_OTHER_STATEMENT, "write", 1, later)
+            raise later
+        except DatabaseError:
+            pass
+    refusal = RollbackOnlyError("transaction is rollback-only; commit refused")
+    refusal.__cause__ = doomed
+    builder.current.failed(refusal)
+    attempt = builder.view().final_attempt
+    failure = attempt.failure
+    assert failure is not None
+    assert len(attempt.calls) == 2
+    assert failure.database_call is attempt.calls[0]
+
+
+def test_a_callback_failure_raised_from_a_swallowed_call_still_names_none() -> None:
+    # `raise ... from` states an adjacency the CALLER chose, and what escapes is
+    # arbitrary callback work, which references no call. Only a rollback-only
+    # refusal — the boundary restating a decision an earlier failure made — is
+    # read through to the failure behind it.
+    builder = _opened()
+    caught = deadlock()
+    with builder.current.write_batch("read_dependency") as batch:
+        try:
+            batch.failed(_STATEMENT, "write", 1, caught)
+            raise caught
+        except DatabaseError as exc:
+            rejected = RuntimeError("the callback gave up on the write")
+            rejected.__cause__ = exc
+    builder.current.failed(rejected)
+    failure = builder.view().final_attempt.failure
+    assert failure is not None
+    assert (failure.phase, failure.code, failure.database_call) == ("body", None, None)
+
+
+def test_an_unrelated_failure_crossing_the_enforcement_bracket_names_no_call() -> None:
+    # `enforcing` brackets the Affected Rows Policy verdict on a completed call.
+    # Anything else unwinding through it — an interrupt, a defect in the enforcer
+    # — is not a verdict about that call, so the bracket's adjacency alone
+    # attributes nothing.
+    builder = _opened()
+    interrupted = KeyboardInterrupt()
+    with pytest.raises(KeyboardInterrupt), builder.current.write_batch("finalization") as batch:
+        batch.completed(_STATEMENT, "write", 1, WriteCompleted(1))
+        with batch.enforcing():
+            raise interrupted
+    builder.current.failed(interrupted)
+    attempt = builder.view().final_attempt
+    failure = attempt.failure
+    assert failure is not None
+    assert attempt.calls[0].completion == WriteCompleted(1)
+    assert failure.database_call is None
+
+
+def test_a_self_caused_refusal_is_recorded_rather_than_recursed_on() -> None:
+    # Python permits a cyclic declared cause. The log is an observer: reading a
+    # failure's code and its call through such a chain must terminate, or the
+    # observer would replace the very failure it is recording.
+    from parallax.core.unit_work import RollbackOnlyError
+
+    builder = _opened()
+    refusal = RollbackOnlyError("transaction is rollback-only; commit refused")
+    refusal.__cause__ = refusal
+    builder.current.failed(refusal)
+    attempt = builder.view().final_attempt
+    failure = attempt.failure
+    assert attempt.status == "rolled_back"
+    assert failure is not None
+    assert (failure.code, failure.database_call) == (None, None)
+
+
+def test_a_live_log_does_not_pin_the_exception_a_swallowed_call_raised() -> None:
+    # The log is reachable while the body still runs, so a caller that catches a
+    # failed call and keeps reading its log must not thereby hold that exception,
+    # its traceback, and every frame and local they close over alive until the
+    # transaction terminates.
+    builder = _opened()
+
+    def swallow_a_failed_call() -> weakref.ref[BaseException]:
+        error = deadlock()
+        with builder.current.write_batch("read_dependency") as batch:
+            try:
+                batch.failed(_STATEMENT, "write", 1, error)
+                raise error
+            except DatabaseError:
+                pass
+        return weakref.ref(error)
+
+    swallowed = swallow_a_failed_call()
+    gc.collect()
+    assert swallowed() is None
+    assert not builder.view().is_sealed
+    assert builder.view().final_attempt.status == "active"
+    # A released exception cannot be the one now escaping, so the attempt that
+    # goes on to fail for another reason names no call.
+    builder.current.failed(RuntimeError("the callback rejected the value it read"))
+    failure = builder.view().final_attempt.failure
+    assert failure is not None and failure.database_call is None
 
 
 def _key_target() -> Any:

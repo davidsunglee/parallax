@@ -43,6 +43,7 @@ transaction did rather than whatever a stray reference appended afterwards.
 
 from __future__ import annotations
 
+import weakref
 from collections.abc import Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -59,6 +60,7 @@ from parallax.core.unit_work import (
     RollbackOnlyError,
     StaleWriteError,
     WriteBatchTrigger,
+    WriteEffectError,
 )
 
 __all__ = [
@@ -177,28 +179,50 @@ class DatabaseCall:
             )
 
 
-type _CallAttribution = tuple[BaseException, DatabaseCall]
-"""The exception a Database Call caused, paired with that call.
+type _AttributableFailure = DatabaseError | WriteEffectError
+"""The only two failures a Database Call is allowed to be the cause of: one the
+port could not complete, and the Affected Rows Policy verdict on a completed one.
+
+Both are closed families this module already names, so an exception that merely
+unwinds through an instrumented bracket — a conversion error, a callback's own
+refusal, an interrupt — is not a candidate at all.
+"""
+
+type _CallAttribution = tuple[weakref.ref[_AttributableFailure], DatabaseCall]
+"""A WEAK reference to the failure a Database Call caused, paired with that call.
 
 Causality is held against the PARTICULAR exception, so a failure that is not that
 one — a later unrelated callback error, a commit failure after the caller swallowed
 a failed call — names no call however recently a call failed.
+
+The reference is weak because the log is reachable while the transaction body is
+still running: a caller that catches a failed call and keeps reading its log must
+not thereby pin that exception, its traceback, and every frame and local they
+close over. An exception nothing else holds cannot be the one escaping now, so a
+released referent attributes nothing and no causality the record could still have
+stated is lost.
 """
 
 
-def _cause_chain(exc: BaseException) -> Iterator[BaseException]:
-    """``exc`` followed by the DECLARED causes behind it (``raise ... from``).
+def _refusal_chain(exc: BaseException) -> Iterator[BaseException]:
+    """``exc`` followed by the failure each rollback-only refusal was raised from.
 
-    Implicit context is excluded: an exception raised while another was being
-    handled states adjacency, and the second failure is exactly the one that must
-    not inherit the first one's call.
+    A refusal is the boundary reporting a decision an EARLIER failure already
+    made, so the failure that doomed the transaction is what both the attributed
+    call and the failure code must be read from. No other declared cause is
+    followed: an exception a caller raised ``from`` one it caught states an
+    adjacency that caller chose, and such a failure is exactly the arbitrary
+    callback failure that must not inherit the earlier one's call.
+
+    Declared causes may form a cycle, so the walk stops at an exception it has
+    already yielded rather than recursing forever.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         yield current
-        current = current.__cause__
+        current = current.__cause__ if isinstance(current, RollbackOnlyError) else None
 
 
 def _non_empty(calls: tuple[DatabaseCall, ...], trace: str) -> None:
@@ -348,21 +372,24 @@ class TraceRecorder:
     equal ones. A call recorded after that sealing would belong to a trace
     already handed out, so it is refused rather than silently dropped.
 
-    The recorder also remembers which of its calls a failure is ABOUT, naming the
-    PARTICULAR exception rather than the moment: a call the port could not
-    complete attributes the error it failed with, and post-call enforcement of a
-    completed call attributes whatever escapes :meth:`enforcing`. Nothing else
-    does, so a conversion or planning failure that merely unwinds past recorded
-    calls attributes to none — an attempt failure states call causality it was
-    told about that exception, never causality inferred from an exception passing
-    a bracket that happens to hold calls.
+    The recorder also remembers which of its calls each failure is ABOUT, naming
+    the PARTICULAR exception rather than the moment: a call the port could not
+    complete attributes the error it failed with, and a completed call attributes
+    the Affected Rows Policy verdict that rejected it inside :meth:`enforcing`.
+    Nothing else does, so a conversion or planning failure that merely unwinds
+    past recorded calls attributes to none — an attempt failure states causality
+    it was told about that exception, never causality inferred from one passing
+    a bracket that happens to hold calls. Every such pairing is kept, because a
+    caller may swallow one failed call and then be doomed by a second: which of
+    them the attempt ends up naming is decided by the exception that escapes, not
+    by which call failed last.
     """
 
-    __slots__ = ("_attribution", "_calls", "_read_trace", "_sealed", "_write_batch_trace")
+    __slots__ = ("_attributions", "_calls", "_read_trace", "_sealed", "_write_batch_trace")
 
     def __init__(self) -> None:
         self._calls: list[DatabaseCall] = []
-        self._attribution: _CallAttribution | None = None
+        self._attributions: list[_CallAttribution] = []
         self._sealed = False
         self._read_trace: ReadTrace | None = None
         self._write_batch_trace: WriteBatchTrace | None = None
@@ -386,7 +413,7 @@ class TraceRecorder:
             DatabaseCallFailed(error.category, error.native_code, error.message),
         )
         self._append(call)
-        self._attribution = (error, call)
+        self._attributions.append((weakref.ref(error), call))
 
     @contextmanager
     def enforcing(self) -> Generator[None]:
@@ -394,13 +421,16 @@ class TraceRecorder:
 
         A shortfall the enforcer rejects leaves the call itself a COMPLETION —
         it reached the database and reported a count — while the rejection is the
-        attempt's failure, so the failure must still name that call.
+        attempt's failure, so the failure must still name that call. Only the
+        enforcer's own closed verdict family attributes: anything else that
+        unwinds through this bracket is no more ABOUT the call than what unwinds
+        through the trace bracket around it.
         """
         try:
             yield
-        except BaseException as exc:
+        except WriteEffectError as exc:
             if self._calls:
-                self._attribution = (exc, self._calls[-1])
+                self._attributions.append((weakref.ref(exc), self._calls[-1]))
             raise
 
     @property
@@ -410,10 +440,11 @@ class TraceRecorder:
         return bool(self._calls)
 
     @property
-    def attribution(self) -> _CallAttribution | None:
-        """The exception one of this recorder's calls caused, paired with that
-        call; absent when nothing recorded here caused a failure."""
-        return self._attribution
+    def attributions(self) -> Sequence[_CallAttribution]:
+        """Each exception one of this recorder's calls caused, paired with that
+        call, in the order they failed; empty when nothing recorded here caused a
+        failure."""
+        return self._attributions
 
     def read_trace(self) -> ReadTrace:
         """This recorder's calls as a Read Trace, sealing the recorder."""
@@ -486,7 +517,7 @@ class _AttemptState:
     traces: list[Trace] = field(default_factory=list[Trace])
     failure: AttemptFailure | None = None
     phase: FailurePhase = "body"
-    attribution: _CallAttribution | None = None
+    attributions: list[_CallAttribution] = field(default_factory=list[_CallAttribution])
     sealed: bool = False
 
 
@@ -535,16 +566,18 @@ class AttemptRecorder:
     The two bracketing helpers own the causality rules so no caller restates
     them: a trace is sealed and appended once its work has succeeded OR raised,
     a bracket that reached the database not at all appends nothing and seals
-    nothing, and the call a trace recorder attributed to an exception carries
-    forward WITH THAT EXCEPTION. So an empty bracket unwinding around a failed
+    nothing, and every call a trace recorder attributed carries forward WITH THE
+    EXCEPTION it was attributed to. So an empty bracket unwinding around a failed
     one cannot erase the call that failed, a conversion failure after a
-    successful call cannot claim it, and a caller that swallows a failed call and
+    successful call cannot claim it, a caller that swallows a failed call and
     later raises something else — or lets the commit fail — leaves that later
-    failure naming no call at all.
+    failure naming no call at all, and a second failed call does not displace the
+    first one when the first is what the escaping failure was raised from.
 
-    The attribution is released once the attempt reaches a terminal state, so the
-    record a caller may retain for the life of its log holds no exception, no
-    traceback, and no frame the failure ran in.
+    Attributions are held weakly and released outright once the attempt reaches a
+    terminal state, so neither the live record nor the one a caller retains for
+    the life of its log holds an exception, a traceback, or a frame the failure
+    ran in.
 
     A ``finalization`` batch also moves the attempt's failure phase, because
     nothing an attempt records follows that batch. The move happens as early as
@@ -602,8 +635,7 @@ class AttemptRecorder:
     def _close(self, recorder: TraceRecorder, seal: Callable[[], Trace]) -> None:
         if recorder.has_calls:
             self._state.traces.append(seal())
-        if recorder.attribution is not None:
-            self._state.attribution = recorder.attribution
+        self._state.attributions.extend(recorder.attributions)
 
     def entering_commit(self) -> None:
         """The body and its finalization batch are done; what remains is the
@@ -614,13 +646,13 @@ class AttemptRecorder:
     def committed(self) -> None:
         self._ensure_open()
         self._state.status = "committed"
-        self._state.attribution = None
+        self._state.attributions.clear()
 
     def failed(self, exc: BaseException) -> None:
         """Roll the attempt back, retaining ``exc``'s detached diagnostic.
 
-        The failure names a Database Call only when ``exc`` — or the failure it
-        was explicitly raised from, as a rollback-only refusal is — is the one a
+        The failure names a Database Call only when ``exc`` — or the failure a
+        rollback-only refusal reports a decision already made about — is one a
         trace recorder attributed to that call.
 
         Idempotent in the first caller's favour: the composition root records the
@@ -639,14 +671,17 @@ class AttemptRecorder:
             retry_eligible=False,
             database_call=self._attributed_call(exc),
         )
-        self._state.attribution = None
+        self._state.attributions.clear()
 
     def _attributed_call(self, exc: BaseException) -> DatabaseCall | None:
-        attribution = self._state.attribution
-        if attribution is None:
-            return None
-        attributed, call = attribution
-        return call if any(link is attributed for link in _cause_chain(exc)) else None
+        # Outward through the refusal chain first, so a failure that is itself
+        # attributed names its own call rather than the one that doomed the
+        # transaction before it.
+        for link in _refusal_chain(exc):
+            for attributed, call in self._state.attributions:
+                if attributed() is link:
+                    return call
+        return None
 
     def classify(self, *, retry_eligible: bool) -> None:
         """Apply the retry classifier's verdict to the recorded failure."""
@@ -682,15 +717,17 @@ _WRITE_EFFECT_CODES: Final[dict[type[BaseException], str]] = {
 def _failure_code(exc: BaseException) -> str | None:
     """The stable Parallax or provider code ``exc`` carries, if any.
 
-    A rollback-only refusal is unwrapped to the failure that doomed the
-    transaction: the refusal is the boundary reporting a decision already made,
-    and its cause is what a reader of the log needs named.
+    Read through the same refusal chain the attributed call is: a rollback-only
+    refusal is the boundary reporting a decision already made, so the failure
+    that doomed the transaction is what a reader of the log needs named.
     """
-    if isinstance(exc, RollbackOnlyError):
-        return None if exc.__cause__ is None else _failure_code(exc.__cause__)
-    if isinstance(exc, DatabaseError):
-        return exc.native_code
-    return _WRITE_EFFECT_CODES.get(type(exc))
+    for link in _refusal_chain(exc):
+        if isinstance(link, RollbackOnlyError):
+            continue
+        if isinstance(link, DatabaseError):
+            return link.native_code
+        return _WRITE_EFFECT_CODES.get(type(link))
+    return None
 
 
 @dataclass(slots=True)
