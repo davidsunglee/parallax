@@ -74,7 +74,6 @@
     "EntityDefinitionError",
     "EntityGraphConstruction",
     "EntityGraphWriter",
-    "EntityMeta",
     "EntityRelationshipInput",
     "EntityRowCodec",
     "EntityRowError",
@@ -118,10 +117,8 @@
     "UnloadedRelationshipError",
     "ValueObject",
     "ValueObjectAttributeInput",
-    "ValueObjectMeta",
     "ValueObjectOccurrenceInput",
     "ValueObjectRecord",
-    "WireNames",
     "asc",
     "attr",
     "desc",
@@ -133,8 +130,7 @@
     "row_codec_of",
     "shape_of",
     "snake_to_camel",
-    "to_document",
-    "wire_names_of"
+    "to_document"
   ],
   "parallax.descriptor": [
     "DescriptorError",

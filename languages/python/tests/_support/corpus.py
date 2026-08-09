@@ -143,7 +143,7 @@ def instance_row(instance: Entity, *, family_variant: bool = False) -> dict[str,
     grading a case whose oracle projects the raw tag column for an
     abstract-root read.
     """
-    from parallax.core.entity import wire_names_of
+    from parallax.core.entity._entity import wire_names_of
 
     names = wire_names_of(type(instance))
     column_by_py = {py_name: column for column, py_name in names.column_to_py.items()}

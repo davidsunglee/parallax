@@ -53,8 +53,9 @@ from typing import Final, cast
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
 from parallax.core.entity import Entity as EntityBase
-from parallax.core.entity import lifecycle_state_of, wire_names_of
+from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._declaration import declaration_of
+from parallax.core.entity._entity import wire_names_of
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,

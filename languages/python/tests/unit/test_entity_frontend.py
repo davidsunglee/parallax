@@ -43,11 +43,10 @@ from parallax.core.entity import (
     Predicate,
     RelationshipPath,
     UnloadedRelationshipError,
-    wire_names_of,
 )
 from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT, wire_names_of
 from parallax.core.entity._errors import EditError
 from parallax.core.entity._query import lower_find_query
 from parallax.core.metamodel import (
