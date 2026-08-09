@@ -201,6 +201,64 @@ def test_only_a_call_the_failure_is_about_is_the_call_the_failure_names() -> Non
     assert conversion_failure.database_call is None
 
 
+def test_a_failure_the_caller_swallowed_is_not_inherited_by_what_fails_later() -> None:
+    # The body catches the failed call and carries on, then fails for an
+    # unrelated reason: the later failure is an arbitrary callback failure and
+    # must name no call, however recently a call of its own failed.
+    builder = _opened()
+    caught = deadlock()
+    with builder.current.write_batch("read_dependency") as batch:
+        try:
+            batch.failed(_STATEMENT, "write", 1, caught)
+            raise caught
+        except DatabaseError:
+            pass
+    unrelated = RuntimeError("the callback rejected the value it read")
+    builder.current.failed(unrelated)
+    failure = builder.view().final_attempt.failure
+    assert failure is not None
+    assert (failure.phase, failure.database_call) == ("body", None)
+
+    # Same swallowed call, but the durability boundary is what fails: a commit
+    # failure names none either, and the phase is the only thing that moved.
+    committing = _opened()
+    swallowed = deadlock()
+    with committing.current.write_batch("finalization") as batch:
+        try:
+            batch.failed(_STATEMENT, "write", 1, swallowed)
+            raise swallowed
+        except DatabaseError:
+            pass
+    committing.current.entering_commit()
+    committing.current.failed(RuntimeError("the commit was refused"))
+    commit_failure = committing.view().final_attempt.failure
+    assert commit_failure is not None
+    assert (commit_failure.phase, commit_failure.database_call) == ("commit", None)
+
+
+def test_a_rollback_only_refusal_names_the_call_the_doomed_failure_was_about() -> None:
+    # The refusal is the boundary reporting a decision already made, so it is
+    # about whatever doomed the transaction — here a call the port could not
+    # complete, reached through the refusal's declared cause.
+    from parallax.core.unit_work import RollbackOnlyError
+
+    builder = _opened()
+    error = deadlock()
+    with builder.current.write_batch("read_dependency") as batch:
+        try:
+            batch.failed(_STATEMENT, "write", 1, error)
+            raise error
+        except DatabaseError:
+            pass
+    refusal = RollbackOnlyError("transaction is rollback-only; commit refused")
+    refusal.__cause__ = error
+    builder.current.failed(refusal)
+    attempt = builder.view().final_attempt
+    failure = attempt.failure
+    assert failure is not None
+    assert failure.database_call is attempt.calls[0]
+
+
 def _key_target() -> Any:
     from parallax.core.unit_work import KeyTarget
 
