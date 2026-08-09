@@ -96,6 +96,24 @@ def test_a_flush_that_reached_no_call_appends_no_trace() -> None:
     assert builder.view().round_trips == 0
 
 
+def test_an_announced_final_batch_carries_its_phase_before_it_is_planned() -> None:
+    builder = _opened()
+    builder.current.write_batch_starting("finalization")
+    builder.current.failed(RuntimeError("planning the final batch failed"))
+    failure = builder.view().final_attempt.failure
+    assert failure is not None
+    assert (failure.phase, failure.database_call) == ("finalization", None)
+    assert builder.view().final_attempt.traces == ()
+
+
+def test_an_announced_dependency_batch_leaves_the_attempt_in_the_body_phase() -> None:
+    builder = _opened()
+    builder.current.write_batch_starting("read_dependency")
+    builder.current.failed(RuntimeError("planning the read-forced batch failed"))
+    failure = builder.view().final_attempt.failure
+    assert failure is not None and failure.phase == "body"
+
+
 def test_a_read_result_and_the_attempt_reference_ONE_trace_object() -> None:
     builder = _opened()
     with builder.current.read_trace() as recorder:
@@ -312,6 +330,8 @@ def test_a_sealed_log_refuses_every_further_write_to_itself_and_its_attempts() -
         recorder.entering_commit()
     with pytest.raises(SealedExecutionLogError):
         recorder.failed(RuntimeError("late"))
+    with pytest.raises(SealedExecutionLogError):
+        recorder.write_batch_starting("finalization")
     with pytest.raises(SealedExecutionLogError), recorder.read_trace():
         pass  # pragma: no cover - the bracket is refused before it opens
     assert builder.view().final_attempt.status == "active"

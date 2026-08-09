@@ -90,7 +90,12 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-batch-write": "parallax.core.batch_write",
     "m-navigate": "parallax.core.navigate",
     "m-deep-fetch": "parallax.core.deep_fetch",
-    "m-snapshot-read": "parallax.snapshot.materialize",
+    # The tag maps to the read-RESULT module rather than to the row-to-graph
+    # package: `m-snapshot-read --> m-execution-log` reaches `m-sql`, and a
+    # forbidden row is the complement of a closure, so granting that package the
+    # provenance edge would hand every consumer of the row-to-graph surface SQL
+    # generation with it.
+    "m-snapshot-read": "parallax.snapshot._read_result",
     "m-case-format": "parallax.conformance.case_format",
     "m-conformance-adapter": "parallax.conformance.cli",
 }
@@ -197,6 +202,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     "parallax.snapshot.handle": frozenset(
         {
             "parallax.snapshot.materialize",
+            "parallax.snapshot._read_result",
             "parallax.snapshot._inspection",
             "parallax.core.entity",
             "parallax.core.base",
@@ -230,11 +236,31 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.temporal_read",
         }
     ),
-    # The one Python-only support edge a BEHAVIOURAL scope carries: the shared
-    # carrier algebra has no language-neutral module tag, so `modules.md` cannot
-    # state it and §7 is its only declaration. Every other `m-snapshot-read` edge
+    # The one Python-only support edge the BEHAVIOURAL `m-snapshot-read` scope
+    # carries: the row-to-graph package it publishes results from is a Python
+    # scope with no language-neutral module tag, so `modules.md` cannot state the
+    # edge and §7 is its only declaration. Every other `m-snapshot-read` edge
     # stays in `modules.md`, and this table's grants are unioned with those.
-    "parallax.snapshot.materialize": frozenset({"parallax.core.entity._graph_input"}),
+    "parallax.snapshot._read_result": frozenset({"parallax.snapshot.materialize"}),
+    # The row-to-graph half of `m-snapshot-read`, scoped apart from the read
+    # result `parallax.snapshot._read_result` publishes. It holds every
+    # `m-snapshot-read` edge EXCEPT `m-execution-log`, plus the shared carrier
+    # algebra, which has no language-neutral module tag either. Withholding the
+    # provenance edge here is what keeps `m-sql`, `m-db-error`, `m-auto-retry`
+    # and `m-dialect` outside this scope's closure — and therefore outside the
+    # closure of `parallax.snapshot.handle._materializer`, whose whole reason to
+    # exist is to be forbidden them.
+    "parallax.snapshot.materialize": frozenset(
+        {
+            "parallax.core.entity._graph_input",
+            "parallax.core.deep_fetch",
+            "parallax.core.document_codec",
+            "parallax.core.metamodel",
+            "parallax.core.inheritance",
+            "parallax.core.relationship",
+            "parallax.core.temporal_read",
+        }
+    ),
     # The read gate is scoped apart from its own package so the generated
     # contract proves what its module docstring claims: a preflight that resolves
     # a target and validates an operation names no SQL generation, no dialect, no

@@ -157,6 +157,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -186,6 +187,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -225,6 +227,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -256,6 +259,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -286,6 +290,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -322,6 +327,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -360,6 +366,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -389,6 +396,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -427,6 +435,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -464,6 +473,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -489,6 +499,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -523,6 +534,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -560,6 +572,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -593,6 +606,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -617,6 +631,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -653,6 +668,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -691,6 +707,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -728,6 +745,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -758,6 +776,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -793,6 +812,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -824,6 +844,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -861,6 +882,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -891,6 +913,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -927,6 +950,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -957,6 +981,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -991,6 +1016,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -1025,6 +1051,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -1056,6 +1083,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -1088,6 +1116,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -1124,6 +1153,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -1162,6 +1192,7 @@ forbidden_modules = [
     "parallax.core.value_object",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -1186,6 +1217,7 @@ forbidden_modules = [
     "parallax.core.txtime_write",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -1221,6 +1253,7 @@ forbidden_modules = [
     "parallax.core.value_object",
     "parallax.descriptor",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
 ]
@@ -1245,8 +1278,29 @@ forbidden_modules = [
     "parallax.core.txtime_write",
     "parallax.descriptor",
     "parallax.postgres",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
     "parallax.snapshot.materialize",
+]
+
+[[tool.importlinter.contracts]]
+name = "parallax.snapshot._read_result may import only its permitted dependencies"
+type = "forbidden"
+source_modules = ["parallax.snapshot._read_result"]
+forbidden_modules = [
+    "parallax.conformance",
+    "parallax.core._formation_profile",
+    "parallax.core.batch_write",
+    "parallax.core.bitemp_write",
+    "parallax.core.opt_lock",
+    "parallax.core.pk_gen",
+    "parallax.core.read_lock",
+    "parallax.core.txtime_write",
+    "parallax.core.value_object",
+    "parallax.descriptor",
+    "parallax.postgres",
+    "parallax.snapshot._inspection",
+    "parallax.snapshot.handle",
 ]
 
 [[tool.importlinter.contracts]]
@@ -1296,6 +1350,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle._family",
     "parallax.snapshot.handle._keyed_sql",
     "parallax.snapshot.handle._materializer",
@@ -1326,6 +1381,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.materialize",
 ]
 
@@ -1349,6 +1405,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.materialize",
 ]
 
@@ -1358,13 +1415,19 @@ type = "forbidden"
 source_modules = ["parallax.snapshot.handle._materializer"]
 forbidden_modules = [
     "parallax.conformance",
+    "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.dialect",
+    "parallax.core.execution_log",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
+    "parallax.core.sql_gen",
     "parallax.core.txtime_write",
     "parallax.descriptor",
     "parallax.postgres",
+    "parallax.snapshot._read_result",
 ]
 
 [[tool.importlinter.contracts]]
@@ -1396,6 +1459,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.materialize",
 ]
 
@@ -1419,6 +1483,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.materialize",
 ]
 
@@ -1442,6 +1507,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.materialize",
 ]
 
@@ -1465,6 +1531,7 @@ forbidden_modules = [
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.materialize",
 ]
 
@@ -1475,16 +1542,23 @@ source_modules = ["parallax.snapshot.materialize"]
 forbidden_modules = [
     "parallax.conformance",
     "parallax.core._formation_profile",
+    "parallax.core.auto_retry",
     "parallax.core.batch_write",
     "parallax.core.bitemp_write",
+    "parallax.core.db_error",
+    "parallax.core.dialect",
+    "parallax.core.execution_log",
     "parallax.core.opt_lock",
     "parallax.core.pk_gen",
     "parallax.core.read_lock",
+    "parallax.core.sql_gen",
+    "parallax.core.storage_layout",
     "parallax.core.txtime_write",
     "parallax.core.value_object",
     "parallax.descriptor",
     "parallax.postgres",
     "parallax.snapshot._inspection",
+    "parallax.snapshot._read_result",
     "parallax.snapshot.handle",
 ]
 # <<< check_dag_sync.py: END GENERATED IMPORT-LINTER CONTRACTS <<<

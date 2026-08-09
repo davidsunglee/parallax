@@ -508,9 +508,13 @@ class AttemptRecorder:
     nothing, and an escaping exception carries forward only the call the trace
     recorder ATTRIBUTED it to. That last part is why an empty bracket unwinding
     around a failed one cannot erase the call that failed, and why a conversion
-    failure after a successful call cannot claim it. Opening a ``finalization``
-    batch also moves the attempt's failure phase, because nothing an attempt
-    records follows that batch.
+    failure after a successful call cannot claim it.
+
+    A ``finalization`` batch also moves the attempt's failure phase, because
+    nothing an attempt records follows that batch. The move happens as early as
+    the driver announces the batch (:meth:`write_batch_starting`) rather than
+    when its bracket opens, so the planning a batch fails in is inside its own
+    phase.
     """
 
     __slots__ = ("_state",)
@@ -532,13 +536,24 @@ class AttemptRecorder:
         finally:
             self._close(recorder, recorder.read_trace, errored=errored)
 
+    def write_batch_starting(self, trigger: WriteBatchTrigger) -> None:
+        """Note that a batch with this trigger is about to be PLANNED.
+
+        Planning precedes the batch's first Database Call, so a flush that fails
+        planning opens no bracket and appends no trace. Without this notice such
+        a failure in the boundary-owned final batch would be recorded in the
+        ``body`` phase, which is reserved for callback work, explicit reads, and
+        the batches a read forced.
+        """
+        self._ensure_open()
+        self._enter_batch_phase(trigger)
+
     @contextmanager
     def write_batch(self, trigger: WriteBatchTrigger) -> Generator[TraceRecorder]:
         """Bracket one flushed write batch, appending its Write Batch Trace when
         it issued any call."""
         self._ensure_open()
-        if trigger == "finalization":
-            self._state.phase = "finalization"
+        self._enter_batch_phase(trigger)
         recorder = TraceRecorder()
         errored = False
         try:
@@ -548,6 +563,13 @@ class AttemptRecorder:
             raise
         finally:
             self._close(recorder, lambda: recorder.write_batch_trace(trigger), errored=errored)
+
+    def _enter_batch_phase(self, trigger: WriteBatchTrigger) -> None:
+        # Nothing an attempt records follows the finalization batch, so the
+        # phase moves with the batch itself — announced or bracketed, whichever
+        # this attempt's driver reaches first.
+        if trigger == "finalization":
+            self._state.phase = "finalization"
 
     def _close(self, recorder: TraceRecorder, seal: Callable[[], Trace], *, errored: bool) -> None:
         if recorder.has_calls:

@@ -4990,34 +4990,55 @@ type CaseProvenance = ReadTrace | ExecutionLog
 
 class _StatementIndexer:
     """Hands each Database Call, in execution order, its index into the
-    envelope's own ``emissions``.
+    envelope's own ``emissions``, and VALIDATES that the index names the
+    statement the call ran.
 
-    The correspondence is POSITIONAL: this adapter emits exactly the statements
-    it executes, in the order it executes them, so the k-th call ran the k-th
-    emission. A disagreement is an adapter defect rather than a case failure —
-    an index naming nothing would make the observation agree with an oracle
-    structurally while describing no statement — so it is raised here instead of
-    reported.
+    The correspondence is positional — the k-th call ran the k-th emission — but
+    it is not assumed. On the grouped-scenario and conflict lanes the two sides
+    are built independently: the emissions are a pure re-lowering of the
+    case-authored rows, per step, while execution buffers the whole group and
+    flushes it as one plan, so foreign-key reordering inside that plan or any
+    drift between the two lowerings would leave position *k* naming a different
+    statement while the case still graded green. Comparing the SQL text closes
+    every mechanism that changes it. A disagreement is an adapter defect rather
+    than a case failure, so it is raised here instead of reported, exactly as a
+    count mismatch is.
+
+    Binds are deliberately NOT compared. The two sides differ in representation
+    on purpose: the emission stays on the undecoded, case-authored wire spelling
+    (an authored ``250.00``) while execution binds the native carrier a decode
+    produced (``Decimal("250.00")``), which is what keeps the golden-bind
+    comparison from drifting. The residual is therefore two statements with
+    identical SQL and different binds, which a swap would leave undetected — one
+    known gap in one place, rather than an unchecked assumption spread across
+    three lanes.
     """
 
-    __slots__ = ("_count", "_position")
+    __slots__ = ("_emissions", "_position")
 
     def __init__(self, emissions: Sequence[Emission]) -> None:
-        self._count = len(emissions)
+        self._emissions = emissions
         self._position = 0
 
-    def take(self) -> int | None:
-        """The next call's statement index, or ``None`` on a lane whose envelope
+    def take(self, call: DatabaseCall) -> int | None:
+        """``call``'s statement index, or ``None`` on a lane whose envelope
         reports no emission at all (`api-conformance`)."""
-        if self._count == 0:
+        if not self._emissions:
             return None
         index = self._position
         self._position += 1
-        if index >= self._count:
+        if index >= len(self._emissions):
             raise EngineError(
                 f"execution provenance recorded {index + 1} database call(s) but the "
-                f"envelope reports only {self._count} emission(s): the observation's "
+                f"envelope reports only {len(self._emissions)} emission(s): the observation's "
                 "statement index would name nothing (m-conformance-adapter)"
+            )
+        emitted = self._emissions[index].sql
+        if call.statement.sql != emitted:
+            raise EngineError(
+                f"execution provenance's database call {index} ran {call.statement.sql!r}, "
+                f"but the envelope's emission {index} reports {emitted!r}: the observation's "
+                "statement index would name a different statement (m-conformance-adapter)"
             )
         return index
 
@@ -5124,7 +5145,7 @@ def _wire_read_trace(trace: ReadTrace, indexer: _StatementIndexer) -> dict[str, 
 
 def _wire_call(call: DatabaseCall, indexer: _StatementIndexer) -> dict[str, object]:
     wire: dict[str, object] = {"kind": call.kind, "completion": _wire_completion(call.completion)}
-    index = indexer.take()
+    index = indexer.take(call)
     if index is not None:
         wire["statement"] = index
     return wire

@@ -3500,6 +3500,17 @@ every importer above already declares, and `parallax.core.entity._query`,
 NARROWER grant than its parent — not because they are the only children an
 importer may reach.
 
+A behavioral module maps to the scope that needs its WHOLE edge set, which for
+`m-snapshot-read` is not the materialization package: only the read result names
+the Read Trace `m-snapshot-read --> m-execution-log` declares, while the
+row-to-graph modules need a strictly narrower grant. The tag therefore maps to
+`parallax.snapshot._read_result`, and `parallax.snapshot.materialize` carries a
+support row holding every other `m-snapshot-read` edge. The mapping has to be
+this fine grained because a forbidden row is the complement of a closure:
+`m-execution-log` reaches `m-sql`, so a scope granted it could not also be the
+grant `parallax.snapshot.handle._materializer` holds in order to be forbidden
+SQL generation.
+
 import-linter forbids every production scope-pair import the DAG does not
 permit — the generated forbidden-edge complement below, with the
 conformance-family scopes exempted as importers per `modules.md` — so illegal
@@ -3535,11 +3546,12 @@ legalizes a forbidden edge.
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship` | generated forbidden contracts |
-| `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-log`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-log`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
-| Snapshot Graph Input carriers (support edge of the snapshot materialization scope) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input` | generated forbidden contracts |
+| Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts + cross-package contract |
+| Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
 | Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity._query`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
 | Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
@@ -3609,6 +3621,7 @@ parallax.snapshot._inspection --> parallax.core.inheritance
 parallax.snapshot._inspection --> parallax.core.relationship
 parallax.snapshot._inspection --> parallax.core.temporal_read
 parallax.snapshot.handle --> parallax.snapshot.materialize
+parallax.snapshot.handle --> parallax.snapshot._read_result
 parallax.snapshot.handle --> parallax.snapshot._inspection
 parallax.snapshot.handle --> parallax.core.entity
 parallax.snapshot.handle --> parallax.core.base
@@ -3630,7 +3643,14 @@ parallax.snapshot.handle --> parallax.core.opt_lock
 parallax.snapshot.handle --> parallax.core.batch_write
 parallax.snapshot.handle --> parallax.core.txtime_write
 parallax.snapshot.handle --> parallax.core.bitemp_write
+parallax.snapshot._read_result --> parallax.snapshot.materialize
 parallax.snapshot.materialize --> parallax.core.entity._graph_input
+parallax.snapshot.materialize --> parallax.core.deep_fetch
+parallax.snapshot.materialize --> parallax.core.document_codec
+parallax.snapshot.materialize --> parallax.core.metamodel
+parallax.snapshot.materialize --> parallax.core.inheritance
+parallax.snapshot.materialize --> parallax.core.relationship
+parallax.snapshot.materialize --> parallax.core.temporal_read
 parallax.snapshot.handle._materializer --> parallax.snapshot.materialize
 parallax.snapshot.handle._materializer --> parallax.snapshot._inspection
 parallax.snapshot.handle._materializer --> parallax.core.entity
