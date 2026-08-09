@@ -215,6 +215,15 @@ Attempt Failure whose retry eligibility is true**: a failure the classifier
 refused surfaces to the caller rather than re-executing, and an attempt that
 records no failure at all states no ground for the attempt after it.
 
+The classifier and the bound must also agree about where the history *stops*.
+A retriable failure re-executes the closure until the bound is spent, so a
+terminal graph ending on a rolled-back attempt whose Attempt Failure is
+retry-eligible is one whose attempts number exactly `maxRetries + 1` — the
+retry exhaustion the case table above names. Under that count the record claims
+a re-execution that the policy licensed and the loop did not run. A final
+attempt whose failure the classifier **refused**, or which records none, is
+terminal at any count, because nothing licensed a successor.
+
 The compatibility harness validates the authored oracle itself — the case schema
 fixes its shape, and the referential, arithmetic, trigger, and attempt-history
 rules above are checked over the corpus — but it records no execution provenance

@@ -52,10 +52,11 @@ never something an application developer hand-writes.
   oracle is graded against a running implementation by this target alone: the
   compatibility harness validates the authored oracle itself but records no
   execution provenance of its own to compare with it, so a disagreement between
-  Python and the specification has no second reader. Every other claimed module's runtime observables are
-  double-witnessed, and this one is a deliberate, recorded exception — it is
-  carried as an open entry in [`docs/deferred-ledger.md`](../docs/deferred-ledger.md)
-  until a second grader exists, not as a permanent property of the module.
+  Python and the specification has no second reader. Every other claimed module's
+  runtime observables are double-witnessed. This one is a deliberate exception
+  that holds only until a second grader exists, not a permanent property of the
+  module; [`docs/deferred-ledger.md`](../docs/deferred-ledger.md) forwards to the
+  issue that owns building one.
 - **Case-selection expression.** Verification selects
   `("slice-snapshot-1" ∈ case.tags) ∧ (dialect = postgres) ∧ (case.shape ∈ claimed caseShapes) ∧ (case module-tags ⊆ claimed modules)`;
   milestone-scoped runs intersect further with capability tags via
