@@ -1208,21 +1208,21 @@ than the value. An implementation that can arrange no second source therefore
 does not witness `anotherSource` at all, and says so, rather than presenting a
 value it built to be classified.
 
-Such a step carries **no golden SQL** and declares `roundTrips: 0`: an accepted
-value's write is buffered rather than emitted, and a refused one reaches no
-statement at all. Its observable is the per-step `expectError`, and a step that
-declares no `expectError` asserts the value is **accepted**: the verb takes it
-and raises nothing.
+Such a step carries **no golden SQL** and declares `roundTrips: 0`: a refused
+value stops the verb before it buffers anything, and the one acceptance this
+shape admits — fixed below — buffers nothing either, so neither owes a statement.
+Its observable is the per-step `expectError`, and a step that declares no
+`expectError` asserts the value is **accepted**: the verb takes it and raises
+nothing.
 
 A scenario carrying one is `lane: api-conformance` **throughout**, and the schema
 requires it. The wire harness holds no client value to hand a verb, so it can
 neither arrange the step's provenance nor execute the step; and a scenario is
 **one ordered execution**, not a set of steps to divide between executors — a
-`harness` lane would run the neighbours while this step never ran, and an
-accepted keyed step's buffered write would go missing from the DML those
-neighbours expect. So the API Conformance Suite runs the whole case
-(`m-conformance-adapter`, `m-api-conformance`), which is what makes grading it in
-part a reported pass for steps that never ran.
+`harness` lane would report the case run while the step it turns on never ran.
+So the API Conformance Suite runs the whole case (`m-conformance-adapter`,
+`m-api-conformance`), which is what makes grading it in part a reported pass for
+steps that never ran.
 
 Every step of such a scenario is a keyed write action step, and the schema
 requires that too. The suite that runs the case asserts no golden SQL

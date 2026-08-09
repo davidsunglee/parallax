@@ -1108,9 +1108,9 @@ def _identity_check_stray_key() -> dict[str, Any]:
 def _write_value_step_with_golden_statements() -> dict[str, Any]:
     """A keyed write action step listing golden SQL.
 
-    Such a step carries NONE: an accepted value's write is buffered rather than
-    emitted, and a refused one reaches no statement at all, so any `statements`
-    there claims an emission the step cannot have."""
+    Such a step carries NONE: a refusal stops the verb before it buffers
+    anything, and the only acceptance this shape admits buffers nothing either,
+    so any `statements` there claims an emission the step cannot have."""
     doc = _write_value_scenario_case()
     doc["when"]["scenario"][0]["statements"] = [
         {"sql": {"postgres": "update account set balance = ? where id = ?"}, "binds": [1, 2]}
