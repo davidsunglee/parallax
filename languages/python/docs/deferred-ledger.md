@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-61**.
+Entry numbering is continuous and never reused. The next new number is **D-62**.
 
 ## Standing notes
 
@@ -223,10 +223,12 @@ combine that semantic migration with deleting the duplicate engine.
 **What.** Every other claimed module's runtime behavior is graded twice — by the
 reference harness and by this target — so a disagreement between them is a
 finding rather than a silent agreement with a defect. `then.execution` is graded
-by this target alone: the harness validates the key against the case schema and
-ignores it. The seven `m-execution-log` cases therefore prove that Python matches
-*Python's own reading* of the specification, and nothing cross-checks that
-reading.
+against a running implementation by this target alone: the harness validates the
+authored oracle — its shape against the case schema, its indexes, counts,
+triggers, and attempt history against `m-execution-log` — but records no
+provenance of its own to compare with it. The seven `m-execution-log` cases
+therefore prove that Python matches *Python's own reading* of the specification,
+and nothing cross-checks that reading.
 
 **Why it is deferred rather than fixed.** Teaching the harness to grade the
 oracle is harness work of its own size — it has an attempt-count oracle but no
@@ -260,6 +262,31 @@ committing an empty package purely to satisfy a generator. All three — the
 `MODULE_SCOPE` entry, the incoming `m-snapshot-read` edge, and the
 `m-snapshot-read.md` amendment that edge carries — land with the module's own
 source, at which point this entry closes.
+
+### D-61 — The envelope-side execution checks have an implementation but no reader
+
+*Medium — a normative adapter obligation nothing enforces.* The envelope half of
+D-59. Relates to `core/spec/m-conformance-adapter.md` *Execution provenance*,
+`reference_harness.execution_validate`, `parallax.conformance`. True owner:
+[COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution).
+
+**What.** A `run` envelope's `execution` may index only what the envelope
+carries: a call's `statement` in range of `emissions` and present whenever the
+envelope reports any emission, an attempt failure's `databaseCall` in range of
+that attempt's own calls. `validate_execution_observation` implements both
+against an envelope's own `emissions`, through the same walker that grades the
+case oracle, and its unit tests pin them. Nothing applies it to a produced
+envelope: every `run`-envelope path validates against the conformance-adapter
+schema alone, so an envelope omitting `statement`, indexing past `emissions`, or
+naming an absent database call passes the validation the tree performs.
+
+**Why it is deferred rather than fixed.** There is no envelope-grading seam to
+wire it into. The reference harness reads only `describe` envelopes — the
+canonical slice claims and a language spec's single describe fence — and no
+adapter reports the observation yet, so a caller added now would grade nothing
+and would pre-empt the observation-versus-oracle runner COR-95 designs. The check
+belongs at that runner's seam; this entry keeps the unenforced obligation visible
+until it lands there.
 
 ## Forwarding pointers
 
