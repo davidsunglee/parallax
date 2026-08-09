@@ -25,11 +25,21 @@ from parallax.core.execution_log import (
     TraceRecorder,
     WriteCompleted,
 )
+from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.sql_gen import LoweredStatement
+from parallax.core.unit_work import KeyTarget, OptimisticLockConflictError
 
 _READ = LoweredStatement("select 1", (1,))
 _WRITE = LoweredStatement("update account set balance = ?", (2,))
 _DELETE = LoweredStatement("delete from account where id = ?", (3,))
+_ACCOUNT = EntityIdentity(namespace="parallax.compatibility", name="Account")
+
+
+def _conflict() -> OptimisticLockConflictError:
+    """The Affected Rows Policy verdict a gated write's shortfall produces — the
+    one post-call failure entitled to name the call it rejected."""
+    target = KeyTarget((AttributeIdentity(entity=_ACCOUNT, name="id"),), ((1,),))
+    return OptimisticLockConflictError(_ACCOUNT, target, 1, 0)
 
 
 def _emissions(*statements: LoweredStatement) -> list[engine.Emission]:
@@ -89,9 +99,9 @@ def test_a_transactional_run_renders_the_whole_log_with_wire_spellings() -> None
 def test_a_rolled_back_attempt_renders_its_failure_and_the_call_it_names() -> None:
     builder = _builder(concurrency="optimistic", retries=1)
     builder.attempt_opened()
-    rejection = RuntimeError("the enforcement rejected it")
+    rejection = _conflict()
     with (
-        pytest.raises(RuntimeError),
+        pytest.raises(OptimisticLockConflictError),
         builder.current.write_batch("finalization") as batch,
     ):
         batch.completed(_WRITE, "write", 1, WriteCompleted(0))
@@ -104,9 +114,9 @@ def test_a_rolled_back_attempt_renders_its_failure_and_the_call_it_names() -> No
     log = cast("dict[str, Any]", engine.execution_observation(builder.view(), _emissions(_WRITE)))
     attempt = cast("list[dict[str, Any]]", log["transactionLog"]["attempts"])[0]
     assert attempt["status"] == "rolled-back"
-    # No `code`: the failure carries none, and an absent key is the honest report.
     assert attempt["failure"] == {
         "phase": "finalization",
+        "code": "optimistic-lock-conflict",
         "retryEligible": True,
         "databaseCall": 0,
     }
