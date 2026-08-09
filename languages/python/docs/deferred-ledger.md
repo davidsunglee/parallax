@@ -213,30 +213,6 @@ wire shape, and bounded-memory streaming. It needs its own grilling session and
 ticket after conformance has been reduced to the production path; COR-93 must not
 combine that semantic migration with deleting the duplicate engine.
 
-### D-59 — `then.execution` has one grader, so an `m-execution-log` disagreement has no second reader
-
-*Medium — a claimed module's runtime observables are single-witness.* Relates to
-`core/spec/m-execution-log.md`, `core/schemas/compatibility-case.schema.json`,
-`parallax.conformance`. True owner:
-[COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution).
-
-**What.** Every other claimed module's runtime behavior is graded twice — by the
-reference harness and by this target — so a disagreement between them is a
-finding rather than a silent agreement with a defect. `then.execution` is graded
-against a running implementation by this target alone: the harness validates the
-authored oracle — its shape against the case schema, its indexes, counts,
-triggers, and attempt history against `m-execution-log` — but records no
-provenance of its own to compare with it. The seven `m-execution-log` cases
-therefore prove that Python matches *Python's own reading* of the specification,
-and nothing cross-checks that reading.
-
-**Why it is deferred rather than fixed.** Teaching the harness to grade the
-oracle is harness work of its own size — it has an attempt-count oracle but no
-per-call trace, no read-versus-write-batch distinction, and no batch trigger — and
-it belongs to the harness's own executor rather than to this target. COR-95 owns
-it; this entry exists so the gap stays visible from the Python side while it is
-open.
-
 ### D-60 — The `m-execution-log` enforcement scope is declared in `python.md` §7 but generates no import-linter contract
 
 *Low — a declared scope with nothing under it yet.* Relates to
@@ -263,31 +239,6 @@ committing an empty package purely to satisfy a generator. All three — the
 `m-snapshot-read.md` amendment that edge carries — land with the module's own
 source, at which point this entry closes.
 
-### D-61 — The envelope-side execution checks have an implementation but no reader
-
-*Medium — a normative adapter obligation nothing enforces.* The envelope half of
-D-59. Relates to `core/spec/m-conformance-adapter.md` *Execution provenance*,
-`reference_harness.execution_validate`, `parallax.conformance`. True owner:
-[COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution).
-
-**What.** A `run` envelope's `execution` may index only what the envelope
-carries: a call's `statement` in range of `emissions` and present whenever the
-envelope reports any emission, an attempt failure's `databaseCall` in range of
-that attempt's own calls. `validate_execution_observation` implements both
-against an envelope's own `emissions`, through the same walker that grades the
-case oracle, and its unit tests pin them. Nothing applies it to a produced
-envelope: every `run`-envelope path validates against the conformance-adapter
-schema alone, so an envelope omitting `statement`, indexing past `emissions`, or
-naming an absent database call passes the validation the tree performs.
-
-**Why it is deferred rather than fixed.** There is no envelope-grading seam to
-wire it into. The reference harness reads only `describe` envelopes — the
-canonical slice claims and a language spec's single describe fence — and no
-adapter reports the observation yet, so a caller added now would grade nothing
-and would pre-empt the observation-versus-oracle runner COR-95 designs. The check
-belongs at that runner's seam; this entry keeps the unenforced obligation visible
-until it lands there.
-
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a
@@ -303,6 +254,8 @@ prose.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
 - **D-57** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). `_identity_row` applies `serialize_member`, so all three Entity Row Codec operations carry one form; `python.md` §5 states that uniform contract in place of the asymmetry, and no golden moved, because a primary key is structurally a scalar Attribute that `serialize_member` passes through unchanged.
+- **D-59** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). `then.execution` has one grader; `spec/python.md` §1 carries the single-witness limit.
+- **D-61** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The envelope half: `validate_execution_observation` has no envelope-grading seam, and `core/spec/m-conformance-adapter.md` *Execution provenance* binds the adapter regardless.
 
 ## History
 

@@ -22,8 +22,10 @@ envelope's matching observation alike (`m-execution-log`):
   one, so nothing the attempt records follows it;
 - the graph is TERMINAL, so a commit ends the invocation: a committed attempt is
   the final attempt, the attempts number at most one more than the retained
-  Retry Policy's maximum re-execution count, and every attempt another follows
-  names the retry-eligible failure that licensed the re-execution.
+  Retry Policy's maximum re-execution count, and the classifier's verdict and
+  the budget agree about where the history stops — every attempt another follows
+  names the retry-eligible failure that licensed the re-execution, and a final
+  attempt whose failure was retry-eligible ran the budget out.
 
 Without these, a record whose numbers are internally consistent but names
 nothing — every index ``999``, every count mirrored wrongly at all four levels —
@@ -200,11 +202,16 @@ def _trace_round_trips(trace: dict[str, Any]) -> Any:
 def _check_history(log: dict[str, Any], attempts: list[Any], problems: list[str]) -> None:
     """The attempt history a TERMINAL graph admits (`m-execution-log`)."""
     last = len(attempts) - 1
+    policy = log.get("retryPolicy")
+    bound = policy.get("maxRetries") if isinstance(policy, dict) else None
     for index, attempt in enumerate(attempts):
-        if not isinstance(attempt, dict) or index == last:
+        if not isinstance(attempt, dict):
             continue
         status = attempt.get("status")
-        if status == "committed":
+        if index == last:
+            if status == "rolled-back":
+                _check_retry_exhaustion(attempt, index, bound, len(attempts), problems)
+        elif status == "committed":
             problems.append(
                 f"transactionLog.attempts[{index}] committed but is not the last attempt; a "
                 f"commit ends the invocation, so a terminal graph holds at most one committed "
@@ -212,8 +219,6 @@ def _check_history(log: dict[str, Any], attempts: list[Any], problems: list[str]
             )
         elif status == "rolled-back":
             _check_retry_licence(attempt, index, problems)
-    policy = log.get("retryPolicy")
-    bound = policy.get("maxRetries") if isinstance(policy, dict) else None
     if isinstance(bound, int) and len(attempts) > bound + 1:
         problems.append(
             f"transactionLog records {len(attempts)} attempts but its retryPolicy allows "
@@ -237,6 +242,22 @@ def _check_retry_licence(attempt: dict[str, Any], index: int, problems: list[str
             f"transactionLog.attempts[{index}] records a failure the classifier judged "
             f"ineligible for retry, but another attempt follows it; a non-retriable failure "
             f"surfaces to the caller instead of re-executing the closure"
+        )
+
+
+def _check_retry_exhaustion(
+    attempt: dict[str, Any], index: int, bound: Any, ran: int, problems: list[str]
+) -> None:
+    """What licenses the loop to stop on a retry-eligible failure (`m-auto-retry`)."""
+    failure = attempt.get("failure")
+    if not isinstance(failure, dict) or failure.get("retryEligible") is not True:
+        return
+    if isinstance(bound, int) and ran < bound + 1:
+        problems.append(
+            f"transactionLog ends on attempt {index}, which rolled back with a retry-eligible "
+            f"failure, but only {ran} of the {bound + 1} attempt(s) its retryPolicy allows ran; "
+            f"a failure the classifier admitted re-executes the closure until the bound is "
+            f"spent, so the graph terminates on one only at exhaustion"
         )
 
 

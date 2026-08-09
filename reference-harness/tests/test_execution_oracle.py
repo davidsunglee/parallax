@@ -468,14 +468,32 @@ def test_a_re_executed_attempt_recording_no_failure_at_all_is_flagged() -> None:
     assert validate_execution(_attempts_case(["rolled-back", "committed"], 1, licence=None))
 
 
-def test_the_final_attempts_own_verdict_licenses_nothing_and_is_not_read() -> None:
-    case = _attempts_case(["rolled-back", "rolled-back"], 1)
+def _with_final_verdict(
+    statuses: list[str], max_retries: int, retry_eligible: bool
+) -> dict[str, Any]:
+    case = _attempts_case(statuses, max_retries)
     case["then"]["execution"]["transactionLog"]["attempts"][-1]["failure"] = {
         "phase": "finalization",
-        "retryEligible": False,
+        "retryEligible": retry_eligible,
         "databaseCall": 0,
     }
-    assert validate_execution(case) == []
+    return case
+
+
+def test_a_final_verdict_the_classifier_refused_is_terminal_at_any_count() -> None:
+    assert validate_execution(_with_final_verdict(["rolled-back"], 10, False)) == []
+    assert validate_execution(_with_final_verdict(["rolled-back", "rolled-back"], 1, False)) == []
+
+
+def test_a_final_retry_eligible_verdict_with_budget_left_is_flagged() -> None:
+    assert validate_execution(_with_final_verdict(["rolled-back", "rolled-back"], 1, True)) == []
+    assert validate_execution(_with_final_verdict(["rolled-back"], 0, True)) == []
+    assert validate_execution(_with_final_verdict(["rolled-back", "rolled-back"], 10, True))
+    assert validate_execution(_with_final_verdict(["rolled-back"], 1, True))
+
+
+def test_a_final_attempt_recording_no_failure_at_all_is_terminal_at_any_count() -> None:
+    assert validate_execution(_attempts_case(["rolled-back"], 10)) == []
 
 
 # --- the same relations over the adapter's observation ------------------------
