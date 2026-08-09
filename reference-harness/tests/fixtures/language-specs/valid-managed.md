@@ -64,20 +64,20 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-document-codec` | src/document-codec | document-codec | `m-core`, `m-metamodel` | depcheck.toml |
 | `m-identity-map` | src/identity-map | identity-map | `m-unit-work`, `m-temporal-read` | depcheck.toml |
 | `m-inheritance` | src/inheritance | inheritance | `m-metamodel`, `m-model-formation` | depcheck.toml |
-| `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
+| `m-storage-layout` | src/storage-layout | storage-layout | `m-metamodel`, `m-model-formation`, `m-inheritance`, `m-relationship` | depcheck.toml |
 | `m-metamodel` | src/metamodel | metamodel | `m-core` | depcheck.toml |
 | `m-model-formation` | src/model-formation | model-formation | `m-metamodel` | depcheck.toml |
 | `m-navigate` | src/navigate | navigate | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |
-| `m-op-algebra` | src/operation | operation | `m-descriptor`, `m-inheritance` | depcheck.toml |
-| `m-op-list` | src/lists | lists | `m-op-algebra`, `m-unit-work` | depcheck.toml |
+| `m-op-algebra` | src/operation | operation | `m-metamodel`, `m-inheritance` | depcheck.toml |
+| `m-op-list` | src/lists | lists | `m-op-algebra`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
 | `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
-| `m-pk-gen` | src/pk-gen | pk-gen | `m-descriptor`, `m-metamodel` | depcheck.toml |
+| `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |
 | `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |
-| `m-sql` | src/sql | sql | `m-op-algebra`, `m-dialect` | depcheck.toml |
+| `m-sql` | src/sql | sql | `m-op-algebra`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | depcheck.toml |
 | `m-relationship` | src/relationship | relationship | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-temporal-read` | src/temporal-read | temporal-read | `m-op-algebra`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
-| `m-unit-work` | src/unit-work | unit-work | `m-op-algebra`, `m-db-port` | depcheck.toml |
-| `m-value-object` | src/value-object | value-object | `m-descriptor`, `m-metamodel`, `m-model-formation` | depcheck.toml |
+| `m-unit-work` | src/unit-work | unit-work | `m-op-algebra`, `m-db-port`, `m-temporal-read` | depcheck.toml |
+| `m-value-object` | src/value-object | value-object | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | adapter composition | tests/composition | composition | postgres adapter | depcheck.toml |
 
 ## 8. Deployable artifact topology
