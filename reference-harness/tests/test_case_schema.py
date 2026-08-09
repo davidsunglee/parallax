@@ -258,6 +258,11 @@ def _write_value_scenario_case() -> dict[str, Any]:
     `value` states, names no `on`, carries no golden SQL, and declares
     `roundTrips: 0` — so the whole scenario's declared total is legitimately 0,
     the one shape where that floor is relaxed.
+
+    The three steps are the three shapes this grammar admits: a refused `update`,
+    the one ACCEPTED write whose zero is honest (an `update` of a value no author
+    changed materializes nothing), and a refused `insert` — the only `insert`
+    there is here, since an accepted one would open a row.
     """
     return {
         "model": "models/account.yaml",
@@ -273,6 +278,12 @@ def _write_value_scenario_case() -> dict[str, Any]:
                     "expectError": "write-value-not-stored",
                 },
                 {"action": "update", "value": "thisSource", "roundTrips": 0},
+                {
+                    "action": "insert",
+                    "value": "thisSource",
+                    "roundTrips": 0,
+                    "expectError": "write-value-already-stored",
+                },
             ]
         },
         "then": {"roundTrips": 0},
@@ -1117,6 +1128,20 @@ def _write_value_step_costing_a_round_trip() -> dict[str, Any]:
     return doc
 
 
+def _write_value_step_accepting_an_insert() -> dict[str, Any]:
+    """A keyed write action step declaring an ACCEPTED `insert`.
+
+    An accepted `insert` opens a row: the verb buffers a write the committing
+    unit of work flushes, so the step emits DML while its `roundTrips: 0` denies
+    it — and no executor could catch the contradiction, since the suite that runs
+    this lane asserts no golden SQL and grades the declared zero as the absence of
+    exactly the durable effect the acceptance produces. The only accepted keyed
+    write this shape carries is the `update` of a value no author changed."""
+    doc = _write_value_scenario_case()
+    doc["when"]["scenario"][2] = {"action": "insert", "value": "unmanaged", "roundTrips": 0}
+    return doc
+
+
 def _write_value_scenario_on_the_harness_lane() -> dict[str, Any]:
     """A keyed-write-value scenario declaring `lane: harness`.
 
@@ -1190,6 +1215,7 @@ def _rejected_case_costing_a_round_trip() -> dict[str, Any]:
 REJECTED_CASES = {
     "write-value-step-with-golden-statements": _write_value_step_with_golden_statements,
     "write-value-step-costing-a-round-trip": _write_value_step_costing_a_round_trip,
+    "write-value-step-accepting-an-insert": _write_value_step_accepting_an_insert,
     "write-value-scenario-on-the-harness-lane": _write_value_scenario_on_the_harness_lane,
     "write-value-scenario-without-a-lane": _write_value_scenario_without_a_lane,
     "write-value-scenario-mixing-another-step": _write_value_scenario_mixing_another_step,
