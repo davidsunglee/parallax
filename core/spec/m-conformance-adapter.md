@@ -423,8 +423,11 @@ reports any emission at all, and an attempt failure's `databaseCall` is in range
 of that attempt's own flattened calls. An index naming nothing makes the
 observation agree with an oracle structurally while describing no statement, so
 it is a malformed envelope rather than a case failure. JSON Schema cannot state a
-bound between two arrays, so the reference harness owns these two checks for the
-envelope exactly as it owns them for the oracle.
+bound between two arrays, so both are semantic checks. The reference harness
+holds one implementation of them, stated over whichever index space it is given:
+the case's flattened goldens for the oracle, the envelope's own `emissions` for
+the observation. The obligation is the adapter's whether or not a reader has
+applied that check to a given envelope.
 
 The key is optional and additive — an adapter reporting no provenance omits it
 and every existing `run` output stays valid — but an adapter whose claim includes

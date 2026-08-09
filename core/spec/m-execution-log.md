@@ -215,7 +215,11 @@ Attempt Failure whose retry eligibility is true**: a failure the classifier
 refused surfaces to the caller rather than re-executing, and an attempt that
 records no failure at all states no ground for the attempt after it.
 
-`then.execution` is presently graded by the language implementations alone: the
-compatibility harness validates the key and ignores it. Until a second grader
-exists, this module's runtime observables are single-witness, and each language
-records that limit in its own deferred work.
+The compatibility harness validates the authored oracle itself — the case schema
+fixes its shape, and the referential, arithmetic, trigger, and attempt-history
+rules above are checked over the corpus — but it records no execution provenance
+of its own, so it has nothing to compare the oracle against. Grading an
+implementation against `then.execution` is therefore the language
+implementations' alone; until a second grader observes an execution, this
+module's runtime observables are single-witness, and each language records that
+limit in its own deferred work.
