@@ -97,13 +97,13 @@ __all__ = [
     "connect",
 ]
 
-# The audit-neutral Subject Identity every production planning request
-# carries: private, module-local, and captured through the boundary's own
-# nonempty check (`capture_subject_identity`) — never a Principal
-# implementation, a default identity, or a public caller option.
-_TRANSITIONAL_SUBJECT_IDENTITY: Final[SubjectIdentity] = capture_subject_identity(
-    "cor-62-transitional-subject"
-)
+# The audit-neutral Subject Identity every production planning request carries
+# while no Principal attributes one: private, module-local, and captured through
+# the boundary's own nonempty check (`capture_subject_identity`) — never a
+# Principal implementation, a default identity, or a public caller option.
+# Attributed capture belongs to the outer database-operation boundary a Principal
+# is read at, which is the only place that can name a subject.
+_UNATTRIBUTED_SUBJECT_IDENTITY: Final[SubjectIdentity] = capture_subject_identity("unattributed")
 
 
 class TransactionOptionConflictError(ValueError):
@@ -370,7 +370,7 @@ class Database:
                 meta=active.meta,
                 flush_executor=active.flush_executor,
                 planner=self._planner,
-                subject_identity=_TRANSITIONAL_SUBJECT_IDENTITY,
+                subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
             )
         options = _ResolvedOptions(
             retries=retries if retries is not None else 10,
@@ -409,7 +409,7 @@ class Database:
                     # compile lane calls the SAME factory, so the two lanes
                     # plan through one deterministic computation.
                     planner=self._planner,
-                    subject_identity=_TRANSITIONAL_SUBJECT_IDENTITY,
+                    subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
                 )
 
             return self._port.transaction(in_txn)
