@@ -772,7 +772,9 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, provision
     port = _StatementCapturePort(provisioner.port)
     db = connect(port, meta)
     if story.concurrency is not None:
-        snapshot = db.transact(lambda tx: tx.find(story.build()), concurrency=story.concurrency)
+        snapshot = db.transact(
+            lambda tx: tx.find(story.build()), concurrency=story.concurrency
+        ).value
     else:
         snapshot = db.find(story.build())
     then = cast("dict[str, Any]", case_document(_CASES[story.case_id])["then"])

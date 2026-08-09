@@ -75,7 +75,9 @@ from parallax.core.unit_work import (
     TemporalObservation,
     TransactionSettings,
     UnitOfWork,
+    WriteBatchTrigger,
     WriteObservation,
+    WritePlan,
     WritePlanningError,
     run_unit_of_work,
 )
@@ -89,6 +91,11 @@ from parallax.snapshot.handle import (
     plan_temporal_close,
 )
 from parallax.snapshot.handle._write_inputs import ReadObservations, record_observations
+
+
+def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+    """A flush sink for a test that never flushes."""
+    return None
 
 
 def _accepted(name: str, meta: Metamodel) -> tuple[AcceptedMetamodel, EntityMetadata]:
@@ -987,7 +994,7 @@ def test_a_temporal_concrete_observes_its_own_declared_members_not_the_roots() -
         settings=TransactionSettings(),
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=model,
-        flush_executor=lambda _plan: None,
+        flush_executor=_no_flush,
         planner=build_write_planner(model),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )
@@ -1031,7 +1038,7 @@ def test_a_real_find_retains_the_rows_raw_structured_column_for_its_observation(
         settings=TransactionSettings(),
         clock=FixedClock(dt.datetime(2024, 6, 1, tzinfo=dt.UTC)),
         meta=model,
-        flush_executor=lambda _plan: None,
+        flush_executor=_no_flush,
         planner=build_write_planner(model),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )

@@ -604,9 +604,14 @@ def test_handle_child_rows_are_narrower_than_the_parent_row() -> None:
         if declared_parent != "parallax.snapshot.handle":
             continue
         assert parent < set(forbidden[child]), child
-    # `_materializer` may not reach SQL generation; the lowering cluster may not reach
-    # the read side. Neither restriction exists on the parent.
-    assert "parallax.core.sql_gen" in forbidden["parallax.snapshot.handle._materializer"]
+    # `_materializer` may not reach the read lock or the write-policy modules; the
+    # lowering cluster may not reach the read side. Neither restriction exists on
+    # the parent. SQL generation is deliberately NOT among them any more: the
+    # `m-snapshot-read --> m-execution-log` edge puts `m-sql` inside the closure of
+    # the `parallax.snapshot.materialize` grant this child holds, and a closure
+    # complement has no way to grant a scope and withhold what that scope reaches.
+    assert "parallax.core.read_lock" in forbidden["parallax.snapshot.handle._materializer"]
+    assert "parallax.core.batch_write" in forbidden["parallax.snapshot.handle._materializer"]
     assert "parallax.snapshot.materialize" in forbidden["parallax.snapshot.handle._keyed_sql"]
 
 
@@ -770,13 +775,13 @@ def test_child_scope_contract_blocks_an_import_the_parent_permits() -> None:
     lint_imports = shutil.which("lint-imports")
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
-    # `m-sql` IS in the parent handle grant row, so the broad contract permits
-    # this import; only the `_materializer` child contract can reject it.
-    assert "parallax.core.sql_gen" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
+    # `m-read-lock` IS in the parent handle grant row, so the broad contract
+    # permits this import; only the `_materializer` child contract can reject it.
+    assert "parallax.core.read_lock" in dag.SUPPORT_SCOPE_DEPS["parallax.snapshot.handle"]
     target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_materializer.py"
     original = target.read_text()
     target.write_text(
-        f"{original}import parallax.core.sql_gen  # deliberate child-scope violation\n"
+        f"{original}import parallax.core.read_lock  # deliberate child-scope violation\n"
     )
     try:
         result = subprocess.run(
@@ -789,7 +794,7 @@ def test_child_scope_contract_blocks_an_import_the_parent_permits() -> None:
         target.write_text(original)
 
     assert result.returncode != 0, result.stdout
-    assert "parallax.snapshot.handle._materializer -> parallax.core.sql_gen" in result.stdout
+    assert "parallax.snapshot.handle._materializer -> parallax.core.read_lock" in result.stdout
 
 
 # --------------------------------------------------------------------------

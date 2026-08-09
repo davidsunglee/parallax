@@ -47,11 +47,19 @@ public-surface check promises. Where the exported names live:
   recognizer that matches a canonical operation against them.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, plus the result surface they build
-  (:class:`Snapshot`, :class:`Execution`, :class:`ExecutedStatement`,
-  :class:`FindResult`, :class:`HistoryFindResult`,
+  (:class:`Snapshot`, :class:`FindResult`, :class:`HistoryFindResult`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`) and
   :class:`ObservationCollector`, the optional seam a participating read hands its
   materialized rows to.
+
+Execution provenance is `m-execution-log`'s vocabulary, canonically defined in
+:mod:`parallax.core.execution_log`; the developer-facing subset a `db.find` or
+`db.transact` caller reads off a result — :class:`ReadTrace`,
+:class:`DatabaseCall`, :class:`ExecutionLog`, :class:`TransactionAttempt`,
+:class:`TransactionResult`, and the two refusals a joined result's execution view
+raises — is re-exported here beside :class:`Database` and :class:`Transaction`
+rather than sending a developer to a core module for the type their own result
+already carries.
 - :mod:`~parallax.snapshot.handle._write_lowering` — :func:`stream_lowered`,
   which lowers an already-settled Write Plan's steps into the one seam DML
   becomes through.
@@ -75,6 +83,15 @@ seam, and its own §7 scope is what proves it reaches no port.
 
 from __future__ import annotations
 
+from parallax.core.execution_log import (
+    DatabaseCall,
+    ExecutionLog,
+    ReadTrace,
+    TransactionAttempt,
+    TransactionInProgressError,
+    TransactionNotCommittedError,
+    TransactionResult,
+)
 from parallax.snapshot.handle._database import (
     Database,
     TransactionOptionConflictError,
@@ -89,8 +106,6 @@ from parallax.snapshot.handle._errors import (
 from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._read import (
-    ExecutedStatement,
-    Execution,
     FindResult,
     HistoryFindResult,
     NoResultFound,
@@ -114,22 +129,27 @@ from parallax.snapshot.handle._write_types import WriteLoweringError
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
     "Database",
+    "DatabaseCall",
     "DeferredFeatureError",
-    "ExecutedStatement",
-    "Execution",
+    "ExecutionLog",
     "FindResult",
     "HistoryFindResult",
     "KeyedWriteValueError",
     "NoResultFound",
     "ObservationCollector",
     "QueryTargetError",
+    "ReadTrace",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotMaterializationError",
     "TooManyResultsFound",
     "Transaction",
+    "TransactionAttempt",
+    "TransactionInProgressError",
+    "TransactionNotCommittedError",
     "TransactionOptionConflictError",
     "TransactionOwnershipError",
+    "TransactionResult",
     "TransactionTimePinReadOnlyError",
     "WriteLoweringError",
     "build_write_planner",

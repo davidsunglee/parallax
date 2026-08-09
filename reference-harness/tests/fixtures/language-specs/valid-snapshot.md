@@ -72,7 +72,7 @@ shared-node states remain distinct without issuing later SQL.
 | `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |
 | `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |
-| `m-snapshot-read` | src/snapshot | snapshot | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | depcheck.toml |
+| `m-snapshot-read` | src/snapshot | snapshot | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log` | depcheck.toml |
 | `m-sql` | src/sql | sql | `m-op-algebra`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | depcheck.toml |
 | `m-relationship` | src/relationship | relationship | `m-metamodel`, `m-model-formation` | depcheck.toml |
 | `m-temporal-read` | src/temporal-read | temporal-read | `m-op-algebra`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |

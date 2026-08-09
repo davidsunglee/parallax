@@ -52,7 +52,7 @@ def test_every_write_value_case_is_graded_through_the_shipped_verbs(
     def fn(tx: Transaction) -> list[str | None]:
         return write_value_runner.graded_outcomes(tx, steps, another)
 
-    outcomes = _db(port).transact(fn)
+    outcomes = _db(port).transact(fn).value
     assert outcomes == [step.expect_error for step in steps]
     # The case's own round-trip oracle, graded against the DML the enclosing
     # transaction actually flushed: a refusal reaches no statement and an
@@ -87,7 +87,7 @@ def test_the_value_no_read_produced_is_arranged_without_touching_the_adapter() -
     def fn(tx: Transaction) -> Account:
         return write_value_runner.value_of("unmanaged", tx, unreachable)
 
-    value = Database.connect(NoIoPort(), ACCOUNT_MODEL, clock=FixedClock(FIXED)).transact(fn)
+    value = Database.connect(NoIoPort(), ACCOUNT_MODEL, clock=FixedClock(FIXED)).transact(fn).value
     assert isinstance(value, Account)
 
 

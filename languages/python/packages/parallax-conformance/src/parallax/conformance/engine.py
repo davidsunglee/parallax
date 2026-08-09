@@ -21,6 +21,7 @@ import decimal
 import os
 import socket
 import threading
+import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -45,6 +46,17 @@ from parallax.core.base import (
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import Dialect, dialect_for
+from parallax.core.execution_log import (
+    DatabaseCall,
+    DatabaseCallFailed,
+    ExecutionLog,
+    ReadCompleted,
+    ReadTrace,
+    TraceRecorder,
+    TransactionAttempt,
+    WriteBatchTrace,
+    WriteCompleted,
+)
 from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
@@ -122,6 +134,7 @@ __all__ = [
     "compile_write_sequence_case",
     "decode_write_row",
     "eligibility",
+    "execution_observation",
     "load_case_metamodel",
     "read_table_state",
     "run_conflict_case",
@@ -383,7 +396,7 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
 
 def run_read_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], list[Row], int]:
+) -> tuple[list[Emission], list[Row], int, ReadTrace]:
     """Execute a read case through ``port`` and record its emissions and observed rows.
 
     The adapter returns **managed** Python values (``Decimal``, ``datetime``,
@@ -417,10 +430,15 @@ def run_read_case(
     compiled = _compile_statement(case, dialect_name)
     statement = compiled.statement
     dialect = dialect_for(dialect_name)
-    managed = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
+    # The call is bracketed into a production Read Trace rather than counted
+    # locally, so the round trips this lane reports and the provenance it reports
+    # are one record (`m-execution-log`). Phase C moves the whole lane onto
+    # `read_neutral`, which hands the trace back already sealed.
+    trace = TraceRecorder()
+    managed = _execute_reads(port, dialect, (statement,), trace)
     emission = Emission("/operation", statement.sql, statement.binds)
     rows = [wire_row(compiled.transform_row(row)) for row in managed]
-    return [emission], rows, 1
+    return [emission], rows, 1, trace.read_trace()
 
 
 def _driver_binds(binds: Sequence[object]) -> list[object]:
@@ -459,8 +477,8 @@ def run_graph_case(
     ) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = [
-        Emission("/operation", statement.sql, statement.binds)
-        for statement in result.execution.statements
+        Emission("/operation", call.statement.sql, call.statement.binds)
+        for call in result.execution.calls
     ]
     root_key = _graph_root_key(target, model)
     graph_wire = _render_graph(root_key, result.nodes, model)
@@ -491,8 +509,8 @@ def run_graphs_case(
     ) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = [
-        Emission("/operation", statement.sql, statement.binds)
-        for statement in result.execution.statements
+        Emission("/operation", call.statement.sql, call.statement.binds)
+        for call in result.execution.calls
     ]
     root_key = _graph_root_key(target, model)
     graphs_wire: list[dict[str, object]] = [
@@ -2240,8 +2258,10 @@ def _run_snapshot_scenario(
             identity = case_entity(case_model(meta), meta.entity(target)).identity
         except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
-        for statement in result.execution.statements:
-            emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
+        for call in result.execution.calls:
+            emissions.append(
+                Emission(f"/scenario/{index}/find", call.statement.sql, call.statement.binds)
+            )
         round_trips += result.execution.round_trips
         results.append(list(result.nodes))
         pins.append(pin)
@@ -2455,7 +2475,9 @@ def _execute_write_unit(
             # exception), so this scope must flush itself first (`m-unit-work`
             # abort contract: "the forced flush is safe precisely because it
             # lands inside the still-open atomic scope the abort discards").
-            tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+            tx._uow.flush(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                trigger="finalization"
+            )
             raise _RollbackStep
 
     with contextlib.suppress(_RollbackStep):
@@ -2497,7 +2519,9 @@ def _run_readless_predicate_write(
     def body(tx: handle.Transaction) -> None:
         tx._buffer_predicate_instruction(decoded)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
         if rollback:
-            tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+            tx._uow.flush(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                trigger="finalization"
+            )
             raise _RollbackStep
 
     with contextlib.suppress(_RollbackStep):
@@ -2651,7 +2675,9 @@ def _run_materializing_pair(
     def body(tx: handle.Transaction) -> None:
         tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
         if rollback:
-            tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+            tx._uow.flush(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                trigger="finalization"
+            )
             raise _RollbackStep
 
     with contextlib.suppress(_RollbackStep):
@@ -2805,7 +2831,7 @@ def _run_uow_group(
     steps: Sequence[Mapping[str, object]],
     start: int,
     end: int,
-) -> list[_LoweredStep]:
+) -> tuple[list[_LoweredStep], ExecutionLog | None]:
     """Execute one CONTIGUOUS `uow` group's steps (index *start*..*end*
     inclusive) inside ONE ``db.transact``: in step order, a grouped FIND
     reads THROUGH the
@@ -2844,8 +2870,10 @@ def _run_uow_group(
     database = handle.Database(port, case_model(meta), dialect=dialect, clock=FixedClock(instant))
     model = case_model(meta)
     lowered: list[_LoweredStep] = []
+    logs: list[ExecutionLog] = []
 
     def body(tx: handle.Transaction) -> None:
+        logs.append(tx.execution_log)
         for index in range(start, end + 1):
             step = steps[index]
             if "write" in step:
@@ -2871,9 +2899,11 @@ def _run_uow_group(
                 compiled = _compile_find(step, meta, model, dialect, concurrency)
                 statement = compiled.statement
                 conn = tx._conn  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
-                rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-                    lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
-                )
+                attempt = tx._attempt  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private execution-log seam
+                with attempt.read_trace() as trace:
+                    rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                        lambda st=statement, c=conn, t=trace: _execute_reads(c, dialect, (st,), t)
+                    )
                 group_milestones[index] = _observe_group_find(
                     group_observations, meta, model, compiled, rows
                 )
@@ -2886,12 +2916,17 @@ def _run_uow_group(
             # otherwise (the group's last step is itself the doomed write, no
             # find after it) this is what puts the DML on the wire at all
             # (`m-unit-work` abort contract, mirroring `_execute_write_unit`).
-            tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+            tx._uow.flush(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                trigger="finalization"
+            )
             raise _RollbackStep
 
     with contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=concurrency)
-    return lowered
+    # The group's own Execution Log — the production record of what this ONE
+    # transaction did, which is where the `execution` observation comes from
+    # rather than from a second count this lane keeps.
+    return lowered, logs[-1] if logs else None
 
 
 # --------------------------------------------------------------------------- #
@@ -3075,14 +3110,18 @@ def _run_interleaved_group(
                     f"/scenario/{index}/write", statements, True, step.get("rollback") is True
                 )
                 if is_last:
-                    tx._uow.flush()  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                    tx._uow.flush(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                        trigger="finalization"
+                    )
             else:
                 compiled = _compile_find(step, meta, model, dialect, concurrency)
                 statement = compiled.statement
                 conn = tx._conn  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private connection seam
-                rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
-                    lambda st=statement, c=conn: _execute_reads(c, dialect, (st,))
-                )
+                attempt = tx._attempt  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private execution-log seam
+                with attempt.read_trace() as trace:
+                    rows = tx._uow.read(  # pyright: ignore[reportPrivateUsage] - conformance harness drives the transaction's private unit-of-work seam
+                        lambda st=statement, c=conn, t=trace: _execute_reads(c, dialect, (st,), t)
+                    )
                 group_milestones[index] = _observe_group_find(
                     group_observations, meta, model, compiled, rows
                 )
@@ -3692,7 +3731,7 @@ def run_interleaved_scenario_case(
 
 def run_scenario_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], int, list[dict[str, object]]]:
+) -> tuple[list[Emission], int, list[dict[str, object]], ExecutionLog | None]:
     """Run a scenario: an UNGROUPED write step commits (or aborts) as its OWN
     unit of work through ``db.transact``, and an ungrouped find reads
     committed state. A `uow`-GROUPED contiguous span of steps instead runs
@@ -3707,10 +3746,17 @@ def run_scenario_case(
     ordered emissions, the total round trips, and the `errors` observation
     entries (`m-conformance-adapter`) — populated only by the snapshot
     action-step lane's `expectError` grading (:func:`_run_snapshot_scenario`);
-    every keyed unit-of-work scenario reports an empty list."""
+    every keyed unit-of-work scenario reports an empty list.
+
+    The fourth element is the scenario's execution provenance
+    (`m-execution-log`): the Execution Log of its ONE `uow` group, or ``None``
+    when the scenario ran no group or more than one — a scenario that opened
+    several transactions has no single log to report, and the observation
+    describes one invocation by contract."""
     steps = _scenario_steps(case)
     if _has_action_step(steps):
-        return _run_snapshot_scenario(case, dialect_name, port, steps)
+        emissions, round_trips, errors = _run_snapshot_scenario(case, dialect_name, port, steps)
+        return emissions, round_trips, errors, None
     meta = load_case_metamodel(case)
     model = case_model(meta)
     dialect = dialect_for(dialect_name)
@@ -3726,6 +3772,7 @@ def run_scenario_case(
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
     lowered: list[_LoweredStep] = []
+    group_logs: list[ExecutionLog | None] = []
     try:
         _seed_shadow_from_fixtures(case, meta, shadow)
         # After the fixtures and before the first step, exactly where the
@@ -3739,9 +3786,11 @@ def run_scenario_case(
             label = span_start_labels.get(index)
             if label is not None:
                 start, end = spans[label]
-                lowered.extend(
-                    _run_uow_group(port, meta, dialect, concurrency, shadow, steps, start, end)
+                group_lowered, group_log = _run_uow_group(
+                    port, meta, dialect, concurrency, shadow, steps, start, end
                 )
+                lowered.extend(group_lowered)
+                group_logs.append(group_log)
                 index = end + 1
                 continue
             step = steps[index]
@@ -3800,7 +3849,8 @@ def run_scenario_case(
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions([(step.pointer, step.statements) for step in lowered])
-    return emissions, len(emissions), []
+    log = group_logs[0] if len(group_logs) == 1 else None
+    return emissions, len(emissions), [], log
 
 
 def run_write_sequence_case(
@@ -3862,7 +3912,10 @@ def read_table_state(
 
 
 def _execute_reads(
-    port: DbPort, dialect: Dialect, statements: Sequence[LoweredStatement]
+    port: DbPort,
+    dialect: Dialect,
+    statements: Sequence[LoweredStatement],
+    recorder: TraceRecorder | None = None,
 ) -> list[Row]:
     """Execute every statement and return the LAST one's rows — a scenario find
     step is always single-statement (:func:`_compile_find`), so ``statements`` is
@@ -3874,7 +3927,12 @@ def _execute_reads(
     find's plain read when called on the top-level ``port``."""
     rows: list[Row] = []
     for statement in statements:
+        started = time.perf_counter_ns()
         rows = port.execute(dialect.to_driver_sql(statement.sql), _driver_binds(statement.binds))
+        if recorder is not None:
+            recorder.completed(
+                statement, "read", time.perf_counter_ns() - started, ReadCompleted(len(rows))
+            )
     return rows
 
 
@@ -4078,7 +4136,7 @@ def _conflict_attempt_affected(
     concurrency: Concurrency,
     implied: type[WriteEffectError],
     body: Callable[[handle.Transaction], int],
-) -> int:
+) -> tuple[int, ExecutionLog | None]:
     """One conflict attempt's affected-row observation: what ``body`` reports when
     the write lands, or the ``actual`` count carried by the ONE Write Effect Error
     the case's own declared facts admit.
@@ -4096,13 +4154,26 @@ def _conflict_attempt_affected(
     direction the raised error itself reports — not the declared mode — selects
     that arm.
     """
+    logs: list[ExecutionLog] = []
+
+    def observed(tx: handle.Transaction) -> int:
+        # Retained before the body runs: a shortfall aborts the transaction, so
+        # the result never arrives and the live log the Transaction carries is
+        # the only way to read what the failed attempt did (`m-execution-log`).
+        logs.append(tx.execution_log)
+        return body(tx)
+
+    log = None
     try:
-        return database.transact(body, concurrency=concurrency)
+        result = database.transact(observed, concurrency=concurrency)
     except WriteEffectError as exc:
         admitted = CardinalityCorruptionError if exc.actual > exc.expected else implied
         if type(exc) is not admitted:
             raise
-        return exc.actual
+        if logs:
+            log = logs[-1]
+        return exc.actual, log
+    return result.value, result.execution_log
 
 
 def _run_conflict_write(
@@ -4113,7 +4184,7 @@ def _run_conflict_write(
     concurrency: Concurrency,
     write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["update", "delete"],
-) -> tuple[tuple[LoweredStatement, ...], int]:
+) -> tuple[tuple[LoweredStatement, ...], int, ExecutionLog | None]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE
     transaction, an inert Clock (never consumed by a non-temporal write).
@@ -4159,7 +4230,8 @@ def _run_conflict_write(
 
     observation_requiring = _versioned_non_temporal_version_attribute(meta, target) is not None
     implied = _implied_shortfall_error(observation_requiring, concurrency)
-    return statements, _conflict_attempt_affected(database, concurrency, implied, body)
+    affected, log = _conflict_attempt_affected(database, concurrency, implied, body)
+    return statements, affected, log
 
 
 # A temporal conflict attempt's verb. The case names none (`when.mutation` is
@@ -4180,7 +4252,7 @@ def _run_conflict_close(
     observed_tx_start: str | None,
     observed_valid_start: str | None,
     shadow: TemporalShadow,
-) -> tuple[tuple[LoweredStatement, ...], int]:
+) -> tuple[tuple[LoweredStatement, ...], int, ExecutionLog | None]:
     """Lower and execute one TEMPORAL conflict attempt's close through
     ``db.transact`` — ONE
     transaction, ``clock=FixedClock(at)``. Composes the SAME two halves
@@ -4254,7 +4326,11 @@ def _run_conflict_close(
         return affected
 
     implied = _implied_shortfall_error(True, concurrency)
-    return (statement,), _conflict_attempt_affected(database, concurrency, implied, body)
+    # A standalone close bypasses the buffer/flush pipeline, so its statement runs
+    # on the connection directly and no Write Batch Trace records it: this lane
+    # reports no execution provenance, and no case authors the oracle for it.
+    affected, _log = _conflict_attempt_affected(database, concurrency, implied, body)
+    return (statement,), affected, None
 
 
 def _observed_milestone_coordinates(
@@ -4418,7 +4494,7 @@ def _refuse_unentitled_observed_edge(
 
 def run_conflict_case(
     case: case_format.Case, dialect_name: str, port: DbPort
-) -> tuple[list[Emission], int, dict[str, list[Row]] | None]:
+) -> tuple[list[Emission], int, dict[str, list[Row]] | None, ExecutionLog | None]:
     """Run a `conflict` case (`m-opt-lock` / `m-txtime-write` / `m-bitemp-write`):
     the single-attempt form (`when.write`), or the `when.attempts` retry
     sequence — each attempt its OWN `db.transact` unit,
@@ -4455,6 +4531,7 @@ def run_conflict_case(
         _seed_shadow_from_fixtures(case, meta, shadow)
     emissions: list[Emission] = []
     affected = 0
+    logs: list[ExecutionLog | None] = []
     try:
         _apply_given_apply(case, dialect, port)
         raw_attempts = when.get("attempts")
@@ -4468,7 +4545,7 @@ def run_conflict_case(
         )
         for pointer, attempt in attempts:
             if is_temporal:
-                statements, affected = _run_conflict_close(
+                statements, affected, log = _run_conflict_close(
                     port,
                     dialect,
                     meta,
@@ -4481,7 +4558,7 @@ def run_conflict_case(
                     shadow,
                 )
             else:
-                statements, affected = _run_conflict_write(
+                statements, affected, log = _run_conflict_write(
                     port,
                     dialect,
                     meta,
@@ -4491,6 +4568,7 @@ def run_conflict_case(
                     mutation,
                 )
             emissions.extend(Emission(pointer, s.sql, s.binds) for s in statements)
+            logs.append(log)
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     then = case.document.get("then")
@@ -4499,7 +4577,10 @@ def run_conflict_case(
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
-    return emissions, affected, table_state
+    # A `when.attempts` sequence drives one transaction PER attempt, so the lane
+    # holds one log per attempt and no single invocation to report; only the
+    # single-attempt form has one.
+    return emissions, affected, table_state, logs[0] if len(logs) == 1 else None
 
 
 # --------------------------------------------------------------------------- #
@@ -4898,6 +4979,147 @@ def wire_value(value: object) -> object:
     if isinstance(value, (bytes, bytearray, memoryview)):
         return value.hex()
     return value
+
+
+# --------------------------------------------------------------------------- #
+# Execution provenance (m-execution-log) — the `execution` observation.        #
+# The adapter REPORTS what production recorded; it never re-derives a trace    #
+# from the case's own golden (m-conformance-adapter "Execution provenance").   #
+# --------------------------------------------------------------------------- #
+type CaseProvenance = ReadTrace | ExecutionLog
+
+
+class _StatementIndexer:
+    """Hands each Database Call, in execution order, its index into the
+    envelope's own ``emissions``.
+
+    The correspondence is POSITIONAL: this adapter emits exactly the statements
+    it executes, in the order it executes them, so the k-th call ran the k-th
+    emission. A disagreement is an adapter defect rather than a case failure —
+    an index naming nothing would make the observation agree with an oracle
+    structurally while describing no statement — so it is raised here instead of
+    reported.
+    """
+
+    __slots__ = ("_count", "_position")
+
+    def __init__(self, emissions: Sequence[Emission]) -> None:
+        self._count = len(emissions)
+        self._position = 0
+
+    def take(self) -> int | None:
+        """The next call's statement index, or ``None`` on a lane whose envelope
+        reports no emission at all (`api-conformance`)."""
+        if self._count == 0:
+            return None
+        index = self._position
+        self._position += 1
+        if index >= self._count:
+            raise EngineError(
+                f"execution provenance recorded {index + 1} database call(s) but the "
+                f"envelope reports only {self._count} emission(s): the observation's "
+                "statement index would name nothing (m-conformance-adapter)"
+            )
+        return index
+
+
+def execution_observation(
+    provenance: CaseProvenance, emissions: Sequence[Emission]
+) -> dict[str, object]:
+    """One run's `execution` observation, in the closed union the case oracle
+    authors: a bare ``readTrace`` for a standalone read, or the whole
+    ``transactionLog`` for a transactional run."""
+    indexer = _StatementIndexer(emissions)
+    if isinstance(provenance, ReadTrace):
+        return {"readTrace": _wire_read_trace(provenance, indexer)}
+    return {"transactionLog": _wire_transaction_log(provenance, indexer)}
+
+
+def _wire_transaction_log(log: ExecutionLog, indexer: _StatementIndexer) -> dict[str, object]:
+    return {
+        "concurrency": log.concurrency,
+        "retryPolicy": {
+            "maxRetries": log.retry_policy.max_retries,
+            "retryOptimisticConflicts": log.retry_policy.retry_optimistic_conflicts,
+        },
+        "attempts": [_wire_attempt(attempt, indexer) for attempt in log.attempts],
+        "roundTrips": log.round_trips,
+    }
+
+
+_ATTEMPT_STATUS_WIRE: Final[dict[str, str]] = {
+    "committed": "committed",
+    "rolled_back": "rolled-back",
+}
+
+_TRIGGER_WIRE: Final[dict[str, str]] = {
+    "read_dependency": "read-dependency",
+    "finalization": "finalization",
+}
+
+
+def _wire_attempt(attempt: TransactionAttempt, indexer: _StatementIndexer) -> dict[str, object]:
+    status = _ATTEMPT_STATUS_WIRE.get(attempt.status)
+    if status is None:
+        raise EngineError(
+            f"execution provenance reports an {attempt.status!r} attempt after the run "
+            "finished; a terminal Execution Log has already transitioned every attempt "
+            "(m-execution-log)"
+        )
+    calls = list(attempt.calls)
+    wire: dict[str, object] = {
+        "status": status,
+        "traces": [_wire_trace(trace, indexer) for trace in attempt.traces],
+        "roundTrips": attempt.round_trips,
+    }
+    failure = attempt.failure
+    if failure is not None:
+        entry: dict[str, object] = {"phase": failure.phase, "retryEligible": failure.retry_eligible}
+        if failure.code is not None:
+            entry["code"] = failure.code
+        if failure.database_call is not None:
+            entry["databaseCall"] = calls.index(failure.database_call)
+        wire["failure"] = entry
+    return wire
+
+
+def _wire_trace(
+    trace: ReadTrace | WriteBatchTrace, indexer: _StatementIndexer
+) -> dict[str, object]:
+    if isinstance(trace, ReadTrace):
+        return {"readTrace": _wire_read_trace(trace, indexer)}
+    return {
+        "writeBatch": {
+            "trigger": _TRIGGER_WIRE[trace.trigger],
+            "calls": [_wire_call(call, indexer) for call in trace.calls],
+            "roundTrips": trace.round_trips,
+        }
+    }
+
+
+def _wire_read_trace(trace: ReadTrace, indexer: _StatementIndexer) -> dict[str, object]:
+    return {
+        "calls": [_wire_call(call, indexer) for call in trace.calls],
+        "roundTrips": trace.round_trips,
+    }
+
+
+def _wire_call(call: DatabaseCall, indexer: _StatementIndexer) -> dict[str, object]:
+    wire: dict[str, object] = {"kind": call.kind, "completion": _wire_completion(call.completion)}
+    index = indexer.take()
+    if index is not None:
+        wire["statement"] = index
+    return wire
+
+
+def _wire_completion(
+    completion: ReadCompleted | WriteCompleted | DatabaseCallFailed,
+) -> dict[str, object]:
+    if isinstance(completion, ReadCompleted):
+        return {"readCompleted": {"returnedRows": completion.returned_rows}}
+    if isinstance(completion, WriteCompleted):
+        return {"writeCompleted": {"affectedRows": completion.affected_rows}}
+    return {"failed": {"category": completion.category}}
 
 
 def wire_row(row: Row) -> Row:

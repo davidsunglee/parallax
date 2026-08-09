@@ -26,7 +26,8 @@ _PUBLIC_API_SNAPSHOT = PY_ROOT / "tests" / "api" / "public_api.json"
 def test_top_package_public_surfaces() -> None:
     # `parallax.core` publishes the model-definition surface; the concrete
     # Postgres adapter surface and the snapshot developer surface
-    # (`Snapshot[T]` / `Execution`, §8) are published alongside `connect()`.
+    # (`Snapshot[T]` and the execution-provenance subset, §8) are published
+    # alongside `connect()`.
     assert {"Entity", "ValueObject", "Attr", "Rel", "attr", "rel", "DomainModel"} <= set(
         parallax.core.__all__
     )
@@ -34,7 +35,13 @@ def test_top_package_public_surfaces() -> None:
     assert set(parallax.snapshot.__all__) == {
         "connect",
         "Snapshot",
-        "Execution",
+        "ReadTrace",
+        "DatabaseCall",
+        "ExecutionLog",
+        "TransactionAttempt",
+        "TransactionResult",
+        "TransactionInProgressError",
+        "TransactionNotCommittedError",
         "DeferredFeatureError",
         "KEYED_WRITE_VALUE_CODES",
         "KeyedWriteValueError",

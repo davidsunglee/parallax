@@ -26,6 +26,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal, Protocol
 
 from parallax.core.metamodel import Metamodel
 from parallax.core.unit_work.clock import Clock, TransactionInstant
@@ -45,13 +46,33 @@ __all__ = [
     "TransactionSettings",
     "UnitOfWork",
     "UnitOfWorkError",
+    "WriteBatchTrigger",
     "active_unit_of_work",
     "run_unit_of_work",
 ]
 
-# The composition-layer sink a Write Plan is handed to for lowering and
-# execution. It is neutral because m-unit-work takes no m-sql edge.
-FlushExecutor = Callable[[WritePlan], None]
+type WriteBatchTrigger = Literal["read_dependency", "finalization"]
+"""The CLOSED set of reasons a unit of work flushes its buffer.
+
+``read_dependency`` is the batch :meth:`UnitOfWork.read` forces out so a
+dependent read observes it; ``finalization`` is the boundary-owned final batch
+:meth:`UnitOfWork.run_outermost` flushes. There is no size-based, periodic, or
+caller-invoked third trigger, which is what lets an observer state which of the
+two produced a batch instead of guessing from position.
+"""
+
+
+class FlushExecutor(Protocol):
+    """The composition-layer sink a Write Plan is handed to for lowering and
+    execution. It is neutral because m-unit-work takes no m-sql edge.
+
+    ``trigger`` travels with the plan rather than being inferred by the sink: the
+    unit of work is the only participant that knows why it flushed, and an
+    observer downstream would otherwise have to reconstruct the reason from the
+    order it saw batches arrive in.
+    """
+
+    def __call__(self, plan: WritePlan, /, *, trigger: WriteBatchTrigger) -> None: ...
 
 
 class UnitOfWorkError(RuntimeError):
@@ -191,11 +212,16 @@ class UnitOfWork:
         """
         self._ensure_open()
         if self._buffer:
-            self.flush()
+            self.flush(trigger="read_dependency")
         return read_fn()
 
-    def flush(self) -> None:
-        """Plan and execute the buffered writes (the injected executor lowers them)."""
+    def flush(self, *, trigger: WriteBatchTrigger) -> None:
+        """Plan and execute the buffered writes (the injected executor lowers them).
+
+        ``trigger`` names which of the two flush reasons this call is, and every
+        caller already knows its own: :meth:`read` serves a read dependency and
+        :meth:`run_outermost` finalizes the boundary.
+        """
         self._ensure_open()
         if not self._buffer:
             return
@@ -207,7 +233,7 @@ class UnitOfWork:
         )
         plan = self._planner.plan(request)
         self._buffer.clear()
-        self.flush_executor(plan)
+        self.flush_executor(plan, trigger=trigger)
 
     def mark_rollback_only(self, cause: BaseException) -> None:
         """Doom the transaction: commit will be refused. The first cause is kept."""
@@ -252,7 +278,7 @@ class UnitOfWork:
                 raise RollbackOnlyError(
                     "transaction is rollback-only; commit refused"
                 ) from self._rollback_cause
-            self.flush()
+            self.flush(trigger="finalization")
             return result
         except BaseException:
             # Abort: discard buffered effects and withhold the callback value.

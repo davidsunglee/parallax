@@ -92,6 +92,14 @@ observability rides the lazy operation-backed list, `m-op-list`; a snapshot
 read is **not** an operation-backed list — the count is pinned here instead,
 on the same golden statements.)
 
+A snapshot result carries the **Read Trace** (`m-execution-log`) of the calls it
+issued, and the ceiling is observed through that record rather than through a
+bare number the read invents: each Database Call names the Lowered Statement it
+ran and how it completed, and the trace's round-trip count is what `1 + L`
+bounds. A read that PARTICIPATES in a transaction shares that one trace object
+with the Transaction Attempt that issued it, so the graph and the transaction's
+own provenance never disagree about what a level cost.
+
 ## What the suite pins down
 
 Snapshot cases are **read**-shape deep-fetch cases (`m-case-format`): golden

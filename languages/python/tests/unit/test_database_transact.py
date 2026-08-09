@@ -52,6 +52,7 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
+    WriteBatchTrigger,
     WritePlan,
     run_unit_of_work,
 )
@@ -97,11 +98,11 @@ def test_join_receives_the_same_transaction_and_returns_immediately() -> None:
     db = account_db(port)
 
     def outer(tx: Transaction) -> int:
-        inner = db.transact(lambda inner_tx: (inner_tx is tx, 42))
+        inner = db.transact(lambda inner_tx: (inner_tx is tx, 42)).value
         assert inner == (True, 42)
         return inner[1]
 
-    assert db.transact(outer) == 42
+    assert db.transact(outer).value == 42
     assert port.begins == 1  # the join opened no second database transaction
 
 
@@ -116,9 +117,9 @@ def test_join_with_equal_or_omitted_options_inherits() -> None:
             retries=10,
             concurrency="locking",
             retry_optimistic_conflicts=False,
-        )
+        ).value
 
-    assert db.transact(outer) == "joined"
+    assert db.transact(outer).value == "joined"
 
 
 def _must_not_run(_tx: Transaction) -> None:  # pragma: no cover - conflict forecloses it
@@ -149,7 +150,7 @@ def test_join_with_a_conflicting_explicit_option_raises(
 
     # The conflict is refused before the joined closure runs, and refusing it
     # does not doom the outer transaction (nothing entered the joined frame).
-    assert db.transact(outer) == "survived"
+    assert db.transact(outer).value == "survived"
 
 
 def test_joining_a_doomed_transaction_is_foreclosed_before_its_closure_runs() -> None:
@@ -192,7 +193,9 @@ def test_bare_unit_of_work_on_the_thread_is_refused() -> None:
     port = RecordingPort()
     db = account_db(port)
 
-    def executor(_plan: WritePlan) -> None:  # pragma: no cover - never flushed
+    def executor(  # pragma: no cover - never flushed
+        _plan: WritePlan, *, trigger: WriteBatchTrigger
+    ) -> None:
         raise AssertionError("no flush expected")
 
     def body(_uow: UnitOfWork) -> None:
@@ -222,10 +225,10 @@ def test_an_alias_of_the_owner_joins_and_receives_the_identical_transaction() ->
     alias = db  # a second name for one object — the only thing that ever joins
 
     def outer(tx: Transaction) -> int:
-        assert alias.transact(lambda inner_tx: (inner_tx is tx, 42)) == (True, 42)
+        assert alias.transact(lambda inner_tx: (inner_tx is tx, 42)).value == (True, 42)
         return 42
 
-    assert db.transact(outer) == 42
+    assert db.transact(outer).value == 42
     assert port.begins == 1
 
 
@@ -245,7 +248,7 @@ def test_a_different_database_over_the_same_model_and_adapter_is_refused() -> No
 
     # Refusing the join opened no second database transaction and did not doom
     # the outer one — nothing entered the joined frame.
-    assert owner.transact(outer) == "survived"
+    assert owner.transact(outer).value == "survived"
     assert port.begins == 1
 
 
@@ -284,7 +287,7 @@ def test_a_structurally_equal_model_establishes_no_ownership() -> None:
             foreign.transact(_must_not_run)
         return "survived"
 
-    assert owner.transact(outer) == "survived"
+    assert owner.transact(outer).value == "survived"
 
 
 def test_the_ownership_refusal_reaches_no_adapter() -> None:
@@ -299,7 +302,7 @@ def test_the_ownership_refusal_reaches_no_adapter() -> None:
             foreign.transact(_must_not_run)
         return "survived"
 
-    assert owner.transact(outer) == "survived"
+    assert owner.transact(outer).value == "survived"
 
 
 def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> None:
@@ -336,7 +339,7 @@ def test_ownership_is_settled_before_rollback_only_and_option_conflicts() -> Non
 def test_a_deadlock_is_retried_and_the_reexecution_succeeds() -> None:
     port = RecordingPort()
     port.txn_faults = [deadlock(), deadlock()]
-    assert account_db(port).transact(lambda _tx: "ok") == "ok"
+    assert account_db(port).transact(lambda _tx: "ok").value == "ok"
     assert port.begins == 3
 
 
@@ -400,7 +403,7 @@ def test_rollback_only_refusal_keeps_the_original_retriability() -> None:
             db.transact(lambda inner_tx: inner_tx.find(mm.Account.where(mm.Account.id == 7)))
         return "caught"
 
-    assert db.transact(outer) == "caught"
+    assert db.transact(outer).value == "caught"
     assert port.begins == 2
 
 
@@ -463,7 +466,9 @@ def test_optimistic_conflict_opt_in_is_inert_for_a_transient_failure() -> None:
     # predicate at all — see the NON-retriable sibling below for that.
     port = RecordingPort()
     port.txn_faults = [deadlock()]
-    assert account_db(port).transact(lambda _tx: "ok", retry_optimistic_conflicts=True) == "ok"
+    assert (
+        account_db(port).transact(lambda _tx: "ok", retry_optimistic_conflicts=True).value == "ok"
+    )
     assert port.begins == 2
 
 
@@ -574,5 +579,8 @@ def test_optimistic_conflict_rollback_only_cause_is_retried_with_the_opt_in() ->
             db.transact(_observe_update_then_force_flush)  # joins; conflicts mid-scope
         return "caught"
 
-    assert db.transact(outer, concurrency="optimistic", retry_optimistic_conflicts=True) == "caught"
+    assert (
+        db.transact(outer, concurrency="optimistic", retry_optimistic_conflicts=True).value
+        == "caught"
+    )
     assert port.begins == 2  # the conflicting attempt, then the retried (successful) attempt

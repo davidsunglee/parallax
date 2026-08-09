@@ -46,7 +46,7 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     def fn(tx: Transaction) -> list[str | None]:
         return write_value_runner.graded_outcomes(tx, steps, another)
 
-    assert db.transact(fn) == [step.expect_error for step in steps]
+    assert db.transact(fn).value == [step.expect_error for step in steps]
     # The case's `then.roundTrips` graded through the developer surface: this
     # suite asserts no SQL text (m-api-conformance), so a declared count of zero
     # is graded as the absence of any durable effect after the transaction
@@ -65,7 +65,7 @@ def test_write_value_case_runs_through_the_shipped_verbs(
             tx.find(Account.where(Account.id == write_value_runner.TARGET_ID)).result(),
             tx.find(Account.where(Account.id == write_value_runner.UNMANAGED_ID)).results(),
         )
-    )
+    ).value
     assert (stored.owner, stored.balance, stored.version) == ("Linus", Decimal("250.00"), 1)
     assert unmanaged == []
 

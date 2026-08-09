@@ -2,9 +2,9 @@
 Snapshot result surface (m-deep-fetch / m-snapshot-read).
 
 The module DAG's snapshot-handle scope already reaches `materialize` + `m-sql`
-+ `m-db-port`, so the deliberate DAG-forbidden edges (`m-deep-fetch`/
-`m-snapshot-read` may not import `m-sql`; `m-sql` may not import `m-navigate`/
-`m-temporal-read`) are composed HERE, exactly like `_write_lowering` composes
++ `m-db-port`, so the edges the DAG declares nowhere (`m-deep-fetch` may not
+import `m-sql`; `m-sql` may not import `m-navigate`/`m-temporal-read`) are
+composed HERE, exactly like `_write_lowering` composes
 the write-side `m-unit-work` x `m-sql` edge — one executor, production-owned:
 `db.find` and `tx.find` both call the SAME :func:`find` / :func:`find_history`
 and build the SAME
@@ -20,13 +20,19 @@ a materialized row is reachable only until its conversion, and no level
 accumulates them. Nothing below this module holds a row, and no row survives into
 the graph input, the Snapshot, or the observation record.
 
-The executor's own results (:class:`ExecutedStatement`, :class:`Execution`,
-:class:`FindResult`, :class:`HistoryFindResult`) stay
-co-located with it, together with the developer-facing :class:`Snapshot`
+The executor's own results (:class:`FindResult`, :class:`HistoryFindResult`)
+stay co-located with it, together with the developer-facing :class:`Snapshot`
 surface they convert into and the pin helpers that carry a query's or a
 milestone's as-of coordinates across that conversion. Those helpers stay here
 rather than moving to the write side: `_write_inputs` imports this module, so
 the reverse edge would close a cycle.
+
+What a find EXECUTED is `m-execution-log`'s vocabulary, not this module's: each
+call is bracketed into a
+:class:`~parallax.core.execution_log.TraceRecorder`, whose sealed Read Trace is
+the result's own execution record. A participating read is handed the recorder
+the active attempt already opened, so the Snapshot and the attempt reference one
+trace rather than two equal ones.
 """
 
 from __future__ import annotations
@@ -37,9 +43,11 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import EntityGraphConstruction
+from parallax.core.execution_log import CallRecorder, ReadCompleted, ReadTrace, TraceRecorder
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -65,8 +73,6 @@ from parallax.snapshot.materialize import (
 )
 
 __all__ = [
-    "ExecutedStatement",
-    "Execution",
     "FindResult",
     "HistoryFindResult",
     "NoResultFound",
@@ -76,31 +82,6 @@ __all__ = [
     "find",
     "find_history",
 ]
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutedStatement:
-    """One statement this executor actually ran (or would run — the caller's own
-    compile-eligibility posture is not this module's concern). ``duration`` is
-    the WALL-CLOCK seconds the port's own ``execute`` call took — informational
-    only (spec §3: never graded, never used for control flow)."""
-
-    sql: str
-    binds: tuple[object, ...]
-    duration: float = 0.0
-
-
-@dataclass(frozen=True, slots=True)
-class Execution:
-    """The ordered record of every statement one `find` / `find_history` call
-    executed — the production analogue of the conformance adapter's `emissions`
-    + `roundTrips`, built once here and consumed by both."""
-
-    statements: tuple[ExecutedStatement, ...]
-
-    @property
-    def round_trips(self) -> int:
-        return len(self.statements)
 
 
 class NoResultFound(RuntimeError):
@@ -117,8 +98,7 @@ class Snapshot[T]:
     ``tx.find``'s result. The complete surface: :meth:`result`,
     :meth:`result_or_none`, :meth:`results` (a FRESH ``list[T]`` per call),
     :attr:`pin` (the lowered as-of coordinates — only genuinely PINNED axes; a
-    scanned axis is absent), :attr:`execution` (per-statement ``sql`` /
-    ``binds``, informational ``duration``, and ``round_trips``), and
+    scanned axis is absent), :attr:`execution` (the read's own Read Trace), and
     ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
     indexing on the container, refresh or write methods, and any lazy
     behavior — every accessor is a pure in-memory read over roots already
@@ -129,9 +109,9 @@ class Snapshot[T]:
 
     _roots: tuple[T, ...]
     _pin: Pin
-    _execution: Execution
+    _execution: ReadTrace
 
-    def __init__(self, roots: tuple[T, ...], pin: Pin, execution: Execution) -> None:
+    def __init__(self, roots: tuple[T, ...], pin: Pin, execution: ReadTrace) -> None:
         self._roots = roots
         self._pin = pin
         self._execution = execution
@@ -167,9 +147,11 @@ class Snapshot[T]:
         return self._pin
 
     @property
-    def execution(self) -> Execution:
-        """This find's execution record (per-statement ``sql`` / ``binds``,
-        informational ``duration``, and ``round_trips``)."""
+    def execution(self) -> ReadTrace:
+        """This find's own Read Trace (`m-execution-log`): every Database Call it
+        issued, each naming the `m-sql` value it ran and how it completed, plus
+        their ``round_trips``. For a PARTICIPATING read this is the same object
+        the transaction's current attempt records."""
         return self._execution
 
     def __repr__(self) -> str:
@@ -212,16 +194,16 @@ class ObservationCollector(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class FindResult:
-    """A single-graph find's Snapshot Graph Input plus its execution record."""
+    """A single-graph find's Snapshot Graph Input plus its Read Trace."""
 
     graph: SnapshotGraphInput
-    execution: Execution
+    execution: ReadTrace
 
 
 @dataclass(frozen=True, slots=True)
 class HistoryFindResult:
     """A milestone-set find's ordered per-milestone graph inputs plus its
-    (single-statement) execution record.
+    (single-call) Read Trace.
 
     Each entry is a root-only graph pinned at its own milestone's from-instant
     (m-snapshot-read "The whole-graph pin"); a v1 milestone-set graph carries no
@@ -229,7 +211,7 @@ class HistoryFindResult:
     """
 
     graphs: tuple[SnapshotGraphInput, ...]
-    execution: Execution
+    execution: ReadTrace
 
 
 def _new_roots() -> list[SnapshotNodeRef]:
@@ -255,6 +237,7 @@ def find(
     *,
     lock: LockMode | None = None,
     observations: ObservationCollector | None = None,
+    recorder: TraceRecorder | None = None,
 ) -> FindResult:
     """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
     "one query per non-empty relationship level"; m-snapshot-read "round trips").
@@ -284,25 +267,30 @@ def find(
     inversion happens here, and no row outlives its own level.
 
     Returns the whole Snapshot Graph Input — every projection, the root
-    references in result order, and the query's own lowered pin — plus the full
-    ordered execution record.
+    references in result order, and the query's own lowered pin — plus the
+    read's own sealed Read Trace.
 
     ``observations``, when supplied, takes every materialized row (root and each
     attached level) as the level materializes it, so a caller with a unit of work
     behind it can record what a later write needs. Omitting it is how a
     non-transactional read builds no observation state at all.
+
+    ``recorder`` is the trace under construction this read's calls belong to — the
+    one an active Transaction Attempt already opened. Omitting it is how a
+    standalone read still answers its own Read Trace: the executor opens a
+    private recorder, and the trace simply belongs to nothing above it.
     """
     # ``meta`` is the accepted model the connected ``Database`` already holds, so
     # every level's own Entity resolves against it directly.
     root_entity = _metadata(meta, target)
     plan_ = deep_fetch.plan(root_entity, op, meta)
-    statements: list[ExecutedStatement] = []
+    calls = recorder if recorder is not None else TraceRecorder()
     scope = MergeScope(meta)
 
     root_compiled = compile_read(
         plan_.root_operation, meta, dialect, root_entity, result_form="instance", lock=lock
     )
-    root_refs = _convert_level(scope, port, dialect, root_compiled, statements, observations)
+    root_refs = _convert_level(scope, port, dialect, root_compiled, calls, observations)
 
     level_refs: list[tuple[SnapshotNodeRef, ...]] = []
     for level in plan_.levels:
@@ -329,16 +317,22 @@ def find(
         # A child level takes its narrow from `FetchLevel.narrow_to` (consumed
         # inside `child_operation`), never from the compiled read — only the ROOT
         # has no planner-supplied narrow to fall back on.
-        child_refs = _convert_level(scope, port, dialect, child_compiled, statements, observations)
+        child_refs = _convert_level(scope, port, dialect, child_compiled, calls, observations)
         _attach_children(scope, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
     pin = deep_fetch_statement_pin(op, declaring_metadata(meta, root_entity.identity))
-    return FindResult(graph=scope.build(root_refs, pin), execution=Execution(tuple(statements)))
+    return FindResult(graph=scope.build(root_refs, pin), execution=calls.read_trace())
 
 
 def find_history(
-    op: op_algebra.Operation, meta: Metamodel, dialect: Dialect, target: str, port: DbPort
+    op: op_algebra.Operation,
+    meta: Metamodel,
+    dialect: Dialect,
+    target: str,
+    port: DbPort,
+    *,
+    recorder: TraceRecorder | None = None,
 ) -> HistoryFindResult:
     """The milestone-set snapshot read (m-snapshot-read "The whole-graph pin";
     m-case-format "Milestone-set graphs"): `history` / `asOfRange` return the
@@ -369,9 +363,9 @@ def find_history(
     # own (possibly locally-empty) axes.
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root_operation, meta, dialect, metadata, result_form="instance")
-    statements: list[ExecutedStatement] = []
+    calls = recorder if recorder is not None else TraceRecorder()
     milestones: dict[Edge, _Milestone] = {}
-    for row in _execute_compiled(port, dialect, compiled, statements):
+    for row in _execute_compiled(port, dialect, compiled, calls):
         edge = milestone_edge(entity, row.values)
         milestone = milestones.get(edge)
         if milestone is None:
@@ -388,7 +382,7 @@ def find_history(
         milestone.scope.build(tuple(milestone.roots), _edge_pin(edge))
         for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
     )
-    return HistoryFindResult(graphs=graphs, execution=Execution(tuple(statements)))
+    return HistoryFindResult(graphs=graphs, execution=calls.read_trace())
 
 
 def _convert_level(
@@ -396,7 +390,7 @@ def _convert_level(
     port: DbPort,
     dialect: Dialect,
     compiled: CompiledRead,
-    statements: list[ExecutedStatement],
+    recorder: CallRecorder,
     observations: ObservationCollector | None,
 ) -> tuple[SnapshotNodeRef, ...]:
     """Execute one level and convert each of its rows as that row materializes.
@@ -414,7 +408,7 @@ def _convert_level(
     a polymorphic level's concrete, and an included child alike.
     """
     refs: list[SnapshotNodeRef] = []
-    for row in _execute_compiled(port, dialect, compiled, statements):
+    for row in _execute_compiled(port, dialect, compiled, recorder):
         context = LevelContext(row.resolved_entity, compiled.documents)
         refs.append(convert_row(row.values, context, scope))
         if observations is not None:
@@ -529,7 +523,7 @@ def _correlation_member(meta: Metamodel, attribute: AttributeIdentity) -> Attrib
 
 
 def _execute_compiled(
-    port: DbPort, dialect: Dialect, compiled: CompiledRead, statements: list[ExecutedStatement]
+    port: DbPort, dialect: Dialect, compiled: CompiledRead, recorder: CallRecorder
 ) -> Iterator[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN transform.
 
@@ -549,16 +543,26 @@ def _execute_compiled(
     exactly as long as its consumer takes to convert it, and the level never
     holds a second copy of its result set.
     """
-    return map(compiled.materialize_row, _execute(port, dialect, compiled.statement, statements))
+    return map(compiled.materialize_row, _execute(port, dialect, compiled.statement, recorder))
 
 
 def _execute(
-    port: DbPort, dialect: Dialect, statement: LoweredStatement, statements: list[ExecutedStatement]
+    port: DbPort, dialect: Dialect, statement: LoweredStatement, recorder: CallRecorder
 ) -> list[Row]:
-    started = time.perf_counter()
-    rows = port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
-    statements.append(
-        ExecutedStatement(statement.sql, statement.binds, time.perf_counter() - started)
+    """Run one statement, recording the Database Call either way.
+
+    A FAILED call is timed and recorded too, and the failure then propagates
+    untouched: a call that reached the port and came back is work the log owes an
+    account of, whatever it came back with.
+    """
+    started = time.perf_counter_ns()
+    try:
+        rows = port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
+    except DatabaseError as exc:
+        recorder.failed(statement, "read", time.perf_counter_ns() - started, exc)
+        raise
+    recorder.completed(
+        statement, "read", time.perf_counter_ns() - started, ReadCompleted(len(rows))
     )
     return rows
 

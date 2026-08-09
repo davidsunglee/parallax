@@ -81,7 +81,7 @@ def test_commit_flushes_the_buffer_through_the_lowering_seam() -> None:
         tx.insert(new_account())
         return "done"
 
-    assert account_db(port).transact(fn) == "done"
+    assert account_db(port).transact(fn).value == "done"
     assert port.ops == [
         ("begin",),
         ("write", INSERT_SQL, (7, "Newton", 5.00, 1)),

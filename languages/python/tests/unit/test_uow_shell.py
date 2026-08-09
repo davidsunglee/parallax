@@ -39,6 +39,7 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     VersionObservation,
+    WriteBatchTrigger,
     WritePlan,
     active_unit_of_work,
     buffered_write,
@@ -53,16 +54,19 @@ _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 
 class _Recorder:
-    """Records each Write Plan the shell hands the executor."""
+    """Records each Write Plan the shell hands the executor, with the flush
+    trigger it travelled under."""
 
     def __init__(self) -> None:
         self.plans: list[WritePlan] = []
+        self.triggers: list[WriteBatchTrigger] = []
 
-    def __call__(self, plan: WritePlan) -> None:
+    def __call__(self, plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
         self.plans.append(plan)
+        self.triggers.append(trigger)
 
 
-def _noop(plan: WritePlan) -> None:
+def _noop(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
     return None
 
 
@@ -186,9 +190,9 @@ def test_read_force_flushes_pending_writes_first() -> None:
     order: list[str] = []
     recorder = _Recorder()
 
-    def executor(plan: WritePlan) -> None:
+    def executor(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
         order.append("flush")
-        recorder(plan)
+        recorder(plan, trigger=trigger)
 
     def body(tx: UnitOfWork) -> str:
         tx.buffer(_account_insert(9))
@@ -437,6 +441,6 @@ def test_escaped_reference_raises_on_every_use() -> None:
             VersionObservation(observed_version=1),
         )
     with pytest.raises(EscapedTransactionError):
-        tx.flush()
+        tx.flush(trigger="finalization")
     with pytest.raises(EscapedTransactionError):
         tx.read(lambda: None)

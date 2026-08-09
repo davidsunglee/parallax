@@ -149,11 +149,11 @@ def insert_then_read_your_own_write(db: Database) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
 
-    return db.transact(fn)  # the dependent find observes the flushed insert
+    return db.transact(fn).value  # the dependent find observes the flushed insert
 
 
 def aborted_update_is_discarded(db: Database) -> list[Entity]:
-    fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
+    fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).value.result()
     edited = fetched.edit(balance=Decimal("999.00"))
 
     def doomed(tx: Transaction) -> None:
@@ -163,7 +163,7 @@ def aborted_update_is_discarded(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The same find re-resolves and observes the ORIGINAL balance, not 999.00.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).value.results())
 
 
 def fk_ordered_inserts(db: Database) -> None:
@@ -191,7 +191,7 @@ def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
         tx.find(Account.where(Account.id == 1))  # forces the flush
         raise RuntimeError("abort")  # even the force-flushed write is rolled back
 
-    return db.transact(fn)  # raises — no value is returned as though durable
+    return db.transact(fn).value  # raises — no value is returned as though durable
 
 
 def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
@@ -200,7 +200,7 @@ def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
         tx.update(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
 
-    return db.transact(fn)
+    return db.transact(fn).value
 
 
 def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
@@ -209,7 +209,7 @@ def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
         tx.delete(current)
         return list(tx.find(Account.where(Account.id == 3)).results())
 
-    return db.transact(fn)  # [] — the dependent find observes the deletion
+    return db.transact(fn).value  # [] — the dependent find observes the deletion
 
 
 def create_then_delete_a_parent_child_pair(db: Database) -> None:
@@ -254,7 +254,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
         tx.delete(deleted)
         return list(tx.find(Account.where(Account.balance < 50.00)).results())
 
-    return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
+    return db.transact(fn).value  # observe, then one flush: insert, update, delete — then the find
 
 
 def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
@@ -265,7 +265,7 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted insert was discarded: the find observes NO rows for account 7.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).value.results())
 
 
 def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
@@ -278,7 +278,7 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted delete was discarded: account 3 still stands.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).value.results())
 
 
 # --------------------------------------------------------------------------- #
@@ -379,7 +379,7 @@ def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
         tx.delete_where(Wallet.where(Wallet.balance < 200.00))
         return list(tx.find(Wallet.where(Wallet.balance < 200.00)).results())
 
-    return db.transact(fn, concurrency="optimistic")
+    return db.transact(fn, concurrency="optimistic").value
 
 
 # --------------------------------------------------------------------------- #

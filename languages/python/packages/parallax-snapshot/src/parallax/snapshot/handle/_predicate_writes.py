@@ -35,14 +35,17 @@ underscores.
 from __future__ import annotations
 
 import datetime as dt
+import time
 from collections.abc import Sequence
 from typing import Any, Final, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment, FindQuery
 from parallax.core.entity._query import mutation_selection
+from parallax.core.execution_log import AttemptRecorder, CallRecorder, ReadCompleted
 from parallax.core.metamodel import (
     AttributeMetadata,
     EntityIdentity,
@@ -104,6 +107,7 @@ def buffer_predicate(
     *,
     valid_from: dt.datetime | None,
     until: dt.datetime | None = None,
+    attempt: AttemptRecorder,
 ) -> None:
     """The typed-authoring entry to the predicate-write lane: it turns a
     mutation-compatible :class:`~parallax.core.entity.FindQuery` plus typed
@@ -204,7 +208,7 @@ def buffer_predicate(
     instruction = instructions.deserialize(doc)
     assert isinstance(instruction, PredicateWrite)  # this seam always builds the predicate shape
     instructions.validate_instruction(instruction, meta)
-    buffer_predicate_instruction(uow, meta, conn, dialect, instruction)
+    buffer_predicate_instruction(uow, meta, conn, dialect, instruction, attempt)
 
 
 def _reject_uncomposable_assignments(
@@ -265,6 +269,7 @@ def buffer_predicate_instruction(
     conn: DbPort,
     dialect: Dialect,
     instruction: PredicateWrite,
+    attempt: AttemptRecorder,
 ) -> None:
     """The neutral seam UNDERLYING every ``_where`` verb and the
     conformance engine's own predicate-write translation (`m-case-format`
@@ -327,7 +332,7 @@ def buffer_predicate_instruction(
         uow.buffer(instruction)
         return
     _materialize_predicate_write(
-        uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr
+        uow, meta, conn, dialect, instruction, entity, declaring_entity, version_attr, attempt
     )
 
 
@@ -370,6 +375,7 @@ def _materialize_predicate_write(
     entity: EntityMetadata,
     declaring_entity: EntityMetadata,
     version_attr: AttributeMetadata | None,
+    attempt: AttemptRecorder,
 ) -> None:
     """Materialize a predicate write on a VERSIONED or TEMPORAL target
     (`m-opt-lock` "Predicate-selected writes materialize when observations
@@ -479,10 +485,11 @@ def _materialize_predicate_write(
         include_value_objects=needs_documents,
     )
     structured_column = compiled.structured_column
-    resolved = [
-        compiled.materialize_row(row)
-        for row in uow.read(lambda: _resolve_rows(conn, dialect, compiled.statement))
-    ]
+    with attempt.read_trace() as recorder:
+        resolved = [
+            compiled.materialize_row(row)
+            for row in uow.read(lambda: _resolve_rows(conn, dialect, compiled.statement, recorder))
+        ]
     if not resolved:
         return
     rows = [materialized.values for materialized in resolved]
@@ -561,5 +568,19 @@ def _materialize_predicate_write(
     )
 
 
-def _resolve_rows(conn: DbPort, dialect: Dialect, statement: LoweredStatement) -> list[Row]:
-    return conn.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
+def _resolve_rows(
+    conn: DbPort, dialect: Dialect, statement: LoweredStatement, recorder: CallRecorder
+) -> list[Row]:
+    """The resolving read's own Database Call, recorded like any other: a
+    materializing predicate write reaches the database, so the Execution Log
+    accounts for it rather than leaving a round trip nothing explains."""
+    started = time.perf_counter_ns()
+    try:
+        rows = conn.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
+    except DatabaseError as exc:
+        recorder.failed(statement, "read", time.perf_counter_ns() - started, exc)
+        raise
+    recorder.completed(
+        statement, "read", time.perf_counter_ns() - started, ReadCompleted(len(rows))
+    )
+    return rows
