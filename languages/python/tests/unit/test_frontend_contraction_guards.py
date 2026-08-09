@@ -11,30 +11,53 @@ The reaches this module pins are the ones `spec/python.md` §7 names. A reach §
 does not name is a §7 decision before it is a code change, which is what the
 exact-set assertions below make true rather than merely intended.
 
-Each guard is stated over the artifact it constrains — an import's SOURCE
-module and bound name, a handler's caught type, a call's resolved callee, a
-definition's name — rather than over a line of text, so a regression spelled
-differently from the one that prompted the guard fails it just the same.
+Each guard is scoped to the prohibited thing itself — a type and its
+descendants, a protocol's implementations, one named surface, one code path —
+rather than to a name shape or an inventory of accepted spellings. Scoping that
+way makes a guard stronger and narrower at once: it catches a reconstruction
+spelled differently from the one that prompted it, and it stays silent for
+unrelated code that merely shares a spelling. Several guards therefore import
+the distributions and ask Python, because subclassing and protocol satisfaction
+are runtime facts that source text only approximates.
+
+Two limits are stated rather than guarded, so no assertion here is read as
+covering them: a row assembled member by member out of ordinary attribute
+reads, and an audit value stamped by hand under a name of its own. Each is
+named again at the guard whose subject it borders, with what does grade it.
 """
 
 from __future__ import annotations
 
 import ast
+import builtins
+import importlib
 import re
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
 from typing import cast
 
 import pytest
+from pydantic import BaseModel
 
 from _support.distributions import ALL_PACKAGES, PRODUCTION_PACKAGES, TOP_PACKAGE_DIR
 from _support.repo import PY_ROOT
-from parallax.core.unit_work import NO_AUDIT, PlannedWrite, SubjectIdentity, TransactionInstant
+from parallax.core.entity import EntityRowCodec, EntityRowError
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.unit_work import (
+    NO_AUDIT,
+    AuditStrategy,
+    PlannedWrite,
+    SubjectIdentity,
+    TransactionInstant,
+    WritePlanner,
+)
 
 _PACKAGES = PY_ROOT / "packages"
+_CORE_SRC = _PACKAGES / "parallax-core" / "src" / "parallax" / "core"
 _SNAPSHOT_SRC = _PACKAGES / "parallax-snapshot" / "src" / "parallax" / "snapshot"
-_ENTITY_SRC = _PACKAGES / "parallax-core" / "src" / "parallax" / "core" / "entity"
+_ENTITY_SRC = _CORE_SRC / "entity"
 
 _ENTITY_PACKAGE = "parallax.core.entity"
 
@@ -83,6 +106,24 @@ def _hits(pattern: str, sources: Iterator[tuple[Path, str]], *, flags: int = 0) 
 
 def _word(name: str) -> str:
     return rf"\b{re.escape(name)}\b"
+
+
+def _parsed(sources: Iterator[tuple[Path, str]]) -> Iterator[tuple[Path, ast.Module]]:
+    for path, text in sources:
+        yield path, ast.parse(text)
+
+
+def _imported(
+    sources: Iterator[tuple[Path, str]],
+) -> Iterator[tuple[Path, ast.Module, dict[str, object]]]:
+    """Each source file, its syntax tree, and its imported module's namespace.
+
+    `test_smoke.py` proves every module here imports cleanly, so the guards that
+    need a runtime answer — what a name resolves to, what descends from a class,
+    what satisfies a protocol — can ask for one.
+    """
+    for path, tree in _parsed(sources):
+        yield path, tree, vars(importlib.import_module(_dotted(path)))
 
 
 # --------------------------------------------------------------------------- #
@@ -134,8 +175,8 @@ def _module_imports(path: Path, tree: ast.Module) -> Iterator[_Import]:
 
 
 def _imports(sources: Iterator[tuple[Path, str]]) -> Iterator[_Import]:
-    for path, text in sources:
-        yield from _module_imports(path, ast.parse(text))
+    for path, tree in _parsed(sources):
+        yield from _module_imports(path, tree)
 
 
 def _snapshot_imports() -> list[_Import]:
@@ -201,7 +242,7 @@ def test_snapshots_private_entity_reaches_are_exactly_the_accepted_seams() -> No
 
 
 # --------------------------------------------------------------------------- #
-# Row derivation: the codec answers, and Snapshot reconstructs none of it.    #
+# Row derivation: the codec answers, holding vocabulary Snapshot never holds.  #
 # --------------------------------------------------------------------------- #
 # The free row and Change Set helpers the Entity Row Codec replaced. Absent as
 # imports AND as definitions, because reintroducing one under Snapshot needs no
@@ -211,16 +252,32 @@ DELETED_ROW_HELPERS = frozenset(
 )
 FORBIDDEN_ROW_IMPORTS = DELETED_ROW_HELPERS | {"BaseModel", "CHANGE_RECORD_SLOT", "WireNames"}
 
+# Pydantic's value-reading API, read off the base class rather than listed, so
+# `model_dump` and `__pydantic_fields_set__` are forbidden on the same terms as
+# `model_fields_set` without anyone having had to think of them; the private
+# Change Record slot joins them as the value it actually keys.
+PRIVATE_VALUE_VOCABULARY = frozenset(
+    name for name in dir(BaseModel) if name.startswith(("model_", "__pydantic"))
+) | {CHANGE_RECORD_SLOT}
 
-def test_snapshot_derives_every_row_through_the_codec_alone() -> None:
-    # Snapshot asks the Entity Row Codec for a row and reconstructs no part of
-    # what the codec does: not through Pydantic, not through the private Change
-    # Record slot, not through the exported side table, and not through a row
-    # helper of its own. The codec's own audit-neutrality proof
-    # (`test_row_codec.py`) is what makes consulting it enough.
+
+def test_snapshot_holds_none_of_the_codecs_row_vocabulary() -> None:
+    # Snapshot asks the Entity Row Codec for a row, and holds no part of what
+    # the codec holds: not the Pydantic substrate, not the private Change Record
+    # slot, not the exported side table, not a private name out of any
+    # `parallax` module, and not a row helper of its own. The codec's own
+    # audit-neutrality proof (`test_row_codec.py`) is what makes consulting it
+    # enough.
     #
     # `self._codec.full_row(...)` IS the codec being consulted, so the guard is
-    # stated over what Snapshot imports and defines rather than over the call.
+    # stated over what Snapshot imports, defines, and reads rather than over the
+    # call.
+    #
+    # The limit: a row assembled member by member out of ordinary attribute
+    # reads touches none of this vocabulary and is indistinguishable at the
+    # source from any other attribute read. Such a row would carry raw rather
+    # than serialized values, which the write path's golden SQL grades; no
+    # source-shape assertion can see it, and none below claims to.
     imported = _snapshot_imports()
     assert [
         entry.site
@@ -235,47 +292,98 @@ def test_snapshot_derives_every_row_through_the_codec_alone() -> None:
     ] == []
     assert [
         _site(path, node.lineno)
-        for path, text in _sources(_SNAPSHOT_SRC)
-        for node in ast.walk(ast.parse(text))
+        for path, tree in _parsed(_sources(_SNAPSHOT_SRC))
+        for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
         and node.name in DELETED_ROW_HELPERS
     ] == []
     assert [
         (entry.importer, entry.source) for entry in imported if entry.name == "row_codec_of"
     ] == [("parallax.snapshot.handle._database", _ENTITY_PACKAGE)]
-    assert _hits(_word("model_fields_set"), _sources(_SNAPSHOT_SRC)) == []
+    for spelling in sorted(PRIVATE_VALUE_VOCABULARY):
+        assert _hits(_word(spelling), _sources(_SNAPSHOT_SRC)) == [], spelling
 
 
-# Every `except` clause under `parallax.snapshot`, as the module that writes it
-# and the type it names. An inventory rather than a count: swapping one accepted
-# handler's type for another leaves any count unchanged, and the type is the
-# whole subject of the guard below.
-ACCEPTED_SNAPSHOT_EXCEPT_HANDLERS: list[tuple[str, str]] = [
-    ("parallax.snapshot.handle._read", "Exception"),
-    ("parallax.snapshot.materialize._convert", "LeafEncodingError"),
-]
+# The codec's own operation surface, read off the class, so an operation added
+# to it inherits the guard below rather than needing to be added to a list.
+CODEC_OPERATIONS = frozenset(name for name in vars(EntityRowCodec) if not name.startswith("_"))
 
 
-def _snapshot_except_handlers() -> list[tuple[str, str]]:
-    return sorted(
-        (_dotted(path), "" if node.type is None else ast.unparse(node.type))
-        for path, text in _sources(_SNAPSHOT_SRC)
-        for node in ast.walk(ast.parse(text))
-        if isinstance(node, ast.ExceptHandler)
-    )
+def _named_types(namespace: dict[str, object], expression: ast.expr) -> tuple[object, ...]:
+    """Every runtime object an `except` clause's type expression names."""
+    if isinstance(expression, ast.Tuple):
+        return tuple(chain.from_iterable(_named_types(namespace, item) for item in expression.elts))
+    if isinstance(expression, ast.Name):
+        return (namespace.get(expression.id, getattr(builtins, expression.id, None)),)
+    if isinstance(expression, ast.Attribute):
+        return tuple(
+            getattr(base, expression.attr, None)
+            for base in _named_types(namespace, expression.value)
+        )
+    return ()
+
+
+def _snapshot_handlers() -> Iterator[tuple[str, tuple[object, ...]]]:
+    """Every `except` clause under Snapshot, as its site and the types it names.
+
+    Resolved in the writing module's own namespace, so an alias, a rebinding, or
+    a qualified `module.Name` all answer the same class an inventory of
+    spellings would have to guess at. A bare `except` names everything.
+    """
+    for path, tree, namespace in _imported(_sources(_SNAPSHOT_SRC)):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler):
+                named = (
+                    (BaseException,) if node.type is None else _named_types(namespace, node.type)
+                )
+                yield _site(path, node.lineno), named
+
+
+def _codec_calls_inside_try() -> list[str]:
+    """Every codec operation called from inside a `try` body under Snapshot."""
+    return [
+        _site(path, node.lineno)
+        for path, tree in _parsed(_sources(_SNAPSHOT_SRC))
+        for statement in ast.walk(tree)
+        if isinstance(statement, ast.Try | ast.TryStar)
+        for guarded in statement.body
+        for node in ast.walk(guarded)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr in CODEC_OPERATIONS)
+            or (isinstance(node.func, ast.Name) and node.func.id in CODEC_OPERATIONS)
+        )
+    ]
 
 
 def test_no_snapshot_module_catches_the_codecs_own_refusal() -> None:
     # A codec refusal reports first-party misuse, so nothing may catch, wrap, or
     # rethrow one: every keyed-write refusal a developer can provoke is decided
-    # from the value's provenance before a row is derived (`m-unit-work`). The
-    # class is nameable in prose — two docstrings explain what is NOT caught —
-    # so the guard is that it is neither imported nor named by any handler,
-    # under any spelling a handler could reach it by.
+    # from the value's provenance before a row is derived (`m-unit-work`). Two
+    # statements pin that without freezing Snapshot's unrelated exception
+    # boundaries — no handler names the refusal, and no codec operation is
+    # called from inside a `try` body, so no handler however broadly typed
+    # stands between a codec call and its caller. That no refusal reaches an
+    # application is graded where the verbs' own steering is,
+    # `test_transaction_writes.py`.
+    #
+    # A handler whose type this module cannot resolve to a class is a handler it
+    # cannot judge, so those fail here rather than passing quietly.
     assert [
         entry.site for entry in _snapshot_imports() if "EntityRowError" in {entry.name, entry.local}
     ] == []
-    assert _snapshot_except_handlers() == ACCEPTED_SNAPSHOT_EXCEPT_HANDLERS
+    handlers = list(_snapshot_handlers())
+    assert [
+        site
+        for site, named in handlers
+        if not named or not all(isinstance(caught, type) for caught in named)
+    ] == []
+    assert [
+        site
+        for site, named in handlers
+        if any(isinstance(caught, type) and issubclass(caught, EntityRowError) for caught in named)
+    ] == []
+    assert _codec_calls_inside_try() == []
 
 
 TRANSITION_VOCABULARY = (
@@ -321,11 +429,53 @@ def test_a_removed_frontend_surface_stays_removed(removed: str) -> None:
     assert _hits(_word(removed), _production_sources()) == []
 
 
-def test_the_removed_registry_keyword_stays_absent() -> None:
-    # The registry frontend's caller-visible half is the `registry=` argument,
-    # which survives every guard stated over the removed type names: a parameter
-    # can be reintroduced without naming `EntityRegistry` anywhere.
-    assert _hits(r"\bregistry=", _all_sources()) == []
+# The scopes that declare Entities and form models — the registry-based
+# declaration/configuration surface's successors, and the only place a
+# `registry` argument would be the removed frontend rather than a collaborator.
+# `m-pk-gen`'s `sequence` registry is a real domain object elsewhere in the
+# tree; nothing here is a guard against the word.
+_DECLARATION_FRONTENDS = (
+    _ENTITY_SRC,
+    _CORE_SRC / "metamodel",
+    _CORE_SRC / "model_formation",
+    _PACKAGES / "parallax-descriptor" / "src" / "parallax" / "descriptor",
+)
+
+
+def _registry_arguments() -> list[str]:
+    """Every `registry` parameter, class keyword, and keyword argument in them."""
+    found: list[str] = []
+    for path, tree in _parsed(_sources(*_DECLARATION_FRONTENDS)):
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+                taken = node.args
+                found.extend(
+                    _site(path, argument.lineno)
+                    for argument in (
+                        *taken.posonlyargs,
+                        *taken.args,
+                        *taken.kwonlyargs,
+                        *(one for one in (taken.vararg, taken.kwarg) if one is not None),
+                    )
+                    if argument.arg == "registry"
+                )
+            elif isinstance(node, ast.ClassDef | ast.Call):
+                found.extend(
+                    _site(path, keyword.value.lineno)
+                    for keyword in node.keywords
+                    if keyword.arg == "registry"
+                )
+    return sorted(found)
+
+
+def test_the_removed_registry_argument_stays_absent() -> None:
+    # The registry frontend's caller-visible half is a `registry` argument on
+    # the declaration surface, which survives every guard stated over the
+    # removed type names: a parameter can be reintroduced without naming
+    # `EntityRegistry` anywhere. Stated over the declared argument rather than
+    # the text `registry=`, because `registry: Registry | None = None` is the
+    # same surface returning with no `registry=` anywhere to find.
+    assert _registry_arguments() == []
 
 
 def test_the_transition_query_statement_module_stays_absent() -> None:
@@ -369,15 +519,32 @@ def _bound_to(tree: ast.Module, source_prefix: str, name: str) -> set[str]:
     return bound
 
 
+def _is_call_to(call: ast.Call, callees: set[str], attribute: str) -> bool:
+    func = call.func
+    return (isinstance(func, ast.Name) and func.id in callees) or (
+        isinstance(func, ast.Attribute) and func.attr == attribute
+    )
+
+
 def _calls(tree: ast.Module, callees: set[str], attribute: str) -> Iterator[ast.Call]:
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if (isinstance(func, ast.Name) and func.id in callees) or (
-            isinstance(func, ast.Attribute) and func.attr == attribute
-        ):
+        if isinstance(node, ast.Call) and _is_call_to(node, callees, attribute):
             yield node
+
+
+def _scoped_calls(tree: ast.Module) -> Iterator[tuple[str, ast.Call]]:
+    """Every call, paired with the dotted name of the innermost scope holding it."""
+
+    def within(node: ast.AST, scope: tuple[str, ...]) -> Iterator[tuple[str, ast.Call]]:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                yield from within(child, (*scope, child.name))
+                continue
+            if isinstance(child, ast.Call):
+                yield ".".join(scope), child
+            yield from within(child, scope)
+
+    yield from within(tree, ())
 
 
 def _keyword(call: ast.Call, name: str) -> str | None:
@@ -389,43 +556,51 @@ def _keyword(call: ast.Call, name: str) -> str | None:
 
 def _write_planner_constructions() -> list[tuple[str, str | None]]:
     """Every construction of the Write Planner, as its module and audit argument."""
-    found: list[tuple[str, str | None]] = []
-    for path, text in _all_sources():
-        tree = ast.parse(text)
-        bound = _bound_to(tree, "parallax.core.unit_work", "WritePlanner")
-        found.extend(
-            (_dotted(path), _keyword(call, "audit")) for call in _calls(tree, bound, "WritePlanner")
+    return sorted(
+        (_dotted(path), _keyword(call, "audit"))
+        for path, tree in _parsed(_all_sources())
+        for call in _calls(
+            tree, _bound_to(tree, "parallax.core.unit_work", "WritePlanner"), "WritePlanner"
         )
-    return sorted(found)
+    )
 
 
-def _planner_definitions() -> list[str]:
-    """Every class that is, or descends from, a Write Planner."""
-    found: list[str] = []
-    for path, text in _all_sources():
-        tree = ast.parse(text)
-        bound = _bound_to(tree, "parallax.core.unit_work", "WritePlanner")
-        found.extend(
-            f"{_dotted(path)}.{node.name}"
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ClassDef)
-            and (
-                node.name.endswith("Planner")
-                or any(isinstance(base, ast.Name) and base.id in bound for base in node.bases)
+def _descendants(root: type) -> Iterator[type]:
+    yield root
+    for child in root.__subclasses__():
+        yield from _descendants(child)
+
+
+def _write_planner_hierarchy() -> list[str]:
+    """Every first-party class that is, or descends from, the Write Planner.
+
+    Python's own subclass registry answers this once every module is imported,
+    so no alias, qualified base spelling, or class name evades it — and a class
+    merely named like a planner is not in it.
+    """
+    for _ in _imported(_all_sources()):
+        pass
+    return sorted(
+        f"{planner.__module__}.{planner.__qualname__}"
+        for planner in _descendants(WritePlanner)
+        if planner.__module__.startswith("parallax.")
+    )
+
+
+def _factory_call_sites() -> list[tuple[str, str]]:
+    """Every scope that calls the composition-root factory, as module and scope."""
+    return sorted(
+        {
+            (_dotted(path), scope)
+            for path, tree in _parsed(_all_sources())
+            for scope, call in _scoped_calls(tree)
+            if _is_call_to(
+                call,
+                _bound_to(tree, "parallax.snapshot.handle", "build_write_planner"),
+                "build_write_planner",
             )
-        )
-    return sorted(found)
-
-
-def _factory_callers() -> list[str]:
-    """Every module that calls the composition-root factory."""
-    found: set[str] = set()
-    for path, text in _all_sources():
-        tree = ast.parse(text)
-        bound = _bound_to(tree, "parallax.snapshot.handle", "build_write_planner")
-        if any(_calls(tree, bound, "build_write_planner")):
-            found.add(_dotted(path))
-    return sorted(found)
+        }
+    )
 
 
 def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
@@ -433,41 +608,49 @@ def test_build_write_planner_is_the_sole_planner_composition_root() -> None:
     # path and the conformance lane call one factory, so a second construction
     # anywhere is a second set of strategies that could drift. Stated over the
     # resolved callee rather than the spelling `WritePlanner(`, because a local
-    # alias constructs the same class under a name no text search finds.
-    assert _write_planner_constructions() == [("parallax.snapshot.handle._planning", "NO_AUDIT")]
-    assert _planner_definitions() == ["parallax.core.unit_work.write_planner.WritePlanner"]
-    assert _factory_callers() == [
-        "parallax.conformance.engine",
-        "parallax.snapshot.handle._database",
+    # alias constructs the same class under a name no text search finds; and
+    # over the calling scope rather than the calling module, because the factory
+    # has to serve every write path, and a module keeps its entry when one of
+    # its write paths stops calling.
+    assert [module for module, _ in _write_planner_constructions()] == [
+        "parallax.snapshot.handle._planning"
+    ]
+    assert _write_planner_hierarchy() == ["parallax.core.unit_work.write_planner.WritePlanner"]
+    assert _factory_call_sites() == [
+        ("parallax.conformance.engine", "_lower_conflict_write"),
+        ("parallax.conformance.engine", "_lower_predicate_write_step"),
+        ("parallax.conformance.engine", "_lower_resolved"),
+        ("parallax.snapshot.handle._database", "Database.__init__"),
     ]
 
 
-def _audit_arguments() -> list[tuple[str, str]]:
-    return sorted(
-        (_dotted(path), ast.unparse(keyword.value))
-        for path, text in _all_sources()
-        for node in ast.walk(ast.parse(text))
-        if isinstance(node, ast.Call)
-        for keyword in node.keywords
-        if keyword.arg == "audit"
-    )
+def _snapshot_classes() -> Iterator[type]:
+    """Every class Snapshot's own modules define."""
+    for _, _, namespace in _imported(_sources(_SNAPSHOT_SRC)):
+        module = namespace["__name__"]
+        for value in namespace.values():
+            if isinstance(value, type) and value.__module__ == module:
+                yield value
 
 
 def test_the_write_path_decorates_no_audit_provenance() -> None:
     # Audit decoration is a wired port with nothing behind it. Three statements
-    # make "no write path emits an audit value" checkable: the only audit
-    # argument any distribution passes is the neutral strategy, no module under
-    # Snapshot implements the decoration port, and the neutral strategy returns
-    # the step it was handed.
-    assert _audit_arguments() == [("parallax.snapshot.handle._planning", "NO_AUDIT")]
+    # make "no write path emits an audit value" checkable: the write path's one
+    # planner is built with the neutral strategy, no class under Snapshot
+    # satisfies the decoration port, and the neutral strategy returns the step it
+    # was handed. Scoped to the port and to that construction, so an `audit=`
+    # option somewhere off the write path and an ordinary decoration helper that
+    # implements nothing are none of this guard's business.
+    #
+    # The limit: a value stamped by hand onto a row, under a name of its own and
+    # ahead of the reserved audit property names, satisfies no port and matches
+    # no vocabulary nameable here. What a write actually emits is graded by the
+    # write tests' golden SQL.
+    assert _write_planner_constructions() == [("parallax.snapshot.handle._planning", "NO_AUDIT")]
     assert [
-        entry.site for entry in _snapshot_imports() if "AuditStrategy" in {entry.name, entry.local}
-    ] == []
-    assert [
-        _site(path, node.lineno)
-        for path, text in _sources(_SNAPSHOT_SRC)
-        for node in ast.walk(ast.parse(text))
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == "decorate"
+        f"{implementation.__module__}.{implementation.__qualname__}"
+        for implementation in _snapshot_classes()
+        if issubclass(implementation, AuditStrategy)
     ] == []
     step = cast("PlannedWrite", object())
     assert (
