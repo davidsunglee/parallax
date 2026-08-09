@@ -1,15 +1,15 @@
 # Retry then commit (m-execution-log): ONE Execution Log spans both physical
 # attempts of one logical invocation.
 #
-# A concurrent transaction commits over account 3 out of band (`given.apply`:
-# balance 999.00, version 2), so the first attempt's gated UPDATE matches nothing
-# and rolls back; with `retryOptimisticConflicts: true` the conflict is retriable,
-# so the boundary re-executes and the second attempt lands. The semantic
-# distinction this case pins down is that those two attempts are ONE log, not two:
-# a retry is a physical re-execution of the same logical invocation, so the
-# rolled-back attempt survives in `attempts[0]` instead of being discarded with
-# the transaction that produced it. Nothing else in the corpus can observe a
-# failed attempt after the fact.
+# An injected optimistic-lock conflict makes the first attempt's gated UPDATE
+# match nothing, and `retryOptimisticConflicts: true` joins that conflict to the
+# retriable set, so the boundary RE-EXECUTES the whole closure: the second
+# attempt re-reads the now-current version and its re-applied UPDATE lands. The
+# semantic distinction this case pins down is that those two attempts are ONE
+# log, not two: a retry is a physical re-execution of the same logical
+# invocation, so the rolled-back attempt survives in `attempts[0]` instead of
+# being discarded with the transaction that produced it. Nothing else in the
+# corpus can observe a failed attempt after the fact.
 #
 # Each attempt's zero-row and one-row outcomes are ordinary `writeCompleted`
 # completions — the call REACHED the database and returned a count, so a
@@ -18,47 +18,42 @@
 # `retryEligible: true` (the classifier's verdict under this invocation's
 # optimistic-conflict opt-in), and a `databaseCall` index into that attempt's own
 # flattened calls naming the completed call the enforcement rejected. The
-# committed attempt carries no failure at all.
+# committed attempt carries no failure at all. Its sibling m-execution-log-005 is
+# the SAME classifier verdict with the budget spent instead of left.
 #
-# `roundTrips` counts every attempted call across attempts, so it is 2 for a
-# single-statement write retried once — the one number in the corpus that a
+# `roundTrips` counts every attempted call across attempts, so it is 4 for a
+# read-then-write closure retried once — the one number in the corpus that a
 # per-attempt count cannot reconstruct.
+#
+# `lane: api-conformance`: an injected conflict and a re-executed closure are
+# observables a single-connection harness cannot provoke, and the conflict-shape
+# `when.attempts` form cannot express them either — that form authors each
+# attempt's own write and drives each as its own transaction, which is a
+# sequence of invocations rather than one invocation retried. No golden SQL is
+# authored, so each Database Call omits its `statement` index. Satisfied by each
+# language's API Conformance Suite.
 model: models/account.yaml
-tags: [m-execution-log, m-opt-lock, m-auto-retry, retry, slice-snapshot-1]
-shape: conflict
+tags: [m-execution-log, m-opt-lock, m-auto-retry, m-api-conformance, retry, slice-snapshot-1]
+lane: api-conformance
+shape: boundary
 compileEligibility:
   mode: run-only
   reason: single-connection
-  note: "single-connection concurrency/locking intent (given.apply, shape:conflict)"
+  note: "single-connection concurrency/locking intent (given.fault, shape:boundary)"
 given:
-  apply:
-    - sql: update account set balance = 999.00, version = 2 where id = 3
+  fault: optimistic-lock-conflict
 when:
   uow:
     concurrency: optimistic
     retryOptimisticConflicts: true
-  attempts:
-    - note: stale-version UPDATE — gates on version 1, which the concurrent writer replaced ⇒ 0 rows
-      statements:
-        - sql:
-            postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [42.00, 2, 3, 1]
-      write: { id: 3, balance: 42.00, observedVersion: 1 }
-      affectedRows: 0
-    - note: the retry re-reads the fresh version (2) and re-applies ⇒ 1 row, version 2 -> 3
-      statements:
-        - sql:
-            postgres: update account set balance = ?, version = ? where id = ? and version = ?
-          binds: [42.00, 3, 3, 2]
-      write: { id: 3, balance: 42.00, observedVersion: 2 }
-      affectedRows: 1
+  boundary:
+    - action: read
+      note: observe the versioned row (records the observed version)
+    - action: update
+      note: the gated UPDATE conflicts once; the auto-retry re-reads and the second attempt commits
 then:
-  tableState:
-    account:
-      - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-      - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-      - { id: 3, owner: Grace, balance: 42.00, version: 3 }
-  roundTrips: 2
+  outcome: committed
+  roundTrips: 4
   execution:
     transactionLog:
       concurrency: optimistic
@@ -68,31 +63,43 @@ then:
       attempts:
         - status: rolled-back
           traces:
+            - readTrace:
+                calls:
+                  - kind: read
+                    completion:
+                      readCompleted:
+                        returnedRows: 1
+                roundTrips: 1
             - writeBatch:
                 trigger: finalization
                 calls:
-                  - statement: 0
-                    kind: write
+                  - kind: write
                     completion:
                       writeCompleted:
                         affectedRows: 0
                 roundTrips: 1
-          roundTrips: 1
+          roundTrips: 2
           failure:
             phase: finalization
             code: optimistic-lock-conflict
             retryEligible: true
-            databaseCall: 0
+            databaseCall: 1
         - status: committed
           traces:
+            - readTrace:
+                calls:
+                  - kind: read
+                    completion:
+                      readCompleted:
+                        returnedRows: 1
+                roundTrips: 1
             - writeBatch:
                 trigger: finalization
                 calls:
-                  - statement: 1
-                    kind: write
+                  - kind: write
                     completion:
                       writeCompleted:
                         affectedRows: 1
                 roundTrips: 1
-          roundTrips: 1
-      roundTrips: 2
+          roundTrips: 2
+      roundTrips: 4

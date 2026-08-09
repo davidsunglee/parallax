@@ -114,7 +114,7 @@ def test_compile_read_case_matches_golden() -> None:
 
 def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
     port = FakeDbPort([{"id": 1, "name": "Grace"}])
-    emissions, rows, round_trips = engine.run_read_case(
+    emissions, rows, round_trips, _trace = engine.run_read_case(
         _case("m-value-object-001"), "postgres", port
     )
     assert round_trips == 1
@@ -128,7 +128,7 @@ def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
 def test_run_read_case_wire_renders_managed_row_values() -> None:
     # The port returns managed values; run_read_case records canonical wire form.
     port = FakeDbPort([{"id": 1, "external_id": uuid.UUID("123e4567-e89b-12d3-a456-426614174000")}])
-    _emissions, rows, _round_trips = engine.run_read_case(
+    _emissions, rows, _round_trips, _trace = engine.run_read_case(
         _case("m-value-object-001"), "postgres", port
     )
     assert rows == [{"id": 1, "external_id": "123e4567-e89b-12d3-a456-426614174000"}]
@@ -151,7 +151,7 @@ def test_run_read_case_materializes_family_variant_from_the_tph_tag_column() -> 
             }
         ]
     )
-    _emissions, rows, _round_trips = engine.run_read_case(
+    _emissions, rows, _round_trips, _trace = engine.run_read_case(
         _case("m-inheritance-003"), "postgres", port
     )
     assert rows == [
@@ -183,7 +183,7 @@ def test_run_read_case_materializes_family_variant_from_the_tpcs_literal_column(
             }
         ]
     )
-    _emissions, rows, _round_trips = engine.run_read_case(
+    _emissions, rows, _round_trips, _trace = engine.run_read_case(
         _case("m-inheritance-050"), "postgres", port
     )
     assert rows[0]["familyVariant"] == "Invoice"
@@ -194,7 +194,7 @@ def test_run_read_case_concrete_target_read_carries_no_family_variant() -> None:
     # m-inheritance-001 (CardPayment, concrete target): the compiled SELECT never
     # projects a tag/literal column, so the row passes through wire rendering alone.
     port = FakeDbPort([{"id": 1, "amount": decimal.Decimal("100.00"), "card_network": "Visa"}])
-    _emissions, rows, _round_trips = engine.run_read_case(
+    _emissions, rows, _round_trips, _trace = engine.run_read_case(
         _case("m-inheritance-001"), "postgres", port
     )
     assert rows == [{"id": 1, "amount": "100.00", "card_network": "Visa"}]
@@ -338,7 +338,7 @@ def _synthetic_write(shape: str, document: dict[str, object]) -> case_format.Cas
 
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     port = FakeWritePort(find_rows=[{"id": 7}])
-    emissions, round_trips, errors = engine.run_scenario_case(
+    emissions, round_trips, errors, _log = engine.run_scenario_case(
         _case("m-unit-work-001"), "postgres", port
     )
     assert round_trips == 2
@@ -352,7 +352,7 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
 
 def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> None:
     port = FakeWritePort(find_rows=[])
-    emissions, round_trips, _errors = engine.run_scenario_case(
+    emissions, round_trips, _errors, _log = engine.run_scenario_case(
         _case("m-unit-work-011"), "postgres", port
     )
     assert round_trips == 2  # the aborted insert still counts one round trip
@@ -381,7 +381,7 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    emissions, round_trips, _errors = engine.run_scenario_case(
+    emissions, round_trips, _errors, _log = engine.run_scenario_case(
         _case("m-unit-work-005"), "postgres", port
     )
     assert round_trips == 3
@@ -408,7 +408,7 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    emissions, round_trips, _errors = engine.run_scenario_case(
+    emissions, round_trips, _errors, _log = engine.run_scenario_case(
         _case("m-unit-work-002"), "postgres", port
     )
     assert round_trips == 3
@@ -2469,7 +2469,7 @@ def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
         },
     )
     port = FakeWritePort()
-    emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
+    emissions, round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 1
     assert emissions[0].case_pointer == "/scenario/0/write"
     assert emissions[0].sql == "delete from wallet where balance < ?"
@@ -2509,7 +2509,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
+    emissions, round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
     assert emissions[1].sql == "delete from account where id = ?"
@@ -2546,7 +2546,7 @@ def test_run_scenario_case_readless_predicate_write_rollback_aborts_but_counts_t
         },
     )
     port = FakeWritePort()
-    emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
+    emissions, round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 1
     assert emissions[0].sql == "delete from wallet where balance < ?"
     assert len(port.writes) == 1
@@ -2587,7 +2587,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    emissions, round_trips, _errors = engine.run_scenario_case(case, "postgres", port)
+    emissions, round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
     assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
     assert emissions[1].sql == "delete from account where id = ?"
@@ -2725,7 +2725,7 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
 # --------------------------------------------------------------------------- #
 def test_run_conflict_case_single_attempt() -> None:
     port = FakeWritePort()
-    emissions, affected, table_state = engine.run_conflict_case(
+    emissions, affected, table_state, _log = engine.run_conflict_case(
         _load_case("m-opt-lock-006"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -2736,7 +2736,7 @@ def test_run_conflict_case_single_attempt() -> None:
 
 def test_run_conflict_case_applies_given_apply_out_of_band_first() -> None:
     port = FakeWritePort()
-    emissions, affected, table_state = engine.run_conflict_case(
+    emissions, affected, table_state, _log = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -2763,7 +2763,7 @@ def test_run_conflict_case_renders_an_ungated_zero_row_delete_as_a_stale_write()
     # implies, so the case's `affectedRows: 0` observation is reachable exactly
     # when the write classified its shortfall the way the mode requires.
     port = _ZeroAffectedPort()
-    emissions, affected, _table_state = engine.run_conflict_case(
+    emissions, affected, _table_state, _log = engine.run_conflict_case(
         _load_case("m-opt-lock-016"), "postgres", port
     )
     assert [e.sql for e in emissions] == ["delete from account where id = ?"]
@@ -2772,7 +2772,7 @@ def test_run_conflict_case_renders_an_ungated_zero_row_delete_as_a_stale_write()
 
 def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
     port = _ZeroAffectedPort()
-    _emissions, affected, _table_state = engine.run_conflict_case(
+    _emissions, affected, _table_state, _log = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert affected == 0
@@ -2794,7 +2794,7 @@ def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() 
     # m-temporal-read-012: the locking-mode close renders its address and no gate,
     # so its shortfall is the non-retriable stale write — the temporal sibling of
     # the ungated versioned DELETE above, caught by the same one implied class.
-    _emissions, affected, _table_state = engine.run_conflict_case(
+    _emissions, affected, _table_state, _log = engine.run_conflict_case(
         _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
     )
     assert affected == 0
@@ -2830,7 +2830,7 @@ def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_re
 
 
 def test_a_multi_key_unversioned_conflict_attempt_collapses_to_one_statement() -> None:
-    emissions, _affected, _table_state = engine.run_conflict_case(
+    emissions, _affected, _table_state, _log = engine.run_conflict_case(
         _unversioned_conflict_case([{"id": 1, "balance": 500.00}, {"id": 2, "balance": 500.00}]),
         "postgres",
         FakeWritePort(),
@@ -2841,7 +2841,7 @@ def test_a_multi_key_unversioned_conflict_attempt_collapses_to_one_statement() -
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
-    _emissions, affected, _table_state = engine.run_conflict_case(
+    _emissions, affected, _table_state, _log = engine.run_conflict_case(
         _load_case("m-temporal-read-010"), "postgres", _ZeroAffectedClosePort()
     )
     assert affected == 0
@@ -2930,7 +2930,7 @@ def test_run_conflict_case_collapses_a_multi_key_write_into_one_statement() -> N
     # the same collapse policy the execution runs under, or it would report three
     # statements where one was emitted. The count it reports is the aggregate the
     # single complete Key Target owns, never a per-row 1.
-    emissions, affected, _table_state = engine.run_conflict_case(
+    emissions, affected, _table_state, _log = engine.run_conflict_case(
         _load_case("m-batch-write-008"), "postgres", _CollapsedDeletePort()
     )
     assert [e.sql for e in emissions] == ["delete from wallet where id in (?, ?, ?)"]
@@ -2962,7 +2962,7 @@ def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target()
 
 def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:
     port = FakeWritePort()
-    emissions, affected, table_state = engine.run_conflict_case(
+    emissions, affected, table_state, _log = engine.run_conflict_case(
         _load_case("m-opt-lock-007"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == [
@@ -2995,7 +2995,7 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
     # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-txtime-write-006"]
     port = FakeWritePort()
-    emissions, affected, table_state = engine.run_conflict_case(case, "postgres", port)
+    emissions, affected, table_state, _log = engine.run_conflict_case(case, "postgres", port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert emissions[0].sql == (
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
@@ -3075,7 +3075,7 @@ def test_an_edge_named_close_derives_its_address_from_the_named_milestone() -> N
     heads: list[list[object]] = []
     for valid_start in ("2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"):
         port = FakeWritePort()
-        emissions, affected, _table_state = engine.run_conflict_case(
+        emissions, affected, _table_state, _log = engine.run_conflict_case(
             _edge_named_close(
                 {
                     "uow": {"concurrency": "optimistic"},
@@ -3291,7 +3291,7 @@ def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
     # own half, which SELECTS the milestone whose `thru_z` the address binds.
     # That selection happens in either mode; only the gate is optimistic-only,
     # so the locking golden carries the derived address and no `in_z` predicate.
-    emissions, affected, _table_state = engine.run_conflict_case(
+    emissions, affected, _table_state, _log = engine.run_conflict_case(
         _edge_named_close(
             {
                 "uow": {"concurrency": "locking"},
@@ -3430,7 +3430,7 @@ def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None
     # convention.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-inheritance-105"]
     port = FakeWritePort()
-    emissions, affected, table_state = engine.run_conflict_case(case, "postgres", port)
+    emissions, affected, table_state, _log = engine.run_conflict_case(case, "postgres", port)
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert emissions[0].sql == (
         "update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
@@ -3446,7 +3446,7 @@ def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> N
     # non-temporal versioned-UPDATE retry `m-opt-lock-007` already covers).
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-temporal-read-011"]
     port = FakeWritePort()
-    emissions, affected, table_state = engine.run_conflict_case(case, "postgres", port)
+    emissions, affected, table_state, _log = engine.run_conflict_case(case, "postgres", port)
     assert [e.case_pointer for e in emissions] == [
         "/when/attempts/0/write",
         "/when/attempts/1/write",
@@ -4479,7 +4479,7 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
             }
         ]
     )
-    emissions, round_trips, errors = engine.run_scenario_case(
+    emissions, round_trips, errors, _log = engine.run_scenario_case(
         _case("m-snapshot-read-010"), "postgres", port
     )
     assert round_trips == 2
@@ -4508,7 +4508,7 @@ _POSITION_R1_ROW: dict[str, object] = {
 
 def test_run_scenario_case_grades_a_transaction_time_pin_read_only_mutate() -> None:
     port = FakeDbPort([dict(_POSITION_R1_ROW)])
-    emissions, round_trips, errors = engine.run_scenario_case(
+    emissions, round_trips, errors, _log = engine.run_scenario_case(
         _case("m-bitemp-write-016"), "postgres", port
     )
     assert round_trips == 1
@@ -4522,7 +4522,7 @@ def test_run_scenario_case_accepts_a_finite_valid_time_pin_mutate() -> None:
     # mutate applies in-memory and no error observation is reported.
     row = dict(_POSITION_R1_ROW, val=decimal.Decimal("100.00"))
     port = FakeDbPort([row])
-    _emissions, round_trips, errors = engine.run_scenario_case(
+    _emissions, round_trips, errors, _log = engine.run_scenario_case(
         _case("m-bitemp-write-015"), "postgres", port
     )
     assert round_trips == 1

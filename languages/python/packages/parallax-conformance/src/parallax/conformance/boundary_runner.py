@@ -41,7 +41,7 @@ from parallax.conformance.story_models import Account
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.unit_work import Concurrency
-from parallax.snapshot.handle import Transaction
+from parallax.snapshot.handle import Database, Transaction
 
 __all__ = [
     "TARGET_ID",
@@ -135,7 +135,9 @@ def outcome(case: case_format.Case) -> str:
     return cast("str", then["outcome"])
 
 
-def run_boundary_actions(tx: Transaction, actions: Sequence[str]) -> Account | None:
+def run_boundary_actions(
+    tx: Transaction, actions: Sequence[str], *, database: Database | None = None
+) -> Account | None:
     """The ONE deterministic `when.boundary` action -> verb mapping every
     boundary case shares (never a per-case hand function): every
     reachable case targets `models/account.yaml`'s versioned :data:`TARGET_ID`
@@ -152,6 +154,13 @@ def run_boundary_actions(tx: Transaction, actions: Sequence[str]) -> Account | N
       range 1-3) — no reachable corpus witness authors this action, but the
       mapping is total, not partial.
     - ``delete`` removes the last-read row.
+    - ``join`` opens a joined unit of work through ``database`` and runs every
+      REMAINING action inside it, carrying the row already observed. A joined
+      call shares the outer transaction (`m-unit-work`), so its closure receives
+      the same :class:`Transaction` and its buffered writes reach the database
+      under the OUTER boundary's own finalization — which is exactly what
+      `m-execution-log-007` asserts. It needs the ``Database`` that opened the
+      boundary, since only that object joins.
     - ``terminate`` has no legal target on this NON-temporal model — a loud
       refusal (no reachable corpus witness authors it either).
 
@@ -159,8 +168,16 @@ def run_boundary_actions(tx: Transaction, actions: Sequence[str]) -> Account | N
     value — `then.outcome: committed`'s "callback value returned" half),
     ``None`` after a ``delete``.
     """
-    current: Account | None = None
-    for action in actions:
+    return _run_actions(tx, list(actions), None, database)
+
+
+def _run_actions(
+    tx: Transaction,
+    actions: list[str],
+    current: Account | None,
+    database: Database | None,
+) -> Account | None:
+    for index, action in enumerate(actions):
         if action == "read":
             current = tx.find(Account.where(Account.id == TARGET_ID)).result()
         elif action == "update":
@@ -176,6 +193,17 @@ def run_boundary_actions(tx: Transaction, actions: Sequence[str]) -> Account | N
                 raise AssertionError("a `delete` action needs a prior `read` observation")
             tx.delete(current)
             current = None
+        elif action == "join":
+            if database is None:
+                raise AssertionError(
+                    "a `join` action needs the Database that opened the boundary — only that "
+                    "object joins it (`python.md` §5)"
+                )
+            return database.transact(
+                lambda joined, rest=actions[index + 1 :], seen=current: _run_actions(
+                    joined, rest, seen, database
+                )
+            ).value
         elif action == "terminate":
             raise AssertionError(
                 "`terminate` has no legal target on the non-temporal account.yaml model "

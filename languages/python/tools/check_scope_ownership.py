@@ -106,7 +106,7 @@ EXEMPTIONS: Mapping[str, str] = {
     ),
     "parallax-snapshot/src/parallax/snapshot/__init__.py": (
         "distribution package interface: re-exports the §8 `parallax.snapshot` surface "
-        "(`connect`, `Snapshot`, `Execution`, the arity errors) from "
+        "(`connect`, `Snapshot`, the execution-provenance subset, the arity errors) from "
         "`parallax.snapshot.handle`, and sits above both snapshot scopes"
     ),
 }

@@ -185,6 +185,7 @@ from parallax.core.unit_work.uow import (
     TransactionSettings,
     UnitOfWork,
     UnitOfWorkError,
+    WriteBatchTrigger,
     active_unit_of_work,
     run_unit_of_work,
 )
@@ -324,6 +325,7 @@ __all__ = [
     "VersionObservation",
     "Versioned",
     "WriteAssignment",
+    "WriteBatchTrigger",
     "WriteEffectError",
     "WriteInstruction",
     "WriteInstructionError",

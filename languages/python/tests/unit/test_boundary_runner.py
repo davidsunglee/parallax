@@ -134,10 +134,42 @@ def test_run_boundary_actions_read_then_update() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, ["read", "update"])
 
-    result = _db(port).transact(fn)
+    result = _db(port).transact(fn).value
     assert result is not None
     assert result.balance == Decimal("251.00")
     assert len(port.writes) == 1
+
+
+def test_run_boundary_actions_join_runs_the_rest_inside_a_joined_unit_of_work() -> None:
+    # A joined call shares the outer transaction (`m-unit-work`), so the write
+    # after the `join` buffers onto the SAME unit of work and reaches the
+    # database under the OUTER boundary's finalization — `m-execution-log-007`.
+    port = _FakePort(rows=[{"id": 2, "owner": "Linus", "balance": Decimal("250.00"), "version": 1}])
+    db = _db(port)
+
+    def fn(tx: Transaction) -> Any:
+        return boundary_runner.run_boundary_actions(tx, ["read", "join", "update"], database=db)
+
+    result = db.transact(fn)
+    assert result.value is not None
+    assert result.value.balance == Decimal("251.00")
+    assert len(port.writes) == 1
+    # One log, one attempt: the join opened no second boundary.
+    assert len(result.execution_log.attempts) == 1
+    assert [type(trace).__name__ for trace in result.execution.traces] == [
+        "ReadTrace",
+        "WriteBatchTrace",
+    ]
+
+
+def test_a_join_without_the_owning_database_is_refused() -> None:
+    port = _FakePort(rows=[])
+
+    def fn(tx: Transaction) -> Any:
+        return boundary_runner.run_boundary_actions(tx, ["join"])
+
+    with pytest.raises(AssertionError, match="needs the Database that opened the boundary"):
+        _db(port).transact(fn)
 
 
 def test_run_boundary_actions_create() -> None:
@@ -146,7 +178,7 @@ def test_run_boundary_actions_create() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, ["create"])
 
-    result = _db(port).transact(fn)
+    result = _db(port).transact(fn).value
     assert result is not None
     assert result.id == 90
     assert len(port.writes) == 1
@@ -158,7 +190,7 @@ def test_run_boundary_actions_read_then_delete() -> None:
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, ["read", "delete"])
 
-    result = _db(port).transact(fn)
+    result = _db(port).transact(fn).value
     assert result is None
     assert len(port.writes) == 1
 
@@ -258,7 +290,7 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, ["read", "update"])
 
-    result = db.transact(fn)
+    result = db.transact(fn).value
     assert result is not None
     assert result.balance == Decimal("251.00")
     assert port.attempts == 2  # the faulted attempt, then the retried (successful) one

@@ -4,7 +4,12 @@ Snapshot graph materialization and the developer handle over the spine. The
 package re-exports exactly the spec §8 surface: :func:`connect` (the
 composition-root entry point — application code constructs a concrete adapter
 and calls ``parallax.snapshot.connect(adapter, model)``), :class:`Snapshot`
-(``Snapshot[T]``), and :class:`Execution`. :class:`NoResultFound` /
+(``Snapshot[T]``), and the execution-provenance subset a result carries —
+:class:`ReadTrace`, :class:`DatabaseCall`, :class:`ExecutionLog`,
+:class:`TransactionAttempt`, and :class:`TransactionResult`, with
+:class:`TransactionInProgressError` / :class:`TransactionNotCommittedError`
+the two refusals a joined result's execution view raises.
+:class:`NoResultFound` /
 :class:`TooManyResultsFound` are ``Snapshot.result()`` / ``.result_or_none()``'s
 own arity errors. The refusals are :class:`QueryTargetError`, of a query
 whose target the connected model does not declare;
@@ -43,34 +48,46 @@ from parallax.snapshot._inspection import (
 )
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
+    DatabaseCall,
     DeferredFeatureError,
-    Execution,
+    ExecutionLog,
     KeyedWriteValueError,
     NoResultFound,
     QueryTargetError,
+    ReadTrace,
     Snapshot,
     SnapshotConnectionError,
     SnapshotMaterializationError,
     TooManyResultsFound,
+    TransactionAttempt,
+    TransactionInProgressError,
+    TransactionNotCommittedError,
     TransactionOwnershipError,
+    TransactionResult,
     connect,
 )
 from parallax.snapshot.materialize import SnapshotDecodingError
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
+    "DatabaseCall",
     "DeferredFeatureError",
-    "Execution",
+    "ExecutionLog",
     "KeyedWriteValueError",
     "NoResultFound",
     "QueryTargetError",
+    "ReadTrace",
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotDecodingError",
     "SnapshotInspectionError",
     "SnapshotMaterializationError",
     "TooManyResultsFound",
+    "TransactionAttempt",
+    "TransactionInProgressError",
+    "TransactionNotCommittedError",
     "TransactionOwnershipError",
+    "TransactionResult",
     "UnloadedRelationshipError",
     "connect",
     "edge_of",

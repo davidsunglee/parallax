@@ -7,6 +7,7 @@ import decimal
 import json
 import uuid
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 from pathlib import Path
 
 import jsonschema
@@ -857,3 +858,55 @@ def test_run_case_lowers_a_pk_gen_sequence_batch_that_decomposes_per_row() -> No
     # The registry UPDATE + two independent Pass INSERTs (never one collapsed
     # multi-row INSERT — the id list is derived, not authored).
     assert len(envelope["emissions"]) == 3, envelope["emissions"]
+
+
+# --------------------------------------------------------------------------- #
+# The `execution` observation (m-conformance-adapter, m-execution-log): the    #
+# adapter reports the provenance the run PRODUCED, for the cases that author   #
+# the oracle and no others.                                                    #
+# --------------------------------------------------------------------------- #
+class _AccountPort:
+    """Returns the one `account.yaml` row `m-execution-log-001` reads."""
+
+    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+        return [{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
+        raise NotImplementedError
+
+    def transaction[T](self, body: Callable[[DbPort], T]) -> T:  # pragma: no cover
+        return body(self)
+
+
+def test_a_case_authoring_the_oracle_gets_the_provenance_its_run_produced() -> None:
+    case_path = case_format.default_cases_dir() / "m-execution-log-001-standalone-read-trace.yaml"
+    envelope = adapter.run_case(case_path, "postgres", _AccountPort())
+    jsonschema.validate(envelope, _SCHEMA)
+    assert envelope["status"] == "ok", envelope
+    assert envelope["observations"]["execution"] == {
+        "readTrace": {
+            "calls": [
+                {
+                    "kind": "read",
+                    "completion": {"readCompleted": {"returnedRows": 1}},
+                    "statement": 0,
+                }
+            ],
+            "roundTrips": 1,
+        }
+    }
+
+
+def test_a_case_not_authoring_the_oracle_reports_no_execution_observation() -> None:
+    envelope = adapter.run_case(_VO_READ_CASE, "postgres", _FakePort())
+    assert "execution" not in envelope["observations"]
+
+
+def test_a_lane_with_no_single_invocation_to_describe_is_named_loudly() -> None:
+    # A `when.attempts` retry sequence opens one transaction PER attempt, so it
+    # holds no single Execution Log; a case authoring the oracle against such a
+    # lane is mis-authored, and reporting nothing would hide that.
+    case_path = case_format.default_cases_dir() / "m-execution-log-001-standalone-read-trace.yaml"
+    case = case_format.load_case(case_path)
+    with pytest.raises(engine.EngineError, match="no single execution record"):
+        adapter._report_execution(case, {}, None, [])  # pyright: ignore[reportPrivateUsage] - unit test drives the adapter's private observation seam directly

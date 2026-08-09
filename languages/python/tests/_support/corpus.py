@@ -212,3 +212,53 @@ def compare_graph(observed: Mapping[str, Any], expected: Mapping[str, Any]) -> N
     assert _values_equal(observed_wire, expected_wire), (
         f"graph mismatch:\n  observed: {observed_wire!r}\n  expected: {expected_wire!r}"
     )
+
+
+def _execution_mismatch(observed: object, expected: object, path: str) -> str | None:
+    """The first place ``observed`` fails to satisfy the ``expected`` oracle, or
+    ``None``.
+
+    The `then.execution` oracle is a PARTIAL specification (`m-execution-log`):
+    it states attempt, trace, call, and completion structure, and deliberately
+    omits what is not portable — a call's `statement` index on a lane with no
+    golden SQL, a failure's implementation-level `code`. An omitted key is
+    therefore a don't-care, while every authored one must match exactly, and a
+    sequence must match element for element with no length slack: the ORDER
+    traces reached the database in is the assertion.
+    """
+    if isinstance(expected, Mapping):
+        if not isinstance(observed, Mapping):
+            return f"{path}: expected an object, observed {observed!r}"
+        observed_map = cast("Mapping[str, Any]", observed)
+        for key, value in cast("Mapping[str, Any]", expected).items():
+            if key not in observed_map:
+                return f"{path}/{key}: absent from the observed provenance"
+            mismatch = _execution_mismatch(observed_map[key], value, f"{path}/{key}")
+            if mismatch is not None:
+                return mismatch
+        return None
+    if isinstance(expected, list):
+        expected_list = cast("list[Any]", expected)
+        if not isinstance(observed, list):
+            return f"{path}: expected an array, observed {observed!r}"
+        observed_list = cast("list[Any]", observed)
+        if len(observed_list) != len(expected_list):
+            return f"{path}: expected {len(expected_list)} entr(ies), observed {len(observed_list)}"
+        for index, value in enumerate(expected_list):
+            mismatch = _execution_mismatch(observed_list[index], value, f"{path}/{index}")
+            if mismatch is not None:
+                return mismatch
+        return None
+    if observed != expected:
+        return f"{path}: expected {expected!r}, observed {observed!r}"
+    return None
+
+
+def compare_execution(observed: Mapping[str, Any], expected: Mapping[str, Any]) -> None:
+    """Assert an `execution` observation satisfies the case's `then.execution`
+    oracle (m-execution-log)."""
+    mismatch = _execution_mismatch(observed, expected, "execution")
+    assert mismatch is None, (
+        f"execution provenance mismatch — {mismatch}\n"
+        f"  observed: {observed!r}\n  expected: {expected!r}"
+    )

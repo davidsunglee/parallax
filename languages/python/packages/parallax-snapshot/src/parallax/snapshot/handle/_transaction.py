@@ -41,6 +41,7 @@ from parallax.core.entity import (
     FindQuery,
 )
 from parallax.core.entity import Entity as EntityBase
+from parallax.core.execution_log import AttemptRecorder, ExecutionLog
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
@@ -114,10 +115,12 @@ class Transaction:
     """
 
     __slots__ = (
+        "_attempt",
         "_codec",
         "_conn",
         "_construction",
         "_dialect",
+        "_execution_log",
         "_inserted_keys",
         "_inserted_objects",
         "_meta",
@@ -132,6 +135,8 @@ class Transaction:
         dialect: Dialect,
         construction: EntityGraphConstruction | None,
         codec: EntityRowCodec,
+        execution_log: ExecutionLog,
+        attempt: AttemptRecorder,
     ) -> None:
         self._uow = uow
         self._conn = conn
@@ -139,6 +144,13 @@ class Transaction:
         self._dialect = dialect
         self._construction = construction
         self._codec = codec
+        # The invocation's own live log (`m-execution-log`) and the writer for the
+        # attempt this Transaction belongs to. The log spans every attempt and is
+        # the SAME object a joining call's result carries; the recorder is scoped
+        # to this one attempt, and a retry receives a fresh Transaction with a
+        # fresh recorder over the SAME log.
+        self._execution_log = execution_log
+        self._attempt = attempt
         # What THIS transaction buffered an insert of, recorded once per insert
         # (`_record_buffered_insert`) in the two readings the two
         # read-your-own-writes exemptions need — a same-transaction insert IS the
@@ -154,6 +166,18 @@ class Transaction:
         # slot holds the total reading `written_object` answers for any value.
         self._inserted_keys: set[ObservationKey] = set()
         self._inserted_objects: set[WrittenObject | None] = set()
+
+    @property
+    def execution_log(self) -> ExecutionLog:
+        """This invocation's live Execution Log (`m-execution-log`).
+
+        The SAME stable read-only object throughout: its current attempt is
+        ``active`` while this body runs, completed traces appear on it as they
+        close, and it seals when the outermost invocation terminates. It is how a
+        caller that retained the Transaction inspects failed attempts after
+        ``db.transact`` raised and no result exists.
+        """
+        return self._execution_log
 
     def insert(self, instance: EntityBase, *, valid_from: dt.datetime | None = None) -> None:
         """Buffer a keyed ``insert`` of a full instance (the Create Payload,
@@ -545,23 +569,32 @@ class Transaction:
         lowered = preflight_find(query, model=self._meta)
         target, op = lowered.target.canonical, lowered.operation
         lock = read_lock.mode_for(self._uow.settings.concurrency)
+        # The Read Trace bracket opens BEFORE the force-flush, so a batch that
+        # flush produces is appended first and the trace this read closes lands
+        # immediately after it — the read-dependency causality the Execution Log
+        # states positionally (`m-execution-log`).
         if scans_an_axis(op):
-            history_result = self._uow.read(
-                lambda: find_history(op, self._meta, self._dialect, target, self._conn)
-            )
+            with self._attempt.read_trace() as recorder:
+                history_result = self._uow.read(
+                    lambda: find_history(
+                        op, self._meta, self._dialect, target, self._conn, recorder=recorder
+                    )
+                )
             return snapshot_from_history_result(history_result, self._meta, construction)
         observations = ReadObservations()
-        find_result = self._uow.read(
-            lambda: find(
-                op,
-                self._meta,
-                self._dialect,
-                target,
-                self._conn,
-                lock=lock,
-                observations=observations,
+        with self._attempt.read_trace() as recorder:
+            find_result = self._uow.read(
+                lambda: find(
+                    op,
+                    self._meta,
+                    self._dialect,
+                    target,
+                    self._conn,
+                    lock=lock,
+                    observations=observations,
+                    recorder=recorder,
+                )
             )
-        )
         record_observations(self._uow, self._meta, observations)
         return snapshot_from_find_result(find_result, self._meta, construction)
 
@@ -648,6 +681,7 @@ class Transaction:
             query,
             assignments,
             valid_from=valid_from,
+            attempt=self._attempt,
         )
 
     def delete_where(self, query: FindQuery[Any, Any]) -> None:
@@ -666,6 +700,7 @@ class Transaction:
             query,
             (),
             valid_from=None,
+            attempt=self._attempt,
         )
 
     def terminate_where(
@@ -684,6 +719,7 @@ class Transaction:
             query,
             (),
             valid_from=valid_from,
+            attempt=self._attempt,
         )
 
     def update_until_where(
@@ -706,6 +742,7 @@ class Transaction:
             assignments,
             valid_from=valid_from,
             until=until,
+            attempt=self._attempt,
         )
 
     def terminate_until_where(
@@ -725,6 +762,7 @@ class Transaction:
             (),
             valid_from=valid_from,
             until=until,
+            attempt=self._attempt,
         )
 
     def _buffer_predicate_instruction(self, instruction: PredicateWrite) -> None:
@@ -745,7 +783,9 @@ class Transaction:
         buffer through Transaction's own seam"). The typed ``_where`` verbs
         above and the engine converge on the SAME free function below.
         """
-        buffer_predicate_instruction(self._uow, self._meta, self._conn, self._dialect, instruction)
+        buffer_predicate_instruction(
+            self._uow, self._meta, self._conn, self._dialect, instruction, self._attempt
+        )
 
 
 def _materializing(

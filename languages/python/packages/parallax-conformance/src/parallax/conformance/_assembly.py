@@ -24,6 +24,7 @@ re-derives what the projection already settled.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, cast
@@ -36,6 +37,7 @@ from parallax.core.document_codec import (
     occurrence_shape,
     reduce_declared_members,
 )
+from parallax.core.execution_log import ReadCompleted, ReadTrace, TraceRecorder
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -52,7 +54,6 @@ from parallax.core.metamodel import (
 )
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
 from parallax.core.temporal_read import Edge, milestone_edge
-from parallax.snapshot.handle import ExecutedStatement, Execution
 
 __all__ = [
     "AssembledFind",
@@ -359,10 +360,10 @@ def _one_or_none(matched: list[Node]) -> Node | None:
 
 @dataclass(frozen=True, slots=True)
 class AssembledFind:
-    """One graph read's root nodes plus its ordered execution record."""
+    """One graph read's root nodes plus the Read Trace of the calls it issued."""
 
     nodes: tuple[Node, ...]
-    execution: Execution
+    execution: ReadTrace
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,10 +377,10 @@ class AssembledMilestone:
 
 @dataclass(frozen=True, slots=True)
 class AssembledHistory:
-    """A milestone-set read's ordered graphs plus its single-statement execution."""
+    """A milestone-set read's ordered graphs plus its single-call Read Trace."""
 
     graphs: tuple[AssembledMilestone, ...]
-    execution: Execution
+    execution: ReadTrace
 
 
 def find(
@@ -398,12 +399,12 @@ def find(
     """
     root_entity = _entity(meta, target)
     plan = deep_fetch.plan(root_entity, op, meta)
-    statements: list[ExecutedStatement] = []
+    calls = TraceRecorder()
 
     root_compiled = compile_read(
         plan.root_operation, meta, dialect, root_entity, result_form="instance"
     )
-    root_materialized = _execute_compiled(port, dialect, root_compiled, statements)
+    root_materialized = _execute_compiled(port, dialect, root_compiled, calls)
     root_rows = [row.values for row in root_materialized]
 
     assembler = Assembler(meta=meta)
@@ -434,7 +435,7 @@ def find(
         child_compiled = compile_read(
             child_op, meta, dialect, _entity(meta, child_target), result_form="instance"
         )
-        child_materialized = _execute_compiled(port, dialect, child_compiled, statements)
+        child_materialized = _execute_compiled(port, dialect, child_compiled, calls)
         rows = [row.values for row in child_materialized]
         level_nodes.append(
             assembler.attach_level(
@@ -449,7 +450,7 @@ def find(
         )
         level_rows.append(rows)
 
-    return AssembledFind(nodes=tuple(root_nodes), execution=Execution(tuple(statements)))
+    return AssembledFind(nodes=tuple(root_nodes), execution=calls.read_trace())
 
 
 def find_history(
@@ -466,8 +467,8 @@ def find_history(
         )
     entity = _family_root(meta, metadata)
     compiled = compile_read(plan.root_operation, meta, dialect, metadata, result_form="instance")
-    statements: list[ExecutedStatement] = []
-    materialized_rows = _execute_compiled(port, dialect, compiled, statements)
+    calls = TraceRecorder()
+    materialized_rows = _execute_compiled(port, dialect, compiled, calls)
 
     order: list[Edge] = []
     groups: dict[Edge, list[MaterializedReadRow]] = {}
@@ -493,25 +494,28 @@ def find_history(
         )
         for edge in order
     )
-    return AssembledHistory(graphs=graphs, execution=Execution(tuple(statements)))
+    return AssembledHistory(graphs=graphs, execution=calls.read_trace())
 
 
 def _execute_compiled(
-    port: DbPort, dialect: Dialect, compiled: CompiledRead, statements: list[ExecutedStatement]
+    port: DbPort, dialect: Dialect, compiled: CompiledRead, recorder: TraceRecorder
 ) -> list[MaterializedReadRow]:
     """Execute one compiled read, materializing its rows through its OWN
     transform, so a root compile and a child compile can never be crossed."""
     return [
         compiled.materialize_row(row)
-        for row in _execute(port, dialect, compiled.statement, statements)
+        for row in _execute(port, dialect, compiled.statement, recorder)
     ]
 
 
 def _execute(
-    port: DbPort, dialect: Dialect, statement: LoweredStatement, statements: list[ExecutedStatement]
+    port: DbPort, dialect: Dialect, statement: LoweredStatement, recorder: TraceRecorder
 ) -> list[Row]:
+    started = time.perf_counter_ns()
     rows = port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
-    statements.append(ExecutedStatement(statement.sql, statement.binds))
+    recorder.completed(
+        statement, "read", time.perf_counter_ns() - started, ReadCompleted(len(rows))
+    )
     return rows
 
 

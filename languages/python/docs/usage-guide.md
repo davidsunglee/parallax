@@ -24,7 +24,7 @@ def wallet_predicate_delete_is_readless(db: Database) -> list[Entity]:
         tx.delete_where(Wallet.where(Wallet.balance < 200.00))
         return list(tx.find(Wallet.where(Wallet.balance < 200.00)).results())
 
-    return db.transact(fn, concurrency="optimistic")
+    return db.transact(fn, concurrency="optimistic").value
 ```
 
 ## Bitemporal update-until splits head/middle/tail
@@ -129,6 +129,52 @@ def customer_locations_deep_fetch_materializes_the_child_document_too(
     descriptor — never the root's — and a null child document (Location 101)
     collapses to null exactly like a null-address Customer does at the root."""
     return db.find(Customer.where(Customer.all).include(Customer.locations))
+```
+
+## A joined unit of work appends to the OUTER transaction's live Execution Log
+
+Corpus case: `m-execution-log-007`
+
+```python
+def a_joined_unit_of_work_appends_to_the_outer_live_log(db: Database) -> JoinedLog:
+    seen: list[LiveJoin] = []
+
+    def outer(tx: Transaction) -> ExecutionLog:
+        live = tx.execution_log
+        # The attempt is visible before any work completes, so the log never
+        # shows a gap between "the invocation started" and "something happened".
+        status = live.final_attempt.status
+        current = tx.find(Account.where(Account.id == _TARGET_ID)).result()
+        before = len(live.final_attempt.traces)
+
+        def joined_body(joined_tx: Transaction) -> None:
+            joined_tx.update(current.edit(balance=current.balance + _BUMP))
+
+        # A joined call shares the outer transaction rather than opening a
+        # nested one, so its result carries the SAME live log object — and its
+        # common execution view is unavailable until that boundary commits.
+        joined = db.transact(joined_body)
+        try:
+            refusal = type(joined.execution).__name__
+        except TransactionInProgressError as exc:
+            refusal = type(exc).__name__
+        seen.append(
+            LiveJoin(
+                status_while_running=status,
+                traces_before_join=before,
+                # The read's trace was appended as it closed; the joined write is
+                # still buffered, and reaches the database under the OUTER
+                # boundary's own finalization.
+                traces_after_join=len(live.final_attempt.traces),
+                shares_the_outer_log=joined.execution_log is live,
+                sealed_while_running=live.is_sealed,
+                execution_refusal=refusal,
+            )
+        )
+        return live
+
+    result = db.transact(outer)
+    return JoinedLog(live=seen[0], result=result)
 ```
 
 ## Table-per-hierarchy concrete-target read
@@ -606,7 +652,7 @@ Corpus case: `m-read-lock-002`
 
 ```python
 op = Account.where(Account.id == 2)
-db.transact(lambda tx: tx.find(op), concurrency="locking")
+db.transact(lambda tx: tx.find(op), concurrency="locking").value
 ```
 
 ## An optimistic-mode read omits the shared read lock
@@ -615,7 +661,7 @@ Corpus case: `m-read-lock-005`
 
 ```python
 op = Account.where(Account.id == 2)
-db.transact(lambda tx: tx.find(op), concurrency="optimistic")
+db.transact(lambda tx: tx.find(op), concurrency="optimistic").value
 ```
 
 ## Diamond identity: two include paths reaching the same rows share one node
@@ -822,7 +868,7 @@ def insert_then_read_your_own_write(db: Database) -> list[Entity]:
         tx.insert(Account(id=7, owner="Newton", balance=Decimal("5.00")))
         return list(tx.find(Account.where(Account.id == 7)).results())
 
-    return db.transact(fn)  # the dependent find observes the flushed insert
+    return db.transact(fn).value  # the dependent find observes the flushed insert
 ```
 
 ## An aborted update is discarded
@@ -831,7 +877,7 @@ Corpus case: `m-unit-work-002`
 
 ```python
 def aborted_update_is_discarded(db: Database) -> list[Entity]:
-    fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).result()
+    fetched = db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).value.result()
     edited = fetched.edit(balance=Decimal("999.00"))
 
     def doomed(tx: Transaction) -> None:
@@ -841,7 +887,7 @@ def aborted_update_is_discarded(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The same find re-resolves and observes the ORIGINAL balance, not 999.00.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 1))).value.results())
 ```
 
 ## Foreign-key-ordered inserts in one transaction
@@ -879,7 +925,7 @@ def callback_value_withheld_on_abort(db: Database) -> list[Entity]:
         tx.find(Account.where(Account.id == 1))  # forces the flush
         raise RuntimeError("abort")  # even the force-flushed write is rolled back
 
-    return db.transact(fn)  # raises — no value is returned as though durable
+    return db.transact(fn).value  # raises — no value is returned as though durable
 ```
 
 ## Keyed update, observed in-transaction
@@ -893,7 +939,7 @@ def keyed_update_observed_in_transaction(db: Database) -> list[Entity]:
         tx.update(current.edit(balance=Decimal("175.00")))
         return list(tx.find(Account.where(Account.id == 1)).results())
 
-    return db.transact(fn)
+    return db.transact(fn).value
 ```
 
 ## Keyed delete, observed in-transaction
@@ -907,7 +953,7 @@ def keyed_delete_observed_in_transaction(db: Database) -> list[Entity]:
         tx.delete(current)
         return list(tx.find(Account.where(Account.id == 3)).results())
 
-    return db.transact(fn)  # [] — the dependent find observes the deletion
+    return db.transact(fn).value  # [] — the dependent find observes the deletion
 ```
 
 ## Create, then later delete, a parent/child pair
@@ -962,7 +1008,7 @@ def one_flush_combined_mixed_verb_order(db: Database) -> list[Entity]:
         tx.delete(deleted)
         return list(tx.find(Account.where(Account.balance < 50.00)).results())
 
-    return db.transact(fn)  # observe, then one flush: insert, update, delete — then the find
+    return db.transact(fn).value  # observe, then one flush: insert, update, delete — then the find
 ```
 
 ## An aborted insert never becomes durable
@@ -978,7 +1024,7 @@ def aborted_insert_never_becomes_durable(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted insert was discarded: the find observes NO rows for account 7.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 7))).value.results())
 ```
 
 ## An aborted delete leaves the row standing
@@ -996,7 +1042,7 @@ def aborted_delete_leaves_the_row_standing(db: Database) -> list[Entity]:
     with contextlib.suppress(RuntimeError):
         db.transact(doomed)
     # The aborted delete was discarded: account 3 still stands.
-    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).results())
+    return list(db.transact(lambda tx: tx.find(Account.where(Account.id == 3))).value.results())
 ```
 
 ## A close settles against the milestone its own find observed

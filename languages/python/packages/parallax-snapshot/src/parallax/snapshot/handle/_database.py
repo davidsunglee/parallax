@@ -32,11 +32,13 @@ bite on.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final
 
 from parallax.core.auto_retry import run_with_retry
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES, Dialect
 
@@ -57,6 +59,14 @@ from parallax.core.entity import (
     row_codec_of,
 )
 from parallax.core.entity._model import class_index, model_of
+from parallax.core.execution_log import (
+    AttemptRecorder,
+    ExecutionLogBuilder,
+    RetryPolicy,
+    TransactionResult,
+    WriteBatchTrigger,
+    WriteCompleted,
+)
 from parallax.core.metamodel import Metamodel
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
@@ -321,7 +331,7 @@ class Database:
         retries: int | None = None,
         concurrency: Concurrency | None = None,
         retry_optimistic_conflicts: bool | None = None,
-    ) -> T:
+    ) -> TransactionResult[T]:
         """Run ``fn(tx)`` in a transaction, returning its value only after commit.
 
         Every option is sentinel-backed (spec §5): ``None`` means *apply the
@@ -338,6 +348,14 @@ class Database:
         owns commit, abort, and the ``m-auto-retry`` bounded retry loop; abort
         withholds the callback value, and an inner failure dooms the whole
         transaction (rollback-only) even if caught.
+
+        The result carries the callback value together with the invocation's
+        whole :class:`~parallax.core.execution_log.ExecutionLog`
+        (`m-execution-log`), which spans every physical attempt. A JOINING call's
+        result carries the OUTER transaction's same live log rather than a
+        fictitious nested one, so its
+        :attr:`~parallax.core.execution_log.TransactionResult.execution` view is
+        unavailable until that boundary commits.
         """
         active = active_unit_of_work()
         if active is not None:
@@ -363,7 +381,7 @@ class Database:
             # The join path returns immediately and ignores these arguments in
             # favor of the active transaction's own (m-unit-work); rollback-only
             # foreclosure happens before the closure runs.
-            return run_unit_of_work(
+            joined = run_unit_of_work(
                 lambda _: fn(demarcation.tx),
                 settings=active.settings,
                 clock=active.clock,
@@ -372,6 +390,7 @@ class Database:
                 planner=self._planner,
                 subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
             )
+            return TransactionResult(value=joined, execution_log=demarcation.tx.execution_log)
         options = _ResolvedOptions(
             retries=retries if retries is not None else 10,
             concurrency=concurrency if concurrency is not None else "locking",
@@ -387,21 +406,46 @@ class Database:
         construction = self._connected.construction
         codec = self._connected.codec
 
+        # Constructed BEFORE the retry loop, because one Execution Log describes
+        # one LOGICAL invocation and spans every physical attempt the loop runs
+        # (`m-execution-log`): a log owned by an attempt could not survive the
+        # attempt that failed.
+        log = ExecutionLogBuilder(
+            concurrency=options.concurrency,
+            retry_policy=RetryPolicy(
+                max_retries=options.retries,
+                retry_optimistic_conflicts=options.retry_optimistic_conflicts,
+            ),
+        )
+
         def attempt() -> T:
+            # The loop opened this attempt before calling, so the recorder writes
+            # to the attempt already visible as `active`.
+            recorder = log.current
+
             def in_txn(conn: DbPort) -> T:
                 def body(uow: UnitOfWork) -> T:
-                    tx = Transaction(uow, conn, self._meta, self._dialect, construction, codec)
+                    tx = Transaction(
+                        uow,
+                        conn,
+                        self._meta,
+                        self._dialect,
+                        construction,
+                        codec,
+                        log.view(),
+                        recorder,
+                    )
                     # Published for joining calls; visible only while core's
                     # active-transaction binding is, so it needs no cleanup.
                     uow.companion = _Demarcation(tx=tx, options=options, owner=self)
                     return fn(tx)
 
-                return run_unit_of_work(
+                value = run_unit_of_work(
                     body,
                     settings=TransactionSettings(concurrency=options.concurrency),
                     clock=self._clock,
                     meta=model,
-                    flush_executor=_flush_executor(conn, model, self._dialect),
+                    flush_executor=_flush_executor(conn, model, self._dialect, recorder),
                     # The injected Write Planner — `parallax.snapshot.handle`
                     # is the sole module cleared to import both `batch_write`
                     # and `m-unit-work`, so it alone builds the strategy
@@ -411,16 +455,38 @@ class Database:
                     planner=self._planner,
                     subject_identity=_UNATTRIBUTED_SUBJECT_IDENTITY,
                 )
+                # The body and its finalization batch are done; anything that
+                # fails from here is the durability boundary itself, which
+                # records no call of its own.
+                recorder.entering_commit()
+                return value
 
-            return self._port.transaction(in_txn)
+            try:
+                value = self._port.transaction(in_txn)
+            except BaseException as exc:
+                # The composition root knows WHERE the attempt failed; the retry
+                # loop knows only whether the classifier licenses another one, and
+                # applies that verdict afterwards through `log.attempt_failed`.
+                recorder.failed(exc)
+                raise
+            recorder.committed()
+            return value
 
-        return run_with_retry(
-            attempt,
-            retries=options.retries,
-            extra_retriable=(
-                _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
-            ),
-        )
+        try:
+            value = run_with_retry(
+                attempt,
+                retries=options.retries,
+                extra_retriable=(
+                    _optimistic_conflict_retriable if options.retry_optimistic_conflicts else None
+                ),
+                on_attempt=log,
+            )
+        finally:
+            # The invocation has terminated either way, so the graph seals either
+            # way: a caller that retained the Transaction reads a sealed log
+            # describing the attempts that failed.
+            log.seal()
+        return TransactionResult(value=value, execution_log=log.view())
 
 
 def _optimistic_conflict_retriable(exc: BaseException) -> bool:
@@ -478,7 +544,9 @@ def _refuse_conflict(name: str, explicit: object | None, active_value: object) -
         )
 
 
-def _flush_executor(conn: DbPort, model: Metamodel, dialect: Dialect) -> FlushExecutor:
+def _flush_executor(
+    conn: DbPort, model: Metamodel, dialect: Dialect, attempt: AttemptRecorder
+) -> FlushExecutor:
     """The unit of work's injected flush sink: lower each planned step, execute
     every statement in order, and hand each result back to the unit of work to
     interpret.
@@ -495,13 +563,32 @@ def _flush_executor(conn: DbPort, model: Metamodel, dialect: Dialect) -> FlushEx
     this reports only the driver's count to
     :func:`~parallax.core.unit_work.enforce_affected_rows`, which owns the
     authoritative reading of the step's Affected Rows Policy (ADR 0048).
+
+    One flush is ONE Write Batch Trace (`m-execution-log`) carrying the unit of
+    work's own trigger, however many statements the plan lowers to — a batch is a
+    flush, not a statement. A shortfall raised by the enforcer therefore fails
+    INSIDE the batch's own bracket, which is what lets the attempt's failure name
+    the completed call the enforcement rejected: the call reached the database
+    and reported a count, so it stays a completion.
     """
 
-    def execute(plan: WritePlan) -> None:
-        for step, statement in stream_lowered(plan, model, dialect):
-            affected = conn.execute_write(
-                dialect.to_driver_sql(statement.sql), list(statement.binds)
-            )
-            enforce_affected_rows(step, affected)
+    def execute(plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+        with attempt.write_batch(trigger) as recorder:
+            for step, statement in stream_lowered(plan, model, dialect):
+                started = time.perf_counter_ns()
+                try:
+                    affected = conn.execute_write(
+                        dialect.to_driver_sql(statement.sql), list(statement.binds)
+                    )
+                except DatabaseError as exc:
+                    recorder.failed(statement, "write", time.perf_counter_ns() - started, exc)
+                    raise
+                recorder.completed(
+                    statement,
+                    "write",
+                    time.perf_counter_ns() - started,
+                    WriteCompleted(affected),
+                )
+                enforce_affected_rows(step, affected)
 
     return execute

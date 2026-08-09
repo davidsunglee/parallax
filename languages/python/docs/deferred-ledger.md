@@ -213,32 +213,6 @@ wire shape, and bounded-memory streaming. It needs its own grilling session and
 ticket after conformance has been reduced to the production path; COR-93 must not
 combine that semantic migration with deleting the duplicate engine.
 
-### D-60 — The `m-execution-log` enforcement scope is declared in `python.md` §7 but generates no import-linter contract
-
-*Low — a declared scope with nothing under it yet.* Relates to
-`languages/python/spec/python.md` §7, `languages/python/tools/check_dag_sync.py`,
-`core/spec/modules.md`, `core/spec/m-snapshot-read.md`.
-
-**What.** §7 maps `m-execution-log` onto `parallax.core.execution_log`, but
-`MODULE_SCOPE` does not carry the entry and the generated
-`[tool.importlinter]` block therefore has no contract for it. Three consequences
-follow while that holds: nothing enforces what the scope may import;
-`core/spec/modules.md` cannot yet carry the `m-snapshot-read --> m-execution-log`
-edge — `check_dag_sync.build_adjacency` refuses an edge from a mapped module to
-an unmapped one, so declaring it would fail generation; and `m-snapshot-read.md`
-therefore still names no Read Trace as the record its round-trip count is
-observed through, because naming another module's entity IS that edge and cannot
-precede it.
-
-**Why it is deferred rather than fixed.** import-linter refuses a `forbidden`
-contract whose `source_modules` names a module that does not exist
-(`Module 'parallax.core.execution_log' does not exist.`), so the mapping cannot
-be registered before the module has source. Registering it early would mean
-committing an empty package purely to satisfy a generator. All three — the
-`MODULE_SCOPE` entry, the incoming `m-snapshot-read` edge, and the
-`m-snapshot-read.md` amendment that edge carries — land with the module's own
-source, at which point this entry closes.
-
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a
@@ -254,6 +228,7 @@ prose.
 - **D-51** → [COR-67](https://linear.app/flimflam/issue/COR-67/triage-residual-defects-and-coverage-gaps-surfaced-by-cor-64) P6, item 6d. A defining to-one whose foreign key sits on the target side.
 - **D-52** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). The silent unbinding it describes was already gone: [COR-89](https://linear.app/flimflam/issue/COR-89/let-an-operation-reference-name-a-namespaced-entity-and-migrate-the) made `targets(model)` register canonical spellings unconditionally and every serialized surface emit `identity.canonical`, so no in-tree producer can supply an ambiguous one. What COR-51 added is classification at the external-producer boundary — `unit_work.instructions._entity` and `snapshot.handle._read._metadata` both raise `reference-ambiguous-entity-name` — so a spelling arriving from outside is one refusal naming both candidates rather than a missing observation binding.
 - **D-57** → closed by [COR-51](https://linear.app/flimflam/issue/COR-51/integrate-snapshot-writes-and-remove-legacy-frontend-surfaces). `_identity_row` applies `serialize_member`, so all three Entity Row Codec operations carry one form; `python.md` §5 states that uniform contract in place of the asymmetry, and no golden moved, because a primary key is structurally a scalar Attribute that `serialize_member` passes through unchanged.
+- **D-60** → closed by this claim. The module's own source landed, so `MODULE_SCOPE` carries `parallax.core.execution_log`, the generated `[tool.importlinter]` block contracts it, `core/spec/modules.md` carries `m-snapshot-read --> m-execution-log`, and `m-snapshot-read.md` names the Read Trace its round-trip count is observed through. One consequence the entry did not foresee: that edge puts `m-sql` inside the transitive closure of the `parallax.snapshot.materialize` grant, so the `_materializer` child scope is no longer forbidden SQL generation — recorded in `tests/unit/test_dag_sync.py`, whose canaries now probe `m-read-lock` instead.
 - **D-59** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). `then.execution` has one grader; `spec/python.md` §1 carries the single-witness limit.
 - **D-61** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The envelope half: `validate_execution_observation` has no envelope-grading seam, and `core/spec/m-conformance-adapter.md` *Execution provenance* binds the adapter regardless.
 

@@ -189,10 +189,22 @@ and the implementation-level error type name are omitted from the portable
 oracle and are checked only against their general API contracts. The shape is a
 **case assertion format, not a public serialization contract**.
 
-Two of the seven — retry exhaustion and joined live-to-sealed — turn on injected
-faults and a nested boundary that a single-connection harness cannot provoke, so
-they are authored on the `api-conformance` lane and satisfied by each language's
-API Conformance Suite (`m-api-conformance`).
+Three of the seven — retry then commit, retry exhaustion, and joined
+live-to-sealed — turn on injected faults, a re-executed closure, and a nested
+boundary that a single-connection harness cannot provoke, so they are authored on
+the `api-conformance` lane and satisfied by each language's API Conformance Suite
+(`m-api-conformance`). A **retry** in particular is not the ordered
+`when.attempts` sequence a `conflict` case authors: that form states each
+attempt's own write and each attempt is its own invocation, whereas a retry
+re-executes ONE invocation's closure, which is what makes its attempts share one
+Execution Log. The four that stay on the harness lane carry golden SQL, and a
+call there names its statement by index into it.
+
+A case authoring a `transactionLog` oracle describes **one** logical invocation,
+so it must arrange one: an ordered write sequence is a sequence of independent
+units of work, and two boundaries produce two logs rather than one with two
+batches. Where a case's subject is what ONE boundary flushed, the corpus
+expresses it as a unit-of-work-grouped scenario.
 
 The oracle states a **terminal** value graph, which bounds what the spine proves
 about the live half of the joined lifecycle. That the outer transaction's log is

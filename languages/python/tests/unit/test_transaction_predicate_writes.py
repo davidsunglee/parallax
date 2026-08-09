@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, cast
 
@@ -54,8 +55,10 @@ from parallax.core import (
     inheritance,
 )
 from parallax.core.base import InstantError
-from parallax.core.db_port import JsonDocument, Row
+from parallax.core.db_error import DatabaseError
+from parallax.core.db_port import Bind, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
+from parallax.core.execution_log import DatabaseCallFailed, ExecutionLog
 from parallax.core.op_algebra import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
@@ -506,6 +509,31 @@ def test_materializing_write_with_zero_resolved_rows_writes_nothing() -> None:
     account_db(port).transact(fn)
     assert port.ops == [("begin",), ("read", port.ops[1][1], port.ops[1][2]), ("commit",)]
     assert not any(op[0] == "write" for op in port.ops)
+
+
+def test_a_failed_resolving_read_is_still_recorded_as_the_call_it_made() -> None:
+    # A materializing predicate write reaches the database to resolve its
+    # predicate, so `m-execution-log` owes that round trip an account whether the
+    # call came back with rows or with a failure.
+    class _FailingReadPort(RecordingPort):
+        def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+            raise DatabaseError(
+                category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
+            )
+
+    port = _FailingReadPort()
+    held: list[ExecutionLog] = []
+
+    def fn(tx: Transaction) -> None:
+        held.append(tx.execution_log)
+        tx.delete_where(mm.Account.where(mm.Account.balance < 0))
+
+    with pytest.raises(DatabaseError):
+        account_db(port).transact(fn, retries=0)
+    attempt = held[0].final_attempt
+    assert attempt.round_trips == 1
+    assert isinstance(attempt.calls[0].completion, DatabaseCallFailed)
+    assert attempt.calls[0].kind == "read"
 
 
 def _two_terminate_rows() -> list[Row]:

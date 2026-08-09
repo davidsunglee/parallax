@@ -30,7 +30,9 @@ from parallax.core.unit_work import (
     TransactionSettings,
     UnitOfWork,
     VersionObservation,
+    WriteBatchTrigger,
     WriteObservation,
+    WritePlan,
     run_unit_of_work,
 )
 from parallax.snapshot.handle import build_write_planner
@@ -47,6 +49,11 @@ _TX_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _VALID_START = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _RATE_TX_START = dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
 _INFINITY = INFINITY
+
+
+def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
+    """A flush sink for a test that never flushes."""
+    return None
 
 
 def _slot(
@@ -100,7 +107,7 @@ def _recorded(
         settings=TransactionSettings(),
         clock=FixedClock(_FIXED),
         meta=model,
-        flush_executor=lambda _plan: None,
+        flush_executor=_no_flush,
         planner=build_write_planner(model),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )
@@ -233,7 +240,7 @@ def test_two_reads_of_one_milestone_at_different_pins_share_one_observation_slot
         settings=TransactionSettings(),
         clock=FixedClock(_FIXED),
         meta=model,
-        flush_executor=lambda _plan: None,
+        flush_executor=_no_flush,
         planner=build_write_planner(model),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )
@@ -261,7 +268,7 @@ def test_every_observed_row_records_under_its_own_key() -> None:
         settings=TransactionSettings(),
         clock=FixedClock(_FIXED),
         meta=model,
-        flush_executor=lambda _plan: None,
+        flush_executor=_no_flush,
         planner=build_write_planner(model),
         subject_identity=TEST_SUBJECT_IDENTITY,
     )

@@ -219,6 +219,7 @@ m-snapshot-read --> m-metamodel
 m-snapshot-read --> m-inheritance
 m-snapshot-read --> m-relationship
 m-snapshot-read --> m-temporal-read
+m-snapshot-read --> m-execution-log
 m-temporal-read --> m-op-algebra
 m-temporal-read --> m-metamodel
 m-temporal-read --> m-model-formation
@@ -385,6 +386,12 @@ construction it may reference any behavioral module it harnesses.
   `m-deep-fetch`; naming them directly is what makes the vocabulary a snapshot
   graph is built from legible to every language target rather than an accident of
   the planner's own closure.
+- **`m-snapshot-read --> m-execution-log`.** A snapshot read's round-trip ceiling
+  is *observed* through the **Read Trace** its result carries, so the read module
+  names the record it publishes. The direction is the only one available:
+  execution provenance is a composition-level observer with no reason to know
+  what a materialized graph is, and the reverse edge would make the observed
+  depend on its observer.
 - **`m-opt-lock --> m-temporal-read`.** For a Transaction-Time Entity the
   optimistic-lock version analogue is derived from `txStart` / physical `in_z`, so
   an optimistic close references the milestoning read model.

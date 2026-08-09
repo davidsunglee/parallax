@@ -1,52 +1,56 @@
 # Finalization Write Batch Trace (m-execution-log): the boundary's own flush is
 # ONE batch carrying the `finalization` trigger.
 #
-# Both writes are buffered and neither is read back, so nothing forces an early
-# flush: the unit of work reaches its boundary with a full buffer and flushes it
-# in one pass. The Execution Log therefore holds exactly ONE Write Batch Trace,
-# and its trigger is `finalization` — the semantic distinction this case pins
-# down against its sibling m-execution-log-003, where an identical pair of
-# statements is split by a dependent read into a `read-dependency` batch and the
-# read it enabled. Two statements in one batch is the point: a batch is a flush,
-# not a statement, so the trace holds two Database Calls rather than appearing
-# twice.
+# Both writes are buffered in ONE unit of work (the shared `uow` label) and
+# neither is read back, so nothing forces an early flush: the unit of work
+# reaches its boundary with a full buffer and flushes it in one pass. The
+# Execution Log therefore holds exactly ONE Write Batch Trace, and its trigger is
+# `finalization` — the semantic distinction this case pins down against its
+# sibling m-execution-log-003, where an identical buffered insert is forced out
+# early by a dependent read and the batch carries `read-dependency` instead. Two
+# statements in one batch is the point: a batch is a flush, not a statement, so
+# the trace holds two Database Calls rather than appearing twice.
 #
-# The FK ordering is the ordinary m-unit-work rule (the parent Order before the
-# child OrderItem that references it), reused here so the two calls have a
-# deterministic order to assert. Each call is a `write` whose `writeCompleted`
-# reports the single row it affected, and the log's `roundTrips` — one per call,
-# with begin and commit counting none — matches `then.roundTrips`. The one
-# attempt is `committed`, so it carries no failure.
+# The steps must share one unit of work for that to be observable at all: an
+# ordered write SEQUENCE is a sequence of independent units of work, and two
+# independent boundaries would produce two Execution Logs with one call each,
+# which is a different claim entirely. The FK ordering is the ordinary
+# m-unit-work rule (the parent Order before the child OrderItem that references
+# it), reused here so the two calls have a deterministic order to assert. Each
+# call is a `write` whose `writeCompleted` reports the single row it affected,
+# and the log's `roundTrips` — one per call, with begin and commit counting none
+# — matches `then.roundTrips`. The one attempt is `committed`, so it carries no
+# failure.
 model: models/orders.yaml
 tags: [m-execution-log, m-unit-work, write-batch, finalization, slice-snapshot-1]
-shape: writeSequence
+shape: scenario
 when:
-  writeSequence:
-    - mutation: insert
-      entity: parallax.compatibility.Order
-      statements: 1
+  scenario:
+    - uow: batch
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.Order
+          rows:
+            - { id: 300, name: Lovelace, sku: E-1, qty: 2, price: 12.50, active: true, orderedOn: "2024-08-01" }
+      roundTrips: 1
       note: buffer the parent Order; nothing reads it back, so nothing flushes yet
-      rows:
-        - { id: 300, name: Lovelace, sku: E-1, qty: 2, price: 12.50, active: true, orderedOn: "2024-08-01" }
-    - mutation: insert
-      entity: parallax.compatibility.OrderItem
-      statements: 1
-      note: buffer the child OrderItem; the boundary flushes both in one finalization batch
-      rows:
-        - { id: 301, orderId: 300, sku: E-1, quantity: 4 }
+      statements:
+        - sql:
+            postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
+          binds: [300, Lovelace, E-1, 2, 12.50, true, 2024-08-01]
+    - uow: batch
+      write:
+        - mutation: insert
+          entity: parallax.compatibility.OrderItem
+          rows:
+            - { id: 301, orderId: 300, sku: E-1, quantity: 4 }
+      roundTrips: 1
+      note: buffer the child OrderItem in the SAME unit of work; the boundary flushes both in one finalization batch
+      statements:
+        - sql:
+            postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
+          binds: [301, 300, E-1, 4]
 then:
-  statements:
-    - sql:
-        postgres: insert into orders(id, name, sku, qty, price, active, ordered_on) values (?, ?, ?, ?, ?, ?, ?)
-      binds: [300, Lovelace, E-1, 2, 12.50, true, 2024-08-01]
-    - sql:
-        postgres: insert into order_item(id, order_id, sku, quantity) values (?, ?, ?, ?)
-      binds: [301, 300, E-1, 4]
-  tableState:
-    orders:
-      - { id: 300, name: Lovelace, sku: E-1, qty: 2, price: 12.50, active: true, ordered_on: 2024-08-01 }
-    order_item:
-      - { id: 301, order_id: 300, sku: E-1, quantity: 4, shipped_on: null }
   roundTrips: 2
   execution:
     transactionLog:

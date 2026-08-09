@@ -1922,8 +1922,9 @@ or descriptor authoring form and performs no audit stamping.
   are shareable but not hashable. `Snapshot[T]`'s
   complete surface: `result()`, `result_or_none()`, `results()` (a fresh
   `list[T]` per call), `pin` (the lowered as-of coordinates), `execution`
-  (per-query-execution `sql`, `binds`, informational `duration`, and `round_trips`,
-  mirroring the adapter emission convention), and `__repr__`. Deliberately
+  (the read's own Read Trace — each Database Call's Lowered Statement,
+  informational `duration_ns`, and completion, plus `round_trips`;
+  `m-execution-log`), and `__repr__`. Deliberately
   absent: iteration/len/truthiness/indexing on the container, refresh or
   write methods, and any lazy behavior. Accessors are pure in-memory reads.
 - **Graph-local identity.** Within one materialized graph, one node per
@@ -2682,9 +2683,9 @@ or descriptor authoring form and performs no audit stamping.
   the active transaction's settings when this call joins one*. The closure
   receives the Parallax Transaction (`def fn(tx): ...`),
   `tx.find(op)` reads inside the transaction (participating per the selected
-  mode), and the callback's return value is returned **only after a durable
-  commit** — on rollback, or on commit failure, the call raises instead of
-  returning the value as though durable. A `with`-block demarcation is
+  mode), and the call returns a `TransactionResult[T]` carrying that callback's
+  `.value` **only after a durable commit** — on rollback, or on commit failure,
+  the call raises instead of returning the value as though durable. A `with`-block demarcation is
   deliberately not offered: the core retry contract requires re-executing the
   closure, which a `with` block cannot do; a decorator form is a possible
   additive future. Bounded automatic retry follows core: deadlock-category
@@ -2692,6 +2693,18 @@ or descriptor authoring form and performs no audit stamping.
   loop, exhaustion surfaces diagnosably with the attempt count;
   optimistic-lock conflicts join the retriable set only via
   `retry_optimistic_conflicts=True`.
+- **Execution provenance.** The `TransactionResult[T]` a `db.transact` call
+  returns carries the invocation's whole `ExecutionLog` (`m-execution-log`)
+  beside the callback value, and `.execution` is the common view of it — the
+  committed attempt. The same live log object is reachable from the closure's own
+  `tx.execution_log` while the body runs, which is how a caller inspects the
+  attempts of an invocation that raised and returned no result. A JOINING call's
+  result carries the OUTER transaction's same log rather than a fictitious nested
+  one, so its `.execution` raises `TransactionInProgressError` while that
+  boundary is active and `TransactionNotCommittedError` if it later rolls back.
+  A participating `tx.find` shares its `ReadTrace` object with the attempt that
+  issued it, so `snapshot.execution` and `tx.execution_log` never disagree about
+  what a level cost.
 - **Nesting, ownership, and participation mode.** A `db.transact` call while
   a transaction is already active on the current thread **joins** it, but only
   through the exact `Database` object that opened the boundary. The outermost
@@ -3522,8 +3535,8 @@ legalizes a forbidden edge.
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship` | generated forbidden contracts |
-| `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| `m-snapshot-read` | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-log`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot Graph Input carriers (support edge of the snapshot materialization scope) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input` | generated forbidden contracts |
@@ -3612,6 +3625,7 @@ parallax.snapshot.handle --> parallax.core.sql_gen
 parallax.snapshot.handle --> parallax.core.unit_work
 parallax.snapshot.handle --> parallax.core.read_lock
 parallax.snapshot.handle --> parallax.core.auto_retry
+parallax.snapshot.handle --> parallax.core.execution_log
 parallax.snapshot.handle --> parallax.core.opt_lock
 parallax.snapshot.handle --> parallax.core.batch_write
 parallax.snapshot.handle --> parallax.core.txtime_write
@@ -3855,7 +3869,7 @@ hatchling.
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Find Query authoring vocabulary — `FindQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `Execution`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 
