@@ -2,8 +2,9 @@
 
 SQL generation: the three-stage read compiler (canonicalize -> lower ->
 normalize) that turns an ``m-op-algebra`` operation into one canonical
-``Statement`` per dialect. Dialect variation enters only through the injected
-``Dialect`` strategy. ``m-sql`` depends on ``m-op-algebra`` and ``m-dialect``.
+``LoweredStatement`` per dialect. Dialect variation enters only through the
+injected ``Dialect`` strategy. ``m-sql`` depends on ``m-op-algebra`` and
+``m-dialect``.
 
 The seven names below are the whole supported seam; everything else in this
 package is private implementation. ``compile_read`` returns a self-contained
@@ -63,9 +64,9 @@ from __future__ import annotations
 from parallax.core.sql_gen._compile import (
     CompiledPredicate,
     CompiledRead,
+    LoweredStatement,
     MaterializedReadRow,
     SqlGenError,
-    Statement,
     compile_read,
     compile_write_predicate,
 )
@@ -73,9 +74,9 @@ from parallax.core.sql_gen._compile import (
 __all__ = [
     "CompiledPredicate",
     "CompiledRead",
+    "LoweredStatement",
     "MaterializedReadRow",
     "SqlGenError",
-    "Statement",
     "compile_read",
     "compile_write_predicate",
 ]

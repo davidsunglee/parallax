@@ -50,7 +50,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
+from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
 from parallax.core.temporal_read import Edge, milestone_edge
 from parallax.snapshot.handle import ExecutedStatement, Execution
 
@@ -508,7 +508,7 @@ def _execute_compiled(
 
 
 def _execute(
-    port: DbPort, dialect: Dialect, statement: Statement, statements: list[ExecutedStatement]
+    port: DbPort, dialect: Dialect, statement: LoweredStatement, statements: list[ExecutedStatement]
 ) -> list[Row]:
     rows = port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
     statements.append(ExecutedStatement(statement.sql, statement.binds))

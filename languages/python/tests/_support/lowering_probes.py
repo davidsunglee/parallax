@@ -15,7 +15,7 @@ from _support.clock_probes import inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import Statement
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     Concurrency,
     PlanningRequest,
@@ -38,7 +38,7 @@ def lower_instruction(
     tx_instant: TransactionInstant | None = None,
     *,
     observation: WriteObservation | None = None,
-) -> list[Statement]:
+) -> list[LoweredStatement]:
     """Every statement one instruction plans and lowers to, in execution order."""
     return [
         statement
@@ -56,7 +56,7 @@ def lower_instruction_steps(
     tx_instant: TransactionInstant | None = None,
     *,
     observation: WriteObservation | None = None,
-) -> list[tuple[PlannedStep, Statement]]:
+) -> list[tuple[PlannedStep, LoweredStatement]]:
     """The same, paired with the settled step each statement came from."""
     return list(_stream(instruction, model, dialect, concurrency, tx_instant, observation))
 
@@ -68,7 +68,7 @@ def _stream(
     concurrency: Concurrency,
     tx_instant: TransactionInstant | None,
     observation: WriteObservation | None,
-) -> list[tuple[PlannedStep, Statement]]:
+) -> list[tuple[PlannedStep, LoweredStatement]]:
     instant = inert_instant() if tx_instant is None else tx_instant
     plan = build_write_planner(model).plan(
         PlanningRequest(

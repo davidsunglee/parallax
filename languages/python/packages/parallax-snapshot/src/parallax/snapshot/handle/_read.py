@@ -49,7 +49,7 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.sql_gen import CompiledRead, MaterializedReadRow, Statement, compile_read
+from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
 from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
@@ -553,7 +553,7 @@ def _execute_compiled(
 
 
 def _execute(
-    port: DbPort, dialect: Dialect, statement: Statement, statements: list[ExecutedStatement]
+    port: DbPort, dialect: Dialect, statement: LoweredStatement, statements: list[ExecutedStatement]
 ) -> list[Row]:
     started = time.perf_counter()
     rows = port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))

@@ -4,7 +4,7 @@ The adapter path compiles and runs a compatibility case directly against the
 class-free engine spine (no dynamic class synthesis): the case's model YAML is
 ingested through the ``m-descriptor`` deserializer, its ``when.operation`` through
 the ``m-op-algebra`` deserializer, and the tree is lowered by ``m-sql``
-``compile_read`` to one ``CompiledRead`` — its canonical ``Statement`` together
+``compile_read`` to one ``CompiledRead`` — its canonical ``LoweredStatement`` together
 with the row transform that statement's own resolved position decided.
 ``compile`` emits that statement; ``run`` executes it through the injected
 ``m-db-port``, renders each observed row to wire form, and passes it through the
@@ -58,7 +58,7 @@ from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
-from parallax.core.sql_gen import CompiledRead, SqlGenError, Statement, compile_read
+from parallax.core.sql_gen import CompiledRead, LoweredStatement, SqlGenError, compile_read
 from parallax.core.temporal_read import (
     Pin,
     TemporalReadError,
@@ -778,7 +778,7 @@ class _LoweredStep:
     """One lowered scenario step: its emission pointer and DML, and how to run it."""
 
     pointer: str
-    statements: tuple[Statement, ...]
+    statements: tuple[LoweredStatement, ...]
     is_write: bool
     rollback: bool
 
@@ -1853,7 +1853,7 @@ def _lower_resolved(
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: str,
-) -> tuple[Statement, ...]:
+) -> tuple[LoweredStatement, ...]:
     """Plan one write buffer through the SAME ``build_write_planner`` factory
     the composition layer uses (`parallax.snapshot.handle.Database.transact`)
     and lower each survivor — PURE, no database. The planner is the ONE
@@ -1891,7 +1891,7 @@ def _lower_writes(
     shadow: TemporalShadow,
     tx_instant: str,
     scenario_observations: ScenarioObservations,
-) -> tuple[Statement, ...]:
+) -> tuple[LoweredStatement, ...]:
     """Resolve and PURE-lower one write buffer — the COMPILE lane's own
     lowering, and the RUN lane's emissions/round-trips oracle (`_execute_write_unit`
     resolves its own entries via :func:`_resolve_entries` and reuses
@@ -1903,7 +1903,7 @@ def _lower_writes(
 
 def _lower_predicate_write_step(
     raw_write: Mapping[str, object], meta: Metamodel, dialect: Dialect, concurrency: Concurrency
-) -> Statement:
+) -> LoweredStatement:
     """Lower a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) to its ONE statement — PURE, no database. Deserializes +
     validates the canonical instruction, then reuses the SAME
@@ -1957,7 +1957,7 @@ def _compile_find(
     """Compile a scenario ``find`` step through the read path with the read-lock suffix.
 
     The whole :class:`~parallax.core.sql_gen.CompiledRead` is returned rather
-    than its :class:`~parallax.core.sql_gen.Statement` alone: a step's emission
+    than its :class:`~parallax.core.sql_gen.LoweredStatement` alone: a step's emission
     is graded on the statement, but a GROUPED find additionally resolves each
     returned row to its own concrete Entity (:func:`_observe_group_find`), and
     that resolution belongs to the compiled read that projected the row.
@@ -1994,7 +1994,7 @@ def _compile_find(
     a residual "mirrors production" gap to close. The case-driven engine has
     no typed Python entity classes at all (a scenario step is a raw,
     case-authored dict naming `targetEntity` + a serialized operation), so
-    there is no `Statement` to hand a production seam — `Transaction.find`
+    there is no `LoweredStatement` to hand a production seam — `Transaction.find`
     itself REQUIRES one. Re-routing through a production API would mean
     inventing a new one solely to serve this untyped input, the opposite of
     engine-thinning; this function stays the adapter's own translation from
@@ -2085,7 +2085,7 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
 
 def _write_sequence_lowered(
     case: case_format.Case, dialect_name: str
-) -> list[tuple[str, tuple[Statement, ...]]]:
+) -> list[tuple[str, tuple[LoweredStatement, ...]]]:
     """Lower each writeSequence entry independently to ``(pointer, statements)`` —
     pure. One :class:`TemporalShadow` spans the whole sequence:
     a later entry's temporal close/chain observes an earlier
@@ -2124,7 +2124,9 @@ def _write_sequence_lowered(
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
-def _emissions(pointer_statements: Sequence[tuple[str, Sequence[Statement]]]) -> list[Emission]:
+def _emissions(
+    pointer_statements: Sequence[tuple[str, Sequence[LoweredStatement]]],
+) -> list[Emission]:
     return [
         Emission(pointer, statement.sql, statement.binds)
         for pointer, statements in pointer_statements
@@ -2666,15 +2668,15 @@ def _run_materializing_pair(
     # statement's SQL must round-trip back through `dialect.from_driver_sql`
     # before joining them; the binds themselves need no translation (the
     # framework's own pre-adapter values, the same shape a pure re-lowering's
-    # `Statement.binds` already carries).
+    # `LoweredStatement.binds` already carries).
     resolve_sql, resolve_binds = capture.captured[0]
     write_statements = tuple(
-        Statement(dialect.from_driver_sql(sql), binds) for sql, binds in capture.captured[1:]
+        LoweredStatement(dialect.from_driver_sql(sql), binds) for sql, binds in capture.captured[1:]
     )
     return [
         _LoweredStep(
             f"/scenario/{index}/find",
-            (Statement(dialect.from_driver_sql(resolve_sql), resolve_binds),),
+            (LoweredStatement(dialect.from_driver_sql(resolve_sql), resolve_binds),),
             False,
             False,
         ),
@@ -3818,7 +3820,7 @@ def run_write_sequence_case(
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
     scenario_observations: ScenarioObservations = {}
-    lowered: list[tuple[str, tuple[Statement, ...]]] = []
+    lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     try:
         _seed_shadow_from_fixtures(case, meta, shadow)
         for index, entry in enumerate(_write_sequence_entries(case)):
@@ -3859,7 +3861,9 @@ def read_table_state(
     return state
 
 
-def _execute_reads(port: DbPort, dialect: Dialect, statements: Sequence[Statement]) -> list[Row]:
+def _execute_reads(
+    port: DbPort, dialect: Dialect, statements: Sequence[LoweredStatement]
+) -> list[Row]:
     """Execute every statement and return the LAST one's rows — a scenario find
     step is always single-statement (:func:`_compile_find`), so ``statements`` is
     always a one-tuple in practice; the raw, COLUMN-keyed rows are a GROUPED
@@ -4029,7 +4033,7 @@ def _lower_conflict_write(
     dialect: Dialect,
     concurrency: Concurrency,
     resolved: Sequence[_ConflictWrite],
-) -> tuple[Statement, ...]:
+) -> tuple[LoweredStatement, ...]:
     """PURE-lower one NON-TEMPORAL conflict attempt's resolved ``write`` rows:
     plan the whole buffer through the SAME ``build_write_planner`` factory the
     composition layer uses (`parallax.snapshot.handle.Database.transact`) and
@@ -4109,7 +4113,7 @@ def _run_conflict_write(
     concurrency: Concurrency,
     write_rows: Sequence[Mapping[str, object]],
     mutation: Literal["update", "delete"],
-) -> tuple[tuple[Statement, ...], int]:
+) -> tuple[tuple[LoweredStatement, ...], int]:
     """Lower and execute one NON-TEMPORAL conflict attempt's write through
     ``db.transact`` — ONE
     transaction, an inert Clock (never consumed by a non-temporal write).
@@ -4176,7 +4180,7 @@ def _run_conflict_close(
     observed_tx_start: str | None,
     observed_valid_start: str | None,
     shadow: TemporalShadow,
-) -> tuple[tuple[Statement, ...], int]:
+) -> tuple[tuple[LoweredStatement, ...], int]:
     """Lower and execute one TEMPORAL conflict attempt's close through
     ``db.transact`` — ONE
     transaction, ``clock=FixedClock(at)``. Composes the SAME two halves

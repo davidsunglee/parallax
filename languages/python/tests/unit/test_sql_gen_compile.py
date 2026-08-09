@@ -1,7 +1,7 @@
 """Ordinary read assembly (m-sql lowering): projection, directives, clause tail.
 
 The non-family, non-navigation, non-value-object lane of the read compiler: the
-supported six-name interface and its value semantics, the `Statement` value
+supported six-name interface and its value semantics, the `LoweredStatement` value
 itself, ordinary scalar/row projection, result-shaping directive composition and
 its refusals, the read-lock suffix and its `distinct` suppression, the
 deferred-node refusals, and the bind-ORDER invariants the whole compiler rests
@@ -29,8 +29,8 @@ from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import (
     CompiledPredicate,
     CompiledRead,
+    LoweredStatement,
     SqlGenError,
-    Statement,
     compile_read,
     compile_write_predicate,
 )
@@ -178,7 +178,7 @@ def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None
 
 
 def test_statement_is_frozen_value() -> None:
-    statement = Statement("select 1", (1,))
+    statement = LoweredStatement("select 1", (1,))
     assert statement.sql == "select 1"
     assert statement.binds == (1,)
 
@@ -199,9 +199,9 @@ def test_the_package_exports_exactly_the_seven_supported_names() -> None:
     assert set(sql_gen.__all__) == {
         "CompiledPredicate",
         "CompiledRead",
+        "LoweredStatement",
         "MaterializedReadRow",
         "SqlGenError",
-        "Statement",
         "compile_read",
         "compile_write_predicate",
     }
@@ -210,7 +210,7 @@ def test_the_package_exports_exactly_the_seven_supported_names() -> None:
     assert sql_gen.CompiledPredicate is CompiledPredicate
     assert sql_gen.CompiledRead is CompiledRead
     assert sql_gen.SqlGenError is SqlGenError
-    assert sql_gen.Statement is Statement
+    assert sql_gen.LoweredStatement is LoweredStatement
     assert sql_gen.compile_read is compile_read
     assert sql_gen.compile_write_predicate is compile_write_predicate
 
@@ -253,7 +253,7 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
     # callable would print an address and make this untestable.
     compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert repr(compiled) == (
-        "CompiledRead(statement=Statement(sql='select t0.id, t0.name, t0.sku, "
+        "CompiledRead(statement=LoweredStatement(sql='select t0.id, t0.name, t0.sku, "
         "t0.qty, t0.price, t0.active, t0.ordered_on from orders t0', binds=()), "
         "narrow_to=None, target=EntityIdentity(namespace='parallax.compatibility', name='Order'), "
         "resolved_position=(EntityIdentity(namespace='parallax.compatibility', name='Order'),), "
@@ -293,7 +293,7 @@ def test_compiled_predicate_is_a_frozen_value() -> None:
     assert predicate.sql == "balance < ?"
     assert predicate.binds == (100,)
     assert predicate == CompiledPredicate("balance < ?", (100,))
-    # `binds` defaults to the empty tuple, exactly as `Statement`'s does.
+    # `binds` defaults to the empty tuple, exactly as `LoweredStatement`'s does.
     assert CompiledPredicate("1 = 0") == CompiledPredicate("1 = 0", ())
 
 

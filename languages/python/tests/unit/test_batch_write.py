@@ -20,7 +20,7 @@ from parallax.conformance import models
 from parallax.core import batch_write
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.sql_gen import Statement
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import BufferItem, KeyedWrite, PlanningRequest
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 from parallax.snapshot.handle._keyed_sql import collapse_group_key
@@ -42,7 +42,7 @@ BALANCE = _target("balance", "Balance")
 POSITION = _target("position", "Position")
 
 
-def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[Statement]:
+def _flush_and_lower(buffer: list[BufferItem], model: Metamodel) -> list[LoweredStatement]:
     """Plan ``buffer`` with the production wiring, then lower the plan."""
     instant = inert_instant()
     plan = build_write_planner(model).plan(

@@ -52,7 +52,7 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.op_algebra import QueryDefinitionError
-from parallax.core.sql_gen import Statement, compile_read
+from parallax.core.sql_gen import LoweredStatement, compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.unit_work import (
     ChunkedColumnBuilder,
@@ -561,5 +561,5 @@ def _materialize_predicate_write(
     )
 
 
-def _resolve_rows(conn: DbPort, dialect: Dialect, statement: Statement) -> list[Row]:
+def _resolve_rows(conn: DbPort, dialect: Dialect, statement: LoweredStatement) -> list[Row]:
     return conn.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))

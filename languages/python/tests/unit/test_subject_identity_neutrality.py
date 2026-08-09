@@ -22,7 +22,7 @@ from parallax.conformance import models
 from parallax.core import op_algebra
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import Statement
+from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import (
     BufferItem,
     Concurrency,
@@ -84,7 +84,7 @@ def _plan_under(
     )
 
 
-def _statements(plan: WritePlan, model: Metamodel) -> list[Statement]:
+def _statements(plan: WritePlan, model: Metamodel) -> list[LoweredStatement]:
     return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
 
 

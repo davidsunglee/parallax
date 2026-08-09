@@ -1,7 +1,7 @@
 """The three-stage read compiler (m-sql): canonicalize -> lower -> normalize.
 
 ``compile_read`` turns an ``m-op-algebra`` operation into one canonical
-``Statement`` for a dialect. Lowering descends through `_predicate`'s one
+``LoweredStatement`` for a dialect. Lowering descends through `_predicate`'s one
 dispatcher (no visitor framework — see the third paragraph); the dialect strategy
 supplies every dialect-specific string. The emitted SQL is produced directly in
 canonical normalized form (alias-qualified columns, lowercase, single-space
@@ -91,9 +91,9 @@ from parallax.core.storage_layout import view as _storage_view
 __all__ = [
     "CompiledPredicate",
     "CompiledRead",
+    "LoweredStatement",
     "MaterializedReadRow",
     "SqlGenError",
-    "Statement",
     "compile_read",
     "compile_write_predicate",
 ]
@@ -110,7 +110,7 @@ _ResultForm = Literal["row", "instance"]
 
 
 @dataclass(frozen=True, slots=True)
-class Statement:
+class LoweredStatement:
     """One compiled SQL statement in canonical form and its ordered binds."""
 
     sql: str
@@ -122,8 +122,8 @@ class CompiledPredicate:
     """A compiled write predicate: an UNALIASED `where`-clause fragment
     (`balance < ?`, never `t0.balance < ?`) and its ordered binds.
 
-    Deliberately NOT a :class:`Statement`: this is a predicate fragment, not a
-    complete statement — the caller splices it into its own `update … where` /
+    Deliberately NOT a :class:`LoweredStatement`: this is a predicate fragment,
+    not a complete statement — the caller splices it into its own `update … where` /
     `delete from … where` template (`m-batch-write.md` "Predicate-selected
     readless forms").
     """
@@ -156,7 +156,7 @@ class MaterializedReadRow:
 
 @dataclass(frozen=True, slots=True)
 class CompiledRead:
-    """One compiled read: its :class:`Statement`, the root narrow to materialize
+    """One compiled read: its :class:`LoweredStatement`, the root narrow to materialize
     under, and the row transform that materializes `familyVariant`.
 
     Self-contained by design: everything a caller needs to turn driver
@@ -184,7 +184,7 @@ class CompiledRead:
     Column rather than in one of its own.
     """
 
-    statement: Statement
+    statement: LoweredStatement
     narrow_to: tuple[str, ...] | None
     target: EntityIdentity
     resolved_position: tuple[EntityIdentity, ...]
@@ -334,7 +334,7 @@ def compile_read(
     never re-resolves a name against the model.
 
     The result carries everything the caller needs to consume the read's rows —
-    the canonical ``Statement`` for ``dialect``, the root ``narrow_to`` to
+    the canonical ``LoweredStatement`` for ``dialect``, the root ``narrow_to`` to
     materialize under, and :meth:`CompiledRead.transform_row` — so no caller
     re-derives `familyVariant` or narrowing from the operation a second time.
 
@@ -422,7 +422,7 @@ def compile_read(
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
 
-    statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+    statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
     # A non-family read projects no tag and no variant literal, so the only
     # transform it can carry is the document fan-out its own projection decided.
     return CompiledRead(
@@ -576,7 +576,7 @@ def _compile_inheritance_read(
     dialect: Dialect,
     result_form: _ResultForm,
     lock: LockMode | None,
-) -> tuple[Statement, tuple[EntityIdentity, ...], _RowTransform]:
+) -> tuple[LoweredStatement, tuple[EntityIdentity, ...], _RowTransform]:
     """Assemble an inheritance-family read from its plan.
 
     Returns the statement AND its row transform together: whether a read carries
@@ -642,7 +642,7 @@ def _compile_tph_read(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-) -> tuple[Statement, _RowTransform]:
+) -> tuple[LoweredStatement, _RowTransform]:
     """Assemble a table-per-hierarchy read: one shared correlated `EXISTS`-free
     single-table SELECT (m-sql "Inheritance — table-per-hierarchy lowering").
 
@@ -692,7 +692,7 @@ def _compile_tph_read(
             ),
             plan.transform,
         )
-    statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+    statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
     return statement, plan.transform
 
 
@@ -707,7 +707,7 @@ def _compile_tph_partitioned(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-) -> Statement:
+) -> LoweredStatement:
     """Assemble one tag-disjoint branch per selected TPH document variant."""
     branch_sqls: list[str] = []
     binds: list[object] = []
@@ -778,10 +778,10 @@ def _compile_tph_partitioned(
         _append_result_shape(parts, outer_scope, distinct, order_keys, limit, lock)
         tail_binds = outer_ctx.binds[len(projection_binds) :]
         ordered_binds = (*projection_binds, *binds, *tail_binds)
-        return _normalize(Statement(" ".join(parts), ordered_binds))
+        return _normalize(LoweredStatement(" ".join(parts), ordered_binds))
 
     if not distinct and not order_keys and limit is None:
-        return _normalize(Statement(union, tuple(binds)))
+        return _normalize(LoweredStatement(union, tuple(binds)))
 
     outer_ctx = _Ctx(model, facet, storage, dialect)
     outer_scope = _EntityScope(
@@ -800,7 +800,7 @@ def _compile_tph_partitioned(
     ]
     _append_result_shape(parts, outer_scope, distinct, order_keys, limit, None)
     binds.extend(outer_ctx.binds)
-    return _normalize(Statement(" ".join(parts), tuple(binds)))
+    return _normalize(LoweredStatement(" ".join(parts), tuple(binds)))
 
 
 def _compile_tpcs_read(
@@ -810,7 +810,7 @@ def _compile_tpcs_read(
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
-) -> tuple[Statement, _RowTransform]:
+) -> tuple[LoweredStatement, _RowTransform]:
     """Assemble a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
     table-per-concrete-subtype lowering").
 
@@ -840,7 +840,7 @@ def _compile_tpcs_read(
         branch_sqls.append(" ".join(parts))
         all_binds.extend(branch_ctx.binds)
 
-    statement = _normalize(Statement(" union all ".join(branch_sqls), tuple(all_binds)))
+    statement = _normalize(LoweredStatement(" union all ".join(branch_sqls), tuple(all_binds)))
     return statement, plan.transform
 
 
@@ -855,7 +855,7 @@ def _compile_tpcs_single(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-) -> tuple[Statement, _RowTransform]:
+) -> tuple[LoweredStatement, _RowTransform]:
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
     no union, no `familyVariant` — attribute resolution still widens across the
@@ -879,14 +879,14 @@ def _compile_tpcs_single(
     if where_sql:
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
-    statement = _normalize(Statement(" ".join(parts), tuple(ctx.binds)))
+    statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
     return statement, plan.transform
 
 
 # --------------------------------------------------------------------------- #
 # Normalization (fixed-point identity check).                                 #
 # --------------------------------------------------------------------------- #
-def _normalize(statement: Statement) -> Statement:
+def _normalize(statement: LoweredStatement) -> LoweredStatement:
     """Assert the emitted SQL is already the m-sql canonical fixed point.
 
     The compiler emits canonical form directly (single-space separation,
