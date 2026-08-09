@@ -1655,10 +1655,11 @@ def test_query_assignment_target_mismatch_precedes_every_adapter_call() -> None:
 
 # --------------------------------------------------------------------------- #
 # Stale-write detection and the optimistic-conflict retry loop, reached        #
-# through a TYPED `_where` call. Both behaviors were previously witnessed only #
-# from the conformance ingress and by their keyed analogues, so nothing pinned #
-# that a materialized group's per-row shortfall classifies and retries the     #
-# same way the keyed path's does.                                              #
+# through a TYPED `_where` call: a materialized group's per-row shortfall      #
+# classifies and retries exactly as the keyed path's does. Each is stated as   #
+# the whole per-attempt op SEQUENCE, because the retry contract is that the    #
+# closure is RE-EXECUTED — an attempt that reused the first one's              #
+# materialization would still open a second transaction and still commit.     #
 # --------------------------------------------------------------------------- #
 def _update_balance_where(tx: Transaction) -> None:
     tx.update_where(
@@ -1678,8 +1679,7 @@ def test_materializing_where_shortfall_in_locking_mode_is_a_stale_write() -> Non
 
     with pytest.raises(StaleWriteError, match="Account"):
         account_db(port).transact(_update_balance_where)
-    assert ("rollback",) in port.ops
-    assert len([op for op in port.ops if op[0] == "write"]) == 1
+    assert [op[0] for op in port.ops] == ["begin", "read", "write", "rollback"]
 
 
 def test_materializing_where_shortfall_in_optimistic_mode_is_a_lock_conflict() -> None:
@@ -1690,13 +1690,16 @@ def test_materializing_where_shortfall_in_optimistic_mode_is_a_lock_conflict() -
 
     with pytest.raises(OptimisticLockConflictError):
         account_db(port).transact(_update_balance_where, concurrency="optimistic")
-    assert port.begins == 1
+    assert [op[0] for op in port.ops] == ["begin", "read", "write", "rollback"]
 
 
 def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in() -> None:
     # The `0`-then-`1` affected-rows transition, driven through the typed
     # `update_where` verb: the retried attempt re-runs the resolving read and
-    # the gated write inside a second transaction.
+    # the gated write inside a second transaction. The second `read` is the
+    # assertion that carries the re-execution contract; the second `begin` and
+    # the `commit` alone are also true of an attempt that reused the first
+    # attempt's materialization.
     port = RecordingPort(
         rows=[{"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1}]
     )
@@ -1705,5 +1708,15 @@ def test_materializing_where_conflict_is_auto_retried_to_success_with_the_opt_in
     account_db(port).transact(
         _update_balance_where, concurrency="optimistic", retry_optimistic_conflicts=True
     )
-    assert port.begins == 2
-    assert ("commit",) in port.ops
+    assert [op[0] for op in port.ops] == [
+        "begin",
+        "read",
+        "write",
+        "rollback",
+        "begin",
+        "read",
+        "write",
+        "commit",
+    ]
+    reads = [op for op in port.ops if op[0] == "read"]
+    assert reads[0] == reads[1]
