@@ -25,14 +25,7 @@ imports no descriptor interchange code at all.
 from __future__ import annotations
 
 from parallax.core.entity._declaration import EntityDeclaration, shape_of, snake_to_camel
-from parallax.core.entity._entity import (
-    Bitemporal,
-    Entity,
-    EntityMeta,
-    TxTemporal,
-    WireNames,
-    wire_names_of,
-)
+from parallax.core.entity._entity import Bitemporal, Entity, TxTemporal
 from parallax.core.entity._errors import (
     EDIT_CODES,
     ENTITY_DEFINITION_CODES,
@@ -116,7 +109,7 @@ from parallax.core.entity._members import (
 from parallax.core.entity._model import DomainModel
 from parallax.core.entity._query import FindQuery
 from parallax.core.entity._row_codec import EntityRowCodec, row_codec_of
-from parallax.core.entity._value_object import ValueObject, ValueObjectMeta, to_document
+from parallax.core.entity._value_object import ValueObject, to_document
 
 __all__ = [
     "EDIT_CODES",
@@ -157,7 +150,6 @@ __all__ = [
     "EntityDefinitionError",
     "EntityGraphConstruction",
     "EntityGraphWriter",
-    "EntityMeta",
     "EntityRelationshipInput",
     "EntityRowCodec",
     "EntityRowError",
@@ -188,10 +180,8 @@ __all__ = [
     "UnloadedRelationshipError",
     "ValueObject",
     "ValueObjectAttributeInput",
-    "ValueObjectMeta",
     "ValueObjectOccurrenceInput",
     "ValueObjectRecord",
-    "WireNames",
     "asc",
     "attr",
     "desc",
@@ -204,5 +194,4 @@ __all__ = [
     "shape_of",
     "snake_to_camel",
     "to_document",
-    "wire_names_of",
 ]

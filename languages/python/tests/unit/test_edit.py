@@ -43,14 +43,12 @@ from parallax.core.entity import (
     ValueObjectAttributeInput,
     ValueObjectOccurrenceInput,
     ValueObjectRecord,
-    WireNames,
     graph_construction_of,
     lifecycle_state_of,
     relationship_value_of,
-    wire_names_of,
 )
 from parallax.core.entity._declaration import FRAMEWORK_NAME_PREFIX, LIFECYCLE_STATE_SLOT
-from parallax.core.entity._entity import CHANGE_RECORD_SLOT
+from parallax.core.entity._entity import CHANGE_RECORD_SLOT, WireNames, wire_names_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,

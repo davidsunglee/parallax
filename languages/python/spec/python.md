@@ -3439,6 +3439,26 @@ while the Domain Model's class-backed constructor owns Python realization and
 therefore does not belong to the
 representation-independent `parallax.core.metamodel` module. No
 common-runtime, Snapshot, or Postgres scope imports the descriptor package.
+
+The enforcement unit is the **scope**, not a package's `__all__`: an importer
+granted `parallax.core.entity` reaches every module that scope owns, private
+ones included. Three Snapshot modules use that grant for six names the Entity
+frontend deliberately does not export — `parallax.snapshot._inspection` and
+`parallax.snapshot.handle._write_inputs` read declarations from
+`parallax.core.entity._declaration` (`declaration_of`, `is_entity_class`,
+`members_of`), `parallax.snapshot.handle._write_inputs` reads the merged
+member-name correspondences from `parallax.core.entity._entity`
+(`wire_names_of`), and `parallax.snapshot.handle._database` reads the accepted
+Metamodel and the class index from `parallax.core.entity._model` (`model_of`,
+`class_index`). Each is a seam between two first-party packages that a developer
+never needs, so exporting the names to spell the reach publicly would widen the
+developer surface to serve one lifecycle package. None of the three modules
+takes a scope row of its own: they belong to `parallax.core.entity`, whose edge
+every importer above already declares, and `parallax.core.entity._query`,
+`._expressions`, and `._graph_input` carry rows below because each needs a
+NARROWER grant than its parent — not because they are the only children an
+importer may reach.
+
 import-linter forbids every production scope-pair import the DAG does not
 permit — the generated forbidden-edge complement below, with the
 conformance-family scopes exempted as importers per `modules.md` — so illegal
