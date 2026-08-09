@@ -417,6 +417,15 @@ neither side repeats SQL or binds and `emissions` stays the single record of wha
 was emitted. `roundTrips` remains the count oracle: the log's own `roundTrips`
 counts the same calls, so the two agree or the case fails.
 
+Both indexes **MUST** name something the envelope already carries: a call's
+`statement` is in range of `emissions` and is present whenever the envelope
+reports any emission at all, and an attempt failure's `databaseCall` is in range
+of that attempt's own flattened calls. An index naming nothing makes the
+observation agree with an oracle structurally while describing no statement, so
+it is a malformed envelope rather than a case failure. JSON Schema cannot state a
+bound between two arrays, so the reference harness owns these two checks for the
+envelope exactly as it owns them for the oracle.
+
 The key is optional and additive — an adapter reporting no provenance omits it
 and every existing `run` output stays valid — but an adapter whose claim includes
 `m-execution-log` **MUST** report it for every case authoring the oracle. An

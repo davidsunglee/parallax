@@ -80,7 +80,8 @@ A **Write Batch Trace** records a **closed trigger** naming which of
   read. It appears immediately *before* the Read Trace it enabled, which is how
   the log exposes that causality without anyone acquiring a public flush
   operation.
-- **finalization** — the boundary-owned final batch.
+- **finalization** — the boundary-owned final batch. Nothing the attempt records
+  follows it, so it is the attempt's last trace.
 
 A read surfaced to a caller **shares** its Read Trace with the attempt that
 issued it: the result and the current attempt reference the same trace, and no
@@ -202,6 +203,13 @@ the two intermediate states surface as distinct errors are each an observation
 taken *during* an invocation. They are normative above and are proven by each
 language's API Conformance Suite against the story the joined case maps to, not
 by the portable oracle.
+
+Being terminal bounds the attempt history the oracle can state. Every attempt has
+already transitioned, so **no attempt is `active`**; a commit ends the
+invocation, so a **committed attempt is the last attempt** and there is at most
+one; and the retained Retry Policy's maximum re-execution count bounds the
+re-executions, so the attempts number at most **`maxRetries + 1`** — the original
+execution plus the bound.
 
 `then.execution` is presently graded by the language implementations alone: the
 compatibility harness validates the key and ignores it. Until a second grader

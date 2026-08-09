@@ -8,9 +8,10 @@ layers carry that:
 * the schemas close the algebra a call, an attempt, and a case shape admit, on
   BOTH sides of the mirror;
 * :mod:`reference_harness.execution_validate` closes the relations no JSON
-  Schema states — statement and call indexes that name something, round-trip
-  counts that agree at every level and with ``then.roundTrips``, and the
-  read-dependency batch's position in front of the read it enabled.
+  Schema states, on BOTH sides too — statement and call indexes that name
+  something, round-trip counts that agree at every level and with the record's
+  own count oracle, each write batch's positional trigger claim, and the attempt
+  history a terminal graph admits.
 
 The whole corpus is asserted consistent under both.
 """
@@ -24,7 +25,10 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from reference_harness.corpus_yaml import read_corpus_yaml
-from reference_harness.execution_validate import validate_execution
+from reference_harness.execution_validate import (
+    validate_execution,
+    validate_execution_observation,
+)
 from reference_harness.schemas import build_registry, load_schemas
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -151,11 +155,6 @@ def test_the_fixture_case_and_envelope_are_accepted_as_authored() -> None:
 # --- failure belongs to a rolled-back attempt alone -------------------------
 
 
-def test_an_active_attempt_carrying_a_failure_is_refused() -> None:
-    case = _case(_log(status="active", failure={"phase": "body", "retryEligible": True}))
-    assert not _valid_against("compatibility-case.schema.json", case)
-
-
 def test_a_committed_attempt_carrying_a_failure_is_refused() -> None:
     case = _case(_log(failure={"phase": "body", "retryEligible": True}))
     assert not _valid_against("compatibility-case.schema.json", case)
@@ -241,6 +240,57 @@ def test_a_call_index_on_a_lane_authoring_no_golden_is_flagged() -> None:
     assert validate_execution(case)
 
 
+def test_a_golden_bearing_call_omitting_its_statement_is_flagged() -> None:
+    case = _case(_log())
+    del case["then"]["execution"]["transactionLog"]["attempts"][0]["traces"][0]["writeBatch"][
+        "calls"
+    ][0]["statement"]
+    assert validate_execution(case)
+
+
+def _stepwise_case(when: dict[str, Any], statements: list[int]) -> dict[str, Any]:
+    """A case whose goldens live under *when* alone, with calls naming *statements*."""
+    calls = [_write_call(statement=index) for index in statements]
+    log = _log()
+    attempt = log["transactionLog"]["attempts"][0]
+    attempt["traces"][0]["writeBatch"]["calls"] = calls
+    attempt["traces"][0]["writeBatch"]["roundTrips"] = len(calls)
+    attempt["roundTrips"] = len(calls)
+    log["transactionLog"]["roundTrips"] = len(calls)
+    case = _case(log, when=when)
+    del case["then"]["statements"]
+    case["then"]["roundTrips"] = len(calls)
+    return case
+
+
+def _golden(sql: str) -> dict[str, Any]:
+    return {"sql": {"postgres": sql}, "binds": []}
+
+
+def test_a_coherence_step_golden_is_part_of_the_flattened_order() -> None:
+    when = {
+        "coherence": [
+            {"statements": [_golden("select 1")]},
+            {"statements": [_golden("select 2")]},
+        ]
+    }
+    assert validate_execution(_stepwise_case(when, [0, 1])) == []
+    assert validate_execution(_stepwise_case(when, [0, 2]))
+
+
+def test_a_concurrency_round_golden_is_part_of_the_flattened_order() -> None:
+    when = {
+        "concurrency": {
+            "rounds": [
+                {"A": {"statements": [_golden("select 1")]}, "B": {"statements": [_golden("2")]}},
+                {"A": {"statements": [_golden("select 3")]}},
+            ]
+        }
+    }
+    assert validate_execution(_stepwise_case(when, [0, 1, 2])) == []
+    assert validate_execution(_stepwise_case(when, [0, 1, 3]))
+
+
 def test_an_attempt_failure_naming_an_absent_call_is_flagged() -> None:
     case = _case(
         _log(
@@ -283,7 +333,7 @@ def test_a_read_trace_disagreeing_with_the_case_count_is_flagged() -> None:
     assert validate_execution(_standalone_read_case(_standalone_read_trace(), round_trips=2))
 
 
-# --- the read-dependency batch stands in front of the read it enabled --------
+# --- each trigger is a positional claim ---------------------------------------
 
 
 def _dependency_case(traces: list[dict[str, Any]], round_trips: int) -> dict[str, Any]:
@@ -339,6 +389,93 @@ def test_a_read_dependency_batch_followed_by_another_batch_is_flagged() -> None:
     }
     case = _dependency_case([_dependency_batch(), finalization], 2)
     assert validate_execution(case)
+
+
+def test_a_finalization_batch_followed_by_a_read_is_flagged() -> None:
+    finalization = {
+        "writeBatch": {"trigger": "finalization", "calls": [_write_call()], "roundTrips": 1}
+    }
+    case = _dependency_case([finalization, _read_trace(1)], 2)
+    assert validate_execution(case)
+
+
+# --- the attempt history a terminal graph admits ------------------------------
+
+
+def test_an_attempt_claiming_the_live_active_status_is_refused_by_both_schemas() -> None:
+    assert not _valid_against("compatibility-case.schema.json", _case(_log(status="active")))
+    assert not _valid_against(
+        "conformance-adapter.schema.json", _run_envelope(_log(status="active"))
+    )
+
+
+def _attempts_case(statuses: list[str], max_retries: int) -> dict[str, Any]:
+    attempts = [
+        {
+            "status": status,
+            "traces": [
+                {
+                    "writeBatch": {
+                        "trigger": "finalization",
+                        "calls": [_write_call(statement=index)],
+                        "roundTrips": 1,
+                    }
+                }
+            ],
+            "roundTrips": 1,
+        }
+        for index, status in enumerate(statuses)
+    ]
+    case = _case(_log())
+    case["then"]["statements"] = [_golden(f"insert {index}") for index in range(len(statuses))]
+    case["then"]["roundTrips"] = len(statuses)
+    case["then"]["execution"]["transactionLog"].update(
+        attempts=attempts,
+        roundTrips=len(statuses),
+        retryPolicy={"maxRetries": max_retries, "retryOptimisticConflicts": False},
+    )
+    return case
+
+
+def test_a_rollback_after_the_commit_is_flagged() -> None:
+    assert validate_execution(_attempts_case(["rolled-back", "committed"], 1)) == []
+    assert validate_execution(_attempts_case(["committed", "rolled-back"], 1))
+
+
+def test_more_attempts_than_the_retry_bound_allows_are_flagged() -> None:
+    assert validate_execution(_attempts_case(["rolled-back", "rolled-back"], 1)) == []
+    assert validate_execution(_attempts_case(["rolled-back", "rolled-back"], 0))
+
+
+# --- the same relations over the adapter's observation ------------------------
+
+
+def test_the_envelope_observation_is_walked_against_its_own_emissions() -> None:
+    envelope = _run_envelope(_log())
+    assert validate_execution_observation(envelope) == []
+
+    envelope["emissions"] = []
+    assert validate_execution_observation(envelope)
+
+
+def test_an_observed_call_omitting_its_statement_beside_emissions_is_flagged() -> None:
+    log = _log()
+    del log["transactionLog"]["attempts"][0]["traces"][0]["writeBatch"]["calls"][0]["statement"]
+    assert validate_execution_observation(_run_envelope(log))
+
+
+def test_an_observed_failure_naming_an_absent_call_is_flagged() -> None:
+    log = _log(
+        status="rolled-back",
+        failure={"phase": "finalization", "retryEligible": False, "databaseCall": 3},
+    )
+    assert validate_execution_observation(_run_envelope(log))
+
+
+def test_an_envelope_reporting_no_provenance_has_nothing_to_walk() -> None:
+    envelope = _run_envelope(_log())
+    del envelope["observations"]["execution"]
+    assert validate_execution_observation(envelope) == []
 
 
 # --- the corpus itself --------------------------------------------------------

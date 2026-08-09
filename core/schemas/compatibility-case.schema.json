@@ -1272,12 +1272,12 @@
       ]
     },
     "transactionAttempt": {
-      "description": "One PHYSICAL attempt of the logical invocation (m-execution-log Transaction Attempt). `traces` is the ordered Read Traces and Write Batch Traces the attempt produced; it MAY be empty for an attempt that failed before reaching the database. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. A `failure` belongs to a ROLLED-BACK attempt alone, which the conditional below states structurally.",
+      "description": "One PHYSICAL attempt of the logical invocation (m-execution-log Transaction Attempt). `traces` is the ordered Read Traces and Write Batch Traces the attempt produced; it MAY be empty for an attempt that failed before reaching the database. `roundTrips` counts every attempted call, a failed one included, and excludes begin / commit / rollback. `status` omits the live `active` value the module's own algebra carries: this is a TERMINAL value graph, so every attempt it states has already transitioned. A `failure` belongs to a ROLLED-BACK attempt alone, which the conditional below states structurally.",
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "traces", "roundTrips"],
       "properties": {
-        "status": { "enum": ["active", "committed", "rolled-back"] },
+        "status": { "enum": ["committed", "rolled-back"] },
         "traces": {
           "type": "array",
           "items": { "$ref": "#/$defs/attemptTrace" }
@@ -1287,7 +1287,7 @@
       },
       "allOf": [
         {
-          "description": "Only a ROLLED-BACK attempt carries a failure. The diagnostic describes the attempt that rolled back, so authoring one beside `committed` states two outcomes for one attempt, and authoring one beside `active` reports an outcome for an attempt that has reached none.",
+          "description": "Only a ROLLED-BACK attempt carries a failure. The diagnostic describes the attempt that rolled back, so authoring one beside `committed` states two outcomes for one attempt.",
           "if": {
             "required": ["status"],
             "properties": { "status": { "const": "rolled-back" } }

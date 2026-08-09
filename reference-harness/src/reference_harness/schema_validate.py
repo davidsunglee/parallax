@@ -404,9 +404,15 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         model_rel = case.get("model") if isinstance(case, dict) else None
         model_name = Path(model_rel).name if isinstance(model_rel, str) else None
         family = families.get(model_name) if model_name is not None else None
-        _validate(case, case_schema, f"case {case_path.name}", errors, registry)
+        # The execution oracle's referential and arithmetic checks read members the
+        # case schema has already typed, so they run only once the case IS
+        # schema-valid; on a schema-invalid case the structural diagnostics are the
+        # answer and a semantic walk over unchecked shapes would raise instead.
+        case_problem = validation_error(case, case_schema, registry)
+        if case_problem is not None:
+            errors.append(f"case {case_path.name}: {case_problem}")
         _check_compile_eligibility(case, f"case {case_path.name}", errors)
-        if isinstance(case, dict):
+        if case_problem is None and isinstance(case, dict):
             errors.extend(
                 f"case {case_path.name}: {problem}" for problem in validate_execution(case)
             )
