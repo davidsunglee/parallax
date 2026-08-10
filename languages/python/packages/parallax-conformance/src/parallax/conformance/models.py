@@ -12,9 +12,9 @@ is read out of the sealed Domain Model through the first-party
 The accepted model enumerates its Entities canonically, so a corpus model's own
 AUTHORING order is not recoverable from it. `m-case-format`'s default-target
 convention for a case naming no target ends at "the model's own first entity",
-which is a fact about the document; :func:`declared_entity_names` is where that
-fact is read, and it is the only reason this module still looks at a decoded
-document after forming one.
+which is a fact about the document; :func:`declared_entity_spellings` is where
+that fact is read, and it is the only reason this module still looks at a
+decoded document after forming one.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from parallax.descriptor import domain_model_from_document
 
 __all__ = [
     "accepted_model",
-    "declared_entity_names",
+    "declared_entity_spellings",
     "default_models_dir",
     "load_model",
     "load_models",
@@ -69,25 +69,40 @@ def accepted_model(document: Mapping[str, object]) -> AcceptedMetamodel:
     return model_of(domain_model_from_document(document))
 
 
-def declared_entity_names(document: Mapping[str, object]) -> tuple[str, ...]:
-    """The Entity names ``document`` declares, in its own authoring order.
+def declared_entity_spellings(document: Mapping[str, object]) -> tuple[str, ...]:
+    """The Entities ``document`` declares, canonically spelled, in its own
+    authoring order.
 
     Reads the canonical schema's two top-level forms (``entity:`` for one,
     ``entities:`` for several) and nothing else, so it answers for a document
     that never forms as readily as for one that does. The accepted model
-    enumerates canonically, which is why the order cannot be taken from there.
+    enumerates canonically, which is why the ORDER cannot be taken from there.
+
+    Each spelling is ``<namespace>.<name>``, exactly as
+    :attr:`~parallax.core.metamodel.EntityIdentity.canonical` composes one, and
+    bare only for an Entity the document declares ownerless. A selection this
+    module makes is not an authored reference, so it must not be handed on as a
+    bare local name: a bare spelling two namespaces share names both Entities
+    and therefore neither, and a bare spelling an ownerless Entity also carries
+    names that OTHER Entity exactly.
     """
     single = document.get("entity")
     if isinstance(single, Mapping):
-        return (str(cast("Mapping[str, object]", single).get("name", "")),)
+        return (_canonical_spelling(cast("Mapping[str, object]", single)),)
     several = document.get("entities")
     if not isinstance(several, Sequence) or isinstance(several, str | bytes):
         return ()
     return tuple(
-        str(cast("Mapping[str, object]", entry).get("name", ""))
+        _canonical_spelling(cast("Mapping[str, object]", entry))
         for entry in cast("Sequence[object]", several)
         if isinstance(entry, Mapping)
     )
+
+
+def _canonical_spelling(declaration: Mapping[str, object]) -> str:
+    name = str(declaration.get("name", ""))
+    namespace = declaration.get("namespace")
+    return f"{namespace}.{name}" if isinstance(namespace, str) and namespace else name
 
 
 def load_model(path: Path) -> AcceptedMetamodel:
