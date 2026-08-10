@@ -472,9 +472,14 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "family) are graded end-to-end by the compile/run conformance lanes (the "
         "readless forms) or the run lane alone (the materializing ones, "
         "query-result-dependent). The versioned keyed LOCKING-mode advance has an "
-        "idiomatic story (`m-opt-lock-002`); the OPTIMISTIC-mode gate/conflict/"
-        "multi-attribute forms (`-005`/`-006`/`-007`/`-013`) have none, their "
-        "`conflict` shape needing a second writer no single-session story can stage. The "
+        "idiomatic story (`m-opt-lock-002`); the OPTIMISTIC-mode forms have none, for "
+        "two DIFFERENT reasons: `-005` and `-007` are stale-gate cases whose competing "
+        "writer is applied out of band (`given.apply`), which no single-session story "
+        "can stage, while `-006` and `-013` are single-session SUCCESSES needing no "
+        "second writer at all — their developer spelling is the exercised `m-opt-lock-002` "
+        "story's observe-edit-update, taken under optimistic concurrency, and what they add "
+        "is framework-emitted SQL no caller spells (the `and version = ?` gate optimistic "
+        "mode renders, and the multi-column SET ordering ahead of ONE version advance). The "
         "auto-retry conflict-lane witness (`-009`), the boundary runner's "
         "conflict-opt-in pair (`-010`/`-011`), and the interleaved two-session race "
         "(`-012`, over the `peer` seam) each have their own case-scoped entry below"
@@ -486,9 +491,10 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "the insert / terminate / close-and-chain-update family "
         "(`m-txtime-write-001`..`-005`, each over a per-story scripted clock, which is "
         "what lets one story chain milestones across several Transaction-Time "
-        "instants). The optimistic-gated close (`-006`, a `conflict`-shape case forcing "
-        "a stale observed `in_z` — no natural single-session spelling, the SAME posture "
-        "as the `m-opt-lock` conflict-shape cases) and the materializing predicate-write "
+        "instants). The optimistic-gated close (`-006`, a single-session success whose "
+        "observed `in_z` is FRESH, so what it adds over the exercised chaining-update "
+        "stories is the framework-emitted `and in_z = ?` predicate on the closing UPDATE "
+        "rather than a developer spelling) and the materializing predicate-write "
         "scenarios (`-007`/`-009`) have no idiomatic story, and are graded end-to-end by "
         "the compile/run conformance lanes (`-006`) or the run lane alone "
         "(`-007`/`-009`, query-result-dependent)"
@@ -499,14 +505,21 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "TPH/TPCS compositions) are graded end-to-end by the compile/run conformance "
         "lanes. Idiomatic stories exist for the flagship insert / updateUntil "
         "rectangle split (`-001`), `insertUntil` (`-003`), the plain-update two-way "
-        "degenerate (`-006`), and the plain insert (`-009`). The remaining "
-        "rectangle-split/terminate/plain-terminate compositions (`-002`/`-007`), the "
-        "optimistic-gate conflict shapes (`-004`/`-005`/`-008`, the SAME `conflict`-shape "
-        "posture as `m-opt-lock`), and the materializing predicate-write scenarios "
-        "(`-010`..`-013`) have no idiomatic story: each either composes verbs an "
-        "exercised story already spells or stages a conflict one session cannot. They "
-        "are graded end-to-end by the compile/run conformance lanes (or the run lane "
-        "alone for the materializing ones, query-result-dependent)"
+        "degenerate (`-006`), and the plain insert (`-009`). The remaining cases have no "
+        "idiomatic story, and what each is missing differs. `-002`/`-007` spell the "
+        "TERMINATE half of the bounded/plain verb pair whose UPDATE half is exercised "
+        "(`-001`/`-006`), so what distinguishes them is which segments the rectangle "
+        "split leaves re-inserted. `-004`/`-008` add no second writer at all — their "
+        "observed `in_z` is fresh and the gate matches — and what they grade beyond an "
+        "exercised sibling is the framework-emitted `and in_z = ?` predicate no caller "
+        "spells; `-005` is the stale-observation twin, and ITS staleness comes from a "
+        "competing writer applied out of band (`given.apply`) that no single session can "
+        "produce. `-010`..`-013` are predicate-selected writes whose `_where` verb the "
+        "developer surface does carry, and what they pin is the per-resolved-row "
+        "close-and-re-insert lowering. Every one of those distinctions is an emitted-SQL "
+        "or concurrency-staging contract, graded end-to-end by the compile/run "
+        "conformance lanes (or the run lane alone for the materializing ones, "
+        "query-result-dependent)"
     ),
     "m-storage-layout": (
         "canonical physical composition has no standalone developer surface. Its "
@@ -529,10 +542,16 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "collapse, batched UPDATE, IN-list DELETE, readless predicate update/delete, "
         "and the versioned materialize-then-lower family) are graded end-to-end by the "
         "compile/run conformance lanes. The readless predicate delete has an idiomatic "
-        "story (`m-batch-write-005`); the remaining set-based collapse / "
-        "readless-update / versioned-materialize forms (`-001`/`-002`/`-003`/`-006`) "
-        "have none, each spelling the same buffered verbs that story already shows and "
-        "differing only in the planner collapse the compile lane grades"
+        "story (`m-batch-write-005`, `tx.delete_where`); the remaining forms have none, "
+        "each for its own reason. `-001`/`-002`/`-003` are BUFFERED keyed writes — "
+        "multi-row insert, per-key versus batched update, IN-list delete — spelling the "
+        "same `tx.insert`/`tx.update`/`tx.delete` verbs the exercised `m-unit-work` "
+        "stories show (`-001`/`-005`/`-006`/`-009`), and adding only the planner's "
+        "COLLAPSE decision, an emitted-SQL contract the compile lane grades byte-exact. "
+        "`-006` is the predicate-UPDATE complement of `-005`'s predicate delete, adding "
+        "the SET column order its assignments render rather than a developer spelling of "
+        "its own. The versioned per-key materialize (`-004`) carries its own case-scoped "
+        "entry below"
     ),
 }
 
@@ -669,6 +688,17 @@ _INHERITANCE_TEMPORAL_WRITE_REASON: Final[str] = (
     "SAME posture the non-temporal inheritance-family write forms carry, "
     "`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
 )
+# The composed TPH/audit/optimistic-lock case is a CONFLICT shape, not a
+# writeSequence: its skip turns on the staging its gate needs, not on a spelling
+# an exercised story already shows.
+_INHERITANCE_COMPOSED_CONFLICT_REASON: Final[str] = (
+    "a table-per-hierarchy audit-only close GATED on a STALE observed Transaction-Time "
+    "start (m-inheritance x m-txtime-write x m-opt-lock composed): graded end-to-end by "
+    "the run lane; no idiomatic story covers it because the staleness it grades is "
+    "produced by a competing writer applied out of band (`given.apply`), which one "
+    "single-session callback cannot stage (the SAME posture the `m-opt-lock` stale-gate "
+    "cases carry)"
+)
 # Non-temporal TPH/TPCS insert, update, and delete cases are graded end-to-end
 # by the compile/run lanes, including deep-chain, sibling-branch, and
 # optimistic-lock compositions. They have no idiomatic instance-native story.
@@ -679,15 +709,34 @@ _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "an inheritance-family write, whose developer spelling is the plain-entity keyed "
     "write an exercised story already shows, typed at a concrete subtype"
 )
-# The non-temporal optimistic-lock family is graded end-to-end by the
-# compile/run lanes: conflict gating, success/retry, locking-mode version
-# advancement, and versioned batched-delete materialization.
-_OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
-    "a non-temporal optimistic-lock keyed write (the version gate/advance/conflict, or "
-    "a versioned batched delete's per-key materialize): graded end-to-end by the "
-    "compile/run conformance lanes; no idiomatic story covers this exact "
-    "optimistic-mode conflict/advance shape, whose gate a single session cannot trip "
-    "(the locking-mode advance sibling is exercised, `m-opt-lock-002`)"
+# The non-temporal optimistic-lock keyed write splits into two skip reasons: a
+# stale gate needs a competing writer, while a matching gate needs none and is
+# distinguished from its exercised locking-mode sibling only by emitted SQL.
+_OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON: Final[str] = (
+    "a non-temporal optimistic-lock keyed write whose version gate is STALE when it "
+    "runs (the 0-row conflict, and the 0-then-1 retry choreography over it): graded "
+    "end-to-end by the run lane; no idiomatic story covers it because the staleness is "
+    "produced by a competing writer applied out of band (`given.apply`), which one "
+    "single-session callback cannot stage"
+)
+_OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON: Final[str] = (
+    "a non-temporal optimistic-lock keyed write whose version gate MATCHES — a "
+    "single-session success needing no concurrent writer: graded end-to-end by the run "
+    "lane; no idiomatic story covers it because its developer spelling is the exercised "
+    "locking-mode advance's (`m-opt-lock-002`: observe, edit, update) taken under "
+    "optimistic concurrency, and everything it adds is framework-emitted SQL no "
+    "caller spells — the `and version = ?` gate optimistic mode renders, and the "
+    "multi-column SET ordering ahead of ONE version advance"
+)
+# A versioned set-based delete refuses the IN-list collapse its unversioned
+# sibling takes (m-batch-write-003) and lowers per resolved row instead.
+_BATCH_WRITE_VERSIONED_MATERIALIZE_REASON: Final[str] = (
+    "a versioned set-based delete's per-key materialize, running in the DEFAULT locking "
+    "mode where each keyed delete is UNGATED: graded end-to-end by the run lane; no "
+    "idiomatic story covers it because what it pins is the planner's refusal to collapse "
+    "a versioned set delete into one IN-list statement, an emitted-SQL contract rather "
+    "than a developer spelling (the resolving read half is proven by "
+    "`m-opt-lock-003`/`-004`)"
 )
 # The auto-retry optimistic-conflict opt-in's conflict-lane witness uses
 # `retryOptimisticConflicts: true` over a two-attempt, 0-then-1
@@ -1185,10 +1234,10 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-unit-work-016": _TEMPORAL_KEYED_SINGLETON_UNREACHABLE_REASON,
     # -- m-opt-lock: non-temporal write family, conformance-lane covered ----- #
     # (the locking-mode advance has an idiomatic story, m-opt-lock-002)        #
-    "m-opt-lock-005": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
-    "m-opt-lock-006": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
-    "m-opt-lock-007": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
-    "m-opt-lock-013": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    "m-opt-lock-005": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
+    "m-opt-lock-006": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
+    "m-opt-lock-007": _OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON,
+    "m-opt-lock-013": _OPT_LOCK_MATCHING_GATE_EMITTED_SQL_REASON,
     # -- m-opt-lock / m-read-lock concurrency cases -------------------------- #
     "m-opt-lock-009": _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON,
     "m-opt-lock-010": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
@@ -1202,7 +1251,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-read-lock-010": _READ_LOCK_PARTITIONED_GOLDEN_REASON,
     "m-read-lock-011": _READ_LOCK_TWO_SESSION_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #
-    "m-batch-write-004": _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON,
+    "m-batch-write-004": _BATCH_WRITE_VERSIONED_MATERIALIZE_REASON,
     # -- m-pk-gen: temporal composition -------------------------------------- #
     "m-pk-gen-014": _PK_GEN_TEMPORAL_INSERT_REASON,
     # -- m-inheritance: rows-form representative siblings ------------------- #
@@ -1289,7 +1338,7 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-095": _INHERITANCE_TEMPORAL_WRITE_REASON,
     "m-inheritance-096": _INHERITANCE_TEMPORAL_WRITE_REASON,
     "m-inheritance-097": _INHERITANCE_TEMPORAL_WRITE_REASON,
-    "m-inheritance-105": _INHERITANCE_TEMPORAL_WRITE_REASON,
+    "m-inheritance-105": _INHERITANCE_COMPOSED_CONFLICT_REASON,
     "m-inheritance-086": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-131": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-087": _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON,
