@@ -62,7 +62,18 @@ from typing import Any, Literal
 
 from parallax.core.entity._query import FindQuery, LoweredFindQuery, lower_find_query
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.op_algebra import DeepFetch, Operation, validate_operation
+from parallax.core.op_algebra import (
+    AsOf,
+    AsOfRange,
+    DeepFetch,
+    Distinct,
+    History,
+    Limit,
+    Narrow,
+    Operation,
+    OrderBy,
+    validate_operation,
+)
 from parallax.snapshot.handle._errors import QueryTargetError
 from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features
 
@@ -136,12 +147,38 @@ def preflight_neutral(
 
 
 def fetches_relationships(operation: Operation) -> bool:
-    """Whether ``operation``'s own deep-fetch directive names a level to fetch.
+    """Whether ``operation`` names a relationship level to fetch, at any depth a
+    result wrapper can carry one.
 
-    The structural counterpart of a nonempty ``FetchPlan.levels``: planning takes
-    its paths off an OUTER ``DeepFetch`` node and adds one level per segment, so
-    a directive with no path, or a path with no segment, plans no level either.
-    Deciding it structurally is what keeps this seam free of deep-fetch planning,
-    which its enforcement scope forbids it to reach.
+    A deep fetch is not confined to the outermost node: ``m-op-algebra`` composes
+    it freely with the other nodes that return their operand's OWN rows —
+    ``orderBy``, ``limit``, ``distinct``, ``narrow``, and the temporal ``asOf``,
+    ``asOfRange``, and ``history`` — so ``limit(deepFetch(all, path), 1)`` is as
+    legal a request as the bare ``deepFetch``, and the levels it names are just as
+    unserviceable by the values lane. The walk descends that closed set of
+    wrappers and no other node, which is the same spine the algebra's own ordered-
+    position rule resolves through; a level named anywhere along it refuses.
+
+    Reaching a ``DeepFetch`` ends the walk either way: a directive with no path,
+    or a path with no segment, names no level and is not a refusal. Deciding all
+    of this structurally is what keeps this seam free of deep-fetch planning,
+    which its enforcement scope forbids it to reach — and the seam cannot borrow
+    the planner's own reading of the operation, which sees the outer node alone.
     """
-    return isinstance(operation, DeepFetch) and any(path.segments for path in operation.paths)
+    node = operation
+    while True:
+        match node:
+            case DeepFetch(paths=paths):
+                return any(path.segments for path in paths)
+            case (
+                OrderBy(operand=operand)
+                | Limit(operand=operand)
+                | Distinct(operand=operand)
+                | Narrow(operand=operand)
+                | AsOf(operand=operand)
+                | AsOfRange(operand=operand)
+                | History(operand=operand)
+            ):
+                node = operand
+            case _:
+                return False

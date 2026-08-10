@@ -292,3 +292,35 @@ def test_transaction_passes_a_non_driver_body_error_unchanged() -> None:
     adapter = _adapter(_FakeConnection())
     with pytest.raises(_Boom):
         adapter.transaction(body)
+
+
+def test_transaction_passes_a_body_raised_driver_error_unchanged() -> None:
+    # m-db-port scopes translation to the errors the PORT makes; an exception the
+    # caller's own body raised is not one of them, however psycopg-shaped it is.
+    # The identical object reaches the caller, so a body-authored deadlock-class
+    # exception cannot read as a retriable DatabaseError to m-auto-retry and have
+    # the body replayed over a failure the database never reported.
+    raised_by_the_body = errors.DeadlockDetected("the caller's own deadlock")
+
+    def body(_port: object) -> None:
+        raise raised_by_the_body
+
+    adapter = _adapter(_FakeConnection())
+    with pytest.raises(psycopg.Error) as exc_info:
+        adapter.transaction(body)
+    assert exc_info.value is raised_by_the_body
+
+
+def test_transaction_translates_a_rollback_failure_over_a_body_driver_error() -> None:
+    # The other side of the same boundary: the rollback the body triggered is the
+    # port's own work, so ITS driver failure translates and is what escapes, even
+    # though the body's exception was also a psycopg error. Identity is what
+    # separates the two; the classes cannot.
+    def body(_port: object) -> None:
+        raise errors.DeadlockDetected("the caller's own deadlock")
+
+    adapter = _adapter(_FakeConnection(rollback_error=errors.UniqueViolation("dup")))
+    with pytest.raises(DatabaseError) as exc_info:
+        adapter.transaction(body)
+    assert exc_info.value.violates_unique_index
+    assert exc_info.value.native_code == "23505"

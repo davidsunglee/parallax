@@ -2709,16 +2709,24 @@ or descriptor authoring form and performs no audit stamping.
   path's own runtime through three entry points exported from
   `parallax.snapshot.handle` beside `Database` and `Transaction` together with
   the `Neutral*` result vocabulary and `ObservationKey`. `db.read_neutral(request)`
-  and `tx.read_neutral(request)` are reads and enter the same read executor
-  `db.find` and `tx.find` enter; `tx.write_neutral(instruction, *, observation:
-  ObservationKey | WriteObservation | None = None)` is the neutral WRITE ingress —
+  and `tx.read_neutral(request)` are reads, and which executor entry they take is
+  the request's FORM: a graph-form request enters the very entries `db.find` and
+  `tx.find` enter — the instance-form executor with its per-level deep-fetch loop,
+  or the milestone-set entry a scanned axis dispatches to — while a row-form
+  request enters a third entry of its own, which shares the root canonicalization,
+  the same compilation with the values lane selected, and the same recorded
+  Database Call, but runs no relationship level and builds no graph, because the
+  transformed row is already the representation;
+  `tx.write_neutral(instruction, *, observation: ObservationKey |
+  WriteObservation | None = None)` is the neutral WRITE ingress —
   it validates and buffers one write instruction for the same Write Planner the
   typed verbs feed, and reaches no read executor. A `NeutralReadRequest`
   states the two facts lowering a Find Query would have produced — the resolved
   target and the canonical operation — and selects the row or graph form;
   everything after it is the typed path's own: the same read gate, the same
   canonicalization and compilation, the same Database Call, the same deep-fetch
-  loop, and, on `tx.read_neutral`, the same force-flush, read-lock derivation,
+  loop wherever the form runs one, and, on `tx.read_neutral`, the same
+  force-flush, read-lock derivation,
   observation recording, and Read Trace bracket. The two materializers are peers
   chosen only once execution has finished, so a typed read constructs no
   `Neutral*` value. A graph-form node publishes the `ObservationKey` its evidence
@@ -3456,10 +3464,16 @@ remains observable rather than making Python its own oracle.
   unavailable; a session-scoped fixture prints a final summary naming every
   skipped database-backed check and its reason, and the CI database lane fails
   on any skip — silent skips are structurally impossible.
-- **Database Error mapping.** At the port boundary every driver exception is
+- **Database Error mapping.** At the port boundary every driver exception raised
+  by work the port itself performs — a statement, or the `transaction`
+  boundary's begin, commit, or rollback — is
   re-raised as a Parallax Error carrying the neutral `m-db-error` category,
-  the preserved native SQLSTATE, and the driver message; driver exception
-  types never cross above the port. The translation constructs that error at the
+  the preserved native SQLSTATE, and the driver message; no driver exception
+  type the port raises ever crosses above it. The one exclusion is the caller's
+  own `transaction` body: an exception it raises is not the port's, so it
+  crosses unchanged even when it is a driver exception, which is what keeps a
+  body-authored deadlock-class failure from reading as retriable to
+  `m-auto-retry` and having the body replayed. The translation constructs that error at the
   failing call and caches nothing, satisfying the `m-db-port` rule that no two
   invocations share an error instance — which is what lets the Execution Log
   attribute an attempt failure to the call whose error escaped. The provider test
@@ -3470,7 +3484,11 @@ remains observable rather than making Python its own oracle.
   boundary `transaction` wraps whole: its begin, its commit, and its rollback —
   and asserts the adapter hands back ten distinct errors carrying the same
   category, native code, and message. Repetition rules out reuse within a raise
-  site and the shared adapter rules it out across them. The
+  site and the shared adapter rules it out across them. The same file pins the
+  rule's boundary in both directions: a body raising a psycopg exception over a
+  succeeding rollback surfaces that identical object, while the same body over a
+  rollback that itself fails with a psycopg exception surfaces the translated
+  port error. The
   SQLSTATE→category table (`40P01`,
   `40001` → deadlock; `55P03` → lock-wait timeout; `23505` → unique violation;
   …) lives in the pure dialect strategy where the Docker-free contract suite
