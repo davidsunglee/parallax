@@ -19,6 +19,12 @@ could produce. Which milestones such statements touched is not something a naive
 overtaken rather than claiming an account it no longer has
 (:meth:`TemporalShadow.accounts_for`).
 
+A materializing predicate write is the second such blind spot, and a sharper one:
+it resolves its own rows and retires and opens milestones inside production,
+whose plan never reaches this layer at all, so what this tracker holds for that
+target is not merely incomplete but no longer current
+(:meth:`TemporalShadow.note_materialized_write`).
+
 Non-normative engine-internal bookkeeping: never serialized, never a
 :class:`~parallax.core.unit_work.WriteInstruction` field, never consulted by
 production code (:mod:`parallax.snapshot.handle`) — the conformance family's own
@@ -99,12 +105,13 @@ class TemporalShadow:
     that names an observed edge address exactly the milestone it observed.
     """
 
-    __slots__ = ("_current", "_out_of_band", "_overtaken")
+    __slots__ = ("_current", "_materialized", "_out_of_band", "_overtaken")
 
     def __init__(self) -> None:
         self._current: dict[_ObjectKey, TemporalObservation] = {}
         self._out_of_band = False
         self._overtaken: set[_ObjectKey] = set()
+        self._materialized: set[_ObjectKey] = set()
 
     def accounts_for(
         self,
@@ -146,6 +153,25 @@ class TemporalShadow:
         slot = self._slot(model, entity, row, edge)
         return slot is not None and slot not in self._overtaken
 
+    def moved_by_materialization(
+        self,
+        model: Metamodel,
+        entity: EntityMetadata,
+        row: Mapping[str, object],
+        edge: temporal_read.Edge | None = None,
+    ) -> bool:
+        """Whether the milestone ``row`` addresses is one a materializing
+        predicate write of this case already retired
+        (:meth:`note_materialized_write`).
+
+        ``True`` means the tracked milestone is stale in the strongest sense: the
+        database holds a successor of it opened at that write's own instant, and a
+        close addressed at what this tracker still holds current would match no
+        row at all.
+        """
+        slot = self._slot(model, entity, row, edge)
+        return slot is not None and slot in self._materialized
+
     @contextlib.contextmanager
     def staged(self, *, doomed: bool) -> Generator[None]:
         """One choreography unit's advances, staged on that unit's own
@@ -170,13 +196,35 @@ class TemporalShadow:
             return
         current = dict(self._current)
         overtaken = set(self._overtaken)
+        materialized = set(self._materialized)
         out_of_band = self._out_of_band
         try:
             yield
         finally:
             self._current = current
             self._overtaken = overtaken
+            self._materialized = materialized
             self._out_of_band = out_of_band
+
+    def note_materialized_write(self, entity: EntityMetadata) -> None:
+        """Record that a materializing predicate write over ``entity`` committed —
+        it resolved its own rows and, for each, retired the milestone it found and
+        opened a successor (`m-opt-lock` predicate-selected writes materialize).
+
+        Production performs that resolve and plans those rows internally, and
+        hands back neither, so this tracker cannot advance to what the write left:
+        which of ``entity``'s milestones its predicate selected is not derivable
+        here at all. Every milestone of ``entity`` tracked right now is therefore
+        recorded as MOVED, which is a stronger statement than the doubt
+        out-of-band statements raise (:meth:`accounts_for`) — the row it names is
+        not merely unaccounted for, it is no longer the current one — and it is
+        the tightest bound available without the plan.
+
+        Milestones of OTHER entities are untouched: a predicate names one target,
+        and a write of that target moves no other table's rows.
+        """
+        name = entity.identity.name
+        self._materialized |= {key for key in self._current if key[0] == name}
 
     def note_out_of_band_write(self) -> None:
         """Record that statements outside this tracker's own accounting ran
@@ -292,6 +340,7 @@ class TemporalShadow:
         )
         self._current.pop(key, None)
         self._overtaken.discard(key)
+        self._materialized.discard(key)
 
     def track_opened(self, model: Metamodel, plan: WritePlan) -> None:
         """Track every milestone ``plan`` OPENS as the current state a later step
@@ -334,7 +383,9 @@ class TemporalShadow:
 
         Storing a milestone is also what re-establishes a whole account of it: the
         row stored here came from the case's own fixtures or from the plan that
-        wrote it, so nothing that ran before it can still be in doubt.
+        wrote it, so neither the doubt earlier out-of-band statements raised nor
+        an earlier materializing write's displacement can still stand for the slot
+        it occupies.
         """
         existing = self._current.get(key)
         if existing is not None and existing.predecessor.members != observation.predecessor.members:
@@ -345,6 +396,7 @@ class TemporalShadow:
             )
         self._current[key] = observation
         self._overtaken.discard(key)
+        self._materialized.discard(key)
 
     @staticmethod
     def _key(
