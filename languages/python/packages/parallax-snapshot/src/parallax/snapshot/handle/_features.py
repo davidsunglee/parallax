@@ -37,18 +37,8 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.op_algebra import (
-    AsOf,
-    AsOfRange,
-    DeepFetch,
-    Distinct,
-    History,
-    Limit,
-    Narrow,
-    Operation,
-    OrderBy,
-)
-from parallax.core.temporal_read import scans_an_axis
+from parallax.core.op_algebra import AsOfRange, DeepFetch, History, Operation
+from parallax.snapshot.handle._spine import own_row_spine
 
 __all__ = ["DeferredFeatureError", "deferred_features"]
 
@@ -118,41 +108,35 @@ def _includes_over_a_scan(operation: Operation) -> bool:
     """Whether ``operation`` deep-fetches over a SCANNED temporal axis.
 
     A milestone-set read answers one graph per milestone, and combining that
-    with includes is the ``snapshot-history-includes`` Feature. The deep fetch
-    is not confined to the outermost node: ``m-op-algebra`` composes it freely
-    with the nodes returning their operand's OWN rows — ``orderBy``, ``limit``,
-    ``distinct``, ``narrow``, and the temporal ``asOf``, ``asOfRange``, and
-    ``history`` — so the walk descends that closed spine until it reaches one,
-    exactly as the read gate's own level check does. Reading the outer node
-    alone would let a wrapper-carried deep fetch over a milestone set past this
-    seam, which is the deferral evading its own refusal rather than a shape this
-    implementation runs.
+    with includes is the ``snapshot-history-includes`` Feature. Neither half is
+    confined to a position: ``m-op-algebra`` composes both freely with every
+    node returning its operand's own rows, so the two halves are recognized
+    across the whole
+    :func:`~parallax.snapshot.handle._spine.own_row_spine` — an include ANYWHERE
+    on it over a scan ANYWHERE on it, in either order and however many wrappers
+    separate them. Stopping the walk at the first deep fetch would leave the
+    legal ``deepFetch(deepFetch(history(...), ...), ...)`` and a ``narrow``
+    between a deep fetch and the scan below it unrecognized, which is the
+    deferral evading its own refusal rather than a shape this implementation
+    runs.
 
-    A scan on EITHER side of the deep fetch is the same milestone set: the
-    wrappers crossed on the way down are part of the read, and the operand below
-    is the question ``~parallax.core.temporal_read.scans_an_axis`` owns — the
-    same recognizer the read executors dispatch a milestone-set find on, and one
-    that deliberately does not peel a deep fetch itself, leaving a composer of
-    the two to hold that half. Reaching it costs no port: ``m-temporal-read`` is
-    a pure operation-and-metadata scope, so this module stays clear of the
-    Database Port its own read-preflight consumer must not touch.
+    An include is a deep-fetch path naming at least one segment, read exactly as
+    :func:`~parallax.snapshot.handle._preflight.fetches_relationships` reads one:
+    a ``deepFetch`` adding no relationship level to the milestone set combines
+    nothing with it.
+
+    Reaching this answer costs no port — the spine walk sees the operation
+    algebra alone — so this module stays clear of the Database Port its own
+    read-preflight consumer must not touch.
     """
-    node = operation
+    includes = False
     scanned = False
-    while True:
+    for node in own_row_spine(operation):
         match node:
-            case DeepFetch(operand=operand):
-                return scanned or scans_an_axis(operand)
-            case AsOfRange(operand=operand) | History(operand=operand):
+            case DeepFetch(paths=paths):
+                includes = includes or any(path.segments for path in paths)
+            case AsOfRange() | History():
                 scanned = True
-                node = operand
-            case (
-                OrderBy(operand=operand)
-                | Limit(operand=operand)
-                | Distinct(operand=operand)
-                | Narrow(operand=operand)
-                | AsOf(operand=operand)
-            ):
-                node = operand
             case _:
-                return False
+                continue
+    return includes and scanned

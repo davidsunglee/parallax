@@ -86,10 +86,11 @@ already carries.
   verbs run before deriving a row.
 
 The modules behind no exported name (``_materializer``, ``_family``,
-``_keyed_sql``, ``_predicate_writes``, ``_preflight``) are reached only through the modules
-above; each documents its own place in the package's acyclic internal graph.
+``_keyed_sql``, ``_predicate_writes``, ``_preflight``, ``_spine``) are reached only through the
+modules above; each documents its own place in the package's acyclic internal graph.
 ``_preflight`` in particular stays unexported: the read gate is an intra-package
-seam, and its own §7 scope is what proves it reaches no port.
+seam, and its own §7 scope is what proves it reaches no port; ``_spine`` is the
+one own-row wrapper walk that gate's two structural recognizers share.
 """
 
 from __future__ import annotations
