@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-62**.
+Entry numbering is continuous and never reused. The next new number is **D-63**.
 
 ## Standing notes
 
@@ -212,6 +212,43 @@ compatibility graph oracles, Python typed and neutral results, cycle rendering,
 wire shape, and bounded-memory streaming. It needs its own grilling session and
 ticket after conformance has been reduced to the production path; COR-93 must not
 combine that semantic migration with deleting the duplicate engine.
+
+### D-62 — A graph-form read whose deep fetch sits under a result wrapper passes the read gate and fails in SQL generation after a force-flush
+
+*Medium — a legal operation reaches execution and fails late, having already
+written.* **Owned by
+[COR-96](https://linear.app/flimflam/issue/COR-96/decide-what-a-row-returning-wrapper-over-a-deep-fetch-means), not this
+target** — what the shape denotes is a core-specification decision, and this
+entry records only what Python does until that decision is made, so a second
+language target inheriting the same ingress finds it. Relates to
+`parallax.snapshot.handle._preflight.preflight_neutral`,
+`parallax.snapshot.handle._features`, `parallax.core.deep_fetch.plan`.
+
+**What.** `m-op-algebra` composes `deepFetch` freely under the nodes that return
+their operand's own rows, so `limit(deepFetch(all, path), 5)` is a legal
+operation. Find Query lowering never emits one — it places the deep fetch
+outermost — but the model-neutral read ingress accepts any legal operation, so
+the shape now reaches execution. `deep_fetch.plan` reads the outer node alone: it
+plans zero levels and hands the whole operation, deep fetch included, to
+`compile_read`, which raises `SqlGenError`. On a participating read that lands
+after `uow.read`'s force-flush — the recorded port sequence is `['begin',
+'write', 'rollback']`, with the buffered DML already executed.
+
+Two neighbouring shapes are settled and are not this entry. A ROW-form request
+carrying the same operation is refused at the read gate, which walks the wrapper
+spine, because the values lane materializes no relationship level at any depth.
+A wrapper-carried deep fetch over a SCANNED temporal axis is refused one step
+earlier as the `snapshot-history-includes` Deferred Execution Feature, which
+`m-snapshot-read` already defines.
+
+**Why it is deferred rather than fixed.** Every available repair presumes an
+answer to the unstated question: what the graph a row-returning wrapper over a
+deep fetch denotes. Planner support would build one denotation into the
+implementation. A new Deferred Execution Feature would name a Feature no core tag
+defines, and would be retired the moment the denotation is stated. A gate
+rejection would report the operation invalid when the specification permits it
+and only the implementation is behind. Python therefore adds neither, states the
+bound truthfully at the gate, and follows COR-96's decision.
 
 ## Forwarding pointers
 

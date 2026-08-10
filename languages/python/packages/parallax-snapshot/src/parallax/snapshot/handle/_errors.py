@@ -12,18 +12,20 @@ library.
 The other three are raised from the parent ``parallax.snapshot.handle`` scope
 alone — :class:`SnapshotConnectionError` from ``_database`` and
 ``_transaction``, :class:`SnapshotMaterializationError` from ``_read``,
-:class:`UnobservedWriteError` from ``_transaction`` — so their raise sites
-compel nothing, and their membership is a placement decision rather than a
-structural one. It is this: none of them reports a condition that one surface's
-own contract DECIDES. A model that composed no Entity Class, a failure
-translated at the materialization boundary, a key naming nothing the unit of
-work's observation record holds — each is a fact about the package, and any
-scope in it could come to detect one. Defining such a refusal inside a scope
-would make a second raiser a question about which module owns the class;
-defining it here leaves a second raiser a decision about behavior alone.
+:class:`UnobservedWriteError` from ``_transaction`` — so nothing about their
+raise sites compels this module, and their membership is a placement decision
+rather than a structural one. Only the first of the three lacks a single home
+of its own: class-backed capability is checked at both read doors, so either
+module defining it would have the other import a sibling for a class neither
+owns. The remaining two each have one raiser and one deciding surface — the
+materialization boundary ``_read`` translates at, and the Observation-Key
+dereference ``tx.write_neutral`` performs — and are here for one reason only,
+which is that the scope's four developer-facing refusals are then read in one
+place. Nothing structural rules on those two, and moving either beside its
+surface would cost this module nothing.
 
-The package's other developer-facing refusals do have a deciding surface, and
-are defined there: ``DeferredFeatureError`` by the Feature inventory it reports
+The package's other developer-facing refusals are declared with the surface
+that decides them: ``DeferredFeatureError`` by the Feature inventory it reports
 (:mod:`parallax.snapshot.handle._features`), ``NoResultFound`` and
 ``TooManyResultsFound`` by ``Snapshot.result``
 (:mod:`parallax.snapshot.handle._read`), ``TransactionOptionConflictError`` and

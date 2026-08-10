@@ -78,8 +78,13 @@ wraps the whole boundary in one translating block substitutes a port error for i
 unless it excludes the body. The two branches are one proof: a body raising a
 driver exception over a rollback that succeeds must surface that same object, and
 the same body over a rollback that itself fails with a driver exception must
-surface the translated port error instead. Only identity separates them, so a
-proof asserting error types alone establishes neither.
+surface the translated port error instead. Neither the exception's type nor its
+identity separates the branches, because the same driver that reuses one
+exception object across failures — the input the identity rule above already
+requires an adapter to withstand — hands the body and the rollback the same
+object. An adapter must therefore separate them by where the failure occurred,
+and the proof must include the case where one object is both: a body raising it,
+a rollback failing with it, and the translated boundary error surfacing.
 
 ## 3. Provider and matrix contract
 
