@@ -29,13 +29,11 @@ from dataclasses import dataclass, field, replace
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import (
-    _assembly,
     case_format,
     models,
     provision,
     temporal_state,
 )
-from parallax.conformance._assembly import find, find_history
 from parallax.conformance.temporal_state import TemporalShadow, predecessor_row
 from parallax.core import batch_write, inheritance, navigate, opt_lock, read_lock, storage_layout
 from parallax.core.base import (
@@ -59,6 +57,7 @@ from parallax.core.execution_log import (
     WriteCompleted,
 )
 from parallax.core.metamodel import (
+    AttributeIdentity,
     EntityIdentity,
     EntityMetadata,
     Multiplicity,
@@ -466,81 +465,123 @@ def _driver_binds(binds: Sequence[object]) -> list[object]:
 
 
 # --------------------------------------------------------------------------- #
-# Graph reads (m-deep-fetch / m-snapshot-read): the lane's own class-free       #
-# executor (`parallax.conformance._assembly`) does EVERY level's own            #
-# compile/execute/assemble. This lane deserializes the case's operation, calls  #
-# that executor, and renders its neutral `_assembly.Node`s to the wire `graph`  #
-# / `graphs` observation — the row-shaped, per-projection form the corpus       #
-# grades, which the developer-facing object graph does not retain.              #
+# Graph reads (m-deep-fetch / m-snapshot-read): the lane runs the production    #
+# neutral read seam in graph form, so every level's compile, execute, convert,  #
+# and merge is production's. What is left here is rendering the neutral node    #
+# views to the wire `graph` / `graphs` observation the corpus grades.           #
 # --------------------------------------------------------------------------- #
+def _neutral_read(
+    case: case_format.Case,
+    target: str,
+    operation_doc: object,
+    model: AcceptedMetamodel,
+    port: DbPort,
+    dialect_name: str,
+) -> handle.NeutralReadResult:
+    """One graph-form neutral read of the case's own operation.
+
+    The whole lane is ``db.read_neutral``: canonicalization, deep-fetch planning,
+    per-level compilation and execution, row conversion, projection merging, and
+    the round-trip count are production's, and a scanning read answers the
+    milestone-set form from the same call, exactly as ``db.find`` does.
+    """
+    db = handle.Database(port, model, dialect=dialect_for(dialect_name))
+    try:
+        entity = case_entity(model, _case_meta_entity(case, target))
+        request = handle.NeutralReadRequest.graph(
+            target=entity.identity, operation=deserialize(operation_doc)
+        )
+        return db.read_neutral(request)
+    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+
+
+def _case_meta_entity(case: case_format.Case, target: str) -> Entity:
+    return load_case_metamodel(case).entity(target)
+
+
 def run_graph_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], dict[str, list[Row]], int, list[dict[str, object]] | None]:
-    """Run a single-graph deep-fetch / snapshot read, rendering its assembled
-    neutral nodes to the wire `then.graph` shape (root-class-keyed) and, for a
-    case declaring `then.identityChecks`, evaluating each declared reference-
-    identity assertion over the ASSEMBLED (pre-truncation) graph.
+    """Run a single-graph deep-fetch / snapshot read, rendering the neutral node
+    views production materialized to the wire `then.graph` shape (root-class-
+    keyed) and, for a case declaring `then.identityChecks`, evaluating each
+    declared reference-identity assertion over the MATERIALIZED (pre-truncation)
+    graph.
     """
     target, operation_doc = _read_target_and_operation(case)
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
-    dialect = dialect_for(dialect_name)
-    try:
-        raw_op = deserialize(operation_doc)
-        result = find(raw_op, model, dialect, target, port)
-    except (
-        OperationError,
-        SqlGenError,
-        TemporalReadError,
-        _assembly.AssemblyError,
-        KeyError,
-    ) as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-    emissions = [
-        Emission("/operation", call.statement.sql, call.statement.binds)
-        for call in result.execution.calls
-    ]
+    model = case_model(load_case_metamodel(case))
+    result = _neutral_read(case, target, operation_doc, model, port, dialect_name)
+    graph = result.output
+    if not isinstance(graph, handle.NeutralGraph):
+        raise EngineError(
+            f"{case.path.name}: a `then.graph` case read answered {type(graph).__name__} — "
+            "a milestone-set read asserts `then.graphs`"
+        )
     root_key = _graph_root_key(target, model)
-    graph_wire = _render_graph(root_key, result.nodes, model)
-    identity_checks = _evaluate_identity_checks(case, root_key, result.nodes)
-    return emissions, graph_wire, result.execution.round_trips, identity_checks
+    return (
+        _read_emissions(result),
+        _render_graph(root_key, graph.roots, model),
+        result.execution.round_trips,
+        _evaluate_identity_checks(case, root_key, graph.roots),
+    )
 
 
 def run_graphs_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], list[dict[str, object]], int]:
-    """Run a milestone-set (`history` / `asOfRange`) snapshot read, rendering the
-    executor's ordered per-milestone graphs to the wire `then.graphs` shape:
+    """Run a milestone-set (`history` / `asOfRange`) snapshot read, rendering
+    production's ordered per-milestone graphs to the wire `then.graphs` shape:
     an array of `{pin, graph}` entries, each pin keyed by declared as-of
-    attribute name."""
+    dimension spelling."""
     target, operation_doc = _read_target_and_operation(case)
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
-    dialect = dialect_for(dialect_name)
-    try:
-        raw_op = deserialize(operation_doc)
-        result = find_history(raw_op, model, dialect, target, port)
-    except (
-        OperationError,
-        SqlGenError,
-        TemporalReadError,
-        _assembly.AssemblyError,
-        KeyError,
-    ) as exc:
-        raise EngineError(f"{case.path.name}: {exc}") from exc
-    emissions = [
-        Emission("/operation", call.statement.sql, call.statement.binds)
-        for call in result.execution.calls
-    ]
+    model = case_model(load_case_metamodel(case))
+    result = _neutral_read(case, target, operation_doc, model, port, dialect_name)
+    graphs = result.output
+    if not isinstance(graphs, handle.NeutralGraphs):
+        raise EngineError(
+            f"{case.path.name}: a `then.graphs` case read answered {type(graphs).__name__} — "
+            "a single-instant read asserts `then.graph`"
+        )
     root_key = _graph_root_key(target, model)
     graphs_wire: list[dict[str, object]] = [
         {
-            "pin": {name: wire_value(instant) for name, instant in graph.pin.items()},
-            "graph": _render_graph(root_key, graph.nodes, model),
+            "pin": _wire_pin(graph.pin),
+            "graph": _render_graph(root_key, graph.roots, model),
         }
-        for graph in result.graphs
+        for graph in graphs
     ]
-    return emissions, graphs_wire, result.execution.round_trips
+    return _read_emissions(result), graphs_wire, result.execution.round_trips
+
+
+def _read_emissions(result: handle.NeutralReadResult) -> list[Emission]:
+    """The read's own emissions: the statements production actually ran, in order."""
+    return [
+        Emission("/operation", call.statement.sql, call.statement.binds)
+        for call in result.execution.calls
+    ]
+
+
+# The wire spelling each pinned as-of axis is emitted under in a milestone-set
+# graph's pin entry. The coordinate itself is structured everywhere above this seam.
+_PIN_AXIS_NAMES: Final[tuple[tuple[str, str], ...]] = (
+    ("valid-time", "valid_time"),
+    ("transaction-time", "tx_time"),
+)
+
+
+def _wire_pin(pin: Pin) -> dict[str, object]:
+    """One milestone's edge pin on the wire, keyed by dimension spelling.
+
+    An axis the milestone's Entity does not declare carries no coordinate and is
+    absent, which is what a :class:`~parallax.core.temporal_read.Pin` already
+    says by holding ``None`` there.
+    """
+    return {
+        name: wire_value(getattr(pin, field))
+        for name, field in _PIN_AXIS_NAMES
+        if getattr(pin, field) is not None
+    }
 
 
 def _graph_root_key(target: str, model: AcceptedMetamodel) -> str:
@@ -558,45 +599,65 @@ def _graph_root_key(target: str, model: AcceptedMetamodel) -> str:
 
 
 def _render_graph(
-    root_key: str, nodes: Sequence[_assembly.Node], model: AcceptedMetamodel
+    root_key: str, roots: Sequence[handle.NeutralNodeView], model: AcceptedMetamodel
 ) -> dict[str, list[Row]]:
-    """The wire `then.graph` shape: root-class-keyed, each root row rendered
-    through :func:`_render_node` (back-reference cycles truncate to a PK-only
-    stub; a diamond at a non-cyclic position keeps its full value)."""
-    return {root_key: [_render_node(node, frozenset(), model) for node in nodes]}
+    """The wire `then.graph` shape: root-class-keyed, each root rendered through
+    :func:`_render_node` (back-reference cycles truncate to a PK-only stub; a
+    diamond at a non-cyclic position keeps its full value)."""
+    return {root_key: [_render_node(view, frozenset(), model) for view in roots]}
 
 
 def _render_node(
-    node: _assembly.Node,
-    visiting: frozenset[int],
-    model: AcceptedMetamodel | None = None,
+    view: handle.NeutralNodeView, visiting: frozenset[int], model: AcceptedMetamodel
 ) -> Row:
-    """Render one assembled node to wire JSON: a node whose identity is ALREADY
-    on the current recursion path (a true back-reference cycle, m-case-format
-    "Back-reference cycles") truncates to a PK-only stub instead of recursing
-    again; every other position — including a diamond reached a second time
-    from a DIFFERENT, non-ancestor position — renders its full value.
+    """Render one neutral node view to wire JSON.
+
+    A node whose identity is ALREADY on the current recursion path (a true
+    back-reference cycle, m-case-format "Back-reference cycles") truncates to a
+    PK-only stub instead of recursing again; every other position — including a
+    diamond reached a second time from a DIFFERENT, non-ancestor position —
+    renders its full value.
+
+    Every member arrives keyed by structured identity, because that is what a
+    production read publishes; the wire keys are physical for an Attribute (the
+    spelling `then.graph` leaves author) and the canonical member name for a
+    Value Object occurrence. The recursion is keyed on the shared
+    :class:`~parallax.snapshot.handle.NeutralNode` rather than on the view, so a
+    cycle is recognized by the identity anchor production merged the projections
+    onto.
     """
-    node_id = id(node)
-    if node_id in visiting:
-        return {column: wire_value(node.fields[column]) for column in node.pk_columns}
-    nested = visiting | {node_id}
-    value_object_names = _value_object_names(node, model)
+    anchor = id(view.node)
+    if anchor in visiting:
+        return {
+            _member_column(model, identity): wire_value(view.attributes[identity])
+            for identity in view.primary_key
+        }
+    nested = visiting | {anchor}
     rendered: Row = {}
-    for key, value in node.fields.items():
-        _put_rendered(rendered, key, _render_value(value, nested, model))
-    if node.family_variant is not None:
-        _put_rendered(rendered, "familyVariant", node.family_variant)
-    for storage, canonical in value_object_names.items():
-        if storage in node.value_objects:
-            _put_rendered(
-                rendered,
-                canonical,
-                _render_value(node.value_objects[storage], nested, model),
-            )
-    for key, value in node.relationships.items():
-        _put_rendered(rendered, key, _render_value(value, nested, model))
+    for identity, value in view.attributes.items():
+        column = _member_column(model, identity)
+        _put_rendered(rendered, column, _render_value(value, nested, model))
+    if view.family_variant is not None:
+        _put_rendered(rendered, "familyVariant", view.family_variant)
+    for occurrence, document in view.value_objects.items():
+        _put_rendered(rendered, occurrence.path[-1], _render_value(document, nested, model))
+    for key, related in view.relationships.items():
+        _put_rendered(
+            rendered,
+            key.narrowed_view or key.relationship.name,
+            _render_value(related, nested, model),
+        )
     return rendered
+
+
+def _member_column(model: AcceptedMetamodel, identity: AttributeIdentity) -> str:
+    """The physical column ``identity`` is stored under — the spelling a
+    `then.graph` leaf keys that member by."""
+    entity = model.entity(identity.entity)
+    attribute = None if entity is None else entity.attribute(identity.name)
+    if attribute is None:  # pragma: no cover - a materialized member is declared Metadata
+        raise EngineError(f"{identity.entity.canonical}.{identity.name} names no declared member")
+    return attribute.storage.name
 
 
 def _put_rendered(rendered: Row, key: str, value: object) -> None:
@@ -606,65 +667,11 @@ def _put_rendered(rendered: Row, key: str, value: object) -> None:
     rendered[key] = value
 
 
-def _value_object_names(node: _assembly.Node, model: AcceptedMetamodel | None) -> dict[str, str]:
-    if model is None:
-        return {}
-    entity = _rendered_node_entity(node, model)
-    if entity is None:
-        return {}  # pragma: no cover - model-backed assembler nodes always resolve an entity
-    position = inheritance.view(model).entity(entity.identity)
-    if position is None:
-        return {}  # pragma: no cover - the inheritance facet covers every accepted entity
-    claimed: dict[str, str] = {}
-    if position.tag_column is not None:
-        claimed[position.tag_column] = f"family tag of {position.root.canonical}"
-    for attribute in position.applicable_attributes:
-        _claim_rendered_column(
-            claimed,
-            attribute.storage.name,
-            f"Attribute {attribute.identity.entity.canonical}.{attribute.identity.name}",
-        )
-    names: dict[str, str] = {}
-    for value_object in position.applicable_value_objects:
-        canonical_name = value_object.identity.path[-1]
-        _claim_rendered_column(
-            claimed,
-            value_object.storage.name,
-            f"Value Object {value_object.identity.entity.canonical}.{canonical_name}",
-        )
-        names[value_object.storage.name] = canonical_name
-    return names
-
-
-def _claim_rendered_column(claimed: dict[str, str], column: str, contributor: str) -> None:
-    existing = claimed.get(column)
-    if existing is not None:  # pragma: no cover - Model Formation rejects this defensively
-        raise EngineError(
-            f"physical column {column!r} ambiguously renders both {existing} and {contributor}"
-        )
-    claimed[column] = contributor
-
-
-def _rendered_node_entity(node: _assembly.Node, model: AcceptedMetamodel) -> EntityMetadata | None:
-    """Resolve a node through its assembler-propagated exact Entity Identity."""
-    identity = node.resolved_entity
-    if identity is None:
-        return None
-    entity = model.entity(identity)
-    if entity is None:  # pragma: no cover - assembler bookkeeping is accepted Metadata
-        raise EngineError(
-            f"node resolved entity {identity.canonical!r} is not declared by the model"
-        )
-    return entity
-
-
-def _render_value(
-    value: object, visiting: frozenset[int], model: AcceptedMetamodel | None = None
-) -> object:
-    if isinstance(value, _assembly.Node):
+def _render_value(value: object, visiting: frozenset[int], model: AcceptedMetamodel) -> object:
+    if isinstance(value, handle.NeutralNodeView):
         return _render_node(value, visiting, model)
-    if isinstance(value, list):
-        return [_render_value(item, visiting, model) for item in cast("list[object]", value)]
+    if isinstance(value, tuple | list):
+        return [_render_value(item, visiting, model) for item in cast("Sequence[object]", value)]
     if isinstance(value, Mapping):
         mapping = cast("Mapping[str, object]", value)
         return {key: _render_value(v, visiting, model) for key, v in mapping.items()}
@@ -672,14 +679,19 @@ def _render_value(
 
 
 def _evaluate_identity_checks(
-    case: case_format.Case, root_key: str, nodes: Sequence[_assembly.Node]
+    case: case_format.Case, root_key: str, roots: Sequence[handle.NeutralNodeView]
 ) -> list[dict[str, object]] | None:
     """The case's declared `then.identityChecks` (m-case-format / m-conformance-
-    adapter), each evaluated as Python reference identity (`is`) over the
-    ASSEMBLED graph — resolved by walking the SAME JSON-Pointer path the case
-    declares, against the neutral nodes directly (never the truncated wire
-    JSON, so a stubbed cycle position still resolves to its real referent).
-    Returns ``None`` when the case declares no identityChecks at all.
+    adapter), each evaluated as reference identity over the MATERIALIZED graph —
+    resolved by walking the SAME JSON-Pointer path the case declares, against the
+    neutral node views directly (never the truncated wire JSON, so a stubbed
+    cycle position still resolves to its real referent).
+
+    Sameness is asked of the shared identity anchor rather than of the view,
+    which is what "the same node" means once production has merged every
+    projection of one logical row onto one
+    :class:`~parallax.snapshot.handle.NeutralNode`. Returns ``None`` when the
+    case declares no identityChecks at all.
     """
     then = case.document.get("then")
     declared = (
@@ -689,43 +701,58 @@ def _evaluate_identity_checks(
     )
     if not declared:
         return None
-    root_map = {root_key: nodes}
+    root_map = {root_key: roots}
     results: list[dict[str, object]] = []
     for check in cast("list[Mapping[str, object]]", declared):
         left = _resolve_graph_pointer(case, root_map, cast("str", check["left"]))
         right = _resolve_graph_pointer(case, root_map, cast("str", check["right"]))
-        results.append({"left": check["left"], "right": check["right"], "same": left is right})
+        results.append(
+            {"left": check["left"], "right": check["right"], "same": left.node is right.node}
+        )
     return results
 
 
 def _resolve_graph_pointer(
-    case: case_format.Case, root_map: Mapping[str, Sequence[_assembly.Node]], pointer: str
-) -> _assembly.Node:
+    case: case_format.Case,
+    root_map: Mapping[str, Sequence[handle.NeutralNodeView]],
+    pointer: str,
+) -> handle.NeutralNodeView:
     """Resolve a `/then/graph/<RootClass>/<index>/<key>/<index>/...` JSON Pointer
-    against the assembled (pre-truncation) graph, alternating list-index and
+    against the materialized (pre-truncation) graph, alternating list-index and
     relationship-key navigation exactly as the pointer's own segments do."""
     parts = pointer.lstrip("/").split("/")
     if len(parts) < 4 or parts[0] != "then" or parts[1] != "graph":
         raise EngineError(f"{case.path.name}: identityChecks pointer {pointer!r} is malformed")
     current: object = root_map[parts[2]][int(parts[3])]
     for part in parts[4:]:
-        if isinstance(current, _assembly.Node):
-            if part in current.relationships:
-                current = current.relationships[part]
-            else:
-                current = current.fields[part]
-        elif isinstance(current, list):
-            current = cast("list[object]", current)[int(part)]
-        else:
-            raise EngineError(
-                f"{case.path.name}: identityChecks pointer {pointer!r} does not resolve "
-                "against the assembled graph"
-            )
-    if not isinstance(current, _assembly.Node):
+        current = (
+            cast("tuple[object, ...]", current)[int(part)]
+            if isinstance(current, tuple)
+            else _view_relationship(case, pointer, current, part)
+        )
+    if not isinstance(current, handle.NeutralNodeView):
         raise EngineError(
             f"{case.path.name}: identityChecks pointer {pointer!r} does not name a graph node"
         )
     return current
+
+
+def _view_relationship(case: case_format.Case, pointer: str, current: object, name: str) -> object:
+    """One pointer segment resolved against a node view's relationship views,
+    under the wire key a `then.graph` leaf spells them by.
+
+    Only relationship segments navigate: a pointer naming an Attribute reaches a
+    scalar, which can never be one side of an identity claim, so refusing here
+    reports the malformed pointer rather than a later, less specific miss.
+    """
+    if isinstance(current, handle.NeutralNodeView):
+        for key, related in current.relationships.items():
+            if (key.narrowed_view or key.relationship.name) == name:
+                return related
+    raise EngineError(
+        f"{case.path.name}: identityChecks pointer {pointer!r} does not resolve "
+        "against the materialized graph"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -2565,37 +2592,36 @@ def _run_snapshot_scenario(
     port: DbPort,
     steps: Sequence[Mapping[str, object]],
 ) -> tuple[list[Emission], int, list[dict[str, object]]]:
-    """Run a snapshot-read scenario: each find step assembles fresh neutral
-    nodes through the SAME lane executor every graph read uses
-    (:func:`~parallax.conformance._assembly.find`); `mutate` runs the production
-    write seam's
+    """Run a snapshot-read scenario: each find step reads through the SAME
+    production neutral seam every graph read uses (``db.read_neutral`` in graph
+    form); `mutate` runs the production write seam's
     finite-Transaction-Time-pin refusal against the referenced find step's own
-    statement pin (:func:`_grade_mutate_step`) and, when accepted, applies its
-    `set` directly to that step's own materialized node — a plain in-memory
-    field update, zero round trips, nothing at the port (m-snapshot-read
-    closed world: a snapshot node is never enrolled in a unit of work, so
-    mutating it can never write back). Returns the ordered emissions, the
-    total round trips, and one `errors` observation entry per `expectError`
-    step whose verb raised its declared application-lifecycle error
+    statement pin (:func:`_grade_mutate_step`) — zero round trips, nothing at the
+    port (m-snapshot-read closed world: a snapshot node is never enrolled in a
+    unit of work, so mutating it can never write back). Returns the ordered
+    emissions, the total round trips, and one `errors` observation entry per
+    `expectError` step whose verb raised its declared application-lifecycle error
     (`m-conformance-adapter`)."""
     meta = load_case_metamodel(case)
+    model = case_model(meta)
     dialect = dialect_for(dialect_name)
     # This lane resolves no milestone from case state — every node it publishes
     # comes from a real read and it buffers no keyed write — so the tracker the
     # out-of-band statements mark is its own and is never consulted.
     _apply_given_apply(case, dialect, port, TemporalShadow())
+    db = handle.Database(port, model, dialect=dialect)
     emissions: list[Emission] = []
     round_trips = 0
-    results: list[list[_assembly.Node]] = []
+    materialized: list[int] = []
     pins: list[Pin | None] = []
     identities: list[EntityIdentity | None] = []
     errors: list[dict[str, object]] = []
     for index, step in enumerate(steps):
         if "action" in step:
-            error_class = _grade_mutate_step(case, step, results, pins, identities)
+            error_class = _grade_mutate_step(case, step, materialized, pins, identities)
             if error_class is not None:
                 errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
-            results.append([])
+            materialized.append(0)
             pins.append(None)
             identities.append(None)
             continue
@@ -2607,12 +2633,14 @@ def _run_snapshot_scenario(
             )
         try:
             raw_op = deserialize(find_doc)
-            result = find(raw_op, case_model(meta), dialect, target, port)
-            pin = _find_step_pin(meta, target, raw_op)
             # The case document's own spelling is resolved HERE, where the
             # document is read, so no later step carries a spelling into a
             # production seam that takes an Entity Identity.
-            identity = case_entity(case_model(meta), meta.entity(target)).identity
+            identity = case_entity(model, meta.entity(target)).identity
+            result = db.read_neutral(
+                handle.NeutralReadRequest.graph(target=identity, operation=raw_op)
+            )
+            pin = _find_step_pin(meta, target, raw_op)
         except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         for call in result.execution.calls:
@@ -2620,10 +2648,23 @@ def _run_snapshot_scenario(
                 Emission(f"/scenario/{index}/find", call.statement.sql, call.statement.binds)
             )
         round_trips += result.execution.round_trips
-        results.append(list(result.nodes))
+        materialized.append(_root_count(case, result))
         pins.append(pin)
         identities.append(identity)
     return emissions, round_trips, errors
+
+
+def _root_count(case: case_format.Case, result: handle.NeutralReadResult) -> int:
+    """How many roots a scenario find step materialized — what a later `mutate`
+    step's single-node requirement is checked against."""
+    graph = result.output
+    if isinstance(graph, handle.NeutralGraph):
+        return len(graph.roots)
+    if isinstance(graph, handle.NeutralGraphs):  # pragma: no cover - no such step is authored
+        return sum(len(one.roots) for one in graph)
+    raise EngineError(  # pragma: no cover - a graph request answers a graph
+        f"{case.path.name}: a scenario find answered {type(graph).__name__}"
+    )
 
 
 def _find_step_pin(meta: Metamodel, target: str, raw_op: Operation) -> Pin:
@@ -2640,7 +2681,7 @@ def _find_step_pin(meta: Metamodel, target: str, raw_op: Operation) -> Pin:
 def _grade_mutate_step(
     case: case_format.Case,
     step: Mapping[str, object],
-    results: Sequence[list[_assembly.Node]],
+    materialized: Sequence[int],
     pins: Sequence[Pin | None],
     identities: Sequence[EntityIdentity | None],
 ) -> str | None:
@@ -2648,16 +2689,16 @@ def _grade_mutate_step(
     validator the keyed developer verbs run
     (:func:`~parallax.snapshot.handle.validate_source_pin`): a mutation
     through a view pinned at a finite Transaction-Time instant raises the
-    neutral `transaction-time-pin-read-only` error and applies nothing, while
-    a Latest or finite-Valid-Time pin is accepted and the `set` applies
-    in-memory (:func:`_apply_mutate_step`). Returns the raised error's
-    `errorClass` when the step's own declared `expectError` matched it, else
-    ``None`` for an accepted mutation; a mismatch in either direction — an
-    undeclared refusal, or a declared expectation the verb never raised — is
-    a loud :class:`EngineError`, never a silently dropped observation."""
+    neutral `transaction-time-pin-read-only` error, while a Latest or finite-
+    Valid-Time pin is accepted (:func:`_check_mutate_target`). Returns the
+    raised error's `errorClass` when the step's own declared `expectError`
+    matched it, else ``None`` for an accepted mutation; a mismatch in either
+    direction — an undeclared refusal, or a declared expectation the verb never
+    raised — is a loud :class:`EngineError`, never a silently dropped
+    observation."""
     _check_action_step(case, step)
     on = step.get("on")
-    source = on if isinstance(on, int) and 0 <= on < len(results) else None
+    source = on if isinstance(on, int) and 0 <= on < len(materialized) else None
     identity = None if source is None else identities[source]
     if source is None or identity is None:
         raise EngineError(f"{case.path.name}: `mutate` names {on!r}, which is no earlier find step")
@@ -2677,27 +2718,31 @@ def _grade_mutate_step(
             f"{case.path.name}: the step declares expectError {expected!r} but the "
             "mutation was accepted"
         )
-    _apply_mutate_step(case, step, results)
+    _check_mutate_target(case, step, materialized, source)
     return None
 
 
-def _apply_mutate_step(
-    case: case_format.Case, step: Mapping[str, object], results: Sequence[list[_assembly.Node]]
+def _check_mutate_target(
+    case: case_format.Case,
+    step: Mapping[str, object],
+    materialized: Sequence[int],
+    source: int,
 ) -> None:
-    _check_action_step(case, step)
-    on = step.get("on")
-    if not isinstance(on, int) or not (0 <= on < len(results)):
-        raise EngineError(f"{case.path.name}: `mutate` names an invalid `on` step index {on!r}")
-    nodes = results[on]
-    if len(nodes) != 1:
+    """Check that an ACCEPTED mutation names one node and carries a `set` map.
+
+    Nothing is applied. A snapshot view is a detached, immutable value
+    (`m-snapshot-read` closed world), which is exactly what this lane grades: the
+    step's whole observable claim is that the mutation was licensed, that it
+    reached the port not at all, and that the view it named was a single node.
+    """
+    count = materialized[source]
+    if count != 1:
         raise EngineError(
-            f"{case.path.name}: `mutate` targets step {on}, which materialized "
-            f"{len(nodes)} nodes (expected exactly one to mutate)"
+            f"{case.path.name}: `mutate` targets step {source}, which materialized "
+            f"{count} nodes (expected exactly one to mutate)"
         )
-    set_values = step.get("set")
-    if not isinstance(set_values, Mapping):
+    if not isinstance(step.get("set"), Mapping):
         raise EngineError(f"{case.path.name}: a `mutate` action needs a `set` mapping")
-    nodes[0].fields.update(cast("Mapping[str, object]", set_values))
 
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:

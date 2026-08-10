@@ -3849,6 +3849,22 @@ parallax.postgres --> parallax.core.dialect
   `uv run python tools/check_dag_sync.py && uv run lint-imports`. CI: the
   same pair as a blocking job; any import outside the closure, and any
   generated-contract drift, fails.
+- **The conformance family's accepted private reaches.** The enforcement unit is
+  the scope, so the importing-side exemption above already reaches a granted
+  scope's private modules; what the exemption does not decide is *which* of them
+  the adapter may read. The adapter drives production through supported entry
+  points, and the residue is an enumerated set rather than a habit: the
+  `m-descriptor` **record graph** (`parallax.descriptor._records` / `._serde` /
+  `._ingest` / `._adapter` / `._family`, plus the model-formation composition
+  root), because a corpus model is a descriptor document a case reads as parsed
+  records — including four inline `rejected` models that deliberately never
+  form — and the frontend's public surface answers only with a Domain Model Hub
+  or a refusal; and the two `parallax.core.entity` seams `AnotherSource`
+  composes, which are already accepted private seams of the composition root and
+  the read preflight. Each reach is keyed by the module that makes it, so a
+  second importer of an accepted name is a new decision here.
+  `tests/unit/test_frontend_contraction_guards.py` holds the exact set for both
+  this family and Snapshot's, as an inventory that fails when it drifts.
 - **Child enforcement scopes.** A support scope MAY declare child scopes over
   its own private implementation modules when the child's declared grants are
   materially narrower than the parent's closure or when one orchestration leaf
