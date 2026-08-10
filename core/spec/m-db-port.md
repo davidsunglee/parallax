@@ -58,16 +58,19 @@ Database Call — and two bodies that raise one shared object are two occurrence
 the caller chose not to distinguish.
 
 The rule binds the raise site alone, and an adapter that classifies each failure
-into a fresh error at the point of failure satisfies it structurally. No runtime
-consumer can enforce it while attributing a failure: an error it has just caught
-carries nothing saying whether some earlier occurrence was the same object, so a
-reused instance is indistinguishable from the occurrence it impersonates and
-nothing above the port checks. Detecting a violation instead needs several
-failures held at once and compared by identity, which is a **conformance proof**
-rather than a runtime attribution — one every adapter owes and the
-[database-provider test contract](database-provider-test-contract.md) states,
+into a fresh error at the point of failure satisfies it structurally. Enforcing
+it is an obligation of the adapter's proof, not of the port's consumers. A
+consumer attributing a failure sees only the error it just caught, and that
+error carries nothing saying whether an earlier occurrence was the same object,
+so a reused instance is indistinguishable from the occurrence it impersonates.
+Seeing the reuse means retaining earlier failures and comparing each new one
+against them by identity — which a consumer MAY do but none is required to, and
+which the consumers this rule exists for (`m-execution-log` attributing an
+attempt failure) do not do, because they hold one failure at a time. Enforcement
+is therefore a **conformance proof** every adapter owes: the
+[database-provider test contract](database-provider-test-contract.md) states it,
 driving each raise site repeatedly over a driver that reuses one exception
-object.
+object and comparing the collected errors by identity.
 
 ## Concrete adapter artifacts — one per database type
 
