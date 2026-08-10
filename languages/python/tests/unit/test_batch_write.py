@@ -30,7 +30,7 @@ _MODELS = models.load_models()
 
 def _target(stem: str, name: str) -> tuple[Metamodel, EntityMetadata]:
     """One corpus model and one of its Entities, both accepted."""
-    model = models.accepted_model(_MODELS[stem])
+    model = _MODELS[stem]
     entity = model.entity(EntityIdentity("parallax.compatibility", name))
     assert entity is not None
     return model, entity

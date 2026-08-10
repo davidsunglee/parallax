@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
+from _sql_gen_support import corpus_records
 
 from parallax.conformance import case_format
-from parallax.conformance import models as corpus_models
 from parallax.core.inheritance import InheritanceError
 from parallax.descriptor import validate_inheritance_families
 from parallax.descriptor._family import (
@@ -23,7 +23,7 @@ from parallax.descriptor._records import Attribute, Entity, Inheritance, Metamod
 from parallax.descriptor._serde import deserialize
 
 _REPO = case_format.find_repo_root()
-_MODELS = corpus_models.load_models(_REPO / "core" / "compatibility" / "models")
+_MODELS = corpus_records()
 _CASES = _REPO / "core" / "compatibility" / "cases"
 
 

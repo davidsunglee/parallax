@@ -69,7 +69,7 @@ def test_the_compile_lane_emits_exactly_one_plans_own_lowering(
 
     assert planned, "the emissions come from a plan rather than from a re-lowering"
     assert len({id(value) for value in planned}) == len(planned), "no buffer is planned twice"
-    model = engine.case_model(engine.load_case_metamodel(case))
+    model = engine.load_case_metamodel(case)
     expected = [
         statement
         for value in planned

@@ -24,10 +24,11 @@ from collections.abc import Sequence
 import pytest
 from _corpus_identity_support import corpus_object_key
 from _metamodel_support import Declaration, attribute, identity, key, source
+from _sql_gen_support import corpus_records, formed
+from _sql_gen_support import model as corpus_model
 
 from _support.clock_probes import CountingClock, inert_instant, instant_at
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
-from parallax.conformance import models
 from parallax.core import op_algebra, opt_lock
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
@@ -84,15 +85,15 @@ from parallax.core.unit_work import (
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
 from parallax.snapshot.handle import build_write_planner
 
-_MODELS = models.load_models()
-_ACCOUNT = models.accepted_model(_MODELS["account"])
-_BALANCE = models.accepted_model(_MODELS["balance"])
-_POSITION = models.accepted_model(_MODELS["position"])
-_ORDERS = models.accepted_model(_MODELS["orders"])
-_PERSON = models.accepted_model(_MODELS["person"])
-_PAYMENT = models.accepted_model(_MODELS["payment"])
-_PK_MAX = models.accepted_model(_MODELS["pk-max"])
-_WALLET = models.accepted_model(_MODELS["wallet"])
+_MODELS = corpus_records()
+_ACCOUNT = corpus_model("account")
+_BALANCE = corpus_model("balance")
+_POSITION = corpus_model("position")
+_ORDERS = corpus_model("orders")
+_PERSON = corpus_model("person")
+_PAYMENT = corpus_model("payment")
+_PK_MAX = corpus_model("pk-max")
+_WALLET = corpus_model("wallet")
 
 _B1 = "2024-01-01T00:00:00+00:00"
 
@@ -796,7 +797,7 @@ def test_batching_never_regroups_across_an_intervening_different_entity() -> Non
         KeyedWrite("insert", "Person", ({"id": 99, "name": "P"},)),
         KeyedWrite("insert", "Wallet", ({"id": 2, "owner": "Bo", "balance": 2.00},)),
     ]
-    model = models.accepted_model(
+    model = formed(
         DescriptorMetamodel(entities=(*_MODELS["wallet"].entities, *_MODELS["person"].entities))
     )
     plan = _plan(buffer, model)
@@ -1016,7 +1017,7 @@ def test_a_bounded_bitemporal_update_expands_in_place_between_unrelated_writes()
         position_update,
         KeyedWrite("delete", "Wallet", ({"id": 2},)),
     ]
-    model = models.accepted_model(
+    model = formed(
         DescriptorMetamodel(entities=(*_MODELS["wallet"].entities, *_MODELS["position"].entities))
     )
     plan = _plan(

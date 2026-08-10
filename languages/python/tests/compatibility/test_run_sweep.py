@@ -368,7 +368,7 @@ def _scenario_find_row_transforms(case: case_format.Case, meta: Any) -> list[Cal
     transform is the identity, which is what makes this inert for every other
     case in this lane.
     """
-    model = engine.case_model(meta)
+    model = meta
     transforms: list[Callable[[Row], Row]] = []
     for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
         if "find" not in step:
@@ -466,7 +466,7 @@ def _assert_layout_shaped_table_state(
     """
     layouts = {
         layout.table.name: [slot.column.name for slot in layout.columns]
-        for layout in storage_layout.view(engine.case_model(meta)).tables
+        for layout in storage_layout.view(meta).tables
     }
     assert set(observed_state) == set(layouts), (case.case_id, sorted(observed_state))
     for table, rows in observed_state.items():

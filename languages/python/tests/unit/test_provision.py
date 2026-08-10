@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import pytest
 from _document_layout_support import document_model
+from _sql_gen_support import corpus, corpus_records, formed
 
-from parallax.conformance import models, provision
+from parallax.conformance import provision
 from parallax.core.db_port import JsonDocument
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
@@ -29,8 +30,8 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 
-_RECORDS = models.load_models()
-_MODELS = {stem: models.accepted_model(meta) for stem, meta in _RECORDS.items()}
+_RECORDS = corpus_records()
+_MODELS = corpus()
 
 
 def test_reset_statements() -> None:
@@ -323,7 +324,7 @@ def test_an_index_naming_an_undeclared_attribute_never_reaches_provisioning() ->
         ),
     )
     with pytest.raises(MetamodelValidationError, match="metamodel-index-attribute"):
-        models.accepted_model(
+        formed(
             dataclasses.replace(
                 broken, entities=(next(e for e in broken.entities if e.name == "Tag"),)
             )
@@ -354,7 +355,7 @@ def _tph_family_with_a_value_object() -> AcceptedMetamodel:
         inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
-    return models.accepted_model(Metamodel(entities=(root, leaf)))
+    return formed(Metamodel(entities=(root, leaf)))
 
 
 def _tpcs_family_with_a_value_object() -> AcceptedMetamodel:
@@ -376,7 +377,7 @@ def _tpcs_family_with_a_value_object() -> AcceptedMetamodel:
             ),
         ),
     )
-    return models.accepted_model(Metamodel(entities=(root, leaf)))
+    return formed(Metamodel(entities=(root, leaf)))
 
 
 def test_schema_statements_tph_maps_a_value_object_to_jsonb() -> None:
@@ -412,7 +413,7 @@ def _tph_family_with_a_descendant_declared_value_object_and_index() -> AcceptedM
         ),
         indices=(Index(name="leaf_code_uq", attributes=("code",), unique=True),),
     )
-    return models.accepted_model(Metamodel(entities=(root, leaf)))
+    return formed(Metamodel(entities=(root, leaf)))
 
 
 def test_schema_statements_tph_surfaces_a_descendant_declared_value_object_and_index() -> None:
@@ -461,7 +462,7 @@ def _tpcs_family_with_a_root_declared_unique_index() -> AcceptedMetamodel:
         inheritance=Inheritance(role="concrete-subtype", parent="Root"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
-    return models.accepted_model(Metamodel(entities=(root, leaf)))
+    return formed(Metamodel(entities=(root, leaf)))
 
 
 def test_schema_statements_tpcs_surfaces_a_root_declared_unique_index() -> None:
@@ -493,7 +494,7 @@ def _tpcs_family_with_a_temporal_root() -> AcceptedMetamodel:
         inheritance=Inheritance(role="concrete-subtype", parent="Root"),
         attributes=(Attribute(name="x", type="int32", column="x"),),
     )
-    return models.accepted_model(Metamodel(entities=(root, leaf)))
+    return formed(Metamodel(entities=(root, leaf)))
 
 
 def test_schema_statements_tpcs_key_comes_from_the_tableless_root_derived_index() -> None:
@@ -524,7 +525,7 @@ def _entity_with_two_indices_over_one_column() -> AcceptedMetamodel:
             Index(name="widget_code_uq_dup", attributes=("code",), unique=True),
         ),
     )
-    return models.accepted_model(Metamodel(entities=(widget,)))
+    return formed(Metamodel(entities=(widget,)))
 
 
 def test_schema_statements_renders_every_unique_index_over_one_column() -> None:
@@ -719,4 +720,4 @@ def test_an_axis_naming_an_unknown_attribute_never_reaches_provisioning() -> Non
         ),
     )
     with pytest.raises(MetamodelValidationError, match="metamodel-as-of-attribute"):
-        models.accepted_model(Metamodel(entities=(malformed,)))
+        formed(Metamodel(entities=(malformed,)))

@@ -55,8 +55,8 @@ from parallax.core.unit_work import (
 )
 
 _MODELS = models.load_models()
-_ACCOUNT = models.accepted_model(_MODELS["account"])
-_BALANCE = models.accepted_model(_MODELS["balance"])
+_ACCOUNT = _MODELS["account"]
+_BALANCE = _MODELS["balance"]
 
 
 def _edited_account_row(*, version: int = 1) -> dict[str, object]:

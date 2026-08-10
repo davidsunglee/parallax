@@ -3859,14 +3859,20 @@ parallax.postgres --> parallax.core.dialect
   scope's private modules; what the exemption does not decide is *which* of them
   the adapter may read. The adapter drives production through supported entry
   points, and the residue is an enumerated set rather than a habit: the
-  `m-descriptor` **record graph** (`parallax.descriptor._records` / `._serde` /
-  `._ingest` / `._adapter` / `._family`, plus the model-formation composition
-  root), because a corpus model is a descriptor document a case reads as parsed
-  records — including four inline `rejected` models that deliberately never
-  form — and the frontend's public surface answers only with a Domain Model Hub
-  or a refusal; and the two `parallax.core.entity` seams `AnotherSource`
-  composes, which are already accepted private seams of the composition root and
-  the read preflight. Each reach is keyed by the module that makes it, so a
+  `parallax.core.entity` seams the adapter composes descriptor-backed models
+  through — `_model.model_of` in both its corpus-model loader and its
+  second-frontend fixture, and `_query.lower_find_query` in the latter. All
+  three are **rebutted rather than exempted**: `model_of` and `lower_find_query`
+  are already accepted private seams of production's own composition root and
+  read preflight, and `model_of` exists precisely so a separately distributed
+  frontend can read the accepted model out of a Domain Model (*Canonical
+  descriptor input*), which is what the adapter is doing. Widening
+  `parallax.core.entity`'s shipped surface to serve a development-only consumer
+  of a documented first-party seam would be the wrong repair. The `m-descriptor`
+  record graph is **not** in the set: corpus models reach the adapter through the
+  public `domain_model_from_*` doors and are read through the accepted model's
+  own vocabulary, so no `parallax.descriptor` private module is imported at all.
+  Each reach is keyed by the module that makes it, so a
   second importer of an accepted name is a new decision here.
   `tests/unit/test_frontend_contraction_guards.py` holds the exact set for both
   this family and Snapshot's, as an inventory that fails when it drifts.

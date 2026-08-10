@@ -45,13 +45,13 @@ def _validate(doc: object, schema: dict[str, Any]) -> None:
 
 
 _MODELS = models.load_models()
-_ACCOUNT = models.accepted_model(_MODELS["account"])
-_PAYMENT = models.accepted_model(_MODELS["payment"])
-_BALANCE = models.accepted_model(_MODELS["balance"])
-_POSITION = models.accepted_model(_MODELS["position"])
+_ACCOUNT = _MODELS["account"]
+_PAYMENT = _MODELS["payment"]
+_BALANCE = _MODELS["balance"]
+_POSITION = _MODELS["position"]
 # Two Entities sharing one local name across namespaces — the corpus model the
 # ambiguity rule is authored against (`m-op-algebra-048` / `-051`).
-_SHARED_LOCAL_NAME = models.accepted_model(_MODELS["shared-local-name"])
+_SHARED_LOCAL_NAME = _MODELS["shared-local-name"]
 
 _B1 = "2024-01-01T00:00:00+00:00"
 _B2 = "2024-06-01T00:00:00+00:00"
@@ -652,7 +652,7 @@ def test_a_milestone_verb_is_accepted_on_a_temporal_family_descendant() -> None:
     # Temporality is family-level metadata only the root declares
     # (`m-inheritance`), so a descendant whose OWN accepted Metadata carries no
     # axis still admits every milestone verb its family derives one for.
-    rate = models.accepted_model(_MODELS["rate"])
+    rate = _MODELS["rate"]
     keyed = wi.deserialize(
         {
             "mutation": "terminate",
@@ -667,7 +667,7 @@ def test_a_milestone_verb_is_accepted_on_a_temporal_family_descendant() -> None:
 def test_member_name_honesty_covers_value_object_members() -> None:
     # A top-level value-object name is a legal write-row key (m-value-object); the
     # honesty check accepts it alongside scalar attributes.
-    customer = models.accepted_model(_MODELS["customer"])
+    customer = _MODELS["customer"]
     keyed = wi.deserialize(
         {
             "mutation": "insert",
@@ -732,7 +732,7 @@ def test_member_name_honesty_rejects_a_scalar_type_mismatched_assignment() -> No
 # accepted. `test_where_verbs.py` covers the typed-path half of this check.     #
 # --------------------------------------------------------------------------- #
 def test_member_name_honesty_rejects_a_non_document_value_object_assignment() -> None:
-    customer = models.accepted_model(_MODELS["customer"])
+    customer = _MODELS["customer"]
     predicate = wi.deserialize(
         {
             "mutation": "update",
@@ -745,7 +745,7 @@ def test_member_name_honesty_rejects_a_non_document_value_object_assignment() ->
 
 
 def test_member_name_honesty_accepts_a_well_formed_value_object_assignment() -> None:
-    customer = models.accepted_model(_MODELS["customer"])
+    customer = _MODELS["customer"]
     document: dict[str, object] = {
         "street": "1 Aurora Ave",
         "city": "Oslo",
@@ -770,7 +770,7 @@ def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_n
     # `models/shipment.yaml`'s `destination` is `nullable: false` (the corpus's
     # "required top-level value object missing" exemplar), so a `None`
     # assignment is invalid.
-    shipment = models.accepted_model(_MODELS["shipment"])
+    shipment = _MODELS["shipment"]
     predicate = wi.deserialize(
         {
             "mutation": "update",
@@ -785,7 +785,7 @@ def test_member_name_honesty_rejects_a_non_nullable_value_object_assignment_of_n
 def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none() -> None:
     # `Customer.address` is `nullable: true` -- an explicit `None` stays a
     # legal clearing assignment.
-    customer = models.accepted_model(_MODELS["customer"])
+    customer = _MODELS["customer"]
     predicate = wi.deserialize(
         {
             "mutation": "update",
@@ -821,7 +821,7 @@ def test_a_predicate_writes_inverted_between_window_is_rejected() -> None:
 
 
 def test_a_predicate_writes_out_of_position_attribute_reference_is_rejected() -> None:
-    orders = models.accepted_model(_MODELS["orders"])
+    orders = _MODELS["orders"]
     predicate = wi.deserialize(
         {
             "mutation": "delete",
@@ -966,7 +966,7 @@ def test_a_result_modifier_inside_a_navigation_filter_is_rejected(
     position: str, predicate: dict[str, Any]
 ) -> None:
     assert position in predicate
-    orders = models.accepted_model(_MODELS["orders"])
+    orders = _MODELS["orders"]
     body = cast("dict[str, Any]", predicate[position])
     body["op"]["limit"]["count"] = 5
     instruction = wi.deserialize(
@@ -990,7 +990,7 @@ def test_a_bare_navigation_filter_carrying_no_inner_operation_is_accepted(
     # The optional inner `op` is absent — the recursion has nothing to descend
     # into and the predicate stays bare.
     assert position in predicate
-    orders = models.accepted_model(_MODELS["orders"])
+    orders = _MODELS["orders"]
     instruction = wi.deserialize(
         {"mutation": "delete", "target": {"entity": "Order", "predicate": predicate}}
     )
@@ -1027,7 +1027,7 @@ def test_a_whole_result_narrow_is_never_a_bare_write_predicate() -> None:
         wi.validate_instruction(instruction, _PAYMENT)
 
 
-_ANIMAL = models.accepted_model(_MODELS["animal"])
+_ANIMAL = _MODELS["animal"]
 # `Person` owns the polymorphic `animals` (-> the abstract root `Animal`) and is
 # itself a plain non-family, non-temporal, unversioned entity — so a predicate
 # write on it is legal and the narrow inside its navigation filter is the only
@@ -1127,7 +1127,7 @@ def test_a_result_modifier_inside_a_predicate_scoped_narrow_is_still_rejected() 
 
 
 def test_a_deep_fetch_is_never_a_bare_write_predicate() -> None:
-    orders = models.accepted_model(_MODELS["orders"])
+    orders = _MODELS["orders"]
     instruction = wi.deserialize(
         {
             "mutation": "delete",
@@ -1209,7 +1209,7 @@ def test_the_inheritance_family_rejection_outranks_the_assignment_rules() -> Non
 def test_member_name_honesty_rejects_a_non_nullable_scalar_assignment_of_none() -> None:
     # `Shipment.name` declares no `nullable: true`, so an explicit `None`
     # assignment is refused just as it is for a required value object.
-    shipment = models.accepted_model(_MODELS["shipment"])
+    shipment = _MODELS["shipment"]
     predicate = wi.deserialize(
         {
             "mutation": "update",

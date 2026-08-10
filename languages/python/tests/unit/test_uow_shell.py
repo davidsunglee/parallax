@@ -50,8 +50,8 @@ from parallax.core.unit_work import (
 from parallax.snapshot.handle import build_write_planner
 
 _MODELS = models.load_models()
-_ACCOUNT = models.accepted_model(_MODELS["account"])
-_BALANCE = models.accepted_model(_MODELS["balance"])
+_ACCOUNT = _MODELS["account"]
+_BALANCE = _MODELS["balance"]
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
 

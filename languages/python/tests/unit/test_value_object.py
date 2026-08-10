@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import pytest
 from _metamodel_support import Declaration, identity, key, source
+from _sql_gen_support import model as corpus_model
 
-from parallax.conformance import case_format
-from parallax.conformance import models as corpus_models
 from parallax.core import value_object as vo
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import FLOAT64, STRING, NeutralType
@@ -23,13 +22,9 @@ from parallax.core.metamodel import (
     ValueObjectShapeKey,
 )
 
-_MODELS = corpus_models.load_models(
-    case_format.find_repo_root() / "core" / "compatibility" / "models"
-)
-
 
 def _model(stem: str) -> Metamodel:
-    return corpus_models.accepted_model(_MODELS[stem])
+    return corpus_model(stem)
 
 
 def _address() -> ValueObjectMetadata:

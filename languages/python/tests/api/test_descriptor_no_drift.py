@@ -40,7 +40,7 @@ _MODELS = case_format.find_repo_root() / "core" / "compatibility" / "models"
 
 
 def _corpus(stem: str) -> Metamodel:
-    return models.accepted_model(models.load_model(Path(_MODELS / f"{stem}.yaml")))
+    return models.load_model(Path(_MODELS / f"{stem}.yaml"))
 
 
 def _leaf(left: ValueObjectAttributeMetadata, right: ValueObjectAttributeMetadata) -> None:

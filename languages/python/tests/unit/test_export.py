@@ -63,7 +63,7 @@ def _by_identity(document: dict[str, object]) -> dict[tuple[object, object], dic
 def test_export_equals_canonicalize_over_the_corpus(path: Path) -> None:
     raw = case_format.safe_load_yaml(path.read_text(encoding="utf-8"))
     assert isinstance(raw, dict)
-    model = models.accepted_model(models.load_model(path))
+    model = models.load_model(path)
     exported = export_document(model)
     corpus = canonicalize(cast("dict[str, object]", raw))
     assert ("entity" in exported) == ("entity" in corpus)

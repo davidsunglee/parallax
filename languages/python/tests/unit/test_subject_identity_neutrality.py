@@ -44,9 +44,9 @@ from parallax.core.unit_work import (
 from parallax.snapshot.handle import build_write_planner, stream_lowered
 
 _MODELS = models.load_models()
-_ACCOUNT = models.accepted_model(_MODELS["account"])
-_WALLET = models.accepted_model(_MODELS["wallet"])
-_BALANCE = models.accepted_model(_MODELS["balance"])
+_ACCOUNT = _MODELS["account"]
+_WALLET = _MODELS["wallet"]
+_BALANCE = _MODELS["balance"]
 
 # Two Subject Identities differing only in their opaque string — neither is
 # more "real" than the other; audit-neutrality means the choice cannot matter.

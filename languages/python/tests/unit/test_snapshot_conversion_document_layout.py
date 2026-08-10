@@ -37,7 +37,7 @@ from parallax.snapshot.materialize import (
     convert_row,
 )
 
-_CORPUS = models.accepted_model(models.load_models()["document-layout"])
+_CORPUS = models.load_models()["document-layout"]
 _TWIN_DOCUMENT = document_model()
 _TWIN_COLUMNS = columns_model()
 

@@ -39,11 +39,12 @@ from typing import cast
 import pytest
 from _corpus_identity_support import corpus_object_key
 from _metamodel_support import Declaration, attribute, identity, key, source
+from _sql_gen_support import formed, records
+from _sql_gen_support import model as corpus_model
 
 from _support.clock_probes import inert_instant
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
-from parallax.conformance import models
 from parallax.core import inheritance, opt_lock, storage_layout
 from parallax.core import op_algebra as oa
 from parallax.core._formation_profile import form_metamodel
@@ -53,6 +54,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
+    Metamodel,
     Multiplicity,
     ValueObjectAttributeDeclaration,
     ValueObjectIdentity,
@@ -100,44 +102,40 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.planned import PlannedWrite as PlannedStep
 from parallax.descriptor import _records
-from parallax.descriptor._records import Metamodel
 from parallax.snapshot.handle import WriteLoweringError, build_write_planner, stream_lowered
 from parallax.snapshot.handle._step_lowering import lower_step
 
-_MODELS = models.load_models()
-ACCOUNT = _MODELS["account"]
-ORDERS = _MODELS["orders"]
-CUSTOMER = _MODELS["customer"]
-PAYMENT = _MODELS["payment"]
-VEHICLE = _MODELS["vehicle"]
-APPLIANCE = _MODELS["appliance"]
-DOCUMENT = _MODELS["document"]
-PK_MAX = _MODELS["pk-max"]
-PK_SEQUENCE = _MODELS["pk-sequence"]
-WALLET = _MODELS["wallet"]
-BALANCE = _MODELS["balance"]
+ACCOUNT = corpus_model("account")
+ORDERS = corpus_model("orders")
+CUSTOMER = corpus_model("customer")
+PAYMENT = corpus_model("payment")
+VEHICLE = corpus_model("vehicle")
+APPLIANCE = corpus_model("appliance")
+DOCUMENT = corpus_model("document")
+PK_MAX = corpus_model("pk-max")
+PK_SEQUENCE = corpus_model("pk-sequence")
+WALLET = corpus_model("wallet")
+BALANCE = corpus_model("balance")
 
 
 def _lower(
     instruction: WriteInstruction,
-    meta: Metamodel,
+    model: Metamodel,
     *,
     observation: WriteObservation | None = None,
     dialect: Dialect = POSTGRES,
     concurrency: Concurrency = "locking",
 ) -> list[LoweredStatement]:
-    model = models.accepted_model(meta)
     return lower_instruction(instruction, model, dialect, concurrency, observation=observation)
 
 
 def _flush_and_lower(
     buffer: list[WriteInstruction],
-    meta: Metamodel,
+    model: Metamodel,
     *,
     concurrency: Concurrency = "locking",
     observations: Mapping[ObjectKey, WriteObservation] | None = None,
 ) -> list[LoweredStatement]:
-    model = models.accepted_model(meta)
     instant = inert_instant()
     plan = build_write_planner(model).plan(
         PlanningRequest(
@@ -150,9 +148,8 @@ def _flush_and_lower(
     return [statement for _step, statement in stream_lowered(plan, model, POSTGRES)]
 
 
-def _layout_columns(meta: Metamodel, entity_name: str) -> tuple[str, ...]:
+def _layout_columns(model: Metamodel, entity_name: str) -> tuple[str, ...]:
     """The target Entity's applicable Table Layout slots, in canonical order."""
-    model = models.accepted_model(meta)
     metadata = entity_by_name(model, entity_name)
     assert metadata is not None
     view = storage_layout.view(model).entity(metadata.identity)
@@ -166,8 +163,8 @@ def _insert_columns(statement: LoweredStatement) -> tuple[str, ...]:
 
 
 def test_non_temporal_write_requires_an_effective_table() -> None:
-    account = dataclasses.replace(ACCOUNT.entity("Account"), table=None)
-    malformed = Metamodel(entities=(account,))
+    account = dataclasses.replace(records("account").entity("Account"), table=None)
+    malformed = formed(_records.Metamodel(entities=(account,)))
     with pytest.raises(WriteLoweringError, match="write target has no effective table"):
         _lower(KeyedWrite("insert", "Account", ({"id": 1},)), malformed)
 
@@ -295,7 +292,7 @@ def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() ->
 # m-storage-layout: the one physical shape every keyed emission follows.       #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    ("meta", "entity", "row"),
+    ("model", "entity", "row"),
     [
         (
             ORDERS,
@@ -319,15 +316,15 @@ def test_a_value_object_leaf_binds_the_codecs_spelling_not_the_write_inputs() ->
     ],
 )
 def test_full_row_insert_emits_the_entity_layout_slot_selection(
-    meta: Metamodel, entity: str, row: dict[str, object]
+    model: Metamodel, entity: str, row: dict[str, object]
 ) -> None:
     # A row naming every applicable member emits exactly the target's Table Layout
     # slot selection, in slot order — a standalone Entity's own table, a
     # table-per-hierarchy concrete's applicable slots of the SHARED table (the
     # derived discriminator included, the sibling's own slot excluded), and a
     # table-per-concrete-subtype concrete's complete ancestry in its own table.
-    statement = _lower(KeyedWrite("insert", entity, (row,)), meta)[0]
-    assert _insert_columns(statement) == _layout_columns(meta, entity)
+    statement = _lower(KeyedWrite("insert", entity, (row,)), model)[0]
+    assert _insert_columns(statement) == _layout_columns(model, entity)
 
 
 def test_update_sets_every_layout_slot_the_row_names_except_the_model_key() -> None:
@@ -449,7 +446,7 @@ def test_versioned_delete_shortfall_classifies_by_gate_not_by_mutation() -> None
     # ungated close's is; a gated (optimistic) one stays the retriable conflict.
     delete = KeyedWrite("delete", "Account", ({"id": 3},))
     observation = VersionObservation(observed_version=1)
-    model = models.accepted_model(ACCOUNT)
+    model = ACCOUNT
     locking, _ = lower_instruction_steps(
         delete, model, concurrency="locking", observation=observation
     )[0]
@@ -918,7 +915,7 @@ def test_a_composite_primary_key_does_not_form() -> None:
     # `(<pk1>, <pk2>) in (...)` row-constructor branch lowering keeps is
     # defensive under that contract.
     with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-multiple"):
-        models.accepted_model(_LEDGER)
+        formed(_LEDGER)
 
 
 def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
@@ -938,7 +935,7 @@ def test_a_multi_column_key_target_renders_a_row_constructor() -> None:
         concurrency=UNVERSIONED,
         affected_rows=ExactCount(expected=2, on_shortfall=MISSING_TARGET),
     )
-    statement = lower_step(step, models.accepted_model(WALLET), POSTGRES)
+    statement = lower_step(step, WALLET, POSTGRES)
     assert statement.sql == "delete from wallet where (id, owner) in ((?, ?), (?, ?))"
     assert statement.binds == (1, "Ada", 2, "Bo")
 
@@ -995,41 +992,39 @@ def test_value_object_document_is_not_mistaken_for_a_marker() -> None:
 # --------------------------------------------------------------------------- #
 def _finalize(
     instruction: WriteInstruction,
-    meta: Metamodel,
+    model: Metamodel,
     *,
     observation: WriteObservation | None = None,
     concurrency: Concurrency = "locking",
 ) -> tuple[PlannedStep, ...]:
     steps = lower_instruction_steps(
         instruction,
-        models.accepted_model(meta),
+        model,
         concurrency=concurrency,
         observation=observation,
     )
     return tuple(step for step, _statement in steps)
 
 
-def _identity(meta: Metamodel, entity: str) -> EntityIdentity:
-    metadata = entity_by_name(models.accepted_model(meta), entity)
+def _identity(model: Metamodel, entity: str) -> EntityIdentity:
+    metadata = entity_by_name(model, entity)
     assert metadata is not None
     return metadata.identity
 
 
-def _attribute(meta: Metamodel, entity: str, member: str) -> AttributeIdentity:
+def _attribute(model: Metamodel, entity: str, member: str) -> AttributeIdentity:
     """The Attribute identity a write row's ``member`` spelling names — the
     family-effective one, so an inherited member resolves at its declaring
     ancestor exactly as the Table Layout slot's own contributor does."""
-    model = models.accepted_model(meta)
-    position = inheritance.view(model).entity(_identity(meta, entity))
+    position = inheritance.view(model).entity(_identity(model, entity))
     assert position is not None
     attribute = position.applicable_attribute(member)
     assert attribute is not None
     return attribute.identity
 
 
-def _value_object(meta: Metamodel, entity: str, member: str) -> ValueObjectIdentity:
-    model = models.accepted_model(meta)
-    position = inheritance.view(model).entity(_identity(meta, entity))
+def _value_object(model: Metamodel, entity: str, member: str) -> ValueObjectIdentity:
+    position = inheritance.view(model).entity(_identity(model, entity))
     assert position is not None
     value_object = position.applicable_value_object(member)
     assert value_object is not None
@@ -1063,7 +1058,7 @@ def test_step_lowering_reads_an_immutable_write_input_into_a_plain_json_document
         entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
     )
 
-    statement = lower_step(step, models.accepted_model(CUSTOMER), POSTGRES)
+    statement = lower_step(step, CUSTOMER, POSTGRES)
 
     assert statement.binds[-1] == JsonDocument(
         {"city": "Oslo", "phones": [{"type": "home"}, {"type": "work"}]}
@@ -1286,7 +1281,7 @@ def test_step_lowering_reads_column_participation_and_order_from_the_layout() ->
             ),
         ),
     )
-    statement = lower_step(step, models.accepted_model(ORDERS), POSTGRES)
+    statement = lower_step(step, ORDERS, POSTGRES)
     assert statement.sql == "insert into order_item(id, order_id, quantity) values (?, ?, ?)"
     assert statement.binds == (200, 100, 3)
 
@@ -1305,7 +1300,7 @@ def test_step_lowering_derives_the_table_per_hierarchy_tag_no_entry_names() -> N
         entity=_identity(PAYMENT, "CardPayment"),
         entries=(InsertEntry(row=row, origin=NEW_LINEAGE),),
     )
-    statement = lower_step(step, models.accepted_model(PAYMENT), POSTGRES)
+    statement = lower_step(step, PAYMENT, POSTGRES)
     assert (
         statement.sql == "insert into payment(id, kind, amount, card_network) values (?, ?, ?, ?)"
     )
@@ -1385,4 +1380,4 @@ def test_step_lowering_refuses_a_multi_entry_generated_value() -> None:
         ),
     )
     with pytest.raises(WriteLoweringError, match="one row at a time"):
-        lower_step(step, models.accepted_model(PK_MAX), POSTGRES)
+        lower_step(step, PK_MAX, POSTGRES)

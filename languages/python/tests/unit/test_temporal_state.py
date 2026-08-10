@@ -36,12 +36,12 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle import build_write_planner
 
-POSITION = models.accepted_model(models.load_models()["position"])
+POSITION = models.load_models()["position"]
 _POSITION_ENTITY = POSITION.entity(EntityIdentity("parallax.compatibility", "Position"))
 assert _POSITION_ENTITY is not None
 POSITION_ENTITY = _POSITION_ENTITY
 
-BALANCE = models.accepted_model(models.load_models()["balance"])
+BALANCE = models.load_models()["balance"]
 _BALANCE_ENTITY = BALANCE.entity(EntityIdentity("parallax.compatibility", "Balance"))
 assert _BALANCE_ENTITY is not None
 BALANCE_ENTITY = _BALANCE_ENTITY
@@ -386,7 +386,7 @@ def test_track_opened_ignores_a_non_temporal_plan() -> None:
     instruction = instructions.deserialize(
         {"mutation": "insert", "entity": "Account", "rows": [{"id": 1, "owner": "Ada"}]}
     )
-    account = models.accepted_model(models.load_models()["account"])
+    account = models.load_models()["account"]
     plan = build_write_planner(account).plan(
         PlanningRequest(
             subject_identity=SubjectIdentity("unattributed"),

@@ -67,9 +67,9 @@ from parallax.core.unit_work.planner import Targets  # forbidden-plan-context re
 from parallax.snapshot.handle import Database, Transaction, build_write_planner, lower_step
 
 _MODELS = models.load_models()
-_ACCOUNT = models.accepted_model(_MODELS["account"])
-_BALANCE = models.accepted_model(_MODELS["balance"])
-_BRANCH = models.accepted_model(_MODELS["branch"])
+_ACCOUNT = _MODELS["account"]
+_BALANCE = _MODELS["balance"]
+_BRANCH = _MODELS["branch"]
 
 
 # --------------------------------------------------------------------------- #
