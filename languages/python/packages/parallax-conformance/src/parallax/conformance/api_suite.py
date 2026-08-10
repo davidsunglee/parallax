@@ -675,18 +675,28 @@ _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "way, so both lanes of the same behavior are expressed"
 )
 
-# Temporal inheritance-family writes are graded end-to-end by the compile/run
-# conformance lanes. They cover an audit/bitemporal close or chain over a
-# table-per-hierarchy or table-per-concrete-subtype family, but have no
-# idiomatic instance-native story.
-_INHERITANCE_TEMPORAL_WRITE_REASON: Final[str] = (
-    "a TEMPORAL inheritance-family write (an audit/bitemporal milestone close or chain "
-    "over a table-per-hierarchy or table-per-concrete-subtype family): graded "
-    "end-to-end by the compile/run conformance lanes; no idiomatic story covers an "
-    "inheritance-family temporal write, whose developer spelling is the plain-entity "
-    "temporal write an exercised story already shows, typed at a concrete subtype (the "
-    "SAME posture the non-temporal inheritance-family write forms carry, "
-    "`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
+# Temporal inheritance-family termination splits into two skip reasons by which
+# story the case is missing. The audit-only close's verb is exercised on a plain
+# entity, so the family case adds only routing; the bitemporal terminations'
+# verbs are exercised nowhere, on any surface.
+_INHERITANCE_AUDIT_TERMINATE_REASON: Final[str] = (
+    "an audit-only (Transaction-Time-Only) milestone close over a table-per-hierarchy or "
+    "table-per-concrete-subtype family: graded end-to-end by the compile/run conformance "
+    "lanes; no idiomatic story covers it because its developer spelling is the exercised "
+    "`tx.terminate` close (`m-txtime-write-003`), typed at a concrete subtype, and what "
+    "the family composition adds is table routing plus the shared-table tag guard — an "
+    "emitted-SQL contract, not a spelling (the SAME posture the non-temporal "
+    "inheritance-family write forms carry, `_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
+)
+_INHERITANCE_BITEMPORAL_TERMINATE_REASON: Final[str] = (
+    "a BITEMPORAL terminate / terminateUntil over a table-per-hierarchy or "
+    "table-per-concrete-subtype family: graded end-to-end by the compile/run conformance "
+    "lanes; no idiomatic story covers it because NO story spells a bitemporal "
+    "termination at all — the exercised bitemporal stories are the insert and UPDATE "
+    "halves (`m-bitemp-write-001`/`-003`/`-006`/`-009`), and the plain-entity TERMINATE "
+    "halves these compose (`m-bitemp-write-007` plain, `-002` bounded) are themselves "
+    "storyless for the `m-bitemp-write` bucket's own reason above. What the family "
+    "composition adds over those is table routing plus the shared-table tag guard"
 )
 # The composed TPH/audit/optimistic-lock case is a CONFLICT shape, not a
 # writeSequence: its skip turns on the staging its gate needs, not on a spelling
@@ -708,6 +718,19 @@ _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "graded end-to-end by the compile/run conformance lanes; no idiomatic story covers "
     "an inheritance-family write, whose developer spelling is the plain-entity keyed "
     "write an exercised story already shows, typed at a concrete subtype"
+)
+# The abstract-root find licensing a concrete-subtype gated update is the one
+# family write whose subject is NOT its write spelling: both halves of the
+# observation it turns on are exercised, and what it pins is their junction.
+_INHERITANCE_ABSTRACT_OBSERVATION_LICENSES_WRITE_REASON: Final[str] = (
+    "an abstract-root find licensing the CONCRETE subtype's version-gated update: graded "
+    "by the run lane alone (`compileEligibility: run-only` — the gate binds the version "
+    "the group's OWN find returned). What it pins is not the write's spelling but the "
+    "junction of two separately exercised halves: an abstract-root read resolving each "
+    "row to its own concrete is executed for real (`m-inheritance-106`, "
+    "`graph_stories.py`), and a write settling against the observation its own find "
+    "produced is too (`m-unit-work-015`); no idiomatic story was authored for reading at "
+    "the abstract root and naming the concrete in the write"
 )
 # The non-temporal optimistic-lock keyed write splits into two skip reasons: a
 # stale gate needs a competing writer, while a matching gate needs none and is
@@ -1330,14 +1353,14 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-104": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-125": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-128": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
-    "m-inheritance-130": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
+    "m-inheritance-130": _INHERITANCE_ABSTRACT_OBSERVATION_LICENSES_WRITE_REASON,
     # -- m-inheritance: temporal write family -------------------------------- #
-    "m-inheritance-090": _INHERITANCE_TEMPORAL_WRITE_REASON,
-    "m-inheritance-091": _INHERITANCE_TEMPORAL_WRITE_REASON,
-    "m-inheritance-094": _INHERITANCE_TEMPORAL_WRITE_REASON,
-    "m-inheritance-095": _INHERITANCE_TEMPORAL_WRITE_REASON,
-    "m-inheritance-096": _INHERITANCE_TEMPORAL_WRITE_REASON,
-    "m-inheritance-097": _INHERITANCE_TEMPORAL_WRITE_REASON,
+    "m-inheritance-090": _INHERITANCE_AUDIT_TERMINATE_REASON,
+    "m-inheritance-091": _INHERITANCE_AUDIT_TERMINATE_REASON,
+    "m-inheritance-094": _INHERITANCE_BITEMPORAL_TERMINATE_REASON,
+    "m-inheritance-095": _INHERITANCE_BITEMPORAL_TERMINATE_REASON,
+    "m-inheritance-096": _INHERITANCE_BITEMPORAL_TERMINATE_REASON,
+    "m-inheritance-097": _INHERITANCE_BITEMPORAL_TERMINATE_REASON,
     "m-inheritance-105": _INHERITANCE_COMPOSED_CONFLICT_REASON,
     "m-inheritance-086": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-131": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
