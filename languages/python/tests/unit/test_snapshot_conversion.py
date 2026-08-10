@@ -22,8 +22,9 @@ from typing import Any, cast
 
 import pytest
 from _snapshot_graph_support import documents_of, identity_of
+from _sql_gen_support import formed
+from _sql_gen_support import model as corpus_model
 
-from parallax.conformance import models
 from parallax.core.base import (
     BOOLEAN,
     BYTES,
@@ -68,12 +69,11 @@ from parallax.snapshot.materialize import (
     observable_columns,
 )
 
-_MODELS = models.load_models()
-ORDERS = models.accepted_model(_MODELS["orders"])
-ANIMAL = models.accepted_model(_MODELS["animal"])
-CUSTOMER = models.accepted_model(_MODELS["customer"])
-DOCUMENT = models.accepted_model(_MODELS["document"])
-DOCUMENT_CODEC = models.accepted_model(_MODELS["document-codec"])
+ORDERS = corpus_model("orders")
+ANIMAL = corpus_model("animal")
+CUSTOMER = corpus_model("customer")
+DOCUMENT = corpus_model("document")
+DOCUMENT_CODEC = corpus_model("document-codec")
 
 _NAMESPACE = "parallax.compatibility"
 
@@ -293,7 +293,7 @@ def test_a_decoding_refusal_separates_two_members_that_spell_one_dotted_path() -
             ),
         ),
     )
-    model = models.accepted_model(DescriptorMetamodel(entities=(entity,)))
+    model = formed(DescriptorMetamodel(entities=(entity,)))
     with pytest.raises(SnapshotDecodingError) as refusal:
         _converted(model, "Twin", {"id": 1, "profile": {"origin": {"city.name": "bogus"}}})
     assert refusal.value.member == ValueObjectAttributeIdentity(
@@ -326,7 +326,7 @@ def test_a_decoding_refusal_resolves_a_leaf_whose_own_name_carries_a_dot() -> No
             ),
         ),
     )
-    model = models.accepted_model(DescriptorMetamodel(entities=(entity,)))
+    model = formed(DescriptorMetamodel(entities=(entity,)))
     with pytest.raises(SnapshotDecodingError) as refusal:
         _converted(model, "Dotted", {"id": 1, "profile": {"amount.v1": "bogus"}})
     assert refusal.value.member == ValueObjectAttributeIdentity(
@@ -473,7 +473,7 @@ def test_a_top_level_many_cardinality_value_object_converts_to_a_record_tuple() 
             ),
         ),
     )
-    meta = models.accepted_model(DescriptorMetamodel(entities=(entity,)))
+    meta = formed(DescriptorMetamodel(entities=(entity,)))
     node = _converted(meta, "Fleet", {"id": 1, "stops": [{"label": "a"}, {"label": "b"}]})
     stops = cast("tuple[ValueObjectRecord, ...]", _occurrence(node, "stops"))
     assert [_leaf(stop, "label") for stop in stops] == ["a", "b"]
@@ -536,7 +536,7 @@ def test_a_key_less_entity_never_forms() -> None:
         name="NoPk", table="no_pk", attributes=(Attribute(name="x", type="int64", column="x"),)
     )
     with pytest.raises(MetamodelValidationError, match="metamodel-primary-key-missing"):
-        models.accepted_model(DescriptorMetamodel(entities=(entity,)))
+        formed(DescriptorMetamodel(entities=(entity,)))
 
 
 def test_the_scope_registers_the_first_projection_of_a_logical_key() -> None:
@@ -587,7 +587,7 @@ def test_observable_columns_renders_a_many_occurrence_as_a_list() -> None:
             ),
         ),
     )
-    meta = models.accepted_model(DescriptorMetamodel(entities=(entity,)))
+    meta = formed(DescriptorMetamodel(entities=(entity,)))
     columns = observable_columns({"id": 1, "stops": [{"label": "a"}]}, _context(meta, "Fleet"))
     assert columns["stops"] == [{"label": "a"}]
 

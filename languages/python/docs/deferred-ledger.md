@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-67**.
+Entry numbering is continuous and never reused. The next new number is **D-69**.
 
 ## Standing notes
 
@@ -323,75 +323,6 @@ nine (a)/(b) cases diverging exactly as they do now. `m-inheritance-078` itself
 carries an (a) mismatch in its own `pets` child level besides its (c) cycle, so
 even it would not go green on the merge change alone. D-67 therefore survives
 COR-83 and still needs the `m-case-format` reconciliation it names.
-
-### D-68 — The conformance adapter still reads the descriptor record graph, which has no public door
-
-*Low — an enumerated, guarded reach with a named owner, not an open-ended
-deferral.* Relates to `parallax.descriptor`, `spec/python.md` §7 and *Metamodel
-serde ownership*, and `parallax.conformance.models` / `.engine` / `.provision`.
-
-**What.** COR-93 removed every private-attribute reach-through and every private
-runtime seam from `parallax-conformance`. What remains is the descriptor
-**record graph**: `models.py`, `engine.py`, and `provision.py` import
-`parallax.descriptor._records` / `._serde` / `._ingest` / `._adapter` /
-`._family` and `parallax.core._formation_profile.form_metamodel`, and
-`another_source.py` imports the two `parallax.core.entity` seams the composition
-root and the read preflight already reach privately. The set is exact, keyed by
-importing module, and pinned by
-`tests/unit/test_frontend_contraction_guards.ACCEPTED_CONFORMANCE_PRIVATE_REACHES`;
-`spec/python.md` §7 declares it.
-
-**Why it is deferred rather than fixed.** A corpus model is a descriptor
-document that a case reads as parsed records — an Entity's authored inheritance
-role, a family's participants, an Attribute's declared name — and four inline
-`rejected` models deliberately never form, so the accepted Metamodel cannot
-answer for them. `m-descriptor`'s complete public surface is fixed by
-`spec/python.md` (*Metamodel serde ownership*) at the three hub doors, the three
-export doors, `validate_inheritance_families`, and the error types, with
-"descriptor records, serde, schema machinery, and adapters are private".
-Publishing the record graph is a permanent `parallax-descriptor` API decision
-with its own spec amendment and `public_api.json` diff; converting the engine's
-~40 record-graph sites onto the accepted Metamodel is a second, independent
-change. Neither belongs to a phase whose subject is the read lane.
-
-**Owner.** COR-93's Phase F takes the conversion: `models.py`, `engine.py`, and
-`provision.py`'s descriptor record-graph consumers move onto the accepted-model
-vocabulary. The reaches are independent of one another, and none of them is a
-family read over a document that may never form. `_family.family_of` is reached
-at `engine.py:4426` and `:4454` only, both over the CASE-LEVEL model, and every
-lane that reaches them forms those same records through `case_model` — the
-rejected lane at `engine.py:5269` and `:5315`, the conflict lane for every write
-it executes. The four never-forming inline `rejected` models reach neither site:
-that branch (`engine.py:5279-5300`) classifies through the already-public
-`validate_inheritance_families`. A formed model therefore answers both, and
-`parallax.core.inheritance.view` is the public door that answers it. Should the
-conversion leave a family read that must stay on records, the ruled replacement
-is one narrow public accessor on `parallax.descriptor` returning family
-participants and root as plain data, rather than
-`validate_inheritance_families`'s `None`-or-raise contract — never the record
-graph itself.
-
-`another_source.py`'s two `parallax.core.entity` reaches (`model_of`,
-`lower_find_query`) are REBUTTED rather than converted, and `models.py` joins
-that rebuttal with a third reach of its own. `model_of` is documented as a
-first-party runtime seam, and both names are already in production's own
-`ACCEPTED_PRIVATE_ENTITY_REACHES`
-(`tests/unit/test_frontend_contraction_guards.py`, for the composition root and
-the read preflight respectively), so development-only consumers of the same two
-seams are not a reason to widen `parallax.core.entity`'s shipped surface. That
-third reach is how `models.py` reaches an accepted Metamodel once it stops
-forming records: the public descriptor doors return a `DomainModel`, everything
-conformance hands a model to takes the accepted
-`parallax.core.metamodel.Metamodel`, and `model_of` is the only seam that reads
-one out of the other. So `load_model` forms through the public door and extracts
-through `model_of`, no public surface moves, and
-`ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at exactly three entries — all
-`parallax.core.entity`, none `parallax.descriptor`. Exporting `model_of` from
-`parallax.core.entity` and adding a `parallax.descriptor` door returning the
-accepted Metamodel were both considered and rejected: each buys accounting with
-permanently shipped surface, against `spec/python.md` §7's standing decision
-that exporting these seams "would widen the developer surface to serve one
-lifecycle package".
 
 ## Forwarding pointers
 

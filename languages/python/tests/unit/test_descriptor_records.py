@@ -4,9 +4,8 @@ declarations, and the family-root ancestry walk (``declaring_entity``)."""
 from __future__ import annotations
 
 import pytest
+from _sql_gen_support import corpus_records
 
-from parallax.conformance import case_format
-from parallax.conformance import models as corpus_models
 from parallax.descriptor import _records
 from parallax.descriptor._records import (
     AsOfAxisMetadata,
@@ -22,9 +21,7 @@ from parallax.descriptor._records import (
     family_root_name,
 )
 
-_MODELS = corpus_models.load_models(
-    case_format.find_repo_root() / "core" / "compatibility" / "models"
-)
+_MODELS = corpus_records()
 
 
 @pytest.mark.parametrize(

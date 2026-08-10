@@ -68,7 +68,7 @@ def _slot(
 
 
 def _accepted(model_name: str) -> AcceptedMetamodel:
-    return models.accepted_model(_MODELS[model_name])
+    return _MODELS[model_name]
 
 
 def _account_columns(*, id_: int = 1, version: int | None = 4) -> Mapping[str, object]:

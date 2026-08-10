@@ -1946,7 +1946,6 @@ def test_observed_nodes_refuses_an_output_that_is_not_a_graph() -> None:
     with pytest.raises(engine.EngineError, match="a participating scenario find is graph-form"):
         engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             meta,
-            engine.case_model(meta),
             "parallax.compatibility.Account",
             handle.NeutralRows(()),
         )
@@ -1959,7 +1958,6 @@ def test_observed_nodes_records_nothing_for_an_unversioned_non_temporal_target()
     assert (
         engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             meta,
-            engine.case_model(meta),
             "parallax.compatibility.Order",
             handle.NeutralGraph((), Pin()),
         )
@@ -1972,7 +1970,7 @@ def test_observed_nodes_skips_a_node_the_unit_of_work_observed_nothing_of() -> N
     # for, so there is no slot a later write could settle against and it
     # contributes none.
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    model = engine.case_model(meta)
+    model = meta
     account = EntityIdentity("parallax.compatibility", "Account")
     node = handle.NeutralNode(entity=account, object_key=ObjectKey(account, (("id", 1),)))
     view = handle.NeutralNodeView(
@@ -1985,7 +1983,7 @@ def test_observed_nodes_skips_a_node_the_unit_of_work_observed_nothing_of() -> N
     )
     assert (
         engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            meta, model, "parallax.compatibility.Account", handle.NeutralGraph((view,), Pin())
+            model, "parallax.compatibility.Account", handle.NeutralGraph((view,), Pin())
         )
         == ()
     )
@@ -1999,7 +1997,7 @@ def test_observed_nodes_publishes_every_deep_fetch_level_and_walks_a_cycle_once(
     # version of its own and appears in the result exactly once even though the
     # graph closes a cycle back through it.
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    model = engine.case_model(meta)
+    model = meta
     account = EntityIdentity("parallax.compatibility", "Account")
     version = AttributeIdentity(account, "version")
     peer = RelationshipIdentity(account, "peer")
@@ -2038,7 +2036,7 @@ def test_observed_nodes_publishes_every_deep_fetch_level_and_walks_a_cycle_once(
     child_links[RelationshipViewKey(peer)] = root  # the cycle back to the root
 
     observed = engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        meta, model, "parallax.compatibility.Account", handle.NeutralGraph((root,), Pin())
+        model, "parallax.compatibility.Account", handle.NeutralGraph((root,), Pin())
     )
     assert [node.object_key.primary_key for node in observed] == [
         (("id", 1),),
@@ -2076,7 +2074,6 @@ def test_observed_nodes_refuses_a_temporal_target_stored_as_a_document() -> None
     with pytest.raises(engine.EngineError, match="shared Structured Column 'payload'"):
         engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             meta,
-            engine.case_model(meta),
             "parallax.compatibility.Voyage",
             handle.NeutralGraph((view,), Pin()),
         )
@@ -2099,12 +2096,12 @@ def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> 
     # holds every column, so out-of-band state leaves the observation STALE — the
     # very thing a conflict case authors on purpose — never unrepresentable.
     meta = engine.load_case_metamodel(_load_case("m-txtime-write-002"))
-    model = engine.case_model(meta)
+    model = meta
     shadow = TemporalShadow()
     shadow.note_out_of_band_write()
     engine._refuse_unaccounted_document_milestone(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         model,
-        engine.case_entity(model, meta.entity("parallax.compatibility.Balance")),
+        engine.case_entity(model, "parallax.compatibility.Balance"),
         {"id": 1},
         shadow,
     )
@@ -2160,7 +2157,7 @@ def test_a_find_step_names_its_target_and_its_operation() -> None:
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
     with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):
         engine._find_request(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            {"targetEntity": "Account"}, meta, engine.case_model(meta)
+            {"targetEntity": "Account"}, meta
         )
 
 
@@ -2174,7 +2171,6 @@ def test_a_standalone_find_of_a_lockless_scenario_opens_no_transaction() -> None
     result = engine._run_standalone_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
         port,
         meta,
-        engine.case_model(meta),
         dialect_for("postgres"),
         None,
         {"targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
@@ -3518,14 +3514,14 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
     port = FakeWritePort()
     shadow = TemporalShadow()
     meta = engine.load_case_metamodel(_load_case("m-txtime-write-002"))
-    model = engine.case_model(meta)
+    model = meta
     engine._apply_given_apply(case, POSTGRES, port, shadow)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert port.writes == []
     # A case that applies nothing leaves the tracker's account of the stored rows
     # whole — including for a key it tracks no milestone of — which is what a keyed
     # temporal write over a document-mapped target depends on.
     assert shadow.accounts_for(
-        model, engine.case_entity(model, meta.entity("parallax.compatibility.Balance")), {"id": 1}
+        model, engine.case_entity(model, "parallax.compatibility.Balance"), {"id": 1}
     )
 
 
@@ -4274,9 +4270,36 @@ def test_run_rejected_case_raises_for_a_malformed_operation() -> None:
 
 
 def test_run_rejected_case_raises_for_a_malformed_inline_model() -> None:
+    # The family door parses shape only, so a document that is not a descriptor
+    # at all is ITS refusal — reported against the case rather than graded as a
+    # family rule, because no rule was violated by a model that never parsed.
     malformed_model: dict[str, object] = {"model": {"entities": [{"attributes": []}]}}
     with pytest.raises(engine.EngineError, match="`name` must be a string"):
         engine.run_rejected_case(_synthetic_rejected(malformed_model))
+
+
+def test_run_rejected_case_raises_for_an_inline_model_the_schema_refuses() -> None:
+    # The second door's own refusal, which the first cannot reach: a document
+    # whose families are well formed but whose canonical schema they are not.
+    # The family validator has no schema phase and returns, so this arrives at
+    # `domain_model_from_document` and is a `DescriptorSchemaError` — an engine
+    # report, never a graded rule, since a rejected case names a model rule.
+    schema_invalid: dict[str, object] = {
+        "model": {
+            "entities": [
+                {
+                    "name": "Widget",
+                    "table": "widget",
+                    "attributes": [
+                        {"name": "id", "type": "int64", "primaryKey": True},
+                        {"name": "x", "type": "notatype"},
+                    ],
+                }
+            ]
+        }
+    }
+    with pytest.raises(engine.EngineError, match="schema violation"):
+        engine.run_rejected_case(_synthetic_rejected(schema_invalid))
 
 
 def test_run_rejected_case_raises_when_when_carries_none_of_the_three_inputs() -> None:
@@ -5152,7 +5175,7 @@ def _accepted_entity(
     from parallax.conformance import models as _models
     from parallax.core.metamodel import EntityIdentity
 
-    model = _models.accepted_model(_models.load_models()[model_name])
+    model = _models.load_models()[model_name]
     entity = model.entity(EntityIdentity(namespace, entity_name))
     assert entity is not None
     return model, entity

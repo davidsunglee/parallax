@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from _sql_gen_support import formed, records
 
 from parallax.conformance import case_format
-from parallax.conformance import models as corpus_models
 from parallax.core.op_algebra import (
     All,
     And,
@@ -145,11 +145,11 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
 
 
 _MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
-_ANIMAL = corpus_models.load_model(_MODEL_DIR / "animal.yaml")
-_CONTACT = corpus_models.load_model(_MODEL_DIR / "contact.yaml")
-_CUSTOMER = corpus_models.load_model(_MODEL_DIR / "customer.yaml")
-_ORDERS = corpus_models.load_model(_MODEL_DIR / "orders.yaml")
-_SHARED_LOCAL_NAME = corpus_models.load_model(_MODEL_DIR / "shared-local-name.yaml")
+_ANIMAL = records("animal")
+_CONTACT = records("contact")
+_CUSTOMER = records("customer")
+_ORDERS = records("orders")
+_SHARED_LOCAL_NAME = records("shared-local-name")
 _MODEL_BY_FILE: Mapping[str, Metamodel] = {
     "animal.yaml": _ANIMAL,
     "contact.yaml": _CONTACT,
@@ -174,7 +174,7 @@ _ANIMAL_WITH_A_CHILDLESS_SUBTYPE = Metamodel(
 def _validate(target: str, op: Operation, meta: Metamodel) -> None:
     """Form ``meta`` into an accepted model, resolve ``target`` to its accepted
     root Metadata, and run the model-aware validator over ``op``."""
-    model = corpus_models.accepted_model(meta)
+    model = formed(meta)
     root = next(
         entity
         for entity in model.entities

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from _sql_gen_support import model as corpus_model
 
-from parallax.conformance import case_format
-from parallax.conformance import models as corpus_models
 from parallax.core import pk_gen
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
@@ -16,13 +15,9 @@ from parallax.core.metamodel import (
     Sequence,
 )
 
-_MODELS = corpus_models.load_models(
-    case_format.find_repo_root() / "core" / "compatibility" / "models"
-)
-
 
 def _model(stem: str) -> Metamodel:
-    return corpus_models.accepted_model(_MODELS[stem])
+    return corpus_model(stem)
 
 
 def test_generates_distinguishes_supplied_from_allocated_keys() -> None:

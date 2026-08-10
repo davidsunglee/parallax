@@ -10,9 +10,10 @@ from typing import Any, Final, cast
 
 import pytest
 from _metamodel_support import Declaration, accepted, attribute, identity, key, source
+from _sql_gen_support import corpus_records, formed
+from _sql_gen_support import model as corpus_model
 
 from parallax.conformance import case_format
-from parallax.conformance import models as corpus_models
 from parallax.core import inheritance
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
@@ -66,7 +67,7 @@ from parallax.descriptor._records import (
 from parallax.descriptor._serde import parse_document
 
 _REPO = case_format.find_repo_root()
-_MODELS = corpus_models.load_models(_REPO / "core" / "compatibility" / "models")
+_MODELS = corpus_records()
 _CASES = _REPO / "core" / "compatibility" / "cases"
 _MODEL_FILES = sorted((_REPO / "core" / "compatibility" / "models").glob("*.yaml"))
 
@@ -92,7 +93,7 @@ _REJECTIONS = _descriptor_rejection_cases()
 
 def _metadata(stem: str, name: str) -> EntityMetadata:
     """One corpus Entity's accepted Metadata, formed from its own model file."""
-    model = corpus_models.accepted_model(_MODELS[stem])
+    model = corpus_model(stem)
     metadata = model.entity(EntityIdentity("parallax.compatibility", name))
     assert metadata is not None
     return metadata
@@ -231,7 +232,7 @@ def _require_metadata(model: AcceptedMetamodel, entity: Entity) -> EntityMetadat
     return metadata
 
 
-_VO_MODEL = corpus_models.accepted_model(_VO_META)
+_VO_MODEL = formed(_VO_META)
 _VO_METADATA = _require_metadata(_VO_MODEL, _VO_ENTITY)
 
 
@@ -335,7 +336,7 @@ _INVOICE_ENTITY = Entity(
     ),
 )
 _INVOICE_DESCRIPTOR = Metamodel(entities=(_INVOICE_ENTITY,))
-_INVOICE_MODEL = corpus_models.accepted_model(_INVOICE_DESCRIPTOR)
+_INVOICE_MODEL = formed(_INVOICE_DESCRIPTOR)
 _INVOICE_METADATA = _require_metadata(_INVOICE_MODEL, _INVOICE_ENTITY)
 _INVOICE_ACCEPTED = form_metamodel(
     source(

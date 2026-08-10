@@ -30,6 +30,7 @@ from decimal import Decimal
 from typing import Final
 
 import pytest
+from _sql_gen_support import corpus_records, formed
 from _transact_support import (
     INFINITY_INSTANT,
     WHERE_POSITION_META,
@@ -41,7 +42,6 @@ from _transact_support import (
 from _support.clock_probes import instant_at
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
-from parallax.conformance import models
 from parallax.core import bitemp_write, storage_layout, txtime_write
 from parallax.core.base import INFINITY as OPEN_BOUND
 from parallax.core.db_port import JsonDocument, Row
@@ -100,13 +100,13 @@ def _no_flush(_plan: WritePlan, *, trigger: WriteBatchTrigger) -> None:
 
 def _accepted(name: str, meta: Metamodel) -> tuple[AcceptedMetamodel, EntityMetadata]:
     """One corpus model and one of its Entities, both accepted."""
-    model = models.accepted_model(meta)
+    model = formed(meta)
     entity = model.entity(EntityIdentity("parallax.compatibility", name))
     assert entity is not None
     return model, entity
 
 
-_MODELS = models.load_models()
+_MODELS = corpus_records()
 BALANCE = _MODELS["balance"]
 POSITION = _MODELS["position"]
 READING = _MODELS["reading"]
@@ -153,7 +153,7 @@ def _lower_full(
 ) -> list[LoweredStatement]:
     return lower_instruction(
         instruction,
-        models.accepted_model(meta),
+        formed(meta),
         dialect,
         concurrency,
         instant_at(tx_instant),
@@ -173,7 +173,7 @@ def _lower_steps(
     """The same statements, paired with the settled step each came from."""
     return lower_instruction_steps(
         instruction,
-        models.accepted_model(meta),
+        formed(meta),
         dialect,
         concurrency,
         instant_at(tx_instant),
@@ -191,7 +191,7 @@ def _finalize(
 ) -> tuple[PlannedStep, ...]:
     steps = lower_instruction_steps(
         instruction,
-        models.accepted_model(meta),
+        formed(meta),
         POSTGRES,
         concurrency,
         instant_at(tx_instant),
@@ -832,7 +832,7 @@ def _probe(
     return plan_temporal_close(
         {"id": 1},
         entity,
-        models.accepted_model(meta),
+        formed(meta),
         concurrency,
         instant_at("2024-10-01T00:00:00+00:00"),
         observed_tx_start,
@@ -845,7 +845,7 @@ def test_bitemporal_close_addresses_both_axis_ends_then_gates_on_in_z_last() -> 
     # bound per axis in canonical order (`thru_z` then `out_z`); the observed
     # `in_z` gate binds LAST.
     step = _probe("optimistic")
-    statement = lower_step(step, models.accepted_model(POSITION), POSTGRES)
+    statement = lower_step(step, formed(POSITION), POSTGRES)
     assert statement.sql == (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ? and in_z = ?"
     )
@@ -872,7 +872,7 @@ def test_a_probe_identity_naming_more_than_the_address_is_refused() -> None:
         plan_temporal_close(
             {"id": 1, "quantity": 5},
             "Position",
-            models.accepted_model(POSITION),
+            formed(POSITION),
             "optimistic",
             instant_at("2024-10-01T00:00:00+00:00"),
             "2024-04-01T00:00:00+00:00",
@@ -884,7 +884,7 @@ def test_bitemporal_close_keeps_its_whole_address_under_locking() -> None:
     # m-bitemp-write-001/006/007's own locking-mode closes: the address is
     # unchanged — only the `in_z` gate disappears (ADR 0046).
     step = _probe("locking")
-    statement = lower_step(step, models.accepted_model(POSITION), POSTGRES)
+    statement = lower_step(step, formed(POSITION), POSTGRES)
     assert statement.sql == (
         "update position set out_z = ? where pos_id = ? and thru_z = ? and out_z = ?"
     )
@@ -899,7 +899,7 @@ def test_a_probe_addressing_a_bounded_rectangle_binds_its_finite_valid_end() -> 
     # share `in_z` and `out_z`.
     step = _probe("locking", observed_valid_end="2024-06-01T00:00:00+00:00")
     assert step.target.end_values == (Finite(instant="2024-06-01T00:00:00+00:00"), INFINITY)
-    statement = lower_step(step, models.accepted_model(POSITION), POSTGRES)
+    statement = lower_step(step, formed(POSITION), POSTGRES)
     assert statement.binds == (
         "2024-10-01T00:00:00+00:00",
         1,
@@ -919,7 +919,7 @@ def test_bitemporal_close_without_an_observed_valid_end_is_refused() -> None:
 def test_temporal_close_requires_an_effective_table() -> None:
     balance = dataclasses.replace(BALANCE.entity("Balance"), table=None)
     malformed = Metamodel(entities=(balance,))
-    model = models.accepted_model(malformed)
+    model = formed(malformed)
     step = _probe("locking", entity="Balance", meta=malformed, observed_valid_end=None)
     with pytest.raises(WriteLoweringError, match="write target has no effective table"):
         lower_step(step, model, POSTGRES)

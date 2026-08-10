@@ -26,6 +26,7 @@ import uuid
 from collections import deque
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from parallax.conformance import (
@@ -58,6 +59,7 @@ from parallax.core.execution_log import (
 )
 from parallax.core.metamodel import (
     AttributeIdentity,
+    AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
     Multiplicity,
@@ -108,10 +110,11 @@ from parallax.core.unit_work import (
 )
 from parallax.core.unit_work.instructions import WriteInstruction
 from parallax.core.unit_work.write_planner import reject_readless_document_many
-from parallax.descriptor import DescriptorError, validate_inheritance_families
-from parallax.descriptor._family import family_of
-from parallax.descriptor._records import Attribute, Entity, Metamodel, declaring_entity
-from parallax.descriptor._serde import deserialize as deserialize_metamodel
+from parallax.descriptor import (
+    DescriptorError,
+    domain_model_from_document,
+    validate_inheritance_families,
+)
 from parallax.snapshot import handle
 from parallax.snapshot.handle import (
     TransactionTimePinReadOnlyError,
@@ -125,7 +128,6 @@ __all__ = [
     "Emission",
     "EngineError",
     "RunOnly",
-    "case_model",
     "compile_read_case",
     "compile_scenario_case",
     "compile_write_sequence_case",
@@ -209,49 +211,46 @@ def eligibility(case: case_format.Case) -> RunOnly | None:
     return RunOnly(reason=str(reason) if isinstance(reason, str) else "run-only")
 
 
-def load_case_metamodel(case: case_format.Case) -> Metamodel:
-    """Ingest the case's model descriptor into a :class:`Metamodel`."""
+def _case_model_path(case: case_format.Case) -> Path:
     model_ref = case.document.get("model")
     if not isinstance(model_ref, str):
         raise EngineError(f"{case.path.name}: `model` must be a string path")
-    root = case_format.find_repo_root()
-    model_path = root / "core" / "compatibility" / model_ref
-    return models.load_model(model_path)
+    return case_format.find_repo_root() / "core" / "compatibility" / model_ref
 
 
-def case_model(meta: Metamodel) -> AcceptedMetamodel:
-    """The accepted model over a case's parsed record graph.
+def load_case_metamodel(case: case_format.Case) -> AcceptedMetamodel:
+    """The accepted Metamodel the case's model descriptor forms into."""
+    return models.load_model(_case_model_path(case))
 
-    The two views describe one descriptor: a seam that consumes the Metamodel
-    Interface takes this accepted model, and a seam that reads the record graph
-    directly keeps the graph, so an Entity resolved through either is the same
-    Entity of the same descriptor.
+
+def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
+    """The accepted Metadata ``name`` denotes in ``model``.
+
+    A case names an Entity by the spelling its own model authored — bare when
+    that is unambiguous, canonical otherwise — which is exactly the OPERATION
+    REFERENCE rule :func:`~parallax.core.metamodel.entity_by_name` adjudicates,
+    so a case's spelling resolves here the way every validator and lowering site
+    resolves one.
+
+    A miss is a ``KeyError``: it is a lookup that found nothing, and every lane
+    already translates one into an :class:`EngineError` naming the case file, so
+    a corpus defect reports the case rather than an engine frame.
     """
-    return models.accepted_model(meta)
-
-
-def case_entity(model: AcceptedMetamodel, entity: Entity) -> EntityMetadata:
-    """``entity``'s accepted Metadata in ``model``.
-
-    A case names an Entity by its canonical spelling, which the record graph
-    already resolved; taking that record rather than the name again is what
-    makes the two views provably the same Entity of the same descriptor.
-    """
-    metadata = model.entity(EntityIdentity(entity.namespace, entity.name))
-    if metadata is None:  # pragma: no cover - both views come from one descriptor
-        raise EngineError(f"{entity.canonical_name!r} names no entity the accepted model declares")
+    metadata = entity_by_name(model, name)
+    if metadata is None:
+        raise KeyError(f"{name!r} names no entity the accepted model declares")
     return metadata
 
 
-def _declaring_metadata(model: AcceptedMetamodel, entity: Entity) -> EntityMetadata:
-    """The accepted Metadata of the position that DECLARES ``entity``'s family
+def _declaring_metadata(model: AcceptedMetamodel, name: str) -> EntityMetadata:
+    """The accepted Metadata of the position that DECLARES ``name``'s family
     facts — its family root, itself for a standalone Entity.
 
     Temporality is family-wide and root-owned (`m-inheritance` "Inherited
     members"), so a read's pin resolves through the root rather than through a
     concrete descendant's own (locally empty) declaration.
     """
-    return _family_declarer(model, case_entity(model, entity))
+    return _family_declarer(model, case_entity(model, name))
 
 
 def _read_target_and_operation(case: case_format.Case) -> tuple[str, object]:
@@ -368,12 +367,11 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
             f"scenario case compiles through its own dedicated lane; shape={case.shape})"
         )
     target, operation_doc = _read_target_and_operation(case)
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
+    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     lock = read_lock.mode_for(_read_case_concurrency(case))
     try:
-        metadata = case_entity(model, meta.entity(target))
+        metadata = case_entity(model, target)
         operation = _canonicalize_read(operation_doc, metadata, model)
         return compile_read(
             operation,
@@ -429,12 +427,11 @@ def run_read_case(
     logical value observably different under the two layouts.
     """
     target, operation_doc = _read_target_and_operation(case)
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
+    model = load_case_metamodel(case)
     db = handle.Database(port, model, dialect=dialect_for(dialect_name))
     concurrency = _read_case_concurrency(case)
     try:
-        entity = case_entity(model, meta.entity(target))
+        entity = case_entity(model, target)
         request = handle.NeutralReadRequest.rows(
             target=entity.identity, operation=deserialize(operation_doc)
         )
@@ -474,7 +471,6 @@ def _neutral_read(
     case: case_format.Case,
     target: str,
     operation_doc: object,
-    meta: Metamodel,
     model: AcceptedMetamodel,
     port: DbPort,
     dialect_name: str,
@@ -486,14 +482,13 @@ def _neutral_read(
     the round-trip count are production's, and a scanning read answers the
     milestone-set form from the same call, exactly as ``db.find`` does.
 
-    Both views of the case's one descriptor travel in: the record graph resolves
-    the authored ``target`` spelling and the accepted model answers for the
-    Entity it names, so the descriptor is ingested once per case however many
-    views the lane needs.
+    The authored ``target`` spelling resolves against the accepted model itself,
+    under the same OPERATION REFERENCE rule every production validator and
+    lowering site resolves one by.
     """
     db = handle.Database(port, model, dialect=dialect_for(dialect_name))
     try:
-        entity = case_entity(model, meta.entity(target))
+        entity = case_entity(model, target)
         request = handle.NeutralReadRequest.graph(
             target=entity.identity, operation=deserialize(operation_doc)
         )
@@ -512,9 +507,8 @@ def run_graph_case(
     graph.
     """
     target, operation_doc = _read_target_and_operation(case)
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
-    result = _neutral_read(case, target, operation_doc, meta, model, port, dialect_name)
+    model = load_case_metamodel(case)
+    result = _neutral_read(case, target, operation_doc, model, port, dialect_name)
     graph = result.output
     if not isinstance(graph, handle.NeutralGraph):
         raise EngineError(
@@ -538,9 +532,8 @@ def run_graphs_case(
     an array of `{pin, graph}` entries, each pin keyed by declared as-of
     dimension spelling."""
     target, operation_doc = _read_target_and_operation(case)
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
-    result = _neutral_read(case, target, operation_doc, meta, model, port, dialect_name)
+    model = load_case_metamodel(case)
+    result = _neutral_read(case, target, operation_doc, model, port, dialect_name)
     graphs = result.output
     if not isinstance(graphs, handle.NeutralGraphs):
         raise EngineError(
@@ -941,7 +934,7 @@ def _concurrency(case: case_format.Case) -> Concurrency:
     return "locking"
 
 
-def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel) -> bool:
+def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], model: AcceptedMetamodel) -> bool:
     """Whether a scenario's ORDINARY (non-materializing-paired) find steps
     carry the case's declared read-lock suffix at all (`m-read-lock`: "an
     in-transaction object find that INTENDS TO WRITE acquires a shared row
@@ -958,7 +951,7 @@ def _scenario_needs_lock(steps: Sequence[Mapping[str, object]], meta: Metamodel)
     if not write_steps:
         return True
     for step in write_steps:
-        if not _is_predicate_write_step(step["write"]) or _is_materializing_write_step(step, meta):
+        if not _is_predicate_write_step(step["write"]) or _is_materializing_write_step(step, model):
             return True
     return False
 
@@ -1058,25 +1051,23 @@ class _ResolvedWrite:
 
 
 def _versioned_non_temporal_version_attribute(
-    meta: Metamodel, entity_name: str
-) -> Attribute | None:
+    model: AcceptedMetamodel, entity_name: str
+) -> AttributeMetadata | None:
     """``entity_name``'s own optimistic-lock version ATTRIBUTE, when it is a
     VERSIONED, NON-TEMPORAL entity (`m-opt-lock`) — ``None`` otherwise, because a
     temporal entity observes a whole MILESTONE rather than a version, which is a
     different observation shape and not this attribute's
     (:func:`_milestone_observation`; `_build_temporal_instruction`). Resolved
-    through the FAMILY-declaring entity (`declaring_entity`): the version
+    through the FAMILY-declaring entity (:func:`_family_declarer`): the version
     column is family-wide metadata declared only on the root
     (`m-opt-lock` "The version column")."""
-    declaring = declaring_entity(meta, meta.entity(entity_name))
-    if declaring.is_temporal:
+    declaring = _family_declarer(model, case_entity(model, entity_name))
+    if declaring.declared_as_of_axes:
         return None
-    return next((attr for attr in declaring.attributes if attr.optimistic_locking), None)
+    return next((attr for attr in declaring.declared_attributes if attr.optimistic_locking), None)
 
 
-def _observed_nodes(
-    meta: Metamodel, model: AcceptedMetamodel, entity_name: str, output: object
-) -> ObservedNodes:
+def _observed_nodes(model: AcceptedMetamodel, entity_name: str, output: object) -> ObservedNodes:
     """What one `uow` group's find step observed, as production published it.
 
     Every node of the neutral graph carries the active unit of work's own
@@ -1111,10 +1102,10 @@ def _observed_nodes(
         if key is None:
             continue
         node_entity = view.node.entity.canonical
-        is_temporal = _is_temporal_entity(meta, node_entity)
+        is_temporal = _is_temporal_entity(model, node_entity)
         if is_temporal:
             _refuse_document_layout_milestone(model, node_entity)
-        version_attr = _versioned_non_temporal_version_attribute(meta, node_entity)
+        version_attr = _versioned_non_temporal_version_attribute(model, node_entity)
         observation = (
             _milestone_observation(view)
             if is_temporal
@@ -1153,13 +1144,13 @@ def _materialized_nodes(graph: handle.NeutralGraph) -> Iterator[handle.NeutralNo
 
 
 def _version_observation(
-    view: handle.NeutralNodeView, version_attr: Attribute
+    view: handle.NeutralNodeView, version_attr: AttributeMetadata
 ) -> VersionObservation | None:
     """The Version Observation one observed node carries — ``None`` when the
     projection did not return the version member, which no well-formed find
     reaches but this seam takes no data on faith."""
     for identity, value in view.attributes.items():
-        if identity.name == version_attr.name:
+        if identity == version_attr.identity:
             return VersionObservation(observed_version=cast("int", value))
     return None  # pragma: no cover - defends a projection missing its version member
 
@@ -1330,8 +1321,8 @@ def _entry_instant(entry: Mapping[str, object]) -> str:
     return at if isinstance(at, str) else _INERT_CLOCK_INSTANT
 
 
-def _is_temporal_entity(meta: Metamodel, entity_name: str) -> bool:
-    return declaring_entity(meta, meta.entity(entity_name)).is_temporal
+def _is_temporal_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
+    return bool(_family_declarer(model, case_entity(model, entity_name)).declared_as_of_axes)
 
 
 _TEMPORAL_INSERT_MUTATIONS: Final[frozenset[str]] = frozenset({"insert", "insertUntil"})
@@ -1371,7 +1362,7 @@ def _temporal_entry_row(
 
 def _build_temporal_instruction(
     entry: Mapping[str, object],
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     shadow: TemporalShadow,
     unit_inserted: set[ObjectKey],
     source: ObservedNodes | None,
@@ -1418,7 +1409,7 @@ def _build_temporal_instruction(
     entity_name = cast("str", entry["entity"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
     row, _authored_none = _durable_row(
-        meta, entity_name, mutation, _temporal_entry_row(entity_name, mutation, raw_rows)
+        model, entity_name, mutation, _temporal_entry_row(entity_name, mutation, raw_rows)
     )
     valid_from = cast("str | None", entry.get("validFrom"))
     until = cast("str | None", entry.get("until"))
@@ -1428,10 +1419,9 @@ def _build_temporal_instruction(
     if until is not None:
         doc["until"] = until
     instruction = instructions.deserialize(doc)
-    model = case_model(meta)
     instructions.validate_instruction(instruction, model)
     assert isinstance(instruction, KeyedWrite)  # a temporal entry is always keyed
-    entity_metadata = case_entity(model, meta.entity(entity_name))
+    entity_metadata = case_entity(model, entity_name)
     pk_key = object_key(instruction, model)
     is_insert = mutation in _TEMPORAL_INSERT_MUTATIONS
     is_coalescing_candidate = not is_insert and pk_key is not None and pk_key in unit_inserted
@@ -1632,7 +1622,7 @@ def _decoded_assignment_value(
 
 
 def _decoded_predicate_write(
-    instruction: PredicateWrite, meta: Metamodel, model: AcceptedMetamodel
+    instruction: PredicateWrite, model: AcceptedMetamodel
 ) -> PredicateWrite:
     """``instruction``'s own assignment values, decoded
     (:func:`_decoded_assignment_value`) against its target entity's declared
@@ -1647,7 +1637,7 @@ def _decoded_predicate_write(
     """
     if not instruction.assignments:
         return instruction
-    entity = case_entity(model, meta.entity(instruction.target.entity))
+    entity = case_entity(model, instruction.target.entity)
     assignments = tuple(
         WriteAssignment(
             assignment.attr,
@@ -1660,12 +1650,14 @@ def _decoded_predicate_write(
     return replace(instruction, assignments=assignments)
 
 
-def _is_versioned_entity(meta: Metamodel, entity_name: str) -> bool:
-    declaring = declaring_entity(meta, meta.entity(entity_name))
-    return any(attr.optimistic_locking for attr in declaring.attributes)
+def _is_versioned_entity(model: AcceptedMetamodel, entity_name: str) -> bool:
+    declaring = _family_declarer(model, case_entity(model, entity_name))
+    return any(attr.optimistic_locking for attr in declaring.declared_attributes)
 
 
-def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: str) -> str | None:
+def _observation_refusal(
+    model: AcceptedMetamodel, entity_name: str, mutation: str, key: str
+) -> str | None:
     """Why a write row against ``entity_name`` under ``mutation`` may not author
     the reserved observation control key ``key`` — ``None`` when that pair is the
     ONE the corpus vocabulary entitles to author it.
@@ -1715,7 +1707,7 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
             "`when.observedValidStart`, or an attempt's own `observedTxStart`; a writeRow "
             "reserves `observedVersion` alone and every other key names an entity member)"
         )
-    if _is_temporal_entity(meta, entity_name):
+    if _is_temporal_entity(model, entity_name):
         return (
             f"a temporal row authors no `{key}` (m-unit-work: a temporal write observes a whole "
             "predecessor milestone, which no flat row cell can name — the engine resolves one "
@@ -1727,7 +1719,7 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
             f"an insert row authors no `{key}` (m-unit-work: inserts have no observation — an "
             "observed version names the milestone a write against an EXISTING row observed)"
         )
-    if _versioned_non_temporal_version_attribute(meta, entity_name) is None:
+    if _versioned_non_temporal_version_attribute(model, entity_name) is None:
         return (
             f"an unversioned row authors no `{key}` (m-unit-work: unversioned Non-Temporal "
             "writes have no observation — there is no observed version for it to name)"
@@ -1736,7 +1728,7 @@ def _observation_refusal(meta: Metamodel, entity_name: str, mutation: str, key: 
 
 
 def _durable_row(
-    meta: Metamodel, entity_name: str, mutation: str, row: Mapping[str, object]
+    model: AcceptedMetamodel, entity_name: str, mutation: str, row: Mapping[str, object]
 ) -> tuple[dict[str, object], VersionObservation | None]:
     """One case-authored write row as the DURABLE row a write carries, plus the
     Version Observation that row described (``None`` when it described none — an
@@ -1774,7 +1766,7 @@ def _durable_row(
     for key in _ROW_OBSERVATION_KEYS:
         if key not in row:
             continue
-        refusal = _observation_refusal(meta, entity_name, mutation, key)
+        refusal = _observation_refusal(model, entity_name, mutation, key)
         if refusal is not None:
             raise EngineError(f"{entity_name!r} {mutation!r}: {refusal}")
     durable = dict(row)
@@ -1785,16 +1777,22 @@ def _durable_row(
 
 
 def _durable_rows(
-    meta: Metamodel, entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
+    model: AcceptedMetamodel,
+    entity_name: str,
+    mutation: str,
+    raw_rows: Sequence[Mapping[str, object]],
 ) -> list[tuple[dict[str, object], VersionObservation | None]]:
     """Every row of one multi-row write entry through :func:`_durable_row`,
     resolved EAGERLY so an entry is refused on any row it authors before its
     first row is planned — a partially translated entry is never observable."""
-    return [_durable_row(meta, entity_name, mutation, row) for row in raw_rows]
+    return [_durable_row(model, entity_name, mutation, row) for row in raw_rows]
 
 
 def _binds_row_observations(
-    meta: Metamodel, entity_name: str, mutation: str, raw_rows: Sequence[Mapping[str, object]]
+    model: AcceptedMetamodel,
+    entity_name: str,
+    mutation: str,
+    raw_rows: Sequence[Mapping[str, object]],
 ) -> bool:
     """Whether a non-temporal write entry's rows each carry their OWN object key
     and observation, mirroring what that many separate
@@ -1839,8 +1837,7 @@ def _binds_row_observations(
     """
     if len(raw_rows) == 1:
         return True
-    model = case_model(meta)
-    entity = case_entity(model, meta.entity(entity_name))
+    entity = case_entity(model, entity_name)
     return not batch_write.collapses(model, entity, mutation, raw_rows)
 
 
@@ -1882,7 +1879,7 @@ def _check_statement_count_consistency(
 
 
 def _seed_insert_version(
-    meta: Metamodel, entity_name: str, mutation: str, row: Mapping[str, object]
+    model: AcceptedMetamodel, entity_name: str, mutation: str, row: Mapping[str, object]
 ) -> dict[str, object]:
     """A VERSIONED, non-temporal entity's INSERT row, with the derived initial
     version seeded when the case-authored row omits it
@@ -1908,15 +1905,15 @@ def _seed_insert_version(
     """
     if mutation != "insert":
         return dict(row)
-    version_attr = _versioned_non_temporal_version_attribute(meta, entity_name)
-    if version_attr is None or version_attr.name in row:
+    version_attr = _versioned_non_temporal_version_attribute(model, entity_name)
+    if version_attr is None or version_attr.identity.name in row:
         return dict(row)
-    return {**row, version_attr.name: opt_lock.INITIAL_VERSION}
+    return {**row, version_attr.identity.name: opt_lock.INITIAL_VERSION}
 
 
 def _build_instructions(
     entry: Mapping[str, object],
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     shadow: TemporalShadow,
     unit_inserted: set[ObjectKey],
     group_observations: GroupObservations,
@@ -1988,26 +1985,25 @@ def _build_instructions(
             "entry vocabulary is keyed-only)"
         )
     entity_name = cast("str", entry["entity"])
-    if source is not None and not _is_temporal_entity(meta, entity_name):
+    if source is not None and not _is_temporal_entity(model, entity_name):
         raise EngineError(
             f"{entity_name!r}: a write step naming the find it settles against targets a "
             "TEMPORAL entity — a versioned Non-Temporal target has one row per primary key, so "
             "identity already reaches its group's evidence and the reference names nothing the "
             "resolution does not have (m-case-format 'Settling against a grouped find')"
         )
-    if _is_temporal_entity(meta, entity_name):
-        return [_build_temporal_instruction(entry, meta, shadow, unit_inserted, source)]
+    if _is_temporal_entity(model, entity_name):
+        return [_build_temporal_instruction(entry, model, shadow, unit_inserted, source)]
     mutation = cast("str", entry["mutation"])
     raw_rows = cast("Sequence[Mapping[str, object]]", entry["rows"])
-    durable = _durable_rows(meta, entity_name, mutation, raw_rows)
-    binds_observations = _binds_row_observations(meta, entity_name, mutation, raw_rows)
-    model = case_model(meta)
+    durable = _durable_rows(model, entity_name, mutation, raw_rows)
+    binds_observations = _binds_row_observations(model, entity_name, mutation, raw_rows)
     out: list[_ResolvedWrite] = []
     opens_a_row = mutation in INSERT_MUTATIONS
     for clean_row, row_observation in durable:
         observation: WriteObservation | None = row_observation
         evidence: WriteEvidence = row_observation
-        clean_row = _seed_insert_version(meta, entity_name, mutation, clean_row)
+        clean_row = _seed_insert_version(model, entity_name, mutation, clean_row)
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": entity_name, "rows": [clean_row]}
         )
@@ -2040,7 +2036,7 @@ def _observed_for(observations: GroupObservations, key: ObjectKey) -> _ObservedN
 
 def _resolve_entries(
     entries: Sequence[Mapping[str, object]],
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     shadow: TemporalShadow,
     group_observations: GroupObservations,
     source: ObservedNodes | None = None,
@@ -2068,7 +2064,7 @@ def _resolve_entries(
     unit_inserted: set[ObjectKey] = set()
     for entry in entries:
         resolved.extend(
-            _build_instructions(entry, meta, shadow, unit_inserted, group_observations, source)
+            _build_instructions(entry, model, shadow, unit_inserted, group_observations, source)
         )
     return resolved
 
@@ -2092,7 +2088,7 @@ def _buffered(
 def _lower_resolved(
     resolved: Sequence[_ResolvedWrite],
     entries: Sequence[Mapping[str, object]],
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
     tx_instant: str,
@@ -2121,7 +2117,6 @@ def _lower_resolved(
     rows.
     """
     buffer = [_buffered(write.instruction, write.oracle_observation) for write in resolved]
-    model = case_model(meta)
     instant = _pinned_instant(tx_instant)
     plan = build_write_planner(model).plan(
         PlanningRequest(
@@ -2139,7 +2134,7 @@ def _lower_resolved(
 
 def _lower_writes(
     entries: Sequence[Mapping[str, object]],
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
     shadow: TemporalShadow,
@@ -2152,12 +2147,15 @@ def _lower_writes(
     :func:`_lower_resolved` directly, rather than calling this a second time, so
     each consumed observation is retired once and the buffer's one plan is
     tracked once)."""
-    resolved = _resolve_entries(entries, meta, shadow, group_observations)
-    return _lower_resolved(resolved, entries, meta, dialect, concurrency, tx_instant, shadow)
+    resolved = _resolve_entries(entries, model, shadow, group_observations)
+    return _lower_resolved(resolved, entries, model, dialect, concurrency, tx_instant, shadow)
 
 
 def _lower_predicate_write_step(
-    raw_write: Mapping[str, object], meta: Metamodel, dialect: Dialect, concurrency: Concurrency
+    raw_write: Mapping[str, object],
+    model: AcceptedMetamodel,
+    dialect: Dialect,
+    concurrency: Concurrency,
 ) -> LoweredStatement:
     """Lower a READLESS scenario predicate-write step (`m-batch-write-005`/
     ``-006``) to its ONE statement — PURE, no database. Deserializes +
@@ -2182,8 +2180,7 @@ def _lower_predicate_write_step(
     """
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)  # a predicate-shaped step always builds this
-    model = case_model(meta)
-    instructions.validate_instruction(_decoded_predicate_write(instruction, meta, model), model)
+    instructions.validate_instruction(_decoded_predicate_write(instruction, model), model)
     # A readless predicate write declares no Transaction-Time boundary, so the
     # inert instant it carries is never captured (ADR 0010).
     instant = _pinned_instant(_INERT_CLOCK_INSTANT)
@@ -2202,7 +2199,6 @@ def _lower_predicate_write_step(
 
 def _compile_find(
     step: Mapping[str, object],
-    meta: Metamodel,
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency | None,
@@ -2260,7 +2256,7 @@ def _compile_find(
     find_doc = step.get("find")
     if not isinstance(target, str) or find_doc is None:
         raise EngineError("scenario find step needs `targetEntity` and `find`")
-    metadata = case_entity(model, meta.entity(target))
+    metadata = case_entity(model, target)
     operation = _canonicalize_read(find_doc, metadata, model)
     lock = read_lock.mode_for(concurrency)
     return compile_read(
@@ -2274,7 +2270,7 @@ def _compile_find(
 
 
 def _find_request(
-    step: Mapping[str, object], meta: Metamodel, model: AcceptedMetamodel
+    step: Mapping[str, object], model: AcceptedMetamodel
 ) -> tuple[EntityMetadata, Operation]:
     """A scenario ``find`` step as the two facts a neutral read request states:
     the resolved target and the operation to run from it.
@@ -2289,7 +2285,7 @@ def _find_request(
     find_doc = step.get("find")
     if not isinstance(target, str) or find_doc is None:
         raise EngineError("scenario find step needs `targetEntity` and `find`")
-    return case_entity(model, meta.entity(target)), deserialize(find_doc)
+    return case_entity(model, target), deserialize(find_doc)
 
 
 def _trace_statements(result: handle.NeutralReadResult) -> tuple[LoweredStatement, ...]:
@@ -2300,7 +2296,6 @@ def _trace_statements(result: handle.NeutralReadResult) -> tuple[LoweredStatemen
 
 def _run_standalone_find(
     port: DbPort,
-    meta: Metamodel,
     model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency | None,
@@ -2315,7 +2310,7 @@ def _run_standalone_find(
     writes establishes no observation for a lock to protect
     (:func:`_scenario_needs_lock`), so its verification finds run standalone.
     """
-    entity, operation = _find_request(step, meta, model)
+    entity, operation = _find_request(step, model)
     request = handle.NeutralReadRequest.graph(target=entity.identity, operation=operation)
     db = handle.Database(port, model, dialect=dialect)
     if concurrency is None:
@@ -2378,9 +2373,7 @@ def _lower_scenario_step(
     known.
     """
     if "write" not in step:
-        statement = _compile_find(
-            step, context.meta, context.model, context.dialect, find_lock
-        ).statement
+        statement = _compile_find(step, context.model, context.dialect, find_lock).statement
         return _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
     raw_write = step["write"]
     rollback = step.get("rollback") is True
@@ -2391,7 +2384,7 @@ def _lower_scenario_step(
         # `_scenario_lowered` ever runs).
         statement = _lower_predicate_write_step(
             cast("Mapping[str, object]", raw_write),
-            context.meta,
+            context.model,
             context.dialect,
             context.concurrency,
         )
@@ -2399,7 +2392,7 @@ def _lower_scenario_step(
     entries = _write_entries(raw_write)
     statements = _lower_writes(
         entries,
-        context.meta,
+        context.model,
         context.dialect,
         context.concurrency,
         context.shadow,
@@ -2450,16 +2443,14 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     after itself. Both lanes must reach the same DML for the same case, and a
     step after an abort takes its milestone from the write the database kept.
     """
-    meta = load_case_metamodel(case)
+    model = load_case_metamodel(case)
     concurrency = _concurrency(case)
-    context = _GroupContext(
-        meta, case_model(meta), dialect_for(dialect_name), concurrency, TemporalShadow()
-    )
+    context = _GroupContext(model, dialect_for(dialect_name), concurrency, TemporalShadow())
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
     try:
         steps = _scenario_steps(case)
-        find_lock = concurrency if _scenario_needs_lock(steps, meta) else None
+        find_lock = concurrency if _scenario_needs_lock(steps, model) else None
         doomed_spans = _doomed_group_spans(case.path.name, steps)
         index = 0
         while index < len(steps):
@@ -2496,7 +2487,7 @@ def _write_sequence_lowered(
     group observation store stays permanently empty — every keyed
     write's observation still comes from its row's own ``observedVersion``
     control key."""
-    meta = load_case_metamodel(case)
+    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
@@ -2504,7 +2495,7 @@ def _write_sequence_lowered(
     # starts from persisted history, and its first temporal close observes a
     # fixture milestone rather than one an earlier entry opened. Both lanes must
     # start from the same tracked state or they are not the same computation.
-    _seed_shadow_from_fixtures(case, meta, shadow)
+    _seed_shadow_from_fixtures(case, model, shadow)
     group_observations: GroupObservations = []
     try:
         return [
@@ -2512,7 +2503,7 @@ def _write_sequence_lowered(
                 f"/writeSequence/{index}",
                 _lower_writes(
                     [entry],
-                    meta,
+                    model,
                     dialect,
                     concurrency,
                     shadow,
@@ -2564,8 +2555,7 @@ def _compile_snapshot_scenario(
     unlocked — a snapshot materialization is not a locking object find);
     `mutate` contributes no emissions and no round trips at all (m-snapshot-
     read: an in-memory-only change, never SQL)."""
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
+    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     emissions: list[Emission] = []
     try:
@@ -2579,7 +2569,7 @@ def _compile_snapshot_scenario(
                 raise EngineError(
                     f"{case.path.name}: scenario find step needs `targetEntity` and `find`"
                 )
-            metadata = case_entity(model, meta.entity(target))
+            metadata = case_entity(model, target)
             operation = _canonicalize_read(find_doc, metadata, model)
             statement = compile_read(
                 operation, model, dialect, metadata, result_form="instance"
@@ -2631,8 +2621,7 @@ def _run_snapshot_scenario(
     Returns the ordered emissions, the total round trips, and one `errors`
     observation entry per `expectError` step whose verb raised its declared
     application-lifecycle error (`m-conformance-adapter`)."""
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
+    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     # This lane resolves no milestone from case state — every node it publishes
     # comes from a real read and it buffers no keyed write — so the tracker the
@@ -2661,11 +2650,11 @@ def _run_snapshot_scenario(
             # The case document's own spelling is resolved HERE, where the
             # document is read, so no later step carries a spelling into a
             # production seam that takes an Entity Identity.
-            identity = case_entity(model, meta.entity(target)).identity
+            identity = case_entity(model, target).identity
             result = db.read_neutral(
                 handle.NeutralReadRequest.graph(target=identity, operation=raw_op)
             )
-            pin = _find_step_pin(meta, target, raw_op)
+            pin = _find_step_pin(model, target, raw_op)
         except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         for call in result.execution.calls:
@@ -2700,15 +2689,14 @@ def _root_members(
     )
 
 
-def _find_step_pin(meta: Metamodel, target: str, raw_op: Operation) -> Pin:
+def _find_step_pin(model: AcceptedMetamodel, target: str, raw_op: Operation) -> Pin:
     """A scenario find step's own statement pin — the whole-graph as-of
     coordinates the materialized view carries (`m-snapshot-read`), read from
     the SAME raw operation the find executor consumes. This is the pin
     :func:`_grade_mutate_step` hands the production write seam's finite-pin
     rule, resolved through the family-declaring entity exactly as the read
     path resolves it."""
-    model = case_model(meta)
-    return statement_pin(raw_op, _declaring_metadata(model, meta.entity(target)))
+    return statement_pin(raw_op, _declaring_metadata(model, target))
 
 
 def _grade_mutate_step(
@@ -2812,7 +2800,7 @@ def compile_write_sequence_case(
 
 
 def _seed_shadow_from_fixtures(
-    case: case_format.Case, meta: Metamodel, shadow: TemporalShadow
+    case: case_format.Case, model: AcceptedMetamodel, shadow: TemporalShadow
 ) -> None:
     """Seed ``shadow`` from the case's OWN fixture-loading rule (`m-case-format`):
     a writeSequence starts EMPTY unless it opts in with ``given.fixtures: true``;
@@ -2826,18 +2814,16 @@ def _seed_shadow_from_fixtures(
     if case.shape == "writeSequence" and not fixtures_flag:
         return
     fixtures = provision.load_fixtures(cast("str", case.document["model"]))
-    model = case_model(meta)
     for entity_name, rows in fixtures.items():
         shadow.seed_fixtures(
             model,
-            case_entity(model, meta.entity(entity_name)),
+            case_entity(model, entity_name),
             cast("list[Mapping[str, object]]", rows),
         )
 
 
 def _buffer_execution_instruction(
     tx: handle.Transaction,
-    meta: Metamodel,
     model: AcceptedMetamodel,
     write: _ResolvedWrite,
 ) -> None:
@@ -2872,7 +2858,7 @@ def _buffer_execution_instruction(
             f"{instruction.entity!r} {instruction.mutation!r}: a buffered write carries one row "
             f"({len(instruction.rows)} resolved) — the unit of work's own buffer seam takes one"
         )
-    entity_metadata = case_entity(model, meta.entity(instruction.entity))
+    entity_metadata = case_entity(model, instruction.entity)
     tx.write_neutral(
         replace(instruction, rows=(decode_write_row(entity_metadata, instruction.rows[0], model),)),
         observation=write.execution_evidence,
@@ -2881,7 +2867,7 @@ def _buffer_execution_instruction(
 
 def _execute_write_unit(
     port: DbPort,
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
     resolved: Sequence[_ResolvedWrite],
@@ -2902,7 +2888,6 @@ def _execute_write_unit(
     on the wire — and counts its round trips — before the provider rolls the
     transaction back.
     """
-    model = case_model(meta)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(
         _write_port(port, rollback=rollback), model, dialect=dialect, clock=FixedClock(instant)
@@ -2913,7 +2898,7 @@ def _execute_write_unit(
     def body(tx: handle.Transaction) -> None:
         logs.append(tx.execution_log)
         for write in resolved:
-            _buffer_execution_instruction(tx, meta, model, write)
+            _buffer_execution_instruction(tx, model, write)
 
     with contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=concurrency)
@@ -2922,7 +2907,7 @@ def _execute_write_unit(
 
 def _run_readless_predicate_write(
     port: DbPort,
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
     raw_write: Mapping[str, object],
@@ -2947,8 +2932,7 @@ def _run_readless_predicate_write(
     """
     instruction = instructions.deserialize(_canonical_predicate_doc(raw_write))
     assert isinstance(instruction, PredicateWrite)
-    model = case_model(meta)
-    decoded = _decoded_predicate_write(instruction, meta, model)
+    decoded = _decoded_predicate_write(instruction, model)
     instructions.validate_instruction(decoded, model)
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     database = handle.Database(
@@ -2966,7 +2950,7 @@ def _run_readless_predicate_write(
 
 
 def _is_materializing_write_step(
-    step: Mapping[str, object] | None, meta: Metamodel
+    step: Mapping[str, object] | None, model: AcceptedMetamodel
 ) -> PredicateWrite | None:
     """If ``step`` is a write step whose ``write`` field is a structured
     predicate instruction targeting a VERSIONED or TEMPORAL entity
@@ -2992,19 +2976,18 @@ def _is_materializing_write_step(
     )
     if not isinstance(instruction, PredicateWrite):
         return None
-    model = case_model(meta)
-    decoded = _decoded_predicate_write(instruction, meta, model)
+    decoded = _decoded_predicate_write(instruction, model)
     instructions.validate_instruction(decoded, model)
-    entity = meta.entity(instruction.target.entity)
-    declaring = declaring_entity(meta, entity)
-    if declaring.is_temporal or _is_versioned_entity(meta, instruction.target.entity):
+    if _is_temporal_entity(model, instruction.target.entity) or _is_versioned_entity(
+        model, instruction.target.entity
+    ):
         return decoded
     return None
 
 
 def _run_materializing_pair(
     port: DbPort,
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
     steps: Sequence[Mapping[str, object]],
@@ -3045,7 +3028,7 @@ def _run_materializing_pair(
     """
     find_step = steps[index]
     write_step = steps[index + 1]
-    instruction = _is_materializing_write_step(write_step, meta)
+    instruction = _is_materializing_write_step(write_step, model)
     assert instruction is not None  # the caller already established this via the same check
     target = find_step.get("targetEntity")
     if target != instruction.target.entity:
@@ -3079,7 +3062,6 @@ def _run_materializing_pair(
     tx_instant = _entry_instant(cast("Mapping[str, object]", write_step["write"]))
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     rollback = write_step.get("rollback") is True
-    model = case_model(meta)
     database = handle.Database(
         _write_port(port, rollback=rollback),
         model,
@@ -3095,7 +3077,7 @@ def _run_materializing_pair(
     with shadow.staged(doomed=rollback):
         with contextlib.suppress(_RollbackStep):
             database.transact(body, concurrency=concurrency)
-        shadow.note_materialized_write(case_entity(model, meta.entity(instruction.target.entity)))
+        shadow.note_materialized_write(case_entity(model, instruction.target.entity))
     log = logs[-1] if logs else None
     resolve, writes = _materialized_pair_statements(log)
     if not resolve:  # pragma: no cover - zero resolved rows still resolves (1 statement)
@@ -3257,7 +3239,7 @@ class _GroupContext:
     which is exactly the state a shared tracker exists to carry.
     """
 
-    meta: Metamodel
+    model: AcceptedMetamodel
     model: AcceptedMetamodel
     dialect: Dialect
     concurrency: Concurrency
@@ -3316,33 +3298,33 @@ def _run_group_step(
     ignore them — is the caller's affair, and is the only thing the two runners
     still do differently.
     """
-    meta, model = context.meta, context.model
+    model, model = context.model, context.model
     if "write" in step:
         entries = _write_entries(step["write"])
         source = _source_find_milestones(step, index, state.finds)
-        resolved = _resolve_entries(entries, meta, context.shadow, state.observations, source)
+        resolved = _resolve_entries(entries, model, context.shadow, state.observations, source)
         statements = _lower_resolved(
             resolved,
             entries,
-            meta,
+            model,
             context.dialect,
             context.concurrency,
             tx_instant,
             context.shadow,
         )
         for write in resolved:
-            _buffer_execution_instruction(tx, meta, model, write)
+            _buffer_execution_instruction(tx, model, write)
         return (
             _LoweredStep(
                 f"/scenario/{index}/write", statements, True, step.get("rollback") is True
             ),
             None,
         )
-    entity, operation = _find_request(step, meta, model)
+    entity, operation = _find_request(step, model)
     read = tx.read_neutral(
         handle.NeutralReadRequest.graph(target=entity.identity, operation=operation)
     )
-    observed = _observed_nodes(meta, model, entity.identity.canonical, read.output)
+    observed = _observed_nodes(model, entity.identity.canonical, read.output)
     state.finds[index] = observed
     state.observations.extend(observed)
     return _LoweredStep(
@@ -4083,8 +4065,7 @@ def run_interleaved_scenario_case(
     post-ladder join.
     """
     steps = _scenario_steps(case)
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
+    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     groups = _scenario_group_step_indices(steps)
@@ -4097,10 +4078,10 @@ def run_interleaved_scenario_case(
     ungrouped = [i for i in range(len(steps)) if i not in {j for js in groups.values() for j in js}]
     (label_a, indices_a), (label_b, indices_b) = groups.items()
     shadow = TemporalShadow()
-    _seed_shadow_from_fixtures(case, meta, shadow)
+    _seed_shadow_from_fixtures(case, model, shadow)
     _apply_given_apply(case, dialect, port, shadow)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
-    main_db = handle.Database(port, case_model(meta), dialect=dialect, clock=FixedClock(instant))
+    main_db = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
     peer_connection = peer_factory()
     try:
         _require_interleaved_termination_capability(port, peer_connection, case.path.name)
@@ -4114,13 +4095,11 @@ def run_interleaved_scenario_case(
         with contextlib.suppress(Exception):
             peer_connection.close()
         raise
-    peer_db = handle.Database(
-        peer_connection, case_model(meta), dialect=dialect, clock=FixedClock(instant)
-    )
+    peer_db = handle.Database(peer_connection, model, dialect=dialect, clock=FixedClock(instant))
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
-    context = _GroupContext(meta, model, dialect, concurrency, shadow)
+    context = _GroupContext(model, dialect, concurrency, shadow)
     thread_a = threading.Thread(
         target=_run_interleaved_group,
         args=(main_db, context, steps, indices_a, turnstile, result_a),
@@ -4156,7 +4135,7 @@ def run_interleaved_scenario_case(
                 "interleaved uow race is unsupported — m-opt-lock-012's own ungrouped "
                 "step is a trailing verify find only"
             )
-        read = _run_standalone_find(port, meta, model, dialect, concurrency, step)
+        read = _run_standalone_find(port, model, dialect, concurrency, step)
         rows_by_index[index] = _graph_rows(model, read.output)
         round_trips += read.execution.round_trips
         lowered[index] = _LoweredStep(
@@ -4200,11 +4179,10 @@ def run_scenario_case(
     if _has_action_step(steps):
         emissions, round_trips, errors = _run_snapshot_scenario(case, dialect_name, port, steps)
         return emissions, round_trips, errors, None
-    meta = load_case_metamodel(case)
-    model = case_model(meta)
+    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
-    find_lock = concurrency if _scenario_needs_lock(steps, meta) else None
+    find_lock = concurrency if _scenario_needs_lock(steps, model) else None
     shadow = TemporalShadow()
     spans = _scenario_uow_spans(case.path.name, steps)
     if spans is None:
@@ -4214,12 +4192,12 @@ def run_scenario_case(
             "function does not construct — call run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
-    context = _GroupContext(meta, model, dialect, concurrency, shadow)
+    context = _GroupContext(model, dialect, concurrency, shadow)
     lowered: list[_LoweredStep] = []
     group_logs: list[ExecutionLog | None] = []
     round_trips = 0
     try:
-        _seed_shadow_from_fixtures(case, meta, shadow)
+        _seed_shadow_from_fixtures(case, model, shadow)
         # After the fixtures and before the first step, exactly where every other
         # lane applies it (:func:`_apply_given_apply`). The tracker is deliberately
         # not re-seeded from it — it records which milestones the statements may
@@ -4243,16 +4221,16 @@ def run_scenario_case(
             step = steps[index]
             if "write" not in step:
                 next_step = steps[index + 1] if index + 1 < len(steps) else None
-                pairing = _is_materializing_write_step(next_step, meta)
+                pairing = _is_materializing_write_step(next_step, model)
                 if pairing is not None and step.get("targetEntity") == pairing.target.entity:
                     pair_lowered, pair_log = _run_materializing_pair(
-                        port, meta, dialect, concurrency, steps, index, shadow
+                        port, model, dialect, concurrency, steps, index, shadow
                     )
                     lowered.extend(pair_lowered)
                     round_trips += pair_log.round_trips if pair_log is not None else 0
                     index += 2
                     continue
-                read = _run_standalone_find(port, meta, model, dialect, find_lock, step)
+                read = _run_standalone_find(port, model, dialect, find_lock, step)
                 round_trips += read.execution.round_trips
                 lowered.append(
                     _LoweredStep(f"/scenario/{index}/find", _trace_statements(read), False, False)
@@ -4271,11 +4249,11 @@ def run_scenario_case(
                 raw_predicate_write = cast("Mapping[str, object]", raw_write)
                 tx_instant = _entry_instant(raw_predicate_write)
                 statement = _lower_predicate_write_step(
-                    raw_predicate_write, meta, dialect, concurrency
+                    raw_predicate_write, model, dialect, concurrency
                 )
                 write_log = _run_readless_predicate_write(
                     port,
-                    meta,
+                    model,
                     dialect,
                     concurrency,
                     raw_predicate_write,
@@ -4290,12 +4268,12 @@ def run_scenario_case(
                 entries = _write_entries(raw_write)
                 tx_instant = _entry_instant(entries[0])
                 with shadow.staged(doomed=rollback):
-                    resolved = _resolve_entries(entries, meta, shadow, [])
+                    resolved = _resolve_entries(entries, model, shadow, [])
                     statements = _lower_resolved(
-                        resolved, entries, meta, dialect, concurrency, tx_instant, shadow
+                        resolved, entries, model, dialect, concurrency, tx_instant, shadow
                     )
                     write_log = _execute_write_unit(
-                        port, meta, dialect, concurrency, resolved, tx_instant, rollback=rollback
+                        port, model, dialect, concurrency, resolved, tx_instant, rollback=rollback
                     )
                 round_trips += write_log.round_trips if write_log is not None else 0
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
@@ -4326,7 +4304,7 @@ def run_write_sequence_case(
     already writes against, so applying it later than that would grade the
     sequence against a table the case never described.
     """
-    meta = load_case_metamodel(case)
+    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
     shadow = TemporalShadow()
@@ -4334,28 +4312,28 @@ def run_write_sequence_case(
     lowered: list[tuple[str, tuple[LoweredStatement, ...]]] = []
     round_trips = 0
     try:
-        _seed_shadow_from_fixtures(case, meta, shadow)
+        _seed_shadow_from_fixtures(case, model, shadow)
         _apply_given_apply(case, dialect, port, shadow)
         for index, entry in enumerate(_write_sequence_entries(case)):
             tx_instant = _entry_instant(entry)
-            resolved = _resolve_entries([entry], meta, shadow, group_observations)
+            resolved = _resolve_entries([entry], model, shadow, group_observations)
             statements = _lower_resolved(
-                resolved, [entry], meta, dialect, concurrency, tx_instant, shadow
+                resolved, [entry], model, dialect, concurrency, tx_instant, shadow
             )
             log = _execute_write_unit(
-                port, meta, dialect, concurrency, resolved, tx_instant, rollback=False
+                port, model, dialect, concurrency, resolved, tx_instant, rollback=False
             )
             round_trips += log.round_trips if log is not None else 0
             lowered.append((f"/writeSequence/{index}", statements))
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     emissions = _emissions(lowered)
-    table_state = read_table_state(port, meta, dialect)
+    table_state = read_table_state(port, model, dialect)
     return emissions, table_state, round_trips
 
 
 def read_table_state(
-    port: DbPort, meta: Metamodel | AcceptedMetamodel, dialect: Dialect
+    port: DbPort, model: AcceptedMetamodel | AcceptedMetamodel, dialect: Dialect
 ) -> dict[str, list[Row]]:
     """The committed contents of every model table, in canonical wire form.
 
@@ -4367,7 +4345,6 @@ def read_table_state(
     `null`). Takes either the corpus descriptor record graph or an
     already-accepted model.
     """
-    model = case_model(meta) if isinstance(meta, Metamodel) else meta
     state: dict[str, list[Row]] = {}
     for layout in storage_layout.view(model).tables:
         columns = ", ".join(dialect.quote(slot.column.name) for slot in layout.columns)
@@ -4418,29 +4395,59 @@ def _apply_given_apply(
         port.execute_write(dialect.to_driver_sql(sql), _driver_binds(binds))
 
 
-def _default_family_root(meta: Metamodel) -> Entity | None:
+def _default_family_root(model: AcceptedMetamodel) -> EntityMetadata | None:
     """The family root the default-target conventions resolve through.
 
     ``None`` when the model declares no inheritance family at all, so a caller
-    falls back to the model's own entities. A model declaring SEVERAL families
+    falls back to the model document's own first entity
+    (:func:`_first_declared_entity`). A model declaring SEVERAL families
     has no single root to name, and picking one of them would silently target an
     entity the case never asked for, so it is refused: the conventions below all
     say "the family root", singular, and a case over such a model must name its
     target explicitly.
+
+    A family is read off the Inheritance Facet: every participant's view carries
+    the root's own strategy, and a standalone Entity carries none, so the
+    strategy-bearing views' distinct roots ARE the model's families.
     """
-    family = family_of(meta)
-    if not family.participants:
+    facet = inheritance.view(model)
+    roots = {
+        entity.identity: view.root
+        for entity in model.entities
+        if (view := facet.entity(entity.identity)) is not None and view.strategy is not None
+    }
+    distinct = set(roots.values())
+    if not distinct:
         return None
-    if family.root is None:
+    if len(distinct) > 1:
         raise EngineError(
             "the case's model declares no single inheritance family root; a case whose "
             "`when` names no explicit target has no default to resolve against a model "
             "carrying several families"
         )
-    return family.root
+    root = model.entity(next(iter(distinct)))
+    if root is None:  # pragma: no cover - a family root is an accepted Entity
+        raise EngineError("the case's model names a family root it does not declare")
+    return root
 
 
-def _conflict_target(meta: Metamodel) -> str:
+def _first_declared_entity(case: case_format.Case) -> str:
+    """The Entity a case's model document declares FIRST.
+
+    `m-case-format` fixes the default target of a case naming none as the
+    family root, "else — when it declares no family at all — its own first
+    entity". That is the DOCUMENT's order: the accepted model enumerates its
+    Entities canonically, so the authored order survives nowhere else and two
+    corpus models (``person``, ``shared-local-name``) resolve to a different
+    entity under each reading.
+    """
+    names = models.declared_entity_names(models.read_document(_case_model_path(case)))
+    if not names:  # pragma: no cover - a formed model declares at least one entity
+        raise EngineError(f"{case.path.name}: the case's model declares no entity")
+    return names[0]
+
+
+def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     """The entity a conflict case's write targets, when ``when.write`` carries no
     explicit reference (`m-case-format`: a conflict case's write names no
     entity of its own). For a plain model this is its SOLE entity — the same
@@ -4451,13 +4458,12 @@ def _conflict_target(meta: Metamodel) -> str:
     default-target convention — this resolves to the family's SOLE concrete
     subtype (every reachable temporal-inheritance conflict model declares
     exactly one)."""
-    root = _default_family_root(meta)
+    root = _default_family_root(model)
     if root is None:
-        return meta.entities[0].name
+        return _first_declared_entity(case)
+    view = inheritance.view(model).entity(root.identity)
     concretes = sorted(
-        entity.name
-        for entity in family_of(meta).participants
-        if entity.inheritance is not None and entity.inheritance.role == "concrete-subtype"
+        identity.name for identity in (() if view is None else view.concrete_subtypes)
     )
     if len(concretes) != 1:
         raise EngineError(  # pragma: no cover - no witnessed conflict model is ambiguous
@@ -4497,7 +4503,7 @@ class _ConflictWrite:
 
 
 def _resolve_conflict_writes(
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     target: str,
     mutation: Literal["update", "delete"],
     write_rows: Sequence[Mapping[str, object]],
@@ -4522,9 +4528,8 @@ def _resolve_conflict_writes(
     decision alone, so the MULTI-KEY ``write`` array reaches the collapse rule
     rather than a pre-merged instruction this function invented.
     """
-    model = case_model(meta)
     resolved: list[_ConflictWrite] = []
-    for clean_row, observation in _durable_rows(meta, target, mutation, write_rows):
+    for clean_row, observation in _durable_rows(model, target, mutation, write_rows):
         instruction = instructions.deserialize(
             {"mutation": mutation, "entity": target, "rows": [clean_row]}
         )
@@ -4545,7 +4550,7 @@ def _landed_conflict_rows(resolved: Sequence[_ConflictWrite]) -> int:
 
 
 def _lower_conflict_write(
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     dialect: Dialect,
     concurrency: Concurrency,
     resolved: Sequence[_ConflictWrite],
@@ -4557,7 +4562,6 @@ def _lower_conflict_write(
     statement its real execution emits rather than the per-row statements an
     uncollapsed plan would have rendered.
     """
-    model = case_model(meta)
     instant = _pinned_instant(_INERT_CLOCK_INSTANT)
     plan = build_write_planner(model).plan(
         PlanningRequest(
@@ -4650,7 +4654,7 @@ def _admitted_affected(implied: type[WriteEffectError], run: Callable[[], int]) 
 def _run_conflict_write(
     port: DbPort,
     dialect: Dialect,
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     target: str,
     concurrency: Concurrency,
     write_rows: Sequence[Mapping[str, object]],
@@ -4681,19 +4685,18 @@ def _run_conflict_write(
     without the reported emission's bind ever drifting from the case-authored
     literal.
     """
-    resolved = _resolve_conflict_writes(meta, target, mutation, write_rows)
-    statements = _lower_conflict_write(meta, dialect, concurrency, resolved)
-    model = case_model(meta)
+    resolved = _resolve_conflict_writes(model, target, mutation, write_rows)
+    statements = _lower_conflict_write(model, dialect, concurrency, resolved)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     database = handle.Database(port, model, dialect=dialect, clock=FixedClock(instant))
     landed = _landed_conflict_rows(resolved)
 
     def body(tx: handle.Transaction) -> int:
         for write in resolved:
-            _buffer_execution_instruction(tx, meta, model, write.resolved)
+            _buffer_execution_instruction(tx, model, write.resolved)
         return landed  # the expectation machinery already verified this on success
 
-    observation_requiring = _versioned_non_temporal_version_attribute(meta, target) is not None
+    observation_requiring = _versioned_non_temporal_version_attribute(model, target) is not None
     implied = _implied_shortfall_error(observation_requiring, concurrency)
     affected, log = _conflict_attempt_affected(database, concurrency, implied, body)
     return statements, affected, log, log.round_trips if log is not None else 0
@@ -4709,7 +4712,7 @@ _CLOSE_MUTATION: Final[str] = "close"
 def _run_conflict_close(
     port: DbPort,
     dialect: Dialect,
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     target: str,
     concurrency: Concurrency,
     write_row: Mapping[str, object],
@@ -4755,12 +4758,11 @@ def _run_conflict_close(
     (:func:`_implied_shortfall_error`); every other class propagates, so the
     ``affectedRows`` observation can never absorb a misclassified failure.
     """
-    row, _authored_none = _durable_row(meta, target, _CLOSE_MUTATION, write_row)
+    row, _authored_none = _durable_row(model, target, _CLOSE_MUTATION, write_row)
     observed_valid_end = cast("str | None", row.pop("validEnd", None))
-    model = case_model(meta)
     if observed_valid_start is not None:
         observed_valid_end, observed_tx_start = _observed_milestone_coordinates(
-            meta, target, row, observed_valid_end, observed_valid_start, observed_tx_start, shadow
+            model, target, row, observed_valid_end, observed_valid_start, observed_tx_start, shadow
         )
     # The standalone close is settled outside any unit of work, so it is handed
     # its own Transaction Instant over the SAME clock the transaction below runs
@@ -4820,7 +4822,7 @@ def _run_conflict_close(
 
 
 def _observed_milestone_coordinates(
-    meta: Metamodel,
+    model: AcceptedMetamodel,
     target: str,
     row: Mapping[str, object],
     authored_valid_end: str | None,
@@ -4848,8 +4850,7 @@ def _observed_milestone_coordinates(
             "(`observedValidStart`) or its address (`write.validEnd`), never both — the "
             "address of an edge-named close is DERIVED from the milestone the edge selects"
         )
-    model = case_model(meta)
-    entity_metadata = case_entity(model, meta.entity(target))
+    entity_metadata = case_entity(model, target)
     edge = temporal_state.observed_edge(
         model, entity_metadata, valid_start=observed_valid_start, tx_start=observed_tx_start
     )
@@ -5000,13 +5001,13 @@ def run_conflict_case(
     `m-conformance-adapter` — and the resulting table state when the case
     authors `then.tableState`.
     """
-    meta = load_case_metamodel(case)
+    model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     when = _when(case)
     concurrency = _concurrency(case)
-    target = _conflict_target(meta)
+    target = _conflict_target(case, model)
     mutation = _conflict_mutation(when)
-    is_temporal = _is_temporal_entity(meta, target)
+    is_temporal = _is_temporal_entity(model, target)
     # The state an edge-named close resolves its observed milestone against — the
     # case's own loaded fixtures, which are exactly the milestones its address
     # can select. Seeded before `given.apply`, whose out-of-band writer is a
@@ -5014,7 +5015,7 @@ def run_conflict_case(
     shadow = TemporalShadow()
     _refuse_unentitled_observed_edge(case, when, is_temporal=is_temporal)
     if is_temporal:
-        _seed_shadow_from_fixtures(case, meta, shadow)
+        _seed_shadow_from_fixtures(case, model, shadow)
     emissions: list[Emission] = []
     affected = 0
     round_trips = 0
@@ -5035,7 +5036,7 @@ def run_conflict_case(
                 statements, affected, log, attempt_trips = _run_conflict_close(
                     port,
                     dialect,
-                    meta,
+                    model,
                     target,
                     concurrency,
                     _conflict_close_row(case, attempt),
@@ -5048,7 +5049,7 @@ def run_conflict_case(
                 statements, affected, log, attempt_trips = _run_conflict_write(
                     port,
                     dialect,
-                    meta,
+                    model,
                     target,
                     concurrency,
                     _conflict_write_rows(attempt),
@@ -5061,7 +5062,7 @@ def run_conflict_case(
         raise EngineError(f"{case.path.name}: {exc}") from exc
     then = case.document.get("then")
     table_state = (
-        read_table_state(port, meta, dialect)
+        read_table_state(port, model, dialect)
         if isinstance(then, Mapping) and "tableState" in then
         else None
     )
@@ -5174,7 +5175,7 @@ def run_error_case(
 # --------------------------------------------------------------------------- #
 # Rejected — the pre-SQL model-aware validation lane (m-case-format).          #
 # --------------------------------------------------------------------------- #
-def _rejected_target(meta: Metamodel) -> str:
+def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     """The queried/written root a `rejected` case's `when` omits.
 
     A `rejected` case never authors `targetEntity` (m-case-format schema), and a
@@ -5189,10 +5190,10 @@ def _rejected_target(meta: Metamodel) -> str:
     against — the same "no explicit handle, so resolve the model's default
     write/read root" convention, reused rather than restated.
     """
-    root = _default_family_root(meta)
+    root = _default_family_root(model)
     if root is not None:
-        return root.name
-    return meta.entities[0].name
+        return root.identity.name
+    return _first_declared_entity(case)
 
 
 # The `rejected` shape's schema `oneOf`: exactly one of these keys, never zero
@@ -5232,8 +5233,14 @@ def run_rejected_case(case: case_format.Case) -> str:
     drift. A `model` input first passes the descriptor frontend's own
     pre-formation family validator
     (:func:`~parallax.descriptor.validate_inheritance_families`) for descriptor
-    spellings the accepted algebra cannot represent, then runs through the same
-    complete Model Formation profile as every reusable model.
+    spellings the accepted algebra cannot represent, then goes through the same
+    public :func:`~parallax.descriptor.domain_model_from_document` door every
+    reusable corpus model does. **That order is load-bearing, not incidental**:
+    the document door gates on the canonical schema FIRST, and four inline
+    `rejected` models violate that schema on purpose, so forming first would
+    report each as a `DescriptorSchemaError` instead of the family rule the case
+    authored. The family validator parses shape only and has no schema phase,
+    which is exactly why it can answer for a document expected never to form.
 
     A `write` input is one of three, dispatched on the members the input itself
     carries (`m-case-format` Rejected cases) — never on the case's tags or
@@ -5265,14 +5272,13 @@ def run_rejected_case(case: case_format.Case) -> str:
     """
     when = _when(case)
     kind = _rejected_when_kind(case, when)
-    meta = load_case_metamodel(case)
+    model = load_case_metamodel(case)
     if kind == "operation":
         try:
             operation = deserialize(when["operation"])
         except OperationError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
-        model = case_model(meta)
-        root = case_entity(model, meta.entity(_rejected_target(meta)))
+        root = case_entity(model, _rejected_target(case, model))
         try:
             validate_op_algebra_operation(root, operation, model)
         except OperationRejectedError as exc:
@@ -5284,15 +5290,15 @@ def run_rejected_case(case: case_format.Case) -> str:
     if kind == "model":
         inline_model = cast("Mapping[str, object]", when["model"])
         try:
-            inline_meta = deserialize_metamodel(inline_model)
-        except DescriptorError as exc:
-            raise EngineError(f"{case.path.name}: {exc}") from exc
-        try:
             validate_inheritance_families(inline_model)
         except inheritance.InheritanceError as exc:
             return exc.rule
+        except DescriptorError as exc:
+            raise EngineError(f"{case.path.name}: {exc}") from exc
         try:
-            models.accepted_model(inline_meta)
+            domain_model_from_document(inline_model)
+        except DescriptorError as exc:
+            raise EngineError(f"{case.path.name}: {exc}") from exc
         except (
             MetamodelValidationError
         ) as exc:  # pragma: no cover - formation tests own diagnostics
@@ -5317,7 +5323,6 @@ def run_rejected_case(case: case_format.Case) -> str:
             f"produce (m-case-format Rejected cases)"
         )
     row = cast("Mapping[str, object]", raw_write)
-    model = case_model(meta)
     if "target" in row:
         try:
             instruction = instructions.deserialize(_canonical_predicate_doc(row))
@@ -5329,10 +5334,10 @@ def run_rejected_case(case: case_format.Case) -> str:
             instruction, PredicateWrite
         ):  # pragma: no cover - target implies predicate
             raise EngineError(f"{case.path.name}: rejected predicate write decoded as keyed")
-        decoded = _decoded_predicate_write(instruction, meta, model)
+        decoded = _decoded_predicate_write(instruction, model)
         try:
             instructions.validate_instruction(decoded, model)
-            target = case_entity(model, meta.entity(decoded.target.entity))
+            target = case_entity(model, decoded.target.entity)
             reject_readless_document_many(target, decoded)
         except WriteRejectedError as exc:
             return exc.rule
@@ -5342,7 +5347,7 @@ def run_rejected_case(case: case_format.Case) -> str:
         )
     if "rows" in row:
         return _rejected_keyed_write(case, row, model)
-    target = case_entity(model, meta.entity(_rejected_target(meta)))
+    target = case_entity(model, _rejected_target(case, model))
     try:
         inheritance.validate_subtype_write(model, target, row)
     except inheritance.InheritanceError as exc:
