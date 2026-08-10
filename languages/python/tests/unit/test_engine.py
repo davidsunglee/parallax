@@ -1871,6 +1871,47 @@ def test_observed_nodes_refuses_a_temporal_target_stored_as_a_document() -> None
         )
 
 
+def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_statements() -> None:
+    # m-txtime-write-011 seeds a Structured Column key no member declares with
+    # out-of-band SQL and then updates that milestone by key. The tracker never
+    # saw the seeded document and the framework issues no resolving read for a
+    # keyed write, so the successor would be patched from declared members alone
+    # and lose the key. The engine names the shape instead of chaining it.
+    port = FakeWritePort()
+    with pytest.raises(engine.EngineError, match="out-of-band statements"):
+        engine.run_write_sequence_case(_load_case("m-txtime-write-011"), "postgres", port)
+
+
+def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> None:
+    # The refusal is scoped to Relational Document Layout, where the tracked
+    # members cannot even account for the row's SLOTS. Under `Columns` the tracker
+    # holds every column, so out-of-band state leaves the observation STALE — the
+    # very thing a conflict case authors on purpose — never unrepresentable.
+    meta = engine.load_case_metamodel(_load_case("m-txtime-write-002"))
+    shadow = TemporalShadow()
+    shadow.note_out_of_band_write()
+    engine._refuse_out_of_band_document_milestone(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine.case_model(meta), "parallax.compatibility.Balance", shadow
+    )
+
+
+def test_a_tracked_milestone_of_a_document_target_chains_when_the_case_authored_it() -> None:
+    # m-txtime-write-010 is the same document-mapped chain with no out-of-band
+    # statement: every key in the stored document came from the case's own insert,
+    # so the tracked milestone IS the whole stored row and the successor chains.
+    # This is what keeps the refusal above narrow enough to leave the corpus alone.
+    port = FakeWritePort()
+    emissions, _table_state, round_trips = engine.run_write_sequence_case(
+        _load_case("m-txtime-write-010"), "postgres", port
+    )
+    assert round_trips == 3
+    assert [e.case_pointer for e in emissions] == [
+        "/writeSequence/0",
+        "/writeSequence/1",
+        "/writeSequence/1",
+    ]
+
+
 def test_a_find_step_names_its_target_and_its_operation() -> None:
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
     with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):
@@ -1977,8 +2018,8 @@ def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() ->
 def test_run_write_sequence_case_carries_the_temporal_observation_on_the_buffered_write() -> None:
     # m-txtime-write-002: the update entry's shadow-resolved observation rides to
     # planning on the buffered write itself, through the documented neutral seam
-    # (`Transaction._buffer`'s `observation=` route, `_execute_write_unit`) —
-    # exactly what a real caller's own prior find would have resolved for it.
+    # (`Transaction.write_neutral`'s `observation=` route, `_execute_write_unit`)
+    # — exactly what a real caller's own prior find would have resolved for it.
     port = FakeWritePort()
     emissions, table_state, round_trips = engine.run_write_sequence_case(
         _load_case("m-txtime-write-002"), "postgres", port
@@ -1997,7 +2038,7 @@ def test_run_write_sequence_case_buffers_a_bounded_bitemporal_valid_time_window(
     # m-bitemp-write-001: the updateUntil entry's
     # canonical instruction carries BOTH `validFrom` and `until`
     # (its bounded rectangle-split window) — `_execute_write_unit` threads both
-    # onto the neutral `Transaction._buffer` route unchanged.
+    # onto the neutral `Transaction.write_neutral` route unchanged.
     port = FakeWritePort()
     _emissions, table_state, round_trips = engine.run_write_sequence_case(
         _load_case("m-bitemp-write-001"), "postgres", port
@@ -2222,9 +2263,9 @@ def test_a_collapsed_multi_row_insert_decodes_its_wire_floats_before_real_execut
     # m-batch-write-001's own insert shape, run for real (never through the
     # separate pure re-lowering `test_uniform_multi_row_update_collapses_to_
     # one_in_list_statement` grades): the case authors `decimal` balances as
-    # wire-spelled floats, and the collapsed multi-row instruction has no
-    # single-row `Transaction._buffer` route to decode through, so it must be
-    # decoded before it ever reaches the unit of work directly.
+    # wire-spelled floats, and `Transaction.write_neutral` takes an ALREADY-decoded
+    # instruction, so each row must be decoded before it is buffered — the
+    # collapse into one statement happens afterwards, in the planner.
     case = _synthetic_write(
         "writeSequence",
         {
@@ -3125,8 +3166,13 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
 
     case = _synthetic_write("conflict", {"given": {"fixtures": True}})
     port = FakeWritePort()
-    engine._apply_given_apply(case, POSTGRES, port)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    shadow = TemporalShadow()
+    engine._apply_given_apply(case, POSTGRES, port, shadow)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert port.writes == []
+    # A case that applies nothing leaves the tracker's account of the stored rows
+    # whole, which is what a keyed temporal write over a document-mapped target
+    # depends on.
+    assert not shadow.saw_out_of_band_write
 
 
 def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:

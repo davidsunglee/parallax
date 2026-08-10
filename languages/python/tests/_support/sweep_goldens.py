@@ -436,7 +436,9 @@ _SNAPSHOT_MUTATE_SCENARIOS: Final[frozenset[str]] = frozenset({"m-snapshot-read-
 # member declares is seeded by out-of-band SQL, which makes them
 # `compileEligibility: run-only`, and the observation this lane supplies is
 # reconstructed from case state rather than read, so it carries no document to
-# preserve.
+# preserve — which the write lane now REFUSES by name rather than chaining a
+# successor that would drop the key
+# (`engine._refuse_out_of_band_document_milestone`).
 #
 # The materializing predicate
 # forms (m-txtime-write-007/009, m-bitemp-write-010-013), the conflict-shape

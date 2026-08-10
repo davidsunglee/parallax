@@ -40,6 +40,7 @@ from parallax.core.unit_work import (
     ObservationKey,
     VersionObservation,
     WriteInstruction,
+    WriteRejectedError,
     instructions,
 )
 from parallax.snapshot.handle import (
@@ -216,6 +217,38 @@ def test_a_key_is_invalid_once_its_unit_of_work_has_ended() -> None:
     _run(port, fn)
     with pytest.raises(EscapedTransactionError):
         escaped[0].write_neutral(_update(11), observation=_account_slot())
+
+
+def test_a_keyed_instruction_reaches_the_model_aware_validator_the_typed_verbs_do() -> None:
+    # An insert omitting a required attribute is a MODEL judgment, invisible to
+    # the member-name honesty gate: the row names nothing undeclared. The neutral
+    # ingress runs `validate_write` for it, so it is refused with the same
+    # classified rule `Transaction._buffer` and the rejected run lane report.
+    port = RecordingPort()
+    incomplete = instructions.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "parallax.compatibility.Account",
+            "rows": [{"id": 7, "balance": 5}],
+        }
+    )
+    with pytest.raises(WriteRejectedError) as raised:
+        _run(port, lambda tx: tx.write_neutral(incomplete))
+    assert raised.value.rule == "write-required-attribute-missing"
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
+def test_an_unresolvable_entity_spelling_is_refused_as_a_naming_defect() -> None:
+    # The row judgment presupposes a target, so a spelling naming no declared
+    # Entity is left to `validate_instruction`, which owns that classification —
+    # never reported as a member complaint about an Entity the model lacks.
+    port = RecordingPort()
+    unknown = instructions.deserialize(
+        {"mutation": "update", "entity": "NoSuchEntity", "rows": [{"id": 3, "balance": 11}]}
+    )
+    with pytest.raises(instructions.WriteInstructionError, match="NoSuchEntity"):
+        _run(port, lambda tx: tx.write_neutral(unknown))
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
 
 
 def test_a_predicate_instruction_takes_no_observation() -> None:
