@@ -4770,7 +4770,10 @@ def test_apply_mutate_step_assigns_every_named_member_in_memory() -> None:
 
 
 def test_apply_mutate_step_refuses_a_set_naming_no_materialized_member() -> None:
-    step = {"action": "mutate", "on": 0, "set": {"nickname": "Mutant"}}
+    # The assignable name is authored FIRST, so a per-name apply-then-check would
+    # leave `name` mutated behind the refusal: the whole `set` is rejected and
+    # the member state is the one the find step materialized.
+    step = {"action": "mutate", "on": 0, "set": {"name": "Mutant", "nickname": "Nick"}}
     source = _scenario_result({"id": 1, "name": "Ada"})
     with pytest.raises(engine.EngineError, match="carries no member of"):
         engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly

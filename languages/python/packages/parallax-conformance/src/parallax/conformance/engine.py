@@ -2767,7 +2767,11 @@ def _apply_mutate_step(
     published is untouched, no unit of work holds the view, and no DML follows.
     A `set` naming a member the materialized view does not carry is refused
     here — an assignment with nowhere to land is a case the verb cannot perform,
-    not a mutation it silently drops.
+    not a mutation it silently drops. The refusal is decided over the WHOLE
+    `set` before any member is written, so a rejected mutation leaves the member
+    state exactly as the find step materialized it: `set` is an unordered
+    mapping, and applying its recognized names up to the first unrecognized one
+    would make the surviving state depend on authoring order.
     """
     if len(source.roots) != 1:
         raise EngineError(
@@ -2778,13 +2782,14 @@ def _apply_mutate_step(
     if not isinstance(assignments, Mapping):
         raise EngineError(f"{case.path.name}: a `mutate` action needs a `set` mapping")
     members = source.roots[0]
-    for name, value in cast("Mapping[str, object]", assignments).items():
-        if name not in members:
-            raise EngineError(
-                f"{case.path.name}: `mutate` assigns {name!r}, which the view step {on} "
-                "materialized carries no member of"
-            )
-        members[name] = value
+    named = cast("Mapping[str, object]", assignments)
+    unassignable = sorted(name for name in named if name not in members)
+    if unassignable:
+        raise EngineError(
+            f"{case.path.name}: `mutate` assigns {unassignable!r}, which the view step {on} "
+            "materialized carries no member of"
+        )
+    members.update(named)
 
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
