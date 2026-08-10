@@ -640,7 +640,7 @@ class Transaction:
         # The gate precedes `uow.read` deliberately, exactly as `find`'s does:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
-        preflight_neutral(request.target, request.operation, model=self._meta)
+        preflight_neutral(request.target, request.operation, model=self._meta, form=request.form)
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         observations = ReadObservations()
         # The bracket opens BEFORE the force-flush, exactly as `find`'s does, so

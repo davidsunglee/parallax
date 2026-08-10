@@ -105,6 +105,13 @@ class _SlottedSubclass(_Slotted):
         self.also = also
 
 
+class _PrivateSlotted:
+    __slots__ = ("__held",)
+
+    def __init__(self, held: object) -> None:
+        self.__held = held
+
+
 class _Attributed:
     def __init__(self, held: object) -> None:
         self.held = held
@@ -119,6 +126,7 @@ _RETAINING_SHAPES: tuple[tuple[str, Callable[[WritePlan], object]], ...] = (
     ("a-frozenset", lambda plan: frozenset({plan})),
     ("an-instance-dict", _Attributed),
     ("a-slot", _Slotted),
+    ("a-private-slot", _PrivateSlotted),
     ("an-inherited-slot", lambda plan: _SlottedSubclass(plan, None)),
     ("nested", lambda plan: _Attributed([{"k": {plan}}])),
 )
@@ -133,7 +141,9 @@ def test_the_reachability_walk_reaches_every_shape_a_plan_could_hide_in(
     """The negative assertion above is only worth what this walk covers, so each
     container shape carries a plan the walk must find. ``an-inherited-slot``
     hides it on the BASE class's slot while the subclass declares its own, which
-    is the shadowing case a type-level ``__slots__`` read misses."""
+    is the shadowing case a type-level ``__slots__`` read misses;
+    ``a-private-slot`` hides it under a slot whose declared spelling is not the
+    attribute name, which is the mangling case a raw ``__slots__`` read misses."""
     plan = WritePlan()
     assert _reaches_a_write_plan(retaining(plan))
 
@@ -159,9 +169,15 @@ def _reaches_a_write_plan(value: object, seen: set[int] | None = None) -> bool:
     SURVIVES the flush that consumed it, which an assertion about the result
     type's own fields would not catch. The walk has to cover every shape a
     reference can hide in — a sequence, a mapping's keys or values, a set, an
-    instance dictionary, and a slot declared anywhere on the MRO — because the
-    assertion it serves is a NEGATIVE one: a container this missed would report
-    the absence it exists to detect.
+    instance dictionary, and a slot declared anywhere on the MRO under the name
+    the slot actually binds — because the assertion it serves is a NEGATIVE one:
+    a container this missed would report the absence it exists to detect.
+
+    Its boundary is data: what a result HOLDS. A reference reachable only by
+    executing code (a closure cell, a property, a descriptor computing a value)
+    is outside it, and so is a weak reference, which retains nothing. The
+    surfaces under test are frozen data classes, tuples, and mappings, so a plan
+    that survived them would have to survive as one of the shapes above.
     """
     seen = set() if seen is None else seen
     if id(value) in seen:
@@ -189,11 +205,27 @@ def _reference_names(value: object) -> tuple[str, ...]:
 
     ``__slots__`` is read off each class's own ``__dict__`` along the MRO rather
     than off the type: a subclass declaring slots of its own SHADOWS the
-    attribute lookup, so a base class's slots would otherwise go unwalked.
+    attribute lookup, so a base class's slots would otherwise go unwalked. Each
+    declared slot is then mangled against the class that declared it, because a
+    private slot's attribute name is not its declared spelling and reading the
+    spelling back finds nothing.
     """
     names: list[str] = []
     for cls in type(value).__mro__:
         declared: Any = cls.__dict__.get("__slots__", ())
-        names.extend((declared,) if isinstance(declared, str) else tuple(declared))
+        spellings = (declared,) if isinstance(declared, str) else tuple(declared)
+        names.extend(_mangled(cls, spelling) for spelling in spellings)
     names.extend(getattr(value, "__dict__", {}))
     return tuple(names)
+
+
+def _mangled(cls: type, spelling: str) -> str:
+    """``spelling`` as the attribute name it becomes inside ``cls``'s body.
+
+    Python mangles a private identifier — two leading underscores, at most one
+    trailing — to ``_<class>__<name>`` with the class's own leading underscores
+    stripped, and a slot's descriptor is created under that mangled name.
+    """
+    if spelling.startswith("__") and not spelling.endswith("__"):
+        return f"_{cls.__name__.lstrip('_')}{spelling}"
+    return spelling

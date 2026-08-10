@@ -46,8 +46,9 @@ class DbPort(Protocol):
     """The abstract database execution port (m-db-port).
 
     Every error an implementation RAISES ITSELF to report a failure — a statement
-    failure from ``execute`` or ``execute_write``, a commit failure from
-    ``transaction`` — is an instance SHARED WITH NO OTHER INVOCATION, built where
+    failure from ``execute`` or ``execute_write``, or a transaction-boundary
+    failure from ``transaction``, meaning its begin, its commit, or its rollback
+    — is an instance SHARED WITH NO OTHER INVOCATION, built where
     the failure occurs, never cached or pooled, however identical two failures'
     category, native code, and message are. Above the seam a failure is recognized
     by the object caught, and a caller may catch one failed call and keep going, so

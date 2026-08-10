@@ -115,17 +115,33 @@ class _FakeCursor:
 
 
 class _FakeTxn:
-    """A ``connection.transaction()`` stand-in that raises at commit if asked."""
+    """A ``connection.transaction()`` stand-in that raises at any boundary asked.
 
-    def __init__(self, commit_error: psycopg.Error | None) -> None:
+    The adapter wraps the WHOLE boundary in its translating block, so begin,
+    commit, and rollback are three raise sites of the port, not one: a driver
+    failure at any of them reaches the caller as a port-raised error.
+    """
+
+    def __init__(
+        self,
+        *,
+        begin_error: psycopg.Error | None,
+        commit_error: psycopg.Error | None,
+        rollback_error: psycopg.Error | None,
+    ) -> None:
+        self._begin_error = begin_error
         self._commit_error = commit_error
+        self._rollback_error = rollback_error
 
     def __enter__(self) -> _FakeTxn:
+        if self._begin_error is not None:
+            raise self._begin_error
         return self
 
     def __exit__(self, _exc_type: object, exc: BaseException | None, _tb: object) -> bool:
-        if exc is None and self._commit_error is not None:
-            raise self._commit_error
+        failure = self._rollback_error if exc is not None else self._commit_error
+        if failure is not None:
+            raise failure
         return False
 
 
@@ -140,23 +156,37 @@ class _FakeAdapters:
 
 
 class _FakeConnection:
-    """A minimal psycopg-connection stand-in for the boundary-wrapping tests."""
+    """A minimal psycopg-connection stand-in for the boundary-wrapping tests.
+
+    Each injected failure is a public attribute read at call time, so one
+    connection — and therefore one adapter — can be driven through each raise
+    site in turn. ``begin_error`` is set for the invocation that needs it: a
+    boundary that fails to begin reaches neither commit nor rollback.
+    """
 
     def __init__(
         self,
         *,
         cursor_error: psycopg.Error | None = None,
+        begin_error: psycopg.Error | None = None,
         commit_error: psycopg.Error | None = None,
+        rollback_error: psycopg.Error | None = None,
     ) -> None:
-        self._cursor_error = cursor_error
-        self._commit_error = commit_error
+        self.cursor_error = cursor_error
+        self.begin_error = begin_error
+        self.commit_error = commit_error
+        self.rollback_error = rollback_error
         self.adapters = _FakeAdapters()
 
     def cursor(self, **_: object) -> _FakeCursor:
-        return _FakeCursor(self._cursor_error)
+        return _FakeCursor(self.cursor_error)
 
     def transaction(self) -> _FakeTxn:
-        return _FakeTxn(self._commit_error)
+        return _FakeTxn(
+            begin_error=self.begin_error,
+            commit_error=self.commit_error,
+            rollback_error=self.rollback_error,
+        )
 
 
 def _adapter(connection: _FakeConnection) -> PostgresAdapter:
@@ -187,22 +217,49 @@ def test_execute_write_reraises_a_driver_error_at_the_boundary() -> None:
     assert exc_info.value.native_code == "40P01"
 
 
+class _BodyFailure(Exception):
+    """A transaction body's own error — what makes the boundary roll back."""
+
+
 def test_every_failed_port_invocation_raises_its_own_error_instance() -> None:
     # m-db-port failure identity, over every error the port itself makes: a
-    # statement failure from `execute`, one from `execute_write`, and a commit
-    # failure from `transaction`. The driver here hands back ONE reused exception
-    # object for all of them -- the input the rule exists to stop an adapter
-    # passing on -- so distinctness can only come from translating at the failing
-    # call. Driving all three over one adapter also rules out reuse ACROSS paths,
-    # which a per-path cache would produce while each path alone looked clean.
-    # This is what lets a caller (the Execution Log) tell which invocation the
-    # error it caught came from.
+    # statement failure from `execute`, one from `execute_write`, and each
+    # failure of the boundary `transaction` wraps whole -- its begin, its commit,
+    # and its rollback, all three of which the adapter's translating block
+    # covers. The driver here hands back ONE reused exception object for all of
+    # them -- the input the rule exists to stop an adapter passing on -- so
+    # distinctness can only come from translating at the failing call. Driving
+    # every site over one adapter also rules out reuse ACROSS paths, which a
+    # per-path cache would produce while each path alone looked clean. This is
+    # what lets a caller (the Execution Log) tell which invocation the error it
+    # caught came from.
     driver_error = errors.UniqueViolation("dup")
-    adapter = _adapter(_FakeConnection(cursor_error=driver_error, commit_error=driver_error))
+    connection = _FakeConnection(
+        cursor_error=driver_error, commit_error=driver_error, rollback_error=driver_error
+    )
+    adapter = _adapter(connection)
+
+    def failing_begin() -> object:
+        # Scoped to this invocation: a boundary that never begins reaches
+        # neither the commit nor the rollback site below.
+        connection.begin_error = driver_error
+        try:
+            return adapter.transaction(lambda _port: None)
+        finally:
+            connection.begin_error = None
+
+    def failing_rollback() -> object:
+        def body(_port: object) -> None:
+            raise _BodyFailure
+
+        return adapter.transaction(body)
+
     invocations: tuple[Callable[[], object], ...] = (
         lambda: adapter.execute("select 1", []),
         lambda: adapter.execute_write("insert into gauge (v) values (%s)", [1]),
+        failing_begin,
         lambda: adapter.transaction(lambda _port: None),
+        failing_rollback,
     )
     raised: list[DatabaseError] = []
     for invoke in (*invocations, *invocations):

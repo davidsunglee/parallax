@@ -1,14 +1,29 @@
 """``parallax.snapshot.handle._errors`` — the dependency-free refusal leaf.
 
-Holds the package's developer-facing refusals, so that WHERE a refusal is raised
-places no constraint on which scopes can name it. It imports nothing but the
-standard library, which is what lets the read-preflight seam
+Holds the refusals no single enforcement scope owns, so that WHERE such a refusal
+is raised places no constraint on which scopes can name it. It imports nothing
+but the standard library, which is what lets the read-preflight seam
 (:mod:`parallax.snapshot.handle._preflight`) and the write-lowering family leaf
 (:mod:`parallax.snapshot.handle._family`) name the SAME failure: their
 enforcement scopes grant disjoint dependencies, so either importing the other
-would drag a scope the importer may not reach. A refusal with one raiser today
-belongs here for that same reason rather than by a raiser count — the leaf is
-what makes a second raiser, in any scope, a decision about behavior alone.
+would drag a scope the importer may not reach.
+
+Membership is that unownedness, not a raiser count and not being exported.
+:class:`SnapshotMaterializationError` and :class:`UnobservedWriteError` have one
+raiser each and still belong here, because nothing in what they report — a
+failure translated at the materialization boundary, a key naming nothing the
+unit of work's observation record holds — fixes the scope that detects it, and
+the leaf is what makes a second raiser, in any scope, a decision about behavior
+alone. The package's other developer-facing refusals are owned and therefore
+defined by the surface that decides them: ``DeferredFeatureError`` by the
+Feature inventory it reports (:mod:`parallax.snapshot.handle._features`),
+``NoResultFound`` and ``TooManyResultsFound`` by ``Snapshot.result``
+(:mod:`parallax.snapshot.handle._read`), ``TransactionOptionConflictError`` and
+``TransactionOwnershipError`` by the demarcation rules they state
+(:mod:`parallax.snapshot.handle._database`), ``KeyedWriteValueError`` and
+``TransactionTimePinReadOnlyError`` by the write-input checks that run them
+(:mod:`parallax.snapshot.handle._write_inputs`), and ``WriteLoweringError`` by
+the lowering types (:mod:`parallax.snapshot.handle._write_types`).
 
 That emptiness is load-bearing rather than incidental, so ``spec/python.md`` §7
 gives this module its own child scope with a grant row of ``(none)``. Two gates
