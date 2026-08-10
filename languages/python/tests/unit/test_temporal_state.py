@@ -5,8 +5,9 @@ observed current milestone is proven end to end
 through the engine's own writeSequence/scenario/conflict tests
 (``test_engine.py``, ``test_compile_sweep.py``, ``test_run_sweep.py``); this
 module pins the tracker's OWN seam directly — fixture seeding, resolution,
-and the advance-from-plan-output invariant — including the disambiguation
-refusal no reachable corpus case witnesses.
+the advance-from-plan-output invariant, and the abort's discard of a doomed
+unit's advances — including the disambiguation refusal no reachable corpus case
+witnesses.
 """
 
 from __future__ import annotations
@@ -328,6 +329,26 @@ def test_retire_drops_only_the_milestone_the_write_observed() -> None:
     )
     assert survivor is not None
     assert survivor.predecessor.member("value") == 100.00
+
+
+def test_a_doomed_units_retirement_and_re_accounting_are_both_discarded() -> None:
+    # `retire` drops a milestone and `_track` clears the doubt out-of-band
+    # statements left on its slot. A doomed unit does both and then aborts, so
+    # both must be undone: the milestone is tracked again AND is once more a
+    # milestone `accounts_for` refuses, since the row the abort restored is the
+    # one those statements may have overtaken, not the one the plan opened.
+    shadow = TemporalShadow()
+    shadow.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD])
+    shadow.note_out_of_band_write()
+    assert not shadow.accounts_for(POSITION, POSITION_ENTITY, _HEAD)
+    observed = shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1})
+    assert observed is not None
+    with shadow.staged(doomed=True):
+        shadow.retire(POSITION, POSITION_ENTITY, observed)
+        shadow.seed_fixtures(POSITION, POSITION_ENTITY, [_HEAD])
+        assert shadow.accounts_for(POSITION, POSITION_ENTITY, _HEAD)
+    assert shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}) is not None
+    assert not shadow.accounts_for(POSITION, POSITION_ENTITY, _HEAD)
 
 
 def test_track_opened_tracks_the_milestones_the_plan_actually_opens() -> None:

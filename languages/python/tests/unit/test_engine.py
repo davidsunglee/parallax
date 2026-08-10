@@ -356,6 +356,47 @@ def _synthetic_write(shape: str, document: dict[str, object]) -> case_format.Cas
     )
 
 
+def _ledger_update(
+    value: str, at: str, *, uow: str | None = None, rollback: bool = False
+) -> dict[str, object]:
+    """One scenario write step updating the Transaction-Time-Only Ledger id 2 —
+    the fixture key holding exactly ONE current milestone (acct B, 200.00, known
+    from 2024-02-01), so a step naming no observed edge resolves unambiguously."""
+    step: dict[str, object] = {
+        "write": [
+            {
+                "mutation": "update",
+                "entity": "parallax.compatibility.Ledger",
+                "rows": [{"id": 2, "value": decimal.Decimal(value)}],
+                "at": at,
+            }
+        ],
+        "roundTrips": 2,
+    }
+    if uow is not None:
+        step["uow"] = uow
+    if rollback:
+        step["rollback"] = True
+    return step
+
+
+def _synthetic_ledger_scenario(steps: list[dict[str, object]]) -> case_format.Case:
+    from pathlib import Path
+
+    return case_format.Case(
+        path=Path("m-unit-work-998-synthetic.yaml"),
+        case_id="m-unit-work-998",
+        shape="scenario",
+        tags=("m-unit-work", "slice-snapshot-1"),
+        model="models/ledger.yaml",
+        document={
+            "model": "models/ledger.yaml",
+            "shape": "scenario",
+            "when": {"uow": {"concurrency": "optimistic"}, "scenario": steps},
+        },
+    )
+
+
 def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     port = FakeWritePort(find_rows=[{"id": 7}])
     emissions, round_trips, errors, _log = engine.run_scenario_case(
@@ -449,6 +490,57 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     # OWN transaction, exactly as `run_read_case` does: the read lock is the
     # transaction's, so the boundary is what renders it.
     assert port.commits == 1 and port.rollbacks == 1
+
+
+def test_run_scenario_case_discards_an_aborted_ungrouped_temporal_writes_case_state() -> None:
+    # `m-case-format` "a later find MUST re-resolve and observe the ORIGINAL
+    # rows, never the aborted write" applies to the milestone case state holds
+    # as much as to the rows: the aborted step's close retires the fixture
+    # milestone and its successor is tracked as the new current one, and the
+    # abort then erases the successor the database never kept. A later keyed
+    # temporal write must therefore consume the ORIGINAL milestone again —
+    # gating its own close on the fixture's Transaction-Time start (2024-02-01),
+    # not on the aborted successor's (2026-01-01), which would match zero rows.
+    port = FakeWritePort()
+    case = _synthetic_ledger_scenario(
+        [
+            _ledger_update("999.00", "2026-01-01T00:00:00+00:00", rollback=True),
+            _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
+        ]
+    )
+    emissions, _round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
+    assert port.rollbacks == 1 and port.commits == 1
+    aborted_close, _aborted_successor, close, successor = emissions
+    assert aborted_close.binds[3] == "2024-02-01T00:00:00+00:00"
+    assert close.case_pointer == "/scenario/1/write"
+    assert close.binds[3] == "2024-02-01T00:00:00+00:00"
+    # The successor is chained off the ORIGINAL row too — `acct_num` is the
+    # fixture's own B, never the aborted write's carried-forward value.
+    assert successor.binds[1] == "B"
+
+
+def test_run_scenario_case_stages_a_doomed_uow_groups_temporal_case_state() -> None:
+    # Staging is not simply "do not advance": `m-case-format` requires a step
+    # later in the SAME doomed group to observe the mid-transaction state the
+    # eventual abort then erases. Step 1 therefore closes step 0's own
+    # successor (gating on 2026-01-01, the milestone only this doomed
+    # transaction ever opened), while the UNGROUPED step 2, running after the
+    # group aborted, is back on the fixture milestone (2024-02-01).
+    port = FakeWritePort()
+    case = _synthetic_ledger_scenario(
+        [
+            _ledger_update("999.00", "2026-01-01T00:00:00+00:00", uow="doomed", rollback=True),
+            _ledger_update("888.00", "2026-01-01T00:00:00+00:00", uow="doomed"),
+            _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
+        ]
+    )
+    emissions, _round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
+    assert port.rollbacks == 1 and port.commits == 1
+    doomed_close, _doomed_successor, own_write_close, _own_successor, close, _successor = emissions
+    assert doomed_close.binds[3] == "2024-02-01T00:00:00+00:00"
+    assert own_write_close.binds[3] == "2026-01-01T00:00:00+00:00"
+    assert close.case_pointer == "/scenario/2/write"
+    assert close.binds[3] == "2024-02-01T00:00:00+00:00"
 
 
 def _two_group_interleave_steps() -> list[dict[str, object]]:
@@ -1901,7 +1993,7 @@ def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_s
     # keyed write, so the successor would be patched from declared members alone
     # and lose the key. The engine names the shape instead of chaining it.
     port = FakeWritePort()
-    with pytest.raises(engine.EngineError, match="out-of-band statements overtook"):
+    with pytest.raises(engine.EngineError, match="out-of-band statements may have overtaken"):
         engine.run_write_sequence_case(_load_case("m-txtime-write-011"), "postgres", port)
 
 

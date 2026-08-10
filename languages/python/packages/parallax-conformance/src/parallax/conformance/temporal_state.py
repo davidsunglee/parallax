@@ -14,8 +14,9 @@ than a second expansion of the same topology computed beside it.
 
 Statements this tracker never saw are the one thing it cannot account for:
 out-of-band SQL (`m-case-format` ``given.apply``) stores what no authored member
-could produce. It therefore records WHICH of its milestones such statements
-overtook rather than claiming an account it no longer has
+could produce. Which milestones such statements touched is not something a naive
+``sql`` string reveals, so it narrows the doubt to the milestones they MAY have
+overtaken rather than claiming an account it no longer has
 (:meth:`TemporalShadow.accounts_for`).
 
 Non-normative engine-internal bookkeeping: never serialized, never a
@@ -27,8 +28,9 @@ milestone via an earlier transaction-scoped find.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Generator, Mapping, Sequence
 
 from parallax.core import inheritance, temporal_read, txtime_write
 from parallax.core.base import normalize_instant
@@ -144,14 +146,48 @@ class TemporalShadow:
         slot = self._slot(model, entity, row, edge)
         return slot is not None and slot not in self._overtaken
 
+    @contextlib.contextmanager
+    def staged(self, *, doomed: bool) -> Generator[None]:
+        """One choreography unit's advances, staged on that unit's own
+        transaction outcome (`m-unit-work` abort contract).
+
+        A unit's writes retire and open milestones as they resolve, so a later
+        step of the SAME unit observes them — read-your-own-writes holds for this
+        tracker exactly as it holds for the rows. A DOOMED unit's transaction
+        then erases the rows it wrote, and this discards the advances it made
+        with them: a step AFTER the abort resolves the milestone the abort left
+        standing, never a successor no transaction ever stored, and a milestone
+        the aborted unit retired or re-accounted for is restored to what it was.
+
+        The whole tracker is captured rather than a per-key undo log, which is
+        exact because one unit at a time advances it: the state before a doomed
+        unit IS the state its abort restores. The interleaved two-group lane is
+        the one place two units advance together, and its own instructions never
+        reach this tracker (`m-opt-lock-012` is entirely non-temporal).
+        """
+        if not doomed:
+            yield
+            return
+        current = dict(self._current)
+        overtaken = set(self._overtaken)
+        out_of_band = self._out_of_band
+        try:
+            yield
+        finally:
+            self._current = current
+            self._overtaken = overtaken
+            self._out_of_band = out_of_band
+
     def note_out_of_band_write(self) -> None:
         """Record that statements outside this tracker's own accounting ran
         against the tables it shadows (`m-case-format` ``given.apply``).
 
-        Every milestone held right now is overtaken by them, and every key with
-        none is left with no account of a row they may have written. Both states
-        are one-way for the milestones they name — the tracker never re-reads —
-        and both end for a key the moment a later write opens a milestone of it.
+        Every milestone held right now MAY have been overtaken by them and is
+        treated as though it were (:meth:`accounts_for` states the bound), and
+        every key with none is left with no account of a row they may have
+        written. Both states are one-way for the milestones they name — the
+        tracker never re-reads — and both end for a key the moment a later write
+        opens a milestone of it.
         """
         self._out_of_band = True
         self._overtaken |= set(self._current)
@@ -298,7 +334,7 @@ class TemporalShadow:
 
         Storing a milestone is also what re-establishes a whole account of it: the
         row stored here came from the case's own fixtures or from the plan that
-        wrote it, so the slot is no longer overtaken by anything that ran before.
+        wrote it, so nothing that ran before it can still be in doubt.
         """
         existing = self._current.get(key)
         if existing is not None and existing.predecessor.members != observation.predecessor.members:
