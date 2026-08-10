@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-69**.
+Entry numbering is continuous and never reused. The next new number is **D-70**.
 
 ## Standing notes
 
@@ -323,6 +323,61 @@ nine (a)/(b) cases diverging exactly as they do now. `m-inheritance-078` itself
 carries an (a) mismatch in its own `pets` child level besides its (c) cycle, so
 even it would not go green on the merge change alone. D-67 therefore survives
 COR-83 and still needs the `m-case-format` reconciliation it names.
+
+### D-69 — A hand-written skip-reason bucket states a cause untrue of some member, once per review round
+
+*Should-fix — misleading to a reader; no grade and no coverage partition moves.*
+Relates to `parallax.conformance.api_suite.CASE_SKIP_REASONS`.
+
+**What.** Every active case the API Conformance Suite does not exercise as an
+idiomatic example carries prose saying why, and cases sharing one cause share one
+constant. That prose returned a finding in every round of COR-93's Phase F
+boundary review — five rounds, five findings:
+
+- round 1 (P2) — thirteen reasons named retired D-numbers as their owners;
+- round 2 (S6) — reasons cited execution artifacts (tickets, increments, "this
+  round") in place of the durable rationale beside them;
+- round 3 (S8) — four buckets stated one blanket cause across case families whose
+  causes differ;
+- round 4 (S8) — one further bucket did, and the sweep found a fifth case the
+  bucket's clause was false of;
+- round 5 (S8) — **open.** `_INHERITANCE_AUDIT_TERMINATE_REASON`
+  (`api_suite.py:687`) and `_INHERITANCE_BITEMPORAL_TERMINATE_REASON` (`:699`)
+  both say the family composition adds "table routing plus the shared-table tag
+  guard", and each is assigned to table-per-concrete-subtype cases that have no
+  tag guard: `m-inheritance-091` (`:1359`), `-095` (`:1361`), `-097` (`:1363`),
+  whose case headers state that a TPCS termination targets the subtype's own
+  table "with NO tag guard". A table-per-hierarchy property is stated as common
+  to every member.
+
+**The cause,** diagnosed in round 4: a bucket keyed on case **shape** rather than
+**cause**. A shape-keyed bucket — inheritance × temporal × termination answers
+"what kind of case is this", not "why is no story possible" — absorbs any case
+matching the shape whatever its actual reason, and its causal sentence then
+stretches to cover members it is not true of. Most constants in the file are
+already cause-keyed (`_OPT_LOCK_STALE_GATE_SECOND_WRITER_REASON`,
+`_ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON`); the shape-keyed
+survivors are the generator.
+
+**Why hand-correction does not close it.** Four successive rounds each found a
+real inaccuracy and each left another standing, two of them aimed squarely at
+this class. Nothing in the repository gates that a bucket's stated reason is true
+of its members: the coverage partition
+(`tests/unit/test_api_suite.py::test_registry_classifies_every_active_module_without_stale_entries`)
+checks that every active case is claimed by exactly one registry and that no
+entry names nothing, and is indifferent to what the prose asserts. A wrong
+sentence therefore costs nothing until an external reviewer reads it, which is
+why only a reviewer finds these.
+
+**Why it is deferred rather than fixed.** The repair is to stop hand-writing
+bucket prose and derive the coverage rationale mechanically from the traits that
+decide it — the case's storage strategy, its mutation verb, and which story does
+or does not spell that verb — so a stated reason cannot drift from the cases it
+covers. That restructures `api_suite.py` and its registries rather than rewording
+them, and it needs a review of its own; taking it as COR-93 closed would have
+landed an unreviewed restructuring of the very surface the boundary review was
+measuring. Until it is taken the residue is reader-facing only: no case id enters
+or leaves the skip map, no case changes lane, and no grade moves.
 
 ## Forwarding pointers
 
