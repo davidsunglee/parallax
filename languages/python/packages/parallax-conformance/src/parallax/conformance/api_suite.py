@@ -404,11 +404,11 @@ EXAMPLES: Final[list[Example]] = [
 SKIP_REASONS: Final[dict[str, str]] = {
     "m-core": (
         "m-core neutral-type behaviour has no standalone developer surface; it is "
-        "exercised through the first read path (COR-3 Phase 5)"
+        "exercised through the read path"
     ),
     "m-descriptor": (
         "descriptor introspection is proven by the descriptor no-drift guard; the read "
-        "path compiles/runs its descriptor cases (COR-3 Phase 5)"
+        "path compiles/runs its descriptor cases"
     ),
     "m-document-codec": (
         "the portable document encoding has no developer surface of its own: a leaf's "
@@ -422,13 +422,13 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
     "m-op-algebra": (
         "representative predicate/grouping/ordering spellings are exercised as idiomatic "
-        "examples (COR-3 Phase 5); the remaining op-algebra cases are graded through the "
-        "compile/run lanes and land as examples incrementally"
+        "examples; the remaining op-algebra cases are graded through the compile/run "
+        "lanes"
     ),
     "m-temporal-read": (
-        "the representative as-of spelling is exercised as an idiomatic example (the "
-        "class-frontend axis declaration landed in M4); the remaining temporal-read cases "
-        "— including the optimistic-lock temporal-close conflict/retry witnesses "
+        "the representative as-of spelling is exercised as an idiomatic example; the "
+        "remaining temporal-read cases — including the optimistic-lock temporal-close "
+        "conflict/retry witnesses "
         "(`m-temporal-read-009`..`-012`: gated success, stale-`in_z` conflict, the "
         "`when.attempts` 0-then-1 retry, and the locking-mode non-retriable stale close) "
         "— are graded end-to-end by the case-driven boundary runner "
@@ -438,7 +438,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "distinct from what the boundary runner already exercises directly"
     ),
     "m-db-error": (
-        "the m-db-error corpus cases are graded end-to-end by the M4 run lanes — the "
+        "the m-db-error corpus cases are graded end-to-end by the run lanes — the "
         "single-connection triggers by the error run sweep, the two-connection "
         "choreography by the case-driven concurrency rounds runner "
         "(`parallax.conformance.concurrency_runner`); the neutral DatabaseError surface "
@@ -447,13 +447,12 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
     "m-pk-gen": (
         "write-side id allocation (`max`/`sequence`) is graded end-to-end by the "
-        "compile/run conformance lanes; no idiomatic story was authored this round — a "
-        "pk-generated column (`pkGenerator: max`/`sequence`) needs the SAME "
-        "construction-optionality treatment axis-governed columns received this round "
-        "(a caller cannot honestly construct a fresh instance naming a "
-        "server-computed id), which this round scoped to axis columns only "
-        "(`m-pk-gen-014`'s own case-scoped entry below names the same blocker) — a "
-        "breadth item for a future round"
+        "compile/run conformance lanes; no idiomatic story exists, because a "
+        "pk-generated column (`pkGenerator: max`/`sequence`) lacks the "
+        "construction-optionality treatment axis-governed columns carry (a caller cannot "
+        "honestly construct a fresh instance naming a server-computed id), and the "
+        "optional-at-construction surface covers axis columns only "
+        "(`m-pk-gen-014`'s own case-scoped entry below names the same blocker)"
     ),
     "m-auto-retry": (
         "the bounded retry loop is implemented (parallax.core.auto_retry) and proven "
@@ -472,11 +471,10 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "unversioned/non-temporal exception, and the versioned materialize-then-lower "
         "family) are graded end-to-end by the compile/run conformance lanes (the "
         "readless forms) or the run lane alone (the materializing ones, "
-        "query-result-dependent). The versioned keyed LOCKING-mode advance now has an "
-        "idiomatic story (`m-opt-lock-002`, COR-3 Phase 8 increment 7 completion round); "
-        "the OPTIMISTIC-mode gate/conflict/multi-attribute forms (`-005`/`-006`/`-007`/"
-        "`-013`) were not authored as idiomatic stories this round — a breadth item "
-        "deprioritized behind the temporal write-family/stale-web-edit build-out. The "
+        "query-result-dependent). The versioned keyed LOCKING-mode advance has an "
+        "idiomatic story (`m-opt-lock-002`); the OPTIMISTIC-mode gate/conflict/"
+        "multi-attribute forms (`-005`/`-006`/`-007`/`-013`) have none, their "
+        "`conflict` shape needing a second writer no single-session story can stage. The "
         "auto-retry conflict-lane witness (`-009`), the boundary runner's "
         "conflict-opt-in pair (`-010`/`-011`), and the interleaved two-session race "
         "(`-012`, over the `peer` seam) each have their own case-scoped entry below"
@@ -484,33 +482,31 @@ SKIP_REASONS: Final[dict[str, str]] = {
     "m-txtime-write": (
         "the milestone-chaining write forms (insert / close-and-chain update / "
         "terminate, plus the TPH/TPCS and value-object compositions) are graded "
-        "end-to-end by the compile/run conformance lanes. Idiomatic stories now exist "
-        "for the insert / terminate / close-and-chain-update family "
-        "(`m-txtime-write-001`..`-005`, COR-3 Phase 8 increment 7 completion round: the "
-        "per-story scripted clock plus the observed-payload merge fix made "
-        "a genuine multi-instant milestone chain over the public verbs possible for the "
-        "first time). The optimistic-gated close (`-006`, a `conflict`-shape case "
-        "forcing a stale observed `in_z` — no natural single-session spelling, the SAME "
-        "posture as the `m-opt-lock` conflict-shape cases) and the materializing "
-        "predicate-write scenarios (`-007`/`-009`) were not authored as idiomatic "
-        "stories this round — graded end-to-end by the compile/run conformance lanes "
-        "(`-006`) or the run lane alone (`-007`/`-009`, query-result-dependent) meanwhile"
+        "end-to-end by the compile/run conformance lanes. Idiomatic stories exist for "
+        "the insert / terminate / close-and-chain-update family "
+        "(`m-txtime-write-001`..`-005`, each over a per-story scripted clock, which is "
+        "what lets one story chain milestones across several Transaction-Time "
+        "instants). The optimistic-gated close (`-006`, a `conflict`-shape case forcing "
+        "a stale observed `in_z` — no natural single-session spelling, the SAME posture "
+        "as the `m-opt-lock` conflict-shape cases) and the materializing predicate-write "
+        "scenarios (`-007`/`-009`) have no idiomatic story, and are graded end-to-end by "
+        "the compile/run conformance lanes (`-006`) or the run lane alone "
+        "(`-007`/`-009`, query-result-dependent)"
     ),
     "m-bitemp-write": (
         "the rectangle-split write forms (insert / updateUntil / terminateUntil / plain "
         "update / plain terminate, the optimistic observed-in_z gate, and the "
         "TPH/TPCS compositions) are graded end-to-end by the compile/run conformance "
-        "lanes. Idiomatic stories now exist for the flagship insert / updateUntil "
+        "lanes. Idiomatic stories exist for the flagship insert / updateUntil "
         "rectangle split (`-001`), `insertUntil` (`-003`), the plain-update two-way "
-        "degenerate (`-006`), and the plain insert (`-009`) (COR-3 Phase 8 increment 7 "
-        "completion round). The remaining rectangle-split/terminate/"
-        "plain-terminate compositions (`-002`/`-007`), the optimistic-gate conflict "
-        "shapes (`-004`/`-005`/`-008`, the SAME `conflict`-shape posture as `m-opt-lock`), "
-        "and the materializing predicate-write scenarios (`-010`..`-013`) were not "
-        "authored as idiomatic stories this round — a breadth item deprioritized behind "
-        "the Customer/Location/Depot mirror family and the stale-web-edit recipe; graded "
-        "end-to-end by the compile/run conformance lanes (or the run lane alone for the "
-        "materializing ones, query-result-dependent) meanwhile"
+        "degenerate (`-006`), and the plain insert (`-009`). The remaining "
+        "rectangle-split/terminate/plain-terminate compositions (`-002`/`-007`), the "
+        "optimistic-gate conflict shapes (`-004`/`-005`/`-008`, the SAME `conflict`-shape "
+        "posture as `m-opt-lock`), and the materializing predicate-write scenarios "
+        "(`-010`..`-013`) have no idiomatic story: each either composes verbs an "
+        "exercised story already spells or stages a conflict one session cannot. They "
+        "are graded end-to-end by the compile/run conformance lanes (or the run lane "
+        "alone for the materializing ones, query-result-dependent)"
     ),
     "m-storage-layout": (
         "canonical physical composition has no standalone developer surface. Its "
@@ -532,12 +528,11 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "the set-based collapse / readless / materialize forms (multi-row INSERT "
         "collapse, batched UPDATE, IN-list DELETE, readless predicate update/delete, "
         "and the versioned materialize-then-lower family) are graded end-to-end by the "
-        "compile/run conformance lanes. The readless predicate delete now has an "
-        "idiomatic story (`m-batch-write-005`, COR-3 Phase 8 increment 7 completion "
-        "round); the remaining set-based collapse / readless-update / versioned-"
-        "materialize forms (`-001`/`-002`/`-003`/`-006`) were not authored as idiomatic "
-        "stories this round — a breadth item deprioritized behind the temporal "
-        "write-family build-out"
+        "compile/run conformance lanes. The readless predicate delete has an idiomatic "
+        "story (`m-batch-write-005`); the remaining set-based collapse / "
+        "readless-update / versioned-materialize forms (`-001`/`-002`/`-003`/`-006`) "
+        "have none, each spelling the same buffered verbs that story already shows and "
+        "differing only in the planner collapse the compile lane grades"
     ),
 }
 
@@ -549,9 +544,8 @@ _COALESCING_WITNESS_REASON: Final[str] = (
     "a same-transaction coalescing witness: it buffers an insert+update / insert+delete "
     "pair whose one-statement / zero-statement collapse is m-batch-write behavior — the "
     "planner folding is unit-pinned (test_write_lowering) and graded end-to-end by the "
-    "compile/run conformance lanes too; no idiomatic story was authored for this exact "
-    "same-transaction coalescing shape, a breadth item behind the m-batch-write bucket's "
-    "own reason above"
+    "compile/run conformance lanes too; no idiomatic story covers this exact "
+    "same-transaction coalescing shape, for the m-batch-write bucket's own reason above"
 )
 
 # The classifications a write earns when the rows it addressed are not the rows
@@ -659,20 +653,21 @@ _INHERITANCE_MULTI_CONCRETE_PROJECTION_UNREACHABLE_REASON: Final[str] = (
     "reproduced from typed instances — a permanent, structural non-fit. Its own "
     "INSTANCE-FORM sibling (m-inheritance-106/-107/-108/-109 respectively) IS executed "
     "through `db.find` (`graph_stories.py`), proving the identical capability the OTHER "
-    "way (DQ7b: both lanes of the same behavior are now expressed)"
+    "way, so both lanes of the same behavior are expressed"
 )
 
 # Temporal inheritance-family writes are graded end-to-end by the compile/run
 # conformance lanes. They cover an audit/bitemporal close or chain over a
 # table-per-hierarchy or table-per-concrete-subtype family, but have no
 # idiomatic instance-native story.
-_INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
+_INHERITANCE_TEMPORAL_WRITE_REASON: Final[str] = (
     "a TEMPORAL inheritance-family write (an audit/bitemporal milestone close or chain "
     "over a table-per-hierarchy or table-per-concrete-subtype family): graded "
-    "end-to-end by the compile/run conformance lanes; no idiomatic story was authored "
-    "for an inheritance-family temporal write — a breadth item behind the plain-entity "
-    "temporal write-family build-out (the SAME posture the non-temporal inheritance-"
-    "family write forms carry, `_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
+    "end-to-end by the compile/run conformance lanes; no idiomatic story covers an "
+    "inheritance-family temporal write, whose developer spelling is the plain-entity "
+    "temporal write an exercised story already shows, typed at a concrete subtype (the "
+    "SAME posture the non-temporal inheritance-family write forms carry, "
+    "`_INHERITANCE_WRITE_CONFORMANCE_LANE_REASON`)"
 )
 # Non-temporal TPH/TPCS insert, update, and delete cases are graded end-to-end
 # by the compile/run lanes, including deep-chain, sibling-branch, and
@@ -680,9 +675,9 @@ _INHERITANCE_WRITE_PHASE8_REASON: Final[str] = (
 _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal inheritance-family keyed write (table-per-hierarchy or table-per-"
     "concrete-subtype insert/update/delete, including the opt-lock composition pair): "
-    "graded end-to-end by the compile/run conformance lanes; no idiomatic story was "
-    "authored for an inheritance-family write — a breadth item behind the plain-entity "
-    "write-family build-out"
+    "graded end-to-end by the compile/run conformance lanes; no idiomatic story covers "
+    "an inheritance-family write, whose developer spelling is the plain-entity keyed "
+    "write an exercised story already shows, typed at a concrete subtype"
 )
 # The non-temporal optimistic-lock family is graded end-to-end by the
 # compile/run lanes: conflict gating, success/retry, locking-mode version
@@ -690,17 +685,15 @@ _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
 _OPT_LOCK_WRITE_CONFORMANCE_LANE_REASON: Final[str] = (
     "a non-temporal optimistic-lock keyed write (the version gate/advance/conflict, or "
     "a versioned batched delete's per-key materialize): graded end-to-end by the "
-    "compile/run conformance lanes; no idiomatic story was authored for this exact "
-    "optimistic-mode conflict/advance shape — a breadth item behind the flagship "
-    "temporal write-family build-out (the locking-mode advance sibling is now "
-    "exercised, `m-opt-lock-002`)"
+    "compile/run conformance lanes; no idiomatic story covers this exact "
+    "optimistic-mode conflict/advance shape, whose gate a single session cannot trip "
+    "(the locking-mode advance sibling is exercised, `m-opt-lock-002`)"
 )
 # The auto-retry optimistic-conflict opt-in's conflict-lane witness uses
 # `retryOptimisticConflicts: true` over a two-attempt, 0-then-1
 # `when.attempts` choreography — the same
-# caller-visible attempts-sequence lane `m-opt-lock-007` already exercises
-# (pinned semantics #7); the runtime auto-retry LOOP itself is `-011`'s own
-# boundary witness, below.
+# caller-visible attempts-sequence lane `m-opt-lock-007` already exercises; the
+# runtime auto-retry LOOP itself is `-011`'s own boundary witness, below.
 _OPT_LOCK_CONFLICT_LANE_OPT_IN_REASON: Final[str] = (
     "the auto-retry optimistic-conflict opt-in's own conflict-lane witness "
     "(`retryOptimisticConflicts: true` over a two-attempt, 0-then-1 `when.attempts` "
@@ -732,9 +725,8 @@ _OPT_LOCK_BOUNDARY_RUNNER_REASON: Final[str] = (
 _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
     "the interleaved two-session optimistic-lock race (two concurrently-held "
     "`db.transact` units of work over the `Provisioner.peer` seam, sequenced in "
-    "authored order) lands in COR-3 Phase 8 increment 6 — graded end-to-end by the "
-    "run sweep's own interleaved-group runner now "
-    "(`parallax.conformance.engine.run_interleaved_scenario_case`); no idiomatic "
+    "authored order) is graded end-to-end by the run sweep's own interleaved-group "
+    "runner (`parallax.conformance.engine.run_interleaved_scenario_case`); no idiomatic "
     "example exists (a two-connection race has no single-callback developer "
     "expression) — the reference harness remains its independent behavioral "
     "cross-check"
@@ -748,7 +740,7 @@ _OPT_LOCK_INTERLEAVED_RACE_REASON: Final[str] = (
 _READ_LOCK_HARNESS_GOLDEN_REASON: Final[str] = (
     "the module's own harness-lane single-connection golden (the default locking-"
     "mode object find carries the shared read lock) is graded end-to-end by the "
-    "compile AND run sweeps now (COR-3 Phase 8 increment 6); no idiomatic example is "
+    "compile AND run sweeps; no idiomatic example is "
     "needed beyond the runtime matrix's own api-conformance siblings "
     "(`m-read-lock-002`/`-005`, exercised as idiomatic read-story examples "
     "above) — this witness needs no `db.transact` participation-mode configuration, "
@@ -783,8 +775,7 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
     "the two-session behavioral proof (a locking-mode reader's shared lock "
     "blocking/admitting a writer or a second reader, or a projection's own omission "
     "admitting a writer) is graded end-to-end by the case-driven `when.concurrency` "
-    "rounds runner now (COR-3 Phase 8 increment 6, "
-    "`parallax.conformance.concurrency_runner`, "
+    "rounds runner (`parallax.conformance.concurrency_runner`, "
     "`test_run_sweep.test_read_lock_concurrency_rounds`) — a genuine two-connection "
     "concurrency property no single-session idiomatic example can demonstrate; the "
     "reference harness remains its own independent cross-check"
@@ -794,8 +785,8 @@ _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
 # end-to-end but has no idiomatic story.
 _PK_GEN_TEMPORAL_INSERT_REASON: Final[str] = (
     "a `sequence`-strategy primary-key allocation on a TEMPORAL entity (a non-temporal "
-    "registry UPDATE composed with a Transaction-Time-Only INSERT in one writeSequence): this "
-    "temporal composition landed in increment 4 — graded end-to-end by the compile/run "
+    "registry UPDATE composed with a Transaction-Time-Only INSERT in one writeSequence): "
+    "graded end-to-end by the compile/run "
     "conformance lanes; no idiomatic story exists — the SAME pk-generated-column "
     "construction-optionality blocker the `m-pk-gen` module-bucket reason above names"
 )
@@ -832,10 +823,10 @@ _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON: Final[str] = (
     "seam (`Transaction._buffer`) instead"
 )
 _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
-    "the idiomatic spelling now EXISTS: `subtype-write-set-based-unsupported`'s natural "
+    "the idiomatic spelling EXISTS: `subtype-write-set-based-unsupported`'s natural "
     "developer-facing trigger is a set-based `_where` verb (`tx.update_where` / "
-    "`tx.delete_where`) targeting an inheritance family (python.md §5), landed with the "
-    "`_where` verb family (COR-3 Phase 8 increment 5; `inheritance.reject_predicate_write`) — "
+    "`tx.delete_where`) targeting an inheritance family (python.md §5, refused by "
+    "`inheritance.reject_predicate_write`) — "
     "`test_transaction_predicate_writes.py` exercises it through `tx.update_where`; the "
     "rejected-case's OWN keyless-row shape (`m-inheritance-089`) still has no idiomatic keyed "
     "spelling (no single typed instance construction denotes a payload with no primary key at "
@@ -865,16 +856,16 @@ _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` raw-descriptor invariant `descriptor.validate_inheritance_families` "
     "classifies (parent/root/cycle/strategy/tag/temporal-axis-ownership/optimistic-"
     "locking-ownership/layout-ownership shape) — the class metaclass never calls this "
-    "validator (DQ2: "
+    "validator ("
     "`parent`/`role` are DERIVED from the live Python class hierarchy, never separately "
     "authored, so most of these malformed shapes — an unknown parent, a cycle, multiple "
     "roots, a missing root, a redeclared strategy, a duplicate/misplaced tag — have no "
     "idiomatic spelling at all); the table-placement rules AND a descendant's own "
     "temporal base / `optimisticLocking` ARE independently authorable, but the class "
     "frontend's own existing checks raise a different, unclassified error in each case, "
-    "not `InheritanceError.rule` — wiring an idiomatic path to the classified "
-    "vocabulary is unbuilt infrastructure, not a capability gap this phase closes "
-    "(permanent, pre-dating and outliving Phase 7/8)"
+    "not `InheritanceError.rule` — so reaching the classified vocabulary idiomatically "
+    "would need a frontend path that does not exist, which is a structural non-fit "
+    "rather than a missing story"
 )
 
 # `navigate`-tagged corpus siblings: a deliberate spelling redundancy for the
@@ -1292,13 +1283,13 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-inheritance-128": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     "m-inheritance-130": _INHERITANCE_WRITE_CONFORMANCE_LANE_REASON,
     # -- m-inheritance: temporal write family -------------------------------- #
-    "m-inheritance-090": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-091": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-094": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-095": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-096": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-097": _INHERITANCE_WRITE_PHASE8_REASON,
-    "m-inheritance-105": _INHERITANCE_WRITE_PHASE8_REASON,
+    "m-inheritance-090": _INHERITANCE_TEMPORAL_WRITE_REASON,
+    "m-inheritance-091": _INHERITANCE_TEMPORAL_WRITE_REASON,
+    "m-inheritance-094": _INHERITANCE_TEMPORAL_WRITE_REASON,
+    "m-inheritance-095": _INHERITANCE_TEMPORAL_WRITE_REASON,
+    "m-inheritance-096": _INHERITANCE_TEMPORAL_WRITE_REASON,
+    "m-inheritance-097": _INHERITANCE_TEMPORAL_WRITE_REASON,
+    "m-inheritance-105": _INHERITANCE_TEMPORAL_WRITE_REASON,
     "m-inheritance-086": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-131": _INHERITANCE_SIBLING_ATTRIBUTE_UNREACHABLE_REASON,
     "m-inheritance-087": _INHERITANCE_METADATA_FIELD_UNREACHABLE_REASON,
@@ -1575,8 +1566,7 @@ def render_usage_guide(examples: list[Example], recipes: list[Recipe] | None = N
     ]
     if not examples:
         lines.append(
-            "_No idiomatic examples yet — they are added as each COR-3 phase brings "
-            "its capability online._"
+            "_No idiomatic examples yet — each is added with the capability it demonstrates._"
         )
         lines.append("")
     else:

@@ -329,12 +329,14 @@ def test_dropping_a_write_example_fails_the_partition() -> None:
     )
 
 
-def test_pk_gen_014_reason_names_its_current_landed_state() -> None:
-    # Regression guard: `m-pk-gen-014`'s reason must name its current landed
-    # state ("landed in increment 4"), never the stale "toward increment 4"
-    # forward-promise wording.
+def test_pk_gen_reasons_name_the_durable_blocker() -> None:
+    # Regression guard: both pk-generated-column skips must say why no idiomatic
+    # story CAN exist — a caller cannot honestly construct a fresh instance
+    # naming a server-computed id — never a delivery increment, which goes stale
+    # the moment it passes and tells a reader nothing about the surface.
     reason = api_suite.CASE_SKIP_REASONS["m-pk-gen-014"]
-    assert "toward increment 4" not in reason, reason
-    assert "landed in increment 4" in reason, reason
     module_reason = api_suite.SKIP_REASONS["m-pk-gen"]
-    assert "toward increment 4" not in module_reason, module_reason
+    assert "increment" not in reason, reason
+    assert "increment" not in module_reason, module_reason
+    assert "no idiomatic story exists" in reason, reason
+    assert "server-computed id" in module_reason, module_reason
