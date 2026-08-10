@@ -2287,6 +2287,69 @@ def _graph_rows(model: AcceptedMetamodel, output: object) -> list[Mapping[str, o
     return rows
 
 
+def _lower_scenario_step(
+    context: _GroupContext,
+    step: Mapping[str, object],
+    index: int,
+    find_lock: Concurrency | None,
+    group_observations: GroupObservations,
+) -> _LoweredStep:
+    """One scenario step's pointer + DML, PURE — the compile lane's own per-step
+    interpreter, the peer of the run lane's :func:`_run_group_step`.
+
+    Which boundary the step belongs to is deliberately NOT decided here: a
+    doomed unit's case-state advances are staged by the caller
+    (:func:`_scenario_lowered`), the one place a step's own transaction is
+    known.
+    """
+    if "write" not in step:
+        statement = _compile_find(
+            step, context.meta, context.model, context.dialect, find_lock
+        ).statement
+        return _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
+    raw_write = step["write"]
+    rollback = step.get("rollback") is True
+    if _is_predicate_write_step(raw_write):
+        # Readless only (`m-batch-write-005`/`-006`) — a materializing predicate
+        # write never reaches the compile lane at all (its case's
+        # `compileEligibility: run-only` short-circuits before
+        # `_scenario_lowered` ever runs).
+        statement = _lower_predicate_write_step(
+            cast("Mapping[str, object]", raw_write),
+            context.meta,
+            context.dialect,
+            context.concurrency,
+        )
+        return _LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
+    entries = _write_entries(raw_write)
+    statements = _lower_writes(
+        entries,
+        context.meta,
+        context.dialect,
+        context.concurrency,
+        context.shadow,
+        _entry_instant(entries[0]),
+        group_observations,
+    )
+    return _LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
+
+
+def _doomed_group_spans(case_name: str, steps: Sequence[Mapping[str, object]]) -> dict[int, int]:
+    """Each DOOMED `uow` group's own step span, keyed ``start -> end`` inclusive.
+
+    Only the doomed ones: a committing group's steps need no staging, so leaving
+    them out lets the caller drive them as ordinary steps. The two spans this
+    lane cannot represent answer emptily — an interleaved two-group race
+    (:func:`_scenario_uow_spans` returns ``None``) needs two concurrent units a
+    pure lowering has no way to model, and every case carrying that shape is
+    `compileEligibility: run-only` for the same reason.
+    """
+    spans = _scenario_uow_spans(case_name, steps)
+    if spans is None:
+        return {}
+    return {start: end for start, end in spans.values() if _group_is_doomed(steps, start, end)}
+
+
 def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_LoweredStep]:
     """Lower every scenario step to its pointer + DML — pure (no database).
 
@@ -2303,50 +2366,45 @@ def _scenario_lowered(case: case_format.Case, dialect_name: str) -> list[_Lowere
     empty here — every keyed write this lane reaches resolves its observation
     from its OWN row's reserved ``observedVersion`` control key only
     (:func:`_durable_row`), exactly as a writeSequence entry does.
+
+    A DOOMED unit's advances are staged on that unit's own outcome, exactly as
+    the run lane stages them
+    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.staged`): a
+    doomed group's own later steps observe them and the group's last step
+    restores them, and an ungrouped `rollback: true` write step restores them
+    after itself. Both lanes must reach the same DML for the same case, and a
+    step after an abort takes its milestone from the write the database kept.
     """
     meta = load_case_metamodel(case)
-    model = case_model(meta)
-    dialect = dialect_for(dialect_name)
     concurrency = _concurrency(case)
-    shadow = TemporalShadow()
+    context = _GroupContext(
+        meta, case_model(meta), dialect_for(dialect_name), concurrency, TemporalShadow()
+    )
     group_observations: GroupObservations = []
     lowered: list[_LoweredStep] = []
     try:
         steps = _scenario_steps(case)
         find_lock = concurrency if _scenario_needs_lock(steps, meta) else None
-        for index, step in enumerate(steps):
-            if "write" in step:
-                raw_write = step["write"]
-                rollback = step.get("rollback") is True
-                if _is_predicate_write_step(raw_write):
-                    # Readless only (`m-batch-write-005`/`-006`) — a
-                    # materializing predicate write never reaches the compile
-                    # lane at all (its case's `compileEligibility: run-only`
-                    # short-circuits before `_scenario_lowered` ever runs).
-                    statement = _lower_predicate_write_step(
-                        cast("Mapping[str, object]", raw_write), meta, dialect, concurrency
-                    )
-                    lowered.append(
-                        _LoweredStep(f"/scenario/{index}/write", (statement,), True, rollback)
-                    )
-                else:
-                    entries = _write_entries(raw_write)
-                    tx_instant = _entry_instant(entries[0])
-                    statements = _lower_writes(
-                        entries,
-                        meta,
-                        dialect,
-                        concurrency,
-                        shadow,
-                        tx_instant,
-                        group_observations,
-                    )
-                    lowered.append(
-                        _LoweredStep(f"/scenario/{index}/write", statements, True, rollback)
-                    )
-            else:
-                statement = _compile_find(step, meta, model, dialect, find_lock).statement
-                lowered.append(_LoweredStep(f"/scenario/{index}/find", (statement,), False, False))
+        doomed_spans = _doomed_group_spans(case.path.name, steps)
+        index = 0
+        while index < len(steps):
+            end = doomed_spans.get(index)
+            if end is not None:
+                with context.shadow.staged(doomed=True):
+                    for grouped in range(index, end + 1):
+                        lowered.append(
+                            _lower_scenario_step(
+                                context, steps[grouped], grouped, find_lock, group_observations
+                            )
+                        )
+                index = end + 1
+                continue
+            step = steps[index]
+            with context.shadow.staged(doomed=step.get("rollback") is True):
+                lowered.append(
+                    _lower_scenario_step(context, step, index, find_lock, group_observations)
+                )
+            index += 1
     except _LOWERING_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return lowered
@@ -3039,8 +3097,9 @@ def _source_find_milestones(
 
 @dataclass(frozen=True, slots=True)
 class _GroupContext:
-    """What a scenario's translation is fixed by, for every step of every `uow`
-    group it runs.
+    """What a scenario's translation is fixed by, for every one of its steps —
+    the run lane's `uow` groups (:func:`_run_group_step`) and the compile lane's
+    pure lowering (:func:`_lower_scenario_step`) alike.
 
     The two model views describe one descriptor (:func:`case_model`), and the
     tracker is the ONE case-spanning :class:`TemporalShadow` every group shares

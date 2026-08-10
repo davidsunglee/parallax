@@ -543,6 +543,86 @@ def test_run_scenario_case_stages_a_doomed_uow_groups_temporal_case_state() -> N
     assert close.binds[3] == "2024-02-01T00:00:00+00:00"
 
 
+def _ledger_insert(at: str) -> dict[str, object]:
+    """One scenario write step inserting Ledger id 9 — a key no fixture holds, so
+    the milestone every later step in these cases closes is one the case's own
+    steps opened. The compile lane loads no fixtures, so this is the only way
+    both lanes start a temporal chain from the same tracked state."""
+    return {
+        "write": [
+            {
+                "mutation": "insert",
+                "entity": "parallax.compatibility.Ledger",
+                "rows": [{"id": 9, "acctNum": "D", "value": decimal.Decimal("100.00")}],
+                "at": at,
+            }
+        ],
+        "roundTrips": 1,
+    }
+
+
+def _ledger_chain_update(
+    value: str, at: str, *, uow: str | None = None, rollback: bool = False
+) -> dict[str, object]:
+    """The sibling of :func:`_ledger_update` retargeted at the inserted id 9."""
+    step = _ledger_update(value, at, uow=uow, rollback=rollback)
+    cast("list[dict[str, object]]", step["write"])[0]["rows"] = [
+        {"id": 9, "value": decimal.Decimal(value)}
+    ]
+    return step
+
+
+def test_scenario_compile_lane_discards_an_aborted_ungrouped_writes_case_state() -> None:
+    # The compile lane owes the SAME DML the run lane executes for a
+    # compile-eligible case, and `m-case-format`'s abort contract is not
+    # declared run-only: after a rolled-back temporal update, the next keyed
+    # write closes the milestone the database KEPT (the insert's own
+    # 2025-01-01 Transaction-Time start), never the aborted successor's
+    # 2026-01-01, which no transaction ever stored.
+    case = _synthetic_ledger_scenario(
+        [
+            _ledger_insert("2025-01-01T00:00:00+00:00"),
+            _ledger_chain_update("300.00", "2026-01-01T00:00:00+00:00", rollback=True),
+            _ledger_chain_update("400.00", "2026-02-01T00:00:00+00:00"),
+        ]
+    )
+    compiled, _round_trips = engine.compile_scenario_case(case, "postgres")
+    _insert, aborted_close, _aborted_successor, close, successor = compiled
+    assert aborted_close.binds[3] == "2025-01-01T00:00:00+00:00"
+    assert close.case_pointer == "/scenario/2/write"
+    assert close.binds[3] == "2025-01-01T00:00:00+00:00"
+    assert successor.binds[2] == decimal.Decimal("400.00")
+    run, _rt, _errors, _log = engine.run_scenario_case(case, "postgres", FakeWritePort())
+    assert [(e.case_pointer, e.sql, e.binds) for e in compiled] == [
+        (e.case_pointer, e.sql, e.binds) for e in run
+    ]
+
+
+def test_scenario_compile_lane_stages_a_doomed_uow_groups_case_state() -> None:
+    # Staging, not simply "do not advance", in the compile lane too: step 2
+    # closes step 1's own successor because both belong to the SAME doomed
+    # group (gating on 2026-01-01), while the ungrouped step 3 that follows the
+    # group's rollback is back on the insert's milestone (2025-01-01).
+    case = _synthetic_ledger_scenario(
+        [
+            _ledger_insert("2025-01-01T00:00:00+00:00"),
+            _ledger_chain_update(
+                "999.00", "2026-01-01T00:00:00+00:00", uow="doomed", rollback=True
+            ),
+            _ledger_chain_update("888.00", "2026-01-01T00:00:00+00:00", uow="doomed"),
+            _ledger_chain_update("300.00", "2026-02-01T00:00:00+00:00"),
+        ]
+    )
+    compiled, _round_trips = engine.compile_scenario_case(case, "postgres")
+    _insert, doomed_close, _doomed_successor, own_close, _own_successor, close, _successor = (
+        compiled
+    )
+    assert doomed_close.binds[3] == "2025-01-01T00:00:00+00:00"
+    assert own_close.binds[3] == "2026-01-01T00:00:00+00:00"
+    assert close.case_pointer == "/scenario/3/write"
+    assert close.binds[3] == "2025-01-01T00:00:00+00:00"
+
+
 def _two_group_interleave_steps() -> list[dict[str, object]]:
     return [
         {
@@ -585,6 +665,20 @@ def test_scenario_uow_spans_signals_the_two_group_interleave_with_none() -> None
         )
         is None
     )
+
+
+def test_scenario_compile_lane_stages_nothing_for_a_doomed_interleaved_group() -> None:
+    # A doomed group that INTERLEAVES with another is the one shape the compile
+    # lane's staging cannot represent — two concurrent units advance one tracker
+    # there, so restoring the whole tracker would discard the committed group's
+    # advances too. Every case carrying the shape is `compileEligibility:
+    # run-only`, so the lane lowers the steps in authored order and stages
+    # nothing rather than refusing.
+    steps = _two_group_interleave_steps()
+    steps[2]["rollback"] = True
+    case = _synthetic_write("scenario", {"when": {"scenario": steps}, "then": {"roundTrips": 3}})
+    emissions, _round_trips = engine.compile_scenario_case(case, "postgres")
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/find"]
 
 
 def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_scenario_case() -> (
