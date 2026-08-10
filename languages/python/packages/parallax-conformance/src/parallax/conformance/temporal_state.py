@@ -26,10 +26,16 @@ from collections.abc import Mapping, Sequence
 
 from parallax.core import inheritance, temporal_read, txtime_write
 from parallax.core.base import normalize_instant
-from parallax.core.metamodel import EntityMetadata, Metamodel, PrimaryKey, TemporalDimension
+from parallax.core.metamodel import (
+    AttributeIdentity,
+    EntityMetadata,
+    Metamodel,
+    PrimaryKey,
+    TemporalDimension,
+    ValueObjectIdentity,
+)
 from parallax.core.unit_work import (
     PlannedInsert,
-    PlannedRow,
     PredecessorRow,
     TemporalObservation,
     WritePlan,
@@ -41,6 +47,7 @@ __all__ = [
     "TemporalShadow",
     "observed_close_coordinates",
     "observed_edge",
+    "predecessor_row",
 ]
 
 # A tracked milestone's slot: its object identity plus the milestone's own edge —
@@ -203,9 +210,9 @@ class TemporalShadow:
             pk_names = _primary_key_names(model, entity)
             start_names = _axis_start_names(model, entity)
             for entry in step.entries:
-                members = _planned_members(entry.row)
-                key = self._key(entity.identity.name, pk_names, start_names, members)
-                self._track(key, TemporalObservation(predecessor=PredecessorRow(members=members)))
+                predecessor = predecessor_row(entry.row.attributes, entry.row.value_objects)
+                key = self._key(entity.identity.name, pk_names, start_names, predecessor.members)
+                self._track(key, TemporalObservation(predecessor=predecessor))
 
     def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:
         """Store one milestone in its own slot, refusing a slot already taken.
@@ -239,15 +246,30 @@ class TemporalShadow:
         )
 
 
-def _planned_members(row: PlannedRow) -> dict[str, object]:
-    """One Planned Row's cells by DECLARED MEMBER NAME — the spelling a
-    Predecessor Row is read in, and the one a milestone edge is keyed by."""
-    members: dict[str, object] = {
-        identity.name: value for identity, value in row.attributes.items()
-    }
-    for identity, value in row.value_objects.items():
+def predecessor_row(
+    attributes: Mapping[AttributeIdentity, object],
+    value_objects: Mapping[ValueObjectIdentity, object],
+) -> PredecessorRow:
+    """The ONE conversion from identity-keyed carriers to a Predecessor Row.
+
+    Every engine-side milestone — a row the write plan opened, a node a grouped
+    find returned — arrives as a scalar map keyed by
+    :class:`~parallax.core.metamodel.AttributeIdentity` beside a Value Object map
+    keyed by :class:`~parallax.core.metamodel.ValueObjectIdentity`, and a
+    Predecessor Row is read by DECLARED MEMBER NAME, which is also the spelling a
+    milestone edge is keyed by. Both carriers convert here so the tracked
+    milestone and the observed one can never be flattened two different ways.
+
+    The row it builds is purely LOGICAL: neither carrier retains the raw
+    Structured Column document the observing read returned, so
+    :attr:`~parallax.core.unit_work.PredecessorRow.document` is absent and a
+    successor is patched from the declared members rather than from what the row
+    physically held.
+    """
+    members: dict[str, object] = {identity.name: value for identity, value in attributes.items()}
+    for identity, value in value_objects.items():
         members[identity.path[-1]] = value
-    return members
+    return PredecessorRow(members=members)
 
 
 def observed_edge(

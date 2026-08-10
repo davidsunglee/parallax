@@ -287,8 +287,11 @@ def buffer_predicate_instruction(
 
     **Every caller passes ``instruction`` through
     :func:`~parallax.core.unit_work.instructions.validate_instruction` against
-    ``meta`` first** — :func:`buffer_predicate` at its step 5, the engine before
-    it opens the transaction. EVERY model-aware rule is stated there, in the
+    ``meta`` first** — :func:`buffer_predicate` at its step 5 for the typed
+    ``_where`` verbs, and
+    :meth:`~parallax.snapshot.handle.Transaction.write_neutral` at its own
+    ingress for everyone else, the conformance engine included. EVERY
+    model-aware rule is stated there, in the
     order `m-case-format` fixes: the whole ``validate_operation`` vocabulary and
     the bare-predicate rule over the selecting predicate, the
     inheritance-family rejection, member-name honesty and assignability, then
@@ -299,9 +302,9 @@ def buffer_predicate_instruction(
 
     The two refusals repeated here — an inheritance-family target, and that same
     milestone-verb quadrant — are this seam's OWN contract, not duplicates of
-    those rules. This entry point is reachable directly, with an instruction no
-    caller validated, so it takes nothing on faith: without its own refusal such
-    an instruction reaches
+    those rules. This entry point is reachable in-package without going through
+    an ingress, so it takes nothing on faith: without its own refusal an
+    unvalidated instruction reaches
     :func:`_materialize_predicate_write`'s resolving read — real SQL on the
     caller's connection — and, when that read matches no row, buffers nothing
     for the flush-time
