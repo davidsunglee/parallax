@@ -339,11 +339,14 @@ def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
     `when.uow.concurrency` when the case declares it (the read-lock matrix's
     -002/-003/-005, `api-conformance`-lane; any future transactional read
     case that self-describes its mode the same way). The `m-read-lock`
-    corpus family's OWN harness-lane witnesses (-001/-009) declare no
-    `when.uow` at all — their corpus prose is explicit that the read is "an
-    in-transaction object find" under the module's own DEFAULT mode
-    (`m-read-lock.md` "Automatic read-lock correctness": "the default
-    (`locking`) in-transaction object find acquires a shared row lock") — so
+    corpus family's OWN harness-lane witnesses (-001 and -010, the two in-slice
+    read cases this default decides — -009 is the MariaDB row of the same
+    matrix and is out of slice) declare no `when.uow` at all, and each states a
+    LOCKED read in its own prose: -001 "an in-transaction object find", -010
+    "the outer ... lock the returned payment_document rows". That is the
+    module's own DEFAULT mode (`m-read-lock.md` "Automatic read-lock
+    correctness": "the default (`locking`) in-transaction object find acquires
+    a shared row lock") — so
     a read case whose PRIMARY module is `m-read-lock` defaults to `locking`
     absent an explicit `when.uow`, the one module-scoped default this seam
     grants (no other read case's primary module carries this default:

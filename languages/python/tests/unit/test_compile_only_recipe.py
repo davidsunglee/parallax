@@ -14,7 +14,8 @@ entry point, which is exactly the kind of claim that rots silently.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 from typing import Any, cast
 
@@ -89,6 +90,59 @@ def test_a_transaction_result_publishes_no_write_plan() -> None:
     assert not _reaches_a_write_plan(result)
 
 
+class _Slotted:
+    __slots__ = ("held",)
+
+    def __init__(self, held: object) -> None:
+        self.held = held
+
+
+class _SlottedSubclass(_Slotted):
+    __slots__ = ("also",)
+
+    def __init__(self, held: object, also: object) -> None:
+        super().__init__(held)
+        self.also = also
+
+
+class _Attributed:
+    def __init__(self, held: object) -> None:
+        self.held = held
+
+
+_RETAINING_SHAPES: tuple[tuple[str, Callable[[WritePlan], object]], ...] = (
+    ("itself", lambda plan: plan),
+    ("a-sequence", lambda plan: [plan]),
+    ("a-mapping-value", lambda plan: {"k": plan}),
+    ("a-mapping-key", lambda plan: {plan: "v"}),
+    ("a-set", lambda plan: {plan}),
+    ("a-frozenset", lambda plan: frozenset({plan})),
+    ("an-instance-dict", _Attributed),
+    ("a-slot", _Slotted),
+    ("an-inherited-slot", lambda plan: _SlottedSubclass(plan, None)),
+    ("nested", lambda plan: _Attributed([{"k": {plan}}])),
+)
+
+
+@pytest.mark.parametrize(
+    "retaining", [pytest.param(shape, id=name) for name, shape in _RETAINING_SHAPES]
+)
+def test_the_reachability_walk_reaches_every_shape_a_plan_could_hide_in(
+    retaining: Callable[[WritePlan], object],
+) -> None:
+    """The negative assertion above is only worth what this walk covers, so each
+    container shape carries a plan the walk must find. ``an-inherited-slot``
+    hides it on the BASE class's slot while the subclass declares its own, which
+    is the shadowing case a type-level ``__slots__`` read misses."""
+    plan = WritePlan()
+    assert _reaches_a_write_plan(retaining(plan))
+
+
+def test_the_reachability_walk_answers_no_for_a_graph_holding_none() -> None:
+    held: list[dict[str, set[object]]] = [{"k": {frozenset[object](), "s", 1}}]
+    assert not _reaches_a_write_plan(_Attributed(held))
+
+
 def test_the_public_surface_offers_no_plan_and_no_flush() -> None:
     exported = set(handle.__all__)
     assert "WritePlan" not in exported
@@ -103,7 +157,11 @@ def _reaches_a_write_plan(value: object, seen: set[int] | None = None) -> bool:
 
     A reachability walk rather than a field check: the claim is that no plan
     SURVIVES the flush that consumed it, which an assertion about the result
-    type's own fields would not catch.
+    type's own fields would not catch. The walk has to cover every shape a
+    reference can hide in — a sequence, a mapping's keys or values, a set, an
+    instance dictionary, and a slot declared anywhere on the MRO — because the
+    assertion it serves is a NEGATIVE one: a container this missed would report
+    the absence it exists to detect.
     """
     seen = set() if seen is None else seen
     if id(value) in seen:
@@ -111,16 +169,31 @@ def _reaches_a_write_plan(value: object, seen: set[int] | None = None) -> bool:
     seen.add(id(value))
     if isinstance(value, WritePlan):
         return True
-    if isinstance(value, (str, bytes, int, float, bool, type(None))):
+    if isinstance(value, (str, bytes, bytearray, int, float, complex, bool, type(None))):
         return False
-    if isinstance(value, Sequence):
-        items = cast("Sequence[object]", value)
+    if isinstance(value, Mapping):
+        entries = cast("Mapping[object, object]", value)
+        return any(_reaches_a_write_plan(item, seen) for entry in entries.items() for item in entry)
+    if isinstance(value, (Sequence, AbstractSet)):
+        items = cast("Iterable[object]", value)
         return any(_reaches_a_write_plan(item, seen) for item in items)
-    declared: Any = getattr(type(value), "__slots__", ())
-    slots = (declared,) if isinstance(declared, str) else tuple(declared)
-    attributes = (*slots, *getattr(value, "__dict__", {}))
     return any(
         _reaches_a_write_plan(getattr(value, name), seen)
-        for name in attributes
+        for name in _reference_names(value)
         if hasattr(value, name)
     )
+
+
+def _reference_names(value: object) -> tuple[str, ...]:
+    """Every attribute name ``value`` can hold a reference under.
+
+    ``__slots__`` is read off each class's own ``__dict__`` along the MRO rather
+    than off the type: a subclass declaring slots of its own SHADOWS the
+    attribute lookup, so a base class's slots would otherwise go unwalked.
+    """
+    names: list[str] = []
+    for cls in type(value).__mro__:
+        declared: Any = cls.__dict__.get("__slots__", ())
+        names.extend((declared,) if isinstance(declared, str) else tuple(declared))
+    names.extend(getattr(value, "__dict__", {}))
+    return tuple(names)

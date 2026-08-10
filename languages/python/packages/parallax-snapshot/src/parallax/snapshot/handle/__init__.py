@@ -38,10 +38,11 @@ public-surface check promises. Where the exported names live:
   refusal of a query whose target the connected model does not declare, raised
   by the shared read-preflight seam and by the write side's target resolution
   alike, :class:`SnapshotConnectionError`, the refusal of a model that names
-  no Entity Class to materialize into, and :class:`SnapshotMaterializationError`,
+  no Entity Class to materialize into, :class:`SnapshotMaterializationError`,
   the one translation of a graph-construction or lifecycle failure at the
-  materialization boundary. All three are defined in a dependency-free leaf so
-  every raiser can name them.
+  materialization boundary, and :class:`UnobservedWriteError`, the refusal of an
+  Observation Key naming nothing this unit of work recorded. All four are
+  defined in a dependency-free leaf so every raiser can name them.
 - :mod:`~parallax.snapshot.handle._features` — :class:`DeferredFeatureError`,
   beside the fixed inventory of Deferred Execution Features it reports and the
   recognizer that matches a canonical operation against them.

@@ -55,10 +55,16 @@ tooling, the language spec must record the gap and name the deeper suite that
 proves the same classification.
 
 Each adapter must also prove the port's failure-instance identity rule
-(`m-db-port`): two failed invocations yield two error objects that are distinct
-while carrying the same category, native code, and message. This obligation needs
+(`m-db-port`). The rule binds every error the port itself raises, so the proof
+must reach every raise site: a statement failure surfaced by `execute`, one
+surfaced by `executeWrite`, and a commit failure surfaced by `transaction`.
+Repeating each site establishes that no site reuses an instance across its own
+invocations, and driving all three over one adapter establishes that no two sites
+share one — a per-site cache satisfies the first and fails the second. Every
+error so raised is distinct while carrying the same category, native code, and
+message. This obligation needs
 no database and belongs wherever the language can drive the adapter over a driver
-that raises one reused exception object for every statement — the input the rule
+that raises one reused exception object for every failure — the input the rule
 exists to stop an adapter from passing on — so a Docker-free structural test
 discharges it, and the language spec names where that proof lives.
 

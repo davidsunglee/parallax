@@ -9,10 +9,11 @@ order, and returns the one
 :class:`~parallax.core.entity.LoweredFindQuery` the caller keeps for the rest of
 that execution.
 
-:func:`preflight_neutral` is the same gate for a caller that has no Find Query to
-lower — a model-neutral read states the two facts lowering would have produced —
-so the neutral entry points are held to the identical three refusals in the
-identical order rather than becoming a second, laxer read door.
+:func:`preflight_neutral` IS that gate, and :func:`preflight_find` is it with a
+lowering step in front: a model-neutral read states the two facts lowering would
+have produced, so a neutral caller supplies them directly. The three refusals and
+their order therefore exist once, and the neutral entry points cannot become a
+second, laxer read door by drifting from a second copy.
 
 The order is the contract, not an implementation detail. Target resolution is
 not redundant with operation validation: a find-all query carries no attribute
@@ -80,29 +81,21 @@ def preflight_find(query: FindQuery[Any, Any], *, model: Metamodel) -> LoweredFi
     demarcation, or materialization.
     """
     lowered = lower_find_query(query)
-    root = model.entity(lowered.target)
-    if root is None:
-        raise QueryTargetError(
-            "the connected model declares no Entity for this query's target "
-            "(query-target-not-in-model)"
-        )
-    validate_operation(root, lowered.operation, model)
-    deferred = deferred_features(lowered.operation)
-    if deferred:
-        raise DeferredFeatureError(deferred)
+    preflight_neutral(lowered.target, lowered.operation, model=model)
     return lowered
 
 
 def preflight_neutral(target: EntityIdentity, operation: Operation, *, model: Metamodel) -> None:
-    """Resolve and validate a model-neutral read against ``model``, and do no I/O.
+    """Resolve and validate an already-lowered read against ``model``, and do no I/O.
 
-    :func:`preflight_find` without the lowering step, because a neutral caller
-    has no Find Query to lower: it supplies the resolved target and the canonical
-    operation directly. The remaining three steps and their ORDER are the same
-    contract — target resolution, then operation validation from that resolved
-    root, then Deferred Execution Feature classification — so a neutral read is
-    refused for the same reason, with the same class, at the same point relative
-    to a participating read's force-flush.
+    The gate itself, entered directly by a caller that has no Find Query to
+    lower: a model-neutral read supplies the resolved target and the canonical
+    operation, which is exactly what lowering produces. Every entry point runs
+    the same three steps in the same ORDER — target resolution, then operation
+    validation from that resolved root, then Deferred Execution Feature
+    classification — so a neutral read is refused for the same reason, with the
+    same class, at the same point relative to a participating read's
+    force-flush.
     """
     root = model.entity(target)
     if root is None:

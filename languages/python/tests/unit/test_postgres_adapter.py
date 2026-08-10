@@ -10,6 +10,7 @@ end-to-end deadlock witness lives in the provider lane.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import cast
 
 import psycopg
@@ -186,24 +187,33 @@ def test_execute_write_reraises_a_driver_error_at_the_boundary() -> None:
     assert exc_info.value.native_code == "40P01"
 
 
-def test_each_failed_call_raises_its_own_error_instance() -> None:
-    # m-db-port failure identity: a driver may hand the same exception object to
-    # every failed statement, but the port translates at the failing call, so two
-    # invocations never share an error instance -- which is what lets a caller (the
-    # Execution Log) tell which invocation the error it caught came from.
-    adapter = _adapter(_FakeConnection(cursor_error=errors.UniqueViolation("dup")))
-    raised: list[DatabaseError] = []
-    for _ in range(2):
-        with pytest.raises(DatabaseError) as exc_info:
-            adapter.execute_write("insert into gauge (v) values (%s)", [1])
-        raised.append(exc_info.value)
-    first, second = raised
-    assert first is not second
-    assert (first.category, first.native_code, first.message) == (
-        second.category,
-        second.native_code,
-        second.message,
+def test_every_failed_port_invocation_raises_its_own_error_instance() -> None:
+    # m-db-port failure identity, over every error the port itself makes: a
+    # statement failure from `execute`, one from `execute_write`, and a commit
+    # failure from `transaction`. The driver here hands back ONE reused exception
+    # object for all of them -- the input the rule exists to stop an adapter
+    # passing on -- so distinctness can only come from translating at the failing
+    # call. Driving all three over one adapter also rules out reuse ACROSS paths,
+    # which a per-path cache would produce while each path alone looked clean.
+    # This is what lets a caller (the Execution Log) tell which invocation the
+    # error it caught came from.
+    driver_error = errors.UniqueViolation("dup")
+    adapter = _adapter(_FakeConnection(cursor_error=driver_error, commit_error=driver_error))
+    invocations: tuple[Callable[[], object], ...] = (
+        lambda: adapter.execute("select 1", []),
+        lambda: adapter.execute_write("insert into gauge (v) values (%s)", [1]),
+        lambda: adapter.transaction(lambda _port: None),
     )
+    raised: list[DatabaseError] = []
+    for invoke in (*invocations, *invocations):
+        with pytest.raises(DatabaseError) as exc_info:
+            invoke()
+        raised.append(exc_info.value)
+
+    assert len({id(error) for error in raised}) == len(raised)
+    assert {(error.category, error.native_code, error.message) for error in raised} == {
+        ("uniqueViolation", "23505", "dup")
+    }
 
 
 def test_transaction_reraises_a_commit_time_driver_error() -> None:
