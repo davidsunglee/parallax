@@ -64,8 +64,12 @@ from parallax.core.sql_gen import compile_read
 # rendering rather than the graph: nine of the eleven carry a graph story
 # (`parallax.conformance.graph_stories`), whose `tests/api/test_story_run.py`
 # case walks the SAME merged graph through the typed developer surface against a
-# real database. `m-inheritance-073` and `-077` carry no story, so for those two
-# nothing in this target grades the graph at all.
+# real database. `m-inheritance-073` and `-077` carry no story and cannot: each
+# needs a path-root guard resolving to two or more concrete subtypes, which the
+# idiomatic surface can only author by reaching a relationship through ONE
+# subtype class — the same permanent non-fit
+# `parallax.conformance.api_suite.CASE_SKIP_REASONS` already records for both
+# ids. So for those two nothing in this target grades the graph at all.
 _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED: Final[frozenset[str]] = frozenset(
     {
         "m-inheritance-065",
