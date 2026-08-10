@@ -13,6 +13,12 @@ what keeps `m-sql` outside the closure of the grant every consumer of the
 row-to-graph surface holds: a forbidden contract is the complement of a closure,
 so a scope that must stay clear of SQL generation has to be granted a scope that
 does not reach it.
+
+Both materializers' results sit here for that one reason: a result PAIRS an
+output with the Read Trace that produced it, and naming the Read Trace is what
+this scope exists to be allowed to do. The neutral output vocabulary itself names
+no provenance and therefore stays in the narrower row-to-graph scope, beside the
+merge both materializers consume.
 """
 
 from __future__ import annotations
@@ -20,11 +26,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from parallax.core.execution_log import ReadTrace
-from parallax.snapshot.materialize import SnapshotGraphInput
+from parallax.snapshot.materialize import NeutralReadOutput, SnapshotGraphInput
 
 __all__ = [
     "FindResult",
     "HistoryFindResult",
+    "NeutralReadResult",
 ]
 
 
@@ -47,4 +54,19 @@ class HistoryFindResult:
     """
 
     graphs: tuple[SnapshotGraphInput, ...]
+    execution: ReadTrace
+
+
+@dataclass(frozen=True, slots=True)
+class NeutralReadResult:
+    """A model-neutral read's materialized output plus its Read Trace.
+
+    The neutral peer of the typed :class:`~parallax.snapshot.handle.Snapshot`:
+    ``output`` is whichever form the request selected — rows, one graph, or one
+    graph per milestone — already eager, detached, and immutable. For a
+    PARTICIPATING read ``execution`` is the same trace object the transaction's
+    current attempt records, exactly as it is for a typed one.
+    """
+
+    output: NeutralReadOutput
     execution: ReadTrace

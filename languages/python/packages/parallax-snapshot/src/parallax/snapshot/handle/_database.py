@@ -2,7 +2,9 @@
 
 The composition root's own module: :meth:`Database.connect` wires a concrete
 ``m-db-port`` adapter to a metamodel, :meth:`Database.find` runs the shared read
-executor once outside any transaction, and :meth:`Database.transact` is the
+executor once outside any transaction, :meth:`Database.read_neutral` runs the
+same executor into the model-neutral form for a caller that composed no Entity
+Class, and :meth:`Database.transact` is the
 callback demarcation — sentinel-backed options, join with the option-conflict
 check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
 into the unit of work.
@@ -91,9 +93,12 @@ from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
 from parallax.snapshot.handle._preflight import preflight_find
 from parallax.snapshot.handle._read import (
+    NeutralReadRequest,
+    NeutralReadResult,
     Snapshot,
     find,
     find_history,
+    read_neutral,
     snapshot_from_find_result,
     snapshot_from_history_result,
 )
@@ -323,6 +328,25 @@ class Database:
             return snapshot_from_history_result(history_result, self._meta, construction)
         find_result = find(op, self._meta, self._dialect, target, self._port)
         return snapshot_from_find_result(find_result, self._meta, construction)
+
+    def read_neutral(self, request: NeutralReadRequest) -> NeutralReadResult:
+        """Execute ``request`` exactly once outside any transaction, materializing
+        fully into the model-neutral form it selected.
+
+        The neutral peer of :meth:`find`, over the SAME executor: same
+        canonicalization, same compilation, same Database Call, same deep-fetch
+        loop, same conversion — the materializer is chosen only once execution has
+        finished. What differs is what a caller must have. :meth:`find` needs a
+        class-backed model to materialize into, and this needs none, which is why
+        a ``Database`` connected to a bare accepted Metamodel answers this and
+        refuses that.
+
+        Non-transactional, exactly as :meth:`find` is: no read lock, no
+        participation mode, and no observation record — a read with no unit of
+        work behind it has nothing to observe into, so its nodes carry no
+        Observation Key.
+        """
+        return read_neutral(request, self._meta, self._dialect, self._port)
 
     def transact[T](
         self,

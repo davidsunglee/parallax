@@ -28,7 +28,12 @@ from __future__ import annotations
 
 from typing import Final
 
-__all__ = ["QueryTargetError", "SnapshotConnectionError", "SnapshotMaterializationError"]
+__all__ = [
+    "QueryTargetError",
+    "SnapshotConnectionError",
+    "SnapshotMaterializationError",
+    "UnobservedWriteError",
+]
 
 
 class SnapshotConnectionError(ValueError):
@@ -69,6 +74,25 @@ class SnapshotMaterializationError(RuntimeError):
     def __init__(self, message: str, *, cause: BaseException) -> None:
         super().__init__(message)
         self.cause = cause
+
+
+class UnobservedWriteError(LookupError):
+    """A neutral write named an Observation Key this unit of work never filed.
+
+    An Observation Key is a REFERENCE into the transaction's own observation
+    record, so ``tx.write_neutral`` dereferences it at the call rather than
+    carrying it to planning: the defect is about what was read, and letting the
+    write settle bare would surface it at flush as a licensing failure about what
+    is being written — the wrong cause, one layer too late.
+
+    A ``LookupError`` because that is what it is: the key resolved to nothing.
+    Distinct from the `m-opt-lock` licensing refusals, which report that a
+    settled write lacks evidence it structurally requires, rather than that a
+    caller's reference missed. :data:`code` and the message are its whole public
+    state; the key itself is not retained.
+    """
+
+    code: Final[str] = "write-observation-not-recorded"
 
 
 class QueryTargetError(RuntimeError):

@@ -397,7 +397,22 @@ def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[E
 def run_read_case(
     case: case_format.Case, dialect_name: str, port: DbPort
 ) -> tuple[list[Emission], list[Row], int, ReadTrace]:
-    """Execute a read case through ``port`` and record its emissions and observed rows.
+    """Run a row-form read case through the production neutral read seam.
+
+    The whole lane is ``db.read_neutral`` / ``tx.read_neutral``: canonicalization,
+    compilation, the read-lock suffix, the Database Call, `familyVariant`
+    materialization, and the round-trip count are all production's, and what is
+    left here is wire rendering and the case's own routing. A row this adapter
+    reports is the row production materialized, not a row this adapter
+    re-derived from the operation a second time.
+
+    A case declaring an in-transaction participation mode is RUN in one
+    (`m-read-lock` "an in-transaction object find that intends to write acquires
+    a shared row lock"): the lock suffix comes from the transaction's own
+    resolved concurrency, exactly as it does for a developer's ``tx.find``,
+    rather than from a lock this lane asked a compiler for while executing
+    outside any boundary. Begin and commit reach the database but are no Database
+    Call, so the round trips a locking case reports are the read's alone.
 
     The adapter returns **managed** Python values (``Decimal``, ``datetime``,
     ``UUID``, ``bytes``, …); the conformance harness grades in **wire space**, so
@@ -405,39 +420,44 @@ def run_read_case(
     serialization the ``m-db-port`` boundary fixes, keeping the adapter free of any
     wire/grading logic and the observation envelope JSON-serializable.
 
-    An **abstract-target** inheritance read (m-case-format / m-sql)
-    additionally materializes `familyVariant` into each wire row through the
-    compiled read's own `~parallax.core.sql_gen.CompiledRead.transform_row`: a
-    table-per-hierarchy read derives it from the projected raw tag column via
-    the tag-metadata map (the tag column itself is popped, never left on the
-    wire row); a table-per-concrete-subtype read renames its projected
-    `family_variant` literal column. A concrete-target (or
-    single-resolved-position TPCS) read carries neither and transforms by
-    identity. The lane is therefore exactly compile -> execute -> transform:
-    `m-sql` decided at COMPILE time what each row needs, so this adapter never
-    re-derives it from the operation.
-
-    Wire rendering FOLLOWS the transform, because a transform may itself produce
-    a managed value: a Relational Document Layout read projects one Structured
-    Column and fans it out into members decoded by their declared Neutral Type
-    (`m-sql`), so a `timestamp` member arrives here as a `datetime` exactly as
-    the same member does when it is a column of its own. Rendering first would
-    hand the wire that member's document spelling instead, making one logical
-    value observably different under the two layouts. Every other transform
-    leaves each value as it found it, so the order is behavior-identical for
-    every read that carries no document.
+    Wire rendering FOLLOWS production's own row transform, because that transform
+    may itself produce a managed value: a Relational Document Layout read projects
+    one Structured Column and fans it out into members decoded by their declared
+    Neutral Type (`m-sql`), so a `timestamp` member arrives here as a `datetime`
+    exactly as the same member does when it is a column of its own. Rendering
+    first would hand the wire that member's document spelling instead, making one
+    logical value observably different under the two layouts.
     """
-    compiled = _compile_statement(case, dialect_name)
-    statement = compiled.statement
-    dialect = dialect_for(dialect_name)
-    # The call is bracketed into a production Read Trace rather than counted
-    # locally, so the round trips this lane reports and the provenance it reports
-    # are one record (`m-execution-log`).
-    trace = TraceRecorder()
-    managed = _execute_reads(port, dialect, (statement,), trace)
-    emission = Emission("/operation", statement.sql, statement.binds)
-    rows = [wire_row(compiled.transform_row(row)) for row in managed]
-    return [emission], rows, 1, trace.read_trace()
+    target, operation_doc = _read_target_and_operation(case)
+    meta = load_case_metamodel(case)
+    model = case_model(meta)
+    db = handle.Database(port, model, dialect=dialect_for(dialect_name))
+    concurrency = _read_case_concurrency(case)
+    try:
+        entity = case_entity(model, meta.entity(target))
+        request = handle.NeutralReadRequest.rows(
+            target=entity.identity, operation=deserialize(operation_doc)
+        )
+        result = (
+            db.read_neutral(request)
+            if concurrency is None
+            else db.transact(lambda tx: tx.read_neutral(request), concurrency=concurrency).value
+        )
+    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+        raise EngineError(f"{case.path.name}: {exc}") from exc
+    rows = result.output
+    if not isinstance(rows, handle.NeutralRows):  # pragma: no cover - a rows request answers rows
+        raise EngineError(f"{case.path.name}: a row-form read answered {type(rows).__name__}")
+    emissions = [
+        Emission("/operation", call.statement.sql, call.statement.binds)
+        for call in result.execution.calls
+    ]
+    return (
+        emissions,
+        [wire_row(row) for row in rows],
+        result.execution.round_trips,
+        result.execution,
+    )
 
 
 def _driver_binds(binds: Sequence[object]) -> list[object]:
@@ -5161,6 +5181,11 @@ def _wire_completion(
     return {"failed": {"category": completion.category}}
 
 
-def wire_row(row: Row) -> Row:
-    """Render every managed value of one observed row to canonical wire form."""
+def wire_row(row: Mapping[str, object]) -> Row:
+    """Render every managed value of one observed row to canonical wire form.
+
+    Takes any mapping, because the two sources differ in kind: a table-state read
+    hands over the driver's own row, and a neutral read hands over the immutable
+    one production materialized.
+    """
     return {key: wire_value(value) for key, value in row.items()}
