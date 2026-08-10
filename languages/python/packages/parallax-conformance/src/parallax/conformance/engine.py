@@ -1204,8 +1204,10 @@ def _refuse_unaccounted_document_milestone(
     no authored member can produce, this tracker never re-reads, and the framework
     issues no resolving read on behalf of a keyed write — so the successor such a
     write chains would be patched onto declared members alone and drop whatever
-    those statements left in the document. Naming the shape is the only answer
-    that cannot be silently wrong.
+    those statements MAY have left in the document. Whether they touched this
+    milestone at all is not knowable from a naive ``sql`` string, so the doubt
+    alone refuses: naming the shape is the only answer that cannot be silently
+    wrong.
 
     Which milestone the write addresses is what decides it
     (:meth:`~parallax.conformance.temporal_state.TemporalShadow.accounts_for`),
@@ -1223,10 +1225,10 @@ def _refuse_unaccounted_document_milestone(
         return
     raise EngineError(
         f"a keyed temporal write on {entity_name!r} addresses a milestone this case's own "
-        f"out-of-band statements overtook, and its document-resident members are stored in the "
-        f"shared Structured Column {column!r} — this lane observes the milestone from tracked "
-        "case state, which never saw what those statements stored, so the successor it chains "
-        "would lose whatever else that document holds"
+        f"out-of-band statements may have overtaken or stored, and its document-resident members "
+        f"are stored in the shared Structured Column {column!r} — this lane observes the "
+        "milestone from tracked case state, which never saw what those statements stored, so "
+        "the successor it chains would lose whatever else that document holds"
     )
 
 
@@ -2038,7 +2040,10 @@ def _lower_resolved(
     (:meth:`TemporalShadow.track_opened`) — the milestone a later choreography
     unit observes is the one this write actually plans, so there is no second
     expansion of the same topology to drift from it. The close's retirement
-    happened at resolution, where the observation it consumed is known.
+    happened at resolution, where the observation it consumed is known. Both
+    advances belong to the boundary the caller stages them on
+    (:meth:`TemporalShadow.staged`), so a doomed unit's are discarded with its
+    rows.
     """
     buffer = [_buffered(write.instruction, write.oracle_observation) for write in resolved]
     model = case_model(meta)
@@ -3155,7 +3160,10 @@ def _run_uow_group(
     of the group's own write steps dooms the WHOLE group, which then runs on the
     aborting port, so the boundary's finalization flush still puts the buffered
     DML on the wire before the provider rolls it back (the `m-unit-work` abort
-    contract applied to the group rather than to one step).
+    contract applied to the group rather than to one step). The group's case-state
+    advances are staged on that same outcome
+    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.staged`): visible
+    to the group's own later steps, discarded with the rows when it aborts.
 
     Its own find rows are graded elsewhere, so the read output each find step
     answers is discarded here.
@@ -3179,7 +3187,7 @@ def _run_uow_group(
             step, _output = _run_group_step(tx, context, state, steps[index], index, tx_instant)
             lowered.append(step)
 
-    with contextlib.suppress(_RollbackStep):
+    with context.shadow.staged(doomed=doomed), contextlib.suppress(_RollbackStep):
         database.transact(body, concurrency=context.concurrency)
     # The group's own Execution Log — the production record of what this ONE
     # transaction did, which is where the `execution` observation and this
@@ -3319,8 +3327,10 @@ def _run_interleaved_group(
     shares (`_run_uow_group`'s own convention) — safe here ONLY because
     `m-opt-lock-012`'s own witnessed model is entirely NON-temporal (the
     tracker is never mutated for these instructions, so two threads never
-    contend on it); a genuinely temporal interleaved case would need its own
-    per-group tracking discipline, unwitnessed and out of scope.
+    contend on it, and this group's own abort has nothing to discard). A
+    genuinely temporal interleaved case would need its own per-group tracking
+    discipline — the contiguous runner's whole-tracker staging cannot serve two
+    groups advancing at once — unwitnessed and out of scope.
 
     Every OWN find step's observed rows land in ``result.rows`` (keyed by
     scenario step index): the caller's own
@@ -4005,8 +4015,8 @@ def run_scenario_case(
         _seed_shadow_from_fixtures(case, meta, shadow)
         # After the fixtures and before the first step, exactly where every other
         # lane applies it (:func:`_apply_given_apply`). The tracker is deliberately
-        # not re-seeded from it — it records which milestones the statements
-        # overtook instead. A predicate write resolves through a real read that
+        # not re-seeded from it — it records which milestones the statements may
+        # have overtaken instead. A predicate write resolves through a real read that
         # sees whatever they wrote; a keyed write's observation stays case state,
         # and where that state can no longer be the whole stored row the write is
         # refused rather than silently rebuilt
@@ -4072,13 +4082,14 @@ def run_scenario_case(
             else:
                 entries = _write_entries(raw_write)
                 tx_instant = _entry_instant(entries[0])
-                resolved = _resolve_entries(entries, meta, shadow, [])
-                statements = _lower_resolved(
-                    resolved, entries, meta, dialect, concurrency, tx_instant, shadow
-                )
-                write_log = _execute_write_unit(
-                    port, meta, dialect, concurrency, resolved, tx_instant, rollback=rollback
-                )
+                with shadow.staged(doomed=rollback):
+                    resolved = _resolve_entries(entries, meta, shadow, [])
+                    statements = _lower_resolved(
+                        resolved, entries, meta, dialect, concurrency, tx_instant, shadow
+                    )
+                    write_log = _execute_write_unit(
+                        port, meta, dialect, concurrency, resolved, tx_instant, rollback=rollback
+                    )
                 round_trips += write_log.round_trips if write_log is not None else 0
                 lowered.append(_LoweredStep(f"/scenario/{index}/write", statements, True, rollback))
             index += 1
@@ -4186,7 +4197,7 @@ def _apply_given_apply(
     unforgettable: every executor of a shape ``given.apply`` is admitted on —
     conflict, writeSequence, and each of the three scenario executors — runs the
     statements through this one function, so no lane can leave a tracker claiming
-    a whole account of a row one of them has since overtaken."""
+    a whole account of a row one of them may since have overtaken."""
     given = case.document.get("given")
     if not isinstance(given, Mapping):
         return
