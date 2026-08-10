@@ -291,16 +291,44 @@ alone (`tests/compatibility/test_run_sweep.py._CHILD_LEVEL_GRAPH_SHAPE_DEFERRED`
 (`parallax.conformance.graph_stories`), so `tests/api/test_story_run.py` still
 walks the same merged graph through the typed developer surface against a real
 database, and only the wire rendering goes ungraded. `m-inheritance-073` and
-`-077` carry no story, so no Python gate observes their graph at all until this
-entry is settled. The reference harness proves the goldens self-consistent
-against fixture data; it grades no language implementation, so it covers none of
-this.
+`-077` carry no story, and cannot: each needs a path-root guard resolving to two
+or more concrete subtypes (`to: [Cat, Dog]` for both, plus `to: [Pet]` for `-073`
+and `to: [Dog, WildBoar]` for `-077`), and the idiomatic developer surface
+authors a path-root guard only by reaching an inherited relationship through ONE
+subtype class (`Dog.owner`) — `FindQuery._root_guard` and
+`RelationshipPath.source` (`parallax.core.entity._query`, `._expressions`) admit
+no multi-subtype union. This is not an unwritten story but the same structural
+non-fit `parallax.conformance.api_suite.CASE_SKIP_REASONS` already records for
+both ids (`_ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON`), so no Python
+gate observes their graph at all, and none can be added in this shape. The
+reference harness proves the goldens self-consistent against fixture data; it
+grades no language implementation, so it covers none of this either.
+
+**What COR-83 does not settle.** COR-83 ("Stream deep fetch reads at fixed
+memory") is likely to remove the graph-level node-uniqueness requirement
+(`parallax.snapshot.materialize._merge`) so each route in memory carries its own
+full deep-fetch tree. That bears on divergence (c) alone — one logical row
+reached twice sharing a node and truncating to a primary-key stub
+(`parallax.conformance.engine._render_node`'s `visiting` recursion anchor) — and
+only on `m-inheritance-078`, the one case among the eleven whose graph is an
+actual back-reference cycle rather than two independent views of the same row
+(`m-snapshot-read-012`'s diamond renders its shared row in full at both
+positions; nothing there is ever truncated). Divergences (a) and (b) are decided
+upstream of any merge — by `convert_row`'s per-row, per-concrete-entity
+narrowing (`parallax.snapshot.materialize._convert:227-231`) and by
+`_family_variant`'s per-node, per-concrete-entity spelling
+(`parallax.snapshot.materialize._neutral:365-377`) — and neither reads whether
+the resulting node was merged with another, so removing the merge leaves all
+nine (a)/(b) cases diverging exactly as they do now. `m-inheritance-078` itself
+carries an (a) mismatch in its own `pets` child level besides its (c) cycle, so
+even it would not go green on the merge change alone. D-67 therefore survives
+COR-83 and still needs the `m-case-format` reconciliation it names.
 
 ### D-68 — The conformance adapter still reads the descriptor record graph, which has no public door
 
-*Low — an enumerated, guarded reach rather than an unbounded one.* Relates to
-`parallax.descriptor`, `spec/python.md` §7 and *Metamodel serde ownership*, and
-`parallax.conformance.models` / `.engine` / `.provision`.
+*Low — an enumerated, guarded reach with a named owner, not an open-ended
+deferral.* Relates to `parallax.descriptor`, `spec/python.md` §7 and *Metamodel
+serde ownership*, and `parallax.conformance.models` / `.engine` / `.provision`.
 
 **What.** COR-93 removed every private-attribute reach-through and every private
 runtime seam from `parallax-conformance`. What remains is the descriptor
@@ -325,6 +353,25 @@ Publishing the record graph is a permanent `parallax-descriptor` API decision
 with its own spec amendment and `public_api.json` diff; converting the engine's
 ~40 record-graph sites onto the accepted Metamodel is a second, independent
 change. Neither belongs to a phase whose subject is the read lane.
+
+**Owner.** COR-93's Phase F takes the conversion: `models.py`, `engine.py`, and
+`provision.py`'s descriptor record-graph consumers move onto the accepted-model
+vocabulary. It is gated on one new narrow public accessor on
+`parallax.descriptor` that returns raw inheritance-family structure
+(participants and root) as plain data, rather than
+`validate_inheritance_families`'s `None`-or-raise contract:
+`parallax.descriptor._family.family_of`, reached at `engine.py:4426` and
+`:4454`, needs family membership for a document that may never form — one of
+the four inline `rejected` models above — and every other record-graph reach
+cascades off establishing that path first. `another_source.py`'s two
+`parallax.core.entity` reaches (`model_of`, `lower_find_query`) are expected to
+be REBUTTED rather than converted: `model_of` is documented as a first-party
+runtime seam, and both names are already in production's own
+`ACCEPTED_PRIVATE_ENTITY_REACHES`
+(`tests/unit/test_frontend_contraction_guards.py`, for the composition root and
+the read preflight respectively), so a third, development-only consumer of the
+same two seams is not a reason to widen `parallax.core.entity`'s shipped
+surface.
 
 ## Forwarding pointers
 
