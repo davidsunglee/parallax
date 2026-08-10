@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from _sql_gen_support import model as corpus_model
+from _corpus_model_support import model as corpus_model
 
 from parallax.core import pk_gen
 from parallax.core.metamodel import (

@@ -13,7 +13,7 @@ the private-module split must preserve.
 from __future__ import annotations
 
 import pytest
-from _sql_gen_support import formed, model, target
+from _corpus_model_support import formed, model, target
 
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES

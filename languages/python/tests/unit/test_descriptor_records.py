@@ -4,7 +4,7 @@ declarations, and the family-root ancestry walk (``declaring_entity``)."""
 from __future__ import annotations
 
 import pytest
-from _sql_gen_support import corpus_records
+from _corpus_model_support import corpus_records
 
 from parallax.descriptor import _records
 from parallax.descriptor._records import (

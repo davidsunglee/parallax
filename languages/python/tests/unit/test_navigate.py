@@ -14,8 +14,8 @@ the rewritten operation straight to `compile_read` only to assert the FRAGMENT
 from __future__ import annotations
 
 import pytest
-from _sql_gen_support import formed, target
-from _sql_gen_support import model as accepted_model
+from _corpus_model_support import formed, target
+from _corpus_model_support import model as accepted_model
 
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES

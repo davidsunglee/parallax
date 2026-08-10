@@ -21,9 +21,9 @@ import uuid
 from typing import Any, cast
 
 import pytest
+from _corpus_model_support import formed
+from _corpus_model_support import model as corpus_model
 from _snapshot_graph_support import documents_of, identity_of
-from _sql_gen_support import formed
-from _sql_gen_support import model as corpus_model
 
 from parallax.core.base import (
     BOOLEAN,

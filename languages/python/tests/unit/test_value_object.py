@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
+from _corpus_model_support import model as corpus_model
 from _metamodel_support import Declaration, identity, key, source
-from _sql_gen_support import model as corpus_model
 
 from parallax.core import value_object as vo
 from parallax.core._formation_profile import form_metamodel

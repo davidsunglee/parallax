@@ -23,9 +23,9 @@ from collections.abc import Sequence
 
 import pytest
 from _corpus_identity_support import corpus_object_key
+from _corpus_model_support import corpus_records, formed
+from _corpus_model_support import model as corpus_model
 from _metamodel_support import Declaration, attribute, identity, key, source
-from _sql_gen_support import corpus_records, formed
-from _sql_gen_support import model as corpus_model
 
 from _support.clock_probes import CountingClock, inert_instant, instant_at
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer

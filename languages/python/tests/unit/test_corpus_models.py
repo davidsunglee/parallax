@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from _sql_gen_support import corpus_records
+from _corpus_model_support import corpus_records
 
 from parallax.conformance import case_format
 from parallax.conformance import models as corpus_models

@@ -13,9 +13,9 @@ here is over the returned `FetchPlan` / `FetchLevel` shape alone.
 from __future__ import annotations
 
 import pytest
-from _sql_gen_support import formed
-from _sql_gen_support import model as accepted_model
-from _sql_gen_support import target as entity_of
+from _corpus_model_support import formed
+from _corpus_model_support import model as accepted_model
+from _corpus_model_support import target as entity_of
 
 from parallax.core import deep_fetch
 from parallax.core.metamodel import (

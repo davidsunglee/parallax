@@ -19,7 +19,7 @@ from collections.abc import Callable
 from typing import Literal, cast
 
 import pytest
-from _sql_gen_support import model, target
+from _corpus_model_support import model, target
 
 from _support import fake_metamodel
 from parallax.core import inheritance, relationship, storage_layout
