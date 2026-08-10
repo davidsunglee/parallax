@@ -4431,7 +4431,8 @@ def _default_family_root(model: AcceptedMetamodel) -> EntityMetadata | None:
 
 
 def _first_declared_entity(case: case_format.Case) -> str:
-    """The Entity a case's model document declares FIRST.
+    """The canonical spelling of the Entity a case's model document declares
+    FIRST.
 
     `m-case-format` fixes the default target of a case naming none as the
     family root, "else — when it declares no family at all — its own first
@@ -4439,11 +4440,17 @@ def _first_declared_entity(case: case_format.Case) -> str:
     Entities canonically, so the authored order survives nowhere else and two
     corpus models (``person``, ``shared-local-name``) resolve to a different
     entity under each reading.
+
+    The ORDER is the document's; the SPELLING is canonical
+    (:func:`~parallax.conformance.models.declared_entity_spellings`), because a
+    convention resolving a target the case never named must land on the Entity
+    it selected rather than re-enter the bare-name rule that adjudicates an
+    AUTHORED reference.
     """
-    names = models.declared_entity_names(models.read_document(_case_model_path(case)))
-    if not names:  # pragma: no cover - a formed model declares at least one entity
+    spellings = models.declared_entity_spellings(models.read_document(_case_model_path(case)))
+    if not spellings:  # pragma: no cover - a formed model declares at least one entity
         raise EngineError(f"{case.path.name}: the case's model declares no entity")
-    return names[0]
+    return spellings[0]
 
 
 def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
@@ -4456,13 +4463,18 @@ def _conflict_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     :func:`_rejected_target` resolves to for the REJECTED lane's DIFFERENT
     default-target convention — this resolves to the family's SOLE concrete
     subtype (every reachable temporal-inheritance conflict model declares
-    exactly one)."""
+    exactly one).
+
+    Reported by CANONICAL spelling, like every default this lane resolves: the
+    subtype is selected by Identity here, so reducing it to a bare local name
+    would hand a resolved selection back to the ambiguity rule that adjudicates
+    an authored reference."""
     root = _default_family_root(model)
     if root is None:
         return _first_declared_entity(case)
     view = inheritance.view(model).entity(root.identity)
     concretes = sorted(
-        identity.name for identity in (() if view is None else view.concrete_subtypes)
+        identity.canonical for identity in (() if view is None else view.concrete_subtypes)
     )
     if len(concretes) != 1:
         raise EngineError(  # pragma: no cover - no witnessed conflict model is ambiguous
@@ -5188,10 +5200,17 @@ def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     `when.write` case it is the entity `validate_write` checks the payload
     against — the same "no explicit handle, so resolve the model's default
     write/read root" convention, reused rather than restated.
+
+    Reported by CANONICAL spelling: the root arrives here as accepted Metadata,
+    so its Identity is already resolved, and spelling it bare would put a
+    selection the case never authored back through the ambiguity rule that
+    adjudicates an authored one — where a local name two namespaces share
+    resolves to nothing and a local name an ownerless sibling also carries
+    resolves to that sibling.
     """
     root = _default_family_root(model)
     if root is not None:
-        return root.identity.name
+        return root.identity.canonical
     return _first_declared_entity(case)
 
 
