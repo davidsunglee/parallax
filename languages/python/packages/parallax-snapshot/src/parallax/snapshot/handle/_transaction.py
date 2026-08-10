@@ -49,10 +49,11 @@ from parallax.core.entity import (
 )
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution_log import AttemptRecorder, ExecutionLog
-from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     KeyedMutation,
+    KeyedWrite,
     ObservationKey,
     PredicateWrite,
     UnitOfWork,
@@ -697,26 +698,53 @@ class Transaction:
         model, so it precedes validation: an instruction and an evidence
         argument that cannot go together are answered before either is measured.
 
-        Both shapes then reach
-        :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
-        is what makes this ingress classify an instruction exactly as the typed
-        verbs do — the keyed verbs through ``_buffer``, the ``_where`` verbs
-        through :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`'s
-        own step 5 — rather than leaving a predicate-selected caller to
-        pre-validate for itself.
+        Each shape then reaches the SAME judgments its typed peer does, which is
+        what makes this ingress classify an instruction exactly as the typed
+        verbs do rather than leave a class-less caller to pre-validate for
+        itself. A predicate-selected instruction reaches
+        :func:`~parallax.core.unit_work.instructions.validate_instruction`, the
+        whole of what the ``_where`` verbs measure through
+        :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`'s
+        own step 5. A KEYED instruction reaches the model-aware
+        :func:`~parallax.core.unit_work.validate_write` per row and THEN that
+        same member-name honesty gate, in the order and for the reason
+        ``_buffer`` states: the inheritance payload-shape rules classify a
+        framework-owned metadata key or a cross-branch field more specifically
+        than the honesty gate ever could, so they run first and the gate catches
+        whatever they left unexamined.
         """
-        if isinstance(instruction, PredicateWrite) and observation is not None:
-            raise TypeError(
-                "a predicate-selected write resolves its own per-row evidence and takes "
-                "no observation; buffer the keyed writes it materializes to instead"
-            )
-        instructions.validate_instruction(instruction, self._meta)
         if isinstance(instruction, PredicateWrite):
+            if observation is not None:
+                raise TypeError(
+                    "a predicate-selected write resolves its own per-row evidence and takes "
+                    "no observation; buffer the keyed writes it materializes to instead"
+                )
+            instructions.validate_instruction(instruction, self._meta)
             buffer_predicate_instruction(
                 self._uow, self._meta, self._conn, self._dialect, instruction, self._attempt
             )
             return
+        self._validate_keyed_rows(instruction)
+        instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(buffered_write(instruction, self._resolved_observation(observation)))
+
+    def _validate_keyed_rows(self, instruction: KeyedWrite) -> None:
+        """Judge every row of a neutral keyed instruction against the model, the
+        way ``_buffer`` judges the one row a typed verb built.
+
+        A spelling naming no single declared Entity is left entirely to
+        :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
+        owns that classification and refuses it immediately after this returns:
+        a row judgment presupposes the target whose members it is measured
+        against, so an unresolvable target has no row question to answer, and
+        answering it here would report a member complaint about an Entity the
+        model does not have.
+        """
+        entity = entity_by_name(self._meta, instruction.entity)
+        if entity is None:
+            return
+        for row in instruction.rows:
+            validate_write(entity, row, self._meta, mutation=instruction.mutation)
 
     def _resolved_observation(
         self, observation: ObservationKey | WriteObservation | None

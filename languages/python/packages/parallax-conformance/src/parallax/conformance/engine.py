@@ -1164,6 +1164,11 @@ def _refuse_document_layout_milestone(model: AcceptedMetamodel, entity_name: str
     this model does not declare, and would spell an absent Value Object occurrence
     the same way as an empty one the document distinguished. Naming the shape is
     the only answer that cannot be silently wrong.
+
+    This is the find-derived half of one policy;
+    :func:`_refuse_out_of_band_document_milestone` is the tracker-derived half,
+    which refuses on a narrower trigger because a tracked milestone IS the whole
+    stored document as long as the case authored every key in it.
     """
     column = _shared_document_column(model, entity_name)
     if column is None:
@@ -1173,6 +1178,43 @@ def _refuse_document_layout_milestone(model: AcceptedMetamodel, entity_name: str
         f"members are stored in the shared Structured Column {column!r} — the milestone this "
         "engine reconstructs from a neutral node carries declared members only, and a successor "
         "patched from it would lose whatever else that document holds"
+    )
+
+
+def _refuse_out_of_band_document_milestone(
+    model: AcceptedMetamodel, entity_name: str, shadow: TemporalShadow
+) -> None:
+    """Refuse a keyed temporal write over a Relational Document Layout target
+    whose observation would be rebuilt from a tracker that out-of-band statements
+    have already invalidated.
+
+    The peer of :func:`_refuse_document_layout_milestone` for the lanes that take
+    their milestone from tracked case state rather than from a find — every
+    writeSequence entry and every scenario write step not settling against a
+    grouped find. Under ``Columns`` the tracked members ARE the whole stored row.
+    Under ``Document`` they are the whole stored document too, but only while
+    every key in it came from this case's own fixtures and authored writes: a
+    fixture row is authored member by member, and a successor this engine tracked
+    was built from the plan that wrote it.
+
+    Out-of-band statements are exactly what breaks that. They exist to store what
+    no authored member can produce, this tracker never re-reads, and the framework
+    issues no resolving read on behalf of a keyed write — so the successor such a
+    write chains would be patched onto declared members alone and drop whatever
+    those statements left in the document. Naming the shape is the only answer
+    that cannot be silently wrong.
+    """
+    if not shadow.saw_out_of_band_write:
+        return
+    column = _shared_document_column(model, entity_name)
+    if column is None:
+        return
+    raise EngineError(
+        f"a keyed temporal write on {entity_name!r} follows this case's own out-of-band "
+        f"statements, and its document-resident members are stored in the shared Structured "
+        f"Column {column!r} — this lane observes the milestone from tracked case state, which "
+        "never saw what those statements stored, so the successor it chains would lose whatever "
+        "else that document holds"
     )
 
 
@@ -1255,9 +1297,12 @@ def _build_temporal_instruction(
     the milestone ``shadow`` tracks for this key (`m-txtime-write` /
     `m-bitemp-write` "the engine supplies observed rows from case state" — never
     an implicit resolving read), which is how every writeSequence entry and every
-    ungrouped scenario write resolves. Given one, the entry's own step named a
-    find of its `uow` group with ``on``, and the evidence is the Observation Key
-    the active unit of work filed that node under (:func:`_settled_against_source`).
+    ungrouped scenario write resolves; a target whose tracked milestone can no
+    longer account for the whole stored row is refused first
+    (:func:`_refuse_out_of_band_document_milestone`). Given one, the entry's own
+    step named a find of its `uow` group with ``on``, and the evidence is the
+    Observation Key the active unit of work filed that node under
+    (:func:`_settled_against_source`).
 
     The corpus and canonical instruction share the same ``validFrom`` / ``until``
     spelling. Bounds are instruction-level fields; temporal row payloads never
@@ -1306,6 +1351,7 @@ def _build_temporal_instruction(
     evidence: WriteEvidence = None
     if not is_insert and not is_coalescing_candidate:
         if source is None:
+            _refuse_out_of_band_document_milestone(model, entity_name, shadow)
             observation = shadow.resolve(model, entity_metadata, row)
             evidence = observation
         else:
@@ -2970,18 +3016,57 @@ def _source_find_milestones(
     return milestones
 
 
+@dataclass(frozen=True, slots=True)
+class _GroupContext:
+    """What a scenario's translation is fixed by, for every step of every `uow`
+    group it runs.
+
+    The two model views describe one descriptor (:func:`case_model`), and the
+    tracker is the ONE case-spanning :class:`TemporalShadow` every group shares
+    rather than a per-group copy — a later group's temporal close observes the
+    milestone an earlier group's write opened. The record is frozen because none
+    of the five is ever REBOUND mid-scenario; the tracker's own contents advance,
+    which is exactly the state a shared tracker exists to carry.
+    """
+
+    meta: Metamodel
+    model: AcceptedMetamodel
+    dialect: Dialect
+    concurrency: Concurrency
+    shadow: TemporalShadow
+
+
+def _empty_group_observations() -> GroupObservations:
+    return []
+
+
+def _empty_group_finds() -> dict[int, ObservedNodes]:
+    return {}
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupState:
+    """What ONE `uow` group accumulates as its own steps run, and nothing wider.
+
+    Both halves are the same evidence read two ways: ``observations`` is the flat
+    run every write of the group settles against by object identity, and
+    ``finds`` keys the same nodes by the step that observed them, which is what a
+    write step naming a find with ``on`` addresses (`m-case-format` *Settling
+    against a grouped find*). They are built fresh per group — never a
+    scenario-wide store — so evidence never crosses a transaction boundary.
+    """
+
+    observations: GroupObservations = field(default_factory=_empty_group_observations)
+    finds: dict[int, ObservedNodes] = field(default_factory=_empty_group_finds)
+
+
 def _run_group_step(
     tx: handle.Transaction,
-    meta: Metamodel,
-    model: AcceptedMetamodel,
-    dialect: Dialect,
-    concurrency: Concurrency,
-    shadow: TemporalShadow,
+    context: _GroupContext,
+    state: _GroupState,
     step: Mapping[str, object],
     index: int,
     tx_instant: str,
-    group_observations: GroupObservations,
-    group_finds: dict[int, ObservedNodes],
 ) -> tuple[_LoweredStep, handle.NeutralReadOutput | None]:
     """One `uow` group step, inside the group's own open transaction — the ONE
     interpreter both group runners share, contiguous span and interleaved index
@@ -2996,20 +3081,26 @@ def _run_group_step(
     force-flushes any pending buffered write, takes the transaction's own read
     lock, records what a later write settles against, and brackets its own Read
     Trace, exactly as a real ``Transaction.find`` does — and publishes what it
-    observed into ``group_observations`` and ``group_finds``, both of which this
-    function extends in place.
+    observed into both halves of ``state``, which this function extends in place.
 
     Returns the step's lowered emission pointer, and a find step's own read
     output beside it: what a caller does with the rows it returned — grade them,
     ignore them — is the caller's affair, and is the only thing the two runners
     still do differently.
     """
+    meta, model = context.meta, context.model
     if "write" in step:
         entries = _write_entries(step["write"])
-        source = _source_find_milestones(step, index, group_finds)
-        resolved = _resolve_entries(entries, meta, shadow, group_observations, source)
+        source = _source_find_milestones(step, index, state.finds)
+        resolved = _resolve_entries(entries, meta, context.shadow, state.observations, source)
         statements = _lower_resolved(
-            resolved, entries, meta, dialect, concurrency, tx_instant, shadow
+            resolved,
+            entries,
+            meta,
+            context.dialect,
+            context.concurrency,
+            tx_instant,
+            context.shadow,
         )
         for write in resolved:
             _buffer_execution_instruction(tx, meta, model, write)
@@ -3024,8 +3115,8 @@ def _run_group_step(
         handle.NeutralReadRequest.graph(target=entity.identity, operation=operation)
     )
     observed = _observed_nodes(meta, model, entity.identity.canonical, read.output)
-    group_finds[index] = observed
-    group_observations.extend(observed)
+    state.finds[index] = observed
+    state.observations.extend(observed)
     return _LoweredStep(
         f"/scenario/{index}/find", _trace_statements(read), False, False
     ), read.output
@@ -3033,10 +3124,7 @@ def _run_group_step(
 
 def _run_uow_group(
     port: DbPort,
-    meta: Metamodel,
-    dialect: Dialect,
-    concurrency: Concurrency,
-    shadow: TemporalShadow,
+    context: _GroupContext,
     steps: Sequence[Mapping[str, object]],
     start: int,
     end: int,
@@ -3058,12 +3146,13 @@ def _run_uow_group(
     """
     tx_instant = _group_tx_instant(steps, start, end)
     doomed = _group_is_doomed(steps, start, end)
-    group_observations: GroupObservations = []
-    group_finds: dict[int, ObservedNodes] = {}
+    state = _GroupState()
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
-    model = case_model(meta)
     database = handle.Database(
-        _write_port(port, rollback=doomed), model, dialect=dialect, clock=FixedClock(instant)
+        _write_port(port, rollback=doomed),
+        context.model,
+        dialect=context.dialect,
+        clock=FixedClock(instant),
     )
     lowered: list[_LoweredStep] = []
     logs: list[ExecutionLog] = []
@@ -3071,23 +3160,11 @@ def _run_uow_group(
     def body(tx: handle.Transaction) -> None:
         logs.append(tx.execution_log)
         for index in range(start, end + 1):
-            step, _output = _run_group_step(
-                tx,
-                meta,
-                model,
-                dialect,
-                concurrency,
-                shadow,
-                steps[index],
-                index,
-                tx_instant,
-                group_observations,
-                group_finds,
-            )
+            step, _output = _run_group_step(tx, context, state, steps[index], index, tx_instant)
             lowered.append(step)
 
     with contextlib.suppress(_RollbackStep):
-        database.transact(body, concurrency=concurrency)
+        database.transact(body, concurrency=context.concurrency)
     # The group's own Execution Log — the production record of what this ONE
     # transaction did, which is where the `execution` observation and this
     # group's round trips come from rather than from a second count this lane
@@ -3185,10 +3262,7 @@ class _InterleavedGroupResult:
 
 def _run_interleaved_group(
     database: handle.Database,
-    meta: Metamodel,
-    dialect: Dialect,
-    concurrency: Concurrency,
-    shadow: TemporalShadow,
+    context: _GroupContext,
     steps: Sequence[Mapping[str, object]],
     indices: Sequence[int],
     turnstile: _Turnstile,
@@ -3225,8 +3299,8 @@ def _run_interleaved_group(
     callback's own Python code finished): the OTHER group's next step must
     observe that commit for real, never a same-process illusion of one.
 
-    ``shadow`` is the SAME single :class:`TemporalShadow` every group shares
-    (`_run_uow_group`'s own convention) — safe here ONLY because
+    ``context`` carries the SAME single :class:`TemporalShadow` every group
+    shares (`_run_uow_group`'s own convention) — safe here ONLY because
     `m-opt-lock-012`'s own witnessed model is entirely NON-temporal (the
     tracker is never mutated for these instructions, so two threads never
     contend on it); a genuinely temporal interleaved case would need its own
@@ -3241,9 +3315,7 @@ def _run_interleaved_group(
     result that the contiguous runner does not.
     """
     lowered: dict[int, _LoweredStep] = {}
-    group_observations: GroupObservations = []
-    group_finds: dict[int, ObservedNodes] = {}
-    model = case_model(meta)
+    state = _GroupState()
     logs: list[ExecutionLog] = []
 
     def body(tx: handle.Transaction) -> None:
@@ -3252,26 +3324,16 @@ def _run_interleaved_group(
             turnstile.wait_for(index)
             is_last = position == len(indices) - 1
             lowered[index], output = _run_group_step(
-                tx,
-                meta,
-                model,
-                dialect,
-                concurrency,
-                shadow,
-                steps[index],
-                index,
-                _INERT_CLOCK_INSTANT,
-                group_observations,
-                group_finds,
+                tx, context, state, steps[index], index, _INERT_CLOCK_INSTANT
             )
             if output is not None:
-                result.rows[index] = _graph_rows(model, output)
+                result.rows[index] = _graph_rows(context.model, output)
             if not is_last:
                 turnstile.advance()
 
     committed = False
     try:
-        database.transact(body, concurrency=concurrency)
+        database.transact(body, concurrency=context.concurrency)
         committed = True
     except OptimisticLockConflictError as exc:
         result.conflict_actual = exc.actual
@@ -3824,14 +3886,15 @@ def run_interleaved_scenario_case(
     turnstile = _Turnstile()
     result_a = _InterleavedGroupResult(lowered={})
     result_b = _InterleavedGroupResult(lowered={})
+    context = _GroupContext(meta, model, dialect, concurrency, shadow)
     thread_a = threading.Thread(
         target=_run_interleaved_group,
-        args=(main_db, meta, dialect, concurrency, shadow, steps, indices_a, turnstile, result_a),
+        args=(main_db, context, steps, indices_a, turnstile, result_a),
         name=f"uow-{label_a}",
     )
     thread_b = threading.Thread(
         target=_run_interleaved_group,
-        args=(peer_db, meta, dialect, concurrency, shadow, steps, indices_b, turnstile, result_b),
+        args=(peer_db, context, steps, indices_b, turnstile, result_b),
         name=f"uow-{label_b}",
     )
     try:
@@ -3917,6 +3980,7 @@ def run_scenario_case(
             "function does not construct — call run_interleaved_scenario_case instead"
         )
     span_start_labels = {start: label for label, (start, _end) in spans.items()}
+    context = _GroupContext(meta, model, dialect, concurrency, shadow)
     lowered: list[_LoweredStep] = []
     group_logs: list[ExecutionLog | None] = []
     round_trips = 0
@@ -3924,18 +3988,19 @@ def run_scenario_case(
         _seed_shadow_from_fixtures(case, meta, shadow)
         # After the fixtures and before the first step, exactly where the
         # write-sequence and conflict lanes apply it (:func:`_apply_given_apply`).
-        # The shadow is deliberately not re-seeded from it: a keyed write's own
-        # observation is case state, while a predicate write resolves through a
-        # real read that sees whatever this wrote.
-        _apply_given_apply(case, dialect, port)
+        # The tracker is deliberately not re-seeded from it — it records that the
+        # statements ran instead. A predicate write resolves through a real read
+        # that sees whatever they wrote; a keyed write's observation stays case
+        # state, and where that state can no longer be the whole stored row the
+        # write is refused rather than silently rebuilt
+        # (:func:`_refuse_out_of_band_document_milestone`).
+        _apply_given_apply(case, dialect, port, shadow)
         index = 0
         while index < len(steps):
             label = span_start_labels.get(index)
             if label is not None:
                 start, end = spans[label]
-                group_lowered, group_log = _run_uow_group(
-                    port, meta, dialect, concurrency, shadow, steps, start, end
-                )
+                group_lowered, group_log = _run_uow_group(port, context, steps, start, end)
                 lowered.extend(group_lowered)
                 group_logs.append(group_log)
                 round_trips += group_log.round_trips if group_log is not None else 0
@@ -4018,6 +4083,13 @@ def run_write_sequence_case(
     The table read-back is the `m-conformance-adapter` write-sequence observation
     ("write-sequence cases report ``tableState``"): the runner grades it against
     the case's ``then.tableState``. Observation reads are not case round trips.
+
+    ``given.apply`` is applied after the case's own fixture provisioning and
+    before the first entry (`m-case-format` admits it on a writeSequence): the
+    state it stands for — a row a concurrent writer removed, a stored document
+    key no authored member of this model can produce — is state the FIRST entry
+    already writes against, so applying it later than that would grade the
+    sequence against a table the case never described.
     """
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
@@ -4028,6 +4100,7 @@ def run_write_sequence_case(
     round_trips = 0
     try:
         _seed_shadow_from_fixtures(case, meta, shadow)
+        _apply_given_apply(case, dialect, port, shadow)
         for index, entry in enumerate(_write_sequence_entries(case)):
             tx_instant = _entry_instant(entry)
             resolved = _resolve_entries([entry], meta, shadow, group_observations)
@@ -4080,21 +4153,29 @@ def read_table_state(
 # conflict case tests ONLY the close, under an address and a gate the case     #
 # names EXPLICITLY rather than derives from an observation.                    #
 # --------------------------------------------------------------------------- #
-def _apply_given_apply(case: case_format.Case, dialect: Dialect, port: DbPort) -> None:
+def _apply_given_apply(
+    case: case_format.Case, dialect: Dialect, port: DbPort, shadow: TemporalShadow
+) -> None:
     """Apply a case's out-of-band ``given.apply`` naive statements VERBATIM,
-    immediately (never inside our own transaction).
+    immediately (never inside our own transaction), and tell ``shadow`` they ran.
 
     They stand for a writer this unit of work is not: a CONCURRENT transaction
     that already committed, so its effect must survive our own eventual rollback
     (a stale-version conflict), or a newer application version that stored state
     no authored member of this model could produce (a Structured Column key the
-    model declares nowhere)."""
+    model declares nowhere).
+
+    Marking the tracker here rather than at each lane is what makes the mark
+    unforgettable: every lane that can run out-of-band statements runs them
+    through this one function, so no lane can leave a tracker claiming to hold
+    the whole stored row after one did."""
     given = case.document.get("given")
     if not isinstance(given, Mapping):
         return
     entries = cast("Mapping[str, object]", given).get("apply")
     if not isinstance(entries, list):
         return
+    shadow.note_out_of_band_write()
     for entry in cast("list[Mapping[str, object]]", entries):
         sql = cast("str", entry["sql"])
         binds = cast("list[object]", entry.get("binds", []))
@@ -4703,7 +4784,7 @@ def run_conflict_case(
     round_trips = 0
     logs: list[ExecutionLog | None] = []
     try:
-        _apply_given_apply(case, dialect, port)
+        _apply_given_apply(case, dialect, port, shadow)
         raw_attempts = when.get("attempts")
         attempts: list[tuple[str, Mapping[str, object]]] = (
             [

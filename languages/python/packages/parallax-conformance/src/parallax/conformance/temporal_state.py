@@ -91,10 +91,30 @@ class TemporalShadow:
     that names an observed edge address exactly the milestone it observed.
     """
 
-    __slots__ = ("_current",)
+    __slots__ = ("_current", "_out_of_band")
 
     def __init__(self) -> None:
         self._current: dict[_ObjectKey, TemporalObservation] = {}
+        self._out_of_band = False
+
+    @property
+    def saw_out_of_band_write(self) -> bool:
+        """Whether state this tracker never observed has been written to the
+        tables it shadows.
+
+        A milestone it holds is still ADDRESSABLE afterwards — the key and the
+        edge are the case's own — but it is no longer a complete account of the
+        stored row, and a consumer that rebuilds a row rather than merely
+        addressing one has to answer for the difference."""
+        return self._out_of_band
+
+    def note_out_of_band_write(self) -> None:
+        """Record that statements outside this tracker's own accounting ran
+        against the tables it shadows (`m-case-format` ``given.apply``).
+
+        One-way: the tracker never re-reads, so nothing it holds can be
+        re-established as complete once such a statement has run."""
+        self._out_of_band = True
 
     def seed_fixtures(
         self, model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
