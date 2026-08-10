@@ -6,6 +6,15 @@ keyed verbs (``insert`` / ``update`` / ``delete`` and the typed
 temporal-window family), the participating :meth:`Transaction.find`, and the
 neutral ``_buffer`` instruction seam every keyed verb shares.
 
+It also owns the MODEL-NEUTRAL pair, :meth:`Transaction.read_neutral` and
+:meth:`Transaction.write_neutral`, which a caller holding no Entity Class uses in
+place of the typed verbs. They are not a second lifecycle: the neutral read
+enters the same force-flush, lock derivation, observation recording, and Read
+Trace bracket ``find`` does, and the neutral write enters the same
+``buffered_write`` carrier decision, the same buffer, and the same flush triggers
+the keyed verbs do — one step later, on an instruction already built rather than
+on an instance to derive one from.
+
 The predicate-selected ``_where`` family is NOT owned here: those six methods —
 the five public verbs plus the frozen ``_buffer_predicate_instruction`` seam the
 conformance engine calls — are thin delegates that thread
@@ -49,6 +58,7 @@ from parallax.core.unit_work import (
     ObservationKey,
     PredicateWrite,
     UnitOfWork,
+    WriteInstruction,
     WriteObservation,
     buffered_write,
     instructions,
@@ -60,7 +70,7 @@ from parallax.core.unit_work import (
 # by the private MODULE names and by the package's frozen `__all__`, not by
 # per-name underscores, which under pyright strict would make every intra-package
 # import a reportPrivateUsage error.
-from parallax.snapshot.handle._errors import SnapshotConnectionError
+from parallax.snapshot.handle._errors import SnapshotConnectionError, UnobservedWriteError
 from parallax.snapshot.handle._family import declaring as declaring_of
 from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
@@ -68,9 +78,12 @@ from parallax.snapshot.handle._predicate_writes import (
 )
 from parallax.snapshot.handle._preflight import preflight_find
 from parallax.snapshot.handle._read import (
+    NeutralReadRequest,
+    NeutralReadResult,
     Snapshot,
     find,
     find_history,
+    read_neutral,
     snapshot_from_find_result,
     snapshot_from_history_result,
 )
@@ -78,6 +91,7 @@ from parallax.snapshot.handle._write_inputs import (
     ReadObservations,
     WrittenObject,
     metadata_of_instance,
+    observation_keying,
     record_observations,
     source_edge,
     source_pin,
@@ -112,6 +126,12 @@ class Transaction:
     its owning scope ends raises
     :class:`~parallax.core.unit_work.EscapedTransactionError` (every verb
     delegates to the unit of work, which fences use-after-scope).
+
+    :meth:`read_neutral` and :meth:`write_neutral` are the same two capabilities
+    for a caller with no Entity Class: a read that participates exactly as
+    :meth:`find` does and publishes each node's Observation Key, and the one
+    neutral write ingress, which takes an already-decoded instruction plus the
+    evidence it settles against.
     """
 
     __slots__ = (
@@ -597,6 +617,117 @@ class Transaction:
             )
         record_observations(self._uow, self._meta, observations)
         return snapshot_from_find_result(find_result, self._meta, construction)
+
+    def read_neutral(self, request: NeutralReadRequest) -> NeutralReadResult:
+        """Run a PARTICIPATING neutral read and return its materialized output.
+
+        The neutral peer of :meth:`find`, and participating in exactly the same
+        four ways: it force-flushes pending writes first (read-your-own-writes),
+        renders the transaction's own read-lock suffix from its participation
+        mode, records what a later write settles against, and appends its Read
+        Trace to this attempt in the position that states the read-dependency
+        causality. A caller with no Entity Class therefore gets the same
+        transaction semantics a typed reader gets, not a weaker read path beside
+        them.
+
+        Each materialized node additionally publishes the Observation Key its
+        evidence was filed under, which is how a class-less caller settles a
+        later :meth:`write_neutral` against the row this read actually saw
+        rather than against a key it reconstructed. A row-form request records
+        no evidence and publishes no key (`_read.read_neutral`).
+        """
+        lock = read_lock.mode_for(self._uow.settings.concurrency)
+        observations = ReadObservations()
+        # The bracket opens BEFORE the force-flush, exactly as `find`'s does, so
+        # a dependency batch lands immediately before the trace it enabled.
+        with self._attempt.read_trace() as recorder:
+            result = self._uow.read(
+                lambda: read_neutral(
+                    request,
+                    self._meta,
+                    self._dialect,
+                    self._conn,
+                    lock=lock,
+                    observations=observations,
+                    recorder=recorder,
+                    observed=observation_keying(self._meta),
+                )
+            )
+        record_observations(self._uow, self._meta, observations)
+        return result
+
+    def write_neutral(
+        self,
+        instruction: WriteInstruction,
+        *,
+        observation: ObservationKey | WriteObservation | None = None,
+    ) -> None:
+        """Buffer an already-decoded write instruction — the ONE neutral runtime
+        write ingress.
+
+        The neutral peer of the typed verbs, entered one step later: a typed verb
+        derives an instruction from an instance and resolves that instance's own
+        observation, and this takes both already built. Everything downstream is
+        identical — the same carrier decision
+        (:func:`~parallax.core.unit_work.buffered_write`), the same unit of work,
+        the same planner, the same flush triggers. There is no neutral write on
+        ``Database`` and no developer-controlled flush: a buffered write executes
+        only when production semantics require a dependency batch or the outer
+        boundary's finalization.
+
+        ``observation`` states the evidence three ways, and only three.
+        An :class:`~parallax.core.unit_work.ObservationKey` resolves IMMEDIATELY
+        and exactly against this unit of work — a key naming no recorded
+        observation raises
+        :class:`~parallax.snapshot.handle._errors.UnobservedWriteError` here, at
+        the call that supplied it, rather than settling to a bare write whose
+        refusal would surface at flush naming the wrong cause. A
+        :class:`~parallax.core.unit_work.WriteObservation` is evidence a caller
+        holds directly and is used as given. ``None`` buffers bare, which is what
+        an insert and an unobserved target need.
+
+        A predicate-selected instruction carries no observation of its own — it
+        materializes to a Materialized Write Group with its own observation
+        columns — so supplying one with a
+        :class:`~parallax.core.unit_work.PredicateWrite` is refused rather than
+        silently dropped.
+        """
+        if isinstance(instruction, PredicateWrite):
+            if observation is not None:
+                raise TypeError(
+                    "a predicate-selected write resolves its own per-row evidence and takes "
+                    "no observation; buffer the keyed writes it materializes to instead"
+                )
+            buffer_predicate_instruction(
+                self._uow, self._meta, self._conn, self._dialect, instruction, self._attempt
+            )
+            return
+        instructions.validate_instruction(instruction, self._meta)
+        self._uow.buffer(buffered_write(instruction, self._resolved_observation(observation)))
+
+    def _resolved_observation(
+        self, observation: ObservationKey | WriteObservation | None
+    ) -> WriteObservation | None:
+        """The evidence a neutral write settles against, resolving a KEY here.
+
+        A key is a reference into this unit of work's own observation record, so
+        it is dereferenced at the call rather than carried to planning: an
+        unresolvable key is a caller error about what was read, and reporting it
+        at flush would report it as a licensing failure about what is being
+        written. The unit of work's own scope fence answers first, so a key used
+        after its transaction ended raises as the escaped reference it is.
+        """
+        if not isinstance(observation, ObservationKey):
+            return observation
+        resolved = self._uow.observation_for(observation)
+        if resolved is None:
+            raise UnobservedWriteError(
+                "no observation is recorded in this unit of work for "
+                f"{observation.object_key.entity.canonical} under the milestone this key "
+                "names; a neutral write settles against evidence a read of THIS "
+                "transaction recorded"
+            )
+        return resolved
 
     def _buffer(
         self,

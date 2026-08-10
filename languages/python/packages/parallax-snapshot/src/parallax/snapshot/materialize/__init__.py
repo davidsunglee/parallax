@@ -15,12 +15,16 @@ produce and consume it.
   driver answered a level's statement with.
 - :mod:`~parallax.snapshot.materialize._merge` collapses duplicate projections
   into one deterministic allocation order, holding integers and references only.
+- :mod:`~parallax.snapshot.materialize._neutral` turns one merge into class-free
+  nodes and views — the second materializer, a peer of the typed one rather than
+  a wrapper of it.
 
 Nothing here constructs an Entity: this scope is granted the shared carrier
 algebra (``parallax.core.entity._graph_input``) and nothing else of the Entity
 frontend, so the layering between graph input and graph construction is
-structurally enforced rather than asserted. Its consumer —
-``parallax.snapshot.handle._materializer`` — composes the two.
+structurally enforced rather than asserted. Its consumers —
+``parallax.snapshot.handle._materializer`` and the neutral materializer above —
+each compose it with what their own result form needs.
 
 It never imports ``m-sql`` / ``m-dialect``: `familyVariant` materialization and
 each row's resolved concrete Entity are `m-sql`-owned, carried by the compiled
@@ -59,6 +63,20 @@ from parallax.snapshot.materialize._merge import (
     MergedRelationshipView,
     merge_graph_input,
 )
+from parallax.snapshot.materialize._neutral import (
+    NeutralGraph,
+    NeutralGraphs,
+    NeutralNode,
+    NeutralNodeView,
+    NeutralReadOutput,
+    NeutralRelationshipView,
+    NeutralRows,
+    NeutralValue,
+    ObservationKeying,
+    neutral_graph,
+    neutral_graphs,
+    neutral_rows,
+)
 
 __all__ = [
     "SNAPSHOT_DECODING_FAILED",
@@ -68,6 +86,15 @@ __all__ = [
     "MergeScope",
     "MergedNode",
     "MergedRelationshipView",
+    "NeutralGraph",
+    "NeutralGraphs",
+    "NeutralNode",
+    "NeutralNodeView",
+    "NeutralReadOutput",
+    "NeutralRelationshipView",
+    "NeutralRows",
+    "NeutralValue",
+    "ObservationKeying",
     "RelationshipViewKey",
     "SnapshotDecodingError",
     "SnapshotGraphInput",
@@ -78,6 +105,9 @@ __all__ = [
     "convert_row",
     "logical_key",
     "merge_graph_input",
+    "neutral_graph",
+    "neutral_graphs",
+    "neutral_rows",
     "observable_columns",
     "validate_graph_input",
 ]

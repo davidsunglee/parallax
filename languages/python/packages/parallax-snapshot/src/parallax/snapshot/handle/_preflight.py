@@ -9,6 +9,11 @@ order, and returns the one
 :class:`~parallax.core.entity.LoweredFindQuery` the caller keeps for the rest of
 that execution.
 
+:func:`preflight_neutral` is the same gate for a caller that has no Find Query to
+lower — a model-neutral read states the two facts lowering would have produced —
+so the neutral entry points are held to the identical three refusals in the
+identical order rather than becoming a second, laxer read door.
+
 The order is the contract, not an implementation detail. Target resolution is
 not redundant with operation validation: a find-all query carries no attribute
 reference anywhere, so operation validation would never observe an undeclared
@@ -46,12 +51,12 @@ from __future__ import annotations
 from typing import Any
 
 from parallax.core.entity._query import FindQuery, LoweredFindQuery, lower_find_query
-from parallax.core.metamodel import Metamodel
-from parallax.core.op_algebra import validate_operation
+from parallax.core.metamodel import EntityIdentity, Metamodel
+from parallax.core.op_algebra import Operation, validate_operation
 from parallax.snapshot.handle._errors import QueryTargetError
 from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features
 
-__all__ = ["preflight_find"]
+__all__ = ["preflight_find", "preflight_neutral"]
 
 
 def preflight_find(query: FindQuery[Any, Any], *, model: Metamodel) -> LoweredFindQuery:
@@ -86,3 +91,26 @@ def preflight_find(query: FindQuery[Any, Any], *, model: Metamodel) -> LoweredFi
     if deferred:
         raise DeferredFeatureError(deferred)
     return lowered
+
+
+def preflight_neutral(target: EntityIdentity, operation: Operation, *, model: Metamodel) -> None:
+    """Resolve and validate a model-neutral read against ``model``, and do no I/O.
+
+    :func:`preflight_find` without the lowering step, because a neutral caller
+    has no Find Query to lower: it supplies the resolved target and the canonical
+    operation directly. The remaining three steps and their ORDER are the same
+    contract — target resolution, then operation validation from that resolved
+    root, then Deferred Execution Feature classification — so a neutral read is
+    refused for the same reason, with the same class, at the same point relative
+    to a participating read's force-flush.
+    """
+    root = model.entity(target)
+    if root is None:
+        raise QueryTargetError(
+            "the connected model declares no Entity for this read's target "
+            "(query-target-not-in-model)"
+        )
+    validate_operation(root, operation, model)
+    deferred = deferred_features(operation)
+    if deferred:
+        raise DeferredFeatureError(deferred)

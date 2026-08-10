@@ -30,6 +30,15 @@ milestone's as-of coordinates across that conversion. Those helpers stay here
 rather than moving to the write side: `_write_inputs` imports this module, so
 the reverse edge would close a cycle.
 
+One executor, two materializers. :func:`snapshot_from_find_result` and
+:func:`neutral_from_find_result` are PEERS over the same
+:class:`~parallax.snapshot.materialize.GraphMerge`: which one runs is chosen
+after execution has already finished, neither calls the other, and the typed path
+constructs no ``Neutral*`` value. :func:`find_rows` is the values lane's own
+degenerate case — the transformed row IS the representation, so it publishes the
+neutral result directly and shares with :func:`find` exactly the canonicalization,
+compilation, and call recording that decide behavior.
+
 What a find EXECUTED is `m-execution-log`'s vocabulary, not this module's: each
 call is bracketed into a
 :class:`~parallax.core.execution_log.TraceRecorder`, whose sealed Read Trace is
@@ -47,7 +56,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from parallax.core import deep_fetch, inheritance, op_algebra
 from parallax.core.db_error import DatabaseError
@@ -65,29 +74,40 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
-from parallax.core.temporal_read import Edge, Pin, milestone_edge, statement_pin
-from parallax.snapshot._read_result import FindResult, HistoryFindResult
+from parallax.core.temporal_read import Edge, Pin, milestone_edge, scans_an_axis, statement_pin
+from parallax.snapshot._read_result import FindResult, HistoryFindResult, NeutralReadResult
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
+from parallax.snapshot.handle._preflight import preflight_neutral
 from parallax.snapshot.materialize import (
     LevelContext,
     MergeScope,
+    NeutralGraph,
+    ObservationKeying,
     RelationshipViewKey,
     SnapshotNodeRef,
     attribute_value,
     convert_row,
+    merge_graph_input,
+    neutral_graph,
+    neutral_graphs,
+    neutral_rows,
     observable_columns,
 )
 
 __all__ = [
     "FindResult",
     "HistoryFindResult",
+    "NeutralReadRequest",
+    "NeutralReadResult",
     "NoResultFound",
     "ObservationCollector",
     "Snapshot",
     "TooManyResultsFound",
     "find",
     "find_history",
+    "find_rows",
+    "read_neutral",
 ]
 
 
@@ -308,6 +328,86 @@ def find(
 
     pin = deep_fetch_statement_pin(op, declaring_metadata(meta, root_entity.identity))
     return FindResult(graph=scope.build(root_refs, pin), execution=calls.read_trace())
+
+
+@dataclass(frozen=True, slots=True)
+class NeutralReadRequest:
+    """What a model-neutral read asks for: a resolved position and the canonical
+    operation to run from it, plus the result form to materialize into.
+
+    The neutral analogue of a LOWERED Find Query rather than of a Find Query: a
+    caller with no Entity Class has no clause builder to lower, so it states the
+    two facts lowering would have produced. Everything downstream — canonical
+    root as-of injection, per-hop navigation canonicalization, deep-fetch
+    planning, compilation, execution, and conversion — is the same production
+    path a typed read takes.
+
+    ``form`` selects the projection lane `m-sql` fixes at compile time:
+    :meth:`rows` is the values lane (scalars only, one statement, no graph), and
+    :meth:`graph` is the object lane (value-object documents projected too, one
+    query per non-empty relationship level). A ``graph`` request whose operation
+    SCANS an as-of axis answers the milestone-set form instead, exactly as
+    ``db.find`` does.
+    """
+
+    target: EntityIdentity
+    operation: op_algebra.Operation
+    form: Literal["rows", "graph"]
+
+    @classmethod
+    def rows(cls, *, target: EntityIdentity, operation: op_algebra.Operation) -> NeutralReadRequest:
+        """A row-form request: production's transformed rows, in result order."""
+        return cls(target=target, operation=operation, form="rows")
+
+    @classmethod
+    def graph(
+        cls, *, target: EntityIdentity, operation: op_algebra.Operation
+    ) -> NeutralReadRequest:
+        """A graph-form request: one neutral graph, or one per milestone for a
+        scanning read."""
+        return cls(target=target, operation=operation, form="graph")
+
+
+def find_rows(
+    op: op_algebra.Operation,
+    meta: Metamodel,
+    dialect: Dialect,
+    target: str,
+    port: DbPort,
+    *,
+    lock: LockMode | None = None,
+    recorder: TraceRecorder | None = None,
+) -> NeutralReadResult:
+    """The row-form read: one statement, its rows transformed, no graph.
+
+    The values lane has no representation-neutral graph stage to publish, because
+    the transformed ROW is already the representation — so this returns the
+    neutral result directly rather than a graph input a materializer converts.
+    What it shares with :func:`find` is everything that decides behavior: the
+    same canonical root operation (`deep_fetch.plan` injects the as-of predicate
+    and canonicalizes navigation for both lanes), the same
+    :func:`~parallax.core.sql_gen.compile_read` with the lane selected by
+    ``result_form``, and the same recorded Database Call.
+
+    A row-form read materializes no relationships, so a request carrying
+    deep-fetch levels is refused here rather than silently dropping them.
+    """
+    root_entity = _metadata(meta, target)
+    plan_ = deep_fetch.plan(root_entity, op, meta)
+    if plan_.levels:
+        raise ValueError(
+            "a row-form read materializes no relationships, so it carries no deep-fetch "
+            "levels; request the graph form to materialize a related level"
+        )
+    compiled = compile_read(
+        plan_.root_operation, meta, dialect, root_entity, result_form="row", lock=lock
+    )
+    calls = recorder if recorder is not None else TraceRecorder()
+    rows = execute_read(port, dialect, compiled.statement, calls)
+    return NeutralReadResult(
+        output=neutral_rows(compiled.transform_row(row) for row in rows),
+        execution=calls.read_trace(),
+    )
 
 
 def find_history(
@@ -699,6 +799,77 @@ def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -
     """
     pin_op = op.operand if isinstance(op, op_algebra.DeepFetch) else op
     return statement_pin(pin_op, entity)
+
+
+def read_neutral(
+    request: NeutralReadRequest,
+    meta: Metamodel,
+    dialect: Dialect,
+    port: DbPort,
+    *,
+    lock: LockMode | None = None,
+    observations: ObservationCollector | None = None,
+    recorder: TraceRecorder | None = None,
+    observed: ObservationKeying | None = None,
+) -> NeutralReadResult:
+    """Run one neutral read and materialize it into the form ``request`` selected.
+
+    The one dispatch both neutral entry points share, so ``db.read_neutral`` and
+    ``tx.read_neutral`` differ only in what they pass: locking, the observation
+    collector, the attempt's trace recorder, and the Observation Key rule — the
+    same four things that separate ``db.find`` from ``tx.find``.
+
+    The shared read gate runs first and unconditionally
+    (:func:`~parallax.snapshot.handle._preflight.preflight_neutral`), so a
+    neutral read is refused exactly where a typed one is — before any SQL, and on
+    a participating read before the force-flush that would otherwise turn a
+    refused read into a write.
+
+    A row-form read records NO observation even when a collector is supplied: the
+    values lane projects scalars only, so a Predecessor Row read off it would be
+    incomplete under Relational Document Layout, and `m-unit-work` requires a
+    complete one. A participating caller that needs evidence requests the graph
+    form, which is the form ``tx.find`` itself always runs.
+    """
+    preflight_neutral(request.target, request.operation, model=meta)
+    target = request.target.canonical
+    op = request.operation
+    if request.form == "rows":
+        return find_rows(op, meta, dialect, target, port, lock=lock, recorder=recorder)
+    if scans_an_axis(op):
+        history = find_history(op, meta, dialect, target, port, recorder=recorder)
+        return neutral_from_history_result(history, meta, observed=observed)
+    result = find(
+        op, meta, dialect, target, port, lock=lock, observations=observations, recorder=recorder
+    )
+    return neutral_from_find_result(result, meta, observed=observed)
+
+
+def neutral_from_find_result(
+    result: FindResult, meta: Metamodel, *, observed: ObservationKeying | None = None
+) -> NeutralReadResult:
+    """``result``'s graph as class-free nodes and views — the PEER of
+    :func:`snapshot_from_find_result`, not a wrapper of it.
+
+    Both run the same :func:`~parallax.snapshot.materialize.merge_graph_input`
+    over the same executor's own graph input, and neither calls the other: which
+    materializer runs is decided after execution has already finished, so a typed
+    read constructs no ``Neutral*`` value and a neutral read constructs no Entity.
+    """
+    graph = neutral_graph(merge_graph_input(result.graph, meta), meta, observed=observed)
+    return NeutralReadResult(output=graph, execution=result.execution)
+
+
+def neutral_from_history_result(
+    result: HistoryFindResult, meta: Metamodel, *, observed: ObservationKeying | None = None
+) -> NeutralReadResult:
+    """``result``'s per-milestone graphs as the neutral milestone-set output,
+    each carrying its own edge pin, in the executor's chronological order."""
+    graphs: list[NeutralGraph] = [
+        neutral_graph(merge_graph_input(graph, meta), meta, observed=observed)
+        for graph in result.graphs
+    ]
+    return NeutralReadResult(output=neutral_graphs(graphs), execution=result.execution)
 
 
 def snapshot_from_find_result(

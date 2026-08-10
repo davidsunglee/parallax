@@ -2705,6 +2705,28 @@ or descriptor authoring form and performs no audit stamping.
   A participating `tx.find` shares its `ReadTrace` object with the attempt that
   issued it, so `snapshot.execution` and `tx.execution_log` never disagree about
   what a level cost.
+- **The model-neutral seam.** A caller holding no Entity Class reaches the same
+  executor through `db.read_neutral(request)`, `tx.read_neutral(request)`, and
+  `tx.write_neutral(instruction, *, observation=None)`, exported from
+  `parallax.snapshot.handle` beside `Database` and `Transaction` together with
+  the `Neutral*` result vocabulary and `ObservationKey`. A `NeutralReadRequest`
+  states the two facts lowering a Find Query would have produced — the resolved
+  target and the canonical operation — and selects the row or graph form;
+  everything after it is the typed path's own: the same read gate, the same
+  canonicalization and compilation, the same Database Call, the same deep-fetch
+  loop, and, on `tx.read_neutral`, the same force-flush, read-lock derivation,
+  observation recording, and Read Trace bracket. The two materializers are peers
+  chosen only once execution has finished, so a typed read constructs no
+  `Neutral*` value. Each neutral node publishes the `ObservationKey` its evidence
+  was filed under, and `tx.write_neutral` dereferences such a key immediately —
+  a key naming no recorded observation raises `UnobservedWriteError`
+  (`write-observation-not-recorded`) at the call rather than settling bare.
+  `Database(port, accepted_metamodel)` is the advanced connection this surface is
+  reachable through; `Database.connect(...)` still admits only a class-backed
+  Domain Model. There is no `connect_neutral`, `plan_neutral`, `compile_neutral`,
+  neutral write on `Database`, or public flush: runtime returns and retains no
+  `WritePlan`, and a buffered write executes only when a dependency batch or the
+  outer boundary's finalization requires it.
 - **Nesting, ownership, and participation mode.** A `db.transact` call while
   a transaction is already active on the current thread **joins** it, but only
   through the exact `Database` object that opened the boundary. The outermost

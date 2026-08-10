@@ -21,7 +21,10 @@ plus the observation machinery a read leaves behind for it:
   :class:`~parallax.core.unit_work.MaterializedWriteGroup`
   (:func:`is_no_op_assignment`, :func:`key_column_values`,
   :func:`predecessor_payload`), which share their payload extraction with
-  :func:`record_observations` through the module-local ``_row_payload``.
+  :func:`record_observations` through the module-local ``_row_payload``;
+* the same slot rule answered for a materialized NODE rather than a row
+  (:func:`observation_keying`), which is how a neutral read publishes the
+  Observation Key a class-less caller settles a later write against.
 
 Semantic family facts come from the accepted Metamodel and its facets, resolved
 through :mod:`parallax.snapshot.handle._family` (the declaring root,
@@ -57,6 +60,7 @@ from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._declaration import declaration_of
 from parallax.core.entity._entity import wire_names_of
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     EntityMetadata,
@@ -67,11 +71,12 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.storage_layout import EntityLayoutView
-from parallax.core.temporal_read import Edge, Latest, Pin
+from parallax.core.temporal_read import Edge, Latest, Pin, milestone_edge_of
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     KeyedMutation,
     ObjectKey,
+    ObservationKey,
     PredecessorRow,
     TemporalObservation,
     UnitOfWork,
@@ -91,6 +96,7 @@ from parallax.snapshot.handle._family import (
     tx_time_axis,
     version_attribute,
 )
+from parallax.snapshot.materialize import ObservationKeying
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
@@ -101,6 +107,7 @@ __all__ = [
     "is_no_op_assignment",
     "key_column_values",
     "metadata_of_instance",
+    "observation_keying",
     "predecessor_payload",
     "record_observations",
     "source_edge",
@@ -389,6 +396,38 @@ def record_observations(uow: UnitOfWork, meta: Metamodel, observations: ReadObse
                 observed.document,
             ),
         )
+
+
+def observation_keying(meta: Metamodel) -> ObservationKeying:
+    """The slot rule :func:`record_observations` files under, answered for a
+    node instead of for a row.
+
+    A neutral read publishes the Observation Key on the node it materialized, so
+    a caller with no Entity Class can settle a later write against the row it
+    actually read. The key has to be the SAME slot the recording side computed,
+    and this is that rule read off member identities rather than off columns: a
+    versioned target keys by identity alone (one row per primary key), a temporal
+    one is qualified by the milestone its own interval members name, and a target
+    the unit of work observes nothing of answers absence.
+
+    The object identity arrives already derived, so the node's identity anchor
+    and the slot naming it cannot be keyed two different ways.
+    """
+
+    def key_for(
+        object_key: ObjectKey, members: Mapping[AttributeIdentity, object]
+    ) -> ObservationKey | None:
+        record = meta.entity(object_key.entity)
+        if record is None:  # pragma: no cover - a materialized node resolved in this model
+            return None
+        declaring_entity = declaring(meta, record)
+        if version_attribute(meta, declaring_entity) is not None:
+            return ObservationKey(object_key, None)
+        if not _is_temporal(declaring_entity):
+            return None
+        return ObservationKey(object_key, milestone_edge_of(declaring_entity, members))
+
+    return key_for
 
 
 def _record(

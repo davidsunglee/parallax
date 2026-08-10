@@ -10,6 +10,7 @@ reading and the engine's failure modes are pinned too.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import datetime as dt
 import decimal
 import re
@@ -199,6 +200,21 @@ def test_run_read_case_concrete_target_read_carries_no_family_variant() -> None:
     )
     assert rows == [{"id": 1, "amount": "100.00", "card_network": "Visa"}]
     assert "familyVariant" not in rows[0]
+
+
+def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> None:
+    # The lane's one refusal translation: whatever production raises while
+    # resolving, building, or running the request is reported against the case
+    # file, so a corpus defect names the case rather than a production frame.
+    case = _case("m-value-object-001")
+    document = dict(case.document)
+    when = dict(cast("Mapping[str, object]", document["when"]))
+    when["targetEntity"] = "parallax.compatibility.NoSuchEntity"
+    document["when"] = when
+    with pytest.raises(engine.EngineError, match=case.path.name):
+        engine.run_read_case(
+            dataclasses.replace(case, document=document), "postgres", FakeDbPort([])
+        )
 
 
 def test_wire_value_covers_the_managed_type_set() -> None:

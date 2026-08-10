@@ -50,7 +50,17 @@ public-surface check promises. Where the exported names live:
   (:class:`Snapshot`, :class:`FindResult`, :class:`HistoryFindResult`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`) and
   :class:`ObservationCollector`, the optional seam a participating read hands its
-  materialized rows to.
+  materialized rows to. :class:`NeutralReadRequest` is what the model-neutral
+  entry points take, and :class:`NeutralReadResult` what they answer.
+
+The model-neutral read vocabulary — :class:`NeutralRows`, :class:`NeutralGraph`,
+:class:`NeutralGraphs`, :class:`NeutralNode`, :class:`NeutralNodeView` — is
+:mod:`parallax.snapshot.materialize`'s, built by the second materializer beside
+the merge both materializers consume, and re-exported here beside the entry
+points that answer it. :class:`~parallax.core.unit_work.ObservationKey` is
+re-exported for the same reason the execution-provenance subset is: a caller
+cannot use :meth:`Transaction.write_neutral`'s documented contract, or read the
+key a neutral node publishes, without naming the type.
 
 Execution provenance is `m-execution-log`'s vocabulary, canonically defined in
 :mod:`parallax.core.execution_log`; the developer-facing subset a `db.find` or
@@ -92,6 +102,7 @@ from parallax.core.execution_log import (
     TransactionNotCommittedError,
     TransactionResult,
 )
+from parallax.core.unit_work import ObservationKey
 from parallax.snapshot.handle._database import (
     Database,
     TransactionOptionConflictError,
@@ -102,12 +113,15 @@ from parallax.snapshot.handle._errors import (
     QueryTargetError,
     SnapshotConnectionError,
     SnapshotMaterializationError,
+    UnobservedWriteError,
 )
 from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._read import (
     FindResult,
     HistoryFindResult,
+    NeutralReadRequest,
+    NeutralReadResult,
     NoResultFound,
     ObservationCollector,
     Snapshot,
@@ -125,6 +139,14 @@ from parallax.snapshot.handle._write_inputs import (
 )
 from parallax.snapshot.handle._write_lowering import stream_lowered
 from parallax.snapshot.handle._write_types import WriteLoweringError
+from parallax.snapshot.materialize import (
+    NeutralGraph,
+    NeutralGraphs,
+    NeutralNode,
+    NeutralNodeView,
+    NeutralReadOutput,
+    NeutralRows,
+)
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
@@ -135,8 +157,17 @@ __all__ = [
     "FindResult",
     "HistoryFindResult",
     "KeyedWriteValueError",
+    "NeutralGraph",
+    "NeutralGraphs",
+    "NeutralNode",
+    "NeutralNodeView",
+    "NeutralReadOutput",
+    "NeutralReadRequest",
+    "NeutralReadResult",
+    "NeutralRows",
     "NoResultFound",
     "ObservationCollector",
+    "ObservationKey",
     "QueryTargetError",
     "ReadTrace",
     "Snapshot",
@@ -151,6 +182,7 @@ __all__ = [
     "TransactionOwnershipError",
     "TransactionResult",
     "TransactionTimePinReadOnlyError",
+    "UnobservedWriteError",
     "WriteLoweringError",
     "build_write_planner",
     "connect",
