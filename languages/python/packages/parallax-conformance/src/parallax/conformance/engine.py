@@ -4437,9 +4437,10 @@ def _first_declared_entity(case: case_format.Case) -> str:
     `m-case-format` fixes the default target of a case naming none as the
     family root, "else — when it declares no family at all — its own first
     entity". That is the DOCUMENT's order: the accepted model enumerates its
-    Entities canonically, so the authored order survives nowhere else and two
-    corpus models (``person``, ``shared-local-name``) resolve to a different
-    entity under each reading.
+    Entities canonically, so the authored order survives nowhere else. Of the
+    cases that reach this convention, one resolves to a different Entity under
+    each reading — ``m-op-algebra-048`` over ``shared-local-name`` — and it is
+    refused by the same rule either way, so no case grades the difference.
 
     The ORDER is the document's; the SPELLING is canonical
     (:func:`~parallax.conformance.models.declared_entity_spellings`), because a
