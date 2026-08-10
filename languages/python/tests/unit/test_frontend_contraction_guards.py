@@ -271,8 +271,8 @@ def test_snapshots_private_entity_reaches_are_exactly_the_accepted_seams() -> No
 #   that have not formed and, for the four `rejected` inline models, never will.
 #   `m-descriptor`'s complete public surface answers with a Domain Model Hub or
 #   a refusal, neither of which is a readable descriptor, so the records are the
-#   only answer. Making them public is a permanent `parallax-descriptor` API
-#   decision this ticket did not take.
+#   only answer. Making them public would be a permanent `parallax-descriptor`
+#   API commitment, with its own spec amendment and public-API snapshot.
 # - The ENTITY FRONTEND seams `AnotherSource` composes. Both are already accepted
 #   private seams of production's own (`ACCEPTED_PRIVATE_ENTITY_REACHES` above
 #   names `model_of` for the composition root and `lower_find_query` for the read
