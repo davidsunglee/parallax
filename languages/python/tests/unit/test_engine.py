@@ -1841,6 +1841,36 @@ def test_observed_nodes_publishes_every_deep_fetch_level_and_walks_a_cycle_once(
     ]
 
 
+def test_observed_nodes_refuses_a_temporal_target_stored_as_a_document() -> None:
+    # A milestone reconstructed from a neutral node holds the DECLARED members and
+    # no raw Structured Column, which is the whole stored row under `Columns` and
+    # is not under Relational Document Layout — a successor patched from it would
+    # drop every key the stored document holds that this model declares nowhere.
+    # The engine names the shape rather than chaining a wrong successor.
+    meta = engine.load_case_metamodel(_load_case("m-txtime-write-010"))
+    voyage = EntityIdentity("parallax.compatibility", "Voyage")
+    object_key = ObjectKey(voyage, (("id", 1),))
+    view = handle.NeutralNodeView(
+        node=handle.NeutralNode(
+            entity=voyage,
+            object_key=object_key,
+            observation_key=ObservationKey(object_key, None),
+        ),
+        primary_key=(),
+        family_variant=None,
+        attributes={},
+        value_objects={},
+        relationships={},
+    )
+    with pytest.raises(engine.EngineError, match="shared Structured Column 'payload'"):
+        engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            meta,
+            engine.case_model(meta),
+            "parallax.compatibility.Voyage",
+            handle.NeutralGraph((view,), Pin()),
+        )
+
+
 def test_a_find_step_names_its_target_and_its_operation() -> None:
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
     with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):

@@ -1080,10 +1080,13 @@ def _observed_nodes(
         if key is None:
             continue
         node_entity = view.node.entity.canonical
+        is_temporal = _is_temporal_entity(meta, node_entity)
+        if is_temporal:
+            _refuse_document_layout_milestone(model, node_entity)
         version_attr = _versioned_non_temporal_version_attribute(meta, node_entity)
         observation = (
             _milestone_observation(view)
-            if _is_temporal_entity(meta, node_entity)
+            if is_temporal
             else _version_observation(view, version_attr)
             if version_attr is not None
             else None
@@ -1140,8 +1143,54 @@ def _milestone_observation(view: handle.NeutralNodeView) -> TemporalObservation:
     :func:`~parallax.conformance.temporal_state.predecessor_row` policy the
     tracked milestones do, so an observed milestone and a tracked one are the
     same shape.
+
+    Complete only under ``Columns``, which is why
+    :func:`_refuse_document_layout_milestone` guards every call.
     """
     return TemporalObservation(predecessor=predecessor_row(view.attributes, view.value_objects))
+
+
+def _refuse_document_layout_milestone(model: AcceptedMetamodel, entity_name: str) -> None:
+    """Refuse to observe a temporal node whose target is stored under Relational
+    Document Layout; a target under ``Columns`` passes.
+
+    The milestone this engine reconstructs from a neutral node
+    (:func:`_milestone_observation`) is built from the node's DECLARED members,
+    because a neutral read result publishes decoded members and no raw Structured
+    Column. Under ``Columns`` those members are the whole stored row. Under
+    ``Document`` they are not: the successor a close chains is patched onto the
+    document the observing read returned (`m-unit-work`), so reconstructing from
+    declared members alone would drop every key the stored document holds that
+    this model does not declare, and would spell an absent Value Object occurrence
+    the same way as an empty one the document distinguished. Naming the shape is
+    the only answer that cannot be silently wrong.
+    """
+    column = _shared_document_column(model, entity_name)
+    if column is None:
+        return
+    raise EngineError(
+        f"a grouped find observed the temporal target {entity_name!r}, whose document-resident "
+        f"members are stored in the shared Structured Column {column!r} — the milestone this "
+        "engine reconstructs from a neutral node carries declared members only, and a successor "
+        "patched from it would lose whatever else that document holds"
+    )
+
+
+def _shared_document_column(model: AcceptedMetamodel, entity_name: str) -> str | None:
+    """The name of the shared Structured Column ``entity_name``'s rows carry under
+    Relational Document Layout, or ``None`` under ``Columns``, which has none."""
+    entity = entity_by_name(model, entity_name)
+    layout = None if entity is None else storage_layout.view(model).entity(entity.identity)
+    if layout is None:  # pragma: no cover - an observed node names a row-owning Entity
+        return None
+    return next(
+        (
+            slot.column.name
+            for slot in layout.columns
+            if isinstance(slot.contributor, storage_layout.RelationalDocument)
+        ),
+        None,
+    )
 
 
 def _entry_instant(entry: Mapping[str, object]) -> str:

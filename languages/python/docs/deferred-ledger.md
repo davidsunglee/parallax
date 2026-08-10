@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-64**.
+Entry numbering is continuous and never reused. The next new number is **D-66**.
 
 ## Standing notes
 
@@ -272,6 +272,85 @@ are held by Python's own suites alone.
 of the same kind COR-95 already scopes — teaching the harness to observe what a
 run actually cost — and neither is a Python defect. Splitting them across two
 tickets would have the harness grow a round-trip observer twice.
+
+### D-64 — A `uow` group's find refuses a temporal target under Relational Document Layout, because the milestone it reconstructs carries no Structured Column
+
+*Medium — a legal case shape is unauthorable; nothing is silently wrong.* **Owned
+by
+[COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout),
+not this target** — the repair is a change to what a read carrier or a unit of
+work publishes, and this entry records only what Python does until COR-85 makes
+it, so a second language target inheriting the same adapter shape finds it.
+Relates to `parallax.conformance.engine._observed_nodes` /
+`_refuse_document_layout_milestone` / `_milestone_observation`,
+`parallax.conformance.temporal_state.predecessor_row`.
+
+**What.** A `PredecessorRow` carries `document`, the raw Structured Column the
+observing read returned, so a temporal successor is patched onto what the row
+physically held rather than re-encoded from the members this model happens to
+declare. Neither engine-side reconstruction can supply it: `NeutralNodeView`
+publishes decoded members and no raw document, and a `PlannedRow` never held one.
+Under Relational Document Layout a successor built from declared members alone
+loses every key the stored document carried that the model declares nowhere, and
+cannot tell an absent Value Object occurrence from an empty one. The grouped
+temporal find therefore raises, naming the entity and its shared Structured
+Column, instead of chaining a wrong successor.
+
+The shadow half of the same reconstruction is NOT refused and is the residual
+this entry carries. `TemporalShadow.track_opened` builds its tracked milestone
+from the plan's `PlannedRow`, which is equally document-less, and refusing there
+would break `m-txtime-write-010` and `-012`, whose milestones the case's own
+authored insert opened — nothing undeclared can be present in those. The reachable
+gap is narrow and unwitnessed: a document holding an undeclared key must be seeded
+out of band, and the FIRST write over such a milestone resolves through
+production's own materializing read, which retains the document. Only a SECOND
+write of the same key inside one case would consume the tracker's document-less
+copy, and no corpus case authors that.
+
+**Why it is deferred rather than fixed.** Both real repairs change a published
+contract to serve a shape no corpus case authors. Handing the pure re-lowering
+oracle the `WriteObservation` the unit of work filed needs a public way to read a
+unit of work's own observation record by key, which `m-unit-work` does not offer;
+giving `NeutralNodeView` the raw document contradicts the neutral read result
+publishing decoded members only, and is a `python.md` §5 change rather than an
+engine change. COR-85 lands both far more cheaply: its Phase 3 already changes
+`m-unit-work`'s successor rule to retain the carried-forward document, and its
+Phase 2 may carry presence provenance into the read carriers. The refusal is
+therefore a deletion target there rather than an indefinite gap — closing COR-85
+should remove `_refuse_document_layout_milestone` outright.
+
+### D-65 — A deliberately aborted transaction records a `commit`-phase failure and an unclassified retry verdict
+
+*Low — an Execution Log field no oracle reads.* **Owned by
+[COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort),
+filed for exactly this.** Relates to
+`parallax.conformance.engine._AbortingPort` / `_RollbackStep`,
+`core/spec/m-execution-log.md`, `core/spec/m-unit-work.md` *Abort*.
+
+**What.** A `rollback: true` step runs on a pass-through port whose `transaction`
+raises an abort sentinel AFTER the boundary's own finalization flush has returned
+— the only arrangement that reproduces `m-unit-work` "Abort", because production
+discards its buffer unflushed whenever the transaction callback raises. By then
+the boundary has already entered its commit phase, so the attempt's failure record
+names `commit` for a durability boundary that never failed, and the sentinel falls
+outside every classified exception family, making `retryEligible: false` a default
+rather than a classifier's verdict. Nothing grades either field: no `rollback:
+true` case authors `then.execution`, and `roundTrips` comes from the recorded
+database calls.
+
+COR-97's design is a supported `Transaction.abandon()` with flush-then-refuse
+`m-unit-work` semantics plus an `aborted` attempt status — explicitly NOT a
+core-owned sentinel exception, which it rejects. So the engine's decorator
+disappears rather than being blessed.
+
+**Why it is deferred rather than fixed.** An outcome vocabulary change touches
+`m-execution-log`'s specification, schema, catalog row, harness, and case corpus
+together, and a boundary-level doom operation would put a conformance-only verb
+into the port contract every provider implements — the exact direction this
+target's own conformance-diet work was removing. The root `AGENTS.md` rule that
+comments and docstrings never reference issues means `_AbortingPort`'s docstring
+states the untruth and its bound without naming an owner; the ownership lives
+here alone.
 
 ## Forwarding pointers
 
