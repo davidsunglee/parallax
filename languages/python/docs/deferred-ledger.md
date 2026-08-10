@@ -356,14 +356,20 @@ change. Neither belongs to a phase whose subject is the read lane.
 
 **Owner.** COR-93's Phase F takes the conversion: `models.py`, `engine.py`, and
 `provision.py`'s descriptor record-graph consumers move onto the accepted-model
-vocabulary. It is gated on one new narrow public accessor on
-`parallax.descriptor` that returns raw inheritance-family structure
-(participants and root) as plain data, rather than
-`validate_inheritance_families`'s `None`-or-raise contract:
-`parallax.descriptor._family.family_of`, reached at `engine.py:4426` and
-`:4454`, needs family membership for a document that may never form — one of
-the four inline `rejected` models above — and every other record-graph reach
-cascades off establishing that path first. `another_source.py`'s two
+vocabulary. The reaches are independent of one another, and none of them is a
+family read over a document that may never form. `_family.family_of` is reached
+at `engine.py:4426` and `:4454` only, both over the CASE-LEVEL model, and every
+lane that reaches them forms those same records through `case_model` — the
+rejected lane at `engine.py:5269` and `:5315`, the conflict lane for every write
+it executes. The four never-forming inline `rejected` models reach neither site:
+that branch (`engine.py:5279-5300`) classifies through the already-public
+`validate_inheritance_families`. A formed model therefore answers both, and
+`parallax.core.inheritance.view` is the public door that answers it. Should the
+conversion leave a family read that must stay on records, the ruled replacement
+is one narrow public accessor on `parallax.descriptor` returning family
+participants and root as plain data, rather than
+`validate_inheritance_families`'s `None`-or-raise contract — never the record
+graph itself. `another_source.py`'s two
 `parallax.core.entity` reaches (`model_of`, `lower_find_query`) are expected to
 be REBUTTED rather than converted: `model_of` is documented as a first-party
 runtime seam, and both names are already in production's own
