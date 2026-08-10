@@ -39,6 +39,7 @@ from parallax.conformance import adapter, case_format, concurrency_runner, engin
 from parallax.core import op_algebra, storage_layout
 from parallax.core.db_port import Row
 from parallax.core.dialect import dialect_for
+from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import compile_read
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
@@ -149,10 +150,10 @@ def _grade_execution(case: case_format.Case, then: dict[str, Any], envelope: Any
 
 @pytest.mark.parametrize("case", _CASES, ids=[c.case_id for c in _CASES])
 def test_run_sweep(case: case_format.Case, provisioner: Any) -> None:
-    meta = engine.load_case_metamodel(case)
+    model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
-    provisioner.reset(meta, provision.load_fixtures(str(case_document(case)["model"])))
+    provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
     envelope = adapter.run_case(case.path, "postgres", provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
@@ -353,7 +354,9 @@ def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] |
     return [step.get("expectRows") for step in steps if "find" in step]
 
 
-def _scenario_find_row_transforms(case: case_format.Case, meta: Any) -> list[Callable[[Row], Row]]:
+def _scenario_find_row_transforms(
+    case: case_format.Case, model: Metamodel
+) -> list[Callable[[Row], Row]]:
     """Each FIND step's own row transform, in step order.
 
     The port seam these rows are captured at sits BELOW the read's own transform,
@@ -368,12 +371,11 @@ def _scenario_find_row_transforms(case: case_format.Case, meta: Any) -> list[Cal
     transform is the identity, which is what makes this inert for every other
     case in this lane.
     """
-    model = meta
     transforms: list[Callable[[Row], Row]] = []
     for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
         if "find" not in step:
             continue
-        entity = engine.case_entity(model, meta.entity(step["targetEntity"]))
+        entity = engine.case_entity(model, step["targetEntity"])
         compiled = compile_read(
             op_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
         )
@@ -398,8 +400,8 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     from the same execution); a writeSequence's committed `tableState` observation
     equals `then.tableState`, table for table.
     """
-    meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, case_fixtures(case))
+    model = engine.load_case_metamodel(case)
+    provisioner.reset(model, case_fixtures(case))
 
     port = _ReadCapturePort(provisioner.port)
     envelope = adapter.run_case(case.path, "postgres", port)
@@ -425,7 +427,7 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
 
     if case.shape == "scenario":
         expected_per_find = _scenario_expect_rows(case)
-        transforms = _scenario_find_row_transforms(case, meta)
+        transforms = _scenario_find_row_transforms(case, model)
         assert len(port.reads) == len(expected_per_find), (case.case_id, port.reads)
         for observed, expected, transform in zip(
             port.reads, expected_per_find, transforms, strict=True
@@ -449,14 +451,14 @@ def test_write_run_sweep(case: case_format.Case, provisioner: Any) -> None:
             "dict[str, list[dict[str, Any]]]", case_document(case)["then"]["tableState"]
         )
         observed_state = envelope["observations"]["tableState"]
-        _assert_layout_shaped_table_state(case, meta, observed_state)
+        _assert_layout_shaped_table_state(case, model, observed_state)
         assert set(observed_state) >= set(expected_state), (case.case_id, observed_state)
         for table, expected_rows in expected_state.items():
             compare_rows(observed_state[table], expected_rows)
 
 
 def _assert_layout_shaped_table_state(
-    case: case_format.Case, meta: Any, observed_state: dict[str, list[dict[str, Any]]]
+    case: case_format.Case, model: Metamodel, observed_state: dict[str, list[dict[str, Any]]]
 ) -> None:
     """Every compiled Table Layout is observed once, whole, and in canonical order.
 
@@ -466,7 +468,7 @@ def _assert_layout_shaped_table_state(
     """
     layouts = {
         layout.table.name: [slot.column.name for slot in layout.columns]
-        for layout in storage_layout.view(meta).tables
+        for layout in storage_layout.view(model).tables
     }
     assert set(observed_state) == set(layouts), (case.case_id, sorted(observed_state))
     for table, rows in observed_state.items():
@@ -506,8 +508,8 @@ def test_interleaved_uow_group_run_sweep(case: case_format.Case, provisioner: An
     still emit well-formed DML and a correct `affectedRows`, but step 4's
     verify find would observe account 9 — this is what catches it.
     """
-    meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, case_fixtures(case))
+    model = engine.load_case_metamodel(case)
+    provisioner.reset(model, case_fixtures(case))
 
     emissions, round_trips, conflict_actual, find_rows = engine.run_interleaved_scenario_case(
         case, "postgres", provisioner.port, lambda: provisioner.peer()
@@ -554,13 +556,13 @@ def test_error_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     per-dialect `then.nativeCode`. Fixtures load only when the case declares
     `given.fixtures` (the unique-violation cases self-seed via their own trigger).
     """
-    meta = engine.load_case_metamodel(case)
+    model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
     doc = case_document(case)
     given = cast("dict[str, Any]", doc.get("given") or {})
     fixtures = provision.load_fixtures(str(doc["model"])) if given.get("fixtures") else {}
-    provisioner.reset(meta, fixtures)
+    provisioner.reset(model, fixtures)
 
     envelope = adapter.run_case(case.path, "postgres", provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
@@ -698,8 +700,8 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     that authors `then.tableState` grades the committed table contents; a case
     whose write is refused authors none, since the unit of work rolls back.
     """
-    meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, case_fixtures(case))
+    model = engine.load_case_metamodel(case)
+    provisioner.reset(model, case_fixtures(case))
 
     envelope = adapter.run_case(case.path, "postgres", provisioner.port)
     jsonschema.validate(envelope, _SCHEMA)
@@ -787,8 +789,8 @@ def test_run_only_write_sequence_run_sweep(case: case_format.Case, provisioner: 
     run-only case's compile envelope answers `status: "run-only"`, never `"ok"`
     (`test_write_run_sweep`'s `WRITE_EXERCISED` set couples compile-time grading in
     too, which a run-only member would fail)."""
-    meta = engine.load_case_metamodel(case)
-    provisioner.reset(meta, case_fixtures(case))
+    model = engine.load_case_metamodel(case)
+    provisioner.reset(model, case_fixtures(case))
 
     port = _ReadCapturePort(provisioner.port)
     envelope = adapter.run_case(case.path, "postgres", port)
@@ -869,10 +871,10 @@ def test_concurrency_rounds(case: case_format.Case, provisioner: Any) -> None:
     insensitive, `compare_rows`); a `kind: "write"` step asserts only that it
     reached this point at all (no block/no raise).
     """
-    meta = engine.load_case_metamodel(case)
+    model = engine.load_case_metamodel(case)
     from parallax.conformance import provision
 
-    provisioner.reset(meta, provision.load_fixtures(str(case_document(case)["model"])))
+    provisioner.reset(model, provision.load_fixtures(str(case_document(case)["model"])))
 
     rounds = concurrency_runner.parse_rounds(case, "postgres")
     dialect = dialect_for("postgres")
