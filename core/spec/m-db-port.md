@@ -57,10 +57,17 @@ exception is a callback failure, which `m-execution-log` attributes to no
 Database Call — and two bodies that raise one shared object are two occurrences
 the caller chose not to distinguish.
 
-The rule binds the raise site alone. No layer above can detect a violation — a
-reused instance is indistinguishable from the occurrence it impersonates — so an
-adapter that classifies each failure into a fresh error at the point of failure
-satisfies it structurally, and nothing above the port need check.
+The rule binds the raise site alone, and an adapter that classifies each failure
+into a fresh error at the point of failure satisfies it structurally. No runtime
+consumer can enforce it while attributing a failure: an error it has just caught
+carries nothing saying whether some earlier occurrence was the same object, so a
+reused instance is indistinguishable from the occurrence it impersonates and
+nothing above the port checks. Detecting a violation instead needs several
+failures held at once and compared by identity, which is a **conformance proof**
+rather than a runtime attribution — one every adapter owes and the
+[database-provider test contract](database-provider-test-contract.md) states,
+driving each raise site repeatedly over a driver that reuses one exception
+object.
 
 ## Concrete adapter artifacts — one per database type
 
