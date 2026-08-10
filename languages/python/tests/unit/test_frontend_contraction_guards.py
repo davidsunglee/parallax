@@ -257,6 +257,80 @@ def test_snapshots_private_entity_reaches_are_exactly_the_accepted_seams() -> No
 
 
 # --------------------------------------------------------------------------- #
+# The conformance adapter's reaches into shipped-distribution privates.        #
+# --------------------------------------------------------------------------- #
+# The adapter drives production through supported entry points; what remains
+# below is the residue that has no supported entry point to drive, and each
+# entry is a `python.md` §7 decision rather than an import someone wrote.
+#
+# Two families, for two reasons:
+#
+# - The DESCRIPTOR RECORD GRAPH. A corpus model is a descriptor document and a
+#   case reads it as a parsed record graph — an Entity's authored inheritance
+#   role, a family's participants, an Attribute's declared name — for documents
+#   that have not formed and, for the four `rejected` inline models, never will.
+#   `m-descriptor`'s complete public surface answers with a Domain Model Hub or
+#   a refusal, neither of which is a readable descriptor, so the records are the
+#   only answer. Making them public is a permanent `parallax-descriptor` API
+#   decision this ticket did not take.
+# - The ENTITY FRONTEND seams `AnotherSource` composes. Both are already accepted
+#   private seams of production's own (`ACCEPTED_PRIVATE_ENTITY_REACHES` above
+#   names `model_of` for the composition root and `lower_find_query` for the read
+#   preflight); a third, development-only consumer of the same two seams is not a
+#   reason to widen `parallax.core.entity`'s shipped surface.
+#
+# Keyed by REACHING module for the same reason the snapshot inventory is: a
+# second module importing an already-accepted name is a new reach.
+ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
+    ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset({"model_of"}),
+    ("parallax.conformance.another_source", "parallax.core.entity._query"): frozenset(
+        {"lower_find_query"}
+    ),
+    ("parallax.conformance.engine", "parallax.descriptor._family"): frozenset({"family_of"}),
+    ("parallax.conformance.engine", "parallax.descriptor._records"): frozenset(
+        {"Attribute", "Entity", "Metamodel", "declaring_entity"}
+    ),
+    ("parallax.conformance.engine", "parallax.descriptor._serde"): frozenset({"deserialize"}),
+    ("parallax.conformance.models", "parallax.core._formation_profile"): frozenset(
+        {"form_metamodel"}
+    ),
+    ("parallax.conformance.models", "parallax.descriptor._adapter"): frozenset(
+        {"unresolved_metamodel"}
+    ),
+    ("parallax.conformance.models", "parallax.descriptor._ingest"): frozenset({"ingest_document"}),
+    ("parallax.conformance.models", "parallax.descriptor._records"): frozenset({"Metamodel"}),
+    ("parallax.conformance.provision", "parallax.descriptor._records"): frozenset({"Metamodel"}),
+}
+
+_CONFORMANCE_SRC = _PACKAGES / "parallax-conformance" / "src" / "parallax" / "conformance"
+
+
+def _conformance_private_reaches() -> dict[tuple[str, str], set[str]]:
+    """Every name the conformance package imports from an underscored module of a
+    SHIPPED distribution, keyed by ``(importer, imported module)``.
+
+    A module counts as private when any dotted segment after the distribution's
+    top package starts with an underscore, so both
+    ``parallax.core.entity._query`` and a future ``parallax.core._x.y`` are seen.
+    """
+    reached: dict[tuple[str, str], set[str]] = {}
+    for imported in _declared_imports(_sources(_CONFORMANCE_SRC)):
+        source = imported.source or imported.name
+        if not source.startswith("parallax.") or source.startswith("parallax.conformance"):
+            continue
+        if not any(part.startswith("_") for part in source.split(".")[1:]):
+            continue
+        reached.setdefault((imported.importer, source), set()).add(imported.name)
+    return reached
+
+
+def test_conformance_private_production_reaches_are_exactly_the_accepted_seams() -> None:
+    assert _conformance_private_reaches() == {
+        reach: set(names) for reach, names in ACCEPTED_CONFORMANCE_PRIVATE_REACHES.items()
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Row derivation: the codec answers, holding vocabulary Snapshot never holds.  #
 # --------------------------------------------------------------------------- #
 # The free row and Change Set helpers the Entity Row Codec replaced. Absent as

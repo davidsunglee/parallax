@@ -250,6 +250,75 @@ rejection would report the operation invalid when the specification permits it
 and only the implementation is behind. Python therefore adds neither, states the
 bound truthfully at the gate, and follows COR-96's decision.
 
+### D-67 — A deep-fetch or snapshot CHILD level's graph node shape is authored per projection, and production materializes one merged, narrowed node
+
+*Medium — a corpus-versus-production divergence with no defect on either side.*
+Relates to `core/spec/m-case-format.md` *Read targeting*,
+`parallax.snapshot.materialize`, the conformance engine's graph lane, and the
+reference harness's own deep-fetch grader.
+
+**What.** `then.graph` now grades the graph production materializes, and eleven
+cases disagree with it structurally: `m-inheritance-065` / `-066` / `-067` /
+`-068` / `-073` / `-074` / `-075` / `-076` / `-077` / `-078` and
+`m-snapshot-read-012`. Three divergences, each an instance of one difference —
+the corpus authors a child level's nodes PER PROJECTION and production
+materializes one node per LOGICAL ROW:
+
+- a multi-concrete level's node is authored as the unnarrowed concrete superset
+  with a sibling branch's `null` padding, while a materialized node carries its
+  own variant's declared members alone;
+- `familyVariant` is authored by the VIEW that reached the node — present on a
+  polymorphic view, absent on a single-concrete narrowed one — while a
+  materialized node's variant spelling is its own, the same through every view;
+- one logical row reached through two views is authored twice with different
+  values, and materializes as one shared node, so a path that revisits it is a
+  back-reference cycle and truncates to its primary-key stub.
+
+**Why it is deferred rather than fixed.** `m-case-format` *Read targeting*
+already names this as open: the per-variant node shape "is scoped, for now, to a
+read case's own top-level `then.graph` leaves", and "a deep-fetch or snapshot
+CHILD level's graph node shape (`m-snapshot-read-012`'s narrowed-vs-broad
+diamond, for example) is a distinct, already-established convention this decision
+does not touch; reconciling the two … is left open for a follow-up." Reconciling
+it moves the corpus AND the reference harness's `_assert_deep_fetch` grader,
+whose node registry is deliberately keyed per view, so it is a
+core-specification decision rather than an adapter one. Until it is taken, the
+Python run sweep grades everything else these eleven assert — every level's SQL
+and binds, the round-trip count, `then.execution` — and withholds the
+`then.graph` comparison alone
+(`tests/compatibility/test_run_sweep.py._CHILD_LEVEL_GRAPH_SHAPE_DEFERRED`);
+the reference harness grades their graphs in full on every selected provider.
+
+### D-68 — The conformance adapter still reads the descriptor record graph, which has no public door
+
+*Low — an enumerated, guarded reach rather than an unbounded one.* Relates to
+`parallax.descriptor`, `spec/python.md` §7 and *Metamodel serde ownership*, and
+`parallax.conformance.models` / `.engine` / `.provision`.
+
+**What.** COR-93 removed every private-attribute reach-through and every private
+runtime seam from `parallax-conformance`. What remains is the descriptor
+**record graph**: `models.py`, `engine.py`, and `provision.py` import
+`parallax.descriptor._records` / `._serde` / `._ingest` / `._adapter` /
+`._family` and `parallax.core._formation_profile.form_metamodel`, and
+`another_source.py` imports the two `parallax.core.entity` seams the composition
+root and the read preflight already reach privately. The set is exact, keyed by
+importing module, and pinned by
+`tests/unit/test_frontend_contraction_guards.ACCEPTED_CONFORMANCE_PRIVATE_REACHES`;
+`spec/python.md` §7 declares it.
+
+**Why it is deferred rather than fixed.** A corpus model is a descriptor
+document that a case reads as parsed records — an Entity's authored inheritance
+role, a family's participants, an Attribute's declared name — and four inline
+`rejected` models deliberately never form, so the accepted Metamodel cannot
+answer for them. `m-descriptor`'s complete public surface is fixed by
+`spec/python.md` (*Metamodel serde ownership*) at the three hub doors, the three
+export doors, `validate_inheritance_families`, and the error types, with
+"descriptor records, serde, schema machinery, and adapters are private".
+Publishing the record graph is a permanent `parallax-descriptor` API decision
+with its own spec amendment and `public_api.json` diff; converting the engine's
+~40 record-graph sites onto the accepted Metamodel is a second, independent
+change. Neither belongs to a phase whose subject is the read lane.
+
 ## Forwarding pointers
 
 Removed entries whose number a live document still cites. One line each; drop a

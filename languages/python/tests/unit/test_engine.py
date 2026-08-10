@@ -20,7 +20,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 import pytest
-from _metamodel_support import Declaration, key, source
+from _metamodel_support import Declaration, attribute, key, source
 
 from parallax.conformance import case_format, engine, sweep
 from parallax.conformance.temporal_state import TemporalShadow
@@ -40,10 +40,12 @@ from parallax.core.metamodel import (
     Table,
     TablePerHierarchy,
     ValueObjectAttributeDeclaration,
+    ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
+from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
@@ -4491,101 +4493,6 @@ def test_run_graph_case_keys_value_objects_by_canonical_member_name() -> None:
     assert "mailing_address" not in row
 
 
-def test_relationship_attachment_preserves_a_same_named_value_object_storage_key() -> None:
-    from parallax.conformance import _assembly, models
-    from parallax.core.deep_fetch import CorrelationMember, FetchLevel, RootRef
-    from parallax.descriptor._serde import parse_document
-
-    model = models.accepted_model(
-        parse_document(
-            {
-                "entities": [
-                    {
-                        "name": "Owner",
-                        "table": "owner",
-                        "attributes": [
-                            {"name": "id", "type": "int64", "primaryKey": True},
-                            {"name": "targetId", "type": "int64"},
-                        ],
-                        "valueObjects": [
-                            {
-                                "name": "profile",
-                                "column": "details",
-                                "attributes": [{"name": "label", "type": "string"}],
-                            }
-                        ],
-                        "relationships": [
-                            {
-                                "name": "details",
-                                "cardinality": "many-to-one",
-                                "join": {
-                                    "source": "targetId",
-                                    "target": {"entity": "Target", "attribute": "id"},
-                                },
-                            }
-                        ],
-                    },
-                    {
-                        "name": "Target",
-                        "table": "target",
-                        "attributes": [{"name": "id", "type": "int64", "primaryKey": True}],
-                    },
-                ]
-            }
-        )
-    )
-    owner_identity = EntityIdentity(None, "Owner")
-    owner = model.entity(owner_identity)
-    assert owner is not None
-    assembler = _assembly.Assembler(model)
-    parent_rows = [{"id": 1, "target_id": 7, "details": {"label": "stored"}}]
-    parents = assembler.materialize_root(
-        "Owner",
-        parent_rows,
-        resolved_entities=(owner_identity,),
-        family_variants=(None,),
-        documents=owner.declared_value_objects,
-    )
-    level = FetchLevel(
-        attach_key="details",
-        relationship=RelationshipIdentity(owner_identity, "details"),
-        to_many=False,
-        parent=RootRef(),
-        owner=CorrelationMember(
-            identity=AttributeIdentity(owner_identity, "targetId"), column="target_id"
-        ),
-        child_target="Target",
-        related=CorrelationMember(
-            identity=AttributeIdentity(EntityIdentity(None, "Target"), "id"),
-            column="id",
-            reference="Target.id",
-        ),
-    )
-    target_identity = EntityIdentity(None, "Target")
-    assembler.attach_level(
-        level,
-        parents,
-        parent_rows,
-        [{"id": 7}],
-        resolved_entities=(target_identity,),
-        family_variants=(None,),
-    )
-
-    graph = engine._render_graph(  # pyright: ignore[reportPrivateUsage] - integration test renders a real assembled relationship
-        "Owner", parents, model
-    )
-    assert graph == {
-        "Owner": [
-            {
-                "id": 1,
-                "target_id": 7,
-                "profile": {"label": "stored"},
-                "details": {"id": 7},
-            }
-        ]
-    }
-
-
 _VARIANT_ROOT = EntityIdentity("catalog", "AssetRecord")
 _NAMED_VARIANT = EntityIdentity("catalog", "NamedVariant")
 _FIRST_SHARED_VARIANT = EntityIdentity("catalog", "SharedVariant")
@@ -4638,69 +4545,97 @@ _VARIANT_MODEL = form_metamodel(
 )
 
 
-def _value_object_node(*, resolved: EntityIdentity = _VARIANT_ROOT, variant: object = ...) -> Any:
-    from parallax.conformance import _assembly
+_ATTACH_OWNER = EntityIdentity("catalog", "Owner")
+_ATTACH_TARGET = EntityIdentity("catalog", "Target")
 
-    value_objects: dict[str, object] = {
-        "familyVariant": {"label": "mail"},
-        "named_profile": {"label": "named"},
-        "catalog_profile": {"label": "catalog"},
-        "archive_profile": {"label": "archive"},
+# One Entity whose Value Object storage column is spelled exactly like a
+# relationship it also carries: the two namespaces must not overwrite each other
+# on the wire.
+_ATTACH_MODEL = form_metamodel(
+    source(
+        Declaration(
+            identity=_ATTACH_OWNER,
+            container=Table("owner"),
+            attributes=(key(_ATTACH_OWNER), attribute(_ATTACH_OWNER, "targetId")),
+            value_objects=(_rendering_value_object("profile", "details"),),
+        ),
+        Declaration(
+            identity=_ATTACH_TARGET,
+            container=Table("target"),
+            attributes=(key(_ATTACH_TARGET),),
+        ),
+    )
+)
+
+
+def _neutral_roots(
+    model: AcceptedMetamodel,
+    projections: Sequence[tuple[EntityIdentity, Row]],
+    *,
+    roots: Sequence[int] = (0,),
+    attachments: Sequence[tuple[int, RelationshipViewKey, int | tuple[int, ...] | None]] = (),
+    documents: Mapping[int, Sequence[ValueObjectMetadata]] = {},
+) -> tuple[handle.NeutralNodeView, ...]:
+    """The neutral roots production materializes from hand-written projections.
+
+    Built through the real conversion, merge, and neutral materialization rather
+    than by constructing views, so a test of the renderer is a test of what the
+    production read actually hands it — including projection merging, which is
+    what decides whether a repeated logical row is one node or two. An attachment
+    names its target by projection index: a lone index is a loaded to-one, a
+    tuple is a loaded to-many, and ``None`` is loaded-null.
+    """
+    from parallax.snapshot.materialize import (
+        LevelContext,
+        MergeScope,
+        SnapshotNodeRef,
+        convert_row,
+        merge_graph_input,
+        neutral_graph,
+    )
+
+    scope = MergeScope(model)
+    refs = [
+        convert_row(row, LevelContext(entity, tuple(documents.get(index, ()))), scope)
+        for index, (entity, row) in enumerate(projections)
+    ]
+
+    def attached(
+        value: int | tuple[int, ...] | None,
+    ) -> SnapshotNodeRef | tuple[SnapshotNodeRef, ...] | None:
+        if value is None:
+            return None
+        if isinstance(value, tuple):
+            return tuple(refs[index] for index in value)
+        return refs[value]
+
+    for parent, view, value in attachments:
+        scope.attach(refs[parent], view, attached(value))
+    graph = scope.build(tuple(refs[index] for index in roots), Pin())
+    return neutral_graph(merge_graph_input(graph, model), model).roots
+
+
+def test_render_node_keeps_a_value_object_and_a_same_named_relationship_apart() -> None:
+    owner = _ATTACH_MODEL.entity(_ATTACH_OWNER)
+    assert owner is not None
+    roots = _neutral_roots(
+        _ATTACH_MODEL,
+        [
+            (_ATTACH_OWNER, {"id": 1, "target_id": 7, "details": {"label": "stored"}}),
+            (_ATTACH_TARGET, {"id": 7}),
+        ],
+        attachments=[(0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "details")), 1)],
+        documents={0: owner.declared_value_objects},
+    )
+    graph = engine._render_graph(  # pyright: ignore[reportPrivateUsage] - integration test renders a real materialized relationship
+        "Owner", roots, _ATTACH_MODEL
+    )
+    assert graph == {
+        "Owner": [{"id": 1, "target_id": 7, "profile": {"label": "stored"}, "details": {"id": 7}}]
     }
-    family_variant = cast("str | None", variant) if variant is not ... else None
-    return _assembly.Node(
-        fields={"id": 1},
-        pk_columns=("id",),
-        resolved_entity=resolved,
-        value_objects=value_objects,
-        family_variant=family_variant,
-    )
 
 
-def test_value_object_names_use_the_static_entity_when_variant_is_absent() -> None:
-    names = engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's private helper
-        _value_object_node(resolved=_NAMED_VARIANT), _VARIANT_MODEL
-    )
-    assert names == {
-        "familyVariant": "mailingAddress",
-        "named_profile": "namedProfile",
-    }
-
-
-def test_value_object_names_without_assembler_entity_bookkeeping_are_empty() -> None:
-    from parallax.conformance import _assembly
-
-    node = _assembly.Node(fields={"id": 1}, pk_columns=("id",))
-    assert (
-        engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's defensive helper
-            node, _VARIANT_MODEL
-        )
-        == {}
-    )
-
-
-def test_value_object_names_resolve_a_bare_variant_within_the_static_family() -> None:
-    names = engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's private helper
-        _value_object_node(resolved=_NAMED_VARIANT, variant="NamedVariant"), _VARIANT_MODEL
-    )
-    assert names["familyVariant"] == "mailingAddress"
-    assert names["named_profile"] == "namedProfile"
-    assert "wrong_profile" not in names
-
-
-def test_value_object_names_resolve_a_qualified_namespaced_duplicate() -> None:
-    names = engine._value_object_names(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's private helper
-        _value_object_node(resolved=_SECOND_SHARED_VARIANT, variant="archive.SharedVariant"),
-        _VARIANT_MODEL,
-    )
-    assert names == {
-        "familyVariant": "mailingAddress",
-        "archive_profile": "archiveProfile",
-    }
-
-
-def test_namespaced_duplicate_variants_flow_from_sql_plan_through_assembler_to_renderer() -> None:
-    from parallax.conformance import _assembly
+def test_namespaced_duplicate_variants_flow_from_sql_plan_through_production_to_renderer() -> None:
     from parallax.core.dialect import POSTGRES
     from parallax.core.op_algebra import All
     from parallax.core.sql_gen import compile_read
@@ -4722,18 +4657,14 @@ def test_namespaced_duplicate_variants_flow_from_sql_plan_through_assembler_to_r
     assert materialized.family_variant == "archive.SharedVariant"
     assert materialized.values["familyVariant"] == {"label": "mail"}
 
-    nodes = _assembly.Assembler(_VARIANT_MODEL).materialize_root(
-        _VARIANT_ROOT.canonical,
-        [materialized.values],
-        resolved_entities=[materialized.resolved_entity],
-        family_variants=[materialized.family_variant],
-        documents=compiled.documents,
+    roots = _neutral_roots(
+        _VARIANT_MODEL,
+        [(materialized.resolved_entity, materialized.values)],
+        documents={0: compiled.documents},
     )
-    assert "familyVariant" not in nodes[0].fields
-    assert nodes[0].value_objects["familyVariant"] == {"label": "mail"}
-    assert nodes[0].family_variant == "archive.SharedVariant"
-    graph = engine._render_graph(  # pyright: ignore[reportPrivateUsage] - integration test drives the renderer after real assembly
-        _VARIANT_ROOT.canonical, nodes, _VARIANT_MODEL
+    assert roots[0].family_variant == "archive.SharedVariant"
+    graph = engine._render_graph(  # pyright: ignore[reportPrivateUsage] - integration test drives the renderer after a real materialization
+        _VARIANT_ROOT.canonical, roots, _VARIANT_MODEL
     )
     assert graph[_VARIANT_ROOT.canonical] == [
         {
@@ -4745,94 +4676,86 @@ def test_namespaced_duplicate_variants_flow_from_sql_plan_through_assembler_to_r
     ]
 
 
-def test_value_object_name_rendering_defensively_rejects_a_column_collision() -> None:
-    claimed = {"shared": "Attribute catalog.NamedVariant.label"}
-    with pytest.raises(engine.EngineError, match="ambiguously renders"):
-        engine._claim_rendered_column(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's defensive helper
-            claimed, "shared", "Value Object catalog.NamedVariant.profile"
-        )
+def test_rendering_defensively_rejects_two_contributors_for_one_wire_key() -> None:
+    rendered: Row = {"shared": 1}
+    with pytest.raises(engine.EngineError, match="more than one contributor"):
+        engine._put_rendered(rendered, "shared", 2)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance renderer's defensive helper
 
 
 def test_render_node_does_not_stub_a_diamond_at_a_non_cyclic_position() -> None:
-    from parallax.conformance import _assembly
-
-    child = _assembly.Node(fields={"id": 11, "name": "child"}, pk_columns=("id",))
-    root = _assembly.Node(
-        fields={"id": 1},
-        pk_columns=("id",),
-        relationships={"a": child, "b": child},
+    roots = _neutral_roots(
+        _ATTACH_MODEL,
+        [(_ATTACH_OWNER, {"id": 1}), (_ATTACH_TARGET, {"id": 11})],
+        attachments=[
+            (0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "a")), 1),
+            (0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "b")), 1),
+        ],
     )
-    rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    assert rendered["a"] == {"id": 11, "name": "child"}
-    assert rendered["b"] == {"id": 11, "name": "child"}
+    rendered = engine._render_node(roots[0], frozenset(), _ATTACH_MODEL)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    assert rendered["a"] == {"id": 11}
+    assert rendered["b"] == {"id": 11}
 
 
 def test_render_node_truncates_a_true_ancestor_cycle_to_a_pk_only_stub() -> None:
-    from parallax.conformance import _assembly
-
-    root = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
-    root.relationships["self"] = root
-    rendered = engine._render_node(root, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    roots = _neutral_roots(
+        _ATTACH_MODEL,
+        [(_ATTACH_OWNER, {"id": 1, "target_id": 3})],
+        attachments=[(0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "self")), 0)],
+    )
+    rendered = engine._render_node(roots[0], frozenset(), _ATTACH_MODEL)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert rendered["self"] == {"id": 1}
 
 
 def test_resolve_graph_pointer_rejects_a_malformed_pointer() -> None:
-    from parallax.conformance import _assembly
-
-    node = _assembly.Node(fields={"id": 1}, pk_columns=("id",))
+    roots = _neutral_roots(_ATTACH_MODEL, [(_ATTACH_OWNER, {"id": 1})])
     with pytest.raises(engine.EngineError, match="malformed"):
         engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-011"), {"Order": [node]}, "/nonsense"
+            _case("m-snapshot-read-011"), {"Order": roots}, "/nonsense"
         )
 
 
-def test_apply_mutate_step_updates_the_targeted_nodes_fields_in_place() -> None:
-    from parallax.conformance import _assembly
+def test_resolve_graph_pointer_rejects_a_segment_naming_no_relationship_view() -> None:
+    roots = _neutral_roots(_ATTACH_MODEL, [(_ATTACH_OWNER, {"id": 1})])
+    with pytest.raises(engine.EngineError, match="does not resolve"):
+        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            _case("m-snapshot-read-011"), {"Order": roots}, "/then/graph/Order/0/id"
+        )
 
-    node = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
-    step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
-    engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        _case("m-snapshot-read-010"), step, [[node]]
+
+def test_resolve_graph_pointer_rejects_a_pointer_resolving_to_a_non_node() -> None:
+    roots = _neutral_roots(
+        _ATTACH_MODEL,
+        [(_ATTACH_OWNER, {"id": 1})],
+        attachments=[(0, RelationshipViewKey(RelationshipIdentity(_ATTACH_OWNER, "peers")), ())],
     )
-    assert node.fields["name"] == "Mutant"
-
-
-def test_apply_mutate_step_raises_when_the_target_step_materialized_zero_nodes() -> None:
-    step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
-    with pytest.raises(engine.EngineError, match="expected exactly one"):
-        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-010"), step, [[]]
+    with pytest.raises(engine.EngineError, match="does not name a graph node"):
+        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            _case("m-snapshot-read-011"), {"Order": roots}, "/then/graph/Order/0/peers"
         )
 
 
-def test_apply_mutate_step_raises_when_the_target_step_materialized_many_nodes() -> None:
-    from parallax.conformance import _assembly
-
-    nodes = [_assembly.Node(fields={}, pk_columns=()), _assembly.Node(fields={}, pk_columns=())]
+def test_check_mutate_target_raises_when_the_target_step_materialized_zero_nodes() -> None:
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="expected exactly one"):
-        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-010"), step, [nodes]
-        )
+        engine._check_mutate_target(_case("m-snapshot-read-010"), step, [0], 0)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
 
 
-def test_apply_mutate_step_raises_when_set_is_not_a_mapping() -> None:
-    from parallax.conformance import _assembly
+def test_check_mutate_target_raises_when_the_target_step_materialized_many_nodes() -> None:
+    step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
+    with pytest.raises(engine.EngineError, match="expected exactly one"):
+        engine._check_mutate_target(_case("m-snapshot-read-010"), step, [2], 0)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
 
-    node = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
+
+def test_check_mutate_target_raises_when_set_is_not_a_mapping() -> None:
     step = {"action": "mutate", "on": 0, "set": "not-a-mapping"}
     with pytest.raises(engine.EngineError, match="needs a `set` mapping"):
-        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-010"), step, [[node]]
-        )
+        engine._check_mutate_target(_case("m-snapshot-read-010"), step, [1], 0)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
 
 
-def test_apply_mutate_step_raises_on_an_out_of_range_on_index() -> None:
+def test_grade_mutate_step_rejects_an_on_index_naming_no_earlier_find() -> None:
     step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
-    with pytest.raises(engine.EngineError, match="invalid `on`"):
-        engine._apply_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-010"), step, [[]]
-        )
+    with pytest.raises(engine.EngineError, match="no earlier find step"):
+        engine._grade_mutate_step(_case("m-snapshot-read-010"), step, [1], [None], [None])  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
 
 
 # --------------------------------------------------------------------------- #
@@ -4929,35 +4852,53 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
         engine.run_graphs_case(case, "postgres", QueueDbPort([]))
 
 
-def test_render_value_recurses_into_a_nested_value_object_document() -> None:
-    from parallax.conformance import _assembly
-
-    node = _assembly.Node(
-        fields={"id": 1, "address": {"street": "x", "geo": {"country": "NO"}}},
-        pk_columns=("id",),
+def test_run_graph_case_refuses_a_case_whose_read_answers_a_milestone_set() -> None:
+    case = _synthetic(
+        {
+            "model": "models/invoice.yaml",
+            "when": {
+                "targetEntity": "InvoiceLine",
+                "operation": {"history": {"operand": {"all": {}}, "dimension": "transaction-time"}},
+            },
+            "then": {"graph": {}},
+        }
     )
-    rendered = engine._render_node(node, frozenset())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-    assert rendered["address"] == {"street": "x", "geo": {"country": "NO"}}
+    with pytest.raises(engine.EngineError, match=r"asserts `then\.graphs`"):
+        engine.run_graph_case(case, "postgres", QueueDbPort([[]]))
 
 
-def test_resolve_graph_pointer_rejects_a_path_continuing_past_a_scalar() -> None:
-    from parallax.conformance import _assembly
+def test_run_graphs_case_refuses_a_case_whose_read_answers_one_graph() -> None:
+    case = _synthetic(
+        {
+            "model": "models/invoice.yaml",
+            "when": {"targetEntity": "InvoiceLine", "operation": {"all": {}}},
+            "then": {"graphs": []},
+        }
+    )
+    with pytest.raises(engine.EngineError, match=r"asserts `then\.graph`"):
+        engine.run_graphs_case(case, "postgres", QueueDbPort([[]]))
 
-    node = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
-    with pytest.raises(engine.EngineError, match="does not resolve"):
-        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-011"), {"Order": [node]}, "/then/graph/Order/0/name/x"
-        )
 
-
-def test_resolve_graph_pointer_rejects_a_pointer_resolving_to_a_non_node() -> None:
-    from parallax.conformance import _assembly
-
-    node = _assembly.Node(fields={"id": 1, "name": "Ada"}, pk_columns=("id",))
-    with pytest.raises(engine.EngineError, match="does not name a graph node"):
-        engine._resolve_graph_pointer(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            _case("m-snapshot-read-011"), {"Order": [node]}, "/then/graph/Order/0/name"
-        )
+def test_render_value_recurses_into_a_nested_value_object_document() -> None:
+    port = FakeDbPort(
+        [
+            {
+                "id": 1,
+                "name": "Ada",
+                "address": {"street": "x", "geo": {"country": "NO"}},
+            }
+        ]
+    )
+    _emissions, graph, _round_trips, _identity_checks = engine.run_graph_case(
+        _case("m-value-object-024"), "postgres", port
+    )
+    rendered = graph["Customer"][0]
+    assert rendered["address"] == {
+        "street": "x",
+        "city": None,
+        "geo": {"country": "NO", "elevation": None, "point": None},
+        "phones": [],
+    }
 
 
 def test_check_action_step_rejects_a_non_mutate_verb() -> None:
