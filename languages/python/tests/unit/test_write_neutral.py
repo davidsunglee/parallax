@@ -446,6 +446,79 @@ def test_a_scan_wrapping_a_deep_fetch_is_the_same_deferred_feature() -> None:
     assert raised.value.features == ("snapshot-history-includes",)
 
 
+def test_a_deep_fetch_nested_under_another_over_a_scan_is_deferred_by_name() -> None:
+    # `deepFetch` is itself an own-row node, so one deep fetch nests legally under
+    # another and the scan can sit below both. Stopping the walk at the first deep
+    # fetch and asking only the operand under it would classify this shape as
+    # executable: the request would pass the gate, force-flush the buffered insert
+    # on the way into `uow.read`, and fail inside SQL generation with the DML
+    # already executed.
+    port = RecordingPort()
+    request = NeutralReadRequest.graph(
+        target=_policy(),
+        operation=deserialize(
+            {
+                "deepFetch": {
+                    "operand": {
+                        "deepFetch": {
+                            "operand": {
+                                "history": {
+                                    "operand": {"all": {}},
+                                    "dimension": "transaction-time",
+                                }
+                            },
+                            "paths": [
+                                {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
+                            ],
+                        }
+                    },
+                    "paths": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
+                }
+            }
+        ),
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.write_neutral(_policy_insert())
+        tx.read_neutral(request)
+
+    with pytest.raises(DeferredFeatureError) as raised:
+        _policy_db(port).transact(fn)
+    assert raised.value.features == ("snapshot-history-includes",)
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
+def test_a_narrow_between_the_deep_fetch_and_the_scan_is_the_same_deferred_feature() -> None:
+    # A `narrow` selects a subset of its operand's rows and attaches nothing, so
+    # a scan below one is the same milestone set the includes above it combine
+    # with. The walk descends it like any other own-row wrapper.
+    request = NeutralReadRequest.graph(
+        target=_policy(),
+        operation=deserialize(
+            {
+                "deepFetch": {
+                    "operand": {
+                        "narrow": {
+                            "operand": {
+                                "history": {
+                                    "operand": {"all": {}},
+                                    "dimension": "transaction-time",
+                                }
+                            },
+                            "entity": "parallax.compatibility.Policy",
+                            "to": ["parallax.compatibility.Policy"],
+                        }
+                    },
+                    "paths": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
+                }
+            }
+        ),
+    )
+    with pytest.raises(DeferredFeatureError) as raised:
+        _policy_db(RecordingPort()).read_neutral(request)
+    assert raised.value.features == ("snapshot-history-includes",)
+
+
 def test_a_wrapper_spine_carrying_no_deep_fetch_still_answers() -> None:
     # The refusal is about a relationship level, not about depth: walking the
     # spine must not turn the wrappers themselves into a refusal.
