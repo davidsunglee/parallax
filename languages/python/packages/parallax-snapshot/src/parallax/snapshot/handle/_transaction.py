@@ -693,19 +693,29 @@ class Transaction:
         materializes to a Materialized Write Group with its own observation
         columns — so supplying one with a
         :class:`~parallax.core.unit_work.PredicateWrite` is refused rather than
-        silently dropped.
+        silently dropped. That refusal is about the CALL rather than about the
+        model, so it precedes validation: an instruction and an evidence
+        argument that cannot go together are answered before either is measured.
+
+        Both shapes then reach
+        :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
+        is what makes this ingress classify an instruction exactly as the typed
+        verbs do — the keyed verbs through ``_buffer``, the ``_where`` verbs
+        through :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`'s
+        own step 5 — rather than leaving a predicate-selected caller to
+        pre-validate for itself.
         """
+        if isinstance(instruction, PredicateWrite) and observation is not None:
+            raise TypeError(
+                "a predicate-selected write resolves its own per-row evidence and takes "
+                "no observation; buffer the keyed writes it materializes to instead"
+            )
+        instructions.validate_instruction(instruction, self._meta)
         if isinstance(instruction, PredicateWrite):
-            if observation is not None:
-                raise TypeError(
-                    "a predicate-selected write resolves its own per-row evidence and takes "
-                    "no observation; buffer the keyed writes it materializes to instead"
-                )
             buffer_predicate_instruction(
                 self._uow, self._meta, self._conn, self._dialect, instruction, self._attempt
             )
             return
-        instructions.validate_instruction(instruction, self._meta)
         self._uow.buffer(buffered_write(instruction, self._resolved_observation(observation)))
 
     def _resolved_observation(

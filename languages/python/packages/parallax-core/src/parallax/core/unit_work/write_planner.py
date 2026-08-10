@@ -1172,9 +1172,12 @@ def plan_temporal_close(
     """A STANDALONE temporal milestone close — the `m-opt-lock` conflict lane's
     own probe.
 
-    Every real close-bearing mutation chains at least one successor, and a
-    conflict probe deliberately runs only the close, so it settles one here
-    directly rather than through a full :class:`WritePlanner` pipeline.
+    A conflict probe runs only the close, under an address and a gate its
+    caller names outright rather than reads off an observation, so it settles
+    one here directly rather than through a full :class:`WritePlanner` pipeline.
+    The pipeline reaches this shape only for a Transaction-Time-Only
+    ``terminate``, whose topology chains nothing; every Bitemporal closure
+    chains at least the head rectangle.
     ``identity`` is the row the address keys on, ``observed_valid_end``
     completes that address on a Bitemporal target, and ``observed_tx_start``
     is the gate candidate; a probe names all three explicitly rather than

@@ -74,6 +74,10 @@ from parallax.core.unit_work.write_planner import (
 from parallax.snapshot import QueryTargetError
 from parallax.snapshot.handle import Database, Transaction
 
+# The buffering seam below every write ingress, driven directly by the case that
+# pins its own refusals.
+from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
+
 
 # A local Transaction-Time-Only, value-object-bearing entity with the
 # `supplier.yaml` shape from `m-value-object-047`. The minimal self-contained
@@ -1367,17 +1371,17 @@ def test_a_non_utc_bound_reaches_the_buffer_as_its_canonical_utc_literal() -> No
     assert "2024-09-01T00:00:00+00:00" in middle_binds  # the authored `until`, in UTC
 
 
-def test_no_typed_bound_reaches_the_frozen_ingress_uncanonicalized() -> None:
+def test_no_typed_bound_reaches_the_neutral_ingress_uncanonicalized() -> None:
     # WHAT THIS PINS. A `PredicateWrite` this lane builds never carries a
     # non-canonical value in a canonical field, proved on the shape that binds
     # BOTH Valid-Time slots into SQL — a bitemporal `updateUntil`, whose
     # rectangle split emits four statements:
     #
-    #   - a bound that cannot render never becomes an instruction, so the frozen
-    #     ingress is never reached and no statement is ever issued;
+    #   - a bound that cannot render never becomes an instruction, so
+    #     `write_neutral` is never reached and no statement is ever issued;
     #   - a bound that can render arrives already normalized, so the four
     #     statements a typed call produces are INDISTINGUISHABLE from the ones
-    #     the frozen ingress produces for the canonical instruction the
+    #     `write_neutral` produces for the canonical instruction the
     #     conformance engine would hand it. Anything other than the canonical
     #     literal in either slot would show up as a differing bind.
     #
@@ -1432,11 +1436,11 @@ def test_no_typed_bound_reaches_the_frozen_ingress_uncanonicalized() -> None:
     assert isinstance(canonical, PredicateWrite)
     seam_port = RecordingPort(rows=[_position_row()])
 
-    def frozen(tx: Transaction) -> None:
+    def neutral(tx: Transaction) -> None:
         tx.write_neutral(canonical)
 
     Database.connect(seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
-        frozen, concurrency="optimistic"
+        neutral, concurrency="optimistic"
     )
     typed_writes = [op for op in typed_port.ops if op[0] == "write"]
     assert len(typed_writes) == 4  # close + head + middle + tail
@@ -1545,25 +1549,24 @@ def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
         engine._is_materializing_write_step(step, _MATERIALIZING_ENGINE_META)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own materializing predicate-write ingress
 
 
-# The frozen seam's OWN contract, driven the way the conformance engine drives
-# it — an instruction NOTHING pre-validated, straight into
-# `Transaction.write_neutral`. `validate_instruction`
-# establishes the CALLER ordering; this establishes that the directly reachable
-# seam takes no instruction on faith, so deleting its
-# `inheritance.reject_predicate_write` call fails BOTH cases.
+# The neutral ingress's OWN validation, driven the way the conformance engine
+# drives it — an instruction NOTHING pre-validated, straight into
+# `Transaction.write_neutral`. The ingress "validates and buffers one write
+# instruction" (`python.md` §5) for a predicate-selected instruction exactly as
+# for a keyed one, so deleting its `validate_instruction` call fails BOTH cases.
 #
-# The refusal is asserted at the seam CALL, inside the transaction body, which
-# is what makes each half discriminating. Without the seam's own guard the
-# readless family instruction is merely buffered and the call returns — the
-# planner's flush-time refusal would come later, and never at all on the
-# abandoned transaction here. And the materializing one reaches the resolving
-# read, real SQL on the caller's connection, which `port.ops` then shows.
+# The refusal is asserted at the ingress CALL, inside the transaction body,
+# which is what makes each half discriminating. Unvalidated, the readless family
+# instruction is merely buffered and the call returns — the planner's flush-time
+# refusal would come later, and never at all on the abandoned transaction here.
+# And the materializing one reaches the resolving read, real SQL on the caller's
+# connection, which `port.ops` then shows.
 @pytest.mark.parametrize(
     ("model", "entity"),
     [(PAYMENT, "CardPayment"), (RATE, "DepositRate")],
     ids=["readless-unversioned-family", "materializing-bitemporal-family"],
 )
-def test_the_frozen_buffering_seam_refuses_an_unvalidated_inheritance_family_instruction(
+def test_the_neutral_write_ingress_refuses_an_unvalidated_inheritance_family_instruction(
     model: DomainModel, entity: str
 ) -> None:
     instruction = instructions.deserialize(
@@ -1590,16 +1593,19 @@ def test_the_frozen_buffering_seam_refuses_an_unvalidated_inheritance_family_ins
         Database.connect(port, model, clock=FixedClock(FIXED)).transact(fn)
 
 
-# The seam's second own-contract rule, driven the same way: a milestone verb
-# the target's temporal profile does not admit. `Account` is versioned and
+# The ingress's second refusal, driven the same way: a milestone verb the
+# target's temporal profile does not admit. `Account` is versioned and
 # non-temporal, so the instruction MATERIALIZES — without this refusal it
 # reaches the resolving read (real SQL, which `port.ops` would show) and then
 # settles as an ordinary versioned update that consumes each matched row's
 # version while dropping the window the caller bounded. A zero-match resolve
 # would not even reach that: it buffers no group, so the flush would refuse
-# nothing at all.
+# nothing at all. The `updateUntil` assignment carries its member's DECLARED
+# carrier: the target-profile quadrant is the LAST rule `validate_instruction`
+# asks, so a wire-spelled value would classify as an unassignable one first and
+# this case would stop proving anything about the verb.
 @pytest.mark.parametrize("mutation", ["updateUntil", "terminate", "terminateUntil"])
-def test_the_frozen_buffering_seam_refuses_a_milestone_verb_on_a_non_temporal_target(
+def test_the_neutral_write_ingress_refuses_a_milestone_verb_on_a_non_temporal_target(
     mutation: str,
 ) -> None:
     document: dict[str, object] = {
@@ -1607,7 +1613,7 @@ def test_the_frozen_buffering_seam_refuses_a_milestone_verb_on_a_non_temporal_ta
         "target": {"entity": "Account", "predicate": {"eq": {"attr": "Account.id", "value": 1}}},
     }
     if mutation == "updateUntil":
-        document["assignments"] = [{"attr": "Account.balance", "value": 5.00}]
+        document["assignments"] = [{"attr": "Account.balance", "value": Decimal("5.00")}]
     if mutation != "terminate":
         document["validFrom"] = "2024-01-01T00:00:00+00:00"
         document["until"] = "2024-06-01T00:00:00+00:00"
@@ -1623,6 +1629,45 @@ def test_the_frozen_buffering_seam_refuses_a_milestone_verb_on_a_non_temporal_ta
 
     with pytest.raises(_Abandon):
         Database.connect(port, ACCOUNT, clock=FixedClock(FIXED)).transact(fn)
+
+
+# The buffering seam's OWN contract, below every ingress: `buffer_predicate`
+# and `write_neutral` both validate first, so this drives the free function
+# DIRECTLY with an instruction nothing measured. Without the seam's own
+# `inheritance.reject_predicate_write` the bitemporal family instruction reaches
+# `_materialize_predicate_write`'s resolving read — real SQL on the caller's
+# connection, which `port.ops` then shows — so deleting that call fails here and
+# nowhere else.
+def test_the_buffering_seam_refuses_an_unvalidated_inheritance_family_instruction() -> None:
+    instruction = instructions.deserialize(
+        {
+            "mutation": "delete",
+            "target": {
+                "entity": "DepositRate",
+                "predicate": {"eq": {"attr": "DepositRate.id", "value": 1}},
+            },
+        }
+    )
+    assert isinstance(instruction, PredicateWrite)
+    port = RecordingPort(rows=[])
+
+    def fn(tx: Transaction) -> None:
+        with pytest.raises(
+            inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
+        ):
+            buffer_predicate_instruction(
+                tx._uow,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
+                tx._meta,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
+                tx._conn,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
+                tx._dialect,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
+                instruction,
+                tx._attempt,  # pyright: ignore[reportPrivateUsage] - the seam below every ingress
+            )
+        assert port.ops == [("begin",)]
+        raise _Abandon
+
+    with pytest.raises(_Abandon):
+        Database.connect(port, RATE, clock=FixedClock(FIXED)).transact(fn)
 
 
 def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:

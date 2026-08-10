@@ -55,9 +55,11 @@ from parallax.core.unit_work import (
     PredecessorRow,
     StaleWriteError,
     TemporalObservation,
+    VersionObservation,
     WriteEffectError,
 )
 from parallax.snapshot import handle
+from parallax.snapshot.materialize import RelationshipViewKey
 
 
 def _rows(row: Row, key: str) -> list[Row]:
@@ -1669,7 +1671,7 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
     historical = _balance_node("2024-01-01T00:00:00+00:00", "90.00")
 
     def settle(node: Any) -> object:
-        (_instruction, evidence, observation) = engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        write = engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"mutation": "update", "entity": "Balance", "rows": [{"id": 1, "value": 5.00}]},
             meta,
             TemporalShadow(),
@@ -1677,7 +1679,8 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
             [],
             (node,),
         )[0]
-        assert evidence == node.observation_key
+        assert write.execution_evidence == node.observation_key
+        observation = write.oracle_observation
         assert isinstance(observation, TemporalObservation)
         return observation.predecessor.members["txStart"]
 
@@ -1775,6 +1778,67 @@ def test_observed_nodes_skips_a_node_the_unit_of_work_observed_nothing_of() -> N
         )
         == ()
     )
+
+
+def test_observed_nodes_publishes_every_deep_fetch_level_and_walks_a_cycle_once() -> None:
+    # A find observes every row it materialized, at the root and at every
+    # deep-fetch level, and files a key for each. Reading only the roots would
+    # discard evidence production recorded, so a later grouped write of an
+    # INCLUDED object could not settle against it — the child here carries a
+    # version of its own and appears in the result exactly once even though the
+    # graph closes a cycle back through it.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    model = engine.case_model(meta)
+    account = EntityIdentity("parallax.compatibility", "Account")
+    version = AttributeIdentity(account, "version")
+    peer = RelationshipIdentity(account, "peer")
+    peers = RelationshipIdentity(account, "peers")
+    owner = RelationshipIdentity(account, "owner")
+
+    def view(
+        pk: int,
+        observed_version: int,
+        relationships: dict[RelationshipViewKey, Any],
+    ) -> handle.NeutralNodeView:
+        key = ObjectKey(account, (("id", pk),))
+        return handle.NeutralNodeView(
+            node=handle.NeutralNode(
+                entity=account, object_key=key, observation_key=ObservationKey(key, None)
+            ),
+            primary_key=(),
+            family_variant=None,
+            attributes={version: observed_version},
+            value_objects={},
+            relationships=relationships,
+        )
+
+    child_links: dict[RelationshipViewKey, Any] = {}
+    child = view(2, 8, child_links)
+    grandchild = view(3, 9, {})
+    root = view(
+        1,
+        7,
+        {
+            RelationshipViewKey(peer): child,
+            RelationshipViewKey(peers): (grandchild,),
+            RelationshipViewKey(owner): None,
+        },
+    )
+    child_links[RelationshipViewKey(peer)] = root  # the cycle back to the root
+
+    observed = engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        meta, model, "parallax.compatibility.Account", handle.NeutralGraph((root,), Pin())
+    )
+    assert [node.object_key.primary_key for node in observed] == [
+        (("id", 1),),
+        (("id", 2),),
+        (("id", 3),),
+    ]
+    assert [cast("VersionObservation", node.observation).observed_version for node in observed] == [
+        7,
+        8,
+        9,
+    ]
 
 
 def test_a_find_step_names_its_target_and_its_operation() -> None:
