@@ -2782,14 +2782,14 @@ def _apply_mutate_step(
     if not isinstance(assignments, Mapping):
         raise EngineError(f"{case.path.name}: a `mutate` action needs a `set` mapping")
     members = source.roots[0]
-    named = cast("Mapping[str, object]", assignments)
-    unassignable = sorted(name for name in named if name not in members)
+    member_assignments = cast("Mapping[str, object]", assignments)
+    unassignable = sorted(name for name in member_assignments if name not in members)
     if unassignable:
         raise EngineError(
             f"{case.path.name}: `mutate` assigns {unassignable!r}, which the view step {on} "
             "materialized carries no member of"
         )
-    members.update(named)
+    members.update(member_assignments)
 
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:

@@ -4769,7 +4769,7 @@ def test_apply_mutate_step_assigns_every_named_member_in_memory() -> None:
     assert source.roots[0] == {"id": 1, "name": "Mutant", "qty": 9}
 
 
-def test_apply_mutate_step_refuses_a_set_naming_no_materialized_member() -> None:
+def test_apply_mutate_step_refuses_the_whole_set_when_one_name_is_unassignable() -> None:
     # The assignable name is authored FIRST, so a per-name apply-then-check would
     # leave `name` mutated behind the refusal: the whole `set` is rejected and
     # the member state is the one the find step materialized.
