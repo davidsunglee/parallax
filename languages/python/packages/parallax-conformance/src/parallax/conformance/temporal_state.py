@@ -9,8 +9,14 @@ supplies observed rows from case state"). This module is the engine-side tracker
 that makes that observation available WITHOUT a database round trip — fixtures (for
 a case that loads them) seed it, and each temporal write advances it from the
 successor rows the production Write Plan that write already produced carries, so
-the tracker holds exactly what the flush writes rather than a second expansion of
-the same topology computed beside it.
+what it holds for a milestone is what the flush wrote for that milestone rather
+than a second expansion of the same topology computed beside it.
+
+Statements this tracker never saw are the one thing it cannot account for:
+out-of-band SQL (`m-case-format` ``given.apply``) stores what no authored member
+could produce. It therefore records WHICH of its milestones such statements
+overtook rather than claiming an account it no longer has
+(:meth:`TemporalShadow.accounts_for`).
 
 Non-normative engine-internal bookkeeping: never serialized, never a
 :class:`~parallax.core.unit_work.WriteInstruction` field, never consulted by
@@ -91,30 +97,64 @@ class TemporalShadow:
     that names an observed edge address exactly the milestone it observed.
     """
 
-    __slots__ = ("_current", "_out_of_band")
+    __slots__ = ("_current", "_out_of_band", "_overtaken")
 
     def __init__(self) -> None:
         self._current: dict[_ObjectKey, TemporalObservation] = {}
         self._out_of_band = False
+        self._overtaken: set[_ObjectKey] = set()
 
-    @property
-    def saw_out_of_band_write(self) -> bool:
-        """Whether state this tracker never observed has been written to the
-        tables it shadows.
+    def accounts_for(
+        self,
+        model: Metamodel,
+        entity: EntityMetadata,
+        row: Mapping[str, object],
+        edge: temporal_read.Edge | None = None,
+    ) -> bool:
+        """Whether what this tracker holds for the milestone ``row`` addresses is
+        the WHOLE stored row.
 
-        A milestone it holds is still ADDRESSABLE afterwards — the key and the
-        edge are the case's own — but it is no longer a complete account of the
-        stored row, and a consumer that rebuilds a row rather than merely
-        addressing one has to answer for the difference."""
-        return self._out_of_band
+        A milestone stays ADDRESSABLE whatever the answer — the key and the edge
+        are the case's own — but a consumer that REBUILDS a row rather than merely
+        addressing one has to answer for the difference, and this is the question
+        it asks.
+
+        ``False`` in exactly two states, both of them consequences of out-of-band
+        statements (:meth:`note_out_of_band_write`):
+
+        - the milestone was tracked when those statements ran, so they may have
+          stored something no member of it names; and
+        - no milestone of this key is tracked at all, which after such statements
+          means the row they may have left is one the tracker has no account of
+          whatsoever.
+
+        A milestone the case's own writes opened AFTERWARDS is ``True`` again: a
+        Planned Insert's entry row IS the whole row the flush writes, so tracking
+        it establishes a complete account of that milestone even though this
+        tracker never re-reads. Overtaking is per MILESTONE for that reason, not
+        per case.
+
+        The bound is the tightest one available without reading the statements:
+        which rows a naive ``sql`` string touched is not something this tracker
+        can know, so every milestone it held when they ran is treated as
+        overtaken even if they named another target.
+        """
+        if not self._out_of_band:
+            return True
+        slot = self._slot(model, entity, row, edge)
+        return slot is not None and slot not in self._overtaken
 
     def note_out_of_band_write(self) -> None:
         """Record that statements outside this tracker's own accounting ran
         against the tables it shadows (`m-case-format` ``given.apply``).
 
-        One-way: the tracker never re-reads, so nothing it holds can be
-        re-established as complete once such a statement has run."""
+        Every milestone held right now is overtaken by them, and every key with
+        none is left with no account of a row they may have written. Both states
+        are one-way for the milestones they name — the tracker never re-reads —
+        and both end for a key the moment a later write opens a milestone of it.
+        """
         self._out_of_band = True
+        self._overtaken |= set(self._current)
 
     def seed_fixtures(
         self, model: Metamodel, entity: EntityMetadata, rows: Sequence[Mapping[str, object]]
@@ -161,26 +201,40 @@ class TemporalShadow:
         rectangle — the one current milestone is returned, and several raise
         :class:`AmbiguousObservationError`.
         """
+        slot = self._slot(model, entity, row, edge)
+        return None if slot is None else self._current[slot]
+
+    def _slot(
+        self,
+        model: Metamodel,
+        entity: EntityMetadata,
+        row: Mapping[str, object],
+        edge: temporal_read.Edge | None,
+    ) -> _ObjectKey | None:
+        """The one tracked slot ``row`` (and, given one, ``edge``) addresses, or
+        ``None`` for a key this tracker holds no current milestone of.
+
+        The ONE place an input's identity is turned into a slot, so every question
+        asked about the addressed milestone — what it is, and whether it is still
+        a whole account of the stored row — is asked of the same milestone.
+        """
         entity_name = entity.identity.name
         pk_names = _primary_key_names(model, entity)
         identity = (entity_name, tuple(row[name] for name in pk_names))
         if edge is not None:
-            return self._current.get((*identity, edge))
-        candidates = [
-            (key[2], observation)
-            for key, observation in self._current.items()
-            if key[:2] == identity
-        ]
+            slot = (*identity, edge)
+            return slot if slot in self._current else None
+        candidates = [key for key in self._current if key[:2] == identity]
         if not candidates:
             return None
         if len(candidates) > 1:
             raise AmbiguousObservationError(
                 f"{entity_name}: {len(candidates)} current milestones are tracked for "
                 f"{dict(zip(pk_names, identity[1], strict=True))!r}, at the edges "
-                f"{sorted(str(edge) for edge, _ in candidates)} — this input names none of "
+                f"{sorted(str(key[2]) for key in candidates)} — this input names none of "
                 "them, and an observation is keyed by the milestone it observed"
             )
-        return candidates[0][1]
+        return candidates[0]
 
     def retire(
         self, model: Metamodel, entity: EntityMetadata, observed: TemporalObservation
@@ -194,15 +248,14 @@ class TemporalShadow:
         axis ENDS while a tracked milestone is keyed by its own edge — the axis
         STARTS — and the plan carries no way back from one to the other.
         """
-        self._current.pop(
-            self._key(
-                entity.identity.name,
-                _primary_key_names(model, entity),
-                _axis_start_names(model, entity),
-                observed.predecessor.members,
-            ),
-            None,
+        key = self._key(
+            entity.identity.name,
+            _primary_key_names(model, entity),
+            _axis_start_names(model, entity),
+            observed.predecessor.members,
         )
+        self._current.pop(key, None)
+        self._overtaken.discard(key)
 
     def track_opened(self, model: Metamodel, plan: WritePlan) -> None:
         """Track every milestone ``plan`` OPENS as the current state a later step
@@ -242,6 +295,10 @@ class TemporalShadow:
         overwriting would silently drop one and hand every later step the other.
         The independent grader refuses the same state where it scans for the one
         fixture row an edge selects.
+
+        Storing a milestone is also what re-establishes a whole account of it: the
+        row stored here came from the case's own fixtures or from the plan that
+        wrote it, so the slot is no longer overtaken by anything that ran before.
         """
         existing = self._current.get(key)
         if existing is not None and existing.predecessor.members != observation.predecessor.members:
@@ -251,6 +308,7 @@ class TemporalShadow:
                 "an edge names exactly one milestone, so no observation could tell them apart"
             )
         self._current[key] = observation
+        self._overtaken.discard(key)
 
     @staticmethod
     def _key(

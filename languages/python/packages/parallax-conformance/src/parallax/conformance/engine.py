@@ -1166,7 +1166,7 @@ def _refuse_document_layout_milestone(model: AcceptedMetamodel, entity_name: str
     the only answer that cannot be silently wrong.
 
     This is the find-derived half of one policy;
-    :func:`_refuse_out_of_band_document_milestone` is the tracker-derived half,
+    :func:`_refuse_unaccounted_document_milestone` is the tracker-derived half,
     which refuses on a narrower trigger because a tracked milestone IS the whole
     stored document as long as the case authored every key in it.
     """
@@ -1181,12 +1181,15 @@ def _refuse_document_layout_milestone(model: AcceptedMetamodel, entity_name: str
     )
 
 
-def _refuse_out_of_band_document_milestone(
-    model: AcceptedMetamodel, entity_name: str, shadow: TemporalShadow
+def _refuse_unaccounted_document_milestone(
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    row: Mapping[str, object],
+    shadow: TemporalShadow,
 ) -> None:
     """Refuse a keyed temporal write over a Relational Document Layout target
-    whose observation would be rebuilt from a tracker that out-of-band statements
-    have already invalidated.
+    whose observation would be rebuilt from a tracked milestone the tracker can no
+    longer account for whole.
 
     The peer of :func:`_refuse_document_layout_milestone` for the lanes that take
     their milestone from tracked case state rather than from a find — every
@@ -1203,18 +1206,27 @@ def _refuse_out_of_band_document_milestone(
     write chains would be patched onto declared members alone and drop whatever
     those statements left in the document. Naming the shape is the only answer
     that cannot be silently wrong.
+
+    Which milestone the write addresses is what decides it
+    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.accounts_for`),
+    never merely whether the case ran such statements somewhere: a milestone this
+    case's own later write opened is a whole account of its row again, so an
+    insert-then-update chain over a document-mapped target stays legal beside any
+    out-of-band statement (`m-case-format`: a keyed write consumes the milestone
+    the case's own fixtures and earlier entries left current).
     """
-    if not shadow.saw_out_of_band_write:
+    if shadow.accounts_for(model, entity, row):
         return
+    entity_name = entity.identity.canonical
     column = _shared_document_column(model, entity_name)
     if column is None:
         return
     raise EngineError(
-        f"a keyed temporal write on {entity_name!r} follows this case's own out-of-band "
-        f"statements, and its document-resident members are stored in the shared Structured "
-        f"Column {column!r} — this lane observes the milestone from tracked case state, which "
-        "never saw what those statements stored, so the successor it chains would lose whatever "
-        "else that document holds"
+        f"a keyed temporal write on {entity_name!r} addresses a milestone this case's own "
+        f"out-of-band statements overtook, and its document-resident members are stored in the "
+        f"shared Structured Column {column!r} — this lane observes the milestone from tracked "
+        "case state, which never saw what those statements stored, so the successor it chains "
+        "would lose whatever else that document holds"
     )
 
 
@@ -1299,7 +1311,7 @@ def _build_temporal_instruction(
     an implicit resolving read), which is how every writeSequence entry and every
     ungrouped scenario write resolves; a target whose tracked milestone can no
     longer account for the whole stored row is refused first
-    (:func:`_refuse_out_of_band_document_milestone`). Given one, the entry's own
+    (:func:`_refuse_unaccounted_document_milestone`). Given one, the entry's own
     step named a find of its `uow` group with ``on``, and the evidence is the
     Observation Key the active unit of work filed that node under
     (:func:`_settled_against_source`).
@@ -1351,7 +1363,7 @@ def _build_temporal_instruction(
     evidence: WriteEvidence = None
     if not is_insert and not is_coalescing_candidate:
         if source is None:
-            _refuse_out_of_band_document_milestone(model, entity_name, shadow)
+            _refuse_unaccounted_document_milestone(model, entity_metadata, row, shadow)
             observation = shadow.resolve(model, entity_metadata, row)
             evidence = observation
         else:
@@ -2461,6 +2473,10 @@ def _run_snapshot_scenario(
     (`m-conformance-adapter`)."""
     meta = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
+    # This lane resolves no milestone from case state — every node it publishes
+    # comes from a real read and it buffers no keyed write — so the tracker the
+    # out-of-band statements mark is its own and is never consulted.
+    _apply_given_apply(case, dialect, port, TemporalShadow())
     emissions: list[Emission] = []
     round_trips = 0
     results: list[list[_assembly.Node]] = []
@@ -3865,6 +3881,7 @@ def run_interleaved_scenario_case(
     (label_a, indices_a), (label_b, indices_b) = groups.items()
     shadow = TemporalShadow()
     _seed_shadow_from_fixtures(case, meta, shadow)
+    _apply_given_apply(case, dialect, port, shadow)
     instant = normalize_instant(dt.datetime.fromisoformat(_INERT_CLOCK_INSTANT))
     main_db = handle.Database(port, case_model(meta), dialect=dialect, clock=FixedClock(instant))
     peer_connection = peer_factory()
@@ -3986,14 +4003,14 @@ def run_scenario_case(
     round_trips = 0
     try:
         _seed_shadow_from_fixtures(case, meta, shadow)
-        # After the fixtures and before the first step, exactly where the
-        # write-sequence and conflict lanes apply it (:func:`_apply_given_apply`).
-        # The tracker is deliberately not re-seeded from it — it records that the
-        # statements ran instead. A predicate write resolves through a real read
-        # that sees whatever they wrote; a keyed write's observation stays case
-        # state, and where that state can no longer be the whole stored row the
-        # write is refused rather than silently rebuilt
-        # (:func:`_refuse_out_of_band_document_milestone`).
+        # After the fixtures and before the first step, exactly where every other
+        # lane applies it (:func:`_apply_given_apply`). The tracker is deliberately
+        # not re-seeded from it — it records which milestones the statements
+        # overtook instead. A predicate write resolves through a real read that
+        # sees whatever they wrote; a keyed write's observation stays case state,
+        # and where that state can no longer be the whole stored row the write is
+        # refused rather than silently rebuilt
+        # (:func:`_refuse_unaccounted_document_milestone`).
         _apply_given_apply(case, dialect, port, shadow)
         index = 0
         while index < len(steps):
@@ -4166,9 +4183,10 @@ def _apply_given_apply(
     model declares nowhere).
 
     Marking the tracker here rather than at each lane is what makes the mark
-    unforgettable: every lane that can run out-of-band statements runs them
-    through this one function, so no lane can leave a tracker claiming to hold
-    the whole stored row after one did."""
+    unforgettable: every executor of a shape ``given.apply`` is admitted on —
+    conflict, writeSequence, and each of the three scenario executors — runs the
+    statements through this one function, so no lane can leave a tracker claiming
+    a whole account of a row one of them has since overtaken."""
     given = case.document.get("given")
     if not isinstance(given, Mapping):
         return

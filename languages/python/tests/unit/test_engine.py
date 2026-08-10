@@ -636,6 +636,29 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     assert find_rows == [[row_v1], [row_v1], []]
 
 
+def test_run_interleaved_scenario_case_applies_out_of_band_statements_before_the_groups() -> None:
+    # The interleaved executor owes the same `given.apply` setup the other scenario
+    # executors do: applied on the caller's own port after the fixtures and before
+    # either worker starts, so both groups race against the state it left. Its own
+    # first write lands after it in `writes` order, which is what pins the ordering.
+    case = _load_case("m-opt-lock-012")
+    with_apply = dataclasses.replace(
+        case,
+        document={
+            **case.document,
+            "given": {"fixtures": True, "apply": [{"sql": "update account set balance = ?"}]},
+        },
+    )
+    row_v1: Row = {"id": 2, "owner": "Linus", "balance": 250.00, "version": 1}
+    main_port = _ScriptedPort(read_rows=[[row_v1], []], write_affected=[1, 0, 0])
+    peer_port = _ScriptedPort(read_rows=[[row_v1]], write_affected=[1])
+
+    engine.run_interleaved_scenario_case(with_apply, "postgres", main_port, lambda: peer_port)
+
+    assert main_port.writes[0][0] == "update account set balance = %s"
+    assert len(main_port.writes) == 3  # the statement, then the doomed group's two
+
+
 def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_too() -> None:
     # The conflict-rendering fallback is symmetric: whichever group's own
     # last write conflicts, its `actual` affected-row count surfaces —
@@ -1878,7 +1901,7 @@ def test_a_tracked_milestone_of_a_document_target_is_refused_after_out_of_band_s
     # keyed write, so the successor would be patched from declared members alone
     # and lose the key. The engine names the shape instead of chaining it.
     port = FakeWritePort()
-    with pytest.raises(engine.EngineError, match="out-of-band statements"):
+    with pytest.raises(engine.EngineError, match="out-of-band statements overtook"):
         engine.run_write_sequence_case(_load_case("m-txtime-write-011"), "postgres", port)
 
 
@@ -1888,10 +1911,14 @@ def test_a_tracked_milestone_under_columns_survives_out_of_band_statements() -> 
     # holds every column, so out-of-band state leaves the observation STALE — the
     # very thing a conflict case authors on purpose — never unrepresentable.
     meta = engine.load_case_metamodel(_load_case("m-txtime-write-002"))
+    model = engine.case_model(meta)
     shadow = TemporalShadow()
     shadow.note_out_of_band_write()
-    engine._refuse_out_of_band_document_milestone(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        engine.case_model(meta), "parallax.compatibility.Balance", shadow
+    engine._refuse_unaccounted_document_milestone(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        model,
+        engine.case_entity(model, meta.entity("parallax.compatibility.Balance")),
+        {"id": 1},
+        shadow,
     )
 
 
@@ -1910,6 +1937,35 @@ def test_a_tracked_milestone_of_a_document_target_chains_when_the_case_authored_
         "/writeSequence/1",
         "/writeSequence/1",
     ]
+
+
+def test_a_document_milestone_opened_after_out_of_band_statements_still_chains() -> None:
+    # The same chain with an out-of-band statement in front of it. The insert
+    # opens the milestone the update addresses AFTER those statements ran, and a
+    # Planned Insert's entry row is the whole row the flush writes, so the tracker
+    # accounts for that milestone whole again. Refusing here would refuse the very
+    # state `m-case-format` requires a keyed write to consume — the milestone the
+    # case's own earlier entries left current — which is why the refusal is keyed
+    # to the addressed milestone rather than to the case.
+    case = _load_case("m-txtime-write-010")
+    with_apply = dataclasses.replace(
+        case,
+        document={
+            **case.document,
+            "given": {"apply": [{"sql": "insert into unrelated(id) values (1)"}]},
+        },
+    )
+    port = FakeWritePort()
+    emissions, _table_state, round_trips = engine.run_write_sequence_case(
+        with_apply, "postgres", port
+    )
+    assert round_trips == 3
+    assert [e.case_pointer for e in emissions] == [
+        "/writeSequence/0",
+        "/writeSequence/1",
+        "/writeSequence/1",
+    ]
+    assert port.writes[0][0].startswith("insert into unrelated")
 
 
 def test_a_find_step_names_its_target_and_its_operation() -> None:
@@ -3167,12 +3223,16 @@ def test_apply_given_apply_is_a_no_op_when_given_carries_no_apply_list() -> None
     case = _synthetic_write("conflict", {"given": {"fixtures": True}})
     port = FakeWritePort()
     shadow = TemporalShadow()
+    meta = engine.load_case_metamodel(_load_case("m-txtime-write-002"))
+    model = engine.case_model(meta)
     engine._apply_given_apply(case, POSTGRES, port, shadow)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
     assert port.writes == []
     # A case that applies nothing leaves the tracker's account of the stored rows
-    # whole, which is what a keyed temporal write over a document-mapped target
-    # depends on.
-    assert not shadow.saw_out_of_band_write
+    # whole — including for a key it tracks no milestone of — which is what a keyed
+    # temporal write over a document-mapped target depends on.
+    assert shadow.accounts_for(
+        model, engine.case_entity(model, meta.entity("parallax.compatibility.Balance")), {"id": 1}
+    )
 
 
 def test_run_conflict_case_wraps_a_lowering_failure_as_engine_error() -> None:
@@ -4663,20 +4723,19 @@ def test_run_scenario_case_snapshot_lane_wraps_an_error_from_the_find_executor()
         engine.run_scenario_case(case, "postgres", QueueDbPort([]))
 
 
+_ORDER_ROW: dict[str, object] = {
+    "id": 1,
+    "name": "Ada",
+    "sku": "A-100",
+    "qty": 5,
+    "price": decimal.Decimal("10.50"),
+    "active": True,
+    "ordered_on": dt.date(2024, 1, 5),
+}
+
+
 def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -> None:
-    port = FakeWritePort(
-        find_rows=[
-            {
-                "id": 1,
-                "name": "Ada",
-                "sku": "A-100",
-                "qty": 5,
-                "price": decimal.Decimal("10.50"),
-                "active": True,
-                "ordered_on": dt.date(2024, 1, 5),
-            }
-        ]
-    )
+    port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
     emissions, round_trips, errors, _log = engine.run_scenario_case(
         _case("m-snapshot-read-010"), "postgres", port
     )
@@ -4685,6 +4744,24 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
     assert len(port.reads) == 2
     assert len(port.writes) == 0
     assert errors == []  # an unpinned mutate is accepted: no error observation
+
+
+def test_run_scenario_case_snapshot_lane_applies_out_of_band_statements() -> None:
+    # `m-case-format` admits `given.apply` on a scenario without excluding the
+    # action-bearing shape, so this lane owes the same setup every other executor
+    # does: applied on the caller's own port before the first step, so each find
+    # observes the state those statements left rather than the state they replaced.
+    case = _case("m-snapshot-read-010")
+    with_apply = dataclasses.replace(
+        case,
+        document={
+            **case.document,
+            "given": {"apply": [{"sql": "update orders set qty = ?", "binds": [9]}]},
+        },
+    )
+    port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
+    engine.run_scenario_case(with_apply, "postgres", port)
+    assert port.writes == [("update orders set qty = %s", [9])]
 
 
 # --------------------------------------------------------------------------- #

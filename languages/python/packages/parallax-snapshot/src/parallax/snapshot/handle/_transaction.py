@@ -705,13 +705,9 @@ class Transaction:
         :func:`~parallax.core.unit_work.instructions.validate_instruction`, the
         whole of what the ``_where`` verbs measure through
         :func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate`'s
-        own step 5. A KEYED instruction reaches the model-aware
-        :func:`~parallax.core.unit_work.validate_write` per row and THEN that
-        same member-name honesty gate, in the order and for the reason
-        ``_buffer`` states: the inheritance payload-shape rules classify a
-        framework-owned metadata key or a cross-branch field more specifically
-        than the honesty gate ever could, so they run first and the gate catches
-        whatever they left unexamined.
+        own step 5. A KEYED instruction reaches ``_validate_keyed``, which is
+        exactly what the typed verbs' own ``_buffer`` runs on the instruction it
+        builds.
         """
         if isinstance(instruction, PredicateWrite):
             if observation is not None:
@@ -724,27 +720,40 @@ class Transaction:
                 self._uow, self._meta, self._conn, self._dialect, instruction, self._attempt
             )
             return
-        self._validate_keyed_rows(instruction)
-        instructions.validate_instruction(instruction, self._meta)
+        self._validate_keyed(instruction)
         self._uow.buffer(buffered_write(instruction, self._resolved_observation(observation)))
 
-    def _validate_keyed_rows(self, instruction: KeyedWrite) -> None:
-        """Judge every row of a neutral keyed instruction against the model, the
-        way ``_buffer`` judges the one row a typed verb built.
+    def _validate_keyed(self, instruction: KeyedWrite) -> None:
+        """The whole judgment a keyed write instruction is measured by, in the one
+        order both this transaction's ingresses run it in.
+
+        The model-aware :func:`~parallax.core.unit_work.validate_write` per row
+        FIRST: its inheritance payload-shape rules
+        (``subtype-write-metadata-field`` / ``-sibling-attribute`` /
+        ``-set-based-unsupported``, `m-inheritance`) classify a framework-owned
+        metadata key or a cross-branch field MORE SPECIFICALLY than the generic
+        member-name honesty gate ever could. Then
+        :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
+        still catches any OTHERWISE-unknown member the row walk left unexamined
+        (it walks only DECLARED members, never flags a stray key itself).
+
+        Extracted rather than spelled at each ingress because the ORDER is the
+        rule: a typed verb and a neutral keyed instruction that classified the
+        same defect differently would make the ingress, not the model, decide what
+        a write violated.
 
         A spelling naming no single declared Entity is left entirely to
-        :func:`~parallax.core.unit_work.instructions.validate_instruction`, which
-        owns that classification and refuses it immediately after this returns:
-        a row judgment presupposes the target whose members it is measured
-        against, so an unresolvable target has no row question to answer, and
-        answering it here would report a member complaint about an Entity the
+        ``validate_instruction``, which owns that classification and refuses it one
+        step later: a row judgment presupposes the target whose members it is
+        measured against, so an unresolvable target has no row question to answer,
+        and answering it here would report a member complaint about an Entity the
         model does not have.
         """
         entity = entity_by_name(self._meta, instruction.entity)
-        if entity is None:
-            return
-        for row in instruction.rows:
-            validate_write(entity, row, self._meta, mutation=instruction.mutation)
+        if entity is not None:
+            for row in instruction.rows:
+                validate_write(entity, row, self._meta, mutation=instruction.mutation)
+        instructions.validate_instruction(instruction, self._meta)
 
     def _resolved_observation(
         self, observation: ObservationKey | WriteObservation | None
@@ -791,16 +800,9 @@ class Transaction:
         # Materialized Write Group's own observation columns do.
         #
         # The document route buys the IR's structural validation (no `at` alias,
-        # no observation keys) first (`deserialize`), then the model-aware
-        # `validate_write` (the SAME validator the conformance engine's
-        # rejected lane calls): its inheritance payload-shape checks
-        # (`subtype-write-metadata-field` / `-sibling-attribute` /
-        # `-set-based-unsupported`, m-inheritance) classify a framework-owned
-        # metadata key or a cross-branch field MORE SPECIFICALLY than the
-        # generic member-name-honesty gate below ever could, so it runs
-        # first — member-name honesty (`validate_instruction`) still catches
-        # any OTHERWISE-unknown member a validate_write pass left unexamined
-        # (it walks only DECLARED members, never flags a stray key itself).
+        # no observation keys) first (`deserialize`), and the instruction it
+        # yields is then measured by `_validate_keyed`, the SAME judgment in the
+        # SAME order `write_neutral` runs on a keyed instruction it was handed.
         #
         # `valid_from` / `until` extend this neutral seam for a TEMPORAL keyed
         # write: a non-temporal or Transaction-Time-Only
@@ -822,11 +824,8 @@ class Transaction:
         if until is not None:
             doc["until"] = until
         instruction = instructions.deserialize(doc)
-        metadata = self._meta.entity(entity)
-        if metadata is None:  # pragma: no cover - `entity` is the written instance's own identity
-            raise AssertionError(f"{entity.canonical} is not declared by the connected model")
-        validate_write(metadata, row, self._meta, mutation=mutation)
-        instructions.validate_instruction(instruction, self._meta)
+        assert isinstance(instruction, KeyedWrite)  # `doc` carries `rows`
+        self._validate_keyed(instruction)
         self._uow.buffer(buffered_write(instruction, observation))
 
     # --- set-based write verbs (python.md §5) ----------------------------- #
