@@ -284,10 +284,17 @@ it moves the corpus AND the reference harness's `_assert_deep_fetch` grader,
 whose node registry is deliberately keyed per view, so it is a
 core-specification decision rather than an adapter one. Until it is taken, the
 Python run sweep grades everything else these eleven assert — every level's SQL
-and binds, the round-trip count, `then.execution` — and withholds the
-`then.graph` comparison alone
-(`tests/compatibility/test_run_sweep.py._CHILD_LEVEL_GRAPH_SHAPE_DEFERRED`);
-the reference harness grades their graphs in full on every selected provider.
+and binds, the round-trip count — and withholds the `then.graph` comparison
+alone (`tests/compatibility/test_run_sweep.py._CHILD_LEVEL_GRAPH_SHAPE_DEFERRED`).
+
+**What that leaves ungraded.** Nine of the eleven carry a graph story
+(`parallax.conformance.graph_stories`), so `tests/api/test_story_run.py` still
+walks the same merged graph through the typed developer surface against a real
+database, and only the wire rendering goes ungraded. `m-inheritance-073` and
+`-077` carry no story, so no Python gate observes their graph at all until this
+entry is settled. The reference harness proves the goldens self-consistent
+against fixture data; it grades no language implementation, so it covers none of
+this.
 
 ### D-68 — The conformance adapter still reads the descriptor record graph, which has no public door
 

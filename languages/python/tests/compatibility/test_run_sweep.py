@@ -55,13 +55,17 @@ from parallax.core.sql_gen import compile_read
 # (`m-snapshot-read-012`'s narrowed-vs-broad diamond, for example) is a distinct,
 # already-established convention this decision does not touch; reconciling the
 # two … is left open for a follow-up." Reconciling it moves the corpus AND the
-# reference harness's own deep-fetch grader, so it is a corpus decision rather
-# than an adapter one, and it is deferred by name (D-67).
+# reference harness's own deep-fetch grader, so it is a core-specification
+# decision rather than an adapter one.
 #
 # Everything else these cases assert still runs here — every level's SQL and
-# binds (the N+1-elimination proof they exist for), the round-trip count, and any
-# `then.execution` — and their graphs are graded in full by the reference harness
-# on every selected provider. Only the `then.graph` comparison is withheld.
+# binds (the N+1-elimination proof they exist for) and the round-trip count. Only
+# the `then.graph` comparison is withheld, and what it withholds is the WIRE
+# rendering rather than the graph: nine of the eleven carry a graph story
+# (`parallax.conformance.graph_stories`), whose `tests/api/test_story_run.py`
+# case walks the SAME merged graph through the typed developer surface against a
+# real database. `m-inheritance-073` and `-077` carry no story, so for those two
+# nothing in this target grades the graph at all.
 _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED: Final[frozenset[str]] = frozenset(
     {
         "m-inheritance-065",
@@ -78,7 +82,7 @@ _CHILD_LEVEL_GRAPH_SHAPE_DEFERRED: Final[frozenset[str]] = frozenset(
     }
 )
 
-# The reachable read cases whose fixtures + observation this phase runs end-to-
+# The reachable read cases whose fixtures + observation this file runs end-to-
 # end: every compile-exercised read (including the instance-form-graph reads
 # m-value-object-023/-024/-028..-031, the multi-concrete polymorphic
 # m-inheritance-106/-107/-108/-109, and the milestone-set

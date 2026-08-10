@@ -474,6 +474,7 @@ def _neutral_read(
     case: case_format.Case,
     target: str,
     operation_doc: object,
+    meta: Metamodel,
     model: AcceptedMetamodel,
     port: DbPort,
     dialect_name: str,
@@ -484,20 +485,21 @@ def _neutral_read(
     per-level compilation and execution, row conversion, projection merging, and
     the round-trip count are production's, and a scanning read answers the
     milestone-set form from the same call, exactly as ``db.find`` does.
+
+    Both views of the case's one descriptor travel in: the record graph resolves
+    the authored ``target`` spelling and the accepted model answers for the
+    Entity it names, so the descriptor is ingested once per case however many
+    views the lane needs.
     """
     db = handle.Database(port, model, dialect=dialect_for(dialect_name))
     try:
-        entity = case_entity(model, _case_meta_entity(case, target))
+        entity = case_entity(model, meta.entity(target))
         request = handle.NeutralReadRequest.graph(
             target=entity.identity, operation=deserialize(operation_doc)
         )
         return db.read_neutral(request)
     except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
-
-
-def _case_meta_entity(case: case_format.Case, target: str) -> Entity:
-    return load_case_metamodel(case).entity(target)
 
 
 def run_graph_case(
@@ -510,8 +512,9 @@ def run_graph_case(
     graph.
     """
     target, operation_doc = _read_target_and_operation(case)
-    model = case_model(load_case_metamodel(case))
-    result = _neutral_read(case, target, operation_doc, model, port, dialect_name)
+    meta = load_case_metamodel(case)
+    model = case_model(meta)
+    result = _neutral_read(case, target, operation_doc, meta, model, port, dialect_name)
     graph = result.output
     if not isinstance(graph, handle.NeutralGraph):
         raise EngineError(
@@ -535,8 +538,9 @@ def run_graphs_case(
     an array of `{pin, graph}` entries, each pin keyed by declared as-of
     dimension spelling."""
     target, operation_doc = _read_target_and_operation(case)
-    model = case_model(load_case_metamodel(case))
-    result = _neutral_read(case, target, operation_doc, model, port, dialect_name)
+    meta = load_case_metamodel(case)
+    model = case_model(meta)
+    result = _neutral_read(case, target, operation_doc, meta, model, port, dialect_name)
     graphs = result.output
     if not isinstance(graphs, handle.NeutralGraphs):
         raise EngineError(
@@ -2586,6 +2590,30 @@ def _compile_snapshot_scenario(
     return emissions, len(emissions)
 
 
+@dataclass(frozen=True, slots=True)
+class _ScenarioStepResult:
+    """What one snapshot-scenario step left behind for a later step to name.
+
+    The three facts are produced together and consumed together by
+    :func:`_grade_mutate_step`, so they travel as one value rather than as
+    index-aligned sequences a caller could fall out of step.
+
+    ``roots`` is the in-memory member state of each root the step materialized,
+    keyed by declared member name — the plain detached value a `mutate` assigns
+    into (`m-snapshot-read` closed world). Its length is what a `mutate` step's
+    single-node requirement is checked against. ``pin`` and ``identity`` are the
+    coordinates the production finite-pin validator is handed. An action step
+    materializes nothing and carries the empty result.
+    """
+
+    roots: tuple[dict[str, object], ...]
+    pin: Pin | None
+    identity: EntityIdentity | None
+
+
+_NO_SCENARIO_RESULT: Final[_ScenarioStepResult] = _ScenarioStepResult((), None, None)
+
+
 def _run_snapshot_scenario(
     case: case_format.Case,
     dialect_name: str,
@@ -2596,12 +2624,13 @@ def _run_snapshot_scenario(
     production neutral seam every graph read uses (``db.read_neutral`` in graph
     form); `mutate` runs the production write seam's
     finite-Transaction-Time-pin refusal against the referenced find step's own
-    statement pin (:func:`_grade_mutate_step`) — zero round trips, nothing at the
-    port (m-snapshot-read closed world: a snapshot node is never enrolled in a
-    unit of work, so mutating it can never write back). Returns the ordered
-    emissions, the total round trips, and one `errors` observation entry per
-    `expectError` step whose verb raised its declared application-lifecycle error
-    (`m-conformance-adapter`)."""
+    statement pin and, when that verdict accepts, assigns the step's `set` to the
+    named view's own in-memory members (:func:`_grade_mutate_step`) — zero round
+    trips, nothing at the port (m-snapshot-read closed world: a snapshot node is
+    never enrolled in a unit of work, so mutating it can never write back).
+    Returns the ordered emissions, the total round trips, and one `errors`
+    observation entry per `expectError` step whose verb raised its declared
+    application-lifecycle error (`m-conformance-adapter`)."""
     meta = load_case_metamodel(case)
     model = case_model(meta)
     dialect = dialect_for(dialect_name)
@@ -2612,18 +2641,14 @@ def _run_snapshot_scenario(
     db = handle.Database(port, model, dialect=dialect)
     emissions: list[Emission] = []
     round_trips = 0
-    materialized: list[int] = []
-    pins: list[Pin | None] = []
-    identities: list[EntityIdentity | None] = []
+    results: list[_ScenarioStepResult] = []
     errors: list[dict[str, object]] = []
     for index, step in enumerate(steps):
         if "action" in step:
-            error_class = _grade_mutate_step(case, step, materialized, pins, identities)
+            error_class = _grade_mutate_step(case, step, results)
             if error_class is not None:
                 errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
-            materialized.append(0)
-            pins.append(None)
-            identities.append(None)
+            results.append(_NO_SCENARIO_RESULT)
             continue
         target = step.get("targetEntity")
         find_doc = step.get("find")
@@ -2648,22 +2673,30 @@ def _run_snapshot_scenario(
                 Emission(f"/scenario/{index}/find", call.statement.sql, call.statement.binds)
             )
         round_trips += result.execution.round_trips
-        materialized.append(_root_count(case, result))
-        pins.append(pin)
-        identities.append(identity)
+        results.append(_ScenarioStepResult(_root_members(case, result), pin, identity))
     return emissions, round_trips, errors
 
 
-def _root_count(case: case_format.Case, result: handle.NeutralReadResult) -> int:
-    """How many roots a scenario find step materialized — what a later `mutate`
-    step's single-node requirement is checked against."""
+def _root_members(
+    case: case_format.Case, result: handle.NeutralReadResult
+) -> tuple[dict[str, object], ...]:
+    """Each root the step materialized, as its own detached member state.
+
+    Member NAME keyed, because that is the vocabulary a case's `set` is authored
+    in; the values are the ones production materialized, copied out so a later
+    assignment reaches nothing the immutable neutral view still publishes.
+    """
     graph = result.output
     if isinstance(graph, handle.NeutralGraph):
-        return len(graph.roots)
-    if isinstance(graph, handle.NeutralGraphs):  # pragma: no cover - no such step is authored
-        return sum(len(one.roots) for one in graph)
-    raise EngineError(  # pragma: no cover - a graph request answers a graph
-        f"{case.path.name}: a scenario find answered {type(graph).__name__}"
+        roots = graph.roots
+    elif isinstance(graph, handle.NeutralGraphs):  # pragma: no cover - no such step is authored
+        roots = tuple(root for one in graph for root in one.roots)
+    else:
+        raise EngineError(  # pragma: no cover - a graph request answers a graph
+            f"{case.path.name}: a scenario find answered {type(graph).__name__}"
+        )
+    return tuple(
+        {identity.name: value for identity, value in root.attributes.items()} for root in roots
     )
 
 
@@ -2681,30 +2714,28 @@ def _find_step_pin(meta: Metamodel, target: str, raw_op: Operation) -> Pin:
 def _grade_mutate_step(
     case: case_format.Case,
     step: Mapping[str, object],
-    materialized: Sequence[int],
-    pins: Sequence[Pin | None],
-    identities: Sequence[EntityIdentity | None],
+    results: Sequence[_ScenarioStepResult],
 ) -> str | None:
     """Grade one scenario `mutate` action step through the SAME production
     validator the keyed developer verbs run
     (:func:`~parallax.snapshot.handle.validate_source_pin`): a mutation
     through a view pinned at a finite Transaction-Time instant raises the
-    neutral `transaction-time-pin-read-only` error, while a Latest or finite-
-    Valid-Time pin is accepted (:func:`_check_mutate_target`). Returns the
-    raised error's `errorClass` when the step's own declared `expectError`
-    matched it, else ``None`` for an accepted mutation; a mismatch in either
-    direction — an undeclared refusal, or a declared expectation the verb never
-    raised — is a loud :class:`EngineError`, never a silently dropped
-    observation."""
+    neutral `transaction-time-pin-read-only` error and assigns nothing, while a
+    Latest or finite-Valid-Time pin is accepted and the `set` applies in memory
+    (:func:`_apply_mutate_step`). Returns the raised error's `errorClass` when
+    the step's own declared `expectError` matched it, else ``None`` for an
+    accepted mutation; a mismatch in either direction — an undeclared refusal,
+    or a declared expectation the verb never raised — is a loud
+    :class:`EngineError`, never a silently dropped observation."""
     _check_action_step(case, step)
     on = step.get("on")
-    source = on if isinstance(on, int) and 0 <= on < len(materialized) else None
-    identity = None if source is None else identities[source]
-    if source is None or identity is None:
+    source = results[on] if isinstance(on, int) and 0 <= on < len(results) else None
+    identity = None if source is None else source.identity
+    if not isinstance(on, int) or source is None or identity is None:
         raise EngineError(f"{case.path.name}: `mutate` names {on!r}, which is no earlier find step")
     expected = step.get("expectError")
     try:
-        validate_source_pin(identity, pins[source])
+        validate_source_pin(identity, source.pin)
     except TransactionTimePinReadOnlyError as exc:
         if expected != exc.code:
             declared = f"expectError {expected!r}" if expected is not None else "no expectError"
@@ -2718,31 +2749,42 @@ def _grade_mutate_step(
             f"{case.path.name}: the step declares expectError {expected!r} but the "
             "mutation was accepted"
         )
-    _check_mutate_target(case, step, materialized, source)
+    _apply_mutate_step(case, step, on, source)
     return None
 
 
-def _check_mutate_target(
+def _apply_mutate_step(
     case: case_format.Case,
     step: Mapping[str, object],
-    materialized: Sequence[int],
-    source: int,
+    on: int,
+    source: _ScenarioStepResult,
 ) -> None:
-    """Check that an ACCEPTED mutation names one node and carries a `set` map.
+    """Assign an ACCEPTED mutation's `set` to the named view's own members.
 
-    Nothing is applied. A snapshot view is a detached, immutable value
-    (`m-snapshot-read` closed world), which is exactly what this lane grades: the
-    step's whole observable claim is that the mutation was licensed, that it
-    reached the port not at all, and that the view it named was a single node.
+    `m-case-format` defines `mutate` as assigning the attributes in `set` in
+    memory, so the assignment lands on the detached member state the source step
+    materialized and reaches nothing else: the immutable neutral view production
+    published is untouched, no unit of work holds the view, and no DML follows.
+    A `set` naming a member the materialized view does not carry is refused
+    here — an assignment with nowhere to land is a case the verb cannot perform,
+    not a mutation it silently drops.
     """
-    count = materialized[source]
-    if count != 1:
+    if len(source.roots) != 1:
         raise EngineError(
-            f"{case.path.name}: `mutate` targets step {source}, which materialized "
-            f"{count} nodes (expected exactly one to mutate)"
+            f"{case.path.name}: `mutate` targets step {on}, which materialized "
+            f"{len(source.roots)} nodes (expected exactly one to mutate)"
         )
-    if not isinstance(step.get("set"), Mapping):
+    assignments = step.get("set")
+    if not isinstance(assignments, Mapping):
         raise EngineError(f"{case.path.name}: a `mutate` action needs a `set` mapping")
+    members = source.roots[0]
+    for name, value in cast("Mapping[str, object]", assignments).items():
+        if name not in members:
+            raise EngineError(
+                f"{case.path.name}: `mutate` assigns {name!r}, which the view step {on} "
+                "materialized carries no member of"
+            )
+        members[name] = value
 
 
 def compile_scenario_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:

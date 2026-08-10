@@ -959,12 +959,11 @@ def test_transform_row_accepts_any_mapping_and_always_returns_a_fresh_dict() -> 
 
 
 # --------------------------------------------------------------------------- #
-# `CompiledRead.narrow_to`: the                                                #
-# root-level authored-narrow a find executor threads into                     #
-# `Assembler.materialize_root` the same way a deep-fetch child level's own    #
-# `FetchLevel.narrow_to` already threads through `attach_level`. It reports   #
-# the AUTHORED `to`, not the resolved effective set — resolution belongs to   #
-# materialization, which knows the row.                                       #
+# `CompiledRead.narrow_to`: the root-level authored-narrow a converted row     #
+# resolves its own concrete identity through, where a deep-fetch child level   #
+# takes its own `FetchLevel.narrow_to` instead. It reports the AUTHORED `to`,  #
+# not the resolved effective set — resolution belongs to materialization,      #
+# which knows the row.                                                         #
 # --------------------------------------------------------------------------- #
 def test_narrow_to_is_none_for_a_bare_read() -> None:
     assert (

@@ -4734,28 +4734,55 @@ def test_resolve_graph_pointer_rejects_a_pointer_resolving_to_a_non_node() -> No
         )
 
 
-def test_check_mutate_target_raises_when_the_target_step_materialized_zero_nodes() -> None:
+def _scenario_result(
+    *roots: dict[str, object], pin: Pin | None = None, identity: EntityIdentity | None = None
+) -> Any:
+    return engine._ScenarioStepResult(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        roots=tuple(roots), pin=pin, identity=identity
+    )
+
+
+def test_apply_mutate_step_raises_when_the_target_step_materialized_zero_nodes() -> None:
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="expected exactly one"):
-        engine._check_mutate_target(_case("m-snapshot-read-010"), step, [0], 0)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, _scenario_result())  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
 
 
-def test_check_mutate_target_raises_when_the_target_step_materialized_many_nodes() -> None:
+def test_apply_mutate_step_raises_when_the_target_step_materialized_many_nodes() -> None:
     step = {"action": "mutate", "on": 0, "set": {"name": "Mutant"}}
+    source = _scenario_result({"id": 1, "name": "Ada"}, {"id": 2, "name": "Bob"})
     with pytest.raises(engine.EngineError, match="expected exactly one"):
-        engine._check_mutate_target(_case("m-snapshot-read-010"), step, [2], 0)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
 
 
-def test_check_mutate_target_raises_when_set_is_not_a_mapping() -> None:
+def test_apply_mutate_step_raises_when_set_is_not_a_mapping() -> None:
     step = {"action": "mutate", "on": 0, "set": "not-a-mapping"}
+    source = _scenario_result({"id": 1, "name": "Ada"})
     with pytest.raises(engine.EngineError, match="needs a `set` mapping"):
-        engine._check_mutate_target(_case("m-snapshot-read-010"), step, [1], 0)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+
+
+def test_apply_mutate_step_assigns_every_named_member_in_memory() -> None:
+    step = {"action": "mutate", "on": 0, "set": {"name": "Mutant", "qty": 9}}
+    source = _scenario_result({"id": 1, "name": "Ada", "qty": 5})
+    engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    assert source.roots[0] == {"id": 1, "name": "Mutant", "qty": 9}
+
+
+def test_apply_mutate_step_refuses_a_set_naming_no_materialized_member() -> None:
+    step = {"action": "mutate", "on": 0, "set": {"nickname": "Mutant"}}
+    source = _scenario_result({"id": 1, "name": "Ada"})
+    with pytest.raises(engine.EngineError, match="carries no member of"):
+        engine._apply_mutate_step(_case("m-snapshot-read-010"), step, 0, source)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    assert source.roots[0] == {"id": 1, "name": "Ada"}
 
 
 def test_grade_mutate_step_rejects_an_on_index_naming_no_earlier_find() -> None:
     step = {"action": "mutate", "on": 5, "set": {"name": "Mutant"}}
     with pytest.raises(engine.EngineError, match="no earlier find step"):
-        engine._grade_mutate_step(_case("m-snapshot-read-010"), step, [1], [None], [None])  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        engine._grade_mutate_step(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            _case("m-snapshot-read-010"), step, [_scenario_result({"id": 1})]
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -4977,6 +5004,23 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
     assert len(port.reads) == 2
     assert len(port.writes) == 0
     assert errors == []  # an unpinned mutate is accepted: no error observation
+
+
+def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() -> None:
+    # The end-to-end half of the assignment: the `set` resolves against the
+    # members the find step actually materialized, so a name no materialized view
+    # carries is refused at the verb rather than silently dropped.
+    when = {
+        "scenario": [
+            {"targetEntity": "Order", "find": {"eq": {"attr": "Order.id", "value": 1}}},
+            {"action": "mutate", "on": 0, "set": {"nickname": "Mutant"}},
+        ]
+    }
+    case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
+    port = FakeWritePort(find_rows=[dict(_ORDER_ROW)])
+    with pytest.raises(engine.EngineError, match="carries no member of"):
+        engine.run_scenario_case(case, "postgres", port)
+    assert len(port.writes) == 0
 
 
 def test_run_scenario_case_snapshot_lane_applies_out_of_band_statements() -> None:
