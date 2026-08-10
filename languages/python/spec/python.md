@@ -52,11 +52,15 @@ never something an application developer hand-writes.
   oracle is graded against a running implementation by this target alone: the
   compatibility harness validates the authored oracle itself but records no
   execution provenance of its own to compare with it, so a disagreement between
-  Python and the specification has no second reader. Every other claimed module's
-  runtime observables are double-witnessed. This one is a deliberate exception
-  that holds only until a second grader exists, not a permanent property of the
-  module; [`docs/deferred-ledger.md`](../docs/deferred-ledger.md) forwards to the
-  issue that owns building one.
+  Python and the specification has no second reader. The `then.roundTrips` a
+  `boundary` case or a retry-shaped `conflict` case authors is single-witness for
+  the same reason and by a second mechanism: the harness executes no
+  `api-conformance`-lane case at all, and its retry branch asserts per-attempt
+  affected rows and table state without ever counting round trips. Every other
+  claimed module's runtime observables are double-witnessed. Both exceptions are
+  deliberate and hold only until a second grader exists, not permanent properties
+  of the module; [`docs/deferred-ledger.md`](../docs/deferred-ledger.md) forwards
+  to the issue that owns building one.
 - **Case-selection expression.** Verification selects
   `("slice-snapshot-1" ∈ case.tags) ∧ (dialect = postgres) ∧ (case.shape ∈ claimed caseShapes) ∧ (case module-tags ⊆ claimed modules)`;
   milestone-scoped runs intersect further with capability tags via

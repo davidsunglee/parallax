@@ -15,10 +15,8 @@ Trace bracket ``find`` does, and the neutral write enters the same
 the keyed verbs do — one step later, on an instruction already built rather than
 on an instance to derive one from.
 
-The predicate-selected ``_where`` family is NOT owned here: those six methods —
-the five public verbs plus the frozen ``_buffer_predicate_instruction`` seam the
-conformance engine calls — are thin delegates that thread
-``(uow, meta, conn, dialect)`` into
+The predicate-selected ``_where`` family is NOT owned here: those five public
+verbs are thin delegates that thread ``(uow, meta, conn, dialect)`` into
 :mod:`parallax.snapshot.handle._predicate_writes`, which buffers through
 ``uow.buffer`` and never reaches back into this class.
 
@@ -899,28 +897,6 @@ class Transaction:
             valid_from=valid_from,
             until=until,
             attempt=self._attempt,
-        )
-
-    def _buffer_predicate_instruction(self, instruction: PredicateWrite) -> None:
-        """Buffer an ALREADY-BUILT predicate write
-        (:func:`~parallax.snapshot.handle._predicate_writes.buffer_predicate_instruction`),
-        which the caller has already passed through
-        :func:`~parallax.core.unit_work.instructions.validate_instruction`
-        against this transaction's own model — the single model-aware gate
-        covering the selecting predicate, the inheritance-family rejection, and
-        the assignments.
-
-        This method is a FROZEN external seam, not an ordinary private helper:
-        the conformance engine's predicate-write translation calls it directly
-        (`parallax.conformance.engine`), so its name and signature are fixed and
-        it keeps its leading underscore despite crossing a module boundary
-        (`m-case-format` "predicate-shaped case entries deserialize to
-        PredicateWrite through the existing serde and
-        buffer through Transaction's own seam"). The typed ``_where`` verbs
-        above and the engine converge on the SAME free function below.
-        """
-        buffer_predicate_instruction(
-            self._uow, self._meta, self._conn, self._dialect, instruction, self._attempt
         )
 
 

@@ -10,6 +10,10 @@
 # harness cannot provoke (it needs an injected conflict and a re-executed closure),
 # so it is authored here beside `m-opt-lock-009`'s golden-SQL proof.
 #
+# `roundTrips: 4` is what the two attempts cost between them: each observes the row
+# (one call) and issues its gated UPDATE (one call). The first UPDATE reached the
+# database and reported zero rows, so it counts exactly as the second one does.
+#
 # `lane: api-conformance`: injected conflict, re-executed closure; suite-driven via a
 # fault-injecting decorator around the shipped adapter.
 model: models/account.yaml
@@ -33,3 +37,4 @@ when:
       note: the gated UPDATE conflicts once, then the auto-retry re-reads and succeeds
 then:
   outcome: committed
+  roundTrips: 4

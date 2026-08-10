@@ -8,6 +8,11 @@
 # error kind — the caller inspects the
 # winning change and decides, exactly as `m-opt-lock-007`'s caller-driven narrative does.
 #
+# `roundTrips: 2` is the single attempt's cost: the observing read, and the gated
+# UPDATE, which REACHED the database and reported zero rows. The conflict is the
+# post-call verdict on that completed call, not a call that never ran, and with the
+# opt-in unset there is no second attempt.
+#
 # `lane: api-conformance`: it needs an injected conflict a single-connection
 # harness cannot provoke; the language's API Conformance Suite drives it through
 # a fault-injecting decorator wrapped around the shipped adapter.
@@ -32,3 +37,4 @@ when:
       note: the gated UPDATE conflicts once — with the opt-in unset it is NOT retried
 then:
   outcome: optimistic-lock-conflict
+  roundTrips: 2

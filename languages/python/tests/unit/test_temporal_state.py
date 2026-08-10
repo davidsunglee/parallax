@@ -24,7 +24,16 @@ from parallax.conformance.temporal_state import (
     observed_edge,
 )
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.unit_work import KeyedWrite
+from parallax.core.unit_work import (
+    FixedClock,
+    PlanningRequest,
+    SubjectIdentity,
+    TransactionInstant,
+    WritePlan,
+    buffered_write,
+    instructions,
+)
+from parallax.snapshot.handle import build_write_planner
 
 POSITION = models.accepted_model(models.load_models()["position"])
 _POSITION_ENTITY = POSITION.entity(EntityIdentity("parallax.compatibility", "Position"))
@@ -270,7 +279,26 @@ def test_close_coordinates_come_from_the_one_observed_milestone() -> None:
     )
 
 
-def test_advance_retires_only_the_milestone_the_write_observed() -> None:
+def _planned(
+    entity_name: str, members: dict[str, object], *, valid_from: str, at: str
+) -> WritePlan:
+    """The Write Plan an insert of ``members`` produces, through the SAME
+    ``build_write_planner`` factory the engine's own write lanes plan with — so
+    what the ledger tracks is what a flush would actually write."""
+    instruction = instructions.deserialize(
+        {"mutation": "insert", "entity": entity_name, "rows": [members], "validFrom": valid_from}
+    )
+    return build_write_planner(POSITION).plan(
+        PlanningRequest(
+            subject_identity=SubjectIdentity("unattributed"),
+            transaction_instant=TransactionInstant(FixedClock(dt.datetime.fromisoformat(at))),
+            concurrency="locking",
+            buffered_writes=[buffered_write(instruction, None)],
+        )
+    )
+
+
+def test_retire_drops_only_the_milestone_the_write_observed() -> None:
     # A rectangle split closes ONE rectangle and chains its successors; the key's
     # other current rectangle was neither closed nor superseded by that write, so
     # it stays tracked. Under a pk-keyed tracker the successors replace the whole
@@ -285,18 +313,7 @@ def test_advance_retires_only_the_milestone_the_write_observed() -> None:
     )
     observed = shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}, tail_edge)
     assert observed is not None
-    shadow.advance(
-        POSITION,
-        POSITION_ENTITY,
-        KeyedWrite(
-            "terminate",
-            "Position",
-            ({"id": 1, "acctNum": "A", "value": 200.00},),
-            valid_from="2024-06-01T00:00:00+00:00",
-        ),
-        "2024-10-01T00:00:00+00:00",
-        observed,
-    )
+    shadow.retire(POSITION, POSITION_ENTITY, observed)
     assert shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1}, tail_edge) is None
     survivor = shadow.resolve(
         POSITION,
@@ -313,17 +330,21 @@ def test_advance_retires_only_the_milestone_the_write_observed() -> None:
     assert survivor.predecessor.member("value") == 100.00
 
 
-def test_advance_replaces_tracked_state_with_the_newly_opened_rows() -> None:
-    # The SAME pure planning function (`bitemp_write.plan`) the render seam
-    # calls computes what to track next — a plain insert opens one rectangle.
+def test_track_opened_tracks_the_milestones_the_plan_actually_opens() -> None:
+    # The tracker advances from the plan the write lane already produced, so a
+    # plain insert's one opened rectangle is tracked with the framework-owned
+    # interval bounds the plan stamped on it — never a second expansion of the
+    # same topology computed beside it.
     shadow = TemporalShadow()
-    insert = KeyedWrite(
-        "insert",
-        "Position",
-        ({"id": 1, "acctNum": "A", "value": 100.00},),
-        valid_from="2024-01-01T00:00:00+00:00",
+    shadow.track_opened(
+        POSITION,
+        _planned(
+            "Position",
+            {"id": 1, "acctNum": "A", "value": 100.00},
+            valid_from="2024-01-01T00:00:00+00:00",
+            at="2024-01-01T00:00:00+00:00",
+        ),
     )
-    shadow.advance(POSITION, POSITION_ENTITY, insert, "2024-01-01T00:00:00+00:00", None)
     observation = shadow.resolve(POSITION, POSITION_ENTITY, {"id": 1})
     assert observation is not None
     assert dict(observation.predecessor.members) == {
@@ -335,6 +356,30 @@ def test_advance_replaces_tracked_state_with_the_newly_opened_rows() -> None:
         "txStart": "2024-01-01T00:00:00+00:00",
         "txEnd": "infinity",
     }
+
+
+def test_track_opened_ignores_a_non_temporal_plan() -> None:
+    # A non-temporal insert opens no milestone, so a ledger entry for it would
+    # answer no question a later step can ask.
+    shadow = TemporalShadow()
+    instruction = instructions.deserialize(
+        {"mutation": "insert", "entity": "Account", "rows": [{"id": 1, "owner": "Ada"}]}
+    )
+    account = models.accepted_model(models.load_models()["account"])
+    plan = build_write_planner(account).plan(
+        PlanningRequest(
+            subject_identity=SubjectIdentity("unattributed"),
+            transaction_instant=TransactionInstant(
+                FixedClock(dt.datetime(2024, 1, 1, tzinfo=dt.UTC))
+            ),
+            concurrency="locking",
+            buffered_writes=[buffered_write(instruction, None)],
+        )
+    )
+    shadow.track_opened(account, plan)
+    entity = account.entity(EntityIdentity("parallax.compatibility", "Account"))
+    assert entity is not None
+    assert shadow.resolve(account, entity, {"id": 1}) is None
 
 
 def test_an_edge_naming_an_axis_the_target_does_not_declare_is_refused() -> None:

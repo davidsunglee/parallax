@@ -11,6 +11,11 @@
 # affects 1 row, closing the concurrent writer's milestone at 2024-10-01. The case
 # asserts each attempt's affected count and runs no replacement INSERT, so
 # `then.tableState` is the fixtures plus the re-chain plus that retry close.
+#
+# `roundTrips: 2` is what the two authored attempts cost between them — one gated
+# close each. The first REACHED the database and closed zero rows, so it counts
+# exactly as the second does; the count spans every attempt rather than the last.
+#
 model: models/balance.yaml
 tags: [m-temporal-read, m-opt-lock, m-sql, temporal, conflict, slice-snapshot-1, slice-managed-1]
 shape: conflict
@@ -45,6 +50,7 @@ when:
           binds: ["2024-10-01T00:00:00+00:00", 2, infinity, "2024-09-01T00:00:00+00:00"]
       affectedRows: 1
 then:
+  roundTrips: 2
   tableState:
     balance:
       - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }

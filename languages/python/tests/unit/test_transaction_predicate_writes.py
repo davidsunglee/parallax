@@ -1382,7 +1382,7 @@ def test_no_typed_bound_reaches_the_frozen_ingress_uncanonicalized() -> None:
     #     literal in either slot would show up as a differing bind.
     #
     # WHAT IT DOES NOT PIN: what the seam itself tolerates. Neither
-    # `_buffer_predicate_instruction` nor `validate_instruction` reads a bound,
+    # `write_neutral` nor `validate_instruction` reads a bound,
     # and `write-instruction.schema.json` types a Valid-Time instant as a
     # non-empty string with no pattern, so a caller that hand-authors a document
     # containing a malformed instant still deserializes and still reaches SQL
@@ -1433,7 +1433,7 @@ def test_no_typed_bound_reaches_the_frozen_ingress_uncanonicalized() -> None:
     seam_port = RecordingPort(rows=[_position_row()])
 
     def frozen(tx: Transaction) -> None:
-        tx._buffer_predicate_instruction(canonical)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own route into the frozen seam
+        tx.write_neutral(canonical)
 
     Database.connect(seam_port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
         frozen, concurrency="optimistic"
@@ -1547,7 +1547,7 @@ def test_the_engines_materializing_predicate_ingress_refuses_before_it_resolves(
 
 # The frozen seam's OWN contract, driven the way the conformance engine drives
 # it — an instruction NOTHING pre-validated, straight into
-# `Transaction._buffer_predicate_instruction`. `validate_instruction`
+# `Transaction.write_neutral`. `validate_instruction`
 # establishes the CALLER ordering; this establishes that the directly reachable
 # seam takes no instruction on faith, so deleting its
 # `inheritance.reject_predicate_write` call fails BOTH cases.
@@ -1582,7 +1582,7 @@ def test_the_frozen_buffering_seam_refuses_an_unvalidated_inheritance_family_ins
         with pytest.raises(
             inheritance.InheritanceError, match="subtype-write-set-based-unsupported"
         ):
-            tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own route into the frozen seam
+            tx.write_neutral(instruction)
         assert port.ops == [("begin",)]
         raise _Abandon
 
@@ -1617,7 +1617,7 @@ def test_the_frozen_buffering_seam_refuses_a_milestone_verb_on_a_non_temporal_ta
 
     def fn(tx: Transaction) -> None:
         with pytest.raises(instructions.WriteInstructionError, match="temporal milestone verb"):
-            tx._buffer_predicate_instruction(instruction)  # pyright: ignore[reportPrivateUsage] - the conformance engine's own route into the frozen seam
+            tx.write_neutral(instruction)
         assert port.ops == [("begin",)]
         raise _Abandon
 

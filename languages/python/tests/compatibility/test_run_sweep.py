@@ -213,7 +213,7 @@ def _case_uses_uow_grouping(case: case_format.Case) -> bool:
 # The materializing predicate-write run-only scenarios
 # (`m-opt-lock` "Predicate-selected writes materialize when observations are
 # needed", ADR 0014): each resolves through its OWN internal read
-# (`Transaction._buffer_predicate_instruction`, paired with its immediately
+# (`Transaction.write_neutral`, paired with its immediately
 # preceding find step in ONE transaction, `engine._run_materializing_pair`) —
 # query-result-dependent (`compileEligibility: run-only`), so `compile` never
 # grades them, but NONE of them declare `uow` grouping (unlike
@@ -670,9 +670,10 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
     or the count a refused write reached instead. The `when.attempts` retry form
     (`m-opt-lock-007`) grades each attempt's own statements flattened in order
     (proving the `0`-then-`1` transition through each attempt's own distinct gate
-    bind) and the FINAL affected-row count. Every case that authors
-    `then.tableState` grades the committed table contents; a case whose write is
-    refused authors none, since the unit of work rolls back.
+    bind) and the FINAL affected-row count. A case authoring `then.roundTrips`
+    grades the calls that reached the database across every attempt. Every case
+    that authors `then.tableState` grades the committed table contents; a case
+    whose write is refused authors none, since the unit of work rolls back.
     """
     meta = engine.load_case_metamodel(case)
     provisioner.reset(meta, case_fixtures(case))
@@ -709,6 +710,13 @@ def test_conflict_run_sweep(case: case_format.Case, provisioner: Any) -> None:
                 emission,
             )
         assert observations["affectedRows"] == attempts[-1]["affectedRows"], case.case_id
+
+    # `then.roundTrips` where the case authors it: the calls that actually
+    # reached the database, summed across every attempt (`m-execution-log`), which
+    # is a different number from the emission count whenever a statement is
+    # planned but not executed.
+    if "roundTrips" in then:
+        assert observations["roundTrips"] == then["roundTrips"], case.case_id
 
     _grade_execution(case, then, envelope)
 

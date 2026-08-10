@@ -7,12 +7,10 @@ close/chain consumes, but the framework itself never issues an implicit resolvin
 read for one (`core/spec/m-txtime-write.md` / `m-bitemp-write.md`: "the engine
 supplies observed rows from case state"). This module is the engine-side tracker
 that makes that observation available WITHOUT a database round trip — fixtures (for
-a case that loads them) seed it, and each temporal write advances it through the
-SAME neutral topology (:mod:`parallax.core.txtime_write` /
-:mod:`parallax.core.bitemp_write`) and the SAME expansion
-(:func:`~parallax.core.unit_work.expand_milestone`) production finalization uses,
-so COMPILE and RUN consume the identical in-memory state and the tracker can never
-disagree with the rendered SQL.
+a case that loads them) seed it, and each temporal write advances it from the
+successor rows the production Write Plan that write already produced carries, so
+the tracker holds exactly what the flush writes rather than a second expansion of
+the same topology computed beside it.
 
 Non-normative engine-internal bookkeeping: never serialized, never a
 :class:`~parallax.core.unit_work.WriteInstruction` field, never consulted by
@@ -26,15 +24,15 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Mapping, Sequence
 
-from parallax.core import bitemp_write, inheritance, temporal_read, txtime_write
+from parallax.core import inheritance, temporal_read, txtime_write
 from parallax.core.base import normalize_instant
 from parallax.core.metamodel import EntityMetadata, Metamodel, PrimaryKey, TemporalDimension
 from parallax.core.unit_work import (
-    KeyedWrite,
+    PlannedInsert,
+    PlannedRow,
     PredecessorRow,
-    TemporalAxes,
     TemporalObservation,
-    expand_milestone,
+    WritePlan,
 )
 
 __all__ = [
@@ -157,61 +155,57 @@ class TemporalShadow:
             )
         return candidates[0][1]
 
-    def advance(
-        self,
-        model: Metamodel,
-        entity: EntityMetadata,
-        instruction: KeyedWrite,
-        tx_instant: str,
-        observed: TemporalObservation | None,
+    def retire(
+        self, model: Metamodel, entity: EntityMetadata, observed: TemporalObservation
     ) -> None:
-        """Replace this pk's tracked current milestone(s) with the newly OPENED
-        rows the SAME topology (:mod:`parallax.core.txtime_write` /
-        :mod:`parallax.core.bitemp_write`) and the SAME expansion production
-        finalization applies compute — never a separately re-derived arithmetic,
-        so the tracker and the rendered SQL can never disagree (m-txtime-write.md
-        / m-bitemp-write.md "the engine supplies observed rows from case
-        state").
+        """Drop the milestone a close addressed.
 
-        Only the milestone ``observed`` names is retired. A key's OTHER current
-        rectangles are untouched, because this write neither closed nor
-        superseded them."""
-        entity_name = entity.identity.name
-        pk_names = _primary_key_names(model, entity)
-        start_names = _axis_start_names(model, entity)
-        is_bitemporal = isinstance(
-            temporal_read.view(model).shape(entity.identity), temporal_read.Bitemporal
+        Exactly that one: a key's OTHER current rectangles are untouched, because
+        the write neither closed nor superseded them. The retirement is driven by
+        the observation the close CONSUMED rather than by the Planned Close the
+        plan carries, because a Milestone Target addresses a milestone by its
+        axis ENDS while a tracked milestone is keyed by its own edge — the axis
+        STARTS — and the plan carries no way back from one to the other.
+        """
+        self._current.pop(
+            self._key(
+                entity.identity.name,
+                _primary_key_names(model, entity),
+                _axis_start_names(model, entity),
+                observed.predecessor.members,
+            ),
+            None,
         )
-        # Each facet's own `topology(mutation)` is single-param — the
-        # entity-aware dispatch between the two facets belongs to the
-        # composition root's `TemporalStrategy` adapter, which this
-        # engine-internal tracker performs itself since it already has the
-        # entity in hand.
-        strategy = bitemp_write.RECTANGLE_SPLIT if is_bitemporal else txtime_write.MILESTONE_CHAIN
-        topology = strategy.topology(instruction.mutation)
-        opened = expand_milestone(
-            topology,
-            _axes(model, entity, bitemporal=is_bitemporal),
-            transaction_instant=tx_instant,
-            authored=instruction.rows[0],
-            valid_from=instruction.valid_from,
-            until=instruction.until,
-            predecessor=None if observed is None else observed.predecessor,
-        )
-        if observed is not None:
-            # The close retires exactly the milestone it addressed; a
-            # terminate/terminateUntil chains nothing after it.
-            self._current.pop(
-                self._key(entity_name, pk_names, start_names, observed.predecessor.members), None
-            )
-        # An opened row is the whole milestone the mutation just wrote, axis
-        # bounds included, so it is exactly the Predecessor Row a later step
-        # observes.
-        for milestone in opened:
-            key = self._key(entity_name, pk_names, start_names, milestone.members)
-            self._track(
-                key, TemporalObservation(predecessor=PredecessorRow(members=milestone.members))
-            )
+
+    def track_opened(self, model: Metamodel, plan: WritePlan) -> None:
+        """Track every milestone ``plan`` OPENS as the current state a later step
+        observes.
+
+        The successor rows come off the plan the write lane already produced, so
+        the tracker holds exactly what the flush will write rather than a second
+        expansion of the same topology computed beside it. A Planned Insert's
+        entry row is the whole milestone, axis bounds and framework-owned values
+        included, which is exactly the Predecessor Row a later close addresses,
+        gates on, and carries state forward from.
+
+        Rows of a NON-temporal entity are skipped: they open no milestone, and a
+        ledger of them would answer no question a later step can ask.
+        """
+        for step in plan.steps:
+            if not isinstance(step, PlannedInsert):
+                continue
+            entity = model.entity(step.entity)
+            if entity is None:  # pragma: no cover - a planned step names an accepted Entity
+                continue
+            shape = temporal_read.view(model).shape(entity.identity)
+            if shape is None or isinstance(shape, temporal_read.NonTemporal):
+                continue
+            pk_names = _primary_key_names(model, entity)
+            start_names = _axis_start_names(model, entity)
+            for entry in step.entries:
+                members = _planned_members(entry.row)
+                key = self._key(entity.identity.name, pk_names, start_names, members)
+                self._track(key, TemporalObservation(predecessor=PredecessorRow(members=members)))
 
     def _track(self, key: _ObjectKey, observation: TemporalObservation) -> None:
         """Store one milestone in its own slot, refusing a slot already taken.
@@ -243,6 +237,17 @@ class TemporalShadow:
             tuple(row[name] for name in pk_names),
             _edge({dimension: _coordinate(row[name]) for dimension, name in start_names.items()}),
         )
+
+
+def _planned_members(row: PlannedRow) -> dict[str, object]:
+    """One Planned Row's cells by DECLARED MEMBER NAME — the spelling a
+    Predecessor Row is read in, and the one a milestone edge is keyed by."""
+    members: dict[str, object] = {
+        identity.name: value for identity, value in row.attributes.items()
+    }
+    for identity, value in row.value_objects.items():
+        members[identity.path[-1]] = value
+    return members
 
 
 def observed_edge(
@@ -366,20 +371,6 @@ def _axis_names(
 ) -> tuple[str, str]:
     """``entity``'s family-effective Attribute names for one temporal dimension."""
     return txtime_write.axis_attr_names(model, entity, dimension)
-
-
-def _axes(model: Metamodel, entity: EntityMetadata, *, bitemporal: bool) -> TemporalAxes:
-    """The Attribute names ``entity``'s family bounds its milestone intervals with."""
-    tx_start, tx_end = _axis_names(model, entity, TemporalDimension.TRANSACTION_TIME)
-    if not bitemporal:
-        return TemporalAxes(transaction_start=tx_start, transaction_end=tx_end)
-    valid_start, valid_end = _axis_names(model, entity, TemporalDimension.VALID_TIME)
-    return TemporalAxes(
-        transaction_start=tx_start,
-        transaction_end=tx_end,
-        valid_start=valid_start,
-        valid_end=valid_end,
-    )
 
 
 def _primary_key_names(model: Metamodel, entity: EntityMetadata) -> list[str]:

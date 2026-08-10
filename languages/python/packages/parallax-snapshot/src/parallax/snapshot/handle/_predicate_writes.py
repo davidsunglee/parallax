@@ -16,10 +16,9 @@ Temporal, and Optimistic Lock facets through :mod:`parallax.snapshot.handle._fam
 and every physical column comes from the target's Storage Layout view, resolved
 once here and carried into the per-row column builders
 :func:`_materialize_predicate_write` streams into.
-``Transaction`` keeps five thin ``_where`` delegates plus the frozen
-``_buffer_predicate_instruction`` seam the conformance engine calls, so this
-module buffers through ``uow.buffer`` directly and never reaches back into
-``Transaction``.
+``Transaction`` keeps five thin ``_where`` delegates and routes a caller-built
+predicate instruction here from ``write_neutral``, so this module buffers through
+``uow.buffer`` directly and never reaches back into ``Transaction``.
 
 Depends on :mod:`parallax.snapshot.handle._family` (the declaring root, version
 attribute, and the layout member-to-column map),
@@ -310,11 +309,10 @@ def buffer_predicate_instruction(
     it at all. The planner's own structural refusal is the last line before SQL
     for what IS buffered; this one is the first line before the resolve.
 
-    ``Transaction._buffer_predicate_instruction`` is the thin method that
-    delegates here. It keeps its leading underscore and its exact signature
-    because the conformance engine calls it directly (`parallax.conformance.
-    engine`), making it a frozen external seam rather than an ordinary
-    cross-module helper.
+    :meth:`~parallax.snapshot.handle.Transaction.write_neutral` routes a
+    predicate-selected instruction here — the one neutral runtime write ingress,
+    which a caller holding no Entity Class enters exactly as it enters a keyed
+    write.
     """
     entity = entity_of(meta, instruction.target.entity)
     inheritance.reject_predicate_write(entity)

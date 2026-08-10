@@ -9,6 +9,11 @@
 # retriable). Together `m-auto-retry-001`/`m-auto-retry-002` pin "the flag has no bearing on transients"
 # under both flag states.
 #
+# `roundTrips: 4` is what the two attempts cost between them: each observes the row
+# (one call) and then issues its write (one call). The FAILED write of the first
+# attempt counts one — it reached the database — while begin, commit, and rollback
+# count none.
+#
 # `lane: api-conformance`: injected transient; suite-driven via a fault-injecting
 # decorator around the shipped adapter.
 model: models/account.yaml
@@ -32,3 +37,4 @@ when:
       note: the first write raises an injected serialization failure — auto-retried
 then:
   outcome: committed
+  roundTrips: 4

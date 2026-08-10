@@ -7,6 +7,10 @@
 # rather than being retried away. This pins the lower boundary of the bound: a
 # transient is retriable by default, but a disabled loop still surfaces it.
 #
+# `roundTrips: 2` is the single attempt's cost: the observing read, and the write
+# that reached the database and failed. A failed call counts one; the disabled loop
+# means there is no second attempt to add to it.
+#
 # `lane: api-conformance`: injected transient + a loop-configuration observable;
 # suite-driven via a fault-injecting decorator around the shipped adapter.
 model: models/account.yaml
@@ -30,3 +34,4 @@ when:
       note: the write raises an injected serialization failure — with retries 0 it surfaces
 then:
   outcome: serialization-failure
+  roundTrips: 2

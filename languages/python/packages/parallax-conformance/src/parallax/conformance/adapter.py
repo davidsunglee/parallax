@@ -313,8 +313,10 @@ def _run(
         emissions, table_state, round_trips = engine.run_write_sequence_case(case, dialect, port)
         return emissions, {"tableState": table_state, "roundTrips": round_trips}
     if case.shape == "conflict":
-        emissions, affected_rows, table_state, log = engine.run_conflict_case(case, dialect, port)
-        observations: dict[str, Any] = {"affectedRows": affected_rows, "roundTrips": len(emissions)}
+        emissions, affected_rows, table_state, log, round_trips = engine.run_conflict_case(
+            case, dialect, port
+        )
+        observations: dict[str, Any] = {"affectedRows": affected_rows, "roundTrips": round_trips}
         if table_state is not None:
             observations["tableState"] = table_state
         _report_execution(case, observations, log, emissions)

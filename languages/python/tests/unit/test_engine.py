@@ -26,7 +26,9 @@ from parallax.conformance import case_format, engine, sweep
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import INFINITY, STRING, InstantError
+from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
+from parallax.core.dialect import dialect_for
 from parallax.core.metamodel import (
     AbstractRoot,
     AttributeIdentity,
@@ -42,9 +44,10 @@ from parallax.core.metamodel import (
     ValueObjectShapeDeclaration,
     ValueObjectShapeKey,
 )
-from parallax.core.temporal_read import Edge, milestone_edge_from_members
+from parallax.core.temporal_read import Edge, Pin
 from parallax.core.unit_work import (
     Concurrency,
+    KeyTarget,
     MissingTargetError,
     ObjectKey,
     ObservationKey,
@@ -52,10 +55,9 @@ from parallax.core.unit_work import (
     PredecessorRow,
     StaleWriteError,
     TemporalObservation,
-    VersionObservation,
     WriteEffectError,
-    WriteObservation,
 )
+from parallax.snapshot import handle
 
 
 def _rows(row: Row, key: str) -> list[Row]:
@@ -363,7 +365,10 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     assert emissions[0].sql.startswith("insert into account")
     assert emissions[1].sql.endswith("for share of t0")  # the read-lock suffix renders
     assert len(port.writes) == 1 and len(port.reads) == 1
-    assert port.commits == 1 and port.rollbacks == 0
+    # An UNGROUPED find of a scenario declaring a participation mode runs in its
+    # OWN transaction, exactly as `run_read_case` does: the read lock is the
+    # transaction's, so the boundary is what renders it.
+    assert port.commits == 2 and port.rollbacks == 0
 
 
 def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> None:
@@ -373,7 +378,10 @@ def test_run_scenario_case_rollback_step_aborts_but_counts_the_round_trip() -> N
     )
     assert round_trips == 2  # the aborted insert still counts one round trip
     assert len(port.writes) == 1  # the DML executed before the abort
-    assert port.rollbacks == 1 and port.commits == 0
+    # An UNGROUPED find of a scenario declaring a participation mode runs in its
+    # OWN transaction, exactly as `run_read_case` does: the read lock is the
+    # transaction's, so the boundary is what renders it.
+    assert port.rollbacks == 1 and port.commits == 1
     assert emissions[0].case_pointer == "/scenario/0/write"
 
 
@@ -435,7 +443,10 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     ]
     assert len(port.writes) == 1  # the doomed write's DML still executed (and counted)
     assert len(port.reads) == 2  # the grouped observe find + the ungrouped post-abort find
-    assert port.commits == 0 and port.rollbacks == 1
+    # An UNGROUPED find of a scenario declaring a participation mode runs in its
+    # OWN transaction, exactly as `run_read_case` does: the read lock is the
+    # transaction's, so the boundary is what renders it.
+    assert port.commits == 1 and port.rollbacks == 1
 
 
 def _two_group_interleave_steps() -> list[dict[str, object]]:
@@ -1512,196 +1523,64 @@ def test_versioned_non_temporal_version_attribute_is_none_for_a_temporal_entity(
     )
 
 
-def _compiled_find(meta: Any, target: str) -> Any:
-    """The compiled read a bare scenario find of ``target`` produces — the same
-    object a `uow` group hands its observation recording."""
-    from parallax.core.dialect import POSTGRES
-
-    return engine._compile_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        {"targetEntity": target, "find": {"all": {}}},
-        meta,
-        engine.case_model(meta),
-        POSTGRES,
-        None,
-    )
-
-
-def _observe(meta: Any, target: str, rows: list[Row]) -> tuple[Any, Any]:
-    """Record one grouped find's observations, answering the map and what it
-    reported as this step's own observed milestones."""
-    observations: engine.ScenarioObservations = {}
-    observed = engine._observe_group_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        observations, meta, engine.case_model(meta), _compiled_find(meta, target), rows
-    )
-    return observations, observed
-
-
 _JAN = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
 _JUN = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 _APR = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
 
+_POLICY = ObjectKey(EntityIdentity("parallax.compatibility", "Policy"), (("id", 1),))
 
-def _policy_row(valid_start: dt.datetime, valid_end: object, name: str) -> Row:
-    return {
+
+def _policy_node(valid_start: dt.datetime, valid_end: object, name: str) -> Any:
+    """One node a grouped find of a bitemporal `Policy` published: production's
+    own identity and Observation Key for it, beside the milestone it is."""
+    members: dict[str, object] = {
         "id": 1,
         "name": name,
-        "from_z": valid_start,
-        "thru_z": valid_end,
-        "in_z": _APR,
-        "out_z": INFINITY,
+        "validStart": valid_start,
+        "validEnd": valid_end,
+        "txStart": _APR,
+        "txEnd": INFINITY,
     }
-
-
-def test_observe_group_find_files_each_temporal_milestone_under_its_own_edge() -> None:
-    # A milestone chain holds more than one row per primary key, so one find may
-    # return several and each is evidence about the milestone it actually is.
-    # Filed by identity alone the second would erase the first; filed under the
-    # milestone it observed, both survive and each is addressable.
-    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
-    head = _policy_row(_JAN, _JUN, "head")
-    tail = _policy_row(_JUN, INFINITY, "tail")
-    observations, observed = _observe(meta, "Policy", [head, tail])
-    assert len(observations) == 2
-    key = ObjectKey(EntityIdentity("parallax.compatibility", "Policy"), (("id", 1),))
-    assert [entry_key for entry_key, _members in observed] == [key, key]
-    assert {entry.milestone for entry in observations} == {
-        Edge(valid_time=_JAN, tx_time=_APR),
-        Edge(valid_time=_JUN, tx_time=_APR),
-    }
-    stored = observations[ObservationKey(key, Edge(valid_time=_JAN, tx_time=_APR))]
-    assert isinstance(stored, TemporalObservation)
-    assert stored.predecessor.members["name"] == "head"
-
-
-def test_observe_group_find_skips_a_temporal_row_short_of_a_declared_member() -> None:
-    # A Predecessor Row retains the observed row's COMPLETE state, so a
-    # projection missing a declared member records nothing rather than an
-    # incomplete milestone — never reachable for a well-formed corpus find, but
-    # this seam takes no data on faith.
-    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
-    observations, observed = _observe(meta, "Policy", [{"id": 1}])
-    assert observations == {}
-    assert observed == ()
-
-
-def test_observe_group_find_records_nothing_for_an_unversioned_non_temporal_target() -> None:
-    # An unversioned Non-Temporal row is evidence about nothing: it carries no
-    # version to advance from and no milestone to address, so its find leaves the
-    # store untouched and reports no milestone a later write could settle against.
-    meta = engine.load_case_metamodel(_load_case("m-batch-write-005"))
-    observations, observed = _observe(
-        meta, "Wallet", [{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00")}]
+    return engine._ObservedNode(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        object_key=_POLICY,
+        observation_key=ObservationKey(_POLICY, Edge(valid_time=valid_start, tx_time=_APR)),
+        observation=TemporalObservation(predecessor=PredecessorRow(members=members)),
     )
-    assert observations == {}
-    assert observed == ()
 
 
-def test_observe_group_find_retains_a_value_object_occurrence_in_the_predecessor() -> None:
-    # A Predecessor Row retains every applicable member, occurrences included, so
-    # a successor is patched from what the observed row actually held rather than
-    # rebuilt from its scalars (`m-value-object`).
-    meta = engine.load_case_metamodel(_load_case("m-value-object-032"))
-    address: dict[str, object] = {
-        "street": "1 Old Street",
-        "city": "Oslo",
-        "geo": {"country": "NO"},
-        "phones": [],
-    }
-    observations, _observed = _observe(
-        meta,
-        "Supplier",
-        [
-            {
-                "sup_id": 1,
-                "name": "Nordic Foods",
-                "address": address,
-                "in_z": _JAN,
-                "out_z": INFINITY,
-            }
-        ],
-    )
-    (stored,) = observations.values()
-    assert isinstance(stored, TemporalObservation)
-    assert stored.predecessor.members["address"] == address
-    # ...and an occurrence the projection left out makes the row incomplete, just
-    # as a missing scalar does, so nothing is recorded rather than a milestone a
-    # successor would be rebuilt from instead of patched from.
-    partial, _ = _observe(
-        meta, "Supplier", [{"sup_id": 1, "name": "Nordic Foods", "in_z": _JAN, "out_z": INFINITY}]
-    )
-    assert partial == {}
-
-
-def test_observe_group_find_skips_a_row_missing_its_version_field() -> None:
-    # A row carrying the primary key but no version column (never reachable
-    # for a well-formed corpus find) is skipped, not a KeyError — this seam
-    # takes no data on faith.
-    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    observations, observed = _observe(meta, "Account", [{"id": 1}])
-    assert observations == {}
-    assert observed == ()
-
-
-def test_observe_group_find_keys_a_row_by_its_own_resolved_concrete() -> None:
-    # An ABSTRACT table-per-hierarchy find resolves each returned row to its own
-    # concrete, and the keyed write that follows names that concrete: an
-    # observation recorded under the find's own target would be unreachable by
-    # the write it licenses, leaving a versioned concrete-subtype update
-    # unlicensed (`m-unit-work`: a missing required observation is a planning
-    # error). A versioned row names no milestone, so its own slot carries none.
-    meta = engine.load_case_metamodel(_load_case("m-inheritance-084"))
-    observations, observed = _observe(
-        meta,
-        "Vehicle",
-        [{"id": 1, "kind": "car", "name": "Sedan", "version": 5, "doors": 4, "axles": None}],
-    )
-    car = ObjectKey(EntityIdentity("parallax.compatibility", "Car"), (("id", 1),))
-    assert observations == {ObservationKey(car, None): VersionObservation(observed_version=5)}
-    assert observed == ()
-
-
-def _settled(meta: Any, source: Any, observations: Any) -> Any:
+def _settled(source: Any) -> Any:
     return engine._settled_against_source(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        meta,
-        engine.case_model(meta),
-        "Policy",
-        ObjectKey(EntityIdentity("parallax.compatibility", "Policy"), (("id", 1),)),
-        source,
-        observations,
+        "Policy", _POLICY, source
     )
 
 
-def test_a_settled_write_resolves_the_milestone_the_named_find_observed() -> None:
-    # The write derives the coordinate it looks the store up by from the row the
-    # named find handed over — the same milestone's own edge the recording side
-    # filed it under, reached by a SECOND derivation rather than by copying the
-    # recorded key. Two milestones of one key are held apart, and the write gets
-    # the one its own value came from.
-    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
-    head = _policy_row(_JAN, _JUN, "head")
-    tail = _policy_row(_JUN, INFINITY, "tail")
-    observations, observed = _observe(meta, "Policy", [head, tail])
-    for index, expected in ((0, "head"), (1, "tail")):
-        settled = _settled(meta, (observed[index],), observations)
-        assert isinstance(settled, TemporalObservation)
-        assert settled.predecessor.members["name"] == expected
-
-
-def test_a_settled_write_resolves_nothing_when_the_store_holds_no_such_milestone() -> None:
-    # A miss is not an error here: the close is refused where every unobserved
-    # close is, by the planner that needs the observation it cannot find.
-    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
-    head = _policy_row(_JAN, _JUN, "head")
-    _observations, observed = _observe(meta, "Policy", [head])
-    assert _settled(meta, observed, {}) is None
+def test_a_settled_write_settles_against_the_node_the_named_find_observed() -> None:
+    # A milestone chain holds more than one row per primary key, so one find may
+    # return several and each is evidence about the milestone it actually is. The
+    # write settles against the ONE its own `on` reference named — carrying the
+    # slot the unit of work filed that node under, so the real write reaches
+    # production's own record rather than a coordinate this engine re-derived.
+    head = _policy_node(_JAN, _JUN, "head")
+    tail = _policy_node(_JUN, INFINITY, "tail")
+    for node, expected in ((head, "head"), (tail, "tail")):
+        key, observation = _settled((node,))
+        assert key == node.observation_key
+        assert isinstance(observation, TemporalObservation)
+        assert observation.predecessor.members["name"] == expected
 
 
 def test_a_settled_write_refuses_a_find_that_observed_no_row_of_its_key() -> None:
     # The reference names evidence that does not exist — an authoring defect,
     # refused where the diagnosis can name it rather than silently unobserved.
-    meta = engine.load_case_metamodel(_load_case("m-navigate-012"))
     with pytest.raises(engine.EngineError, match="settles against observed 0 rows"):
-        _settled(meta, (), {})
+        _settled(())
+
+
+def test_a_settled_write_refuses_a_find_that_observed_several_rows_of_its_key() -> None:
+    # No single value could have come from two milestones, so a reference that
+    # resolves to both names nothing a write could have been handed.
+    with pytest.raises(engine.EngineError, match="settles against observed 2 rows"):
+        _settled((_policy_node(_JAN, _JUN, "head"), _policy_node(_JUN, INFINITY, "tail")))
 
 
 def test_a_write_step_naming_no_find_settles_against_tracked_state() -> None:
@@ -1752,21 +1631,28 @@ def test_a_settled_write_targets_a_temporal_entity() -> None:
             {"mutation": "update", "entity": "Account", "rows": [{"id": 1, "balance": 5.00}]},
             meta,
             TemporalShadow(),
-            "2024-10-01T00:00:00+00:00",
             set(),
-            {},
+            [],
             (),
         )
 
 
-def _balance_milestone(tx_start: str, tx_end: str, value: str) -> dict[str, object]:
-    return {
+def _balance_node(tx_start: str, value: str) -> Any:
+    """One node a grouped find of a Transaction-Time-Only `Balance` published."""
+    key = ObjectKey(EntityIdentity("parallax.compatibility", "Balance"), (("id", 1),))
+    start = dt.datetime.fromisoformat(tx_start)
+    members: dict[str, object] = {
         "id": 1,
         "acctNum": "A",
         "value": decimal.Decimal(value),
-        "txStart": dt.datetime.fromisoformat(tx_start),
-        "txEnd": INFINITY if tx_end == "infinity" else dt.datetime.fromisoformat(tx_end),
+        "txStart": start,
+        "txEnd": INFINITY,
     }
+    return engine._ObservedNode(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        object_key=key,
+        observation_key=ObservationKey(key, Edge(tx_time=start)),
+        observation=TemporalObservation(predecessor=PredecessorRow(members=members)),
+    )
 
 
 def test_a_settled_write_resolves_a_transaction_time_only_targets_named_milestone() -> None:
@@ -1779,47 +1665,197 @@ def test_a_settled_write_resolves_a_transaction_time_only_targets_named_mileston
     # store keyed by identity alone could not answer, because the second read would
     # have erased the first.
     meta = engine.load_case_metamodel(_case("m-txtime-write-001"))
-    model = engine.case_model(meta)
-    declaring = engine.case_entity(model, meta.entity("Balance"))
-    key = ObjectKey(EntityIdentity("parallax.compatibility", "Balance"), (("id", 1),))
-    current = _balance_milestone("2024-04-01T00:00:00+00:00", "infinity", "100.00")
-    historical = _balance_milestone(
-        "2024-01-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00", "90.00"
-    )
-    observations: dict[ObservationKey, WriteObservation] = {
-        ObservationKey(key, milestone_edge_from_members(declaring, members)): TemporalObservation(
-            predecessor=PredecessorRow(members=members, document=None)
-        )
-        for members in (current, historical)
-    }
+    current = _balance_node("2024-04-01T00:00:00+00:00", "100.00")
+    historical = _balance_node("2024-01-01T00:00:00+00:00", "90.00")
 
-    def settle(observed: dict[str, object]) -> object:
-        (_instruction, _key, observation) = engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    def settle(node: Any) -> object:
+        (_instruction, evidence, observation) = engine._build_instructions(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
             {"mutation": "update", "entity": "Balance", "rows": [{"id": 1, "value": 5.00}]},
             meta,
             TemporalShadow(),
-            "2024-10-01T00:00:00+00:00",
             set(),
-            observations,
-            ((key, observed),),
+            [],
+            (node,),
         )[0]
+        assert evidence == node.observation_key
         assert isinstance(observation, TemporalObservation)
         return observation.predecessor.members["txStart"]
 
-    assert settle(current) == current["txStart"]
-    assert settle(historical) == historical["txStart"]
+    assert settle(current) == current.observation.predecessor.members["txStart"]
+    assert settle(historical) == historical.observation.predecessor.members["txStart"]
 
 
-def test_row_object_key_resolves_a_duplicate_local_name_by_its_namespace() -> None:
-    # Two entities sharing a bare name across namespaces resolve no bare
-    # spelling at all, so keying a row by its resolved identity has to reach the
-    # descriptor through the identity's CANONICAL spelling — a bare-name lookup
-    # would deny a legal model its own observations.
-    meta = engine.load_case_metamodel(_load_case("m-inheritance-120"))
-    archive = EntityIdentity("archive", "SharedVariant")
-    assert engine._row_object_key(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-        meta, archive, {"id": 3}
-    ) == ObjectKey(archive, (("id", 3),))
+def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_names() -> None:
+    # m-unit-work-015: two finds of ONE bitemporal key observe two rectangles both
+    # current on Transaction Time, and the write step names the first with `on`.
+    # The evidence the write settles by is the Observation Key the unit of work
+    # itself filed that node under, and the golden the oracle renders comes from
+    # the same node's own milestone — so the close addresses R2's `thru_z`, which
+    # a store keyed by identity alone could not have chosen between.
+    port = FakeWritePort(
+        find_rows=[
+            {
+                "pos_id": 1,
+                "acct_num": "A",
+                "val": decimal.Decimal("100.00"),
+                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "thru_z": dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
+                "in_z": dt.datetime(2024, 4, 1, tzinfo=dt.UTC),
+                "out_z": INFINITY,
+            }
+        ]
+    )
+    emissions, round_trips, _errors, log = engine.run_scenario_case(
+        _load_case("m-unit-work-015"), "postgres", port
+    )
+    assert round_trips == 5
+    assert log is not None and log.round_trips == 5
+    # The close plus the two rectangles the split chains, all under the write
+    # step's own pointer.
+    assert [e.case_pointer for e in emissions] == [
+        "/scenario/0/find",
+        "/scenario/1/find",
+        *["/scenario/2/write"] * 3,
+    ]
+    close = emissions[2]
+    assert close.sql.startswith("update position set out_z = ?")
+    # The close's address is the OBSERVED rectangle's own `thru_z`, derived from
+    # the node the named find published — never the primary key alone.
+    assert close.binds[2] == dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
+
+
+def test_observed_nodes_refuses_an_output_that_is_not_a_graph() -> None:
+    # A participating scenario find is graph-form: only the graph lane records the
+    # evidence a later write settles against, so a row-form answer here would be a
+    # find that observed nothing while reporting that it had.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    with pytest.raises(engine.EngineError, match="a participating scenario find is graph-form"):
+        engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            meta,
+            engine.case_model(meta),
+            "parallax.compatibility.Account",
+            handle.NeutralRows(()),
+        )
+
+
+def test_observed_nodes_records_nothing_for_an_unversioned_non_temporal_target() -> None:
+    # An unversioned, non-temporal target observes nothing at all (m-unit-work),
+    # so the find publishes no evidence and a later write of it buffers bare.
+    meta = engine.load_case_metamodel(_case("m-unit-work-003"))
+    assert (
+        engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            meta,
+            engine.case_model(meta),
+            "parallax.compatibility.Order",
+            handle.NeutralGraph((), Pin()),
+        )
+        == ()
+    )
+
+
+def test_observed_nodes_skips_a_node_the_unit_of_work_observed_nothing_of() -> None:
+    # A node carrying no Observation Key is one the unit of work filed no evidence
+    # for, so there is no slot a later write could settle against and it
+    # contributes none.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    model = engine.case_model(meta)
+    account = EntityIdentity("parallax.compatibility", "Account")
+    node = handle.NeutralNode(entity=account, object_key=ObjectKey(account, (("id", 1),)))
+    view = handle.NeutralNodeView(
+        node=node,
+        primary_key=(),
+        family_variant=None,
+        attributes={},
+        value_objects={},
+        relationships={},
+    )
+    assert (
+        engine._observed_nodes(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            meta, model, "parallax.compatibility.Account", handle.NeutralGraph((view,), Pin())
+        )
+        == ()
+    )
+
+
+def test_a_find_step_names_its_target_and_its_operation() -> None:
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):
+        engine._find_request(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+            {"targetEntity": "Account"}, meta, engine.case_model(meta)
+        )
+
+
+def test_a_standalone_find_of_a_lockless_scenario_opens_no_transaction() -> None:
+    # A scenario whose write steps are all READLESS predicate writes establishes
+    # no observation for a lock to protect (`_scenario_needs_lock`), so its
+    # verification finds are plain non-participating reads — no boundary, no lock
+    # suffix.
+    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
+    port = FakeWritePort(find_rows=[])
+    result = engine._run_standalone_find(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+        port,
+        meta,
+        engine.case_model(meta),
+        dialect_for("postgres"),
+        None,
+        {"targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
+    )
+    assert result.execution.round_trips == 1
+    assert port.commits == 0 and port.rollbacks == 0
+    assert not port.reads[0][0].endswith("for share of t0")
+
+
+def test_the_aborting_port_passes_reads_and_writes_through() -> None:
+    # It decorates the BOUNDARY alone: every statement still reaches the inner
+    # port unchanged, so the DML a doomed unit of work flushes is the DML it would
+    # have committed.
+    inner = FakeWritePort(find_rows=[{"id": 1}])
+    port = engine._AbortingPort(inner)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+    assert port.execute("select 1", []) == [{"id": 1}]
+    assert port.execute_write("update account set balance = ?", [1]) == 1
+    assert inner.reads and inner.writes
+
+
+def test_the_admitted_affected_guard_reraises_an_unadmitted_write_effect_error() -> None:
+    # Every member of the family renders the same `actual` count, so admitting the
+    # wrong one would report an identical observation whichever class the write
+    # raised. Only the class the case's own declared facts imply is caught; every
+    # other one propagates and fails the case.
+    account = EntityIdentity("parallax.compatibility", "Account")
+    target = KeyTarget(
+        key_attributes=(AttributeIdentity(account, "id"),),
+        key_values=((1,),),
+    )
+
+    def raises() -> int:
+        raise StaleWriteError(account, target, expected=1, actual=0)
+
+    with pytest.raises(StaleWriteError):
+        engine._admitted_affected(MissingTargetError, raises)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
+
+
+class _FailingClosePort(FakeWritePort):
+    """A port whose temporal CLOSE raises a translated transient failure — the
+    case's own out-of-band `given.apply` writer still lands, so the failure is
+    the close's own rather than the arrangement's."""
+
+    def execute_write(self, sql: str, binds: Sequence[object]) -> int:
+        affected = super().execute_write(sql, binds)
+        # The case's own `given.apply` writer runs first and binds nothing; the
+        # close is the parameterized statement.
+        if binds:
+            raise DatabaseError(
+                category="deadlock", native_code="40P01", message="deadlock detected"
+            )
+        return affected
+
+
+def test_run_conflict_case_temporal_close_propagates_a_failed_call() -> None:
+    # A close the port could not complete is recorded as a FAILED Database Call
+    # and then propagates: the lane admits only the shortfall class the case's own
+    # facts imply, and a transient database failure is not one.
+    with pytest.raises(DatabaseError):
+        engine.run_conflict_case(_load_case("m-temporal-read-010"), "postgres", _FailingClosePort())
 
 
 def test_run_write_sequence_case_executes_each_entry_as_its_own_transaction() -> None:
@@ -2461,7 +2497,7 @@ def test_canonical_predicate_doc_preserves_valid_time_bounds_and_drops_at() -> N
 def test_run_scenario_case_executes_a_readless_predicate_write() -> None:
     # `m-batch-write-005`'s own shape, run end to end (no Docker): an
     # unversioned, non-temporal target's predicate delete buffers through
-    # `Transaction._buffer_predicate_instruction` and lowers to ONE readless
+    # `Transaction.write_neutral` and lowers to ONE readless
     # statement — `_run_readless_predicate_write`'s own production seam.
     case = _synthetic_write(
         "scenario",
@@ -2741,7 +2777,7 @@ def test_run_write_sequence_case_wraps_a_lowering_error() -> None:
 # --------------------------------------------------------------------------- #
 def test_run_conflict_case_single_attempt() -> None:
     port = FakeWritePort()
-    emissions, affected, table_state, _log = engine.run_conflict_case(
+    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-006"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -2752,7 +2788,7 @@ def test_run_conflict_case_single_attempt() -> None:
 
 def test_run_conflict_case_applies_given_apply_out_of_band_first() -> None:
     port = FakeWritePort()
-    emissions, affected, table_state, _log = engine.run_conflict_case(
+    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
@@ -2779,7 +2815,7 @@ def test_run_conflict_case_renders_an_ungated_zero_row_delete_as_a_stale_write()
     # implies, so the case's `affectedRows: 0` observation is reachable exactly
     # when the write classified its shortfall the way the mode requires.
     port = _ZeroAffectedPort()
-    emissions, affected, _table_state, _log = engine.run_conflict_case(
+    emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-016"), "postgres", port
     )
     assert [e.sql for e in emissions] == ["delete from account where id = ?"]
@@ -2788,7 +2824,7 @@ def test_run_conflict_case_renders_an_ungated_zero_row_delete_as_a_stale_write()
 
 def test_run_conflict_case_renders_a_gated_zero_row_update_as_a_conflict() -> None:
     port = _ZeroAffectedPort()
-    _emissions, affected, _table_state, _log = engine.run_conflict_case(
+    _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-005"), "postgres", port
     )
     assert affected == 0
@@ -2810,7 +2846,7 @@ def test_run_conflict_case_renders_an_ungated_zero_row_close_as_a_stale_write() 
     # m-temporal-read-012: the locking-mode close renders its address and no gate,
     # so its shortfall is the non-retriable stale write — the temporal sibling of
     # the ungated versioned DELETE above, caught by the same one implied class.
-    _emissions, affected, _table_state, _log = engine.run_conflict_case(
+    _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-temporal-read-012"), "postgres", _ZeroAffectedClosePort()
     )
     assert affected == 0
@@ -2846,7 +2882,7 @@ def test_a_conflict_attempt_row_authoring_an_unobservable_observed_version_is_re
 
 
 def test_a_multi_key_unversioned_conflict_attempt_collapses_to_one_statement() -> None:
-    emissions, _affected, _table_state, _log = engine.run_conflict_case(
+    emissions, _affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _unversioned_conflict_case([{"id": 1, "balance": 500.00}, {"id": 2, "balance": 500.00}]),
         "postgres",
         FakeWritePort(),
@@ -2857,7 +2893,7 @@ def test_a_multi_key_unversioned_conflict_attempt_collapses_to_one_statement() -
 
 
 def test_run_conflict_case_renders_a_gated_zero_row_close_as_a_conflict() -> None:
-    _emissions, affected, _table_state, _log = engine.run_conflict_case(
+    _emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-temporal-read-010"), "postgres", _ZeroAffectedClosePort()
     )
     assert affected == 0
@@ -2946,7 +2982,7 @@ def test_run_conflict_case_collapses_a_multi_key_write_into_one_statement() -> N
     # the same collapse policy the execution runs under, or it would report three
     # statements where one was emitted. The count it reports is the aggregate the
     # single complete Key Target owns, never a per-row 1.
-    emissions, affected, _table_state, _log = engine.run_conflict_case(
+    emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-batch-write-008"), "postgres", _CollapsedDeletePort()
     )
     assert [e.sql for e in emissions] == ["delete from wallet where id in (?, ?, ?)"]
@@ -2978,7 +3014,7 @@ def test_run_conflict_case_refuses_a_multi_key_write_against_a_temporal_target()
 
 def test_run_conflict_case_attempts_form_scripts_each_attempt_independently() -> None:
     port = FakeWritePort()
-    emissions, affected, table_state, _log = engine.run_conflict_case(
+    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
         _load_case("m-opt-lock-007"), "postgres", port
     )
     assert [e.case_pointer for e in emissions] == [
@@ -3011,7 +3047,9 @@ def test_run_conflict_case_temporal_close_form_composes_plan_temporal_close() ->
     # `handle.plan_temporal_close`, not the non-temporal versioned-UPDATE path.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-txtime-write-006"]
     port = FakeWritePort()
-    emissions, affected, table_state, _log = engine.run_conflict_case(case, "postgres", port)
+    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+        case, "postgres", port
+    )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert emissions[0].sql == (
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
@@ -3091,7 +3129,7 @@ def test_an_edge_named_close_derives_its_address_from_the_named_milestone() -> N
     heads: list[list[object]] = []
     for valid_start in ("2024-01-01T00:00:00+00:00", "2024-06-01T00:00:00+00:00"):
         port = FakeWritePort()
-        emissions, affected, _table_state, _log = engine.run_conflict_case(
+        emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
             _edge_named_close(
                 {
                     "uow": {"concurrency": "optimistic"},
@@ -3307,7 +3345,7 @@ def test_a_locking_close_may_still_name_its_observed_milestones_edge() -> None:
     # own half, which SELECTS the milestone whose `thru_z` the address binds.
     # That selection happens in either mode; only the gate is optimistic-only,
     # so the locking golden carries the derived address and no `in_z` predicate.
-    emissions, affected, _table_state, _log = engine.run_conflict_case(
+    emissions, affected, _table_state, _log, _round_trips = engine.run_conflict_case(
         _edge_named_close(
             {
                 "uow": {"concurrency": "locking"},
@@ -3446,7 +3484,9 @@ def test_run_conflict_case_resolves_target_from_the_inheritance_family() -> None
     # convention.
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-inheritance-105"]
     port = FakeWritePort()
-    emissions, affected, table_state, _log = engine.run_conflict_case(case, "postgres", port)
+    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+        case, "postgres", port
+    )
     assert [e.case_pointer for e in emissions] == ["/when/write"]
     assert emissions[0].sql == (
         "update reading set out_z = ? where id = ? and kind = ? and out_z = ? and in_z = ?"
@@ -3462,7 +3502,9 @@ def test_run_conflict_case_temporal_attempts_form_retries_the_gated_close() -> N
     # non-temporal versioned-UPDATE retry `m-opt-lock-007` already covers).
     (case,) = [c for c in case_format.load_cases() if c.case_id == "m-temporal-read-011"]
     port = FakeWritePort()
-    emissions, affected, table_state, _log = engine.run_conflict_case(case, "postgres", port)
+    emissions, affected, table_state, _log, _round_trips = engine.run_conflict_case(
+        case, "postgres", port
+    )
     assert [e.case_pointer for e in emissions] == [
         "/when/attempts/0/write",
         "/when/attempts/1/write",

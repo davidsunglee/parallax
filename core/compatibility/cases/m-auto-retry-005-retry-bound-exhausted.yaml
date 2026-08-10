@@ -8,6 +8,10 @@
 # attempt count). This pins the upper boundary of the bound, the counterpart to
 # `m-auto-retry-004`'s disabled loop.
 #
+# `roundTrips: 6` is what the exhausted loop cost: `retries: 2` admits three attempts,
+# each an observing read plus a write that reached the database and failed. A failed
+# call counts one, and the count spans every attempt rather than the last.
+#
 # `lane: api-conformance`: injected persistent transient + bound exhaustion; suite-
 # driven via a fault-injecting decorator around the shipped adapter.
 model: models/account.yaml
@@ -31,3 +35,4 @@ when:
       note: the write raises a serialization failure on every attempt — surfaces after the bound
 then:
   outcome: serialization-failure
+  roundTrips: 6
