@@ -369,15 +369,29 @@ conversion leave a family read that must stay on records, the ruled replacement
 is one narrow public accessor on `parallax.descriptor` returning family
 participants and root as plain data, rather than
 `validate_inheritance_families`'s `None`-or-raise contract — never the record
-graph itself. `another_source.py`'s two
-`parallax.core.entity` reaches (`model_of`, `lower_find_query`) are expected to
-be REBUTTED rather than converted: `model_of` is documented as a first-party
-runtime seam, and both names are already in production's own
+graph itself.
+
+`another_source.py`'s two `parallax.core.entity` reaches (`model_of`,
+`lower_find_query`) are REBUTTED rather than converted, and `models.py` joins
+that rebuttal with a third reach of its own. `model_of` is documented as a
+first-party runtime seam, and both names are already in production's own
 `ACCEPTED_PRIVATE_ENTITY_REACHES`
 (`tests/unit/test_frontend_contraction_guards.py`, for the composition root and
-the read preflight respectively), so a third, development-only consumer of the
-same two seams is not a reason to widen `parallax.core.entity`'s shipped
-surface.
+the read preflight respectively), so development-only consumers of the same two
+seams are not a reason to widen `parallax.core.entity`'s shipped surface. That
+third reach is how `models.py` reaches an accepted Metamodel once it stops
+forming records: the public descriptor doors return a `DomainModel`, everything
+conformance hands a model to takes the accepted
+`parallax.core.metamodel.Metamodel`, and `model_of` is the only seam that reads
+one out of the other. So `load_model` forms through the public door and extracts
+through `model_of`, no public surface moves, and
+`ACCEPTED_CONFORMANCE_PRIVATE_REACHES` ends at exactly three entries — all
+`parallax.core.entity`, none `parallax.descriptor`. Exporting `model_of` from
+`parallax.core.entity` and adding a `parallax.descriptor` door returning the
+accepted Metamodel were both considered and rejected: each buys accounting with
+permanently shipped surface, against `spec/python.md` §7's standing decision
+that exporting these seams "would widen the developer surface to serve one
+lifecycle package".
 
 ## Forwarding pointers
 
