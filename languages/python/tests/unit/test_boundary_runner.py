@@ -226,7 +226,7 @@ def test_run_boundary_actions_delete_without_a_prior_read_raises() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# FaultInjectingPort: firing / persistence / attempt counting.                #
+# FaultInjectingPort: firing and persistence.                                 #
 # --------------------------------------------------------------------------- #
 def test_fault_injecting_port_fires_once_by_default() -> None:
     inner = _FakePort(rows=[])
@@ -235,7 +235,6 @@ def test_fault_injecting_port_fires_once_by_default() -> None:
         port.execute_write("update x set y = 1", [])
     # A second call, same instance: the state already fired, so it passes through.
     assert port.execute_write("update x set y = 1", []) == 1
-    assert port.attempts == 0  # no `.transaction()` call yet — this probes execute_write alone
 
 
 def test_fault_injecting_port_fires_every_attempt_when_persistent() -> None:
@@ -265,7 +264,7 @@ def test_fault_injecting_port_no_fault_passes_reads_and_writes_through() -> None
     assert port.execute_write("update x set y = 1", []) == 1
 
 
-def test_fault_injecting_port_counts_attempts_across_transaction_calls() -> None:
+def test_fault_injecting_port_delegates_every_transaction_call() -> None:
     inner = _FakePort(rows=[])
     port = FaultInjectingPort(inner, fault=None, persistent=False)
 
@@ -274,7 +273,6 @@ def test_fault_injecting_port_counts_attempts_across_transaction_calls() -> None
 
     assert port.transaction(body) == "ok"
     assert port.transaction(body) == "ok"
-    assert port.attempts == 2
 
 
 def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> None:
@@ -290,10 +288,12 @@ def test_fault_injecting_port_state_survives_nested_transaction_wrapping() -> No
     def fn(tx: Transaction) -> Any:
         return boundary_runner.run_boundary_actions(tx, ["read", "update"])
 
-    result = db.transact(fn).value
-    assert result is not None
-    assert result.balance == Decimal("251.00")
-    assert port.attempts == 2  # the faulted attempt, then the retried (successful) one
+    result = db.transact(fn)
+    assert result.value is not None
+    assert result.value.balance == Decimal("251.00")
+    # The faulted attempt, then the retried (successful) one — read off the
+    # invocation's own Execution Log, which is what the retry loop produced.
+    assert len(result.execution_log.attempts) == 2
 
 
 # --------------------------------------------------------------------------- #

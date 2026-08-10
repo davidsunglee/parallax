@@ -8,6 +8,10 @@
 # `retryOptimisticConflicts: true` on a locking unit of work is therefore a NO-OP —
 # the update commits normally, with no spurious retry and no conflict.
 #
+# `roundTrips: 2` is one attempt's cost: the observing read and the committing
+# UPDATE. No fault fires, so the loop never re-executes and nothing else reaches
+# the database — begin and commit count none.
+#
 # `lane: api-conformance`: it proves a runtime configuration invariant (the flag is
 # inert in locking mode) that carries no golden-SQL observable; the suite runs a
 # locking-mode versioned update with the flag set and asserts a clean commit.
@@ -30,3 +34,4 @@ when:
       note: the ungated locking-mode UPDATE commits — the conflict flag is inert
 then:
   outcome: committed
+  roundTrips: 2

@@ -18,7 +18,8 @@ exists to end):
 - :class:`FaultInjectingPort` is the fault-injecting `m-db-port` DECORATOR
   (wraps a REAL adapter): it SIMULATES the case's `given.fault` at the write
   seam; the real classification / retry-loop / optimistic-gate machinery
-  does the classifying, never this module.
+  does the classifying, never this module, and how many attempts ran is read
+  off the invocation's own Execution Log rather than counted here.
 - :func:`expected_attempts` derives the authored attempt count from the
   SAME fields `m-auto-retry.md` / `m-opt-lock.md` fix the retriability rules
   from (never a per-case hand table).
@@ -237,9 +238,13 @@ def translated_fault(kind: str) -> DatabaseError:
 class _FaultState:
     """Shared, mutable state one :class:`FaultInjectingPort` chain (the
     top-level instance plus every nested copy `.transaction()` wraps) tracks
-    across a WHOLE `db.transact` retry loop — never reset per attempt."""
+    across a WHOLE `db.transact` retry loop — never reset per attempt.
 
-    attempts: int = 0
+    Whether the fault has already fired, and nothing else. How many attempts ran
+    is the invocation's own Execution Log to answer (`m-execution-log`), so this
+    decorator counts none: a second count kept here could disagree with the one
+    the retry loop actually produced."""
+
     fired: bool = False
 
 
@@ -275,10 +280,6 @@ class FaultInjectingPort:
         self._persistent = persistent
         self._state = state if state is not None else _FaultState()
 
-    @property
-    def attempts(self) -> int:
-        return self._state.attempts
-
     def execute(self, sql: str, binds: Any) -> list[Row]:
         return self._inner.execute(sql, binds)
 
@@ -291,7 +292,6 @@ class FaultInjectingPort:
         return self._inner.execute_write(sql, binds)
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        self._state.attempts += 1
         inner = self
 
         def wrapped(conn: DbPort) -> T:

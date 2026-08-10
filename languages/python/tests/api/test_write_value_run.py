@@ -46,20 +46,27 @@ def test_write_value_case_runs_through_the_shipped_verbs(
     def fn(tx: Transaction) -> list[str | None]:
         return write_value_runner.graded_outcomes(tx, steps, another)
 
-    assert db.transact(fn).value == [step.expect_error for step in steps]
-    # The case's `then.roundTrips` graded through the developer surface: this
-    # suite asserts no SQL text (m-api-conformance), so a declared count of zero
-    # is graded as the absence of any durable effect after the transaction
-    # committed — a statement that ran would have left one, on one of the only
-    # two rows a keyed write here can address. The fixture row stands exactly as
-    # loaded (a flushed `update` would bump `version` even carrying no change),
-    # and `UNMANAGED_ID` — outside the fixture range precisely so a value no
-    # managed read produced cannot address a row one did — holds no row at all.
-    # The grammar is what makes that an oracle rather than a wish: an accepted
-    # `insert` opens a row and would flush here, so the case schema admits no
-    # `insert` step without an `expectError`, leaving the `update` that
-    # materializes nothing as the only acceptance a case can declare.
-    assert write_value_runner.declared_round_trips(case) == 0
+    result = db.transact(fn)
+    assert result.value == [step.expect_error for step in steps]
+    # The case's `then.roundTrips` graded against what the transaction actually
+    # did (`m-execution-log`), never against a count this suite kept. The count is
+    # the steps' own verbs, so the WRITE calls are what it names: a read that
+    # arranges a value of the stated provenance is the adapter's own affair and
+    # is not the case's cost (:func:`write_value_runner.declared_round_trips`),
+    # and the Database Call's own kind is what separates the two.
+    executed_writes = sum(
+        1
+        for attempt in result.execution_log.attempts
+        for call in attempt.calls
+        if call.kind == "write"
+    )
+    assert executed_writes == write_value_runner.declared_round_trips(case)
+    # The durable end state beside it: a statement that ran would have left an
+    # effect on one of the only two rows a keyed write here can address. The
+    # fixture row stands exactly as loaded (a flushed `update` would bump
+    # `version` even carrying no change), and `UNMANAGED_ID` — outside the
+    # fixture range precisely so a value no managed read produced cannot address
+    # a row one did — holds no row at all.
     stored, unmanaged = db.transact(
         lambda tx: (
             tx.find(Account.where(Account.id == write_value_runner.TARGET_ID)).result(),

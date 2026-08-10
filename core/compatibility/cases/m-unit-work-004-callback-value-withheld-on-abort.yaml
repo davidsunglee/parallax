@@ -12,6 +12,11 @@
 # already observed (forcing the read-your-own-writes flush first), so the case also
 # witnesses that the forced flush never escapes the atomic scope the abort discards.
 #
+# `roundTrips: 3` is what the aborted attempt cost: the observing read, the write the
+# dependent find force-flushed, and that dependent find. All three reached the
+# database before the abort erased their effect — the count records work done, not
+# work that survived.
+#
 # `lane: api-conformance`: it proves a boundary control-flow observable (the promise
 # rejects; no value is produced); the suite runs `px.transaction` with a throwing
 # body and asserts the rejection propagates and the pre-transaction state stands.
@@ -33,3 +38,4 @@ when:
       note: a dependent find observes the flushed write (still inside the atomic scope)
 then:
   outcome: aborted
+  roundTrips: 3

@@ -26,7 +26,7 @@ and leaving a forwarding line below, so this file stays a work list rather than
 an archive. An entry that is resolved, closed, graduated to a Linear issue, or
 carried in full by one is not an entry here.
 
-Entry numbering is continuous and never reused. The next new number is **D-63**.
+Entry numbering is continuous and never reused. The next new number is **D-64**.
 
 ## Standing notes
 
@@ -249,6 +249,29 @@ defines, and would be retired the moment the denotation is stated. A gate
 rejection would report the operation invalid when the specification permits it
 and only the implementation is behind. Python therefore adds neither, states the
 bound truthfully at the gate, and follows COR-96's decision.
+
+### D-63 — A retry-shaped or boundary case's `then.roundTrips` is graded by this target alone
+
+*Low — a corpus number with one reader.* **Owned by
+[COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution)**,
+which already owns the harness's other execution-provenance gap. Relates to
+`core/schemas/compatibility-case.schema.json` `then.roundTrips`,
+`reference-harness` `case_runner`, and `parallax.conformance.engine`.
+
+**What.** COR-93 made every run-lane round-trip count production provenance
+rather than an emission tally, and authored `then.roundTrips` on the eight
+`boundary` cases and the three retry-shaped `conflict` cases that previously
+declared none. Neither lane has a second reader. A `boundary` case is
+`lane: api-conformance`, which the harness never executes; a retry-shaped
+`conflict` case the harness DOES execute, but its `attempts` branch asserts each
+attempt's affected rows and the final table state and never reaches the
+round-trip assertion its plain-read fallthrough owns. So eleven authored numbers
+are held by Python's own suites alone.
+
+**Why it is deferred rather than fixed.** Both halves are reference-harness work
+of the same kind COR-95 already scopes — teaching the harness to observe what a
+run actually cost — and neither is a Python defect. Splitting them across two
+tickets would have the harness grow a round-trip observer twice.
 
 ## Forwarding pointers
 

@@ -75,9 +75,7 @@ def test_boundary_case_runs_through_the_shipped_surface(
     # The post-transaction verify read runs through a SEPARATE, un-instrumented
     # `Database` (the real adapter directly, no `FaultInjectingPort`): it is
     # out-of-band housekeeping, not part of the boundary mechanism under test,
-    # and driving it through the SAME `port` would inflate `port.attempts`
-    # beyond what `expected_attempts` (the MAIN `run()` call's own count)
-    # predicts.
+    # and driving it through the SAME `port` would arm the fault against it.
     verify_db = connect(provisioner.port, meta)
     raise_after = fault is None and outcome == "aborted"
     logs: list[ExecutionLog] = []
@@ -117,7 +115,12 @@ def test_boundary_case_runs_through_the_shipped_surface(
             run()
         assert excinfo.value.category == category, (case.case_id, excinfo.value)
 
-    assert port.attempts == boundary_runner.expected_attempts(
+    # How many attempts ran is the invocation's OWN Execution Log
+    # (`m-execution-log`), never a count the fault decorator kept beside it: the
+    # log is what the retry loop actually produced, and a second tally could
+    # agree with the oracle while the loop did something else.
+    assert logs, case.case_id
+    assert len(logs[0].attempts) == boundary_runner.expected_attempts(
         fault=fault,
         outcome_kind=outcome,
         retries=uow.retries,

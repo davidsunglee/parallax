@@ -19,6 +19,11 @@
 #   attempt 0 (stale) : UPDATE gates on the observed version (1) => 0 rows — conflict.
 #   attempt 1 (retry) : the loop re-reads the fresh version (2), re-applies => 1 row,
 #                       advancing the version to 3.
+#
+# `roundTrips: 2` is what the two authored attempts cost between them — one gated
+# UPDATE each. The first REACHED the database and reported zero rows, so it counts
+# exactly as the second does; the count spans every attempt rather than the last.
+#
 model: models/account.yaml
 tags: [m-opt-lock, m-auto-retry, m-sql, conflict, success, slice-snapshot-1, slice-managed-1]
 shape: conflict
@@ -49,6 +54,7 @@ when:
       write: { id: 2, balance: 250.00, observedVersion: 2 }
       affectedRows: 1
 then:
+  roundTrips: 2
   tableState:
     account:
       - { id: 1, owner: Ada, balance: 100.00, version: 1 }
