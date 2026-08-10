@@ -1416,9 +1416,9 @@ I/O — acquisition and persistence belong to the caller:
 
 | Function | Input | Syntax phase |
 |---|---|---|
-| `hub_from_document(document)` | an already-decoded `Mapping[str, object]` | none — schema validation is its first gate; it never raises `DescriptorSyntaxError` |
-| `hub_from_json(text)` | `str \| bytes` (UTF-8) JSON | yes — malformed UTF-8 or JSON is `DescriptorSyntaxError` with `format="json"`, optional line/column, and cause |
-| `hub_from_yaml(text)` | `str \| bytes` (UTF-8) YAML | yes — as above with `format="yaml"` |
+| `domain_model_from_document(document)` | an already-decoded `Mapping[str, object]` | none — schema validation is its first gate; it never raises `DescriptorSyntaxError` |
+| `domain_model_from_json(text)` | `str \| bytes` (UTF-8) JSON | yes — malformed UTF-8 or JSON is `DescriptorSyntaxError` with `format="json"`, optional line/column, and cause |
+| `domain_model_from_yaml(text)` | `str \| bytes` (UTF-8) YAML | yes — as above with `format="yaml"` |
 
 After every ingestion phase succeeds, the Descriptor Frontend adapts its
 immutable records to `UnresolvedMetamodel` and calls the private, versioned
@@ -1438,7 +1438,7 @@ value-phase rejections (`m-descriptor` "Type spellings" — e.g. the
 schema-valid but unconstructible `decimal(0,9)`) raise
 `DescriptorValueError(descriptor-value-invalid)` before a model exists; every
 semantic model rule fails last, still inside the same call, as
-`MetamodelValidationError`. Each `hub_from_*` function therefore raises both
+`MetamodelValidationError`. Each `domain_model_from_*` function therefore raises both
 families in that fixed phase order: `DescriptorError` for representation
 defects and `MetamodelValidationError` for model defects. The two remain
 disjoint types, so one call site catches both. A document uses the schema's two
@@ -1486,15 +1486,19 @@ entities:
 ```
 
 ```python
-from parallax.descriptor import hub_from_document, hub_from_json, hub_from_yaml
+from parallax.descriptor import (
+    domain_model_from_document,
+    domain_model_from_json,
+    domain_model_from_yaml,
+)
 
-models = hub_from_yaml(yaml_text)  # or hub_from_json(json_text)
-models = hub_from_document(document)  # e.g. json.loads(json_text)
+models = domain_model_from_yaml(yaml_text)  # or domain_model_from_json(json_text)
+models = domain_model_from_document(document)  # e.g. json.loads(json_text)
 ```
 
 The same package exports a class-backed or descriptor-backed Domain Model
-through `export_document(hub) -> dict[str, object]`,
-`export_json(hub) -> str`, or `export_yaml(hub) -> str`.
+through `export_document(model) -> dict[str, object]`,
+`export_json(model) -> str`, or `export_yaml(model) -> str`.
 `export_document` returns a fresh tree of ordinary mappings, lists, and
 JSON-compatible scalar values. A Domain Model is accepted by construction and
 carries no lifecycle state, so export performs no model-state check and has no
@@ -1515,10 +1519,10 @@ table or tag rules — raising
 `parallax.core.inheritance.InheritanceError` whose `rule` is the same
 `m-inheritance` identifier the accepted model's own Rule Set reports, so a family
 defect reads identically whichever side observed it. It is the ONLY door that
-answers for a document expected never to form: `hub_from_*` can report such a
+answers for a document expected never to form: `domain_model_from_*` can report such a
 document only as a refusal to build a model, and a defect the adaptation discards
 — a non-root's own `strategy` — is unobservable past that point. It therefore
-parses shape only, without the canonical-schema and value phases the `hub_from_*`
+parses shape only, without the canonical-schema and value phases the `domain_model_from_*`
 doors gate on, and says nothing about any non-family rule; a document whose shape
 is not a descriptor at all still raises `DescriptorError`.
 
@@ -1859,7 +1863,8 @@ or descriptor authoring form and performs no audit stamping.
 - **Metamodel serde ownership.** Source owner and enforcement scope
   `parallax.descriptor`, shipped in the separately installable
   `parallax-descriptor` artifact. Its complete public surface is
-  `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`,
+  `domain_model_from_document`, `domain_model_from_json`,
+  `domain_model_from_yaml`, `export_document`,
   `export_json`, `export_yaml`, `validate_inheritance_families`, and the
   descriptor error/violation types listed above; descriptor records, serde,
   schema machinery, and adapters are private.
@@ -3988,7 +3993,7 @@ hatchling.
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Find Query authoring vocabulary — `FindQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
-| `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `hub_from_document`, `hub_from_json`, `hub_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
+| `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |

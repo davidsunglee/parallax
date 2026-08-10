@@ -34,12 +34,12 @@ from parallax.descriptor._errors import (
 from parallax.descriptor._export import DescriptorExportError
 from parallax.descriptor._family import validate_inheritance_families
 from parallax.descriptor._hub import (
+    domain_model_from_document,
+    domain_model_from_json,
+    domain_model_from_yaml,
     export_document,
     export_json,
     export_yaml,
-    hub_from_document,
-    hub_from_json,
-    hub_from_yaml,
 )
 
 __all__ = [
@@ -50,11 +50,11 @@ __all__ = [
     "DescriptorSyntaxError",
     "DescriptorValueError",
     "DescriptorValueViolation",
+    "domain_model_from_document",
+    "domain_model_from_json",
+    "domain_model_from_yaml",
     "export_document",
     "export_json",
     "export_yaml",
-    "hub_from_document",
-    "hub_from_json",
-    "hub_from_yaml",
     "validate_inheritance_families",
 ]

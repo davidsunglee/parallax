@@ -1,6 +1,6 @@
 """The six public doors of ``parallax.descriptor`` (spec §2 "Canonical descriptor input").
 
-The three ``hub_from_*`` doors converge on one sealed fixed-source
+The three ``domain_model_from_*`` doors converge on one sealed fixed-source
 ``DomainModel`` and share a
 fixed phase order — syntax, schema, value, then every semantic model rule as a
 ``MetamodelValidationError`` inside the same call. The three export doors run the
@@ -39,12 +39,12 @@ from parallax.descriptor import (
     DescriptorSchemaError,
     DescriptorSyntaxError,
     DescriptorValueError,
+    domain_model_from_document,
+    domain_model_from_json,
+    domain_model_from_yaml,
     export_document,
     export_json,
     export_yaml,
-    hub_from_document,
-    hub_from_json,
-    hub_from_yaml,
 )
 from parallax.descriptor import _hub as hub_module
 
@@ -125,9 +125,9 @@ def _class_backed() -> tuple[DomainModel, type]:
 def test_every_door_yields_the_same_sealed_model() -> None:
     document = _document()
     built_models = [
-        hub_from_document(document),
-        hub_from_json(json.dumps(document)),
-        hub_from_yaml(_YAML),
+        domain_model_from_document(document),
+        domain_model_from_json(json.dumps(document)),
+        domain_model_from_yaml(_YAML),
     ]
     exported = [export_document(model) for model in built_models]
     assert exported[0] == exported[1] == exported[2]
@@ -143,7 +143,7 @@ def test_a_descriptor_backed_model_composes_no_class() -> None:
     # A descriptor-backed model composes no Entity Class, so a class key names
     # no Entity of it at all — the identity spelling is what it answers.
     _, author_class = _class_backed()
-    built = hub_from_yaml(_YAML)
+    built = domain_model_from_yaml(_YAML)
     with pytest.raises(MetamodelLookupError) as caught:
         built.meta(author_class)
     assert caught.value.code == "metamodel-entity-not-found"
@@ -151,14 +151,16 @@ def test_a_descriptor_backed_model_composes_no_class() -> None:
 
 def test_the_text_doors_accept_utf8_bytes() -> None:
     document = _document()
-    assert export_document(hub_from_json(json.dumps(document).encode())) == export_document(
-        hub_from_json(json.dumps(document))
+    assert export_document(
+        domain_model_from_json(json.dumps(document).encode())
+    ) == export_document(domain_model_from_json(json.dumps(document)))
+    assert export_document(domain_model_from_yaml(_YAML.encode())) == export_document(
+        domain_model_from_yaml(_YAML)
     )
-    assert export_document(hub_from_yaml(_YAML.encode())) == export_document(hub_from_yaml(_YAML))
 
 
 def test_repeated_document_export_is_structurally_equal_and_freshly_built() -> None:
-    built = hub_from_yaml(_YAML)
+    built = domain_model_from_yaml(_YAML)
     first, second = export_document(built), export_document(built)
     assert first == second
     assert first is not second
@@ -170,7 +172,7 @@ def test_repeated_document_export_is_structurally_equal_and_freshly_built() -> N
 # The fixed phase order.                                                      #
 # --------------------------------------------------------------------------- #
 def test_undecodable_bytes_fail_as_a_syntax_defect_of_the_declared_format() -> None:
-    for door, spelling in ((hub_from_json, "json"), (hub_from_yaml, "yaml")):
+    for door, spelling in ((domain_model_from_json, "json"), (domain_model_from_yaml, "yaml")):
         with pytest.raises(DescriptorSyntaxError) as caught:
             door(b"\xff\xfe not utf-8")
         assert caught.value.code == "descriptor-invalid-syntax"
@@ -180,10 +182,10 @@ def test_undecodable_bytes_fail_as_a_syntax_defect_of_the_declared_format() -> N
 
 def test_malformed_text_fails_in_the_syntax_phase() -> None:
     with pytest.raises(DescriptorSyntaxError) as caught:
-        hub_from_json("{not json")
+        domain_model_from_json("{not json")
     assert caught.value.format == "json"
     with pytest.raises(DescriptorSyntaxError) as caught:
-        hub_from_yaml("entities: [\n")
+        domain_model_from_yaml("entities: [\n")
     assert caught.value.format == "yaml"
 
 
@@ -191,7 +193,7 @@ def test_the_document_door_has_no_syntax_phase() -> None:
     # Schema validation is its first gate, so a document that would be a syntax
     # failure as text is simply a schema failure here.
     with pytest.raises(DescriptorSchemaError) as caught:
-        hub_from_document(cast("Mapping[str, object]", {"entity": "not a mapping"}))
+        domain_model_from_document(cast("Mapping[str, object]", {"entity": "not a mapping"}))
     assert caught.value.code == "descriptor-schema-invalid"
     assert not isinstance(caught.value, DescriptorSyntaxError)
 
@@ -199,7 +201,7 @@ def test_the_document_door_has_no_syntax_phase() -> None:
 def test_a_schema_valid_but_unconstructible_value_fails_in_the_value_phase() -> None:
     text = _YAML.replace("type: string\n        maxLength: 200", "type: decimal(0,9)")
     with pytest.raises(DescriptorValueError) as caught:
-        hub_from_yaml(text)
+        domain_model_from_yaml(text)
     assert caught.value.code == "descriptor-value-invalid"
     assert [v.rule for v in caught.value.violations] == ["type-spelling-invalid"]
 
@@ -212,7 +214,7 @@ def test_a_semantic_model_rule_fails_last_and_is_not_a_descriptor_error() -> Non
         "target: { entity: Author, attribute: id }", "target: { entity: Ghost, attribute: id }"
     )
     with pytest.raises(MetamodelValidationError) as caught:
-        hub_from_yaml(text)
+        domain_model_from_yaml(text)
     assert not isinstance(caught.value, DescriptorError)
 
 
@@ -222,7 +224,7 @@ def test_a_semantic_model_rule_fails_last_and_is_not_a_descriptor_error() -> Non
 def test_both_frontends_export_the_same_canonical_document() -> None:
     class_backed, _ = _class_backed()
     exported = export_document(class_backed)
-    assert exported == export_document(hub_from_yaml(_YAML))
+    assert exported == export_document(domain_model_from_yaml(_YAML))
     entities = cast("list[dict[str, object]]", exported["entities"])
     book = next(entity for entity in entities if entity["name"] == "Book")
     attributes = cast("list[dict[str, object]]", book["attributes"])
@@ -231,15 +233,15 @@ def test_both_frontends_export_the_same_canonical_document() -> None:
 
 
 def test_exported_text_is_byte_identical_on_repeat_and_re_ingests() -> None:
-    built = hub_from_yaml(_YAML)
+    built = domain_model_from_yaml(_YAML)
     as_json, as_yaml = export_json(built), export_yaml(built)
     assert (export_json(built), export_yaml(built)) == (as_json, as_yaml)
-    assert export_document(hub_from_json(as_json)) == export_document(built)
-    assert export_document(hub_from_yaml(as_yaml)) == export_document(built)
+    assert export_document(domain_model_from_json(as_json)) == export_document(built)
+    assert export_document(domain_model_from_yaml(as_yaml)) == export_document(built)
 
 
 def test_export_reads_a_json_compatible_tree_of_ordinary_containers() -> None:
-    document = export_document(hub_from_yaml(_YAML))
+    document = export_document(domain_model_from_yaml(_YAML))
     assert type(document) is dict
     entities = document["entities"]
     assert type(entities) is list
@@ -260,7 +262,7 @@ def test_a_serialization_defect_surfaces_as_an_export_error_with_no_partial_outp
     # Export renews no validation, so the only way a text door can fail is an
     # implementation defect in the serializer it composes. Inducing one is the
     # only way to reach that boundary.
-    built = hub_from_yaml(_YAML)
+    built = domain_model_from_yaml(_YAML)
     before = export_document(built)
 
     class _Broken:
