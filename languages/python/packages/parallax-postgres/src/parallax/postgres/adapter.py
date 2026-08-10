@@ -90,39 +90,66 @@ def translating_driver_errors() -> Generator[None]:
         raise translate_driver_error(exc) from exc
 
 
+class _EscapedBodyFailure(BaseException):
+    """The caller's own transaction-body failure, in transit out of the boundary.
+
+    Nothing else can tell the two failures apart. A body's exception and the
+    rollback it triggers reach the boundary the same way — propagating out of
+    one ``with`` — and a driver that raises a cached or reused exception object
+    makes them the same object as well as the same class, so neither identity
+    nor type separates them. Carrying the body's failure as something that is
+    NOT a ``psycopg.Error`` does: whatever a translating block then catches is a
+    failure of the boundary itself.
+
+    A ``BaseException`` rather than an ``Exception`` so that carrying a
+    base-level failure — a ``KeyboardInterrupt``, a cancellation — does not make
+    it catchable as an ordinary error on the way out. The boundary unwraps it
+    and re-raises what it holds, so this is never the exception a caller
+    receives.
+    """
+
+    def __init__(self, escaped: BaseException) -> None:
+        super().__init__(escaped)
+        self.escaped = escaped
+
+
 @contextlib.contextmanager
-def _translating_boundary_errors(from_body: list[BaseException]) -> Generator[None]:
+def _translating_boundary_errors() -> Generator[None]:
     """Translate a psycopg failure of the transaction BOUNDARY, and only that.
 
     Wrapping the whole boundary is what puts its begin and the rollback an
     escaping body triggers inside a translating block alongside its commit. The
-    body runs inside that block too, so this skips exactly the object
-    ``from_body`` records: an exception the caller's body raised is the caller's
-    failure, not one the port made, and ``m-db-port`` has it cross the seam
-    unchanged. A psycopg exception raised by that rollback is a different object
-    and is translated.
+    body runs inside that block too, and reaches it carried — so a
+    ``psycopg.Error`` arriving here is the port's own work by construction, and
+    the carrier is opened and its exception re-raised as the caller's, which
+    ``m-db-port`` has cross the seam unchanged. A rollback that itself fails
+    with a driver exception raises that failure past the carrier, and it
+    translates whether or not the driver handed back the same object the body
+    raised.
     """
+    escaped: BaseException | None = None
     try:
         yield
+    except _EscapedBodyFailure as carried:
+        escaped = carried.escaped
     except psycopg.Error as exc:
-        if any(exc is escaped for escaped in from_body):
-            raise
         raise translate_driver_error(exc) from exc
+    if escaped is not None:
+        raise escaped
 
 
 @contextlib.contextmanager
-def _recording_body_failure(from_body: list[BaseException]) -> Generator[None]:
-    """Record what the caller's transaction body raised, and re-raise it as is.
+def _carrying_body_failure() -> Generator[None]:
+    """Carry whatever the caller's transaction body raised past the boundary.
 
-    Identity is the only thing that separates a body's own psycopg exception from
-    the boundary's: both reach the translating block as a ``psycopg.Error``
-    propagating out of the same ``with``.
+    Wrapping runs before the driver's transaction exit sees the failure, which
+    still rolls back on any exception, and the boundary unwraps it again, so the
+    carrier is confined to these two seams.
     """
     try:
         yield
     except BaseException as exc:
-        from_body.append(exc)
-        raise
+        raise _EscapedBodyFailure(exc) from exc
 
 
 def adapt_binds(binds: Sequence[object]) -> list[object]:
@@ -201,13 +228,15 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         psycopg exception (``m-db-port``). Translating it would substitute a port
         error for the caller's own — and a body-authored deadlock-class exception
         would then read as retriable to ``m-auto-retry``, which would replay the
-        body over a failure the database never reported.
+        body over a failure the database never reported. The body's failure
+        therefore leaves the block carried rather than bare, which is what keeps
+        it distinguishable from the rollback it triggers even when the driver
+        raises one reused exception object for both.
         """
-        from_body: list[BaseException] = []
         with (
-            _translating_boundary_errors(from_body),
+            _translating_boundary_errors(),
             self._connection.transaction(),
-            _recording_body_failure(from_body),
+            _carrying_body_failure(),
         ):
             return body(self)
 

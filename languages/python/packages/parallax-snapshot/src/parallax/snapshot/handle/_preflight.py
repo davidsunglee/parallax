@@ -19,8 +19,18 @@ A neutral read states one fact more than lowering produces — the RESULT FORM i
 wants — so the gate takes it and adds the one refusal it decides: the values lane
 materializes no relationships, and a request selecting it while naming
 deep-fetch paths is refused here rather than inside the lane it cannot serve.
-Every refusal a neutral read can meet is therefore decided before any I/O, which
-is what the force-flush ordering below requires.
+Each of the four refusals this gate states is decided before any I/O, which is
+what the force-flush ordering below requires.
+
+That is the gate's bound rather than a universal one. A GRAPH-form request whose
+deep fetch sits under a result wrapper passes here: ``m-op-algebra`` composes
+that shape, no specification states what its graph result denotes, and refusing
+it would claim a composition invalid that nothing says is. It reaches deep-fetch
+planning, which reads the outer node alone, plans zero levels, and fails inside
+SQL generation — on a participating read, after ``uow.read`` has already
+flushed. Only the row form's answer is settled, which is why only it is decided
+here; a wrapper-carried deep fetch over a milestone SET is settled too, and is
+refused one step earlier as the deferred Feature it is.
 
 The order is the contract, not an implementation detail. Target resolution is
 not redundant with operation validation: a find-all query carries no attribute

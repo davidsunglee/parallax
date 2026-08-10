@@ -3488,7 +3488,10 @@ remains observable rather than making Python its own oracle.
   rule's boundary in both directions: a body raising a psycopg exception over a
   succeeding rollback surfaces that identical object, while the same body over a
   rollback that itself fails with a psycopg exception surfaces the translated
-  port error. The
+  port error — including when the driver hands the body and the rollback ONE
+  reused exception object, which is why the adapter separates a body failure
+  from a boundary failure by where it occurred rather than by the object's
+  identity or type. The
   SQLSTATE→category table (`40P01`,
   `40001` → deadlock; `55P03` → lock-wait timeout; `23505` → unique violation;
   …) lives in the pure dialect strategy where the Docker-free contract suite

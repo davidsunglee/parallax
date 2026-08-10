@@ -376,6 +376,76 @@ def test_a_wrapper_carried_deep_fetch_is_refused_by_the_same_gate() -> None:
     assert [op[0] for op in port.ops] == ["begin", "rollback"]
 
 
+def test_a_wrapper_carried_deep_fetch_over_a_scan_is_deferred_by_name() -> None:
+    # The same spine, one step earlier in the gate. A milestone set combined
+    # with includes is the `snapshot-history-includes` Feature wherever the deep
+    # fetch sits, so classifying the outer node alone would let the deferral
+    # evade its own refusal: the request would pass, force-flush the buffered
+    # insert on the way into `uow.read`, and fail inside SQL generation with the
+    # DML already executed.
+    port = RecordingPort()
+    request = NeutralReadRequest.graph(
+        target=_policy(),
+        operation=deserialize(
+            {
+                "limit": {
+                    "operand": {
+                        "deepFetch": {
+                            "operand": {
+                                "history": {
+                                    "operand": {"all": {}},
+                                    "dimension": "transaction-time",
+                                }
+                            },
+                            "paths": [
+                                {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
+                            ],
+                        }
+                    },
+                    "count": 5,
+                }
+            }
+        ),
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.write_neutral(_policy_insert())
+        tx.read_neutral(request)
+
+    with pytest.raises(DeferredFeatureError) as raised:
+        _policy_db(port).transact(fn)
+    assert raised.value.features == ("snapshot-history-includes",)
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
+def test_a_scan_wrapping_a_deep_fetch_is_the_same_deferred_feature() -> None:
+    # A scan above the deep fetch is the same milestone set as a scan below it:
+    # both answer one graph per milestone with a relationship level to fill, so
+    # the walk counts a scanning wrapper it crosses on the way down as well as
+    # the operand it finally asks.
+    request = NeutralReadRequest.graph(
+        target=_policy(),
+        operation=deserialize(
+            {
+                "history": {
+                    "operand": {
+                        "deepFetch": {
+                            "operand": {"all": {}},
+                            "paths": [
+                                {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
+                            ],
+                        }
+                    },
+                    "dimension": "transaction-time",
+                }
+            }
+        ),
+    )
+    with pytest.raises(DeferredFeatureError) as raised:
+        _policy_db(RecordingPort()).read_neutral(request)
+    assert raised.value.features == ("snapshot-history-includes",)
+
+
 def test_a_wrapper_spine_carrying_no_deep_fetch_still_answers() -> None:
     # The refusal is about a relationship level, not about depth: walking the
     # spine must not turn the wrappers themselves into a refusal.
@@ -428,6 +498,17 @@ def _policy() -> EntityIdentity:
 
 def _policy_db(port: RecordingPort) -> Database:
     return db_for(MODELS["policy"], port)
+
+
+def _policy_insert() -> WriteInstruction:
+    return instructions.deserialize(
+        {
+            "mutation": "insert",
+            "entity": "parallax.compatibility.Policy",
+            "rows": [{"id": 1, "name": "Fleet"}],
+            "validFrom": "2024-07-01T00:00:00+00:00",
+        }
+    )
 
 
 def test_a_milestone_set_read_answers_one_pinned_graph_per_milestone() -> None:

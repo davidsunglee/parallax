@@ -314,8 +314,8 @@ def test_transaction_passes_a_body_raised_driver_error_unchanged() -> None:
 def test_transaction_translates_a_rollback_failure_over_a_body_driver_error() -> None:
     # The other side of the same boundary: the rollback the body triggered is the
     # port's own work, so ITS driver failure translates and is what escapes, even
-    # though the body's exception was also a psycopg error. Identity is what
-    # separates the two; the classes cannot.
+    # though the body's exception was also a psycopg error. Where the failure
+    # occurred is what separates the two; the classes cannot.
     def body(_port: object) -> None:
         raise errors.DeadlockDetected("the caller's own deadlock")
 
@@ -324,3 +324,40 @@ def test_transaction_translates_a_rollback_failure_over_a_body_driver_error() ->
         adapter.transaction(body)
     assert exc_info.value.violates_unique_index
     assert exc_info.value.native_code == "23505"
+
+
+def test_transaction_translates_a_rollback_failure_raised_as_the_bodys_own_object() -> None:
+    # The same two branches over a driver that caches ONE exception object for
+    # every failure -- the input m-db-port already requires an adapter to
+    # withstand. Body and rollback then fail with the identical object, so
+    # neither its type nor its identity says which occurrence escaped: an
+    # adapter reading identity alone mistakes the rollback's failure for the
+    # body's and hands back the raw driver exception, which m-auto-retry would
+    # read as a caller error the port never reported. The failure is separated
+    # by where it occurred, so the boundary's rollback still translates.
+    reused = errors.UniqueViolation("dup")
+
+    def body(_port: object) -> None:
+        raise reused
+
+    adapter = _adapter(_FakeConnection(rollback_error=reused))
+    with pytest.raises(DatabaseError) as exc_info:
+        adapter.transaction(body)
+    assert exc_info.value.violates_unique_index
+    assert exc_info.value.native_code == "23505"
+
+
+def test_transaction_passes_a_body_raised_base_exception_unchanged() -> None:
+    # Carrying the body's failure past the boundary must not change what it IS:
+    # a base-level exception stays base-level and stays the same object, so a
+    # cancellation or interrupt is neither translated nor made catchable as an
+    # ordinary error on the way out.
+    raised_by_the_body = KeyboardInterrupt()
+
+    def body(_port: object) -> None:
+        raise raised_by_the_body
+
+    adapter = _adapter(_FakeConnection())
+    with pytest.raises(KeyboardInterrupt) as exc_info:
+        adapter.transaction(body)
+    assert exc_info.value is raised_by_the_body
