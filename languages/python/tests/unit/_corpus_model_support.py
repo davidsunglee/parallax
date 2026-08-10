@@ -1,9 +1,10 @@
 """Corpus models — accepted, as descriptor records, and Entity lookup.
 
-`compile_read` and `compile_write_predicate` take an accepted Metamodel and the
-queried Entity's own Metadata, so every suite needs two things: a formed model
-and a way to name an Entity the way a corpus case does — by its bare declared
-name. Both live here so no suite restates them.
+A unit suite that grades anything model-shaped needs the same two things: a
+formed corpus model, and a way to name one of its Entities the way a corpus case
+does — by its bare declared name. Both live here so no suite restates them, and
+the whole unit surface reads them from here rather than from the conformance
+loader.
 
 The descriptor RECORD graph lives here too, and only here. The shipped adapter
 reaches a corpus model through the public ``domain_model_from_*`` doors alone, so

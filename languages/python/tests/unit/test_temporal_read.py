@@ -13,8 +13,8 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from _sql_gen_support import model as accepted_model
-from _sql_gen_support import target
+from _corpus_model_support import model as accepted_model
+from _corpus_model_support import target
 
 from parallax.conformance import models
 from parallax.core import Edge, Pin, UndeclaredAxisError

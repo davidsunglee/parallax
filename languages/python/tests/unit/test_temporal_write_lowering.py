@@ -30,7 +30,7 @@ from decimal import Decimal
 from typing import Final
 
 import pytest
-from _sql_gen_support import corpus_records, formed
+from _corpus_model_support import corpus_records, formed
 from _transact_support import (
     INFINITY_INSTANT,
     WHERE_POSITION_META,

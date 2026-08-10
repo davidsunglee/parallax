@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any, Final, cast
 
 import pytest
+from _corpus_model_support import corpus_records, formed
+from _corpus_model_support import model as corpus_model
 from _metamodel_support import Declaration, accepted, attribute, identity, key, source
-from _sql_gen_support import corpus_records, formed
-from _sql_gen_support import model as corpus_model
 
 from parallax.conformance import case_format
 from parallax.core import inheritance

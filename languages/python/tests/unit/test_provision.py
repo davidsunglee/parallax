@@ -12,8 +12,8 @@ proven by the Docker provider lane.
 from __future__ import annotations
 
 import pytest
+from _corpus_model_support import corpus, corpus_records, formed
 from _document_layout_support import document_model
-from _sql_gen_support import corpus, corpus_records, formed
 
 from parallax.conformance import provision
 from parallax.core.db_port import JsonDocument

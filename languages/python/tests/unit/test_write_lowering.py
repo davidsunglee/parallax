@@ -38,9 +38,9 @@ from typing import cast
 
 import pytest
 from _corpus_identity_support import corpus_object_key
+from _corpus_model_support import formed, records
+from _corpus_model_support import model as corpus_model
 from _metamodel_support import Declaration, attribute, identity, key, source
-from _sql_gen_support import formed, records
-from _sql_gen_support import model as corpus_model
 
 from _support.clock_probes import inert_instant
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
