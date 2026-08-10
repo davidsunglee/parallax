@@ -10,12 +10,15 @@ the affected-row count without appending row-returning clauses; ``transaction``
 runs a callback in one transaction, committing on success and rolling back on any
 exception.
 
-The adapter is also the `m-db-error` **port boundary**: every psycopg exception a
-statement or commit raises is re-raised as a neutral
+The adapter is also the `m-db-error` **port boundary**: every psycopg exception
+raised by work the port itself performs — a statement, or the transaction
+boundary's begin, commit, or rollback — is re-raised as a neutral
 :class:`~parallax.core.db_error.DatabaseError` carrying the classified category,
-the preserved native SQLSTATE, and the driver message — so no driver exception
-type ever crosses above the port (`m-db-port` normalize-at-boundary,
-`m-db-error`). Category interpretation is delegated to the pure dialect strategy;
+the preserved native SQLSTATE, and the driver message, so no driver exception
+type raised by the PORT ever crosses above it (`m-db-port`
+normalize-at-boundary, `m-db-error`). An exception the caller's own
+``transaction`` body raises is not the port's work and is not translated
+(`m-db-port`). Category interpretation is delegated to the pure dialect strategy;
 the adapter only extracts psycopg's driver-specific SQLSTATE and message.
 """
 
@@ -87,6 +90,41 @@ def translating_driver_errors() -> Generator[None]:
         raise translate_driver_error(exc) from exc
 
 
+@contextlib.contextmanager
+def _translating_boundary_errors(from_body: list[BaseException]) -> Generator[None]:
+    """Translate a psycopg failure of the transaction BOUNDARY, and only that.
+
+    Wrapping the whole boundary is what puts its begin and the rollback an
+    escaping body triggers inside a translating block alongside its commit. The
+    body runs inside that block too, so this skips exactly the object
+    ``from_body`` records: an exception the caller's body raised is the caller's
+    failure, not one the port made, and ``m-db-port`` has it cross the seam
+    unchanged. A psycopg exception raised by that rollback is a different object
+    and is translated.
+    """
+    try:
+        yield
+    except psycopg.Error as exc:
+        if any(exc is escaped for escaped in from_body):
+            raise
+        raise translate_driver_error(exc) from exc
+
+
+@contextlib.contextmanager
+def _recording_body_failure(from_body: list[BaseException]) -> Generator[None]:
+    """Record what the caller's transaction body raised, and re-raise it as is.
+
+    Identity is the only thing that separates a body's own psycopg exception from
+    the boundary's: both reach the translating block as a ``psycopg.Error``
+    propagating out of the same ``with``.
+    """
+    try:
+        yield
+    except BaseException as exc:
+        from_body.append(exc)
+        raise
+
+
 def adapt_binds(binds: Sequence[object]) -> list[object]:
     """Adapt neutral binds to psycopg's driver bind types at the adapter boundary.
 
@@ -149,11 +187,28 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
             return cursor.rowcount
 
     def transaction[T](self, body: Callable[[DbPort], T]) -> T:
-        # Wraps the whole transaction so a commit-time driver error (a deferred
-        # constraint, a serialization failure) is translated too, not only a
-        # statement error raised inside `body` (which already translates via the
-        # port methods above).
-        with translating_driver_errors(), self._connection.transaction():
+        """Run ``body`` in one transaction, committing on success and rolling
+        back on any exception.
+
+        The whole boundary translates, not only the statements inside it: a
+        driver error at its begin, at its commit (a deferred constraint, a
+        serialization failure), or at the rollback an escaping body triggers
+        reaches the caller as a neutral ``DatabaseError``, exactly as a statement
+        error raised through the port methods above does.
+
+        An exception ``body`` itself raises is the CALLER's failure rather than
+        one the port made, so it crosses the seam unchanged even when it is a
+        psycopg exception (``m-db-port``). Translating it would substitute a port
+        error for the caller's own — and a body-authored deadlock-class exception
+        would then read as retriable to ``m-auto-retry``, which would replay the
+        body over a failure the database never reported.
+        """
+        from_body: list[BaseException] = []
+        with (
+            _translating_boundary_errors(from_body),
+            self._connection.transaction(),
+            _recording_body_failure(from_body),
+        ):
             return body(self)
 
     def close(self) -> None:

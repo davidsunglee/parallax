@@ -1,23 +1,31 @@
 """``parallax.snapshot.handle._errors`` — the dependency-free refusal leaf.
 
-Holds the refusals no single enforcement scope owns, so that WHERE such a refusal
-is raised places no constraint on which scopes can name it. It imports nothing
-but the standard library, which is what lets the read-preflight seam
+The leaf exists for :class:`QueryTargetError`. The read-preflight seam
 (:mod:`parallax.snapshot.handle._preflight`) and the write-lowering family leaf
-(:mod:`parallax.snapshot.handle._family`) name the SAME failure: their
-enforcement scopes grant disjoint dependencies, so either importing the other
-would drag a scope the importer may not reach.
+(:mod:`parallax.snapshot.handle._family`) raise that one class from child
+enforcement scopes whose ``spec/python.md`` §7 grants are disjoint, so either
+importing the other would drag a scope the importer may not reach, and no scope
+holding grants can define it for both. A module that reaches nothing at all is
+the only place left, which is why this one imports nothing but the standard
+library.
 
-Membership is that unownedness, not a raiser count and not being exported.
-:class:`SnapshotMaterializationError` and :class:`UnobservedWriteError` have one
-raiser each and still belong here, because nothing in what they report — a
-failure translated at the materialization boundary, a key naming nothing the
-unit of work's observation record holds — fixes the scope that detects it, and
-the leaf is what makes a second raiser, in any scope, a decision about behavior
-alone. The package's other developer-facing refusals are owned and therefore
-defined by the surface that decides them: ``DeferredFeatureError`` by the
-Feature inventory it reports (:mod:`parallax.snapshot.handle._features`),
-``NoResultFound`` and ``TooManyResultsFound`` by ``Snapshot.result``
+The other three are raised from the parent ``parallax.snapshot.handle`` scope
+alone — :class:`SnapshotConnectionError` from ``_database`` and
+``_transaction``, :class:`SnapshotMaterializationError` from ``_read``,
+:class:`UnobservedWriteError` from ``_transaction`` — so their raise sites
+compel nothing, and their membership is a placement decision rather than a
+structural one. It is this: none of them reports a condition that one surface's
+own contract DECIDES. A model that composed no Entity Class, a failure
+translated at the materialization boundary, a key naming nothing the unit of
+work's observation record holds — each is a fact about the package, and any
+scope in it could come to detect one. Defining such a refusal inside a scope
+would make a second raiser a question about which module owns the class;
+defining it here leaves a second raiser a decision about behavior alone.
+
+The package's other developer-facing refusals do have a deciding surface, and
+are defined there: ``DeferredFeatureError`` by the Feature inventory it reports
+(:mod:`parallax.snapshot.handle._features`), ``NoResultFound`` and
+``TooManyResultsFound`` by ``Snapshot.result``
 (:mod:`parallax.snapshot.handle._read`), ``TransactionOptionConflictError`` and
 ``TransactionOwnershipError`` by the demarcation rules they state
 (:mod:`parallax.snapshot.handle._database`), ``KeyedWriteValueError`` and
@@ -25,7 +33,7 @@ Feature inventory it reports (:mod:`parallax.snapshot.handle._features`),
 (:mod:`parallax.snapshot.handle._write_inputs`), and ``WriteLoweringError`` by
 the lowering types (:mod:`parallax.snapshot.handle._write_types`).
 
-That emptiness is load-bearing rather than incidental, so ``spec/python.md`` §7
+The leaf's emptiness is load-bearing rather than incidental, so ``spec/python.md`` §7
 gives this module its own child scope with a grant row of ``(none)``. Two gates
 hold it: the generated import-linter contract forbids every first-party scope
 outside ``parallax.snapshot.handle`` AND every sibling child scope inside it,

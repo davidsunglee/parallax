@@ -71,6 +71,16 @@ that raises one reused exception object for every failure — the input the rule
 exists to stop an adapter from passing on — so a Docker-free structural test
 discharges it, and the language spec names where that proof lives.
 
+The same rule bounds what an adapter may translate. An exception the caller's own
+`transaction` body raises is not an error the port made, so it must reach the
+caller as the same object even when it is a driver exception — an adapter that
+wraps the whole boundary in one translating block substitutes a port error for it
+unless it excludes the body. The two branches are one proof: a body raising a
+driver exception over a rollback that succeeds must surface that same object, and
+the same body over a rollback that itself fails with a driver exception must
+surface the translated port error instead. Only identity separates them, so a
+proof asserting error types alone establishes neither.
+
 ## 3. Provider and matrix contract
 
 The `m-case-format` database provider is the case-runner provisioning surface. It

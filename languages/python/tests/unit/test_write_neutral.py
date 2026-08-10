@@ -340,6 +340,70 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
     assert [op[0] for op in port.ops] == ["begin", "rollback"]
 
 
+def test_a_wrapper_carried_deep_fetch_is_refused_by_the_same_gate() -> None:
+    # `deepFetch` composes under every wrapper that returns its operand's own
+    # rows, so the levels a row-form request carries need not sit at the outer
+    # node. The gate reads the whole wrapper spine rather than the one node the
+    # deep-fetch planner reads: were it to read only the outer `limit`, the
+    # request would pass, force-flush the buffered write on the way into
+    # `uow.read`, and fail inside SQL generation with the DML already executed.
+    port = RecordingPort(rows=[_ORDER_ROW])
+    request = NeutralReadRequest.rows(
+        target=_order(),
+        operation=deserialize(
+            {
+                "limit": {
+                    "operand": {
+                        "deepFetch": {
+                            "operand": {"all": {}},
+                            "paths": [
+                                {"segments": [{"rel": "parallax.compatibility.Order.items"}]}
+                            ],
+                        }
+                    },
+                    "count": 1,
+                }
+            }
+        ),
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.write_neutral(_order_update())
+        tx.read_neutral(request)
+
+    with pytest.raises(ValueError, match="row-form read materializes no relationships"):
+        _run_on(db_for(MODELS["orders"], port), fn)
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
+def test_a_wrapper_spine_carrying_no_deep_fetch_still_answers() -> None:
+    # The refusal is about a relationship level, not about depth: walking the
+    # spine must not turn the wrappers themselves into a refusal.
+    port = RecordingPort(rows=[_ORDER_ROW])
+    request = NeutralReadRequest.rows(
+        target=_order(),
+        operation=deserialize(
+            {
+                "limit": {
+                    "operand": {
+                        "distinct": {
+                            "operand": {
+                                "orderBy": {
+                                    "operand": {"all": {}},
+                                    "keys": [{"attr": "parallax.compatibility.Order.id"}],
+                                }
+                            }
+                        }
+                    },
+                    "count": 1,
+                }
+            }
+        ),
+    )
+    result = db_for(MODELS["orders"], port).read_neutral(request)
+    assert isinstance(result.output, NeutralRows)
+
+
 def _order() -> EntityIdentity:
     entity = entity_by_name(model_of(MODELS["orders"]), "parallax.compatibility.Order")
     assert entity is not None

@@ -2,9 +2,10 @@
 
 The composition root's own module: :meth:`Database.connect` wires a concrete
 ``m-db-port`` adapter to a metamodel, :meth:`Database.find` runs the shared read
-executor once outside any transaction, :meth:`Database.read_neutral` runs the
-same executor into the model-neutral form for a caller that composed no Entity
-Class, and :meth:`Database.transact` is the
+executor once outside any transaction, :meth:`Database.read_neutral` runs a read
+into the model-neutral form for a caller that composed no Entity Class — the same
+executor entry :meth:`Database.find` takes when the request asks for a graph, and
+the values lane's own entry when it asks for rows — and :meth:`Database.transact` is the
 callback demarcation — sentinel-backed options, join with the option-conflict
 check, the ``m-auto-retry`` bounded retry loop, and the flush executor it injects
 into the unit of work.
@@ -333,10 +334,14 @@ class Database:
         """Execute ``request`` exactly once outside any transaction, materializing
         fully into the model-neutral form it selected.
 
-        The neutral peer of :meth:`find`, over the SAME executor: same
-        canonicalization, same compilation, same Database Call, same deep-fetch
-        loop, same conversion — the materializer is chosen only once execution has
-        finished. What differs is what a caller must have. :meth:`find` needs a
+        The neutral peer of :meth:`find`. A graph-form request runs the SAME
+        executor entry :meth:`find` runs — same canonicalization, same
+        compilation, same Database Call, same deep-fetch loop, same conversion,
+        with the materializer chosen only once execution has finished. A row-form
+        request runs the values lane's own entry instead, which shares the
+        canonicalization, the compilation, and the recorded call but fetches no
+        relationship level and builds no graph at all. What differs from
+        :meth:`find` either way is what a caller must have: :meth:`find` needs a
         class-backed model to materialize into, and this needs none, which is why
         a ``Database`` connected to a bare accepted Metamodel answers this and
         refuses that.
