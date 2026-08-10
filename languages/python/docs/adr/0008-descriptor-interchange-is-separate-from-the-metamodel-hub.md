@@ -1,5 +1,17 @@
 # Descriptor interchange is separate from the Metamodel Hub
 
+> **Amended 2026-08 by COR-93 — the three ingestion doors are renamed.**
+> `hub_from_document`, `hub_from_json`, and `hub_from_yaml` are now
+> `domain_model_from_document`, `domain_model_from_json`, and
+> `domain_model_from_yaml`, and the export functions' `hub` parameter is now
+> `model`. The decision this ADR records is unchanged: the doors are the same
+> functions with the same phase order, the same private `_from_unresolved`
+> seam, and the same public surface. Only the spellings move, onto the
+> `DomainModel` the doors return. The body below carries the new names.
+> This amendment reconciles the door names alone; the `MetamodelHub` spelling
+> used throughout for the model type is COR-64's to reconcile (ADR 0007's
+> amendment table), and is deliberately left standing here.
+
 The common Python runtime owns `MetamodelHub`, including its fixed model scope,
 constructor sealing, accepted metadata, facets, and introspection. Its public
 constructor accepts the complete Entity Class set. An optional descriptor
@@ -19,15 +31,17 @@ of optional parsing, schema, YAML, and serialization dependencies while
 preserving one Hub lifecycle and one accepted-metadata truth for class-backed
 and descriptor-backed models.
 
-The public ingestion functions are `hub_from_document`, `hub_from_json`, and
-`hub_from_yaml`; the public export functions are `export_document`,
+The public ingestion functions are `domain_model_from_document`,
+`domain_model_from_json`, and
+`domain_model_from_yaml`; the public export functions are `export_document`,
 `export_json`, and `export_yaml`. JSON and YAML inputs and outputs are text,
 while document input and output use the canonical decoded document value.
 These functions perform no filesystem or stream I/O: callers own acquisition
 and persistence.
 
-`hub_from_document` accepts a decoded `Mapping[str, object]`;
-`hub_from_json` and `hub_from_yaml` accept `str | bytes`, with bytes decoded as
+`domain_model_from_document` accepts a decoded `Mapping[str, object]`;
+`domain_model_from_json` and `domain_model_from_yaml` accept `str | bytes`,
+with bytes decoded as
 UTF-8. Malformed UTF-8 is a descriptor syntax error for the selected format.
 Successful ingestion converts input into immutable descriptor-owned records
 and retains no caller-owned mutable document. `export_document` returns a

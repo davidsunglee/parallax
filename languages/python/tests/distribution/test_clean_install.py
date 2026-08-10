@@ -118,14 +118,19 @@ def test_core_and_descriptor(tmp_path: Path, wheelhouse: Wheelhouse) -> None:
 import json
 from importlib import resources
 
-from parallax.descriptor import export_json, export_yaml, hub_from_json, hub_from_yaml
+from parallax.descriptor import (
+    domain_model_from_json,
+    domain_model_from_yaml,
+    export_json,
+    export_yaml,
+)
 
 schema = resources.files("parallax.descriptor").joinpath(
     "_schemas/metamodel.schema.json"
 ).read_text("utf-8")
 document = json.loads({json.dumps(json.dumps(document))})
-from_json = hub_from_json(json.dumps(document))
-from_yaml = hub_from_yaml(export_yaml(from_json))
+from_json = domain_model_from_json(json.dumps(document))
+from_yaml = domain_model_from_yaml(export_yaml(from_json))
 assert export_json(from_yaml) == export_json(from_json)
 print(json.dumps({{"schema": schema, "document": export_json(from_yaml)}}))
 """

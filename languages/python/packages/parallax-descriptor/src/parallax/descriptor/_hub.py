@@ -28,16 +28,16 @@ from parallax.descriptor._export import export_document as _document_of_model
 from parallax.descriptor._ingest import ingest_document, parse_json, parse_yaml
 
 __all__ = [
+    "domain_model_from_document",
+    "domain_model_from_json",
+    "domain_model_from_yaml",
     "export_document",
     "export_json",
     "export_yaml",
-    "hub_from_document",
-    "hub_from_json",
-    "hub_from_yaml",
 ]
 
 
-def hub_from_document(document: Mapping[str, object]) -> DomainModel:
+def domain_model_from_document(document: Mapping[str, object]) -> DomainModel:
     """Seal an already-decoded descriptor ``document`` into a hub.
 
     Schema validation is the first gate, so this door never raises
@@ -59,25 +59,25 @@ def hub_from_document(document: Mapping[str, object]) -> DomainModel:
     return _sealed(unresolved_metamodel(ingest_document(document)))
 
 
-def hub_from_json(text: str | bytes) -> DomainModel:
+def domain_model_from_json(text: str | bytes) -> DomainModel:
     """Seal a JSON descriptor document into a hub.
 
     ``text`` is JSON source, decoded as UTF-8 when supplied as bytes. Adds phase
-    1 to :func:`hub_from_document`'s contract: undecodable bytes or malformed
-    JSON raise :class:`~parallax.descriptor.DescriptorSyntaxError` with
-    ``format="json"`` before any later phase runs.
+    1 to :func:`domain_model_from_document`'s contract: undecodable bytes or
+    malformed JSON raise :class:`~parallax.descriptor.DescriptorSyntaxError`
+    with ``format="json"`` before any later phase runs.
     """
     return _sealed(parse_json(text))
 
 
-def hub_from_yaml(text: str | bytes) -> DomainModel:
+def domain_model_from_yaml(text: str | bytes) -> DomainModel:
     """Seal a YAML descriptor document into a hub — the YAML sibling of
-    :func:`hub_from_json`, reporting ``format="yaml"``."""
+    :func:`domain_model_from_json`, reporting ``format="yaml"``."""
     return _sealed(parse_yaml(text))
 
 
-def export_document(hub: DomainModel) -> dict[str, object]:
-    """The canonical minimal descriptor document for ``hub``'s sealed model.
+def export_document(model: DomainModel) -> dict[str, object]:
+    """The canonical minimal descriptor document for ``model``'s sealed model.
 
     A fresh tree of ordinary mappings, lists, and JSON-compatible scalar values
     each call. Every hub is sealed by construction, so export performs no
@@ -85,14 +85,14 @@ def export_document(hub: DomainModel) -> dict[str, object]:
     validation, performs no state change, and retains no descriptor cache.
     Repeated results are structurally equal. A conversion defect raises
     :class:`~parallax.descriptor.DescriptorExportError` with target ``document``
-    and the original cause, returns no partial output, and leaves ``hub``
+    and the original cause, returns no partial output, and leaves ``model``
     unchanged.
     """
-    return _document_of_model(model_of(hub))
+    return _document_of_model(model_of(model))
 
 
-def export_json(hub: DomainModel) -> str:
-    """``hub``'s canonical descriptor document as JSON text.
+def export_json(model: DomainModel) -> str:
+    """``model``'s canonical descriptor document as JSON text.
 
     Deterministic: repeated results are byte-identical, and key order is the
     canonical document's own authoring order rather than a sorted rewrite. Adds
@@ -101,20 +101,20 @@ def export_json(hub: DomainModel) -> str:
     target ``json``, while a conversion defect keeps the target
     :func:`export_document` reported.
     """
-    return _text(hub, "json")
+    return _text(model, "json")
 
 
-def export_yaml(hub: DomainModel) -> str:
-    """``hub``'s canonical descriptor document as YAML text — the YAML sibling
-    of :func:`export_json`, reporting target ``yaml``."""
-    return _text(hub, "yaml")
+def export_yaml(model: DomainModel) -> str:
+    """``model``'s canonical descriptor document as YAML text — the YAML
+    sibling of :func:`export_json`, reporting target ``yaml``."""
+    return _text(model, "yaml")
 
 
 def _sealed(source: UnresolvedMetamodel) -> DomainModel:
     return DomainModel._from_unresolved(source)  # pyright: ignore[reportPrivateUsage] - first-party seam calls the hub's own private constructor
 
 
-def _text(hub: DomainModel, target: ExportTarget) -> str:
+def _text(model: DomainModel, target: ExportTarget) -> str:
     """One canonical document rendered in ``target``'s concrete syntax.
 
     :func:`export_document` already reports a conversion defect as
@@ -122,7 +122,7 @@ def _text(hub: DomainModel, target: ExportTarget) -> str:
     serialization step is guarded and it reports the text target the caller
     asked for.
     """
-    document = export_document(hub)
+    document = export_document(model)
     try:
         if target == "json":
             return json.dumps(document, indent=2, ensure_ascii=False) + "\n"

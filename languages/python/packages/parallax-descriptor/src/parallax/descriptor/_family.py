@@ -60,7 +60,7 @@ def validate_inheritance_families(document: Mapping[str, object]) -> None:
     non-family defect is Model Formation's to report.
 
     Parsing here is deliberately shape-only, without the canonical-schema and
-    value phases the ``hub_from_*`` doors run first. A caller reaches this door
+    value phases the ``domain_model_from_*`` doors run first. A caller reaches this door
     precisely for a document expected NOT to form, and gating the family
     classification behind schema validation would answer a different question —
     whether the document is well formed — for an input whose family defect is
