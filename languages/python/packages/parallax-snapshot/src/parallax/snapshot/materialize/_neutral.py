@@ -244,9 +244,12 @@ def _relationship(
 def _view(
     merged: MergedNode,
     model: Metamodel,
-    relationships: Mapping[RelationshipViewKey, NeutralRelationshipView],
+    relationships: dict[RelationshipViewKey, NeutralRelationshipView],
     observed: ObservationKeying | None,
 ) -> NeutralNodeView:
+    """One merged node's view over the ``relationships`` map the builder still
+    fills. The map is published as a proxy over it rather than as itself, so the
+    second pass reaches the arms and no consumer does."""
     entity = merged.concrete_entity
     members: dict[AttributeIdentity, object] = {
         entry.identity: entry.value for entry in merged.attributes
@@ -269,7 +272,7 @@ def _view(
                 if entry.identity in declared
             }
         ),
-        relationships=relationships,
+        relationships=MappingProxyType(relationships),
     )
 
 

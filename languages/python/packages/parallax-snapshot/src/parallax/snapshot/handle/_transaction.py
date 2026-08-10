@@ -76,14 +76,14 @@ from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
-from parallax.snapshot.handle._preflight import preflight_find
+from parallax.snapshot.handle._preflight import preflight_find, preflight_neutral
 from parallax.snapshot.handle._read import (
     NeutralReadRequest,
     NeutralReadResult,
     Snapshot,
+    execute_neutral,
     find,
     find_history,
-    read_neutral,
     snapshot_from_find_result,
     snapshot_from_history_result,
 )
@@ -633,16 +633,21 @@ class Transaction:
         Each materialized node additionally publishes the Observation Key its
         evidence was filed under, which is how a class-less caller settles a
         later :meth:`write_neutral` against the row this read actually saw
-        rather than against a key it reconstructed. A row-form request records
-        no evidence and publishes no key (`_read.read_neutral`).
+        rather than against a key it reconstructed. A row-form request and a
+        milestone-set request each record no evidence and publish no key
+        (`_read.execute_neutral`).
         """
+        # The gate precedes `uow.read` deliberately, exactly as `find`'s does:
+        # that read force-flushes pending buffered writes, so a refused read must
+        # be refused before it or a refusal turns into a write.
+        preflight_neutral(request.target, request.operation, model=self._meta)
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         observations = ReadObservations()
         # The bracket opens BEFORE the force-flush, exactly as `find`'s does, so
         # a dependency batch lands immediately before the trace it enabled.
         with self._attempt.read_trace() as recorder:
             result = self._uow.read(
-                lambda: read_neutral(
+                lambda: execute_neutral(
                     request,
                     self._meta,
                     self._dialect,

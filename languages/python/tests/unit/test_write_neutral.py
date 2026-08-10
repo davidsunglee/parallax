@@ -260,6 +260,24 @@ def test_the_neutral_read_is_refused_for_an_undeclared_target() -> None:
         account_db(RecordingPort()).read_neutral(request)
 
 
+def test_a_refused_participating_read_flushes_nothing() -> None:
+    # The gate runs BEFORE `uow.read`, whose force-flush would otherwise execute
+    # the pending buffer on the way to a read that was going to be refused —
+    # turning a refusal into a write. `tx.find` is held to the same ordering.
+    port = RecordingPort()
+    request = NeutralReadRequest.rows(
+        target=EntityIdentity("parallax.compatibility", "NoSuchEntity"), operation=_by_id()
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.write_neutral(_update(11), observation=VersionObservation(observed_version=1))
+        tx.read_neutral(request)
+
+    with pytest.raises(QueryTargetError):
+        _run(port, fn)
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
 def test_the_neutral_read_reports_a_deferred_feature_by_name() -> None:
     request = NeutralReadRequest.graph(
         target=_policy(),
@@ -318,12 +336,31 @@ def test_a_milestone_set_read_answers_one_pinned_graph_per_milestone() -> None:
     assert len(graphs) == 2
     pins = [graph.pin for graph in graphs]
     assert pins[0] != pins[1], "each milestone carries its own edge pin"
-    # A temporal target's slot is qualified by the milestone the row it names,
-    # so two milestones of one primary key are two distinct keys.
-    keys = [graph.roots[0].node.observation_key for graph in graphs]
-    assert keys[0] is not None and keys[1] is not None
-    assert keys[0] != keys[1]
-    assert keys[0].object_key == keys[1].object_key
+    # A milestone-set read records no observation on the unit of work, exactly as
+    # `tx.find`'s own history branch does, so it publishes no slot to settle
+    # against: a key here would name nothing and fail the write it was handed to.
+    assert all(graph.roots[0].node.observation_key is None for graph in graphs)
+
+
+def test_a_temporal_node_publishes_the_slot_its_own_milestone_qualifies() -> None:
+    port = RecordingPort(rows=[_balance_history_rows()[1]])
+    lowered = lower_find_query(mm.Balance.where(mm.Balance.id == 1))
+    request = NeutralReadRequest.graph(target=lowered.target, operation=lowered.operation)
+
+    def fn(tx: Transaction) -> object:
+        graph = tx.read_neutral(request).output
+        assert isinstance(graph, NeutralGraph)
+        key = graph.roots[0].node.observation_key
+        assert key is not None
+        # A milestone chain holds several rows per primary key, so the slot the
+        # recording side files under is qualified by the milestone the row names,
+        # and this key — derived off member identities rather than columns —
+        # names that same qualified slot.
+        assert key.milestone is not None
+        return key
+
+    key = cast("ObservationKey", _run_on(db_for(BALANCE, port), fn))
+    assert key.object_key.primary_key == (("id", 1),)
 
 
 def test_an_unversioned_non_temporal_node_carries_no_observation_slot() -> None:

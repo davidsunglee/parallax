@@ -104,6 +104,7 @@ __all__ = [
     "ObservationCollector",
     "Snapshot",
     "TooManyResultsFound",
+    "execute_neutral",
     "find",
     "find_history",
     "find_rows",
@@ -812,33 +813,64 @@ def read_neutral(
     recorder: TraceRecorder | None = None,
     observed: ObservationKeying | None = None,
 ) -> NeutralReadResult:
-    """Run one neutral read and materialize it into the form ``request`` selected.
+    """Preflight ``request`` and run it — the STANDALONE neutral read, whole.
+
+    The neutral peer of ``db.find``'s own composition: the shared read gate
+    (:func:`~parallax.snapshot.handle._preflight.preflight_neutral`), then
+    :func:`execute_neutral`. A participating caller composes the same two itself,
+    because it must gate BEFORE the force-flush that stands between them.
+    """
+    preflight_neutral(request.target, request.operation, model=meta)
+    return execute_neutral(
+        request,
+        meta,
+        dialect,
+        port,
+        lock=lock,
+        observations=observations,
+        recorder=recorder,
+        observed=observed,
+    )
+
+
+def execute_neutral(
+    request: NeutralReadRequest,
+    meta: Metamodel,
+    dialect: Dialect,
+    port: DbPort,
+    *,
+    lock: LockMode | None = None,
+    observations: ObservationCollector | None = None,
+    recorder: TraceRecorder | None = None,
+    observed: ObservationKeying | None = None,
+) -> NeutralReadResult:
+    """Run an ALREADY-PREFLIGHTED neutral read into the form ``request`` selected.
 
     The one dispatch both neutral entry points share, so ``db.read_neutral`` and
     ``tx.read_neutral`` differ only in what they pass: locking, the observation
     collector, the attempt's trace recorder, and the Observation Key rule — the
-    same four things that separate ``db.find`` from ``tx.find``.
-
-    The shared read gate runs first and unconditionally
-    (:func:`~parallax.snapshot.handle._preflight.preflight_neutral`), so a
-    neutral read is refused exactly where a typed one is — before any SQL, and on
-    a participating read before the force-flush that would otherwise turn a
-    refused read into a write.
+    same four things that separate ``db.find`` from ``tx.find``. The gate is the
+    caller's, exactly as it is for :func:`find`, because only the caller knows
+    whether a force-flush stands between the two.
 
     A row-form read records NO observation even when a collector is supplied: the
     values lane projects scalars only, so a Predecessor Row read off it would be
     incomplete under Relational Document Layout, and `m-unit-work` requires a
     complete one. A participating caller that needs evidence requests the graph
     form, which is the form ``tx.find`` itself always runs.
+
+    A milestone-set read publishes no Observation Key for the same reason
+    ``tx.find`` records nothing for one: `m-unit-work` files evidence per
+    observed milestone, and a read that answers a whole milestone SET observes
+    none of them, so ``observed`` reaches the graph branch alone.
     """
-    preflight_neutral(request.target, request.operation, model=meta)
     target = request.target.canonical
     op = request.operation
     if request.form == "rows":
         return find_rows(op, meta, dialect, target, port, lock=lock, recorder=recorder)
     if scans_an_axis(op):
         history = find_history(op, meta, dialect, target, port, recorder=recorder)
-        return neutral_from_history_result(history, meta, observed=observed)
+        return neutral_from_history_result(history, meta)
     result = find(
         op, meta, dialect, target, port, lock=lock, observations=observations, recorder=recorder
     )
@@ -860,14 +892,18 @@ def neutral_from_find_result(
     return NeutralReadResult(output=graph, execution=result.execution)
 
 
-def neutral_from_history_result(
-    result: HistoryFindResult, meta: Metamodel, *, observed: ObservationKeying | None = None
-) -> NeutralReadResult:
+def neutral_from_history_result(result: HistoryFindResult, meta: Metamodel) -> NeutralReadResult:
     """``result``'s per-milestone graphs as the neutral milestone-set output,
-    each carrying its own edge pin, in the executor's chronological order."""
+    each carrying its own edge pin, in the executor's chronological order.
+
+    Takes no Observation Keying and publishes no key: a milestone-set read
+    records no observation on any unit of work (the peer
+    :func:`snapshot_from_history_result` returns before ``tx.find``'s recording
+    step for the same reason), so a key published here would name a slot nothing
+    ever filed under and would fail every write it was handed to.
+    """
     graphs: list[NeutralGraph] = [
-        neutral_graph(merge_graph_input(graph, meta), meta, observed=observed)
-        for graph in result.graphs
+        neutral_graph(merge_graph_input(graph, meta), meta) for graph in result.graphs
     ]
     return NeutralReadResult(output=neutral_graphs(graphs), execution=result.execution)
 

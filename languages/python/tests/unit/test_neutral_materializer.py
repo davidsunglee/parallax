@@ -69,7 +69,7 @@ def _view(view: NeutralNodeView, owner: str, name: str) -> object:
 
 
 # --------------------------------------------------------------------------- #
-# Declared-member fill (Resolved Question A).                                  #
+# Declared-member fill: every declared member reads back, absence included.    #
 # --------------------------------------------------------------------------- #
 
 
@@ -208,6 +208,17 @@ def test_the_four_relationship_states_stay_distinguishable() -> None:
         RelationshipIdentity(identity_of(ORDERS, "SnapOrder"), "statuses")
     )
     assert unloaded not in root.relationships
+
+
+def test_a_published_view_hands_out_no_mutable_relationship_map() -> None:
+    builder = GraphBuilder(sm.SNAP_ORDERS_MODEL)
+    order = builder.node("SnapOrder", _order_row(1))
+    item = builder.node("SnapOrderItem", _item_row(10, order_id=1))
+    builder.attach(order, "SnapOrder.items", (item,))
+    root = _neutral(builder, order, model=ORDERS).roots[0]
+    key = next(iter(root.relationships))
+    with pytest.raises(TypeError):
+        cast("dict[RelationshipViewKey, object]", root.relationships)[key] = None
 
 
 def test_a_narrowed_view_and_its_broad_sibling_are_two_keys() -> None:

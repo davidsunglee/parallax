@@ -2707,7 +2707,8 @@ or descriptor authoring form and performs no audit stamping.
   what a level cost.
 - **The model-neutral seam.** A caller holding no Entity Class reaches the same
   executor through `db.read_neutral(request)`, `tx.read_neutral(request)`, and
-  `tx.write_neutral(instruction, *, observation=None)`, exported from
+  `tx.write_neutral(instruction, *, observation: ObservationKey | WriteObservation
+  | None = None)`, exported from
   `parallax.snapshot.handle` beside `Database` and `Transaction` together with
   the `Neutral*` result vocabulary and `ObservationKey`. A `NeutralReadRequest`
   states the two facts lowering a Find Query would have produced — the resolved
@@ -2717,10 +2718,21 @@ or descriptor authoring form and performs no audit stamping.
   loop, and, on `tx.read_neutral`, the same force-flush, read-lock derivation,
   observation recording, and Read Trace bracket. The two materializers are peers
   chosen only once execution has finished, so a typed read constructs no
-  `Neutral*` value. Each neutral node publishes the `ObservationKey` its evidence
-  was filed under, and `tx.write_neutral` dereferences such a key immediately —
-  a key naming no recorded observation raises `UnobservedWriteError`
-  (`write-observation-not-recorded`) at the call rather than settling bare.
+  `Neutral*` value. A graph-form node publishes the `ObservationKey` its evidence
+  was filed under; a row-form read and a milestone-set read record no evidence
+  and publish none, matching what `tx.find` observes for the same shapes.
+  `observation` states that evidence three ways and only three. An
+  `ObservationKey` is a REFERENCE into this unit of work's own record and
+  dereferences immediately — a key naming no recorded observation raises
+  `UnobservedWriteError` (`write-observation-not-recorded`) at the call rather
+  than settling bare, and a key outlives no unit of work. A `WriteObservation`
+  is evidence the caller HOLDS and is used as given: this is the one licensed
+  way a keyed write settles against a row no read of this unit of work
+  materialized (see *Versioned keyed writes require prior observation* below),
+  and it exists because a class-less caller may already possess the observed
+  row. `None` buffers bare, which is what an insert and an unobserved target
+  need. A `PredicateWrite` resolves its own per-row evidence, so supplying any
+  observation with one raises `TypeError` rather than silently dropping it.
   `Database(port, accepted_metamodel)` is the advanced connection this surface is
   reachable through; `Database.connect(...)` still admits only a class-backed
   Domain Model. There is no `connect_neutral`, `plan_neutral`, `compile_neutral`,
@@ -3072,12 +3084,22 @@ or descriptor authoring form and performs no audit stamping.
   observation read, no DML, zero round trips (the corpus's no-op scenario
   shape). **Then**, for every write that survives, the version driving a keyed
   write must already have been **observed by this unit of work** — recorded by
-  a transaction-scoped read (`tx.find`, or the set-based materialize read
+  a transaction-scoped read (`tx.find`, `tx.read_neutral` in graph form, or the
+  set-based materialize read
   below) that in `locking` mode takes the dialect's shared read lock and in
   `optimistic` mode takes none. A keyed `update` or `delete` of a versioned
   row this unit of work never observed **raises** in either mode; the
   framework never issues an implicit resolving `SELECT` on behalf of a keyed
-  write (which would add round trips no corpus golden represents). A keyed
+  write (which would add round trips no corpus golden represents). The one
+  exception is `tx.write_neutral`'s explicit `WriteObservation` argument, which
+  is the observation itself rather than a reference to a recorded one: the
+  developer verbs offer no such parameter, so a typed caller can reach this
+  rule only through a read this unit of work performed. Explicit evidence is
+  the caller's assertion about a row it already holds, and the framework still
+  issues no read of its own to check it — under `optimistic` concurrency the
+  version gate the write carries is what the database checks, and under
+  `locking` concurrency evidence carried in from outside the unit of work
+  brings no shared read lock with it, so the caller owns that exposure. A keyed
   write row that itself authors an explicit value for the entity's version
   attribute **raises** `CallerAuthoredVersionError`, checked before the
   observation-required rule above even runs: the version is framework-owned
@@ -3439,9 +3461,12 @@ remains observable rather than making Python its own oracle.
   invocations share an error instance — which is what lets the Execution Log
   attribute an attempt failure to the call whose error escaped. The provider test
   contract's failure-instance obligation is discharged Docker-free in
-  `tests/unit/test_postgres_adapter.py`, which drives two failed writes over a
-  connection stub that raises one reused psycopg exception and asserts the adapter
-  hands back two distinct errors of the same category and native code. The
+  `tests/unit/test_postgres_adapter.py`, which drives a failed `execute`, a
+  failed `execute_write`, and a failed commit twice each over one connection stub
+  that raises a single reused psycopg exception for all of them, and asserts the
+  adapter hands back six distinct errors carrying the same category, native code,
+  and message — repetition ruling out reuse within a raise site and the shared
+  adapter ruling it out across them. The
   SQLSTATE→category table (`40P01`,
   `40001` → deadlock; `55P03` → lock-wait timeout; `23505` → unique violation;
   …) lives in the pure dialect strategy where the Docker-free contract suite

@@ -1,11 +1,14 @@
 """``parallax.snapshot.handle._errors`` — the dependency-free refusal leaf.
 
-Holds the refusals more than one module in the package raises. It imports
-nothing but the standard library, which is what lets the read-preflight seam
+Holds the package's developer-facing refusals, so that WHERE a refusal is raised
+places no constraint on which scopes can name it. It imports nothing but the
+standard library, which is what lets the read-preflight seam
 (:mod:`parallax.snapshot.handle._preflight`) and the write-lowering family leaf
 (:mod:`parallax.snapshot.handle._family`) name the SAME failure: their
 enforcement scopes grant disjoint dependencies, so either importing the other
-would drag a scope the importer may not reach.
+would drag a scope the importer may not reach. A refusal with one raiser today
+belongs here for that same reason rather than by a raiser count — the leaf is
+what makes a second raiser, in any scope, a decision about behavior alone.
 
 That emptiness is load-bearing rather than incidental, so ``spec/python.md`` §7
 gives this module its own child scope with a grant row of ``(none)``. Two gates

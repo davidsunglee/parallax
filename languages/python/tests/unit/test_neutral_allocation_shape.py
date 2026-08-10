@@ -1,10 +1,10 @@
 """The typed path pays nothing for the second materializer.
 
-The ticket's cost contract has two halves and this file proves the second: the
-typed and neutral entry points run one executor, and the typed one constructs no
-``Neutral*`` value — not per row, not per node, not once. Counted with the
-constructor hook `test_planned_allocation_shape.py` established, at two dataset
-sizes, with no wall-clock component.
+Adding a second materializer must cost the typed path nothing: the two entry
+points run one executor, and the typed one constructs no ``Neutral*`` value —
+not per row, not per node, not once. Counted with the constructor hook
+`test_planned_allocation_shape.py` established, at two dataset sizes, with no
+wall-clock component.
 
 The same query run through ``read_neutral`` is the control: it constructs neutral
 values in proportion to the rows it materialized, which is what makes a zero on
@@ -26,7 +26,7 @@ from parallax.conformance.story_models import Order
 from parallax.core.entity._model import model_of
 from parallax.core.entity._query import lower_find_query
 from parallax.snapshot import connect
-from parallax.snapshot.handle import Database, NeutralReadRequest
+from parallax.snapshot.handle import Database, NeutralReadRequest, NeutralReadResult
 from parallax.snapshot.materialize import (
     NeutralGraph,
     NeutralGraphs,
@@ -42,9 +42,15 @@ _NEUTRAL_TYPES: tuple[type, ...] = (
     NeutralRows,
     NeutralGraph,
     NeutralGraphs,
+    NeutralReadRequest,
+    NeutralReadResult,
 )
-"""Every published ``Neutral*`` value, so the count is total rather than a sample:
-a typed find that constructed one this tuple omitted would still read as zero."""
+"""Every published concrete ``Neutral*`` value, so the count is total rather than
+a sample: a typed find that constructed one this tuple omitted would still read
+as zero. The request and the result are in it for the same reason the outputs
+are — nothing on the typed path may construct either — while
+``NeutralReadOutput`` and ``NeutralValue`` are type aliases with no constructor
+of their own."""
 
 
 def _count_neutral(monkeypatch: pytest.MonkeyPatch) -> list[object]:
