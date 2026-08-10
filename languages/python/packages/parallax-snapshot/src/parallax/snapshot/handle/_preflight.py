@@ -15,14 +15,23 @@ have produced, so a neutral caller supplies them directly. The three refusals an
 their order therefore exist once, and the neutral entry points cannot become a
 second, laxer read door by drifting from a second copy.
 
+A neutral read states one fact more than lowering produces — the RESULT FORM it
+wants — so the gate takes it and adds the one refusal it decides: the values lane
+materializes no relationships, and a request selecting it while naming
+deep-fetch paths is refused here rather than inside the lane it cannot serve.
+Every refusal a neutral read can meet is therefore decided before any I/O, which
+is what the force-flush ordering below requires.
+
 The order is the contract, not an implementation detail. Target resolution is
 not redundant with operation validation: a find-all query carries no attribute
 reference anywhere, so operation validation would never observe an undeclared
 target. Classification comes last because it presupposes both — a query the
 connected model cannot answer is refused as such and exposes no deferral result,
-even where its operation would match one. And on a participating read, preflight
-runs BEFORE ``uow.read``, whose force-flush would otherwise turn a refused read
-into a write.
+even where its operation would match one. Form comes after all three: it is a
+refusal about the result the caller asked for rather than about the read, and a
+query this implementation cannot answer at all is refused as such first. And on a
+participating read, preflight runs BEFORE ``uow.read``, whose force-flush would
+otherwise turn a refused read into a write.
 
 Deferred-Feature classification belongs to modeled READ execution alone. A
 predicate-selected write reaches its own boundary, which requires a
@@ -49,11 +58,11 @@ underscore and by the package's frozen ``__all__``, not by per-name underscores
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from parallax.core.entity._query import FindQuery, LoweredFindQuery, lower_find_query
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.op_algebra import Operation, validate_operation
+from parallax.core.op_algebra import DeepFetch, Operation, validate_operation
 from parallax.snapshot.handle._errors import QueryTargetError
 from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features
 
@@ -81,11 +90,17 @@ def preflight_find(query: FindQuery[Any, Any], *, model: Metamodel) -> LoweredFi
     demarcation, or materialization.
     """
     lowered = lower_find_query(query)
-    preflight_neutral(lowered.target, lowered.operation, model=model)
+    preflight_neutral(lowered.target, lowered.operation, model=model, form="graph")
     return lowered
 
 
-def preflight_neutral(target: EntityIdentity, operation: Operation, *, model: Metamodel) -> None:
+def preflight_neutral(
+    target: EntityIdentity,
+    operation: Operation,
+    *,
+    model: Metamodel,
+    form: Literal["rows", "graph"],
+) -> None:
     """Resolve and validate an already-lowered read against ``model``, and do no I/O.
 
     The gate itself, entered directly by a caller that has no Find Query to
@@ -96,6 +111,12 @@ def preflight_neutral(target: EntityIdentity, operation: Operation, *, model: Me
     classification — so a neutral read is refused for the same reason, with the
     same class, at the same point relative to a participating read's
     force-flush.
+
+    ``form`` is the fourth step and the one a typed find always answers
+    ``"graph"``: the values lane projects scalars and materializes no
+    relationships, so a ``"rows"`` request whose operation names deep-fetch paths
+    is refused here — before the lane compiles anything and, on a participating
+    read, before the force-flush that would otherwise make the refusal write.
     """
     root = model.entity(target)
     if root is None:
@@ -107,3 +128,20 @@ def preflight_neutral(target: EntityIdentity, operation: Operation, *, model: Me
     deferred = deferred_features(operation)
     if deferred:
         raise DeferredFeatureError(deferred)
+    if form == "rows" and fetches_relationships(operation):
+        raise ValueError(
+            "a row-form read materializes no relationships, so it carries no deep-fetch "
+            "levels; request the graph form to materialize a related level"
+        )
+
+
+def fetches_relationships(operation: Operation) -> bool:
+    """Whether ``operation``'s own deep-fetch directive names a level to fetch.
+
+    The structural counterpart of a nonempty ``FetchPlan.levels``: planning takes
+    its paths off an OUTER ``DeepFetch`` node and adds one level per segment, so
+    a directive with no path, or a path with no segment, plans no level either.
+    Deciding it structurally is what keeps this seam free of deep-fetch planning,
+    which its enforcement scope forbids it to reach.
+    """
+    return isinstance(operation, DeepFetch) and any(path.segments for path in operation.paths)

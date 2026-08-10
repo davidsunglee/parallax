@@ -2705,12 +2705,15 @@ or descriptor authoring form and performs no audit stamping.
   A participating `tx.find` shares its `ReadTrace` object with the attempt that
   issued it, so `snapshot.execution` and `tx.execution_log` never disagree about
   what a level cost.
-- **The model-neutral seam.** A caller holding no Entity Class reaches the same
-  executor through `db.read_neutral(request)`, `tx.read_neutral(request)`, and
-  `tx.write_neutral(instruction, *, observation: ObservationKey | WriteObservation
-  | None = None)`, exported from
+- **The model-neutral seam.** A caller holding no Entity Class reaches the typed
+  path's own runtime through three entry points exported from
   `parallax.snapshot.handle` beside `Database` and `Transaction` together with
-  the `Neutral*` result vocabulary and `ObservationKey`. A `NeutralReadRequest`
+  the `Neutral*` result vocabulary and `ObservationKey`. `db.read_neutral(request)`
+  and `tx.read_neutral(request)` are reads and enter the same read executor
+  `db.find` and `tx.find` enter; `tx.write_neutral(instruction, *, observation:
+  ObservationKey | WriteObservation | None = None)` is the neutral WRITE ingress —
+  it validates and buffers one write instruction for the same Write Planner the
+  typed verbs feed, and reaches no read executor. A `NeutralReadRequest`
   states the two facts lowering a Find Query would have produced — the resolved
   target and the canonical operation — and selects the row or graph form;
   everything after it is the typed path's own: the same read gate, the same
@@ -3461,12 +3464,13 @@ remains observable rather than making Python its own oracle.
   invocations share an error instance — which is what lets the Execution Log
   attribute an attempt failure to the call whose error escaped. The provider test
   contract's failure-instance obligation is discharged Docker-free in
-  `tests/unit/test_postgres_adapter.py`, which drives a failed `execute`, a
-  failed `execute_write`, and a failed commit twice each over one connection stub
-  that raises a single reused psycopg exception for all of them, and asserts the
-  adapter hands back six distinct errors carrying the same category, native code,
-  and message — repetition ruling out reuse within a raise site and the shared
-  adapter ruling it out across them. The
+  `tests/unit/test_postgres_adapter.py`, which drives every raise site twice each
+  over one connection stub that raises a single reused psycopg exception for all
+  of them — a failed `execute`, a failed `execute_write`, and each failure of the
+  boundary `transaction` wraps whole: its begin, its commit, and its rollback —
+  and asserts the adapter hands back ten distinct errors carrying the same
+  category, native code, and message. Repetition rules out reuse within a raise
+  site and the shared adapter rules it out across them. The
   SQLSTATE→category table (`40P01`,
   `40001` → deadlock; `55P03` → lock-wait timeout; `23505` → unique violation;
   …) lives in the pure dialect strategy where the Docker-free contract suite

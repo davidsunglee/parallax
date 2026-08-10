@@ -29,8 +29,9 @@ returns the concrete driver's native affected-row count and no rows.
 ## One error instance per failed invocation
 
 An error the port *itself raises* to report a failure — a statement failure
-surfaced by `execute` or `executeWrite`, a commit failure surfaced by
-`transaction` — is an instance **shared with no other invocation**. An
+surfaced by `execute` or `executeWrite`, or a transaction-boundary failure
+surfaced by `transaction`, which is the boundary's begin, its commit, or its
+rollback — is an instance **shared with no other invocation**. An
 implementation MUST build that error where the failure occurs and MUST NOT raise
 a cached, pooled, or otherwise reused error object, however identical two
 failures' category, native code, and message are (`m-db-error` constrains what a
@@ -43,7 +44,8 @@ several failures can occur in one transaction and only one of them unwinds — a
 a consumer that must name the failing call, as `m-execution-log` does for an
 attempt failure, therefore has only the raised object to distinguish them. One
 instance raised twice makes those occurrences indistinguishable, and the failure
-is recorded against a sibling invocation's call. A commit failure names no call,
+is recorded against a sibling invocation's call. A boundary failure names no
+call — and a begin or rollback failure is outside `m-execution-log` entirely —
 but a reused instance would let one resurface carrying the identity of the
 failed call it stood for earlier, so the rule covers every error the port makes.
 

@@ -57,10 +57,13 @@ proves the same classification.
 Each adapter must also prove the port's failure-instance identity rule
 (`m-db-port`). The rule binds every error the port itself raises, so the proof
 must reach every raise site: a statement failure surfaced by `execute`, one
-surfaced by `executeWrite`, and a commit failure surfaced by `transaction`.
-Repeating each site establishes that no site reuses an instance across its own
-invocations, and driving all three over one adapter establishes that no two sites
-share one — a per-site cache satisfies the first and fails the second. Every
+surfaced by `executeWrite`, and each transaction-boundary failure surfaced by
+`transaction` — its begin, its commit, and its rollback. An adapter that wraps
+the whole boundary translates all three, so a proof stopping at commit leaves the
+two that bracket it unproven. Repeating each site establishes that no site reuses
+an instance across its own invocations, and driving every site over one adapter
+establishes that no two sites share one — a per-site cache satisfies the first
+and fails the second. Every
 error so raised is distinct while carrying the same category, native code, and
 message. This obligation needs
 no database and belongs wherever the language can drive the adapter over a driver

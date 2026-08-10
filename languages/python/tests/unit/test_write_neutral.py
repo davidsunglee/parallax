@@ -313,6 +313,49 @@ def test_a_row_form_request_refuses_the_relationship_levels_it_cannot_materializ
         _policy_db(RecordingPort(rows=[])).read_neutral(request)
 
 
+def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
+    # The form refusal is the read gate's, not the values lane's, so it lands on
+    # the same side of `uow.read`'s force-flush as the other three: a pending
+    # buffered write is still pending when the refusal escapes, and the
+    # transaction rolls back having executed no DML.
+    port = RecordingPort(rows=[_ORDER_ROW])
+    request = NeutralReadRequest.rows(
+        target=_order(),
+        operation=deserialize(
+            {
+                "deepFetch": {
+                    "operand": {"all": {}},
+                    "paths": [{"segments": [{"rel": "parallax.compatibility.Order.items"}]}],
+                }
+            }
+        ),
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.write_neutral(_order_update())
+        tx.read_neutral(request)
+
+    with pytest.raises(ValueError, match="row-form read materializes no relationships"):
+        _run_on(db_for(MODELS["orders"], port), fn)
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
+def _order() -> EntityIdentity:
+    entity = entity_by_name(model_of(MODELS["orders"]), "parallax.compatibility.Order")
+    assert entity is not None
+    return entity.identity
+
+
+def _order_update() -> WriteInstruction:
+    return instructions.deserialize(
+        {
+            "mutation": "update",
+            "entity": "parallax.compatibility.Order",
+            "rows": [{"id": 1, "qty": 7}],
+        }
+    )
+
+
 def _policy() -> EntityIdentity:
     entity = entity_by_name(model_of(MODELS["policy"]), "parallax.compatibility.Policy")
     assert entity is not None

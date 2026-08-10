@@ -349,6 +349,11 @@ class NeutralReadRequest:
     query per non-empty relationship level). A ``graph`` request whose operation
     SCANS an as-of axis answers the milestone-set form instead, exactly as
     ``db.find`` does.
+
+    The form is part of what the read gate validates, so a ``rows`` request whose
+    operation names deep-fetch paths — a level the values lane cannot materialize
+    — is refused before any I/O and before a participating read's force-flush,
+    like every other refusal a neutral read can meet.
     """
 
     target: EntityIdentity
@@ -390,16 +395,14 @@ def find_rows(
     :func:`~parallax.core.sql_gen.compile_read` with the lane selected by
     ``result_form``, and the same recorded Database Call.
 
-    A row-form read materializes no relationships, so a request carrying
-    deep-fetch levels is refused here rather than silently dropping them.
+    A row-form read materializes no relationships, and the shared read gate
+    (:func:`~parallax.snapshot.handle._preflight.preflight_neutral`) refuses a
+    request that asks this lane for one — before any I/O, and before a
+    participating read's force-flush — so the plan reaching here carries no
+    level to drop.
     """
     root_entity = _metadata(meta, target)
     plan_ = deep_fetch.plan(root_entity, op, meta)
-    if plan_.levels:
-        raise ValueError(
-            "a row-form read materializes no relationships, so it carries no deep-fetch "
-            "levels; request the graph form to materialize a related level"
-        )
     compiled = compile_read(
         plan_.root_operation, meta, dialect, root_entity, result_form="row", lock=lock
     )
@@ -820,7 +823,7 @@ def read_neutral(
     :func:`execute_neutral`. A participating caller composes the same two itself,
     because it must gate BEFORE the force-flush that stands between them.
     """
-    preflight_neutral(request.target, request.operation, model=meta)
+    preflight_neutral(request.target, request.operation, model=meta, form=request.form)
     return execute_neutral(
         request,
         meta,
