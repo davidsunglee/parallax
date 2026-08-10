@@ -1232,6 +1232,47 @@ def _refuse_unaccounted_document_milestone(
     )
 
 
+def _refuse_materialized_case_state(
+    model: AcceptedMetamodel,
+    entity: EntityMetadata,
+    row: Mapping[str, object],
+    shadow: TemporalShadow,
+) -> None:
+    """Refuse a keyed temporal write whose observation would come from case state
+    a materializing predicate write of this same case already moved
+    (:meth:`~parallax.conformance.temporal_state.TemporalShadow.moved_by_materialization`).
+
+    That write resolved its own rows inside production, retired the milestone it
+    found for each and opened a successor, and returned neither the plan nor the
+    rows — so the milestone this lane still holds current for that key is one the
+    database closed. A close addressed at it matches no row.
+
+    The composition is refused rather than executed because the two would not even
+    fail the same way. A real caller could not have issued this write at all
+    without a Temporal Observation, which only a read supplies; their observation
+    would name the milestone the predicate write opened, and gating a close on the
+    retired one is what production reports as a stale write. This lane's
+    observation comes from tracked case state instead — the whole reason the
+    tracker exists — and would issue a well-formed statement that quietly affects
+    zero rows. Naming the shape is the only answer that cannot be silently wrong.
+
+    Scope is the milestone, not the case: a target the predicate write never named
+    keeps its tracked state, and a milestone this case's own later write opens for
+    the moved key is a current account of it again.
+    """
+    if not shadow.moved_by_materialization(model, entity, row):
+        return
+    raise EngineError(
+        f"a keyed temporal write on {entity.identity.canonical!r} settles against case state "
+        "that this case's own materializing predicate write already moved — that write closed "
+        "the tracked milestone and opened a successor inside production, whose plan this lane "
+        "never sees, so the close this write would address matches no row. A real caller could "
+        "reach this step only by READING the row, and would gate on the milestone the predicate "
+        "write opened; gating on the retired one is a stale write, not a zero-row success. "
+        "Author the materializing write and the keyed write as separate cases"
+    )
+
+
 def _shared_document_column(model: AcceptedMetamodel, entity_name: str) -> str | None:
     """The name of the shared Structured Column ``entity_name``'s rows carry under
     Relational Document Layout, or ``None`` under ``Columns``, which has none."""
@@ -1311,9 +1352,11 @@ def _build_temporal_instruction(
     the milestone ``shadow`` tracks for this key (`m-txtime-write` /
     `m-bitemp-write` "the engine supplies observed rows from case state" — never
     an implicit resolving read), which is how every writeSequence entry and every
-    ungrouped scenario write resolves; a target whose tracked milestone can no
-    longer account for the whole stored row is refused first
-    (:func:`_refuse_unaccounted_document_milestone`). Given one, the entry's own
+    ungrouped scenario write resolves; a milestone a materializing predicate write
+    of this case already moved (:func:`_refuse_materialized_case_state`), and one
+    whose tracked members can no longer account for the whole stored row
+    (:func:`_refuse_unaccounted_document_milestone`), are both refused first.
+    Given one, the entry's own
     step named a find of its `uow` group with ``on``, and the evidence is the
     Observation Key the active unit of work filed that node under
     (:func:`_settled_against_source`).
@@ -1365,6 +1408,7 @@ def _build_temporal_instruction(
     evidence: WriteEvidence = None
     if not is_insert and not is_coalescing_candidate:
         if source is None:
+            _refuse_materialized_case_state(model, entity_metadata, row, shadow)
             _refuse_unaccounted_document_milestone(model, entity_metadata, row, shadow)
             observation = shadow.resolve(model, entity_metadata, row)
             evidence = observation
@@ -2873,6 +2917,7 @@ def _run_materializing_pair(
     concurrency: Concurrency,
     steps: Sequence[Mapping[str, object]],
     index: int,
+    shadow: TemporalShadow,
 ) -> tuple[list[_LoweredStep], ExecutionLog | None]:
     """Execute a MATERIALIZING predicate-write step (``index + 1``) whose
     IMMEDIATELY PRECEDING step (``index``) is the resolving find that shares
@@ -2897,6 +2942,14 @@ def _run_materializing_pair(
     — canonical Lowered Statements, the SAME form every other emission this
     engine reports carries, so no driver-SQL round trip stands between what ran
     and what is reported.
+
+    What this transaction did to a TEMPORAL target's milestones is recorded on
+    ``shadow`` rather than tracked into it: the rows it closed and opened were
+    resolved and planned inside production, so no later step can settle against
+    them from case state, and one that tries is refused
+    (:func:`_refuse_materialized_case_state`). The record is staged on this
+    transaction's own outcome, exactly as every other unit's advances are — an
+    aborted pair moved nothing.
     """
     find_step = steps[index]
     write_step = steps[index + 1]
@@ -2934,9 +2987,10 @@ def _run_materializing_pair(
     tx_instant = _entry_instant(cast("Mapping[str, object]", write_step["write"]))
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
     rollback = write_step.get("rollback") is True
+    model = case_model(meta)
     database = handle.Database(
         _write_port(port, rollback=rollback),
-        case_model(meta),
+        model,
         dialect=dialect,
         clock=FixedClock(instant),
     )
@@ -2946,8 +3000,10 @@ def _run_materializing_pair(
         logs.append(tx.execution_log)
         tx.write_neutral(instruction)
 
-    with contextlib.suppress(_RollbackStep):
-        database.transact(body, concurrency=concurrency)
+    with shadow.staged(doomed=rollback):
+        with contextlib.suppress(_RollbackStep):
+            database.transact(body, concurrency=concurrency)
+        shadow.note_materialized_write(case_entity(model, meta.entity(instruction.target.entity)))
     log = logs[-1] if logs else None
     resolve, writes = _materialized_pair_statements(log)
     if not resolve:  # pragma: no cover - zero resolved rows still resolves (1 statement)
@@ -4098,7 +4154,7 @@ def run_scenario_case(
                 pairing = _is_materializing_write_step(next_step, meta)
                 if pairing is not None and step.get("targetEntity") == pairing.target.entity:
                     pair_lowered, pair_log = _run_materializing_pair(
-                        port, meta, dialect, concurrency, steps, index
+                        port, meta, dialect, concurrency, steps, index, shadow
                     )
                     lowered.extend(pair_lowered)
                     round_trips += pair_log.round_trips if pair_log is not None else 0

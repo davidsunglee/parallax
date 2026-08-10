@@ -3024,6 +3024,112 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
     assert port.commits == 0 and port.rollbacks == 1
 
 
+def _ledger_predicate() -> dict[str, object]:
+    return {"eq": {"attr": "parallax.compatibility.Ledger.id", "value": 2}}
+
+
+def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[str, object]]:
+    """The resolving find + materializing predicate update over the fixture-held
+    Ledger id 2 that `m-case-format` "Materializing cases" runs as ONE
+    transaction: production resolves the predicate itself and plans a close plus a
+    successor per resolved row."""
+    write: dict[str, object] = {
+        "write": {
+            "mutation": "update",
+            "target": {
+                "entity": "parallax.compatibility.Ledger",
+                "predicate": _ledger_predicate(),
+            },
+            "assignments": [{"attr": "parallax.compatibility.Ledger.value", "value": 777.00}],
+            "at": at,
+        },
+        "roundTrips": 3,
+    }
+    if rollback:
+        write["rollback"] = True
+    return [
+        {
+            "targetEntity": "parallax.compatibility.Ledger",
+            "find": _ledger_predicate(),
+            "roundTrips": 1,
+        },
+        write,
+    ]
+
+
+def _ledger_resolve_port() -> FakeWritePort:
+    return FakeWritePort(
+        find_rows=[
+            {
+                "led_id": 2,
+                "acct_num": "B",
+                "val": decimal.Decimal("200.00"),
+                "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+                "out_z": INFINITY,
+            }
+        ]
+    )
+
+
+def test_run_scenario_case_refuses_a_keyed_temporal_write_after_a_materializing_pair() -> None:
+    # The materializing pair resolves its rows and plans their closes and
+    # successors INSIDE production, which returns neither, so this lane cannot
+    # advance case state to the milestone that transaction opened. A later keyed
+    # temporal write would gate its own close on the milestone the pair retired
+    # (the fixture's 2024-02-01) and quietly affect zero rows, while a real
+    # caller — who could only have reached the step by reading the row — gates on
+    # the successor and gets a stale write. The composition is refused rather
+    # than graded, so the two answers can never be mistaken for one.
+    case = _synthetic_ledger_scenario(
+        [
+            *_ledger_materializing_pair("2025-05-01T00:00:00+00:00"),
+            _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
+        ]
+    )
+    with pytest.raises(engine.EngineError, match="materializing predicate write already moved"):
+        engine.run_scenario_case(case, "postgres", _ledger_resolve_port())
+
+
+def test_run_scenario_case_keeps_case_state_when_a_materializing_pair_aborts() -> None:
+    # An ABORTED pair moved nothing: its close and successor were rolled back with
+    # the rest of its transaction, so the milestone the fixture left current is
+    # still current and the next keyed write settles against it. The record of
+    # what materialization displaced is staged on the pair's own outcome, exactly
+    # as every other unit's case-state advances are.
+    case = _synthetic_ledger_scenario(
+        [
+            *_ledger_materializing_pair("2025-05-01T00:00:00+00:00", rollback=True),
+            _ledger_update("300.00", "2026-02-01T00:00:00+00:00"),
+        ]
+    )
+    port = _ledger_resolve_port()
+    emissions, _round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
+    assert port.rollbacks == 1 and port.commits == 1
+    close, _successor = emissions[-2:]
+    assert close.case_pointer == "/scenario/2/write"
+    assert close.binds[3] == "2024-02-01T00:00:00+00:00"
+
+
+def test_run_scenario_case_chains_a_key_inserted_after_a_materializing_pair() -> None:
+    # The refusal is scoped to the milestones the pair displaced, never to the
+    # case: a milestone this case's own later write OPENS is a complete account of
+    # its row again, so an insert-then-update chain over a key the pair never held
+    # stays legal and closes the milestone the insert opened (2025-06-01).
+    case = _synthetic_ledger_scenario(
+        [
+            *_ledger_materializing_pair("2025-05-01T00:00:00+00:00"),
+            _ledger_insert("2025-06-01T00:00:00+00:00"),
+            _ledger_chain_update("300.00", "2026-02-01T00:00:00+00:00"),
+        ]
+    )
+    emissions, _round_trips, _errors, _log = engine.run_scenario_case(
+        case, "postgres", _ledger_resolve_port()
+    )
+    close = emissions[-2]
+    assert close.case_pointer == "/scenario/3/write"
+    assert close.binds[3] == "2025-06-01T00:00:00+00:00"
+
+
 def test_is_materializing_write_step_returns_none_for_a_keyed_write_shape() -> None:
     # `_is_materializing_write_step`'s SHAPE guard: a keyed-write step's
     # `write` field is the buffered-entry LIST (`m-case-format`'s
@@ -3082,7 +3188,7 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
     ]
     with pytest.raises(engine.EngineError, match="not preceded by"):
         engine._run_materializing_pair(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            FakeWritePort(), meta, POSTGRES, "locking", steps, 0
+            FakeWritePort(), meta, POSTGRES, "locking", steps, 0, TemporalShadow()
         )
 
 
