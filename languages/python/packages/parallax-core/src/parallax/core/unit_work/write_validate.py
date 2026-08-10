@@ -1,13 +1,21 @@
 """The model-aware write validator (m-value-object write validation x
 m-inheritance concrete-subtype write protocol).
 
-:func:`validate_write` is the SHARED validator every write ingress calls: the
-conformance engine's rejected run lane, the developer transaction verbs
-(``Transaction._buffer``), and the model-neutral keyed ingress
-(``Transaction.write_neutral``) -- the "one validator, many callers" pattern
-``validate_operation`` established (`parallax.core.op_algebra.validate`): the
-SAME rule classification and check order runs on every path, so they cannot
-drift.
+:func:`validate_write` is the SHARED validator every ingress carrying a write
+ROW calls: the conformance engine's rejected run lane, and both transaction
+ingresses through the one keyed judgment they share
+(``Transaction._validate_keyed``, reached from the developer verbs' ``_buffer``
+and from the model-neutral ``write_neutral``) -- the "one validator, many
+callers" pattern ``validate_operation`` established
+(`parallax.core.op_algebra.validate`): the SAME rule classification and check
+order runs on every path, so they cannot drift.
+
+A PREDICATE-SELECTED write reaches it nowhere (``write_neutral``'s own predicate
+route, ``_predicate_writes.buffer_predicate``): it selects rows by predicate and
+carries assignments rather than a row, so there is no write row for a row
+validator to measure, and member-name honesty
+(:func:`~parallax.core.unit_work.instructions.validate_instruction`) is the whole
+of what its ingress runs.
 
 Placement (`core/spec/modules.md` §7 DAG): ``m-unit-work`` depends on
 ``m-op-algebra``, ``m-db-port``, and ``m-temporal-read`` only, and its
