@@ -59,15 +59,11 @@ the caller chose not to distinguish.
 
 The rule binds the raise site alone, and an adapter that classifies each failure
 into a fresh error at the point of failure satisfies it structurally. Enforcing
-it is an obligation of the adapter's proof, not of the port's consumers. A
-consumer attributing a failure sees only the error it just caught, and that
-error carries nothing saying whether an earlier occurrence was the same object,
-so a reused instance is indistinguishable from the occurrence it impersonates.
-Seeing the reuse means retaining earlier failures and comparing each new one
-against them by identity — which a consumer MAY do but none is required to, and
-which the consumers this rule exists for (`m-execution-log` attributing an
-attempt failure) do not do, because they hold one failure at a time. Enforcement
-is therefore a **conformance proof** every adapter owes: the
+it is an obligation of the adapter's proof, not of the port's consumers: no
+consumer is required to check, and one that does learns of a reuse only by
+retaining the failures it caught earlier and comparing each new one against them
+by identity, since the caught error carries nothing of its own marking it as a
+reuse. Enforcement is therefore a **conformance proof** every adapter owes: the
 [database-provider test contract](database-provider-test-contract.md) states it,
 driving each raise site repeatedly over a driver that reuses one exception
 object and comparing the collected errors by identity.
