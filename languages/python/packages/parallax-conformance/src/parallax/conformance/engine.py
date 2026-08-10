@@ -3231,15 +3231,15 @@ class _GroupContext:
     the run lane's `uow` groups (:func:`_run_group_step`) and the compile lane's
     pure lowering (:func:`_lower_scenario_step`) alike.
 
-    The two model views describe one descriptor (:func:`case_model`), and the
-    tracker is the ONE case-spanning :class:`TemporalShadow` every group shares
-    rather than a per-group copy — a later group's temporal close observes the
-    milestone an earlier group's write opened. The record is frozen because none
-    of the five is ever REBOUND mid-scenario; the tracker's own contents advance,
-    which is exactly the state a shared tracker exists to carry.
+    The model is the case's own accepted Metamodel
+    (:func:`load_case_metamodel`), and the tracker is the ONE case-spanning
+    :class:`TemporalShadow` every group shares rather than a per-group copy — a
+    later group's temporal close observes the milestone an earlier group's write
+    opened. The record is frozen because none of the four is ever REBOUND
+    mid-scenario; the tracker's own contents advance, which is exactly the state
+    a shared tracker exists to carry.
     """
 
-    model: AcceptedMetamodel
     model: AcceptedMetamodel
     dialect: Dialect
     concurrency: Concurrency
@@ -3298,7 +3298,7 @@ def _run_group_step(
     ignore them — is the caller's affair, and is the only thing the two runners
     still do differently.
     """
-    model, model = context.model, context.model
+    model = context.model
     if "write" in step:
         entries = _write_entries(step["write"])
         source = _source_find_milestones(step, index, state.finds)
@@ -4333,7 +4333,7 @@ def run_write_sequence_case(
 
 
 def read_table_state(
-    port: DbPort, model: AcceptedMetamodel | AcceptedMetamodel, dialect: Dialect
+    port: DbPort, model: AcceptedMetamodel, dialect: Dialect
 ) -> dict[str, list[Row]]:
     """The committed contents of every model table, in canonical wire form.
 
@@ -4342,8 +4342,7 @@ def read_table_state(
     whole physical row ``then.tableState`` asserts — including a slot that only
     a sibling table-per-hierarchy variant fills (e.g. `m-inheritance-007`'s
     inserted `CardPayment` row still reports the cash-only `tendered` column as
-    `null`). Takes either the corpus descriptor record graph or an
-    already-accepted model.
+    `null`).
     """
     state: dict[str, list[Row]] = {}
     for layout in storage_layout.view(model).tables:
