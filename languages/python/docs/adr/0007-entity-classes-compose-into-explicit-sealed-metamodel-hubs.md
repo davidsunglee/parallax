@@ -30,7 +30,7 @@ classifies no type through a registry or registered callback. It also imports
 no model, expression/query behavior, graph state, or row/provenance code. The
 Value Object frontend therefore does not maintain a second annotation parser.
 
-The runtime member seam is separate from the operation algebra.
+The runtime member seam is separate from Predicate.
 `entity._members` owns the public `Attr`/`Rel` annotations, `attr`/`rel`
 declaration values, and the installed class/instance descriptors; it is the
 only runtime module in this cluster that touches owner classes. Those

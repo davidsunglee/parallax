@@ -17,9 +17,8 @@ alone — transitively reaching ``m-predicate``, ``m-temporal-read``,
 directly (the DAG permits any edge ``m-navigate`` itself reaches). A level's
 to-many decision and its correlation columns are read off the compiled
 direction ``m-navigate`` resolves, because a reverse declaration carries neither
-an inverted cardinality nor a swapped join of its own. Root canonicalization reuses the exact
-composition-at-the-engine order every read compile site shares (``inject_as_of``
-then ``navigate.canonicalize``); each level's own propagated
+an inverted cardinality nor a swapped join of its own. This planning boundary owns
+root composition (``inject_as_of`` then ``navigate.canonicalize``); each level's own propagated
 as-of term and relationship resolution reuse ``parallax.core.navigate``'s
 :func:`~parallax.core.navigate.hop_as_of_terms` /
 :func:`~parallax.core.navigate.resolve_relationship` — the SAME primitives a
@@ -728,7 +727,7 @@ def _order_keys(direction: RelationshipMetadata, qualifier: str) -> tuple[OrderK
     name alone) but keeps the reference grammar's shape.
 
     This is the translation boundary between the metamodel's Sort Direction and
-    Null Placement and the operation algebra's own wire vocabulary: an accepted
+    Null Placement and Predicate's own wire vocabulary: an accepted
     ordering term always carries both (an omitted direction normalizes to
     ascending and an omitted placement to nulls-last at formation), while an
     authored sort key may still leave either of its own unset."""

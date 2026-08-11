@@ -8,7 +8,7 @@ combines includes with a scanned temporal axis — and they differ only in the
 policy applied to the nodes the walk hands them. The walk itself lives here once
 so the two policies cannot drift into recognizing different shapes.
 
-This module reaches nothing but the operation algebra, which is what lets the
+This module reaches nothing but Predicate, which is what lets the
 read-preflight seam consume it without widening its own §7 grant.
 """
 

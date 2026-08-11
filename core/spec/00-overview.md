@@ -46,7 +46,7 @@ idiomatic developer experience while still guaranteeing parity.
   normalization), deep-fetch round-trip counts, temporal semantics, transaction
   / identity-cache / optimistic-lock rules.
 - **Protocol seams** — the metamodel (introspection **and** serde), the
-  operation algebra (**and** its serde), the canonical model-descriptor schema,
+  Predicate algebra (**and** its serde), the canonical model-descriptor schema,
   and the database-dialect interface.
 - **The module-dependency graph** — the *direction* of allowed dependencies
   between behavioral modules, enforced across language source scopes regardless

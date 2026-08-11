@@ -1,6 +1,6 @@
 """Parallax common runtime (``parallax-core``).
 
-The class-free engine spine: metamodel formation, op-algebra nodes, write
+The class-free engine spine: metamodel formation, Predicate nodes, write
 instructions, SQL lowering, the pure dialect strategy, the unit of work,
 and the abstract database port.
 

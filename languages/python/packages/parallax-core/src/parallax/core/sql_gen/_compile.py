@@ -1,4 +1,4 @@
-"""The three-stage read compiler (m-sql): canonicalize -> lower -> normalize.
+"""The flat-Entity-Query read compiler (m-sql): lower -> normalize.
 
 ``compile_read`` turns one flat ``m-predicate`` ``EntityQuery`` into one canonical
 ``LoweredStatement`` for a dialect. Lowering descends through `_predicate`'s one
@@ -7,12 +7,12 @@ supplies every dialect-specific string. The emitted SQL is produced directly in
 canonical normalized form (alias-qualified columns, lowercase, single-space
 separated, canonical clause order), so ``normalize`` is a fixed-point identity
 check rather than a rewrite — the language target never depends on the reference harness's
-sqlglot normalizer (non-normative). Temporal reads are canonicalized upstream by
-``m-temporal-read`` (``inject_as_of``) into ordinary predicate nodes before they
-reach this compiler; deep fetch (`DeepFetch`) is planned by `m-deep-fetch` into
-one read per relationship level and is never a predicate, so reaching this
-compiler as one raises a clear :class:`SqlGenError` and a mis-routed case fails
-loudly, never silently.
+sqlglot normalizer (non-normative). The ``m-deep-fetch`` planning boundary peels
+query-wide directives, injects temporal terms through ``m-temporal-read``, and
+canonicalizes navigation before producing the flat ``EntityQuery`` this module
+consumes. Deep fetch (`DeepFetch`) is planned there into one read per relationship
+level and is never a predicate, so reaching this compiler as one raises a clear
+:class:`SqlGenError` and a mis-routed case fails loudly, never silently.
 
 Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
 superset projection, table-per-concrete-subtype union-all) are ASSEMBLED here
@@ -311,7 +311,7 @@ def _projection(
 
 
 # --------------------------------------------------------------------------- #
-# compile_read = canonicalize -> lower -> normalize.                          #
+# compile_read = lower -> normalize.                                          #
 # --------------------------------------------------------------------------- #
 def compile_read(
     query: EntityQuery,
@@ -437,7 +437,7 @@ def compile_write_predicate(
     readless forms"): the UNALIASED where-clause SQL and its ordered binds —
     `balance < ?`, never the resolving read's aliased `t0.balance < ?`.
 
-    Reuses the op-algebra predicate lowering (`_predicate.lower_predicate`) with
+    Reuses the Predicate lowering (`_predicate.lower_predicate`) with
     an unaliased column formatter (:attr:`_EntityScope.unaliased`) rather than
     forking SQL text assembly — the same `And`/`Or`/`Group`/`Comparison`/...
     dispatch a read's `where` clause lowers through, so a write's rendered

@@ -64,7 +64,7 @@ def test_parse_dependency_graph_rejects_missing_block() -> None:
 def test_transitive_closure_follows_edges() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     closure = dag.transitive_closure(adjacency, "parallax.core.predicate")
-    # op-algebra depends on metamodel + inheritance, inheritance reaches model
+    # Predicate depends on metamodel + inheritance, inheritance reaches model
     # formation, and both reach core. No path to the descriptor scope: no
     # behavioral module depends on descriptor.
     assert closure == {

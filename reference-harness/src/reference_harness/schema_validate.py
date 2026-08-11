@@ -419,7 +419,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
             )
         # The action under test lives under `when`; a read case's operation and a
         # scenario/coherence step's `find` are canonical m-predicate nodes that
-        # must also validate against the operation algebra schema.
+        # must also validate against the Predicate schema.
         when = case.get("when") if isinstance(case, dict) else None
         when = when if isinstance(when, dict) else {}
         if "operation" in when:
@@ -455,7 +455,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                     registry,
                 )
         # A scenario case carries its operations per step (under `when.scenario[].find`);
-        # each one must also validate against the operation algebra schema.
+        # each one must also validate against the Predicate schema.
         if isinstance(when.get("scenario"), list):
             for index, step in enumerate(when["scenario"]):
                 if isinstance(step, dict) and "find" in step:
@@ -520,7 +520,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         registry,
                     )
         # A coherence case likewise carries read-step operations under
-        # `when.coherence[].find`; each must validate against the operation algebra schema.
+        # `when.coherence[].find`; each must validate against the Predicate schema.
         if isinstance(when.get("coherence"), list):
             for index, step in enumerate(when["coherence"]):
                 if isinstance(step, dict) and "find" in step:

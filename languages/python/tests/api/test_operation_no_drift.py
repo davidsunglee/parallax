@@ -90,7 +90,7 @@ from parallax.snapshot.handle._preflight import preflight_find
 
 # case id -> the idiomatic query that must lower to the case's operation.
 BUILDERS: dict[str, Callable[[], FindQuery[Any, Any]]] = {
-    # The op-algebra / temporal-read / navigate / single-concrete-inheritance
+    # The Predicate / temporal-read / navigate / single-concrete-inheritance
     # read examples: derived from the SAME `build()` the real-database runner
     # executes (`read_stories.READ_STORIES`) — see this file's own docstring.
     **{story.case_id: story.build for story in READ_STORIES},
