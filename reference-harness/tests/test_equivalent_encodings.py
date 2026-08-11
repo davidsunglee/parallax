@@ -165,7 +165,7 @@ def test_include_canonicalization_keeps_broad_and_narrowed_paths_distinct() -> N
     assert canonical(operation)["deepFetch"]["paths"] == [broad, narrowed]
 
 
-def test_canonicalization_keeps_other_list_order_significant() -> None:
+def test_canonicalization_keeps_boolean_operand_order_but_sorts_subtype_selections() -> None:
     and_left = {"and": {"operands": [{"x": 1}, {"y": 2}]}}
     and_right = {"and": {"operands": [{"y": 2}, {"x": 1}]}}
     or_left = {"or": {"operands": [{"x": 1}, {"y": 2}]}}
@@ -174,4 +174,4 @@ def test_canonicalization_keeps_other_list_order_significant() -> None:
     narrow_right = {"narrow": {"to": ["Dog", "Cat"], "operand": {"all": {}}}}
     assert canonical(and_left) != canonical(and_right)
     assert canonical(or_left) != canonical(or_right)
-    assert canonical(narrow_left) != canonical(narrow_right)
+    assert canonical(narrow_left) == canonical(narrow_right)

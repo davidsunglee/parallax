@@ -133,10 +133,9 @@ materialized-predicate-write resolving read derives its `Document` slots from th
 **declared needs of the write it serves** — that write's target designation and its
 declared assignments — and from nothing else, its own predicate included (the
 `Document` slot rule and *Result form*, below). The operation algebra deliberately
-carries **no projection node** (`m-op-algebra`): no read may project a proper subset of
-the derived list, and a column-subset result is expressible **only** through the
-future aggregate-query contract (`m-agg`, deferred). The directives `orderBy` and
-`limit` never change the list.
+carries **no projection node** (`m-op-algebra`): no Object Query read may project
+a proper subset of the derived list. The directives `orderBy` and `limit` never
+change the list.
 
 Inheritance first resolves the target and every `narrow` to one canonical
 effective concrete-Entity sequence. `StorageLayoutFacet.position(...)` then
@@ -209,7 +208,7 @@ whether `Document` slots are selected:
   instance constructed. It omits Document slots by default. The corpus's predicate
   `read` cases (`then.rows`) and the internal materialized-predicate-write read —
   which resolves a set-based write to each row's pk and gate values (ADR 0014) — are
-  the values lane; a future aggregation result (`m-agg`) lands here too. The
+  the values lane; aggregation results (`m-agg`) use this lane too. The
   resolving read is the one row-form read whose consumer can widen the default: it
   additionally projects the Document slots the write it serves needs, which for a
   temporal target is every declared one, because the observation it records is a
@@ -686,8 +685,6 @@ An in-transaction **object find** that intends to write carries the dialect's
 shared-row-lock suffix (`m-read-lock`, `m-dialect`). The read-lock is an
 **object-find property**, and the `m-dialect` layer **owns applying** the lock
 (whether and where to append it — see `m-dialect`'s *Read-lock application*).
-Projection and aggregation reads are outside the active query contract; their
-locking semantics land with their future query contract.
 For Postgres the suffix is `for share of t0` — `for share` qualified by the root
 alias — appended **after** every other clause (it is the last thing in the
 statement, after any `where`):

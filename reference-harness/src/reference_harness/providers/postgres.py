@@ -275,9 +275,9 @@ class _PgTxSession:
 
         Mirrors the provider's ``query`` but runs on the HELD session connection so a
         locking SELECT (``for share of t0``) both acquires the shared lock and returns
-        its rows, and an unlocked projection reads under the open unit of work. The
-        provider's ``_query_rows`` runs on the AUTOCOMMIT connection and so cannot read
-        inside the session's open transaction — this method can.
+        its rows inside the open unit of work. The provider's ``_query_rows`` runs on
+        the AUTOCOMMIT connection and so cannot read inside the session's open
+        transaction — this method can.
         """
         with self._conn.cursor() as cur:
             if binds:

@@ -681,7 +681,7 @@ op = Account.where(Account.id == 2)
 db.transact(lambda tx: tx.find(op), concurrency="locking").value
 ```
 
-## An optimistic-mode read omits the shared read lock
+## An optimistic-mode object find omits the shared read lock
 
 Corpus case: `m-read-lock-005`
 

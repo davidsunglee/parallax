@@ -36,7 +36,7 @@ every other literal (``m-sql``: the current-row bind is the ``infinity`` literal
 from __future__ import annotations
 
 import datetime as _dt
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -53,6 +53,7 @@ from parallax.core.op_algebra import (
     Group,
     History,
     Limit,
+    Narrow,
     Operation,
     Or,
     OrderBy,
@@ -407,10 +408,11 @@ def inject_as_of(op: Operation, entity: EntityMetadata) -> Operation:
     entity it is a strict identity (no as-of dimension to default). For a temporal
     entity it:
 
-    - peels any result-shaping directives (``orderBy`` / ``limit``)
-      off the top, so they survive around the rewritten predicate;
-    - peels the temporal wrappers (``asOf`` / ``asOfRange`` / ``history``), reading
-      each axis's pin and rejecting a double-pinned or undeclared axis;
+    - walks transparent result-shaping, narrowing, and temporal wrappers at the
+      root in any interleaving, preserving transparent wrappers around the
+      rewritten predicate;
+    - reads each temporal axis's selection and rejects a duplicate or undeclared
+      axis;
     - requires one explicit selection per declared axis, in
       **Valid-Time-first** order;
     - composes the user predicate ``and`` the per-axis interval terms into one flat
@@ -419,24 +421,34 @@ def inject_as_of(op: Operation, entity: EntityMetadata) -> Operation:
     ``history`` injects **no** term for its axis; a read whose every axis is scanned
     (bitemporal ``history``) therefore keeps the user predicate unchanged.
     """
-    core, directives = _peel_directives(op)
-    injected = _inject_core(core, entity)
-    return _rewrap_directives(injected, directives)
+    return _inject_root_temporal(op, entity)
 
 
-def _inject_core(core: Operation, entity: EntityMetadata) -> Operation:
-    modes: dict[AcceptedDimension, _AxisMode] = {}
-    current: Operation = core
-    while isinstance(current, (AsOf, AsOfRange, History)):
-        axis = _declared_axis(current.dimension, entity)
-        if axis.dimension in modes:
-            raise TemporalReadError(
-                f"{entity.identity.name}: the {current.dimension} dimension is pinned "
-                "or scanned twice"
-            )
-        modes[axis.dimension] = _mode_of(current)
+def _root_wrappers(
+    op: Operation,
+) -> Iterator[Limit | OrderBy | Narrow | AsOf | AsOfRange | History]:
+    current = op
+    while isinstance(current, (Limit, OrderBy, Narrow, AsOf, AsOfRange, History)):
+        yield current
         current = current.operand
-    user_predicate = current
+
+
+def _inject_root_temporal(op: Operation, entity: EntityMetadata) -> Operation:
+    modes: dict[AcceptedDimension, _AxisMode] = {}
+    wrappers: list[Limit | OrderBy | Narrow] = []
+    root_nodes = list(_root_wrappers(op))
+    for node in root_nodes:
+        if isinstance(node, (Limit, OrderBy, Narrow)):
+            wrappers.append(node)
+        else:
+            axis = _declared_axis(node.dimension, entity)
+            if axis.dimension in modes:
+                raise TemporalReadError(
+                    f"{entity.identity.name}: the {node.dimension} dimension is pinned "
+                    "or scanned twice"
+                )
+            modes[axis.dimension] = _mode_of(node)
+    user_predicate = root_nodes[-1].operand if root_nodes else op
 
     axis_terms: list[Operation] = []
     # A Temporal Dimension's member value IS its canonical axis rank, so
@@ -453,9 +465,10 @@ def _inject_core(core: Operation, entity: EntityMetadata) -> Operation:
     if not axis_terms:
         # Non-temporal read, or a read whose every declared axis is scanned
         # (bitemporal history): the user predicate stands unchanged.
-        return user_predicate
+        return _rewrap_transparent_wrappers(user_predicate, wrappers)
     terms = (*conjunction_terms(user_predicate), *axis_terms)
-    return terms[0] if len(terms) == 1 else And(operands=terms)
+    injected = terms[0] if len(terms) == 1 else And(operands=terms)
+    return _rewrap_transparent_wrappers(injected, wrappers)
 
 
 def _declared_axis(dimension: str, entity: EntityMetadata) -> AcceptedAsOfAxis:
@@ -543,7 +556,7 @@ def resolve_pinned_instants(op: Operation, entity: EntityMetadata) -> dict[Accep
     moment (an ``asOf(..., date=<instant>)`` wrapper) — the coordinate ``m-navigate``
     re-applies, matched by axis, to a temporal entity reached by navigation.
 
-    Every other axis — undeclared by ``entity``, pinned/defaulted to ``now``, or
+    Every other axis — undeclared by ``entity``, pinned to Latest, or
     scanned via ``history`` / ``asOfRange`` — independently resolves to **latest**
     at its own hop target (`m-navigate` "As-of propagation across relationships"),
     so this map omits them; the caller defaults an absent axis to latest by
@@ -555,15 +568,13 @@ def resolve_pinned_instants(op: Operation, entity: EntityMetadata) -> dict[Accep
     ``m-sql`` from ever seeing a temporal wrapper, so nothing downstream re-derives
     this from already-lowered predicate nodes).
     """
-    core, _directives = _peel_directives(op)
     pins: dict[AcceptedDimension, str] = {}
-    current = core
-    while isinstance(current, (AsOf, AsOfRange, History)):
-        axis = _declared_axis(current.dimension, entity)
-        mode = _mode_of(current)
-        if isinstance(mode, _Containment):
-            pins[axis.dimension] = mode.instant
-        current = current.operand
+    for node in _root_wrappers(op):
+        if isinstance(node, (AsOf, AsOfRange, History)):
+            axis = _declared_axis(node.dimension, entity)
+            mode = _mode_of(node)
+            if isinstance(mode, _Containment):
+                pins[axis.dimension] = mode.instant
     return pins
 
 
@@ -581,23 +592,24 @@ def statement_pin(op: Operation, entity: EntityMetadata) -> Pin:
     :func:`resolve_pinned_instants` consumes — an independent, side-effect-free
     read of the statement's own temporal wrapper, never a database round trip.
     """
-    core, _directives = _peel_directives(op)
     tx_time: _dt.datetime | Latest | None = None
     valid_time: _dt.datetime | Latest | None = None
-    current = core
-    while isinstance(current, (AsOf, AsOfRange, History)):
-        axis = _declared_axis(current.dimension, entity)
-        if isinstance(current, AsOf):
+    for node in _root_wrappers(op):
+        axis = (
+            _declared_axis(node.dimension, entity)
+            if isinstance(node, (AsOf, AsOfRange, History))
+            else None
+        )
+        if isinstance(node, AsOf):
             value: _dt.datetime | Latest = (
                 LATEST
-                if current.coordinate == "latest"
-                else _dt.datetime.fromisoformat(current.coordinate)
+                if node.coordinate == "latest"
+                else _dt.datetime.fromisoformat(node.coordinate)
             )
-            if axis.dimension is AcceptedDimension.TRANSACTION_TIME:
+            if axis is not None and axis.dimension is AcceptedDimension.TRANSACTION_TIME:
                 tx_time = value
             else:
                 valid_time = value
-        current = current.operand
     return Pin(tx_time=tx_time, valid_time=valid_time)
 
 
@@ -611,42 +623,23 @@ def scans_an_axis(op: Operation) -> bool:
     dimension answers a milestone set however the other dimension is pinned, and
     ``asOf(valid-time, history(transaction-time, …))`` therefore scans.
 
-    Directives are peeled first, so a scan stays a scan under any result-shaping
-    wrapper. An outer ``deepFetch`` is deliberately NOT peeled: this scope takes
+    Transparent wrappers are crossed, so a scan stays a scan under result-shaping
+    or whole-result narrowing. An outer ``deepFetch`` is deliberately NOT crossed: this scope takes
     no ``m-deep-fetch`` edge, so a caller composing the two holds the
     graph-shaping question itself.
     """
-    current, _directives = _peel_directives(op)
-    while isinstance(current, (AsOf, AsOfRange, History)):
-        if isinstance(current, (AsOfRange, History)):
-            return True
-        current = current.operand
-    return False
+    return any(isinstance(node, (AsOfRange, History)) for node in _root_wrappers(op))
 
 
-def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy]]:
-    """Split leading result-shaping directives off the temporal/predicate core.
-
-    Returns the inner core and the peeled directive nodes outermost-first, so they
-    can be rebuilt around the rewritten predicate.
-
-    The peeled set is ``m-op-algebra``'s closed set of row-preserving result
-    directives — ``limit`` / ``orderBy`` — read off the algebra rather than off
-    whichever clauses an authoring surface offers.
-    """
-    directives: list[Limit | OrderBy] = []
-    current = op
-    while isinstance(current, (Limit, OrderBy)):
-        directives.append(current)
-        current = current.operand
-    return current, directives
-
-
-def _rewrap_directives(op: Operation, directives: list[Limit | OrderBy]) -> Operation:
+def _rewrap_transparent_wrappers(
+    op: Operation, wrappers: list[Limit | OrderBy | Narrow]
+) -> Operation:
     result = op
-    for node in reversed(directives):
+    for node in reversed(wrappers):
         if isinstance(node, Limit):
             result = Limit(operand=result, count=node.count)
-        else:
+        elif isinstance(node, OrderBy):
             result = OrderBy(operand=result, keys=node.keys)
+        else:
+            result = Narrow(to=node.to, operand=result)
     return result

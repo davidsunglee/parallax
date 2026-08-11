@@ -4,11 +4,11 @@ two-session error cases).
 
 A `concurrencySuccess` / `error`-with-`when.concurrency` case proves a
 GENUINELY two-session concurrency property — the shared read lock actually
-blocks a writer, admits a second shared reader, a projection's own omission
-admits a writer, or a genuine two-connection contention (crossed row locks,
-a real lock-wait timeout, a Postgres SSI write-skew) raises the classified
-error — that a single-connection harness cannot provoke (`m-case-format`
-"Error cases" / "concurrencySuccess"). This module hosts the case-driven,
+blocks a writer, admits a second shared reader, or a genuine two-connection
+contention (crossed row locks, a real lock-wait timeout, a Postgres SSI
+write-skew) raises the classified error — that a single-connection harness
+cannot provoke (`m-case-format` "Error cases" / "concurrencySuccess"). This
+module hosts the case-driven,
 TWO-SESSION choreography every such case shares:
 
 - :func:`parse_rounds` parses a case's own `when.concurrency.rounds` into an

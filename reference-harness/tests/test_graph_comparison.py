@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+import reference_harness.case_runner as case_runner
 from reference_harness.case import Case, load_case, load_model
 from reference_harness.case_runner import (
     CaseFailure,
@@ -445,7 +446,7 @@ def test_root_pins_reads_nested_asof_by_axis():
 def test_root_pins_peels_result_directives_before_asof():
     # m-navigate-024 wraps the temporal root in `limit(orderBy(asOf(asOf(all))))`. The pin
     # collector MUST descend past the result directives first (exactly as the root
-    # compile peels distinct/orderBy/limit before the temporal wrappers); otherwise a
+    # compile peels orderBy/limit before the temporal wrappers); otherwise a
     # directive-wrapped root seeds NO pins and the child wrongly defaults to Latest.
     case = load_case(
         COMPATIBILITY_ROOT,
@@ -454,6 +455,23 @@ def test_root_pins_peels_result_directives_before_asof():
     assert _root_asof_pins(case) == {
         "valid-time": "2024-03-01T00:00:00+00:00",
         "transaction-time": "latest",
+    }
+
+
+def test_root_pins_crosses_scan_wrappers_without_recording_them(monkeypatch):
+    case = load_case(
+        COMPATIBILITY_ROOT,
+        COMPATIBILITY_ROOT / "cases" / "m-navigate-015-deepfetch-temporal-both-past.yaml",
+    )
+    root = case.operation["deepFetch"]["operand"]
+    monkeypatch.setattr(
+        case_runner,
+        "_deepfetch_root_operand",
+        lambda _case: {"history": {"dimension": "valid-time", "operand": root}},
+    )
+    assert case_runner._root_asof_pins(case) == {
+        "valid-time": "2024-03-01T00:00:00+00:00",
+        "transaction-time": "2024-02-01T00:00:00+00:00",
     }
 
 

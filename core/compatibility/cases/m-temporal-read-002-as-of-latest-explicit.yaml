@@ -1,7 +1,6 @@
-# Explicit as-of-Latest read: the same current-row result as the defaulted case,
-# but the caller WRITES the asOf pin with date `now`. Proves the explicit asOf
-# node lowers to the identical injected current-row predicate (`out_z = infinity`)
-# the default-injection rule produces — pinning the equivalence in a fixture.
+# Explicit as-of-Latest read: the caller writes the canonical Transaction-Time
+# selection. It lowers to the current-row predicate (`out_z = infinity`) that an
+# omitted Transaction-Time selection normalizes to before canonical execution.
 model: models/balance.yaml
 tags: [m-temporal-read, m-sql, as-of, audit-only, explicit, slice-snapshot-1, slice-managed-1]
 shape: read

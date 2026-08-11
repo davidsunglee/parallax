@@ -77,8 +77,9 @@ separately from the DAG in [`modules.md`](modules.md).
   developer declares an eager-fetch navigation set.
 - **(decide and record — All slices)** Temporal-read spelling for `asOf`,
   `asOfRange`, and `history`: public axis names, timestamp type and precision,
-  Valid-Time / Transaction-Time dimension names, Latest defaults, finite Now,
-  timestamp type and precision, and rejection of invalid combinations.
+  Valid-Time / Transaction-Time dimension names, the omitted Transaction-Time
+  Latest default, explicit Valid-Time requirement, finite coordinates, timestamp
+  type and precision, and rejection of invalid combinations.
 - **(decide and record — When claimed: `m-agg`)** Aggregation result and operation
   spelling for `groupBy`, aggregate functions, and `having`. Also record SQL
   lowering only when `m-sql-agg` is claimed.

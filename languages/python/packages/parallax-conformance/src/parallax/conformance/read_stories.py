@@ -85,8 +85,8 @@ class ReadStory:
     sourced from ``concurrency`` below rather than a second, independently-
     authored string.
 
-    ``concurrency`` (the `m-read-lock` matrix's
-    -002/-003/-005) opts a story into the TRANSACTIONAL read half instead of
+    ``concurrency`` (the `m-read-lock` matrix's -002/-005 object-find pair) opts
+    a story into the TRANSACTIONAL read half instead of
     the default non-transactional one: ``None`` (every other entry, unchanged)
     runs ``db.find(build())``; a declared mode runs
     ``db.transact(lambda tx: tx.find(build()), concurrency=...).value`` — a
@@ -343,7 +343,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "    valid_time=LATEST, tx_time=datetime(2024, 1, 15, tzinfo=UTC)\n"
         ")",
     ),
-    # -- m-read-lock (the runtime lock/omit matrix), models/account.yaml ----- #
+    # -- m-read-lock (runtime object-find lock/omit pair), account.yaml ------ #
     # The `api-conformance`-lane runtime half of
     # the read-lock matrix — `tx.find` inside a `db.transact` of the declared
     # mode. `m-read-lock-001` (the harness-lane single-connection golden) and
@@ -362,7 +362,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     ),
     ReadStory(
         "m-read-lock-005",
-        "An optimistic-mode read omits the shared read lock",
+        "An optimistic-mode object find omits the shared read lock",
         "account",
         lambda: Account.where(Account.id == 2),
         "op = Account.where(Account.id == 2)",

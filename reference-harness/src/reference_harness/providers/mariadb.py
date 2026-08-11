@@ -347,7 +347,7 @@ class _MariaTxSession:
 
         Mirrors the provider's ``query`` but runs on the HELD session connection so a
         locking SELECT (``lock in share mode``) both takes the shared lock and returns
-        its rows, and an unlocked projection reads under the open unit of work.
+        its rows inside the open unit of work.
         """
         with self._conn.cursor() as cur:
             if binds:

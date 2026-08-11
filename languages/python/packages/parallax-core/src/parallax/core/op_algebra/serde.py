@@ -3,10 +3,11 @@
 ``serialize`` emits the canonical single-key tagged object for each node exactly
 as ``operation.schema.json`` fixes it (an OMITTED optional key — ``direction``,
 ``caseInsensitive`` — stays omitted; an explicitly authored one round-trips
-verbatim); ``deserialize`` reads that form back into frozen nodes. The pair
-round-trips (``serialize(deserialize(x)) == x``) for every node in the read
-algebra, in both JSON and YAML (the format is irrelevant — the document is plain
-dict/list/scalar). ``deserialize`` is structural and type-checked: it validates
+verbatim). ``deserialize`` reads that form into frozen nodes and canonicalizes
+order-insensitive Subtype Selections and include paths. The pair round-trips
+every already-canonical node in the read algebra, in both JSON and YAML (the
+format is irrelevant — the document is plain dict/list/scalar). ``deserialize``
+is structural and type-checked: it validates
 each node's closed shape, enforces every reference string against the schema
 pattern for its position (attribute / relationship / entity / nested / value-
 object / element-relative), and constrains a nested ``where`` to exactly the
@@ -21,6 +22,7 @@ import re
 from collections.abc import Mapping
 from typing import Literal, cast
 
+from parallax.core.op_algebra._builders import _canonical_includes
 from parallax.core.op_algebra.nodes import (
     All,
     And,
@@ -382,7 +384,7 @@ def _paths(body: Mapping[str, object]) -> tuple[NavigationPath, ...]:
             rel = _ref(segment, "rel", "deepFetch", _MEMBER_REF, "relationship reference")
             segments.append(PathSegment(rel=rel, narrow=narrow))
         paths.append(NavigationPath(segments=tuple(segments), narrow=root_narrow))
-    return tuple(paths)
+    return _canonical_includes(tuple(paths))
 
 
 def _nested_where(body: Mapping[str, object]) -> Operation | None:
@@ -396,7 +398,7 @@ def _nested_where(body: Mapping[str, object]) -> Operation | None:
 
 
 def deserialize(doc: object) -> Operation:
-    """Parse a canonical operation document into a frozen node tree."""
+    """Parse an operation document and canonicalize its set-valued carriers."""
     return _deserialize(doc, element_scope=False)
 
 
@@ -567,7 +569,11 @@ def _emit_nav(rel: str, op: Operation | None) -> dict[str, object]:
 
 
 def serialize(op: Operation) -> dict[str, object]:
-    """Emit the canonical single-key tagged document for one node."""
+    """Emit the canonical single-key tagged document for one node.
+
+    Subtype Selections and ``DeepFetch.paths`` are canonicalized defensively so
+    directly constructed nodes have the same wire identity as deserialized ones.
+    """
     match op:
         case All():
             return {"all": {}}
@@ -628,8 +634,12 @@ def serialize(op: Operation) -> dict[str, object]:
         case NotExists(rel=rel, op=inner):
             return {"notExists": _emit_nav(rel, inner)}
         case DeepFetch(operand=operand, paths=paths):
+            canonical_paths = _canonical_includes(paths)
             return {
-                "deepFetch": {"operand": serialize(operand), "paths": [_path(p) for p in paths]}
+                "deepFetch": {
+                    "operand": serialize(operand),
+                    "paths": [_path(p) for p in canonical_paths],
+                }
             }
         case AsOf(operand=operand, dimension=dimension, coordinate=coordinate):
             return {

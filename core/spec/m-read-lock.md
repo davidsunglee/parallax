@@ -5,17 +5,14 @@ in-transaction **object find** that intends to write acquires a **shared row loc
 so a concurrent transaction cannot mutate the row out from under a
 read-then-write. Per the dependency graph, `m-read-lock` depends on `m-unit-work`
 (the transaction whose mode selects it) and `m-dialect` (which owns the lock
-spelling and application). The optimistic alternative — a read that takes no lock
-and a version-gated write — is `m-opt-lock`.
+spelling and application). The optimistic alternative — an object find that
+takes no lock and a version-gated write — is `m-opt-lock`.
 
 ## Automatic read-lock correctness
 
 Reads performed **inside a unit of work** that intends to write **MUST** be made
 correct without the caller writing locking SQL. The default (`locking`) in-
 transaction **object find** acquires a **shared row lock**.
-
-The active query contract contains object finds only. Projection and aggregation
-reads are deferred; their lock behavior lands with their future query contract.
 
 **Whether and where to attach the lock is a `m-dialect` decision**, not
 `m-unit-work`'s: the unit of work asks the dialect to apply this transaction's read

@@ -326,7 +326,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "lane": {
-      "description": "Which executor satisfies this case (m-case-format lane routing). `harness` (the default) — the m-case-format compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a runtime-loop or read-lock-matrix branch a single-connection harness cannot provoke: the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it. Every `boundary`-shape case is `api-conformance` by construction; the read-lock matrix reads (`m-read-lock-002`-`m-read-lock-005`) are `read`-shape `api-conformance` cases.",
+      "description": "Which executor satisfies this case (m-case-format lane routing). `harness` (the default) — the m-case-format compatibility harness executes it as today (golden-SQL / data observables). `api-conformance` — a runtime-loop or read-lock-matrix branch a single-connection harness cannot provoke: the harness schema-validates it but does NOT execute it, and each language's API Conformance Suite MUST satisfy it. Every `boundary`-shape case is `api-conformance` by construction; the read-lock matrix reads (`m-read-lock-002`, `m-read-lock-004`, and `m-read-lock-005`) are `read`-shape `api-conformance` cases.",
       "enum": ["harness", "api-conformance"],
       "default": "harness"
     },

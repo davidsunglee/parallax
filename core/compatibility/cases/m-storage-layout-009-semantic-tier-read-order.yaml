@@ -16,7 +16,7 @@
 #
 # The abstract-root target projects the raw discriminator at its own tier position
 # and carries no tag predicate, and `familyVariant` is materialized from the tag
-# metadata rather than projected. The defaulted-Latest Transaction-Time pin selects
+# metadata rather than projected. The explicit Latest Transaction-Time pin selects
 # the open milestone alone, so the superseded 20.00 row is not observed.
 model: models/storage-layout.yaml
 tags: [m-storage-layout, m-inheritance, m-temporal-read, m-value-object, m-sql, table-per-hierarchy, root, temporal, as-of, document, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
