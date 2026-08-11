@@ -6,7 +6,8 @@
 # counterpart of the table-per-hierarchy `instrument` family: a NEW, small temporal
 # family whose concrete subtypes each map to their OWN table (no shared table, no tag),
 # so an abstract-target read lowers to `union all` over the effective concrete tables
-# with the injected as-of predicate applied PER BRANCH (m-sql). The bitemporal axes are
+# with each selected temporal predicate applied PER BRANCH when present; history may
+# contribute none (m-sql). The bitemporal axes are
 # declared on the ROOT and thread into every concrete table via the ancestry chain, so
 # each concrete table physically carries the interval columns and admits the milestone
 # rectangles.
