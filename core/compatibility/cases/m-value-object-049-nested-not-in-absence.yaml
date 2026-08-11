@@ -1,5 +1,5 @@
 # valueObject negated membership: nestedNotIn excludes every not-present row rather
-# than treating absence as "not in the list" (m-op-algebra nested membership +
+# than treating absence as "not in the list" (m-predicate nested membership +
 # absence collapse, m-sql), on Postgres AND MariaDB.
 #
 # nestedNotIn(Customer.address.city, [Oslo]) lowers the extraction into a LEADING
@@ -17,7 +17,7 @@
 # path then the value. The oracle spells the negation with the native `not in`
 # infix over an independently formulated extraction per dialect.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, notIn, absence-collapse, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, notIn, absence-collapse, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

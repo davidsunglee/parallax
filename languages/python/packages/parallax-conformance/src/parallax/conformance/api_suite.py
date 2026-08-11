@@ -230,7 +230,7 @@ EXAMPLES: Final[list[Example]] = [
     # mirrored case's own `then.rows` (order-insensitive, exact-typed) and
     # `then.roundTrips`. The `navigate`-tagged siblings (a corpus spelling
     # redundancy for the identical correlated-EXISTS lowering `exists`
-    # already expresses — m-op-algebra), the deep-fetch-bearing temporal
+    # already expresses — m-predicate), the deep-fetch-bearing temporal
     # siblings, the multi-concrete polymorphic PROJECTING inheritance reads,
     # and the Customer value-object predicate-read siblings (whose flagship
     # reads are executed graph stories; see GRAPH_STORIES below)
@@ -243,7 +243,7 @@ EXAMPLES: Final[list[Example]] = [
     # fake-port write no-drift guard drives the same function against the golden
     # DML. One source, three consumers: the guide cannot drift from execution.
     *(Example(story.case_id, story.title, story_snippet(story)) for story in WRITE_STORIES),
-    # Rejected-case build-time proofs (m-op-algebra/m-navigate/m-value-object):
+    # Rejected-case build-time proofs (m-predicate/m-navigate/m-value-object):
     # the idiomatic surface refuses the SAME invalid input the corpus's own
     # rejected lane grades, through the SAME model-aware validator
     # (`validate_operation`), naming the SAME classified rule — proven by
@@ -425,7 +425,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "two encoding witnesses are writeSequence cases the reference harness executes "
         "against both engines"
     ),
-    "m-op-algebra": (
+    "m-predicate": (
         "representative predicate/grouping/ordering spellings are exercised as idiomatic "
         "examples; the remaining op-algebra cases are graded through the compile/run "
         "lanes"
@@ -933,7 +933,7 @@ _INHERITANCE_DESCRIPTOR_REJECT_UNREACHABLE_REASON: Final[str] = (
 
 # `navigate`-tagged corpus siblings: a deliberate spelling redundancy for the
 # IDENTICAL correlated-EXISTS lowering the exercised `.exists()`/`.not_exists()` examples
-# already prove (m-navigate-002/003/004/006/008/009/010) — m-op-algebra's own
+# already prove (m-navigate-002/003/004/006/008/009/010) — m-predicate's own
 # framing ("navigate and exists are the same correlated-EXISTS lowering").
 _NAVIGATE_TAG_REDUNDANT_REASON: Final[str] = (
     "a `navigate`-tagged corpus spelling redundancy for the IDENTICAL correlated-EXISTS "

@@ -1,4 +1,4 @@
-# Negative (m-op-algebra positional rule): a predicate reference names an entity the
+# Negative (m-predicate positional rule): a predicate reference names an entity the
 # read is not positioned at, and no narrow can bring it into scope.
 #
 # The read is positioned at `Animal` (the family root, the default a rejected case
@@ -11,7 +11,7 @@
 # is the sibling rule for a reference INSIDE the position's family, where narrowing is
 # the remedy; here nothing is, so the rule is `attribute-outside-active-position`.
 model: models/animal.yaml
-tags: [m-op-algebra, m-inheritance, rejected, negative, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-inheritance, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

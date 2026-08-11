@@ -2,7 +2,7 @@
 
 `m-temporal-read` owns temporal coordinates and automatically injected as-of
 predicates over half-open intervals. The operation nodes belong to
-`m-op-algebra`, SQL emission belongs to `m-sql`, infinity representation belongs
+`m-predicate`, SQL emission belongs to `m-sql`, infinity representation belongs
 to `m-core`/`m-dialect`, and temporal writes belong to `m-txtime-write` and
 `m-bitemp-write`.
 
@@ -24,7 +24,7 @@ writes, and physical storage:
 | Core dimension | `ValidTime` | `TransactionTime` |
 | Core shape variant | declared by `Bitemporal` | declared by `TransactionTimeOnly` and `Bitemporal` |
 | Descriptor `temporality` deriving it | `bitemporal` | `transaction-time` and `bitemporal` |
-| Operation `dimension` | `valid-time` | `transaction-time` |
+| Predicate `dimension` | `valid-time` | `transaction-time` |
 | Derived start Attribute | `validStart` | `txStart` |
 | Derived end Attribute | `validEnd` | `txEnd` |
 | Framework-fixed start column | `from_z` | `in_z` |

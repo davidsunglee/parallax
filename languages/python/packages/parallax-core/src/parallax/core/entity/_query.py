@@ -18,7 +18,7 @@ Lowering lives here rather than in a module of its own for one reason: it reads
 the query's private clause state, and a seam that reached it from outside would
 either publish that state or copy it. What it answers is a
 :class:`LoweredFindQuery` — a target Entity Identity and a canonical
-``m-op-algebra`` operation, and nothing else. It completes the class-local
+``m-predicate`` operation, and nothing else. It completes the class-local
 temporal authoring contract: omitted Transaction Time becomes explicit Latest,
 while omitted Valid Time on a Bitemporal target raises. It is never memoized:
 each call returns a fresh lowering, and one execution keeps its result locally.
@@ -45,7 +45,7 @@ from parallax.core.entity._expressions import (
     conjoin,
 )
 from parallax.core.metamodel import AsOfAxisMetadata, EntityIdentity, TemporalDimension
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     AsOf,
     AsOfRange,
     DeepFetch,
@@ -53,16 +53,16 @@ from parallax.core.op_algebra import (
     Limit,
     Narrow,
     NavigationPath,
-    Operation,
     OrderBy,
     OrderKey,
+    PredicateNode,
     QueryDefinitionError,
 )
-from parallax.core.op_algebra._builders import _canonical_includes
-from parallax.core.op_algebra.nodes import (
+from parallax.core.predicate._builders import _canonical_includes
+from parallax.core.predicate._nodes import (
     TemporalDimension as WireDimension,
 )
-from parallax.core.op_algebra.nodes import (
+from parallax.core.predicate._nodes import (
     canonical_subtype_selection,
 )
 from parallax.core.temporal_read import TX_TIME, VALID_TIME, Latest, TemporalDimensionConstant
@@ -105,7 +105,7 @@ class _AsOfClause:
     dimension: WireDimension
     coordinate: str
 
-    def wrap(self, operand: Operation) -> Operation:
+    def wrap(self, operand: PredicateNode) -> PredicateNode:
         return AsOf(operand=operand, dimension=self.dimension, coordinate=self.coordinate)
 
 
@@ -117,7 +117,7 @@ class _AsOfRangeClause:
     start: str
     end: str
 
-    def wrap(self, operand: Operation) -> Operation:
+    def wrap(self, operand: PredicateNode) -> PredicateNode:
         return AsOfRange(operand=operand, dimension=self.dimension, start=self.start, end=self.end)
 
 
@@ -127,7 +127,7 @@ class _HistoryClause:
 
     dimension: WireDimension
 
-    def wrap(self, operand: Operation) -> Operation:
+    def wrap(self, operand: PredicateNode) -> PredicateNode:
         return History(operand=operand, dimension=self.dimension)
 
 
@@ -162,7 +162,7 @@ class FindQuery[E, S]:
     """
 
     _target: EntityIdentity
-    _predicate: Operation
+    _predicate: PredicateNode
     # The target family's declared temporal axes, captured at ``Entity.where`` so
     # the dimension-keyed temporal clauses validate against them; empty for a
     # non-temporal Entity (every temporal clause then raises).
@@ -357,7 +357,7 @@ class FindQuery[E, S]:
         iterable, an endpoint that would need coercion, a :data:`LATEST`
         endpoint, and an equal or reversed window are each refused HERE — an
         ``asOfRange``'s bounds are canonically finite and ordered
-        (``operation.schema.json``'s ``finiteTemporalInstant``, `m-temporal-read`
+        (``predicate.schema.json``'s ``finiteTemporalInstant``, `m-temporal-read`
         "scans every milestone whose interval overlaps ``[start, end)``"), so
         the clause is never built carrying anything else and no scan reaches SQL
         with a reversed window or a ``latest`` bind.
@@ -520,19 +520,19 @@ class LoweredFindQuery:
     """One lowering of one Find Query (:func:`lower_find_query`).
 
     ``target`` is the queried position's Entity Identity and ``operation`` the
-    canonical ``m-op-algebra`` operation. Deliberately the shape a predicate
-    selection already uses, because an Operation is position-relative and never
+    canonical ``m-predicate`` operation. Deliberately the shape a predicate
+    selection already uses, because a Predicate Node is position-relative and never
     self-locating: it names attributes and relationships within a position it
     does not itself carry.
 
-    It is not a canonical Find Query — only its Operation is canonical, while its
+    It is not a canonical Find Query — only its Predicate Node is canonical, while its
     target is a position the connected model resolves at execution. It contains
     no model, Entity Class, class index, Snapshot feature tag, provider state,
     SQL, serialization method, or execution surface.
     """
 
     target: EntityIdentity
-    operation: Operation
+    operation: PredicateNode
 
 
 @dataclass(frozen=True, slots=True)
@@ -549,7 +549,7 @@ class MutationSelection:
     """
 
     target: EntityIdentity
-    predicate: Operation
+    predicate: PredicateNode
 
 
 def mutation_selection(query: FindQuery[Any, Any]) -> MutationSelection:

@@ -54,9 +54,9 @@ _WIDGETS = DomainModel(Widget)
 
 
 def _op(pred: Predicate[Any]) -> dict[str, object]:
-    from parallax.core.op_algebra import serialize
+    from parallax.core.predicate import serialize
 
-    return serialize(pred.op)
+    return serialize(pred.node)
 
 
 def test_scalar_comparison_operators() -> None:
@@ -126,6 +126,10 @@ def test_boolean_combinators_and_grouping() -> None:
     }
     disj = _op((Widget.qty < 1) | (Widget.qty > 9))
     assert set(disj) == {"or"}
+    flattened_conj = _op(((Widget.qty > 1) & (Widget.qty < 9)) & Widget.active.is_(True))
+    assert len(flattened_conj["and"]["operands"]) == 3  # type: ignore[index] - indexes the known serialized And body
+    flattened_disj = _op(((Widget.qty < 1) | (Widget.qty > 9)) | Widget.active.is_(True))
+    assert len(flattened_disj["or"]["operands"]) == 3  # type: ignore[index] - indexes the known serialized Or body
     negated = _op(~(Widget.qty > 1))
     assert set(negated) == {"not"}
     # An `or` under an `and` is wrapped in a canonical `group`; an `and` under an
@@ -332,7 +336,7 @@ def test_every_clause_answers_a_new_query_and_leaves_its_receiver_alone() -> Non
 def test_a_lowering_carries_a_target_identity_and_an_operation_and_nothing_else() -> None:
     lowered = lower_find_query(Widget.where(Widget.id == 1))
     assert lowered.target == EntityIdentity(_NS, "Widget")
-    assert lowered.operation == (Widget.id == 1).op
+    assert lowered.operation == (Widget.id == 1).node
     # The exact shape: an Entity Identity and a canonical operation, with no
     # model, class index, feature tag, provider state, SQL, or serialization.
     assert [field.name for field in fields(lowered)] == ["target", "operation"]
@@ -462,7 +466,7 @@ def test_as_of_range_refuses_a_window_that_does_not_advance() -> None:
 
 def test_as_of_range_refuses_a_latest_endpoint() -> None:
     # LATEST PINS an axis; an `asOfRange` bound is a finite instant
-    # (`operation.schema.json`), so the sentinel is refused rather than lowered
+    # (`predicate.schema.json`), so the sentinel is refused rather than lowered
     # as the literal `"latest"` — which would reach SQL as a text bind against a
     # timestamp column.
     earlier = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)

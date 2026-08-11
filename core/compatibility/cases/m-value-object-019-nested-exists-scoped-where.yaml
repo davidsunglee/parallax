@@ -1,5 +1,5 @@
 # valueObject to-many: a scoped `where` requires ONE element to satisfy the whole
-# compound — SAME-element (m-value-object to-many, m-op-algebra same-element,
+# compound — SAME-element (m-value-object to-many, m-predicate same-element,
 # m-dialect array-traversal form), on Postgres AND MariaDB.
 #
 # nestedExists(Customer.address.phones, where: type = 'home' AND number =
@@ -18,7 +18,7 @@
 # collapses the non-array `phones` to not-present. The oracle is a `json_table`
 # same-element unnest on MariaDB and a same-element `@>` on Postgres.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

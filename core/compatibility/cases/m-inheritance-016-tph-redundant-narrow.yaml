@@ -1,4 +1,4 @@
-# Table-per-hierarchy VALID redundant narrow (m-inheritance, m-op-algebra, m-sql).
+# Table-per-hierarchy VALID redundant narrow (m-inheritance, m-predicate, m-sql).
 #
 # targetEntity is the abstract subtype Pet; narrowing it to [Pet] is a no-op — the
 # resolved effective set {Cat, Dog} equals the position's own set, so it is a valid
@@ -9,7 +9,7 @@
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
 model: models/animal.yaml
-tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Pet

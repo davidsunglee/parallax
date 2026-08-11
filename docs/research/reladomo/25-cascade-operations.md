@@ -292,7 +292,7 @@ baseline assertions.
 | `cascade-insert-all` | Explicit collection of two new root snapshot graphs, each with dependents | Both graphs persist in one unit of work; a failure in graph two rolls back graph one | `m-unit-work` |
 | `cascade-delete-deep-unloaded` | Persisted root key with unloaded to-one/to-many children and grandchildren | All dependents are discovered from descriptor metadata; grandchildren delete before children and children before root | `m-unit-work`, `m-descriptor` |
 | `cascade-delete-excludes-nondependent` | Existing `m-cascade-delete-002`, retained under the new module name | Dependent rows delete; non-dependent rows survive unchanged | `m-descriptor` |
-| `cascade-delete-all-filtered` | Predicate selects some roots from several populated graphs | Only selected roots and their dependent closures delete; non-selected graphs remain | `m-op-algebra`, `m-unit-work` |
+| `cascade-delete-all-filtered` | Predicate selects some roots from several populated graphs | Only selected roots and their dependent closures delete; non-selected graphs remain | `m-predicate`, `m-unit-work` |
 | `cascade-delete-all-self-dependent` | A finite self-referential dependent tree | Descendants delete before ancestors with no duplicate deletion or infinite recursion; modeled after Reladomo's self-relationship test (`../reladomo/reladomo/src/test/java/com/gs/fw/common/mithra/test/TestTransactionalList.java:666-670`) | `m-unit-work`, `m-descriptor` |
 | `cascade-delete-rollback` | A dependent delete fails or the transaction is explicitly rolled back | Every node remains visible; no partial graph removal | `m-unit-work` |
 | `cascade-terminate-audit-only` | Processing-dated root with dependent to-one and to-many rows | Current root and dependents disappear; historical rows remain and share the transaction processing cutoff | `m-audit-write`, `m-temporal-read` |
@@ -307,9 +307,9 @@ baseline assertions.
 
 | ID | Case | Required assertions | Likely cross-tags |
 |---|---|---|---|
-| `cascade-terminate-all-filtered` | Predicate selects several dated roots | Every selected dependent closure terminates; other graphs and their histories are unchanged | `m-op-algebra`, `m-audit-write` |
+| `cascade-terminate-all-filtered` | Predicate selects several dated roots | Every selected dependent closure terminates; other graphs and their histories are unchanged | `m-predicate`, `m-audit-write` |
 | `cascade-insert-all-until` | Explicit collection of business-dated snapshot graphs | Same exclusive interval is applied to every root and dependent in one unit of work | `m-bitemp-write` |
-| `cascade-terminate-all-until` | Explicit or predicate-selected collection of business-dated graphs | Same removal interval is applied atomically to every selected graph | `m-op-algebra`, `m-bitemp-write` |
+| `cascade-terminate-all-until` | Explicit or predicate-selected collection of business-dated graphs | Same removal interval is applied atomically to every selected graph | `m-predicate`, `m-bitemp-write` |
 | `cascade-until-skips-nonbusiness-dependent` | Business-dated root owns a processing-only or non-dated dependent | Pin the chosen rule. Reladomo leaves that target outside both bounded traversals because generated `Until` recursion visits only business-dated targets; recommended Parallax behavior is to preserve that explicit exclusion rather than invent an unbounded side effect | `m-bitemp-write`, `m-audit-write` |
 | `cascade-delete-all-mixed-temporal-parity` | The same mixed temporal graph is removed once through the snapshot/base surface and once through an operation-backed root list | Both representations produce the same logical closure: delete non-dated nodes and terminate dated nodes. This deliberately smooths Reladomo's operation-list implementation restriction | `m-cascade-list`, `m-op-list`, `m-audit-write` |
 | `cascade-shared-dependent-once` | A dependent with multiple lifecycle parents is reachable twice | It is inserted/removed once, or the descriptor is rejected with a defined diagnostic; never duplicate DML | `m-descriptor`, `m-unit-work` |

@@ -68,7 +68,7 @@ from parallax.core.entity import (
     index,
     rel,
 )
-from parallax.core.op_algebra import OperationRejectedError, QueryDefinitionError
+from parallax.core.predicate import OperationRejectedError, QueryDefinitionError
 from parallax.core.temporal_read import (
     LATEST,
     TX_TIME,

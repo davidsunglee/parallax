@@ -2,7 +2,7 @@
 
 SQL generation: the read compiler that lowers one flat ``EntityQuery`` into a canonical
 ``LoweredStatement`` per dialect. Dialect variation enters only through the
-injected ``Dialect`` strategy. ``m-sql`` depends on ``m-op-algebra`` and
+injected ``Dialect`` strategy. ``m-sql`` depends on ``m-predicate`` and
 ``m-dialect``.
 
 The seven names below are the whole supported seam; everything else in this

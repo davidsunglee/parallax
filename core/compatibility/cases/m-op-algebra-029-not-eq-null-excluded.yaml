@@ -1,4 +1,4 @@
-# notEq over a column containing NULLs — three-valued-logic exclusion (m-op-algebra §Null).
+# notEq over a column containing NULLs — three-valued-logic exclusion (m-predicate §Null).
 #
 # `notEq` against a NULL column yields NULL (not true), so the NULL row is
 # EXCLUDED, never returned. Order 4 has a NULL sku, so `sku <> 'B-200'` must drop
@@ -6,7 +6,7 @@
 # 3VL companion to m-op-algebra-003 (notEq over non-null data) — the classic SQL footgun the
 # spec mandates, proven against real data.
 model: models/orders.yaml
-tags: [m-op-algebra, notEq, "null", three-valued-logic, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, notEq, "null", three-valued-logic, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

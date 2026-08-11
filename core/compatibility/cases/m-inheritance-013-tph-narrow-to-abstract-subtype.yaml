@@ -1,4 +1,4 @@
-# Table-per-hierarchy narrow to an ABSTRACT subtype (m-inheritance, m-op-algebra, m-sql).
+# Table-per-hierarchy narrow to an ABSTRACT subtype (m-inheritance, m-predicate, m-sql).
 #
 # targetEntity is the abstract root Animal, narrowed to the abstract subtype [Pet],
 # which resolves to its concrete descendants {Cat, Dog} (the sibling WildBoar is
@@ -10,7 +10,7 @@
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
 model: models/animal.yaml
-tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Animal

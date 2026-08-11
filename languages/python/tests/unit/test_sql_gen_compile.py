@@ -24,7 +24,7 @@ from _corpus_model_support import model, target
 from _support import fake_metamodel
 from _support.sql import compile_read
 from parallax.core import inheritance, relationship, storage_layout
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen import (
@@ -102,7 +102,7 @@ def test_entity_query_target_must_belong_to_the_model() -> None:
         ),
     ],
 )
-def test_deferred_nodes_are_refused(op: oa.Operation, message: str) -> None:
+def test_deferred_nodes_are_refused(op: oa.PredicateNode, message: str) -> None:
     with pytest.raises(SqlGenError, match=message):
         compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
 

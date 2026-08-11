@@ -54,8 +54,8 @@ def test_real_prose_vocabulary_is_the_full_forty_nine_rule_set() -> None:
     assert "metamodel-index-identity-duplicate" in prose  # the foundational resolver rule
     assert "inheritance-temporality-not-root-owned" in prose  # a root-owned family rule
     assert "inheritance-optimistic-locking-not-root-owned" in prose  # the D-25 rule
-    assert "nested-path-first-segment-not-value-object" in prose  # an Operation-rule bullet
-    assert "between-bounds-inverted" in prose  # the bound-ordering Operation rule
+    assert "nested-path-first-segment-not-value-object" in prose  # a Predicate-rule bullet
+    assert "between-bounds-inverted" in prose  # the bound-ordering Predicate rule
     assert "nested-string-predicate-non-string-member" in prose  # the non-string-member rule
     assert "subtype-write-sibling-attribute" in prose  # a Subtype-write-rule bullet
     assert "temporal-keyed-write-multi-row" in prose  # the Instruction-rule bullet

@@ -40,7 +40,7 @@ def test_subtype_selection_schema_is_registered_under_its_own_id() -> None:
 
 
 def test_operation_schema_resolves_the_shared_subtype_selection_reference() -> None:
-    operation = load_schemas(_SCHEMA_PATH.parents[1])["operation.schema.json"]
+    operation = load_schemas(_SCHEMA_PATH.parents[1])["predicate.schema.json"]
     validator = Draft202012Validator(operation, registry=_REGISTRY)
     assert validator.is_valid({"narrow": {"to": ["Animal"], "operand": {"all": {}}}})
 

@@ -1,8 +1,8 @@
 """``parallax.core.deep_fetch`` enforcement scope (m-deep-fetch).
 
 The **pure** deep-fetch planner: it turns a (possibly ``DeepFetch``-wrapped)
-``m-op-algebra`` operation into an ordered :class:`ObjectQueryPlan` — one flat
-root :class:`~parallax.core.op_algebra.EntityQuery` plus a dependency-ordered
+``m-predicate`` operation into an ordered :class:`ObjectQueryPlan` — one flat
+root :class:`~parallax.core.predicate.EntityQuery` plus a dependency-ordered
 list of :class:`FetchLevel` entries,
 each knowing how to build its own child query from its parent level's distinct
 gathered keys. It never compiles a statement (``m-sql``), never executes
@@ -12,7 +12,7 @@ plan by their own modules (``m-op-list --> m-deep-fetch``,
 ``m-snapshot-read --> m-deep-fetch``).
 
 Per the dependency graph, ``m-deep-fetch`` depends on ``m-navigate``
-alone — transitively reaching ``m-op-algebra``, ``m-temporal-read``,
+alone — transitively reaching ``m-predicate``, ``m-temporal-read``,
 ``m-inheritance``, and ``m-relationship``, all of which this module imports
 directly (the DAG permits any edge ``m-navigate`` itself reaches). A level's
 to-many decision and its correlation columns are read off the compiled
@@ -99,7 +99,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
     entity_by_name,
 )
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     And,
     AsOf,
     AsOfRange,
@@ -110,13 +110,13 @@ from parallax.core.op_algebra import (
     Membership,
     Narrow,
     NavigationPath,
-    Operation,
     OrderBy,
     OrderKey,
     PathSegment,
+    PredicateNode,
     Scalar,
 )
-from parallax.core.op_algebra._builders import _canonical_includes
+from parallax.core.predicate._builders import _canonical_includes
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
 
@@ -159,7 +159,7 @@ class CorrelationMember:
     correlation members, not only their columns"), and the three spellings are one
     fact: ``identity`` is the modeled member addressed at the position the join
     names it at, ``column`` is the physical column it maps to, and ``reference``
-    is the `m-op-algebra` ``Class.attribute`` reference string the child query's
+    is the `m-predicate` ``Class.attribute`` reference string the child query's
     ``in`` membership binds against. Bundling them is what keeps them aligned:
     they are derived together from one join endpoint and are never authored.
 
@@ -229,7 +229,7 @@ class FetchLevel:
     back_reference_family: EntityIdentity | None = None
     child_target: EntityIdentity | None = None
     related: CorrelationMember | None = None
-    as_of_terms: tuple[Operation, ...] = ()
+    as_of_terms: tuple[PredicateNode, ...] = ()
     order_keys: tuple[OrderKey, ...] = ()
     narrow_to: tuple[EntityIdentity, ...] | None = None
     source_position: tuple[EntityIdentity, ...] | None = None
@@ -247,7 +247,7 @@ class FetchLevel:
             raise DeepFetchError(
                 f"{self.attach_key!r} is a back-reference level and issues no child query"
             )
-        predicate: Operation = Membership(op="in", attr=reference, values=tuple(parent_keys))
+        predicate: PredicateNode = Membership(op="in", attr=reference, values=tuple(parent_keys))
         if self.as_of_terms:
             predicate = And(operands=(predicate, *self.as_of_terms))
         return EntityQuery(
@@ -272,7 +272,7 @@ class ObjectQueryPlan:
     levels: tuple[FetchLevel, ...]
 
 
-def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> ObjectQueryPlan:
+def plan(entity: EntityMetadata, op: PredicateNode, model: Metamodel) -> ObjectQueryPlan:
     """Plan a deep fetch against ``model`` after canonicalizing include paths.
 
     ``op`` is the read's raw (undeserialized-no-further, but not yet temporally
@@ -311,7 +311,7 @@ def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> ObjectQuery
 
 @dataclass(frozen=True, slots=True)
 class _QueryParts:
-    predicate: Operation
+    predicate: PredicateNode
     temporal: tuple[AsOf | AsOfRange | History, ...]
     narrow_to: tuple[str, ...] | None
     order_by: tuple[OrderKey, ...]
@@ -319,7 +319,7 @@ class _QueryParts:
     paths: tuple[NavigationPath, ...]
 
 
-def _peel_query(op: Operation) -> _QueryParts:
+def _peel_query(op: PredicateNode) -> _QueryParts:
     """Remove the query-wide wrapper spine once, at the planning boundary."""
     temporal: list[AsOf | AsOfRange | History] = []
     narrows: list[Narrow] = []
@@ -601,7 +601,7 @@ def _narrowed_position(
     Each name is an operation reference and resolves model-wide by
     :func:`~parallax.core.metamodel.entity_by_name`'s rule, never into the
     referring Entity's own namespace — the caller classifies the miss in its own
-    vocabulary, as `m-op-algebra`'s validator does for the same spellings.
+    vocabulary, as `m-predicate`'s validator does for the same spellings.
     """
     members: list[EntityIdentity] = []
     for name in to:

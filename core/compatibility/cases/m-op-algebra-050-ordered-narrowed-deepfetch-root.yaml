@@ -1,5 +1,5 @@
 # An ORDER KEY resolves at the position a top-level `narrow` moved the ordered rows to,
-# under a deep fetch (m-op-algebra positional rule, m-inheritance, m-deep-fetch).
+# under a deep fetch (m-predicate positional rule, m-inheritance, m-deep-fetch).
 #
 # The read is positioned at the abstract root `Animal` (effective concrete set
 # {Cat, Dog, WildBoar}). The deep fetch's root operand narrows that position to [Dog] and
@@ -19,7 +19,7 @@
 # through the child level's own IN list, which gathers only Rex's owner id 10, where an
 # `asc` key would gather Bob's 11. `1 + L` = 2 statements.
 model: models/animal.yaml
-tags: [m-op-algebra, m-deep-fetch, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-deep-fetch, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

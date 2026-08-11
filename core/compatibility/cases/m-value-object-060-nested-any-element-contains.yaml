@@ -1,6 +1,6 @@
 # valueObject to-many affix match: nestedContains through a `many` segment wraps the
 # literal on BOTH sides, completing the affix trio beside m-value-object-058/-059
-# (m-op-algebra wildcard rule + any-element, m-sql). Postgres golden only — a
+# (m-predicate wildcard rule + any-element, m-sql). Postgres golden only — a
 # non-equality element predicate is outside MariaDB's containment scope (m-dialect,
 # "Scope of the containment golden").
 #
@@ -14,7 +14,7 @@
 # The oracle uses `position(... in ...)` rather than a pattern, so a mis-derived affix
 # pattern is a row difference rather than the same mistake spelled twice.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, string, contains, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, contains, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

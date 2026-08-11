@@ -1,5 +1,5 @@
 # valueObject to-many: an affix form inside a scoped `where` derives its pattern in the
-# element scope exactly as it does path-scoped (m-op-algebra elementPredicate + wildcard
+# element scope exactly as it does path-scoped (m-predicate elementPredicate + wildcard
 # rule, m-sql). Postgres golden only — a `where` carrying a non-`eq` leaf is outside
 # MariaDB's containment scope (m-dialect, "Scope of the containment golden").
 #
@@ -14,7 +14,7 @@
 # with the empty array (3), the null column (4), the missing keys (5, 6), and the other
 # non-array states (8, 9).
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, startsWith, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, startsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

@@ -39,7 +39,7 @@ _COMPATIBILITY_ROOT = _CORE / "compatibility"
 _SCHEMAS = load_schemas(_CORE)
 _REGISTRY = build_registry(_SCHEMAS)
 _CASE_URL = _SCHEMAS["compatibility-case.schema.json"]["$id"]
-_OP = _SCHEMAS["operation.schema.json"]
+_OP = _SCHEMAS["predicate.schema.json"]
 
 
 def _buffered_validator() -> Draft202012Validator:

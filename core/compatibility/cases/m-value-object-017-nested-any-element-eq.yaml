@@ -1,5 +1,5 @@
 # valueObject to-many filter: a flat predicate through a `many` segment is
-# ANY-ELEMENT (m-value-object to-many, m-op-algebra, m-dialect array-traversal
+# ANY-ELEMENT (m-value-object to-many, m-predicate, m-dialect array-traversal
 # form), on Postgres AND MariaDB.
 #
 # nestedEq(Customer.address.phones.type, 'home') matches a row iff SOME element of
@@ -19,7 +19,7 @@
 # match. The oracle iterates elements a different way per dialect (Postgres `@>`,
 # MariaDB `json_table`).
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

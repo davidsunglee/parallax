@@ -20,7 +20,7 @@ import pytest
 from _corpus_model_support import model, target
 
 from _support.sql import compile_read
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import (
     CompiledPredicate,
@@ -142,7 +142,7 @@ def test_all_renders_the_empty_fragment_and_none_renders_unsatisfiable() -> None
     ],
 )
 def test_write_predicate_vocabulary_matches_the_read_dispatch(
-    op: oa.Operation, expected_sql: str, expected_binds: tuple[object, ...]
+    op: oa.PredicateNode, expected_sql: str, expected_binds: tuple[object, ...]
 ) -> None:
     predicate = compile_write_predicate(op, ACCOUNT, POSTGRES, target(ACCOUNT, "Account"))
     sql, binds = predicate.sql, predicate.binds
@@ -303,7 +303,7 @@ def test_unbound_attribute_is_refused() -> None:
     ],
 )
 def test_a_result_shaping_directive_reaching_a_write_predicate_is_refused(
-    op: oa.Operation,
+    op: oa.PredicateNode,
 ) -> None:
     # `op` MUST arrive bare — a set-based write target is validated bare upstream,
     # so a directive here is a caller wiring defect and refuses exactly as it would
@@ -328,6 +328,6 @@ def test_a_result_shaping_directive_reaching_a_write_predicate_is_refused(
         ),
     ],
 )
-def test_deferred_nodes_are_refused(op: oa.Operation, message: str) -> None:
+def test_deferred_nodes_are_refused(op: oa.PredicateNode, message: str) -> None:
     with pytest.raises(SqlGenError, match=message):
         compile_write_predicate(op, ORDERS, POSTGRES, target(ORDERS, "Order"))

@@ -3,7 +3,7 @@
 Class-level attribute access yields an :class:`AttributeExpr` (the SQLAlchemy
 ``Mapped[T]`` pattern): the seed of an operation predicate, strict-Pyright-clean
 without a plugin. Its comparison / string / membership / null operators build
-frozen ``m-op-algebra`` nodes wrapped in a :class:`Predicate`, which composes with
+frozen ``m-predicate`` nodes wrapped in a :class:`Predicate`, which composes with
 ``&`` / ``|`` / ``~`` and native parentheses into the canonical boolean tree —
 inserting a ``group`` node exactly where an ``or`` binds looser than its enclosing
 ``and`` so an idiomatic operation can never drift from canonical grouping.
@@ -86,7 +86,7 @@ from parallax.core.metamodel import (
     WriteAssignmentError,
     judge_assignment,
 )
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     And,
     Between,
     Comparison,
@@ -108,16 +108,16 @@ from parallax.core.op_algebra import (
     Not,
     NotExists,
     NullCheck,
-    Operation,
     Or,
     OrderKey,
     PathSegment,
+    PredicateNode,
     QueryDefinitionError,
     Scalar,
     StringMatch,
     StringOp,
 )
-from parallax.core.op_algebra.nodes import canonical_subtype_selection
+from parallax.core.predicate._nodes import canonical_subtype_selection
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -286,7 +286,7 @@ class SortKey[E]:
             that makes ``E`` contravariant (see :class:`Predicate`)."""
 
     def nulls_first(self) -> SortKey[E]:
-        """This key with NULLs placed first. Single-shot (m-op-algebra)."""
+        """This key with NULLs placed first. Single-shot (m-predicate)."""
         return SortKey(self.key.nulls_first())
 
     def nulls_last(self) -> SortKey[E]:
@@ -311,7 +311,7 @@ class AllPredicate[E]:
     query written against a position the query is not at.
     """
 
-    op: Operation
+    node: PredicateNode
 
     if TYPE_CHECKING:
 
@@ -333,7 +333,7 @@ class Predicate[E]:
     ancestors' positions.
     """
 
-    op: Operation
+    node: PredicateNode
 
     if TYPE_CHECKING:
 
@@ -379,27 +379,27 @@ class Predicate[E]:
         return Predicate(Or(operands=(*_or_terms(self), *_or_terms(other))))
 
     def __invert__(self) -> Predicate[E]:
-        return Predicate(Not(operand=self.op))
+        return Predicate(Not(operand=self.node))
 
     def __bool__(self) -> bool:
         raise TypeError(_BOOL_HINT)
 
 
-def and_terms(pred: Predicate[Any] | AllPredicate[Any]) -> tuple[Operation, ...]:
-    if isinstance(pred.op, And):
-        return pred.op.operands  # flatten same-combinator nesting (order-preserving)
-    if isinstance(pred.op, Or):
-        return (Group(operand=pred.op),)  # an `or` under an `and` binds looser -> group
-    return (pred.op,)
+def and_terms(pred: Predicate[Any] | AllPredicate[Any]) -> tuple[PredicateNode, ...]:
+    if isinstance(pred.node, And):
+        return pred.node.operands  # flatten same-combinator nesting (order-preserving)
+    if isinstance(pred.node, Or):
+        return (Group(operand=pred.node),)  # an `or` under an `and` binds looser -> group
+    return (pred.node,)
 
 
-def _or_terms(pred: Predicate[Any]) -> tuple[Operation, ...]:
-    if isinstance(pred.op, Or):
-        return pred.op.operands  # flatten; an `and` under an `or` needs no group
-    return (pred.op,)
+def _or_terms(pred: Predicate[Any]) -> tuple[PredicateNode, ...]:
+    if isinstance(pred.node, Or):
+        return pred.node.operands  # flatten; an `and` under an `or` needs no group
+    return (pred.node,)
 
 
-def conjoin(predicates: Sequence[Predicate[Any] | AllPredicate[Any]]) -> Operation | None:
+def conjoin(predicates: Sequence[Predicate[Any] | AllPredicate[Any]]) -> PredicateNode | None:
     """The big-AND of ``predicates`` (flattened, order-preserving), or ``None``
     for zero arguments — the shared builder behind every variadic predicate
     scope, so a bare presence test, a single predicate, and a conjunction can
@@ -409,8 +409,8 @@ def conjoin(predicates: Sequence[Predicate[Any] | AllPredicate[Any]]) -> Operati
     if not predicates:
         return None
     if len(predicates) == 1:
-        return predicates[0].op
-    operands: list[Operation] = []
+        return predicates[0].node
+    operands: list[PredicateNode] = []
     for predicate in predicates:
         operands.extend(and_terms(predicate))
     return And(operands=tuple(operands))

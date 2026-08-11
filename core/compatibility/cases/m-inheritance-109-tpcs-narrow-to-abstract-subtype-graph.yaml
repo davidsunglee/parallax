@@ -1,5 +1,5 @@
 # Table-per-concrete-subtype narrow to an ABSTRACT SUBTYPE, INSTANCE-FORM sibling:
-# the developer-surface per-variant node shape (m-inheritance, m-op-algebra,
+# the developer-surface per-variant node shape (m-inheritance, m-predicate,
 # m-case-format, m-sql).
 #
 # Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
@@ -10,7 +10,7 @@
 # `m-inheritance-052` remains the values-lane witness (the flat superset row); this is the
 # object-lane (developer-surface `db.find`) witness.
 model: models/document.yaml
-tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Document

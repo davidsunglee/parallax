@@ -1,5 +1,5 @@
 # `exists` over a TABLE-PER-CONCRETE-SUBTYPE polymorphic target NARROWED to an
-# abstract subtype (m-navigate, m-op-algebra, m-inheritance, m-sql, resolved Q7 + Q10).
+# abstract subtype (m-navigate, m-predicate, m-inheritance, m-sql, resolved Q7 + Q10).
 #
 # `Folder.documents` targets the abstract root Document; the `narrow` in the filter's
 # `op` names that relationship target and constrains it to the abstract subtype
@@ -15,7 +15,7 @@
 # Non-trivial (grouped-OR semi-join + narrow) case => referenceSql is the naive
 # per-branch `id in (select fk …)` oracle over just the narrowed branches.
 model: models/document.yaml
-tags: [m-navigate, m-op-algebra, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Folder

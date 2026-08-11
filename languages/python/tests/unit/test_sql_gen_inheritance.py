@@ -19,7 +19,7 @@ import pytest
 from _corpus_model_support import formed, model, target
 
 from _support.sql import compile_read
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import SqlGenError
 
@@ -302,7 +302,7 @@ def test_tph_top_level_narrow_partitions_before_variant_specific_document_cast()
     assert compiled.statement.binds == ("cash", "detail", Decimal("10.0"))
 
 
-def _heterogeneous_payment_predicate() -> oa.Operation:
+def _heterogeneous_payment_predicate() -> oa.PredicateNode:
     return oa.Or(
         operands=(
             oa.Narrow(
@@ -512,7 +512,7 @@ def test_tph_narrowed_projection_drops_slots_outside_the_position() -> None:
 def test_tph_equivalent_narrow_spellings_collapse() -> None:
     # `to: [Pet]` (the abstract subtype) and `to: [Cat, Dog]` (its explicit concrete
     # descendants) resolve to the same effective set and MUST lower identically,
-    # regardless of the authored `to` order or spelling (m-op-algebra / m-sql).
+    # regardless of the authored `to` order or spelling (m-predicate / m-sql).
     by_abstract = compile_read(
         oa.Narrow(to=("Pet",), operand=oa.All()),
         ANIMAL,

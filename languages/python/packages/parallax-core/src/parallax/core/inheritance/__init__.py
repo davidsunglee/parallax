@@ -170,7 +170,7 @@ def family_variant_name(facet: InheritanceFacet, concrete: EntityIdentity) -> st
 # validator MUST enforce before the target-validity rule, pre-SQL. `entity`   #
 # is the write's resolved target (a concrete subtype for an idiomatic keyed   #
 # verb; the family root by the rejected lane's own "no explicit handle"       #
-# default, `m-op-algebra`'s target-resolution convention reused for writes)   #
+# default, `m-predicate`'s target-resolution convention reused for writes)   #
 # -- an abstract `entity` is itself the LAST-checked defect, never short-     #
 # circuited ahead of the more specific payload-shape rules.                   #
 # --------------------------------------------------------------------------- #

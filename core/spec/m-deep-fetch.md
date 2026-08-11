@@ -3,7 +3,7 @@
 `m-deep-fetch` specifies how **deep fetch** eagerly populates an object graph
 while **eliminating N+1** round trips. Per the dependency graph, `m-deep-fetch`
 depends on `m-navigate` alone (deep fetch traverses relationships). The
-`deepFetch` **algebra node** is `m-op-algebra`; the **SQL emission** is `m-sql`.
+`deepFetch` **algebra node** is `m-predicate`; the **SQL emission** is `m-sql`.
 This module ties them to observable behavior. The two lifecycle result surfaces
 — operation-backed lists (`m-op-list`) for the managed lifecycle, snapshot
 graphs (`m-snapshot-read`) for the plain-value lifecycle — sit **above** deep
@@ -19,7 +19,7 @@ own read (`m-value-object`, "Materialization and navigation contract").
 ## Deep fetch: one query per non-empty relationship level
 
 `deepFetch(operand, paths)` resolves `operand` (the root query), then eagerly
-fetches the canonical include-path set owned by `m-op-algebra`. That module owns
+fetches the canonical include-path set owned by `m-predicate`. That module owns
 the path and segment grammar, canonical ordering, duplicate collapse, maximal-
 path rule, and the distinction between broad and narrowed paths. This module
 consumes that canonical set and owns its level planning. The normative guarantee:
@@ -124,7 +124,7 @@ the non-`NULL` values in the declared direction.
 
 A deep-fetch hop whose relationship target is a **polymorphic position**
 (`m-inheritance` — an abstract root or abstract subtype) eagerly fetches concrete
-instances across the family. `m-op-algebra` owns the segment's optional `narrow`
+instances across the family. `m-predicate` owns the segment's optional `narrow`
 grammar; this planner resolves that shared Subtype Selection and fetches only the
 resolved subset of the relationship target. A selection escaping that target is
 `narrow-outside-relationship-target` (`m-navigate`).
@@ -173,7 +173,7 @@ counting as distinct.
 
 ### Path-root guards
 
-The optional path-root `narrow` owned by `m-op-algebra` **guards which queried
+The optional path-root `narrow` owned by `m-predicate` **guards which queried
 objects the path starts from**. It is the deliberate opposite of a segment
 narrow, and the contrast is the whole of its planning semantics:
 

@@ -14,7 +14,7 @@
 # unguarded WildBoar Tusker carries no `owner` key at all: an excluded root never
 # participated in the path, which is not the same observation as having no owner.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

@@ -63,7 +63,7 @@ def test_parse_dependency_graph_rejects_missing_block() -> None:
 
 def test_transitive_closure_follows_edges() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
-    closure = dag.transitive_closure(adjacency, "parallax.core.op_algebra")
+    closure = dag.transitive_closure(adjacency, "parallax.core.predicate")
     # op-algebra depends on metamodel + inheritance, inheritance reaches model
     # formation, and both reach core. No path to the descriptor scope: no
     # behavioral module depends on descriptor.
@@ -80,14 +80,14 @@ def test_forbidden_respects_the_dag() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
     # A permitted dependency is never forbidden...
-    assert "parallax.core.base" not in forbidden["parallax.core.op_algebra"]
+    assert "parallax.core.base" not in forbidden["parallax.core.predicate"]
     # ...while a non-edge is.
-    assert "parallax.core.sql_gen" in forbidden["parallax.core.op_algebra"]
+    assert "parallax.core.sql_gen" in forbidden["parallax.core.predicate"]
     # Nothing in the common runtime depends on the descriptor distribution, so
     # every core scope — behavioral scopes and the entity frontend alike — is
     # forbidden from importing it. The one descriptor/runtime edge runs the other
     # way, and only from the descriptor package's private hub child scope.
-    assert "parallax.descriptor" in forbidden["parallax.core.op_algebra"]
+    assert "parallax.descriptor" in forbidden["parallax.core.predicate"]
     assert "parallax.descriptor" in forbidden["parallax.core.inheritance"]
     assert "parallax.descriptor" in forbidden["parallax.core.entity"]
     assert "parallax.core.entity" not in forbidden["parallax.descriptor._hub"]
@@ -119,8 +119,8 @@ def test_build_adjacency_fails_on_mapped_importer_with_unmapped_target() -> None
 def test_build_adjacency_skips_unmapped_importer() -> None:
     # A deferred / out-of-slice importer the Python target does not enforce is
     # skipped, not treated as a stale-map error.
-    adjacency = dag.build_adjacency([("m-agg", "m-op-algebra")])
-    assert adjacency["parallax.core.op_algebra"] == frozenset()
+    adjacency = dag.build_adjacency([("m-agg", "m-predicate")])
+    assert adjacency["parallax.core.predicate"] == frozenset()
 
 
 def test_build_adjacency_fails_on_unknown_support_dependency(
@@ -650,7 +650,7 @@ def test_an_asymmetric_child_grant_becomes_one_named_exception() -> None:
     ]
     # Only the *direct* extra grant needs naming: ignoring the first hop also
     # withdraws every indirect chain that reaches further through it.
-    assert "parallax.core.op_algebra" in forbidden["parallax.descriptor"]
+    assert "parallax.core.predicate" in forbidden["parallax.descriptor"]
     # A symmetric child chain — every handle child is narrower — needs none.
     assert dag.child_grant_exceptions(adjacency, "parallax.snapshot.handle") == []
 
@@ -726,7 +726,7 @@ def test_the_preflight_seam_grants_the_query_scope_not_the_frontend() -> None:
         {
             "parallax.core.entity._query",
             "parallax.core.metamodel",
-            "parallax.core.op_algebra",
+            "parallax.core.predicate",
         }
     )
     assert "parallax.core.db_port" in dag.transitive_closure(adjacency, "parallax.core.entity")
@@ -986,8 +986,8 @@ def test_illegal_scope_import_fails_lint_imports() -> None:
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
     canary = PY_ROOT / "packages/parallax-core/src/parallax/core/base/_canary_illegal_import.py"
-    # base (m-core) has no permitted dependencies, so importing op_algebra is illegal.
-    canary.write_text("import parallax.core.op_algebra  # deliberate DAG violation\n")
+    # base (m-core) has no permitted dependencies, so importing predicate is illegal.
+    canary.write_text("import parallax.core.predicate  # deliberate DAG violation\n")
     try:
         result = subprocess.run(
             [lint_imports],
@@ -1000,7 +1000,7 @@ def test_illegal_scope_import_fails_lint_imports() -> None:
 
     assert result.returncode != 0, result.stdout
     assert "parallax.core.base" in result.stdout
-    assert "not allowed to import parallax.core.op_algebra" in result.stdout
+    assert "not allowed to import parallax.core.predicate" in result.stdout
 
 
 def test_lint_imports_is_green_without_the_canary() -> None:

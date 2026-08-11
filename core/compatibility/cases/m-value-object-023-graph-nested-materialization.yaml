@@ -9,7 +9,7 @@
 # the positive proof of getter navigation to arbitrary depth with no child round
 # trip. The graph is the DECLARED projection: only declared members appear (the
 # undeclared `zip` inside `geo` is dropped), every declared member is present, and
-# absence collapses exactly as the read predicates do (m-op-algebra Q5) — a null /
+# absence collapses exactly as the read predicates do (m-predicate Q5) — a null /
 # missing / JSON-null / non-object `one` member materializes as null, a null /
 # missing / non-array `many` member as []. Per id: 4 a SQL-NULL address column
 # (whole object null); 5 missing city + geo inner keys (geo all-null, point null,

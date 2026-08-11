@@ -133,7 +133,7 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
 - **`rejected`** — a schema-valid `when.operation`, a `when.write`, **or** an
   inline `when.model` a model-aware validator MUST refuse **before any SQL**,
   naming the violated normative rule in `then.rejectedRule` (`m-value-object` /
-  `m-op-algebra` / `m-inheritance` / `m-storage-layout` / `m-unit-work` negative
+  `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-unit-work` negative
   validation, carrying no golden SQL —
   see *Rejected cases*, below).
 
@@ -276,13 +276,13 @@ keeps the assertion honest across engines.
 | Field | Group | Required | Meaning |
 |---|---|---|---|
 | `model` | top-level | yes | path (relative to `core/compatibility/`) to the model descriptor |
-| `tags` | top-level | yes | module/feature tags (e.g. `["m-op-algebra", "eq"]`); drive coverage + test selection |
+| `tags` | top-level | yes | module/feature tags (e.g. `["m-predicate", "eq"]`); drive coverage + test selection |
 | `lane` | top-level | no | which executor satisfies the case (default `harness`): `harness` — the harness runs it as today; `api-conformance` — schema-validated by the harness but satisfied by each language's API Conformance Suite (see *Case lanes*, below) |
 | `shape` | top-level | yes | the explicit shape discriminator — one of the nine shapes above; the schema `oneOf` keys on this `const` |
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
-| `when.operation` | `when` | read | a canonical `m-op-algebra` node, validated against the operation schema (read cases) |
+| `when.operation` | `when` | read | a canonical `m-predicate` node, validated against the operation schema (read cases) |
 | `when.targetEntity` | `when` | read | the entity the read TARGETS — the queried position `when.operation` starts from (see *Read targeting*, below); REQUIRED on every read case and every scenario / coherence read step |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
 | `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements`; a `uow`-grouped write step MAY additionally carry `on`, naming the find it settles against (see *Settling against a grouped find*, below) |
@@ -321,7 +321,7 @@ keyed or conflict write's `entity`, and a predicate write's `target.entity` —
 carries an Entity spelling under `m-metamodel`'s identifier constraint and parse
 rule: an Entity's local name begins capitalized and every namespace segment is
 lowercase. Each admits the two spellings a reference position admits
-(`m-op-algebra`) — the bare local name, legal wherever it names exactly one
+(`m-predicate`) — the bare local name, legal wherever it names exactly one
 declared Entity of the case's model, or the canonical `<namespace>.<Entity>` —
 and resolves by the same rule.
 
@@ -364,7 +364,7 @@ non-inheritance entity the effective set is the entity itself, so "subset" reduc
 to the pre-inheritance "equal".
 
 This cross-check reads the case's declared `targetEntity` and is deliberately
-weaker than the operation rule it guards: `m-op-algebra`'s positional rule asks
+weaker than the operation rule it guards: `m-predicate`'s positional rule asks
 each reference of the **active position** — the queried position as re-narrowed by
 every enclosing `narrow`, and, for an order key, the position the ordered rows
 occupy — and classifies a violation as `subtype-attribute-outside-narrow-scope`
@@ -373,7 +373,7 @@ this cross-check can still be refused by that rule, and MUST be authored so it i
 not: a `rejected` case is the shape that pins the refusal.
 
 An abstract-target read (an abstract `targetEntity`, or an abstract position
-`narrow`ed with `m-op-algebra`'s `narrow` node) materializes complete concrete
+`narrow`ed with `m-predicate`'s `narrow` node) materializes complete concrete
 instances. Every leaf — a `then.rows` entry or a `then.graph` node — carries a
 **`familyVariant`** key — the concrete subtype's **family variant spelling**
 (`Dog`, `Cat`, …; the canonical qualified Entity spelling when duplicate local
@@ -385,7 +385,7 @@ recomputation like the as-of and PK-allocation oracles. A **concrete-target**
 read carries no `familyVariant` (the caller already knows the variant) and
 projects only that concrete instance's columns in either lane. A `narrow` node
 inside `when.operation` is validated pre-SQL against the family's effective
-concrete-subtype set (`m-op-algebra`); an invalid narrow is a `rejected` case
+concrete-subtype set (`m-predicate`); an invalid narrow is a `rejected` case
 (see the narrow rules in *Rejected cases*).
 
 **A "complete concrete instance" means something different in each result
@@ -677,7 +677,7 @@ cases `then.statements` is an **ordered list** of statement entries (root plus
 the child levels that execute) rather than a single entry, and `then.graph`
 replaces (or accompanies) `then.rows`.
 
-A **path-root guard** (`m-op-algebra`'s `{ to }` beside a path's
+A **path-root guard** (`m-predicate`'s `{ to }` beside a path's
 `segments`) participates in this layer twice, and both are declared rather than
 inferred. Its level's authored `IN` binds must equal the keys gathered from the
 **guarded** root objects alone, so a guard that a case declares but an
@@ -1009,7 +1009,7 @@ expected lowering, never the source from which an adapter deduces the write.
 The canonical write-instruction vocabulary — this predicate-selected shape and
 the keyed `writeSequence` shape — is **hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json)**
-(`m-unit-work`, the write-side analogue of `operation.schema.json`); this document
+(`m-unit-work`, the write-side analogue of `predicate.schema.json`); this document
 references that canonical shape rather than redefining it. `validFrom` is the
 Valid-Time lower bound and `until` the bounded operation's exclusive Valid-Time
 upper bound. `at` is harness/Clock-supplied Transaction-Time context, never an
@@ -1035,7 +1035,7 @@ are deliberately small and structural:
 |---|---|---|
 | `mutation` | yes | one of `update`, `delete`, `terminate`, `updateUntil`, `terminateUntil` |
 | `target.entity` | yes | exact concrete descriptor entity where the operation starts |
-| `target.predicate` | yes | one schema-valid `m-op-algebra` operation; it is a bare write predicate, never a result modifier |
+| `target.predicate` | yes | one schema-valid `m-predicate` operation; it is a bare write predicate, never a result modifier |
 | `assignments` | only `update` / `updateUntil` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
 | `at` | temporal target | harness-supplied Transaction-Time instant for close/chain behavior; context, not an instruction member |
 | `validFrom` | Bitemporal target | Valid-Time lower bound for the plain or bounded temporal operation |
@@ -1044,7 +1044,7 @@ are deliberately small and structural:
 Delete and terminate mutations carry **no** assignments. Assignment list order is
 not SQL order: the target's Entity Layout order determines the emitted `set`
 columns and assignment binds. The model-aware validator validates the predicate
-against `operation.schema.json`, checks entity scope and bare-predicate rules,
+against `predicate.schema.json`, checks entity scope and bare-predicate rules,
 rejects duplicate or framework-owned/unassignable assignments, and requires only
 the temporal coordinates the target profile uses. It rejects a predicate-selected
 inheritance-family write before SQL, as `m-inheritance` requires.
@@ -1399,12 +1399,12 @@ The compatibility harness **validates `then.execution` and does not grade it**;
 each language implementation grades it through the conformance adapter's
 matching `execution` observation (`m-conformance-adapter`).
 
-### Rejected cases (`m-value-object` / `m-op-algebra` / `m-inheritance` / `m-storage-layout` / `m-unit-work`)
+### Rejected cases (`m-value-object` / `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-unit-work`)
 
 A **rejected** case proves a **negative**: that a model-aware validator refuses an
 invalid input **before any SQL is emitted** (resolved question 7). It carries the
 invalid input under `when` — **exactly one** of an `operation` (a schema-valid
-`m-op-algebra` node), a `write` (a neutral write row, ①), **or** a `model` (an
+`m-predicate` node), a `write` (a neutral write row, ①), **or** a `model` (an
 inline invalid model descriptor, below) — and a `then.rejectedRule` naming
 the violated normative rule. A rejected case pins a **single** invalid input:
 carrying **more than one** of `operation` / `write` / `model`, or **none**, is
@@ -1472,25 +1472,25 @@ instruction itself — its verb, its target, and its row count together — is t
 input under test rather than a row's contents.
 
 `then.rejectedRule` is a **closed vocabulary**, each identifier naming a normative
-MUST — the `m-op-algebra` predicate rules (bound ordering, and the
+MUST — the `m-predicate` predicate rules (bound ordering, and the
 nested-predicate resolver), the `m-value-object` materialization/navigation and
-write-validation contracts, and accepted-model formation rules. **Operation**
+write-validation contracts, and accepted-model formation rules. **Predicate**
 rules:
 
 - `between-bounds-inverted` — a `between`'s `lower` bound is strictly greater than
   its `upper`, comparing same-kind literals only (both numbers, or both strings),
-  so the range is empty by construction (`m-op-algebra` bound ordering).
+  so the range is empty by construction (`m-predicate` bound ordering).
 - `nested-path-first-segment-not-value-object` — a nested path's first segment names
-  no value object declared on the queried entity (`m-op-algebra`).
+  no value object declared on the queried entity (`m-predicate`).
 - `nested-path-unknown-member` — an intermediate segment names no declared nested
-  value object, or the leaf names no declared attribute (`m-op-algebra`).
+  value object, or the leaf names no declared attribute (`m-predicate`).
 - `nested-literal-type-mismatch` — a nested comparison / range / membership
   literal's type differs from the leaf attribute's declared neutral type
-  (`m-op-algebra` typed literals).
+  (`m-predicate` typed literals).
 - `nested-string-predicate-non-string-member` — a nested string predicate
   (`nestedLike` / `nestedNotLike` / `nestedStartsWith` / `nestedEndsWith` /
   `nestedContains`, in either nested scope) resolves to a leaf whose declared neutral
-  type is not `String` (`m-op-algebra` non-string-member rule). Checked **before**
+  type is not `String` (`m-predicate` non-string-member rule). Checked **before**
   the typed-literal rule, so a `date` / `time` / `timestamp` / `uuid` / `bytes`
   member — which carries the portable `string` literal and so satisfies the
   typed-literal check — is named here rather than silently accepted.
@@ -1510,23 +1510,23 @@ rules:
 - `narrow-outside-position` — a `narrow` node's resolved effective concrete-subtype
   set is not a **subset** of the **active** polymorphic position supplied by
   context: the read's `targetEntity`, or the enclosing `narrow`'s resolved set, so
-  a nested `narrow` cannot broaden back out (`m-op-algebra` × `m-inheritance`).
+  a nested `narrow` cannot broaden back out (`m-predicate` × `m-inheritance`).
 - `narrow-empty-effective-set` — a `narrow`'s authored `to` list resolves to the
-  **empty** concrete-subtype set (`m-op-algebra` × `m-inheritance`).
+  **empty** concrete-subtype set (`m-predicate` × `m-inheritance`).
 - `subtype-attribute-outside-narrow-scope` — a predicate or order key references a
   concrete-subtype-declared attribute at a polymorphic position that is not
   `narrow`ed to that subtype, so the attribute is not available to every concrete
-  in the effective set (`m-op-algebra` × `m-inheritance`). The reference and the
+  in the effective set (`m-predicate` × `m-inheritance`). The reference and the
   position share an inheritance family, so narrowing is the remedy; when they do
   not, the rule is `attribute-outside-active-position` below.
 - `attribute-outside-active-position` — a predicate or order key references an
   attribute of an Entity that shares **no** inheritance family with the active
   position, so the reference is applicable nowhere in the read and no `narrow`
-  can make it so (`m-op-algebra` positional rule). An order key is asked of the
+  can make it so (`m-predicate` positional rule). An order key is asked of the
   position its ordered rows occupy, which a top-level `narrow` moves.
 - `reference-ambiguous-entity-name` — a reference position names an Entity by a
   **bare local name** that two namespaces of the model declare, so it resolves to
-  no single Entity and the reference resolves nowhere (`m-op-algebra` reference
+  no single Entity and the reference resolves nowhere (`m-predicate` reference
   resolution). It is the resolution half of the two positional rules above, which
   presuppose a reference that resolved: they fire when a reference resolves to an
   Entity **outside** the position, this one when it resolves to **more than one**

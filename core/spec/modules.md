@@ -103,7 +103,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |
 | `m-document-codec` | Portable document encoding, decoding, and patching | active | cases |
 | `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
-| `m-op-algebra` | Query / operation algebra | active | cases |
+| `m-predicate` | Predicate algebra (transitionally including query-wide wrappers) | active | cases |
 | `m-agg` | Aggregation algebra (group-by / having / functions) | deferred | contract |
 | `m-sql` | SQL generation & equivalence contract | active | cases |
 | `m-sql-agg` | SQL lowering for aggregation | deferred | contract |
@@ -169,10 +169,10 @@ m-document-codec --> m-core
 m-document-codec --> m-metamodel
 m-relationship --> m-metamodel
 m-relationship --> m-model-formation
-m-op-algebra --> m-metamodel
-m-op-algebra --> m-inheritance
-m-agg --> m-op-algebra
-m-sql --> m-op-algebra
+m-predicate --> m-metamodel
+m-predicate --> m-inheritance
+m-agg --> m-predicate
+m-sql --> m-predicate
 m-sql --> m-dialect
 m-sql --> m-metamodel
 m-sql --> m-inheritance
@@ -185,7 +185,7 @@ m-dialect --> m-core
 m-db-port --> m-core
 m-db-error --> m-db-port
 m-db-error --> m-dialect
-m-unit-work --> m-op-algebra
+m-unit-work --> m-predicate
 m-unit-work --> m-db-port
 m-unit-work --> m-temporal-read
 m-read-lock --> m-unit-work
@@ -200,12 +200,12 @@ m-execution-log --> m-auto-retry
 m-identity-map --> m-unit-work
 m-identity-map --> m-temporal-read
 m-process-cache --> m-unit-work
-m-op-list --> m-op-algebra
+m-op-list --> m-predicate
 m-op-list --> m-unit-work
 m-batch-write --> m-unit-work
 m-cascade-delete --> m-op-list
 m-cascade-delete --> m-unit-work
-m-navigate --> m-op-algebra
+m-navigate --> m-predicate
 m-navigate --> m-unit-work
 m-navigate --> m-temporal-read
 m-navigate --> m-inheritance
@@ -220,7 +220,7 @@ m-snapshot-read --> m-inheritance
 m-snapshot-read --> m-relationship
 m-snapshot-read --> m-temporal-read
 m-snapshot-read --> m-execution-log
-m-temporal-read --> m-op-algebra
+m-temporal-read --> m-predicate
 m-temporal-read --> m-metamodel
 m-temporal-read --> m-model-formation
 m-temporal-read --> m-inheritance
@@ -254,11 +254,11 @@ construction it may reference any behavioral module it harnesses.
 
 ### Notable directions (and why they may surprise)
 
-- **`m-op-algebra --> m-metamodel`.** Resolved operation nodes carry canonical
+- **`m-predicate --> m-metamodel`.** Resolved operation nodes carry canonical
   model Identities, not descriptor records or authoring strings. Relationship
   execution remains owned by `m-navigate`, which consumes the compiled
   `m-relationship` facet; the operation algebra does not rebuild that facet.
-- **`m-op-algebra --> m-inheritance`.** The `narrow` node constrains a
+- **`m-predicate --> m-inheritance`.** The `narrow` node constrains a
   polymorphic entity position to a subset of its subtypes, and its validity rule
   (the resolved `to` list must be a non-empty subset of the position's **effective
   concrete-subtype set**) is stated in `m-inheritance`'s vocabulary. The algebra
@@ -293,7 +293,7 @@ construction it may reference any behavioral module it harnesses.
   lowers a `narrow` node's tag/branch predicate against the inheritance family
   model, and obtains physical Tables, ordered slots, and branch presence from
   Storage Layout. These direct collaborations are not left to the transitive
-  closure through `m-op-algebra`.
+  closure through `m-predicate`.
 - **`m-document-codec --> m-core`, `m-document-codec --> m-metamodel`.** The codec
   spells a value of the neutral type algebra into a document, and reads a document's
   member back by the type the model declared for it, so it names both the value spaces
@@ -319,9 +319,9 @@ construction it may reference any behavioral module it harnesses.
   *above* it and are populated by it, mirroring the documented
   `m-snapshot-read --> m-deep-fetch` bullet below: the two are peers, and
   neither depends on the other.
-- **`m-navigate --> m-op-algebra`.** Navigation's `navigate`/`exists`/
+- **`m-navigate --> m-predicate`.** Navigation's `navigate`/`exists`/
   `notExists` nodes are algebra vocabulary, so navigation references the
-  algebra directly; before this edge, `m-op-algebra` was reachable from
+  algebra directly; before this edge, `m-predicate` was reachable from
   navigate only transitively, through the now-removed `m-navigate -->
   m-op-list` edge.
 - **`m-navigate --> m-inheritance`.** A relationship target may be a **polymorphic

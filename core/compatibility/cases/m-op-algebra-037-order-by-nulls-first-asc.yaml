@@ -1,5 +1,5 @@
 # orderBy ASCENDING with `nulls: first` over a NULLABLE key — the placement that has
-# no default anywhere, proven on BOTH dialects (m-op-algebra orderBy + m-dialect NULL
+# no default anywhere, proven on BOTH dialects (m-predicate orderBy + m-dialect NULL
 # ordering).
 #
 # Nulls First is the mirror of the canonical nulls-last default, so the dialect that
@@ -11,7 +11,7 @@
 # second-smallest sku, which is exactly how this case separates from
 # m-op-algebra-035.
 model: models/orders.yaml
-tags: [m-op-algebra, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

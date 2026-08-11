@@ -23,7 +23,7 @@ from collections.abc import Callable
 import pytest
 
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.op_algebra import All
+from parallax.core.predicate import All
 from parallax.core.unit_work import (
     ANY_COUNT,
     INFINITY,

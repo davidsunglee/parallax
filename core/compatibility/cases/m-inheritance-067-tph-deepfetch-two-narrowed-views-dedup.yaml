@@ -9,7 +9,7 @@
 # populate independently. Each is a single-concrete view (no `familyVariant`); the
 # child levels project each concrete's own superset and inject `t0.kind = ?`.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

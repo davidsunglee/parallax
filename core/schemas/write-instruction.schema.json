@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/write-instruction.schema.json",
   "title": "Parallax Write Instruction (m-unit-work)",
-  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `operation.schema.json`. A write from any frontend lowers into exactly one keyed or predicate instruction. Valid-Time input is spelled `validFrom`; a bounded `*Until` operation additionally carries `until`, so its window is `[validFrom, until)`. The finite Transaction-Time instant is Clock context supplied at flush and is not an instruction member. The framework-owned optimistic observation is likewise flush-time context: `observedVersion`, `observedTxStart` and `observedValidStart` are forbidden on durable rows. There are no business/processing aliases. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML).",
+  "description": "The canonical, language-neutral write-instruction vocabulary a unit of work buffers and flushes (m-unit-work) — the write-side analogue of `predicate.schema.json`. A write from any frontend lowers into exactly one keyed or predicate instruction. Valid-Time input is spelled `validFrom`; a bounded `*Until` operation additionally carries `until`, so its window is `[validFrom, until)`. The finite Transaction-Time instant is Clock context supplied at flush and is not an instruction member. The framework-owned optimistic observation is likewise flush-time context: `observedVersion`, `observedTxStart` and `observedValidStart` are forbidden on durable rows. There are no business/processing aliases. SERDE ROUND-TRIP CONTRACT: a conforming implementation MUST round-trip every instruction through this canonical form losslessly — `serialize(deserialize(x)) == x` (JSON and YAML).",
   "oneOf": [
     { "$ref": "#/$defs/keyedWriteInstruction" },
     { "$ref": "#/$defs/predicateWriteInstruction" }
@@ -87,7 +87,7 @@
       ]
     },
     "writeTarget": {
-      "description": "The exact entity a predicate-selected write begins from plus its bare `m-op-algebra` predicate. The predicate is validated against `operation.schema.json` and the descriptor-dependent scope / bare-predicate rules separately (it must be a bare write predicate, never a result modifier).",
+      "description": "The exact entity a predicate-selected write begins from plus its bare `m-predicate` predicate. The predicate is validated against `predicate.schema.json` and the descriptor-dependent scope / bare-predicate rules separately (it must be a bare write predicate, never a result modifier).",
       "type": "object",
       "additionalProperties": false,
       "required": ["entity", "predicate"],

@@ -1,6 +1,6 @@
 """The ONE recursive predicate owner (m-sql), over an immutable resolution scope.
 
-Every descent into an `m-op-algebra` predicate happens here. `_navigation` and
+Every descent into an `m-predicate` predicate happens here. `_navigation` and
 `_inheritance` return immutable PLANS and never lower anything; `_compile`
 assembles statements around the fragment this module returns. So this file holds
 the package's only RECURSIVE dispatch over the operation union, and its only
@@ -71,7 +71,7 @@ from parallax.core.metamodel import (
     entity_by_name,
     split_reference,
 )
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     All,
     And,
     AsOf,
@@ -98,9 +98,9 @@ from parallax.core.op_algebra import (
     Not,
     NotExists,
     NullCheck,
-    Operation,
     Or,
     OrderBy,
+    PredicateNode,
     StringMatch,
     StringOp,
 )
@@ -144,7 +144,7 @@ _NESTED_COMPARATORS: dict[str, str] = {
     "nestedLte": "<=",
 }
 # Each nested string predicate's scalar twin. The pattern grammar, the escaping, and
-# the case folding are the SAME rule at both levels (m-op-algebra), so the nested
+# the case folding are the SAME rule at both levels (m-predicate), so the nested
 # family is rendered by mapping onto the scalar kind rather than by a second table.
 _NESTED_STRING_KINDS: dict[NestedStringOp, StringOp] = {
     "nestedLike": "like",
@@ -430,7 +430,7 @@ _FlatNested = (
 # --------------------------------------------------------------------------- #
 # The dispatcher.                                                              #
 # --------------------------------------------------------------------------- #
-def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
+def lower_predicate(op: PredicateNode, scope: ResolutionScope) -> str:
     """Lower one predicate node to a SQL fragment, appending binds in order.
 
     The arms are grouped by which SCOPES admit them, which is the only thing the
@@ -444,7 +444,7 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
        alias.
     2. Everything below the element-scope refusal is entity vocabulary. An
        element scope refuses all of it with one message, deliberately NOT the
-       entity dispatcher's differentiated ones: `m-op-algebra`'s
+       entity dispatcher's differentiated ones: `m-predicate`'s
        `elementPredicate` grammar is a single named production, so what an
        element `where` gets wrong is always the same thing.
     """
@@ -472,7 +472,7 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
         case _ if isinstance(scope, ElementScope):
             raise SqlGenError(
                 f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
-                "(m-op-algebra elementPredicate)"
+                "(m-predicate elementPredicate)"
             )
         case All():
             return ""
@@ -676,7 +676,7 @@ def _lower_navigation(op: Navigate | Exists | NotExists, scope: EntityScope) -> 
 
 
 def _hop_where(
-    inner: Operation | None, correlation: str, child_scope: EntityScope, *extra: str
+    inner: PredicateNode | None, correlation: str, child_scope: EntityScope, *extra: str
 ) -> str:
     """The correlated sub-select's `where` clause: correlation, then the (optional)
     interior predicate, then any trailing fragment (a TPH tag guard) — the shared
@@ -698,7 +698,7 @@ def _hop_where(
 # through m-value-object, which the DAG forbids m-sql from importing.          #
 # --------------------------------------------------------------------------- #
 def _lower_nested(op: _FlatNested, scope: EntityScope) -> str:
-    """Lower a flat `nested*` predicate (m-op-algebra "Nested value-object
+    """Lower a flat `nested*` predicate (m-predicate "Nested value-object
     predicates"): a scalar extraction against the scope's own alias when the path
     stays within `one`-multiplicity members, or — when it crosses a `multiplicity:
     many` member — the any-element array-traversal form (m-sql "To-many — exists /
@@ -719,7 +719,7 @@ def _lower_nested(op: _FlatNested, scope: EntityScope) -> str:
 
 
 def _lower_element_nested(op: _FlatNested, scope: ElementScope) -> str:
-    """The same flat `nested*` family, resolved ELEMENT-relatively (m-op-algebra
+    """The same flat `nested*` family, resolved ELEMENT-relatively (m-predicate
     `elementPredicate`; m-value-object same-element semantics): the path carries
     no `Class.valueObject` prefix, resolves against the scope's container, and
     extracts from the unnested element every predicate in this `where` shares —
@@ -733,7 +733,7 @@ def _lower_element_nested(op: _FlatNested, scope: ElementScope) -> str:
 
 def _flat_vo_path(path: str, scope: EntityScope) -> tuple[ValueObjectMetadata, tuple[str, ...]]:
     """Parse a flat `<Entity>.valueObject(.valueObject)*.attribute` reference
-    (m-op-algebra) into its top-level value object and the path segments after
+    (m-predicate) into its top-level value object and the path segments after
     it (which may cross zero or more nested value objects before reaching a
     leaf, or a `many` member — `_split_at_many` tells the two apart)."""
     entity_name, members = split_reference(path)
@@ -777,7 +777,7 @@ def _lower_comparator(
         _bind_nested_literal(op.upper, leaf_type, scope)
         # One `between`, never two comparisons: through a `many` member the flat
         # family is any-element, so a lowered pair could be satisfied by two
-        # DIFFERENT elements (m-op-algebra).
+        # DIFFERENT elements (m-predicate).
         return f"{casted} between ? and ?"
     if isinstance(op, NestedMembership):
         casted = scope.dialect.nested_cast(extraction, leaf_type)
@@ -789,7 +789,7 @@ def _lower_comparator(
         return fragment if op.op == "nestedIn" else f"not {fragment}"
     if isinstance(op, NestedStringMatch):
         # No cast: the leaf is a `String` member by the non-string-member rule
-        # (m-op-algebra), so the text extraction IS what the pattern matches.
+        # (m-predicate), so the text extraction IS what the pattern matches.
         return _lower_like(
             _NESTED_STRING_KINDS[op.op], op.value, op.case_insensitive, extraction, scope
         )
@@ -821,7 +821,7 @@ def _split_at_many(
     vo: ValueObjectMetadata, segments: Sequence[str]
 ) -> tuple[_VoContainer, tuple[str, ...], tuple[str, ...]] | None:
     """Split a flat predicate's path at the first `multiplicity: many` hop
-    crossed while walking from `vo` (m-op-algebra "Flat predicates through a
+    crossed while walking from `vo` (m-predicate "Flat predicates through a
     `many` segment mean any element matches"). Returns ``(the many container,
     the segments reaching it from vo's own document column, the remaining
     segments addressing a field WITHIN the element)`` — or ``None`` when the
@@ -918,7 +918,7 @@ def _resolve_vo_terminus(
     path: str, entity: EntityMetadata
 ) -> tuple[ValueObjectMetadata, tuple[str, ...], _VoContainer]:
     """Resolve a `nestedExists`/`nestedNotExists` value-object-TERMINATED path
-    (`<Entity>.valueObject(.valueObject)*`, m-op-algebra) to its top-level value
+    (`<Entity>.valueObject(.valueObject)*`, m-predicate) to its top-level value
     object, the full segment chain from that object's own document column to
     the terminal member, and the terminal container itself (`vo` unchanged
     when the path names the top-level object directly, no further segments).

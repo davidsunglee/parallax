@@ -46,7 +46,7 @@ from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.execution_log import TraceRecorder
 from parallax.core.metamodel import Metamodel
-from parallax.core.op_algebra import Operation
+from parallax.core.predicate import PredicateNode
 from parallax.core.unit_work import (
     Concurrency,
     FixedClock,
@@ -78,7 +78,7 @@ def _recording_find(
     real = handle_read.find
 
     def recording(
-        op: Operation,
+        op: PredicateNode,
         meta: Metamodel,
         dialect: Dialect,
         target: str,

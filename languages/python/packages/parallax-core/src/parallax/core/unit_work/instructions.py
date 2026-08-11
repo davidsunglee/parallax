@@ -8,13 +8,13 @@ serde that round-trips them through ``core/schemas/write-instruction.schema.json
 - a **keyed** instruction (:class:`KeyedWrite`) — a ``mutation`` on one ``entity``
   carrying the flat attribute-named neutral write input (``rows``);
 - a **predicate-selected** instruction (:class:`PredicateWrite`) — a ``mutation``
-  on every row of a ``target`` (entity + a bare ``m-op-algebra`` predicate)
+  on every row of a ``target`` (entity + a bare ``m-predicate`` predicate)
   matching that predicate, with ``assignments`` on the update forms.
 
-The embedded predicate is a canonical ``m-op-algebra`` node — the sole place the
-write side reaches the algebra — deserialized through :mod:`parallax.core.op_algebra`
+The embedded predicate is a canonical ``m-predicate`` node — the sole place the
+write side reaches the algebra — deserialized through :mod:`parallax.core.predicate`
 so a malformed predicate is rejected, exactly as the schema defers predicate
-validation to ``operation.schema.json``. Two structural rules keep the instruction
+validation to ``predicate.schema.json``. Two structural rules keep the instruction
 framework-honest and are enforced here:
 
 - **The instant surface is dimension-explicit.** Valid-Time bounds are named
@@ -28,7 +28,7 @@ framework-honest and are enforced here:
   write row; the observation is attached per materialized row at flush
   (:mod:`parallax.core.unit_work.planner`), never carried on the instruction.
 
-Construction is value-only (mirroring ``m-op-algebra`` nodes): structural shape is
+Construction is value-only (mirroring ``m-predicate`` nodes): structural shape is
 validated by :func:`deserialize`; member-name honesty against a metamodel is
 :func:`validate_instruction`.
 """
@@ -41,11 +41,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, cast
 
-from parallax.core import inheritance, op_algebra
+from parallax.core import inheritance
+from parallax.core import predicate as predicate_algebra
 from parallax.core.metamodel import EntityMetadata, entity_by_name
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.op_algebra import Operation
+from parallax.core.predicate import PredicateNode
 
 __all__ = [
     "INSERT_MUTATIONS",
@@ -128,7 +129,7 @@ _FORBIDDEN_ROW_KEYS: Final[frozenset[str]] = frozenset(
 TEMPORAL_KEYED_WRITE_MULTI_ROW: Final[str] = "temporal-keyed-write-multi-row"
 
 # The same vocabulary's classification of a bare Entity spelling two namespaces
-# share, owned normatively by `m-op-algebra` (a property of the reference site,
+# share, owned normatively by `m-predicate` (a property of the reference site,
 # not of the model) and raised here for a write's own target reference.
 REFERENCE_AMBIGUOUS_ENTITY_NAME: Final[str] = "reference-ambiguous-entity-name"
 
@@ -191,7 +192,7 @@ class WriteAssignment:
 @dataclass(frozen=True, slots=True)
 class PredicateSelection:
     """The entity a predicate-selected write begins from plus its bare
-    ``m-op-algebra`` predicate (a canonical operation node).
+    ``m-predicate`` predicate (a canonical operation node).
 
     This is the instruction-level carrier a buffered :class:`PredicateWrite`
     authors, distinct from the finalized :class:`~parallax.core.unit_work.
@@ -199,7 +200,7 @@ class PredicateSelection:
     """
 
     entity: str
-    predicate: Operation
+    predicate: PredicateNode
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,12 +239,12 @@ _ASSIGNMENT_REF = re.compile(
 # wherever it appears.
 _NON_BARE_PREDICATES: Final[Mapping[type[object], str]] = MappingProxyType(
     {
-        op_algebra.OrderBy: "orderBy",
-        op_algebra.Limit: "limit",
-        op_algebra.DeepFetch: "deepFetch",
-        op_algebra.AsOf: "asOf",
-        op_algebra.AsOfRange: "asOfRange",
-        op_algebra.History: "history",
+        predicate_algebra.OrderBy: "orderBy",
+        predicate_algebra.Limit: "limit",
+        predicate_algebra.DeepFetch: "deepFetch",
+        predicate_algebra.AsOf: "asOf",
+        predicate_algebra.AsOfRange: "asOfRange",
+        predicate_algebra.History: "history",
     }
 )
 
@@ -395,9 +396,9 @@ def _target(node: Mapping[str, object]) -> PredicateSelection:
     predicate_doc = target.get("predicate")
     if not isinstance(predicate_doc, Mapping):
         raise WriteInstructionError("predicate write: `target.predicate` must be a mapping")
-    # The embedded predicate is a canonical m-op-algebra node — the sole write-side
-    # reach into the algebra; op_algebra rejects a malformed one.
-    predicate = op_algebra.deserialize(cast("Mapping[str, object]", predicate_doc))
+    # The embedded predicate is a canonical m-predicate node — the sole write-side
+    # reach into the algebra; predicate rejects a malformed one.
+    predicate = predicate_algebra.deserialize(cast("Mapping[str, object]", predicate_doc))
     return PredicateSelection(entity=entity, predicate=predicate)
 
 
@@ -472,7 +473,7 @@ def serialize(instruction: WriteInstruction) -> dict[str, object]:
         "mutation": instruction.mutation,
         "target": {
             "entity": instruction.target.entity,
-            "predicate": op_algebra.serialize(instruction.target.predicate),
+            "predicate": predicate_algebra.serialize(instruction.target.predicate),
         },
     }
     if instruction.assignments:
@@ -668,7 +669,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
                 )
     else:
         entity = _entity(model, instruction.target.entity)
-        op_algebra.validate_operation(entity, instruction.target.predicate, model)
+        predicate_algebra.validate_operation(entity, instruction.target.predicate, model)
         _reject_non_bare_predicate(entity.identity.name, instruction.target.predicate)
         inheritance.reject_predicate_write(entity)
         members = _declared_members(model, entity)
@@ -704,14 +705,14 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
             raise WriteInstructionError(refusal)
 
 
-def _reject_non_bare_predicate(entity_name: str, predicate: Operation) -> None:
+def _reject_non_bare_predicate(entity_name: str, predicate: PredicateNode) -> None:
     """Refuse a write target's predicate that is not BARE (`m-case-format`
     `target.predicate`, `python.md` §5) — a result modifier, a temporal
     wrapper, or a deep fetch anywhere in it, and whole-result narrowing at the
     result position.
 
     ``narrow`` is the one member of that enumeration whose meaning is
-    POSITIONAL, and `m-op-algebra` draws the line: a top-level ``narrow`` is
+    POSITIONAL, and `m-predicate` draws the line: a top-level ``narrow`` is
     "the node a whole-result narrowing produces", while "a `narrow` appearing
     as a predicate term inside a boolean combinator is a filter" over the
     unchanged position. The same distinction admits a ``narrow`` inside a
@@ -721,11 +722,11 @@ def _reject_non_bare_predicate(entity_name: str, predicate: Operation) -> None:
     and a predicate-scoped one is a filter the write's own selection is made
     of, exactly like the ``exists`` that carries it.
 
-    The result position is the ROOT here, and only the root. `m-op-algebra`
+    The result position is the ROOT here, and only the root. `m-predicate`
     fixes the closed set of wrappers that may carry a whole-result narrow up to
     it — ``orderBy`` / ``limit`` / ``deepFetch`` / ``asOf`` /
     ``asOfRange`` / ``history``, the same set
-    :func:`~parallax.core.op_algebra.validate._ordered_scope` resolves an order
+    :func:`~parallax.core.predicate.validate._ordered_scope` resolves an order
     key's position through — and every one of them is itself refused above, at
     any position. Nothing else passes the position through, so no other node
     can hold a whole-result narrow.
@@ -735,7 +736,7 @@ def _reject_non_bare_predicate(entity_name: str, predicate: Operation) -> None:
     (``and(limit(...), eq(...))`` round-trips), and a nested one reaches
     exactly the same lowering the root one does.
     """
-    if isinstance(predicate, op_algebra.Narrow):
+    if isinstance(predicate, predicate_algebra.Narrow):
         raise WriteInstructionError(
             f"{entity_name}: a `narrow` wrapping the whole write predicate is whole-result "
             "narrowing, not a bare write predicate — a predicate-selected write target "
@@ -745,7 +746,7 @@ def _reject_non_bare_predicate(entity_name: str, predicate: Operation) -> None:
     _reject_result_modifier(entity_name, predicate)
 
 
-def _reject_result_modifier(entity_name: str, predicate: Operation) -> None:
+def _reject_result_modifier(entity_name: str, predicate: PredicateNode) -> None:
     """Refuse a result modifier, temporal wrapper, or deep fetch at ANY position
     within a write target's predicate (:func:`_reject_non_bare_predicate`)."""
     wrapper = _NON_BARE_PREDICATES.get(type(predicate))
@@ -755,19 +756,19 @@ def _reject_result_modifier(entity_name: str, predicate: Operation) -> None:
             "a predicate-selected write target carries nothing but a predicate"
         )
     match predicate:
-        case op_algebra.And(operands=operands) | op_algebra.Or(operands=operands):
+        case predicate_algebra.And(operands=operands) | predicate_algebra.Or(operands=operands):
             for operand in operands:
                 _reject_result_modifier(entity_name, operand)
         case (
-            op_algebra.Not(operand=operand)
-            | op_algebra.Group(operand=operand)
-            | op_algebra.Narrow(operand=operand)
+            predicate_algebra.Not(operand=operand)
+            | predicate_algebra.Group(operand=operand)
+            | predicate_algebra.Narrow(operand=operand)
         ):
             _reject_result_modifier(entity_name, operand)
         case (
-            op_algebra.Navigate(op=nested)
-            | op_algebra.Exists(op=nested)
-            | op_algebra.NotExists(op=nested)
+            predicate_algebra.Navigate(op=nested)
+            | predicate_algebra.Exists(op=nested)
+            | predicate_algebra.NotExists(op=nested)
         ):
             if nested is not None:
                 _reject_result_modifier(entity_name, nested)
@@ -783,7 +784,7 @@ def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     every externally produced instruction crosses, so the two are classified
     apart: a bare spelling two namespaces share is the normative
     `reference-ambiguous-entity-name` refusal
-    (:class:`InstructionRejectedError`, `m-op-algebra` "Entity spellings in a
+    (:class:`InstructionRejectedError`, `m-predicate` "Entity spellings in a
     reference position"), naming the canonical spellings that would resolve;
     anything else names no declared Entity at all and stays a plain
     :class:`WriteInstructionError`. Classifying here is also what keeps an
@@ -798,7 +799,7 @@ def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
         raise InstructionRejectedError(
             REFERENCE_AMBIGUOUS_ENTITY_NAME,
             f"the bare Entity spelling {name!r} is shared by {list(shared)}, so it names no "
-            "single Entity in this model and the write resolves nowhere (m-op-algebra reference "
+            "single Entity in this model and the write resolves nowhere (m-predicate reference "
             "resolution); spell the one this write means",
         )
     raise WriteInstructionError(f"unknown entity {name!r}")

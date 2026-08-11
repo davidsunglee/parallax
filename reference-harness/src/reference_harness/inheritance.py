@@ -141,7 +141,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     }
 )
 
-# Operation-level rules (m-op-algebra x m-inheritance): a SCHEMA-VALID operation a
+# Predicate-level rules (m-predicate x m-inheritance): a SCHEMA-VALID operation a
 # model-aware validator MUST refuse pre-SQL because it narrows or references
 # subtypes incompatibly with the polymorphic position it queries.
 NARROW_OUTSIDE_POSITION = "narrow-outside-position"
@@ -931,7 +931,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
 def _default_position(entity_defs: list[dict[str, Any]]) -> str | None:
     """The position an operation carrying no ``targetEntity`` starts from.
 
-    ``m-op-algebra``'s model-aware default: the inheritance family root when the
+    ``m-predicate``'s model-aware default: the inheritance family root when the
     descriptor declares one, else its first declared entity — the position a
     single-entity case queries.
     """
@@ -1131,7 +1131,7 @@ def validate_operation_inheritance(
     """Reject an operation that narrows or references entities outside its position.
 
     The read-side counterpart of the write-derivation oracle: it walks the operation
-    tree and raises :class:`RejectionError` with the violated ``m-op-algebra`` narrow
+    tree and raises :class:`RejectionError` with the violated ``m-predicate`` narrow
     or positional-attribute rule. It runs on EVERY descriptor, not only one declaring
     an inheritance family: a standalone entity's effective concrete set is itself, so
     the same subset test rejects a reference naming an unrelated entity
@@ -1139,7 +1139,7 @@ def validate_operation_inheritance(
 
     *position* is the polymorphic position the operation starts from (a read's
     ``targetEntity``); a rejected operation case carries no ``targetEntity``, so
-    *position* defaults to what ``m-op-algebra`` fixes — the inheritance family root
+    *position* defaults to what ``m-predicate`` fixes — the inheritance family root
     when the descriptor declares one, else its first declared entity.
 
     Each ``narrow``'s subset check binds to the ACTIVE position threaded and
@@ -1256,7 +1256,7 @@ def _ordered_position(
     through the wrappers that return their operand's own rows
     (:data:`OPERAND_ROW_WRAPPER_TAGS`) and no other node. A ``narrow`` inside a
     boolean combinator is a predicate term over the same position and moves
-    nothing (m-op-algebra).
+    nothing (m-predicate).
     """
     if not isinstance(node, dict) or len(node) != 1:
         return current_set
@@ -1274,7 +1274,7 @@ def _check_attribute_position(family: Family, current_set: list[str], attr_ref: 
     """Reject an attribute reference that is not applicable to the active position.
 
     The rule is measured against the entity the reference NAMES, not the ancestor
-    that declares the member: ``m-op-algebra`` states it as "the active position's
+    that declares the member: ``m-predicate`` states it as "the active position's
     effective set is a subset of the referenced Entity's". A reference is a claim
     about which rows it addresses, so ``Dog.name`` addresses dogs whether or not
     ``name`` is inherited — at a broader position it would lower to the shared

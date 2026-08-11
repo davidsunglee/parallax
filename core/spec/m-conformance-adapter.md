@@ -120,7 +120,7 @@ Example:
     "version": "0.1.0"
   },
   "capabilities": {
-    "modules": ["m-core", "m-descriptor", "m-op-algebra", "m-sql", "m-dialect", "m-case-format"],
+    "modules": ["m-core", "m-descriptor", "m-predicate", "m-sql", "m-dialect", "m-case-format"],
     "dialects": ["postgres"],
     "caseShapes": ["read"],
     "caseTags": {
@@ -135,7 +135,7 @@ Example:
 Capability claims are deliberately **case-tag aware**. `modules`,
 `dialects`, and `caseShapes` are broad filters; `caseTags` is an optional
 fine-grained filter over the compatibility case's own `tags` array. This lets a
-partial implementation honestly claim, for example, `m-op-algebra` predicate reads
+partial implementation honestly claim, for example, `m-predicate` predicate reads
 while deferring aggregation (`m-agg`) reads, or `m-unit-work` transaction/write
 cases while deferring the `m-process-cache` query-cache and identity-cache
 scenarios.
@@ -158,7 +158,7 @@ A case command is claimed only when **all** of these are true:
 - the command is listed in `commands`
 - the requested dialect is listed in `dialects`
 - the case shape is listed in `caseShapes`
-- every module-like tag on the case (`m-core`, `m-op-algebra`, …) is
+- every module-like tag on the case (`m-core`, `m-predicate`, …) is
   listed in `modules`
 - if `caseTags.include` is present, the case has at least one listed tag
 - if `caseTags.exclude` is present, the case has none of the listed tags
@@ -403,7 +403,7 @@ assert different things:
 - a rejected case executes **no SQL** and requires **no provisioning or
   dialect**: an adapter whose claim includes the `rejected` caseShape **MUST**
   report `rejectedRule` — the classified normative rule identifier
-  (`m-op-algebra` / `m-navigate` / `m-value-object` / `m-inheritance`) the
+  (`m-predicate` / `m-navigate` / `m-value-object` / `m-inheritance`) the
   input was refused with — with `roundTrips: 0`. This obligation is
   unconditional for every claimant of the shape; the schema field itself stays
   optional and additive, exactly like `errorClass` before it, so an existing
@@ -476,7 +476,7 @@ values yet are distinct pinned views (`m-identity-map`). An adapter grading a
 managed-slice case therefore compares object references, not sorted PK values.
 
 An **abstract-target read** — an abstract `targetEntity`, or an abstract position
-`narrow`ed with `m-op-algebra`'s `narrow` node — materializes complete concrete
+`narrow`ed with `m-predicate`'s `narrow` node — materializes complete concrete
 instances, so each observed row (and each `graph` leaf) additionally carries a
 **`familyVariant`** key: the concrete subtype's family variant spelling (`Dog`,
 `Cat`, …; a canonical qualified Entity spelling when duplicate local concrete

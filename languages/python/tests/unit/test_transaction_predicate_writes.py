@@ -59,7 +59,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution_log import DatabaseCallFailed, ExecutionLog
-from parallax.core.op_algebra import OperationRejectedError
+from parallax.core.predicate import OperationRejectedError
 from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,

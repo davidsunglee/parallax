@@ -35,7 +35,7 @@ def _valid_describe() -> dict:
             "modules": [
                 "m-core",
                 "m-descriptor",
-                "m-op-algebra",
+                "m-predicate",
                 "m-sql",
                 "m-unit-work",
                 "m-dialect",

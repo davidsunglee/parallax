@@ -1,6 +1,6 @@
 # Shared local name: one model declaring the SAME local Entity name in two
 # namespaces — the reference-position exemplar for both halves of
-# m-op-algebra "Entity spellings in a reference position".
+# m-predicate "Entity spellings in a reference position".
 #
 # This descriptor is an instance of core/schemas/metamodel.schema.json. Entity
 # Identity is namespace-qualified (m-metamodel), so `archive.SharedVariant` and

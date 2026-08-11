@@ -30,7 +30,7 @@
 #   id 4 Dee   `profile` present, every leaf an explicit JSON NULL, `origin` null
 #   id 5 Eli   `profile` is SQL NULL — the whole column
 #
-# All three collapse to "not present" for every comparison below (m-op-algebra), and
+# All three collapse to "not present" for every comparison below (m-predicate), and
 # `entries` reads as zero elements for all of them alike — the empty array, the missing
 # key, and the null column are one logical zero state.
 #
@@ -89,7 +89,7 @@ parallax.compatibility.Sample:
       entries: []
   # id 4 (Dee): every leaf key is PRESENT with an explicit JSON null, and so is the
   # `one` occurrence. Distinct from id 3 in the document, identical to it through
-  # every comparison (m-op-algebra absence collapse).
+  # every comparison (m-predicate absence collapse).
   - id: 4
     label: Dee
     profile:

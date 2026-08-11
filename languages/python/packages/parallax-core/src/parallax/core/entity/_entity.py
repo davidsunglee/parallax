@@ -59,8 +59,8 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
 )
-from parallax.core.op_algebra import All, Narrow, Operation, QueryDefinitionError
-from parallax.core.op_algebra.nodes import canonical_subtype_selection
+from parallax.core.predicate import All, Narrow, PredicateNode, QueryDefinitionError
+from parallax.core.predicate._nodes import canonical_subtype_selection
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -546,7 +546,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
                 code="query-path-invalid",
                 message="narrow alternatives must not repeat the same subtype",
             )
-        operand: Operation = where.op if where is not None else All()
+        operand: PredicateNode = where.node if where is not None else All()
         return Predicate(Narrow(to=canonical_subtype_selection(to), operand=operand))
 
     def edit(self, **changes: object) -> Self:

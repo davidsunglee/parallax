@@ -10,7 +10,7 @@ It performs m-case-format layer 1 statically (no database needed):
   (Draft 2020-12).
 * **Descriptor validation** — every model under ``models/`` validates against the
   metamodel schema.
-* **Operation validation** — every case's ``when.operation`` (and each
+* **Predicate validation** — every case's ``when.operation`` (and each
   scenario/coherence step's ``find``) validates against the operation schema.
 * **Case validation** — every case validates against the compatibility-case
   schema, and its referenced model + golden-SQL dialect keys are coherent.
@@ -373,7 +373,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
             errors.append(f"meta-schema: {name} is not a valid JSON Schema: {exc}")
 
     metamodel_schema = schema_map["metamodel.schema.json"]
-    operation_schema = schema_map["operation.schema.json"]
+    operation_schema = schema_map["predicate.schema.json"]
     case_schema = schema_map["compatibility-case.schema.json"]
 
     # 2. Every model descriptor validates against the metamodel schema, the
@@ -418,7 +418,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                 f"case {case_path.name}: {problem}" for problem in validate_execution(case)
             )
         # The action under test lives under `when`; a read case's operation and a
-        # scenario/coherence step's `find` are canonical m-op-algebra nodes that
+        # scenario/coherence step's `find` are canonical m-predicate nodes that
         # must also validate against the operation algebra schema.
         when = case.get("when") if isinstance(case, dict) else None
         when = when if isinstance(when, dict) else {}

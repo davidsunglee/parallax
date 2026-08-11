@@ -14,7 +14,7 @@ normative rule in `then.rejectedRule`. These tests exercise, without a database:
   wrong rule is named; and
 * the purely regex-level negatives (an empty path after the value-object name, a
   bad-cased segment, a reference rooted at a value object rather than an Entity)
-  are the OPERATION SCHEMA's job — they are rejected by `operation.schema.json`'s
+  are the OPERATION SCHEMA's job — they are rejected by `predicate.schema.json`'s
   reference grammars, NOT by a `rejected` case (resolved Q7 keeps them as
   schema-validation unit tests).
 """
@@ -87,7 +87,7 @@ from reference_harness.write_validate import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
-_OPERATION_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "operation.schema.json"
+_OPERATION_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "predicate.schema.json"
 _REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
 
 
@@ -473,7 +473,7 @@ def test_resolve_effective_definition_inherits_temporality_from_the_root_only() 
 
 def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None:
     used = {c.rejected_rule for c in _rejected_cases()}
-    # Operation negatives (three of the four contract clauses, the typed-literal
+    # PredicateNode negatives (three of the four contract clauses, the typed-literal
     # MUST, and the bound-ordering MUST). `find-root-value-object` is deliberately
     # absent: a value-object occurrence name is lowercase-initial and an Entity's
     # local name capitalized, so no serialized document can spell a reference rooted
@@ -861,7 +861,7 @@ def test_nested_range_with_inverted_bounds_rejected_in_both_scopes(node: dict[st
     assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
 
 
-# --- nested string predicates (m-op-algebra non-string-member rule) -----------
+# --- nested string predicates (m-predicate non-string-member rule) -----------
 
 
 @pytest.mark.parametrize(
@@ -916,7 +916,7 @@ def test_nested_string_predicate_on_a_date_member_rejected_in_both_scopes(
     assert exc.value.rule == NESTED_STRING_PREDICATE_NON_STRING_MEMBER
 
 
-# --- range bound ordering (m-op-algebra) -------------------------------------
+# --- range bound ordering (m-predicate) -------------------------------------
 #
 # The bounds are compared by LITERAL KIND, so the rule fires on two numbers or two
 # strings and stands aside for every other pairing. It is the one operation rule that

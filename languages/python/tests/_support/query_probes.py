@@ -12,13 +12,13 @@ from __future__ import annotations
 from typing import Any
 
 from parallax.core.entity._query import FindQuery, lower_find_query
-from parallax.core.op_algebra import Operation, serialize
+from parallax.core.predicate import PredicateNode, serialize
 
 __all__ = ["lowered_document", "lowered_operation"]
 
 
-def lowered_operation(query: FindQuery[Any, Any]) -> Operation:
-    """``query``'s canonical ``m-op-algebra`` operation."""
+def lowered_operation(query: FindQuery[Any, Any]) -> PredicateNode:
+    """``query``'s canonical ``m-predicate`` operation."""
     return lower_find_query(query).operation
 
 

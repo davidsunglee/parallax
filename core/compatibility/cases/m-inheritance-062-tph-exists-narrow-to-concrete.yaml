@@ -1,5 +1,5 @@
 # `exists` over a polymorphic target NARROWED to ONE concrete subtype
-# (m-navigate, m-op-algebra, m-inheritance, resolved Q10).
+# (m-navigate, m-predicate, m-inheritance, resolved Q10).
 #
 # The relationship-target narrowing reuses the `narrow` operation node in the
 # navigation filter's `op` position, where context supplies Pet as the position;
@@ -9,7 +9,7 @@
 #
 # Non-trivial (semi-join + tag) case => referenceSql is the naive `id in (select fk …)` oracle.
 model: models/animal.yaml
-tags: [m-navigate, m-op-algebra, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Person

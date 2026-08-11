@@ -21,7 +21,7 @@
 #
 # Row 2's `note` is absent from its document and row 3's is an explicit JSON null;
 # both read as one absence, the single not-present state a NULL Column has
-# (m-op-algebra). m-storage-layout-021 is the predicate half of that pair.
+# (m-predicate). m-storage-layout-021 is the predicate half of that pair.
 model: models/document-layout.yaml
 tags: [m-storage-layout, m-sql, m-document-codec, m-descriptor, read, json, document-layout, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read

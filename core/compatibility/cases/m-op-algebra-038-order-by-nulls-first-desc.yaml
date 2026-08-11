@@ -1,5 +1,5 @@
 # orderBy DESCENDING with `nulls: first` over a NULLABLE key — the fourth and last
-# direction/placement combination, proven on BOTH dialects (m-op-algebra orderBy +
+# direction/placement combination, proven on BOTH dialects (m-predicate orderBy +
 # m-dialect NULL ordering).
 #
 # This is the row of the table where MariaDB carries the whole compensation: it treats
@@ -12,7 +12,7 @@
 # nulls-last default would have given to the second-largest sku, which is how this
 # case separates from m-op-algebra-036.
 model: models/orders.yaml
-tags: [m-op-algebra, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

@@ -8,7 +8,7 @@
 # uses `offset 0`, while MariaDB uses its maximum-limit form. A flattenable derived
 # table would not provide this guarantee. Both matching rows are returned.
 model: models/document-layout.yaml
-tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Payment

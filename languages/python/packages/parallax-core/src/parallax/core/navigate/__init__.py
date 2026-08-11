@@ -6,20 +6,20 @@ Its single job is **per-hop as-of propagation**: for every ``navigate`` / ``exis
 ``notExists`` hop reached anywhere in an already root-injected operation, resolve the
 relationship's target entity and, when that entity (or its inheritance family) is
 temporal, inject the propagated as-of predicate into the hop's own interior as
-**plain** ``m-op-algebra`` predicate nodes — composed from the identical templates
+**plain** ``m-predicate`` predicate nodes — composed from the identical templates
 ``m-temporal-read`` uses at the root, matched by axis, latest-defaulted — so nothing
 downstream of this module ever needs temporal knowledge.
 
 Polymorphic **SQL emission** (the TPH tag predicate, the TPCS grouped ``OR``) is an
 ``m-sql`` lowering concern (``m-sql`` legally imports ``m-inheritance``
-transitively through ``m-op-algebra``); this module resolves only what
+transitively through ``m-predicate``); this module resolves only what
 **as-of propagation** needs from a
 polymorphic target — the inheritance family's temporal declaration, always carried on
 the family root (`m-inheritance`) — never the tag/branch shape ``m-sql`` derives
 independently and directly from the same metamodel.
 
 Per the dependency graph, ``m-navigate``
-depends on ``m-op-algebra`` (the ``navigate``/``exists``/``notExists`` nodes it walks
+depends on ``m-predicate`` (the ``navigate``/``exists``/``notExists`` nodes it walks
 **are** algebra vocabulary), ``m-unit-work`` (navigation resolves through the unit of
 work), ``m-temporal-read`` (a pinned as-of value propagates per hop — the reason this
 module exists at all, since the DAG forbids ``m-sql`` from importing
@@ -58,7 +58,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
     entity_by_name,
 )
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     And,
     Comparison,
     Exists,
@@ -67,8 +67,8 @@ from parallax.core.op_algebra import (
     Navigate,
     Not,
     NotExists,
-    Operation,
     Or,
+    PredicateNode,
 )
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import conjunction_terms
@@ -79,11 +79,11 @@ _EMPTY_PINS: Mapping[TemporalDimension, str] = MappingProxyType({})
 
 
 def canonicalize(
-    op: Operation,
+    op: PredicateNode,
     model: Metamodel,
     entity: EntityMetadata,
     root_pins: Mapping[TemporalDimension, str] = _EMPTY_PINS,
-) -> Operation:
+) -> PredicateNode:
     """Rewrite every navigation hop in ``op`` to carry its own per-hop as-of term.
 
     ``op`` is the flat predicate after the root's own temporal terms have already
@@ -114,7 +114,7 @@ def canonicalize(
 # --------------------------------------------------------------------------- #
 # Fast pre-check (identity for navigation-free operations).                   #
 # --------------------------------------------------------------------------- #
-def _contains_navigation(op: Operation) -> bool:
+def _contains_navigation(op: PredicateNode) -> bool:
     match op:
         case Navigate() | Exists() | NotExists():
             return True
@@ -133,11 +133,11 @@ def _contains_navigation(op: Operation) -> bool:
 # The rewrite walk (only run once navigation is known to exist somewhere).    #
 # --------------------------------------------------------------------------- #
 def _walk(
-    op: Operation,
+    op: PredicateNode,
     model: Metamodel,
     entity: EntityMetadata,
     root_pins: Mapping[TemporalDimension, str],
-) -> Operation:
+) -> PredicateNode:
     match op:
         case Navigate(rel=rel, op=inner):
             return Navigate(rel=rel, op=_hop_inner(rel, inner, model, entity, root_pins))
@@ -168,11 +168,11 @@ def _walk(
 
 def _hop_inner(
     rel: str,
-    inner: Operation | None,
+    inner: PredicateNode | None,
     model: Metamodel,
     owner: EntityMetadata,
     root_pins: Mapping[TemporalDimension, str],
-) -> Operation | None:
+) -> PredicateNode | None:
     """The hop's rewritten interior: its own navigation walked, then its own
     per-hop as-of term (if temporal) appended after (m-navigate As-of propagation).
 
@@ -251,7 +251,7 @@ def hop_as_of_terms(
     target: EntityMetadata,
     model: Metamodel,
     root_pins: Mapping[TemporalDimension, str],
-) -> tuple[Operation, ...]:
+) -> tuple[PredicateNode, ...]:
     """The per-axis as-of term(s) for a hop's target Entity (m-navigate
     "As-of propagation"): empty for a non-temporal target; one term per its own
     declared dimension (two for a finite instant), Valid-Time-first — the
@@ -268,7 +268,7 @@ def hop_as_of_terms(
     axes = declarer.declared_as_of_axes
     if not axes:
         return ()
-    terms: list[Operation] = []
+    terms: list[PredicateNode] = []
     # A Temporal Dimension's member value IS its canonical axis rank, so
     # Valid-Time-first needs no separate ordering table.
     for axis in sorted(axes, key=lambda item: item.dimension.value):
@@ -284,11 +284,11 @@ def hop_as_of_terms(
 
 
 def _inject_hop_as_of(
-    inner: Operation | None,
+    inner: PredicateNode | None,
     target: EntityMetadata,
     model: Metamodel,
     root_pins: Mapping[TemporalDimension, str],
-) -> Operation | None:
+) -> PredicateNode | None:
     """Append the target Entity's own per-axis as-of term(s) after ``inner``.
 
     A **non-temporal** target carries no as-of term at all (returns ``inner``
@@ -305,7 +305,7 @@ def _inject_hop_as_of(
     if not terms:
         return inner
     if inner is None:
-        conjuncts: tuple[Operation, ...] = terms
+        conjuncts: tuple[PredicateNode, ...] = terms
     else:
         conjuncts = (*conjunction_terms(inner), *terms)
     return conjuncts[0] if len(conjuncts) == 1 else And(operands=conjuncts)

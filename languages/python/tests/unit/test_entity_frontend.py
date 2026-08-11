@@ -68,7 +68,7 @@ from parallax.core.metamodel import (
     derive_temporal_structure,
 )
 from parallax.core.metamodel import Document as AcceptedDocument
-from parallax.core.op_algebra import Comparison, PathSegment, serialize
+from parallax.core.predicate import Comparison, PathSegment, serialize
 
 
 class Customer(Entity, table="customer", namespace="sales"):
@@ -578,8 +578,8 @@ def test_class_level_member_access_seeds_operation_nodes() -> None:
     assert isinstance(Order.id, AttributeExpr)
     predicate = Order.id == 1
     assert isinstance(predicate, Predicate)
-    assert isinstance(predicate.op, Comparison)
-    assert serialize(predicate.op) == {"eq": {"attr": "sales.Order.id", "value": 1}}
+    assert isinstance(predicate.node, Comparison)
+    assert serialize(predicate.node) == {"eq": {"attr": "sales.Order.id", "value": 1}}
     path = Order.customer
     assert isinstance(path, RelationshipPath)
     # A relationship reference names its owner locally, as the wire does; the

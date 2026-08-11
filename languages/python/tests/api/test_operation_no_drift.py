@@ -1,7 +1,7 @@
-"""Operation no-drift guard (m-api-conformance).
+"""PredicateNode no-drift guard (m-api-conformance).
 
 Each idiomatic public-API query the suite authors must LOWER to the exact
-``m-op-algebra`` operation the mirrored corpus case authors — the developer
+``m-predicate`` operation the mirrored corpus case authors — the developer
 surface cannot drift from the graded protocol. The builders here are the source of
 truth for the ``api_suite.EXAMPLES`` snippets; the guard compares each query's
 canonical lowering to the case's ``when.operation``.
@@ -16,7 +16,7 @@ the RAW built predicate's own serialization to the case's ``when.operation`` and
 separately asserting the SAME build raises the classified ``then.rejectedRule``;
 a ``scenario`` case's per-step ``find`` bodies are graded by the executable graph
 stories (``test_story_run.py``) instead, when their own query is trivial
-(a bare primary-key equality already proven by the ``m-op-algebra`` examples
+(a bare primary-key equality already proven by the ``m-predicate`` examples
 above) or their behavior is not a query at all (a mutation/access step).
 
 Most read-only entries below are **derived** from
@@ -84,7 +84,7 @@ from parallax.core import (
     QueryDefinitionError,
 )
 from parallax.core.entity._model import model_of
-from parallax.core.op_algebra import serialize
+from parallax.core.predicate import serialize
 from parallax.core.temporal_read import LATEST
 from parallax.snapshot.handle._preflight import preflight_find
 
@@ -215,7 +215,7 @@ def test_expression_rejects_bool_misuse() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Rejected-case proofs (m-op-algebra / m-navigate / m-value-object): a rejected #
+# Rejected-case proofs (m-predicate / m-navigate / m-value-object): a rejected #
 # case's `when.operation` never reaches execution — the SAME model-aware       #
 # `validate_operation` the corpus's own rejected lane calls                    #
 # (m-conformance-adapter) runs at the shared read gate rather than at          #
@@ -276,7 +276,7 @@ REJECTED_TARGETS: dict[str, type[Entity]] = {
 def test_rejected_predicate_serializes_to_the_corpus_operation(case_id: str) -> None:
     expected = case_document(_CASES[case_id])["when"]["operation"]
     predicate = REJECTED_BUILDERS[case_id]()
-    assert serialize(predicate.op) == expected
+    assert serialize(predicate.node) == expected
 
 
 # case id -> the Domain Model the rejected query is executed against.

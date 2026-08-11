@@ -10,7 +10,7 @@
 # attribute lives inside that SAME `address` column — never an extra column, row,
 # or join — so only `address` carries `column`/`mapping`.
 #
-# Its inner fields are read / filtered with the m-op-algebra nested-attribute
+# Its inner fields are read / filtered with the m-predicate nested-attribute
 # access form (a dotted path `Customer.address.field` / `Customer.address.geo.…`).
 # Postgres golden SQL lowers that to a `jsonb_extract_path_text` extraction whose
 # path segments are carried as `?` binds.

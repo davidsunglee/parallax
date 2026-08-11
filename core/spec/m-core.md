@@ -17,7 +17,7 @@ document operation must break aliases without acquiring document-codec semantics
 
 `NeutralType` is the closed structured type algebra every typed model fact
 uses. Metadata (`m-metamodel` attribute and Value Object Attribute types),
-operation literals and assignments (`m-op-algebra`), and neutral rows all reuse
+operation literals and assignments (`m-predicate`), and neutral rows all reuse
 these variants; no module defines a parallel type vocabulary.
 
 ```text
@@ -67,12 +67,12 @@ variant to an equivalent concrete column type through the dialect seam
 
 A `NeutralValue` is a value drawn from the declared `NeutralType`'s logical
 value space. There is no tagged wrapper type: every position that carries a
-`NeutralValue` — an operation literal or assignment value (`m-op-algebra`), a
+`NeutralValue` — an operation literal or assignment value (`m-predicate`), a
 neutral row cell —
 is already typed by its declaration, so the declared type identifies the value
 space and a stored tag could never carry information the declaration does not.
 Wire encodings of these values belong to the serde seam that carries them
-(the `m-op-algebra` operation encoding, the `m-case-format` fixture forms),
+(the `m-predicate` operation encoding, the `m-case-format` fixture forms),
 never to a behavioral algorithm.
 
 | `NeutralType` | Logical value space | Equality / normalization laws |
@@ -134,7 +134,7 @@ functions. Examples include Postgres `jsonb`, MariaDB `json`, and Snowflake
 `VARIANT`.
 
 An implementation **MUST** read and filter a value object's inner fields through
-the nested-attribute access form (`m-op-algebra` `nestedEq` / `nestedNotEq`,
+the nested-attribute access form (`m-predicate` `nestedEq` / `nestedNotEq`,
 lowered to a dialect-specific document extraction by `m-sql` / `m-dialect`). A
 `Json`-typed column **MAY** be `null` when the value object is declared
 `nullable`; otherwise it is `not null` and carries the embedded object.

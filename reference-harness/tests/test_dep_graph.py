@@ -47,16 +47,14 @@ def test_real_dependency_graph_is_a_legal_dag() -> None:
     markdown = (_SPEC_DIR / "modules.md").read_text(encoding="utf-8")
     assert check(markdown) == []
     edges = parse_edges(markdown)
-    assert ("m-sql", "m-op-algebra") in edges  # sanity: a known edge is present
+    assert ("m-sql", "m-predicate") in edges  # sanity: a known edge is present
     assert ("m-sql", "m-storage-layout") in edges
     assert ("m-deep-fetch", "m-navigate") in edges  # the "surprising" direction is declared
     assert ("m-coherence", "m-process-cache") in edges  # coherence keeps caches coherent
 
 
 def test_cycle_is_rejected() -> None:
-    cyclic = (
-        "```dependency-graph\nm-op-algebra --> m-descriptor\nm-descriptor --> m-op-algebra\n```"
-    )
+    cyclic = "```dependency-graph\nm-predicate --> m-descriptor\nm-descriptor --> m-predicate\n```"
     errors = check(cyclic)
     assert any("not a DAG" in e for e in errors)
 
@@ -334,13 +332,13 @@ def test_deferred_and_contract_modules_are_excluded_from_the_gate() -> None:
     # with zero fixtures they do not fail the coverage gate.
     markdown = _catalog_md(
         [
-            ("m-op-algebra", "active", "cases"),
+            ("m-predicate", "active", "cases"),
             ("m-ghost-deferred", "deferred", "cases"),
             ("m-ghost-port", "active", "contract"),
         ]
     )
     catalog = parse_catalog(markdown)
-    assert gated_modules(catalog) == ["m-op-algebra"]
+    assert gated_modules(catalog) == ["m-predicate"]
     assert coverage_errors(markdown, _COMPATIBILITY_ROOT) == []
 
 
@@ -349,17 +347,17 @@ def test_deferred_and_contract_modules_are_excluded_from_the_gate() -> None:
 
 def test_active_to_deferred_edge_is_rejected() -> None:
     markdown = _catalog_md(
-        [("m-op-algebra", "active", "cases"), ("m-agg", "deferred", "cases")],
-        edges=["m-op-algebra --> m-agg"],
+        [("m-predicate", "active", "cases"), ("m-agg", "deferred", "cases")],
+        edges=["m-predicate --> m-agg"],
     )
     errors = active_deferred_edge_errors(markdown)
-    assert any("m-op-algebra" in e and "m-agg" in e for e in errors)
+    assert any("m-predicate" in e and "m-agg" in e for e in errors)
 
 
 def test_deferred_to_active_edge_is_allowed() -> None:
     markdown = _catalog_md(
-        [("m-op-algebra", "active", "cases"), ("m-agg", "deferred", "cases")],
-        edges=["m-agg --> m-op-algebra"],
+        [("m-predicate", "active", "cases"), ("m-agg", "deferred", "cases")],
+        edges=["m-agg --> m-predicate"],
     )
     assert active_deferred_edge_errors(markdown) == []
 
@@ -371,7 +369,7 @@ def test_deferred_to_active_edge_is_allowed() -> None:
 
 
 def _claim_block(
-    modules: str = '["m-core","m-op-algebra"]',
+    modules: str = '["m-core","m-predicate"]',
     shapes: str = '["read","writeSequence"]',
     case_tags: str = '{ "include": ["slice-example-1"] }',
 ) -> str:
@@ -396,7 +394,7 @@ def _claim_block(
 
 
 def _synthetic_slices(
-    modules: str = '["m-core","m-op-algebra"]',
+    modules: str = '["m-core","m-predicate"]',
     shapes: str = '["read","writeSequence"]',
     case_tags: str = '{ "include": ["slice-example-1"] }',
     extra_claims: str = "",
@@ -431,7 +429,7 @@ def _clean_read_case(tags: list[str]) -> dict:
 def test_parse_profile_claims_extracts_every_embedded_claim() -> None:
     claims = parse_profile_claims(_synthetic_slices())
     assert list(claims) == ["slice-example-1"]
-    assert claims["slice-example-1"]["modules"] == ["m-core", "m-op-algebra"]
+    assert claims["slice-example-1"]["modules"] == ["m-core", "m-predicate"]
     assert claims["slice-example-1"]["caseShapes"] == ["read", "writeSequence"]
 
 
@@ -451,7 +449,7 @@ def test_profile_gate_passes_on_a_consistent_slice(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     _write_case(
-        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-example-1"])
+        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-predicate", "slice-example-1"])
     )
     # an untagged case with a stray module must be ignored entirely.
     _write_case(cases, "m-core-001.yaml", _clean_read_case(["m-ghost", "other"]))
@@ -462,7 +460,7 @@ def test_profile_gate_requires_a_single_wellformed_include_tag(tmp_path: Path) -
     cases = tmp_path / "cases"
     _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     _write_case(
-        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-example-1"])
+        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-predicate", "slice-example-1"])
     )
 
     for case_tags in (
@@ -480,7 +478,7 @@ def test_profile_gate_fails_on_a_slice_tag_with_no_claim(tmp_path: Path) -> None
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
-        _clean_read_case(["m-op-algebra", "slice-example-1", "slice-ghost-1"]),
+        _clean_read_case(["m-predicate", "slice-example-1", "slice-ghost-1"]),
     )
     errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("slice-ghost-1" in e and "no claim" in e for e in errors)
@@ -488,27 +486,27 @@ def test_profile_gate_fails_on_a_slice_tag_with_no_claim(tmp_path: Path) -> None
 
 def test_profile_gate_checks_every_claim_independently(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    # slice-example-1 is fully consistent; slice-other-1 claims m-op-algebra with no
+    # slice-example-1 is fully consistent; slice-other-1 claims m-predicate with no
     # tagged case carrying it -> exactly the second slice fails.
     _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
-        _clean_read_case(["m-op-algebra", "slice-example-1"]),
+        _clean_read_case(["m-predicate", "slice-example-1"]),
     )
     _write_case(cases, "m-core-001.yaml", _clean_read_case(["m-core", "slice-other-1"]))
     two = _synthetic_slices(extra_claims=_claim_block(case_tags='{ "include": ["slice-other-1"] }'))
     errors = profile_errors(two, tmp_path)
-    assert any("[slice-other-1]" in e and "m-op-algebra" in e for e in errors)
+    assert any("[slice-other-1]" in e and "m-predicate" in e for e in errors)
     assert not any("[slice-example-1]" in e for e in errors)
 
 
 def test_profile_gate_fails_when_a_claimed_module_is_uncovered(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
-    # only m-core is carried; the claim also lists m-op-algebra -> uncovered.
+    # only m-core is carried; the claim also lists m-predicate -> uncovered.
     _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     errors = profile_errors(_synthetic_slices(), tmp_path)
-    assert any("m-op-algebra" in e and "no tagged case" in e for e in errors)
+    assert any("m-predicate" in e and "no tagged case" in e for e in errors)
 
 
 def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
@@ -518,7 +516,7 @@ def test_profile_gate_fails_on_a_stray_module_tag(tmp_path: Path) -> None:
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
-        _clean_read_case(["m-op-algebra", "m-detach", "slice-example-1"]),
+        _clean_read_case(["m-predicate", "m-detach", "slice-example-1"]),
     )
     errors = profile_errors(_synthetic_slices(), tmp_path)
     assert any("m-op-algebra-002.yaml" in e and "'m-detach'" in e for e in errors)
@@ -528,7 +526,7 @@ def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None
     cases = tmp_path / "cases"
     _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
     _write_case(
-        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-op-algebra", "slice-example-1"])
+        cases, "m-op-algebra-002.yaml", _clean_read_case(["m-predicate", "slice-example-1"])
     )
     # a conflict-shaped tagged case while the claim allows only read/writeSequence.
     _write_case(
@@ -536,7 +534,7 @@ def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None
         "m-core-001.yaml",
         {
             "model": "models/account.yaml",
-            "tags": ["m-op-algebra", "slice-example-1"],
+            "tags": ["m-predicate", "slice-example-1"],
             "shape": "conflict",
             "when": {"write": {"id": 2, "balance": 250.00, "observedVersion": 1}},
             "then": {
@@ -557,7 +555,7 @@ def test_profile_gate_fails_on_a_shape_outside_the_claim(tmp_path: Path) -> None
 def test_profile_gate_fails_on_a_missing_postgres_golden(tmp_path: Path) -> None:
     cases = tmp_path / "cases"
     _write_case(cases, "m-op-algebra-001.yaml", _clean_read_case(["m-core", "slice-example-1"]))
-    no_golden = _clean_read_case(["m-op-algebra", "slice-example-1"])
+    no_golden = _clean_read_case(["m-predicate", "slice-example-1"])
     no_golden["then"]["statements"] = [{"sql": {"mariadb": "select t0.id from orders t0"}}]
     _write_case(cases, "m-op-algebra-002.yaml", no_golden)
     errors = profile_errors(_synthetic_slices(), tmp_path)
@@ -572,7 +570,7 @@ def test_profile_gate_fails_on_an_excluded_tag_when_the_claim_lists_exclude(
     _write_case(
         cases,
         "m-op-algebra-002.yaml",
-        _clean_read_case(["m-op-algebra", "aggregate", "slice-example-1"]),
+        _clean_read_case(["m-predicate", "aggregate", "slice-example-1"]),
     )
     slices = _synthetic_slices(
         case_tags='{ "include": ["slice-example-1"], "exclude": ["aggregate"] }'
@@ -593,7 +591,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
         "m-op-algebra-002.yaml",
         {
             "model": "models/account.yaml",
-            "tags": ["m-core", "m-op-algebra", "m-unit-work", "slice-example-1"],
+            "tags": ["m-core", "m-predicate", "m-unit-work", "slice-example-1"],
             "shape": "scenario",
             "when": {
                 "scenario": [
@@ -624,7 +622,7 @@ def test_profile_gate_accepts_a_scenario_with_per_step_golden(tmp_path: Path) ->
         },
     )
     slices = _synthetic_slices(
-        modules='["m-core","m-op-algebra","m-unit-work"]',
+        modules='["m-core","m-predicate","m-unit-work"]',
         shapes='["read","writeSequence","scenario"]',
     )
     assert profile_errors(slices, tmp_path) == []

@@ -1,6 +1,6 @@
 """``validate_write`` unit tests (m-value-object write validation), over a
 hand-built multi-type synthetic model — the SAME
-"synthetic Widget model" convention `test_op_algebra_validate.py` uses for
+"synthetic Widget model" convention `test_predicate_validate.py` uses for
 `_literal_matches_type`'s full neutral-type sweep, applied here to the write
 side's own value conformance. The 10 in-slice `when.write` rejected corpus
 cases are exercised through the real corpus models in

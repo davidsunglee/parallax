@@ -46,7 +46,7 @@ from _support.clock_probes import inert_instant
 from _support.lowering_probes import lower_instruction, lower_instruction_steps
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
 from parallax.core import inheritance, opt_lock, storage_layout
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.base import STRING
 from parallax.core.db_port import JsonDocument
@@ -724,7 +724,7 @@ def test_materializing_predicate_write_reaching_finalization_is_refused() -> Non
     ids=["bare-predicate", "narrow"],
 )
 def test_inheritance_family_predicate_write_is_rejected_before_sql(
-    predicate: oa.Operation,
+    predicate: oa.PredicateNode,
 ) -> None:
     # `python.md` §5: "a set-based write whose target entity belongs to an
     # inheritance family is REJECTED BEFORE SQL with the corpus's

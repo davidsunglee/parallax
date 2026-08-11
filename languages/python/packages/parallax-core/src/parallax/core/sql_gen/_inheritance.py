@@ -84,7 +84,7 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.op_algebra import Narrow, Operation, OrderKey
+from parallax.core.predicate import Narrow, OrderKey, PredicateNode
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -146,7 +146,7 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 # illegal state to assert against at apply time, and each form's `apply` is    #
 # total — which is what lets `CompiledRead.transform_row` be a single          #
 # structural delegation with no dispatch. This is the module's own documented  #
-# style (the `m-op-algebra` node union), and each form pickles, compares, and  #
+# style (the `m-predicate` node union), and each form pickles, compares, and  #
 # reprs as a plain dataclass with no `__reduce__` and no stored callable.      #
 #                                                                              #
 # The forms keep their module-private spelling: no sibling names them —        #
@@ -411,7 +411,7 @@ def narrow_position(
     concrete-subtype set and its projection supersets.
 
     `validate_operation` runs upstream and guarantees the resolved set is
-    non-empty and a subset of the active position (`m-op-algebra` "the four-step
+    non-empty and a subset of the active position (`m-predicate` "the four-step
     validation rule") before this compiler ever sees the operation, so this need
     only resolve — never re-validate.
     """
@@ -808,7 +808,7 @@ class TphPlan:
     table: str
     position: tuple[EntityIdentity, ...]
     columns: tuple[ProjectedColumn, ...]
-    inner: Operation
+    inner: PredicateNode
     tag: TagPredicate | None
     transform: RowTransform
 
@@ -831,7 +831,7 @@ class TpcsSinglePlan:
     table: str
     position: tuple[EntityIdentity, ...]
     columns: tuple[ProjectedColumn, ...]
-    inner: Operation
+    inner: PredicateNode
     transform: RowTransform
 
     def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
@@ -912,7 +912,7 @@ class TpcsUnionPlan:
 
     branches: tuple[TpcsBranchPlan, ...]
     position: tuple[EntityIdentity, ...]
-    inner: Operation
+    inner: PredicateNode
     transform: RowTransform
 
 
@@ -924,7 +924,7 @@ class BranchNarrowPlan:
     caller lowers the operand FIRST, then guards.
     """
 
-    operand: Operation
+    operand: PredicateNode
     position: tuple[EntityIdentity, ...]
     tag: TagPredicate | None
 
@@ -934,7 +934,7 @@ class BranchNarrowPlan:
 # --------------------------------------------------------------------------- #
 def plan_inheritance_read(
     entity: EntityMetadata,
-    predicate: Operation,
+    predicate: PredicateNode,
     narrow_to: tuple[EntityIdentity, ...] | None,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
@@ -967,10 +967,10 @@ def plan_inheritance_read(
 
 def _read_position(
     view: InheritanceEntityView,
-    predicate: Operation,
+    predicate: PredicateNode,
     narrow_to: tuple[EntityIdentity, ...] | None,
     facet: InheritanceFacet,
-) -> tuple[InheritancePositionView, Operation, bool]:
+) -> tuple[InheritancePositionView, PredicateNode, bool]:
     """The read's queried position, the predicate left to lower under it, and
     whether a top-level `narrow` produced it.
 
@@ -986,7 +986,7 @@ def _plan_tph_read(
     entity: EntityMetadata,
     view: InheritanceEntityView,
     position: InheritancePositionView,
-    inner: Operation,
+    inner: PredicateNode,
     facet: InheritanceFacet,
     storage: StorageLayoutFacet,
     instance_form: bool,
@@ -1038,7 +1038,7 @@ def _plan_tph_read(
 
 def _plan_tpcs_read(
     position: InheritancePositionView,
-    inner: Operation,
+    inner: PredicateNode,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     facet: InheritanceFacet,

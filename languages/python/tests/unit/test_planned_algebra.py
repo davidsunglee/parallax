@@ -37,7 +37,7 @@ import pytest
 from _support.clock_probes import inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
-from parallax.core.op_algebra import All
+from parallax.core.predicate import All
 from parallax.core.unit_work import (
     ANY_COUNT,
     INFINITY,

@@ -40,7 +40,8 @@ import datetime as dt
 from collections.abc import Sequence
 from typing import Any, Final, cast
 
-from parallax.core import deep_fetch, inheritance, op_algebra, read_lock
+from parallax.core import deep_fetch, inheritance, read_lock
+from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.entity import AttributeAssignment, FindQuery
@@ -55,7 +56,7 @@ from parallax.core.metamodel import (
     TemporalDimension,
     entity_by_name,
 )
-from parallax.core.op_algebra import AsOf, Operation, QueryDefinitionError
+from parallax.core.predicate import AsOf, PredicateNode, QueryDefinitionError
 from parallax.core.sql_gen import compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.unit_work import (
@@ -98,7 +99,7 @@ from parallax.snapshot.handle._write_inputs import (
 _ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", "updateUntil"})
 
 
-def _current_selection(predicate: Operation, entity: EntityMetadata) -> Operation:
+def _current_selection(predicate: PredicateNode, entity: EntityMetadata) -> PredicateNode:
     """Complete an internal predicate-write resolve at Latest on every axis."""
     operation = predicate
     for axis in sorted(
@@ -213,7 +214,7 @@ def buffer_predicate(
         "mutation": mutation,
         "target": {
             "entity": selection.target.canonical,
-            "predicate": op_algebra.serialize(selection.predicate),
+            "predicate": predicate_algebra.serialize(selection.predicate),
         },
     }
     if assignments:

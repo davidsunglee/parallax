@@ -859,10 +859,10 @@ class Case:
 
     @property
     def is_rejected(self) -> bool:
-        """True for a negative-validation case (m-value-object / m-op-algebra, Q7).
+        """True for a negative-validation case (m-value-object / m-predicate, Q7).
 
         A ``rejected`` case carries the invalid input under ``when.operation`` (a
-        schema-valid m-op-algebra node) OR ``when.write`` (a neutral write row) and
+        schema-valid m-predicate node) OR ``when.write`` (a neutral write row) and
         a ``then.rejectedRule`` naming the violated normative rule. A model-aware
         validator MUST refuse it BEFORE any SQL is emitted — no golden SQL, no
         dialect, no provisioning; :func:`case_runner.run_case` runs it dialect-free.

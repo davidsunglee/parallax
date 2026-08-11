@@ -1,5 +1,5 @@
 # Table-per-concrete-subtype narrow to MULTIPLE concrete subtypes across branches
-# (m-inheritance, m-op-algebra, m-sql).
+# (m-inheritance, m-predicate, m-sql).
 #
 # targetEntity is the abstract root Document; the `narrow` node constrains it to the
 # explicit concrete list [Invoice, Memo] — two concretes from DIFFERENT branches of
@@ -11,7 +11,7 @@
 # NULLs `body`, and Memo NULLs both `currency` (FinancialDocument's, which Memo does
 # not inherit) and `amount_due`, each with a dialect cast.
 model: models/document.yaml
-tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Document

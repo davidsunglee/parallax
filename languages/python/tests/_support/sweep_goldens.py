@@ -217,7 +217,7 @@ _DOCUMENT_LAYOUT_READS: Final[frozenset[str]] = frozenset(
         "m-navigate-025",
     }
 )
-# The canonical-Entity-spelling read (`m-op-algebra`): a predicate reference names
+# The canonical-Entity-spelling read (`m-predicate`): a predicate reference names
 # one of two twins sharing a local name across namespaces, so the golden proves
 # WHICH Entity a canonical spelling reached — it selects from `archive_shared` and
 # never `catalog_shared`. Its `rejected` counterpart (`m-op-algebra-048`) spells the

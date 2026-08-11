@@ -1,4 +1,4 @@
-"""Model-aware operation validation unit tests (m-op-algebra / m-navigate /
+"""Model-aware Predicate validation unit tests (m-predicate / m-navigate /
 m-value-object).
 
 Each rejected rule is pinned with the exact identifier `validate_operation`
@@ -20,7 +20,7 @@ import pytest
 from _corpus_model_support import formed, records
 
 from parallax.conformance import case_format
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     All,
     And,
     AsOf,
@@ -48,12 +48,12 @@ from parallax.core.op_algebra import (
     Not,
     NotExists,
     NullCheck,
-    Operation,
     OperationRejectedError,
     Or,
     OrderBy,
     OrderKey,
     PathSegment,
+    PredicateNode,
     Scalar,
     StringMatch,
     deserialize,
@@ -171,7 +171,7 @@ _ANIMAL_WITH_A_CHILDLESS_SUBTYPE = Metamodel(
 )
 
 
-def _validate(target: str, op: Operation, meta: Metamodel) -> None:
+def _validate(target: str, op: PredicateNode, meta: Metamodel) -> None:
     """Form ``meta`` into an accepted model, resolve ``target`` to its accepted
     root Metadata, and run the model-aware validator over ``op``."""
     model = formed(meta)
@@ -183,7 +183,7 @@ def _validate(target: str, op: Operation, meta: Metamodel) -> None:
     validate_operation(root, op, model)
 
 
-def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedError:
+def _rejects(op: PredicateNode, meta: Metamodel, target: str) -> OperationRejectedError:
     with pytest.raises(OperationRejectedError) as excinfo:
         _validate(target, op, meta)
     return excinfo.value
@@ -297,7 +297,7 @@ def test_corpus_rejected_case_classifies_to_its_own_rejected_rule(case_id: str) 
 
 
 # --------------------------------------------------------------------------- #
-# between-bounds-inverted (m-op-algebra "Bound-ordering rule").               #
+# between-bounds-inverted (m-predicate "Bound-ordering rule").               #
 # --------------------------------------------------------------------------- #
 def _between(lower: Scalar, upper: Scalar) -> Between:
     return Between(attr="Order.price", lower=lower, upper=upper)
@@ -349,7 +349,7 @@ def test_between_subject_is_resolved_before_its_bounds_are_ordered() -> None:
 
 def _nested_range_scopes(
     lower: Scalar, upper: Scalar, *, path: str, element: str
-) -> tuple[Operation, Operation]:
+) -> tuple[PredicateNode, PredicateNode]:
     """The same range, once path-scoped and once element-scoped, so a rule can be
     asserted at both scopes from one expectation."""
     return (
@@ -419,7 +419,7 @@ def test_nested_negated_membership_type_checks_its_values_in_both_scopes() -> No
 
 # --------------------------------------------------------------------------- #
 # narrow-outside-position / narrow-empty-effective-set                       #
-# (m-op-algebra "the four-step validation rule").                            #
+# (m-predicate "the four-step validation rule").                            #
 # --------------------------------------------------------------------------- #
 def test_narrow_broadening_past_position_rejects() -> None:
     op = Narrow(to=("Person",), operand=All())
@@ -528,8 +528,8 @@ def test_an_ancestors_attribute_is_addressable_from_a_descendant_position() -> N
     ],
     ids=("predicate", "order-key", "abstract-subtype", "disjoint-sibling"),
 )
-def test_the_position_is_measured_against_the_entity_a_reference_names(op: Operation) -> None:
-    # `m-op-algebra`: "the active position's effective set is a subset of the
+def test_the_position_is_measured_against_the_entity_a_reference_names(op: PredicateNode) -> None:
+    # `m-predicate`: "the active position's effective set is a subset of the
     # REFERENCED Entity's" — not the ancestor's that declares the member. `name` is
     # declared on Animal, so measuring the declaring entity would accept `Dog.name`
     # at the root position and, worse, accept `Cat.name` inside a narrow to Dog,
@@ -689,7 +689,7 @@ def test_deep_fetch_path_root_narrow_empty_effective_set_rejects() -> None:
 
 # --------------------------------------------------------------------------- #
 # Value-object structural rules (m-value-object contracts 4/5,               #
-# m-op-algebra nested-predicate resolver).                                   #
+# m-predicate nested-predicate resolver).                                   #
 # --------------------------------------------------------------------------- #
 def test_nested_path_first_segment_not_value_object_rejects() -> None:
     op = NestedComparison(op="nestedEq", path="Customer.contact.city", value="Oslo")
@@ -860,7 +860,7 @@ def test_literal_matches_type_string_and_portable_fallback() -> None:
     assert exc.rule == "nested-literal-type-mismatch"
 
     # date / time / timestamp / uuid / bytes / json ride the portable literal as a
-    # string (m-op-algebra's typed-literal vocabulary has no dedicated carrier).
+    # string (m-predicate's typed-literal vocabulary has no dedicated carrier).
     _validate("Widget", _nested("Widget.spec.whenMade", "2024-01-02"), _MULTI_TYPE_MODEL)
     exc = _rejects(_nested("Widget.spec.whenMade", 1), _MULTI_TYPE_MODEL, "Widget")
     assert exc.rule == "nested-literal-type-mismatch"
@@ -1162,7 +1162,7 @@ _OWNER_PATH = NavigationPath(segments=(PathSegment(rel="Animal.owner"),))
     ids=lambda operand: type(operand).__name__,
 )
 def test_an_order_keys_position_is_seen_through_every_wrapper_that_carries_the_narrow(
-    operand: Operation,
+    operand: PredicateNode,
 ) -> None:
     # A wrapper that returns its operand's own rows cannot move the position those
     # rows occupy, so the ordered narrow is reached through all of them alike —
@@ -1183,7 +1183,7 @@ def test_an_order_keys_position_is_seen_through_every_wrapper_that_carries_the_n
     ids=lambda operand: type(operand).__name__,
 )
 def test_a_narrow_inside_a_combinator_does_not_move_an_order_keys_position(
-    operand: Operation,
+    operand: PredicateNode,
 ) -> None:
     # A narrow under a boolean combinator is a predicate term over the same
     # position, not the whole-result narrowing an order key reads.
@@ -1251,7 +1251,7 @@ def test_a_bare_reference_two_namespaces_share_resolves_nowhere() -> None:
 # allow — bare — against the corpus model declaring `SharedVariant` in two
 # namespaces. The rule is about the spelling failing to resolve, so it fires
 # wherever a position is named, not only where an attribute is referenced.
-_AMBIGUOUS_BY_POSITION: Mapping[str, Operation] = {
+_AMBIGUOUS_BY_POSITION: Mapping[str, PredicateNode] = {
     "attr": Comparison(op="eq", attr="SharedVariant.archiveLabel", value="A-1"),
     "between.attr": Between(attr="SharedVariant.archiveLabel", lower="a", upper="b"),
     "orderBy.keys": OrderBy(operand=All(), keys=(OrderKey(attr="SharedVariant.archiveLabel"),)),

@@ -35,7 +35,7 @@ DIALECTS = available_dialects()
 
 def _case_id(case) -> str:
     # Include the case's tags in the test id so module/feature selectors work,
-    # e.g. ``pytest -k m-op-algebra`` runs every algebra case and ``pytest -k group`` runs
+    # e.g. ``pytest -k m-predicate`` runs every algebra case and ``pytest -k group`` runs
     # the group-precedence pair. Tags are sanitized to id-safe tokens.
     tags = "-".join(tag.replace(" ", "_") for tag in case.tags)
     return f"{case.path.stem}-{tags}" if tags else case.path.stem

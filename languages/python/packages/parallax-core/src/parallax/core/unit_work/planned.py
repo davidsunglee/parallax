@@ -18,7 +18,7 @@ from types import MappingProxyType
 from typing import Final
 
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, ValueObjectIdentity
-from parallax.core.op_algebra import Operation
+from parallax.core.predicate import PredicateNode
 from parallax.core.unit_work.observe import PredecessorRow
 
 __all__ = [
@@ -352,7 +352,7 @@ class PredicateTarget:
     behavior.
     """
 
-    predicate: Operation
+    predicate: PredicateNode
 
 
 @dataclass(frozen=True, slots=True)

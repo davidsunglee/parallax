@@ -9,7 +9,7 @@ constructed once per accepted Metamodel with its batching, concurrency,
 temporal, and audit strategies already wired, and it exposes exactly one
 planning operation, :meth:`WritePlanner.plan`.
 
-**It emits no SQL.** The module DAG pins ``m-unit-work -> m-op-algebra``,
+**It emits no SQL.** The module DAG pins ``m-unit-work -> m-predicate``,
 ``m-unit-work -> m-db-port``, and ``m-unit-work -> m-temporal-read`` (the Edge a
 Write Observation is filed under) — there is deliberately **no** edge to
 ``m-sql``, ``m-dialect``, or any optional policy module (``m-batch-write``,

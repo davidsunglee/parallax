@@ -4,7 +4,7 @@
 
 1. **buffered tracked-row batching** at an `m-unit-work` boundary, where the unit
    of work already holds an enumerated set of objects; and
-2. **predicate-selected writes** over a bare `m-op-algebra` predicate, whose
+2. **predicate-selected writes** over a bare `m-predicate` predicate, whose
    canonical instruction is supplied by `m-case-format`.
 
 It owns only the set-based/readless vocabulary for the second family. Versioning,

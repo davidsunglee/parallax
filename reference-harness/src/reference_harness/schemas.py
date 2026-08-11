@@ -29,7 +29,7 @@ SCHEMA_FILES = (
     "identity.schema.json",
     "subtype-selection.schema.json",
     "metamodel.schema.json",
-    "operation.schema.json",
+    "predicate.schema.json",
     "compatibility-case.schema.json",
     "conformance-adapter.schema.json",
     "write-instruction.schema.json",

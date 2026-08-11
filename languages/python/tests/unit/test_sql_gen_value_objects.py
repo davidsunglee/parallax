@@ -19,7 +19,7 @@ import pytest
 from _corpus_model_support import formed, model, target
 
 from _support.sql import compile_read
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import SqlGenError
 
@@ -47,7 +47,7 @@ def test_nested_null_check_and_membership() -> None:
 def test_nested_range_lowers_to_one_between_with_the_typed_cast() -> None:
     # ONE `between` with the leaf's cast applied once, binding the path then `lower`
     # then `upper` — never two comparisons, which through a `many` member would be a
-    # different predicate (m-op-algebra).
+    # different predicate (m-predicate).
     compiled = compile_read(
         oa.NestedRange(path="Customer.address.geo.elevation", lower=5, upper=12),
         CUSTOMER,
@@ -524,7 +524,7 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
     ],
 )
 def test_entity_vocabulary_inside_an_element_where_is_refused_as_one_grammar(
-    node: oa.Operation,
+    node: oa.PredicateNode,
 ) -> None:
     # The element `where` and the entity predicate share ONE dispatcher, so what
     # keeps them different vocabularies is only where the element refusal sits in
@@ -532,7 +532,7 @@ def test_entity_vocabulary_inside_an_element_where_is_refused_as_one_grammar(
     # `nested*` family, pinned above), before everything else. Every entity-only
     # node therefore refuses with `elementPredicate`'s single message, NOT with
     # the differentiated deep-fetch / temporal / directive refusals the same node
-    # gets at the top level — `m-op-algebra`'s `elementPredicate` is one named
+    # gets at the top level — `m-predicate`'s `elementPredicate` is one named
     # production, so what an element `where` gets wrong is always the same thing.
     with pytest.raises(SqlGenError, match=r"is not a legal nestedExists/nestedNotExists element"):
         compile_read(
@@ -629,7 +629,7 @@ def test_flat_any_element_scalar_collapse_uses_the_same_guard_fragment() -> None
 
 def test_nested_exists_over_a_one_multiplicity_value_object_has_no_lowering_yet() -> None:
     # `geo` is `cardinality: one` — nestedExists over it is schema-legal
-    # (m-op-algebra: "the value object at `path` is present (`one`)…") but has no
+    # (m-predicate: "the value object at `path` is present (`one`)…") but has no
     # goldened Postgres lowering in this corpus, so it refuses loudly rather than
     # guess a shape.
     with pytest.raises(SqlGenError, match=r"one.*multiplicity.*has no goldened lowering yet"):

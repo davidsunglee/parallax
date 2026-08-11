@@ -19,10 +19,10 @@
 #
 # Cyd's `score` is an explicit JSON null; the cast yields SQL NULL, the comparison is
 # unknown, and she is excluded on both engines — the absence collapse a NULL Column
-# would give (m-op-algebra). MariaDB needs no `nulls last` spelling because DESC
+# would give (m-predicate). MariaDB needs no `nulls last` spelling because DESC
 # already places NULLs last there (m-dialect *Null Placement*).
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-sql, m-dialect, m-op-algebra, read, json, document-layout, cast, order-by, limit, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-sql, m-dialect, m-predicate, read, json, document-layout, cast, order-by, limit, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Traveler

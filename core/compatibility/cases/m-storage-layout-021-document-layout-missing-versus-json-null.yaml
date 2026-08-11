@@ -1,5 +1,5 @@
 # A missing key and an explicit JSON null are ONE logical absence, on both engines
-# (m-storage-layout x m-op-algebra absence collapse), on Postgres AND MariaDB.
+# (m-storage-layout x m-predicate absence collapse), on Postgres AND MariaDB.
 #
 # A NULL Column has one not-present state; a document has two, and they are visibly
 # different data: Bo's document carries no `note` key at all, while Cyd's carries
@@ -17,7 +17,7 @@
 # Ada is excluded because her `note` is present with a value — the third state, and
 # the one the pair is measured against.
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-sql, m-op-algebra, m-document-codec, read, json, document-layout, null-handling, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-sql, m-predicate, m-document-codec, read, json, document-layout, null-handling, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Traveler

@@ -3,7 +3,7 @@
 `m-unit-work` is the transaction scope: the unit of work that **buffers,
 finalizes, and flushes** writes, and the automatic read-correctness rules that
 make in-transaction reads safe. It is expressed entirely in terms of **operations
-and object state** (`m-op-algebra`): it depends on `m-op-algebra`, on the
+and object state** (`m-predicate`): it depends on `m-predicate`, on the
 execution port `m-db-port`, and on `m-temporal-read` — whose Edge is the
 coordinate a Write Observation is filed under — but **not** on `m-sql`. The
 dialect-specific SQL the unit of work executes (the read-lock suffix, the
@@ -108,17 +108,17 @@ Every write a unit of work buffers — from any frontend, keyed or predicate-sel
 — is a neutral **write instruction**, the write-side analogue of the operation
 algebra. The canonical, language-neutral shapes are hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json), mirroring
-how `m-op-algebra` hosts `operation.schema.json`; `m-case-format` and
+how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
 `m-conformance-adapter` reference that shape rather than redefining it. There are two:
 
 - a **keyed** instruction — a `mutation` on one `entity` carrying the flat
   attribute-named neutral write input (`rows`);
 - a **predicate-selected** instruction — a `mutation` on every row of a `target`
-  (`entity` plus a bare `m-op-algebra` predicate) matching that predicate, with
+  (`entity` plus a bare `m-predicate` predicate) matching that predicate, with
   `assignments` on the update forms.
 
-The embedded predicate is a canonical `m-op-algebra` node, legal vocabulary here
-because `m-unit-work` already depends on `m-op-algebra` (the dependency-graph edge);
+The embedded predicate is a canonical `m-predicate` node, legal vocabulary here
+because `m-unit-work` already depends on `m-predicate` (the dependency-graph edge);
 the write instruction is the sole place the write side reaches the algebra.
 
 **How a write instruction spells the Entity it addresses.** A keyed instruction's
@@ -128,7 +128,7 @@ of every `assignments[].attr` all carry an Entity spelling, and all three obey
 capitalized, every namespace segment is lowercase, every member identifier is
 lowercase-initial, and the last capitalized segment of a dotted reference is the
 Entity's local name. Each position therefore admits exactly the two spellings a
-reference position admits (`m-op-algebra`) — the bare local name, legal wherever it
+reference position admits (`m-predicate`) — the bare local name, legal wherever it
 names one declared Entity, or the canonical `<namespace>.<Entity>` — and resolves by
 the same rule. An `assignments[].attr` is that Entity spelling followed by one
 member identifier: `Account.balance`, `parallax.compatibility.Account.balance`.
@@ -180,7 +180,7 @@ Three structural rules keep the instruction framework-honest:
 
 A conforming implementation **MUST** round-trip every instruction through the
 canonical form losslessly (`serialize(deserialize(x)) == x`), the write-side of the
-`m-op-algebra` serde contract.
+`m-predicate` serde contract.
 
 A Write Instruction is **buffered author intent** and stays that until flush. It
 is never a Planned Write, and a Planned Write is never serialized back into one.

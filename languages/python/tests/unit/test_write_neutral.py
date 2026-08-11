@@ -33,7 +33,7 @@ from parallax.core.db_port import Row
 from parallax.core.entity._model import model_of
 from parallax.core.entity._query import lower_find_query
 from parallax.core.metamodel import EntityIdentity, entity_by_name
-from parallax.core.op_algebra import Operation, deserialize
+from parallax.core.predicate import PredicateNode, deserialize
 from parallax.core.unit_work import (
     EscapedTransactionError,
     ObjectKey,
@@ -74,7 +74,7 @@ def _graph_request() -> NeutralReadRequest:
     return NeutralReadRequest.graph(target=_account(), operation=_by_id())
 
 
-def _by_id() -> Operation:
+def _by_id() -> PredicateNode:
     return deserialize({"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}})
 
 

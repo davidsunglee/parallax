@@ -45,7 +45,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     ValueObjectMetadata,
 )
-from parallax.core.op_algebra import PathSegment
+from parallax.core.predicate import PathSegment
 
 __all__ = [
     "DEFAULT_STRUCTURED_COLUMN",
@@ -156,7 +156,7 @@ class OrderTerm:
     This term declares part of a model, not part of a query, so a rejected
     placement composition raises a plain :class:`ValueError` and stays outside the
     query-definition error family. An operation Sort Key
-    (``op_algebra.OrderKey``) carries the same single-shot rule and does belong to
+    (``predicate.OrderKey``) carries the same single-shot rule and does belong to
     that family, so it raises ``QueryDefinitionError`` instead; the two spellings
     differ because the surfaces do, not by accident.
     """

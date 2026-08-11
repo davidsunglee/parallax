@@ -1,5 +1,5 @@
 # Table-per-hierarchy narrow to an ABSTRACT subtype, INSTANCE-FORM sibling: the
-# developer-surface per-variant node shape (m-inheritance, m-op-algebra,
+# developer-surface per-variant node shape (m-inheritance, m-predicate,
 # m-case-format, m-sql).
 #
 # Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
@@ -9,7 +9,7 @@
 # each node is a complete concrete instance of its own declared shape, never padded
 # with a sibling's null column. `m-inheritance-013` remains the values-lane witness.
 model: models/animal.yaml
-tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Animal

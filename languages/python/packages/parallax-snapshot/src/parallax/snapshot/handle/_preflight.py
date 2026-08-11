@@ -23,7 +23,7 @@ Each of the four refusals this gate states is decided before any I/O, which is
 what the force-flush ordering below requires.
 
 That is the gate's bound rather than a universal one. A GRAPH-form request whose
-deep fetch sits under a result wrapper passes here: ``m-op-algebra`` composes
+deep fetch sits under a result wrapper passes here: ``m-predicate`` composes
 that shape, no specification states what its graph result denotes, and refusing
 it would claim a composition invalid that nothing says is. It reaches deep-fetch
 planning, which reads the outer node alone, plans zero levels, and fails inside
@@ -72,7 +72,7 @@ from typing import Any, Literal
 
 from parallax.core.entity._query import FindQuery, LoweredFindQuery, lower_find_query
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.op_algebra import DeepFetch, Operation, validate_read_operation
+from parallax.core.predicate import DeepFetch, PredicateNode, validate_read_operation
 from parallax.snapshot.handle._errors import QueryTargetError
 from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features
 from parallax.snapshot.handle._spine import own_row_spine
@@ -93,7 +93,7 @@ def preflight_find(query: FindQuery[Any, Any], *, model: Metamodel) -> LoweredFi
     two-namespace model creates. Raises
     :class:`~parallax.snapshot.handle._errors.QueryTargetError` when ``model``
     declares no Entity for it,
-    :class:`~parallax.core.op_algebra.OperationRejectedError` when the operation
+    :class:`~parallax.core.predicate.OperationRejectedError` when the operation
     is not applicable from that resolved root, and
     :class:`~parallax.snapshot.handle._features.DeferredFeatureError` when it is
     applicable but requires a Feature this implementation has not built yet.
@@ -107,7 +107,7 @@ def preflight_find(query: FindQuery[Any, Any], *, model: Metamodel) -> LoweredFi
 
 def preflight_neutral(
     target: EntityIdentity,
-    operation: Operation,
+    operation: PredicateNode,
     *,
     model: Metamodel,
     form: Literal["rows", "graph"],
@@ -146,11 +146,11 @@ def preflight_neutral(
         )
 
 
-def fetches_relationships(operation: Operation) -> bool:
+def fetches_relationships(operation: PredicateNode) -> bool:
     """Whether ``operation`` names a relationship level to fetch, at any depth a
     result wrapper can carry one.
 
-    A deep fetch is not confined to the outermost node: ``m-op-algebra`` composes
+    A deep fetch is not confined to the outermost node: ``m-predicate`` composes
     it freely with the other nodes that return their operand's OWN rows, so
     ``limit(deepFetch(all, path), 1)`` is as legal a request as the bare
     ``deepFetch``, and the levels it names are just as unserviceable by the values

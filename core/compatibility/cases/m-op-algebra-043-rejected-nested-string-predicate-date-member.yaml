@@ -1,4 +1,4 @@
-# Negative (m-op-algebra non-string-member MUST): a nested string predicate aimed at a
+# Negative (m-predicate non-string-member MUST): a nested string predicate aimed at a
 # `date` member is refused — the case the typed-literal rule alone cannot catch.
 #
 # `Contact.address.phones.expires` is declared `date`, and the algebra's portable
@@ -11,7 +11,7 @@
 # same hole exists for `time`, `timestamp`, `uuid`, and `bytes`; `date` witnesses them
 # all, since one rule reads the declared type.
 model: models/contact.yaml
-tags: [m-op-algebra, m-value-object, rejected, negative, nested, string, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, rejected, negative, nested, string, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

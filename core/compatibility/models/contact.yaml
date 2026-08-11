@@ -60,7 +60,7 @@ entity:
             - name: number
               type: string
               nullable: true
-            # expires is the witness for the m-op-algebra non-string-member rule,
+            # expires is the witness for the m-predicate non-string-member rule,
             # whose whole point is a member the typed-literal rule cannot catch:
             # `date` rides the portable `string` literal, so a string predicate aimed
             # at it satisfies the literal check and is named only by the dedicated

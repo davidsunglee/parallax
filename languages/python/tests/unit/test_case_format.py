@@ -17,7 +17,7 @@ def _case(
     *,
     case_id: str = "m-op-algebra-001",
     shape: str = "read",
-    tags: tuple[str, ...] = ("m-op-algebra", "slice-snapshot-1"),
+    tags: tuple[str, ...] = ("m-predicate", "slice-snapshot-1"),
 ) -> Case:
     return Case(
         path=Path(f"{case_id}-example.yaml"),
@@ -36,16 +36,16 @@ def _write(tmp_path: Path, name: str, body: str) -> Path:
 
 
 def test_is_module_tag_grammar() -> None:
-    assert case_format.is_module_tag("m-op-algebra")
+    assert case_format.is_module_tag("m-predicate")
     assert case_format.is_module_tag("m-op-algebra-002")  # a case ID also matches
     assert not case_format.is_module_tag("slice-snapshot-1")
     assert not case_format.is_module_tag("eq")
 
 
 def test_case_module_tags_and_primary_module() -> None:
-    case = _case(tags=("m-op-algebra", "eq", "m-conformance-adapter", "slice-snapshot-1"))
-    assert case.module_tags == {"m-op-algebra", "m-conformance-adapter"}
-    assert case.primary_module == "m-op-algebra"
+    case = _case(tags=("m-predicate", "eq", "m-conformance-adapter", "slice-snapshot-1"))
+    assert case.module_tags == {"m-predicate", "m-conformance-adapter"}
+    assert case.primary_module == "m-predicate"
 
 
 def test_primary_module_raises_without_a_module_tag() -> None:
@@ -61,8 +61,8 @@ def test_load_case_parses_a_real_corpus_case() -> None:
     assert case.shape == "read"
     assert case.model == "models/orders.yaml"
     assert "slice-snapshot-1" in case.tags
-    assert "m-op-algebra" in case.module_tags
-    assert case.primary_module == "m-op-algebra"
+    assert "m-predicate" in case.module_tags
+    assert case.primary_module == "m-predicate"
 
 
 def test_load_case_rejects_bad_filename(tmp_path: Path) -> None:
@@ -110,7 +110,7 @@ def test_load_cases_over_the_corpus_default() -> None:
 
 
 _FILTER = SelectionFilter(
-    modules=frozenset({"m-op-algebra", "m-conformance-adapter"}),
+    modules=frozenset({"m-predicate", "m-conformance-adapter"}),
     case_shapes=frozenset({"read"}),
     include=frozenset({"slice-snapshot-1"}),
     exclude=frozenset(),
@@ -130,33 +130,33 @@ def test_is_selected_rejects_module_outside_claim() -> None:
 
 
 def test_is_selected_rejects_case_without_include_tag() -> None:
-    assert not case_format.is_selected(_case(tags=("m-op-algebra",)), _FILTER)
+    assert not case_format.is_selected(_case(tags=("m-predicate",)), _FILTER)
 
 
 def test_is_selected_rejects_excluded_tag() -> None:
     flt = SelectionFilter(
-        modules=frozenset({"m-op-algebra"}),
+        modules=frozenset({"m-predicate"}),
         case_shapes=frozenset({"read"}),
         include=frozenset({"slice-snapshot-1"}),
         exclude=frozenset({"aggregation"}),
     )
-    case = _case(tags=("m-op-algebra", "slice-snapshot-1", "aggregation"))
+    case = _case(tags=("m-predicate", "slice-snapshot-1", "aggregation"))
     assert not case_format.is_selected(case, flt)
 
 
 def test_is_selected_milestone_tags_intersection() -> None:
-    case = _case(tags=("m-op-algebra", "slice-snapshot-1"))
-    assert case_format.is_selected(case, _FILTER, milestone_tags=["m-op-algebra"])
+    case = _case(tags=("m-predicate", "slice-snapshot-1"))
+    assert case_format.is_selected(case, _FILTER, milestone_tags=["m-predicate"])
     assert not case_format.is_selected(case, _FILTER, milestone_tags=["m-sql"])
 
 
 def test_is_selected_implemented_modules_gate() -> None:
-    case = _case(tags=("m-op-algebra", "m-conformance-adapter", "slice-snapshot-1"))
+    case = _case(tags=("m-predicate", "m-conformance-adapter", "slice-snapshot-1"))
     assert case_format.is_selected(
-        case, _FILTER, implemented_modules=frozenset({"m-op-algebra", "m-conformance-adapter"})
+        case, _FILTER, implemented_modules=frozenset({"m-predicate", "m-conformance-adapter"})
     )
     assert not case_format.is_selected(
-        case, _FILTER, implemented_modules=frozenset({"m-op-algebra"})
+        case, _FILTER, implemented_modules=frozenset({"m-predicate"})
     )
 
 
@@ -166,7 +166,7 @@ def test_select_preserves_order_and_filters() -> None:
         _case(case_id="m-op-algebra-002", shape="conflict"),
         _case(case_id="m-op-algebra-003"),
     ]
-    selected = case_format.select(cases, _FILTER, milestone_tags=["m-op-algebra"])
+    selected = case_format.select(cases, _FILTER, milestone_tags=["m-predicate"])
     assert [case.case_id for case in selected] == ["m-op-algebra-001", "m-op-algebra-003"]
 
 

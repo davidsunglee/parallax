@@ -20,7 +20,7 @@ from _corpus_identity_support import corpus_object_key
 from _support.clock_probes import CountingClock
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
-from parallax.core import op_algebra
+from parallax.core import predicate as predicate_algebra
 from parallax.core.metamodel import AttributeIdentity, Metamodel
 from parallax.core.unit_work import (
     Clock,
@@ -308,7 +308,7 @@ def test_a_predicate_write_cannot_be_buffered_with_one_observation() -> None:
     # observation for the set it selects, so offering this seam one is a caller
     # wiring defect rather than a shape it should quietly wrap.
     predicate = PredicateWrite(
-        "delete", PredicateSelection("Account", op_algebra.Comparison("eq", "Account.id", 1))
+        "delete", PredicateSelection("Account", predicate_algebra.Comparison("eq", "Account.id", 1))
     )
     with pytest.raises(TypeError, match="only a keyed write carries"):
         buffered_write(predicate, VersionObservation(observed_version=1))

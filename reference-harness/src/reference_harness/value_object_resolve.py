@@ -11,7 +11,7 @@ This module owns three things:
 * :class:`RejectionError` — raised by a validator with the ``rule`` it violated.
 * The closed **rule vocabulary** (:data:`REJECTED_RULES`) — the small set of
   ``then.rejectedRule`` identifiers, each naming a normative MUST from
-  ``m-op-algebra`` (predicate bound ordering and the nested-predicate resolver) or
+  ``m-predicate`` (predicate bound ordering and the nested-predicate resolver) or
   the ``m-value-object`` materialization/navigation contract. The schema pins the
   SAME vocabulary in the ``then.rejectedRule`` enum; the two MUST agree.
 * The **member resolvers** — resolve a dotted nested path / value-object-terminated
@@ -40,7 +40,7 @@ from .references import split_reference
 # The closed set of `then.rejectedRule` identifiers. Kept in lockstep with the
 # `then.rejectedRule` enum in compatibility-case.schema.json (m-case-format).
 
-# Operation rules (m-op-algebra bound-ordering + nested-predicate resolver MUSTs,
+# PredicateNode rules (m-predicate bound-ordering + nested-predicate resolver MUSTs,
 # m-value-object materialization/navigation contract clauses 4/5).
 BETWEEN_BOUNDS_INVERTED = "between-bounds-inverted"
 NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT = "nested-path-first-segment-not-value-object"
@@ -107,7 +107,7 @@ _DECIMAL_TYPE = re.compile(r"^decimal\((\d+),(\d+)\)$")
 def literal_matches_type(value: Any, neutral_type: str | None) -> bool:
     """Whether a literal / document value spells a member of a declared neutral type.
 
-    Used both for a nested comparison's literal (`m-op-algebra` typed-literal MUST)
+    Used both for a nested comparison's literal (`m-predicate` typed-literal MUST)
     and a write row's scalar leaf (`m-value-object` write validation). A ``null`` is
     always type-acceptable — nullability is a SEPARATE check (required vs optional),
     never a type mismatch.
@@ -223,7 +223,7 @@ def _matches_decimal(value: Any, precision: int, scale: int) -> bool:
 def is_string_member(neutral_type: str | None) -> bool:
     """Whether a declared member's neutral type is m-core's ``String``.
 
-    The `m-op-algebra` non-string-member rule, which the five nested string
+    The `m-predicate` non-string-member rule, which the five nested string
     predicates are subject to in both scopes. Deliberately STRICTER than
     :func:`literal_matches_type`'s string grouping: that function answers whether a
     portable literal can carry a value of the type, and `date` / `time` /
@@ -243,7 +243,7 @@ def _is_number(value: Any) -> bool:
 def bounds_inverted(lower: Any, upper: Any) -> bool:
     """Whether a range's ``lower`` bound is strictly greater than its ``upper``.
 
-    The `m-op-algebra` bound-ordering MUST, shared by every range predicate. Bounds
+    The `m-predicate` bound-ordering MUST, shared by every range predicate. Bounds
     are compared by LITERAL KIND rather than by resolved attribute type: only two
     numbers or two strings are ordered against each other, and a differing pair or a
     ``null`` bound is skipped rather than guessed. Equal bounds name the single-value

@@ -40,7 +40,7 @@ structured identity — into the nodes they seed, and reach no model to do it.
 owns only immutable Attribute Expressions, Relationship Paths, Predicates,
 Assignments, and Sort Keys. It performs no Python class lookup and imports no
 member, Entity, query, or model implementation; its enforcement scope grants
-`m-metamodel` and `m-op-algebra` alone. `entity._query` depends forward
+`m-metamodel` and `m-predicate` alone. `entity._query` depends forward
 on that class-free algebra and on errors. No lazy back-import is used to
 hide a cycle.
 
@@ -53,9 +53,9 @@ returns, which `narrow` and only `narrow` moves; the split is what lets
 first-party `lower_find_query` seam performs the
 total frontend-to-operation transformation and returns a `LoweredFindQuery`
 containing only a structured target Entity Identity and one
-canonical Operation. It exposes no model, Entity Class, class index, Snapshot
+canonical Predicate. It exposes no model, Entity Class, class index, Snapshot
 feature classification, SQL, serialization, or developer-facing inspection
-surface. It is deliberately not named `CanonicalFindQuery`: only the Operation
+surface. It is deliberately not named `CanonicalFindQuery`: only the Predicate
 is canonical, while the target is a position the connected model resolves at
 execution. Lowering is recomputed
 once per execution and retained only for that execution; the Find Query and

@@ -1,7 +1,7 @@
-"""Operation serde (m-op-algebra canonical single-key tagged encoding).
+"""Predicate serde (m-predicate canonical single-key tagged encoding).
 
 ``serialize`` emits the canonical single-key tagged object for each node exactly
-as ``operation.schema.json`` fixes it (an OMITTED optional key — ``direction``,
+as ``predicate.schema.json`` fixes it (an OMITTED optional key — ``direction``,
 ``caseInsensitive`` — stays omitted; an explicitly authored one round-trips
 verbatim). ``deserialize`` reads that form into frozen nodes and canonicalizes
 order-insensitive Subtype Selections and include paths. The pair round-trips
@@ -22,8 +22,8 @@ import re
 from collections.abc import Mapping
 from typing import Literal, cast
 
-from parallax.core.op_algebra._builders import _canonical_includes
-from parallax.core.op_algebra.nodes import (
+from parallax.core.predicate._builders import _canonical_includes
+from parallax.core.predicate._nodes import (
     All,
     And,
     AsOf,
@@ -57,11 +57,11 @@ from parallax.core.op_algebra.nodes import (
     NotExists,
     NullCheck,
     NullOp,
-    Operation,
     Or,
     OrderBy,
     OrderKey,
     PathSegment,
+    PredicateNode,
     Scalar,
     StringMatch,
     StringOp,
@@ -107,7 +107,7 @@ _NESTED_REF = re.compile(rf"^{_ENTITY}\.{_MEMBER}(\.{_MEMBER})+$")
 _VALUE_OBJECT_REF = re.compile(rf"^{_ENTITY}(\.{_MEMBER})+$")
 _ELEMENT_REF = re.compile(rf"^{_MEMBER}(\.{_MEMBER})*$")
 
-# The operation kinds `operation.schema.json` admits inside a nestedExists /
+# The operation kinds `predicate.schema.json` admits inside a nestedExists /
 # nestedNotExists `where` (its `elementPredicate` oneOf): the scoped nested*
 # family over element-relative paths, composed with the boolean combinators. Every
 # other kind — a result directive, a top-level predicate, navigation, a temporal
@@ -127,13 +127,13 @@ class OperationError(ValueError):
 
 
 # --------------------------------------------------------------------------- #
-# Closed-shape table (derived from operation.schema.json).                     #
+# Closed-shape table (derived from predicate.schema.json).                     #
 #                                                                              #
 # Each node body is a CLOSED object (`additionalProperties: false`) with a     #
 # fixed `required` set; the schema fixes both. `deserialize` validates the     #
 # body against this table BEFORE constructing a node, so an unexpected key, a  #
 # missing required key, or a mistyped field is rejected loudly rather than     #
-# silently dropped / defaulted (m-op-algebra: serde MUST validate and          #
+# silently dropped / defaulted (m-predicate: serde MUST validate and          #
 # round-trip every node unchanged). Bodies with recursive members (`operand`,  #
 # `operands`, `keys`, `paths`, `to`, `where`) get their element-level closed   #
 # checks in the helpers below.                                                 #
@@ -277,7 +277,7 @@ def _values(body: Mapping[str, object], tag: str) -> tuple[Scalar, ...]:
     return tuple(_scalar(item, tag) for item in cast("list[object]", raw))
 
 
-def _operand(body: Mapping[str, object], *, element_scope: bool) -> Operation:
+def _operand(body: Mapping[str, object], *, element_scope: bool) -> PredicateNode:
     # `operand` presence is guaranteed by the closed-shape check (every
     # operand-bearing tag lists it as required), so this only recurses. The scope
     # threads through the boolean combinators: a `not`/`group` under a scoped
@@ -287,7 +287,7 @@ def _operand(body: Mapping[str, object], *, element_scope: bool) -> Operation:
 
 def _operands(
     body: Mapping[str, object], tag: str, *, element_scope: bool
-) -> tuple[Operation, ...]:
+) -> tuple[PredicateNode, ...]:
     raw = body.get("operands")
     if not isinstance(raw, list):
         raise OperationError(f"{tag}: `operands` must have at least two entries")
@@ -387,7 +387,7 @@ def _paths(body: Mapping[str, object]) -> tuple[NavigationPath, ...]:
     return _canonical_includes(tuple(paths))
 
 
-def _nested_where(body: Mapping[str, object]) -> Operation | None:
+def _nested_where(body: Mapping[str, object]) -> PredicateNode | None:
     # A nestedExists/nestedNotExists `where` is an `elementPredicate` (schema):
     # the scoped nested* family over element-relative paths plus boolean
     # combinators. Recursing in element scope both restricts the legal tags and
@@ -397,12 +397,12 @@ def _nested_where(body: Mapping[str, object]) -> Operation | None:
     return _deserialize(body["where"], element_scope=True)
 
 
-def deserialize(doc: object) -> Operation:
+def deserialize(doc: object) -> PredicateNode:
     """Parse an operation document and canonicalize its set-valued carriers."""
     return _deserialize(doc, element_scope=False)
 
 
-def _deserialize(doc: object, *, element_scope: bool) -> Operation:
+def _deserialize(doc: object, *, element_scope: bool) -> PredicateNode:
     """Parse one node; ``element_scope`` restricts it to the ``elementPredicate``
     grammar (nested* family + boolean combinators, element-relative paths) the
     schema fixes inside a nestedExists/nestedNotExists ``where``."""
@@ -546,7 +546,7 @@ def _deserialize(doc: object, *, element_scope: bool) -> Operation:
     raise OperationError(f"unknown operation node {tag!r}")
 
 
-def _nav_op(body: Mapping[str, object]) -> Operation | None:
+def _nav_op(body: Mapping[str, object]) -> PredicateNode | None:
     # A navigation `op` references the FULL operation grammar (schema), so it is
     # always deserialized in top-level (non-element) scope.
     if "op" not in body:
@@ -557,18 +557,18 @@ def _nav_op(body: Mapping[str, object]) -> Operation | None:
 # --------------------------------------------------------------------------- #
 # Serialize (canonical minimal single-key tagged form).                       #
 # --------------------------------------------------------------------------- #
-def _emit_where(where: Operation | None) -> dict[str, object]:
+def _emit_where(where: PredicateNode | None) -> dict[str, object]:
     return {"where": serialize(where)} if where is not None else {}
 
 
-def _emit_nav(rel: str, op: Operation | None) -> dict[str, object]:
+def _emit_nav(rel: str, op: PredicateNode | None) -> dict[str, object]:
     body: dict[str, object] = {"rel": rel}
     if op is not None:
         body["op"] = serialize(op)
     return body
 
 
-def serialize(op: Operation) -> dict[str, object]:
+def serialize(op: PredicateNode) -> dict[str, object]:
     """Emit the canonical single-key tagged document for one node.
 
     Subtype Selections and ``DeepFetch.paths`` are canonicalized defensively so
@@ -587,7 +587,7 @@ def serialize(op: Operation) -> dict[str, object]:
             return {tag: {"attr": attr}}
         case StringMatch(op=tag, attr=attr, value=value, case_insensitive=ci):
             # Omit an omitted flag (None); round-trip an explicit `false`/`true`
-            # verbatim (m-op-algebra: serialize(deserialize(op)) == op).
+            # verbatim (m-predicate: serialize(deserialize(op)) == op).
             body: dict[str, object] = {"attr": attr, "value": value}
             if ci is not None:
                 body["caseInsensitive"] = ci

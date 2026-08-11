@@ -16,7 +16,7 @@ values in envelope order, keyed by their declared names and aliases. It never
 materializes an Entity instance and never accepts an Object Query projection.
 The SQL lowering of this envelope is owned by the sibling module `m-sql-agg`.
 
-- **Edge:** `m-agg --> m-op-algebra`. The source predicate uses the predicate
+- **Edge:** `m-agg --> m-predicate`. The source predicate uses the predicate
   subset of that algebra; aggregate-row ordering references group-key names or
   aggregate aliases rather than Entity Attributes.
 - **Schema surface.** The aggregate query envelope requires its own closed

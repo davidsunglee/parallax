@@ -1,14 +1,14 @@
-"""``parallax.core.op_algebra`` enforcement scope (m-op-algebra).
+"""``parallax.core.predicate`` enforcement scope (m-predicate).
 
-The operation algebra: frozen node types for the read-path query tree and the
+The Predicate algebra: frozen node types for the read-path query tree and the
 canonical single-key tagged serde that round-trips them (the corpus's normative
-encoding). ``m-op-algebra`` depends only on ``m-descriptor`` and ``m-inheritance``;
+encoding). ``m-predicate`` depends only on ``m-descriptor`` and ``m-inheritance``;
 SQL lowering lives above it in ``m-sql``.
 """
 
 from __future__ import annotations
 
-from parallax.core.op_algebra.nodes import (
+from parallax.core.predicate._nodes import (
     QUERY_DEFINITION_CODES,
     All,
     And,
@@ -44,18 +44,18 @@ from parallax.core.op_algebra.nodes import (
     NotExists,
     NullCheck,
     NullOp,
-    Operation,
     Or,
     OrderBy,
     OrderKey,
     PathSegment,
+    PredicateNode,
     QueryDefinitionError,
     Scalar,
     StringMatch,
     StringOp,
 )
-from parallax.core.op_algebra.serde import OperationError, deserialize, serialize
-from parallax.core.op_algebra.validate import (
+from parallax.core.predicate.serde import OperationError, deserialize, serialize
+from parallax.core.predicate.validate import (
     OperationRejectedError,
     referenced_entities,
     validate_operation,
@@ -98,13 +98,13 @@ __all__ = [
     "NotExists",
     "NullCheck",
     "NullOp",
-    "Operation",
     "OperationError",
     "OperationRejectedError",
     "Or",
     "OrderBy",
     "OrderKey",
     "PathSegment",
+    "PredicateNode",
     "QueryDefinitionError",
     "Scalar",
     "StringMatch",

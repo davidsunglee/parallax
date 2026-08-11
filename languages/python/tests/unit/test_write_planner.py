@@ -29,7 +29,8 @@ from _metamodel_support import Declaration, attribute, identity, key, source
 
 from _support.clock_probes import CountingClock, inert_instant, instant_at
 from _support.planner_probes import TEST_SUBJECT_IDENTITY, observed_buffer
-from parallax.core import op_algebra, opt_lock
+from parallax.core import opt_lock
+from parallax.core import predicate as predicate_algebra
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.metamodel import (
     AttributeIdentity,
@@ -185,7 +186,7 @@ def _version_group(
     predicate = PredicateWrite(
         mutation,
         PredicateSelection(
-            entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
         ),
         assignments=tuple(assignments),
     )
@@ -282,7 +283,7 @@ def test_multi_row_and_unkeyed_and_predicate_writes_do_not_coalesce() -> None:
     multi = KeyedWrite("insert", "Wallet", ({"id": 8, "balance": 1.00}, {"id": 9, "balance": 2.00}))
     unkeyed = KeyedWrite("insert", "Wallet", ({"owner": "Ada", "balance": 1.00},))  # no PK in row
     predicate = PredicateWrite(
-        "delete", PredicateSelection("Wallet", op_algebra.Comparison("eq", "Wallet.id", 1))
+        "delete", PredicateSelection("Wallet", predicate_algebra.Comparison("eq", "Wallet.id", 1))
     )
     plan = _plan([multi, unkeyed, predicate], _WALLET)
     # None is a single-object keyed write, so none coalesces — all pass through
@@ -422,7 +423,7 @@ def _predicate_update(entity: str) -> PredicateWrite:
     member = _ASSIGNABLE_MEMBER[entity]
     return PredicateWrite(
         "update",
-        PredicateSelection(entity, op_algebra.Comparison("eq", f"{entity}.id", 1)),
+        PredicateSelection(entity, predicate_algebra.Comparison("eq", f"{entity}.id", 1)),
         assignments=(WriteAssignment(f"{entity}.{member}", "Z"),),
     )
 
@@ -450,7 +451,7 @@ def test_no_keyed_write_crosses_a_readless_predicate_write_in_either_direction()
     predicate_step = plan.steps[1]
     assert isinstance(predicate_step, PlannedUpdate)
     assert predicate_step.target == PredicateTarget(
-        predicate=op_algebra.Comparison("eq", "Order.id", 1)
+        predicate=predicate_algebra.Comparison("eq", "Order.id", 1)
     )
 
 
@@ -580,7 +581,7 @@ def test_object_key_of_a_single_row_keyed_write() -> None:
 def test_object_key_is_none_for_unidentifiable_writes() -> None:
     assert object_key(KeyedWrite("insert", "Account", ({"id": 1}, {"id": 2})), _ACCOUNT) is None
     assert object_key(KeyedWrite("insert", "Account", ({"owner": "Ada"},)), _ACCOUNT) is None
-    predicate = PredicateWrite("delete", PredicateSelection("Account", op_algebra.All()))
+    predicate = PredicateWrite("delete", PredicateSelection("Account", predicate_algebra.All()))
     assert object_key(predicate, _ACCOUNT) is None
 
 
@@ -733,7 +734,9 @@ def test_an_observation_free_multi_key_delete_carries_the_aggregate_missing_targ
 def test_a_readless_predicate_write_carries_an_unbounded_expectation() -> None:
     predicate = PredicateWrite(
         "delete",
-        PredicateSelection("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 200.00)),
+        PredicateSelection(
+            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", 200.00)
+        ),
     )
     plan = _plan([predicate], _WALLET)
     (step,) = plan.steps
@@ -861,13 +864,15 @@ def test_batching_never_merges_across_an_intervening_materialized_write_group() 
 def test_batching_never_touches_a_predicate_write() -> None:
     predicate = PredicateWrite(
         "delete",
-        PredicateSelection("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 1.0)),
+        PredicateSelection(
+            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", 1.0)
+        ),
     )
     plan = _plan([predicate], _WALLET)
     (step,) = plan.steps
     assert isinstance(step, PlannedDelete)
     assert step.target == PredicateTarget(
-        predicate=op_algebra.Comparison("lessThan", "Wallet.balance", 1.0)
+        predicate=predicate_algebra.Comparison("lessThan", "Wallet.balance", 1.0)
     )
 
 

@@ -1,5 +1,5 @@
 # valueObject numeric range: nestedBetween is ONE canonical node with a typed cast
-# (m-op-algebra nested range, m-sql, m-dialect typed cast form), on Postgres AND
+# (m-predicate nested range, m-sql, m-dialect typed cast form), on Postgres AND
 # MariaDB.
 #
 # `geo.elevation` is a float64 attribute, so nestedBetween(Customer.address.geo.
@@ -18,7 +18,7 @@
 # different way per dialect and spells the range as two comparisons on the same
 # extraction, which is what a single-valued path makes equivalent.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, between, cast, numeric, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, between, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

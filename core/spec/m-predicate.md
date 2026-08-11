@@ -1,17 +1,27 @@
-# m-op-algebra — Query & Operation Algebra
+# m-predicate — Predicate Algebra
 
-`m-op-algebra` defines the **operation algebra** — the framework's own query
-language — and its **canonical serialization**. The algebra *is* the protocol: the
-compatibility suite's queries are instances of it, and every implementation
-provides operation serde behavior that round-trips them. `m-op-algebra` depends
-on `m-metamodel` (resolved operations are bound to canonical Entity, Attribute,
+`m-predicate` defines the framework's recursive **Predicate algebra** and its
+**canonical serialization**. The algebra *is* the protocol: the compatibility
+suite's queries are instances of it, and every implementation provides Predicate
+serde behavior that round-trips them. `m-predicate` depends on `m-metamodel`
+(resolved predicates are bound to canonical Entity, Attribute,
 Relationship, and Value Object Identities) and on `m-inheritance` (the `narrow`
 node constrains a polymorphic entity position against the family's effective
 concrete-subtype set). Relationship behavior is not reconstructed here:
 `m-navigate` consumes the compiled `m-relationship` facet.
 
 The canonical schema is
-[`core/schemas/operation.schema.json`](../schemas/operation.schema.json).
+[`core/schemas/predicate.schema.json`](../schemas/predicate.schema.json).
+
+## Transitional boundary
+
+The current Predicate schema temporarily retains the query-wide `orderBy`,
+`limit`, `deepFetch`, `asOf`, `asOfRange`, and `history` wrappers, and the case
+envelope still names the serialized value `operation`. These wrappers are not
+the intended Predicate boundary; they remain only while the existing recursive
+read representation is still canonical. This section describes that accepted
+transitional representation rather than claiming the wrappers belong permanently
+to Predicate.
 
 ## Positioning (DQ13)
 
@@ -30,16 +40,16 @@ abstraction level for a finder language. The algebra translates **down** to SQL
 external SQL IR to get many dialects "for free", but that is a per-language
 decision behind the `m-sql` seam, not a core mandate.
 
-## Canonical operation encoding (serde seam)
+## Canonical Predicate encoding (serde seam)
 
-An operation is a tree of **nodes** with a **format-agnostic canonical
+A Predicate is a tree of **nodes** with a **format-agnostic canonical
 serialization**. This serialized form is the suite's normative encoding — one
-source of truth so every implementation tests the same operation. Concrete
+source of truth so every implementation tests the same Predicate. Concrete
 encodings exist in at least **JSON and YAML** (a format-agnostic core plus
 pluggable writers); the format set is consistent with metamodel serde
 (`m-descriptor`).
 
-Every implementation **MUST** provide operation serialization/deserialization
+Every implementation **MUST** provide Predicate serialization/deserialization
 behavior, with **round-trip** tests:
 `serialize(deserialize(op)) == op`. The reference harness asserts this per case,
 in both JSON and YAML. This behavior does not execute operations; its source
@@ -49,7 +59,7 @@ per-language re-expressions of a query (fluent builders, etc.) are **illustrativ
 only** — never the normative encoding.
 
 The encoding is a tagged object: each node is a single-key object whose key names
-the operation. Attribute references are `Class.attribute` strings, resolved
+the predicate kind. Attribute references are `Class.attribute` strings, resolved
 against the model. Examples:
 
 ```json
@@ -60,15 +70,15 @@ against the model. Examples:
 { "eq": { "attr": "Order.id", "value": 42 } }
 ```
 
-## Operation set
+## Predicate set
 
-`m-op-algebra` is the canonical operation algebra. Its schema covers the
+`m-predicate` is the canonical Predicate algebra. Its transitional schema covers the
 single-entity predicate algebra, result-shaping directives, relationship
 navigation, temporal read wrappers, and nested value-object predicates.
 Aggregation is a separate query form owned by `m-agg`; its interchange schema
-does not extend this operation union. Each node below carries a single canonical
-serialization; a conforming operation serde implementation **MUST**
-validate and round-trip every node in `operation.schema.json` unchanged. Executing
+does not extend this Predicate union. Each node below carries a single canonical
+serialization; a conforming Predicate serde implementation **MUST**
+validate and round-trip every node in `predicate.schema.json` unchanged. Executing
 a node may depend on other core modules: `m-metamodel` supplies canonical local
 attributes, relationship declarations, As-Of Axes, and Value Objects;
 `m-navigate` owns behavior over the compiled `m-relationship` facet; `m-sql`
@@ -125,7 +135,7 @@ one.
 
 ### Identities
 
-| Operation | Encoding | Meaning |
+| Predicate | Encoding | Meaning |
 |---|---|---|
 | `all` | `{ "all": {} }` | the identity — selects every row (no `WHERE`) |
 | `none` | `{ "none": {} }` | the absorbing element — matches nothing |
@@ -137,7 +147,7 @@ one.
 Each takes `{ "attr": "Class.attribute", "value": <literal> }`. The value becomes
 a bind placeholder in the golden SQL.
 
-| Operation | SQL operator |
+| Predicate | SQL operator |
 |---|---|
 | `eq` | `=` |
 | `notEq` | `<>` |
@@ -172,7 +182,7 @@ column likewise yield NULL (not true) and so exclude that row.
 The string predicates take `{ "attr", "value", "caseInsensitive"? }`
 (`caseInsensitive` defaults to `false`).
 
-| Operation | Pattern semantics |
+| Predicate | Pattern semantics |
 |---|---|
 | `like` / `notLike` | `value` **is** the SQL pattern: `%` and `_` are wildcards |
 | `startsWith` | `value` is a **literal** prefix ⇒ pattern `value%` |
@@ -222,7 +232,7 @@ neutral type, and the comparison is **typed**.
 The predicate family is **flat** and **parallel** to the scalar single-entity
 algebra — one single-key tagged node per operator, each with a closed body:
 
-| Operation | Encoding | Meaning |
+| Predicate | Encoding | Meaning |
 |---|---|---|
 | `nestedEq` | `{ "nestedEq": { "path", "value" } }` | the value at `path` equals `value` |
 | `nestedNotEq` | `{ "nestedNotEq": { "path", "value" } }` | the value at `path` does not equal `value` |
@@ -386,7 +396,7 @@ when some element has the member and its value is inside it.
 **value-object-terminated** path (`Class.valueObject(.valueObject)*`, ending at a
 value object rather than at an inner attribute):
 
-| Operation | Encoding | Meaning |
+| Predicate | Encoding | Meaning |
 |---|---|---|
 | `nestedExists` | `{ "nestedExists": { "path", "where"? } }` | the value object at `path` is **present** (`one`) or its array is **non-empty** (`many`); with `where`, **at least one** element satisfies the compound sub-predicate |
 | `nestedNotExists` | `{ "nestedNotExists": { "path", "where"? } }` | the complement — the value object is **absent** (`one`) or the array is **empty or absent** (`many`); with `where`, **no** element satisfies the compound sub-predicate |
@@ -436,7 +446,7 @@ decision (`m-sql`), never fixed by this algebra.
 
 ### Boolean combinators
 
-| Operation | Encoding |
+| Predicate | Encoding |
 |---|---|
 | `and` | `{ "and": { "operands": [ op, op, … ] } }` (≥2 operands) |
 | `or` | `{ "or": { "operands": [ op, op, … ] } }` (≥2 operands) |
@@ -456,7 +466,7 @@ distinct golden SQL.
 
 Directives wrap an inner operation rather than filtering:
 
-| Operation | Encoding | Effect |
+| Predicate | Encoding | Effect |
 |---|---|---|
 | `orderBy` | `{ "orderBy": { "operand", "keys": [ { "attr", "direction"?, "nulls"? } ] } }` | order rows; `direction` ∈ `asc` (default) / `desc`; `nulls` ∈ `first` / `last` (default `last`) |
 | `limit` | `{ "limit": { "operand", "count" } }` | cap the row count |
@@ -483,7 +493,7 @@ model, per-dimension selection rule, and milestone behavior; `m-sql` fixes the S
 fragments and bind order. These nodes are part of the algebra because operation
 serde must round-trip the temporal query tree exactly.
 
-| Operation | Encoding | Meaning |
+| Predicate | Encoding | Meaning |
 |---|---|---|
 | `asOf` | `{ "asOf": { "operand", "dimension", "coordinate" } }` | pin one temporal dimension to Latest or a finite instant |
 | `asOfRange` | `{ "asOfRange": { "operand", "dimension", "start", "end" } }` | return milestones whose interval overlaps the half-open range `[start, end)` |
@@ -519,7 +529,7 @@ never multiplies the queried entity's rows (`m-sql`, `m-navigate`).
 
 ### Navigation filters
 
-| Operation | Encoding | Meaning |
+| Predicate | Encoding | Meaning |
 |---|---|---|
 | `navigate` | `{ "navigate": { "rel", "op"? } }` | filter the queried entity by traversing `rel`; `op` (optional) constrains the related entity |
 | `exists` | `{ "exists": { "rel", "op"? } }` | the queried entity has ≥1 related row (optionally matching `op`) |
@@ -538,7 +548,7 @@ inside a navigation.
 `deepFetch` is an eager-fetch **directive**, not a predicate: it shapes the
 result into an **object graph** rather than a flat row set.
 
-| Operation | Encoding | Effect |
+| Predicate | Encoding | Effect |
 |---|---|---|
 | `deepFetch` | `{ "deepFetch": { "operand", "paths": [ { "narrow"?: { "to": [ … ] }, "segments": [ { "rel": …, "narrow"? }, … ] }, … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
 
@@ -631,7 +641,7 @@ position.
 construction, and its model-aware resolution inside a polymorphic position.
 `narrow` contributes only the operation-specific operand that selection scopes:
 
-| Operation | Encoding | Meaning |
+| Predicate | Encoding | Meaning |
 |---|---|---|
 | `narrow` | `{ "narrow": { "to": [ … ], "operand" } }` | evaluate `operand` over the active position narrowed by the Subtype Selection `to` |
 

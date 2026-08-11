@@ -13,7 +13,7 @@ whereas a predicate write is a BARE predicate that carries none of them.
 
 A vocabulary also lives here when its consumers ask DIFFERENT questions of the
 same closed set — :data:`OPERAND_ROW_WRAPPER_TAGS` is shared by walks that do not
-otherwise resemble each other — so that one ``m-op-algebra`` set has one owner
+otherwise resemble each other — so that one ``m-predicate`` set has one owner
 whatever it is being asked.
 """
 
@@ -23,7 +23,7 @@ from typing import Any
 
 from .references import entity_spelling
 
-# The closed set `m-op-algebra` names as the wrappers "returning their operand's
+# The closed set `m-predicate` names as the wrappers "returning their operand's
 # OWN rows": the result-shaping directives (``orderBy`` / ``limit`` /
 # ``deepFetch``, which attaches fetched levels to those rows rather than
 # replacing them) and the temporal wrappers (``asOf`` / ``asOfRange`` /

@@ -4,7 +4,7 @@
 owns **cross-entity as-of propagation**. It consumes the symmetric Relationship
 Facet from `m-relationship`; it never reparses descriptor declarations or pairs
 reverse directions. Per the dependency graph, `m-navigate` also depends on
-`m-op-algebra` (the `navigate` / `exists` / `notExists` nodes it lowers **are**
+`m-predicate` (the `navigate` / `exists` / `notExists` nodes it lowers **are**
 algebra vocabulary), `m-unit-work` (navigation resolves through the unit of
 work), and `m-temporal-read` (a pinned as-of value propagates per hop). The
 **SQL emission** for these nodes is `m-sql`; this module ties the algebra to
@@ -32,7 +32,7 @@ multiply the queried entity's rows. `notExists` is the negated semi-join.
 
 A navigation path segment names a **relationship**; a **value-object segment is
 invalid** here and MUST be rejected. A value object has no identity to correlate
-on — its inner fields are queried *through* the owner with the `m-op-algebra`
+on — its inner fields are queried *through* the owner with the `m-predicate`
 nested-attribute form, never navigated to (`m-value-object`, "Materialization and
 navigation contract").
 
@@ -88,7 +88,7 @@ resolves the target to its **effective concrete-subtype set** and constrains the
 correlated sub-select to exactly that set — the same effective-set derivation a
 top-level read uses, applied at the relationship target.
 
-`narrow` (`m-op-algebra`) MAY appear in a navigation filter's inner operation
+`narrow` (`m-predicate`) MAY appear in a navigation filter's inner operation
 (`op`) to constrain the relationship target. Context supplies the target's
 polymorphic position, and `narrow.to` is `m-inheritance`'s shared Subtype
 Selection. A narrow whose resolved concrete set is **not a subset** of the

@@ -9,7 +9,7 @@
 # preserve this ordering. The outer Postgres `for share of t0` and MariaDB `lock
 # in share mode` lock the returned payment_document rows in one round trip.
 model: models/document-layout.yaml
-tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-op-algebra, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
+tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Payment

@@ -33,7 +33,7 @@ from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
 from parallax.core.entity._declaration import declaration_of, is_entity_class, members_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
-from parallax.core.op_algebra import PathSegment
+from parallax.core.predicate import PathSegment
 from parallax.core.temporal_read import Edge, Pin
 
 __all__ = [

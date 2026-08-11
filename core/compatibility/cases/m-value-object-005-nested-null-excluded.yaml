@@ -1,7 +1,7 @@
 # valueObject nested predicate over a NULL value object — 3VL exclusion
-# (m-op-algebra), on Postgres AND MariaDB.
+# (m-predicate), on Postgres AND MariaDB.
 #
-# m-op-algebra mandates that when the extraction yields NULL — the value-object
+# m-predicate mandates that when the extraction yields NULL — the value-object
 # column is NULL, the path is absent, the selected value is an explicit JSON
 # `null`, or an intermediate is a non-object — the row is EXCLUDED. Customer 4
 # (null column), customer 5 (missing `city` key) and customer 7 (city an explicit

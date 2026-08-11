@@ -165,7 +165,7 @@ class _Report:
 
 
 # --------------------------------------------------------------------------- #
-# The operation walk (m-op-algebra): every reference position, with its path.   #
+# The operation walk (m-predicate): every reference position, with its path.   #
 # --------------------------------------------------------------------------- #
 def _walk_operation(node: Any, where: str, report: _Report, declarations: _Declarations) -> None:
     if not isinstance(node, Mapping) or len(node) != 1:

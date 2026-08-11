@@ -46,7 +46,7 @@ from parallax.core.entity import (
 )
 from parallax.core.entity._model import model_of
 from parallax.core.entity._query import lower_find_query
-from parallax.core.op_algebra import DeepFetch
+from parallax.core.predicate import DeepFetch
 from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.materialize import SnapshotGraphInput, merge_graph_input
 

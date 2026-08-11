@@ -219,7 +219,7 @@ def test_every_nested_leaf_decodes_by_its_declared_neutral_type() -> None:
 def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_collapses() -> None:
     # The two halves of one boundary. A member the document DOES supply in a state
     # the model has — a JSON null, an occurrence of the wrong kind — collapses to
-    # null / () as the read predicates do (m-op-algebra), and a member it supplies
+    # null / () as the read predicates do (m-predicate), and a member it supplies
     # not at all contributes no input, which is how the carrier keeps the document's
     # own presence. A leaf that IS supplied and decodes into no member of its
     # declared value space is a state the model does not have: it is invalid stored

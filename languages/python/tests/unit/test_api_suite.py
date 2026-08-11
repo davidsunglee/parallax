@@ -72,8 +72,8 @@ def test_partition_report_is_a_clean_full_partition() -> None:
 
 
 def test_build_skips_uses_the_reviewed_registry_reason() -> None:
-    active = [_case("m-op-algebra-900", "m-op-algebra")]
-    skips = api_suite.build_skips(active, [], {"m-op-algebra": "reviewed reason"})
+    active = [_case("m-op-algebra-900", "m-predicate")]
+    skips = api_suite.build_skips(active, [], {"m-predicate": "reviewed reason"})
     assert skips == [Skip("m-op-algebra-900", "reviewed reason")]
 
 
@@ -82,7 +82,7 @@ def test_unclassified_active_case_is_not_silently_skipped() -> None:
     # partition flags it as covered-by-neither — forcing a human to classify it
     # rather than minting a generic reason.
     active = [_case("m-ghost-900", "m-ghost")]
-    skips = api_suite.build_skips(active, [], {"m-op-algebra": "r"})
+    skips = api_suite.build_skips(active, [], {"m-predicate": "r"})
     assert skips == []
     report = api_suite.compute_partition(frozenset({"m-ghost-900"}), [], skips)
     assert not report.ok
@@ -90,17 +90,17 @@ def test_unclassified_active_case_is_not_silently_skipped() -> None:
 
 
 def test_stale_registry_entry_absent_from_slice_is_flagged() -> None:
-    active = [_case("m-op-algebra-900", "m-op-algebra")]
-    stale = api_suite.stale_skip_reasons(active, [], {"m-op-algebra": "r", "m-gone": "r2"})
+    active = [_case("m-op-algebra-900", "m-predicate")]
+    stale = api_suite.stale_skip_reasons(active, [], {"m-predicate": "r", "m-gone": "r2"})
     assert any("m-gone" in error for error in stale)
-    assert not any("m-op-algebra" in error for error in stale)
+    assert not any("m-predicate" in error for error in stale)
 
 
 def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
-    active = [_case("m-op-algebra-900", "m-op-algebra")]
+    active = [_case("m-op-algebra-900", "m-predicate")]
     examples = [Example("m-op-algebra-900", "t", "s")]
-    stale = api_suite.stale_skip_reasons(active, examples, {"m-op-algebra": "r"})
-    assert any("m-op-algebra" in error for error in stale)
+    stale = api_suite.stale_skip_reasons(active, examples, {"m-predicate": "r"})
+    assert any("m-predicate" in error for error in stale)
 
 
 # Modules with NO broad SKIP_REASONS bucket: every one of their active cases is

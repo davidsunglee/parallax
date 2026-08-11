@@ -9,7 +9,7 @@
 # IN-list of gathered parent keys). One concrete, so the view carries no
 # `familyVariant` (the caller queried a known variant). `1 + L` = 2 statements.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

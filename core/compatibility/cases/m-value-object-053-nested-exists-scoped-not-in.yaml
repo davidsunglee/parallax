@@ -1,6 +1,6 @@
 # valueObject to-many: a negated membership inside a scoped `where` is SAME-element —
 # the element that carries the equality is the element whose member must be outside
-# the list (m-op-algebra elementPredicate + nested membership, m-sql, m-dialect
+# the list (m-predicate elementPredicate + nested membership, m-sql, m-dialect
 # array-traversal form). Postgres golden only — a `where` carrying a non-`eq` leaf is
 # outside MariaDB's containment scope (m-dialect, "Scope of the containment golden").
 #
@@ -22,7 +22,7 @@
 # no bind. The oracle guards with an outer `jsonb_typeof` rather than the golden's
 # inline `case` and states the absence rule explicitly with `is not null`.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, notIn, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, notIn, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

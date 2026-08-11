@@ -584,7 +584,7 @@ def _assert_serde(case: Case) -> None:
                 serde.assert_roundtrip(step["find"])
     elif case.is_rejected:
         # A rejected case carries the invalid input under `when.operation` (a
-        # schema-valid m-op-algebra node — serde it), `when.write` (a neutral write
+        # schema-valid m-predicate node — serde it), `when.write` (a neutral write
         # row, which has no operation to serde), OR `when.model` (an inline invalid
         # inheritance descriptor — round-tripped through descriptor serde before
         # semantic validation asserts the rejection, m-inheritance resolved Q3). The
@@ -687,7 +687,7 @@ def _deepfetch_paths(case: Case) -> list[list[str]]:
     """The deep-fetch paths as ordered lists of ``Class.relationship`` refs.
 
     A path is a closed object ``{narrow?, segments}`` whose entries are closed
-    ``{rel, narrow?}`` segments (m-op-algebra); this projection keeps only the ``rel``
+    ``{rel, narrow?}`` segments (m-predicate); this projection keeps only the ``rel``
     and is used where narrowing is irrelevant (root-entity resolution). Narrow-aware
     hop identity is built from :func:`_deepfetch_paths_raw`.
     """
@@ -2847,7 +2847,7 @@ def _project_value_object(vo: dict[str, Any], decoded: Any) -> Any:
     The projection mirrors the typed getter surface (m-value-object): only
     declared members appear (undeclared JSON keys are dropped), every declared
     member is always present (null where the document does not supply it), and the
-    absence states collapse exactly as the read predicates do (m-op-algebra,
+    absence states collapse exactly as the read predicates do (m-predicate,
     resolved Q5):
 
     * a ``one`` member is a nested object when the slot is a JSON object, else
@@ -3040,7 +3040,7 @@ def _assert_rejected(case: Case) -> None:
         if "operation" in case.when:
             entity = _rejected_default_root(case)
             validate_operation(entity, case.when["operation"])
-            # Inheritance narrow / subtype-scope validation (m-op-algebra x
+            # Inheritance narrow / subtype-scope validation (m-predicate x
             # m-inheritance): a no-op on a non-inheritance model, so it runs after
             # the value-object validation without disturbing the existing cases.
             validate_operation_inheritance(case.model.entity_defs, case.when["operation"])
@@ -7073,7 +7073,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         return
 
     if case.is_rejected:
-        # Negative validation (m-value-object / m-op-algebra, resolved Q7): the input
+        # Negative validation (m-value-object / m-predicate, resolved Q7): the input
         # is refused PRE-SQL by model-aware validation — no dialect, no provisioning,
         # no execution. It runs identically on every dialect (idempotent, DB-free), so
         # branch here before the dialect is even read.

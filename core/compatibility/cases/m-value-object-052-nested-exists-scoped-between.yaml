@@ -1,5 +1,5 @@
 # valueObject to-many: a range inside a scoped `where` is SAME-element — one element
-# must satisfy the equality AND the whole range (m-op-algebra elementPredicate +
+# must satisfy the equality AND the whole range (m-predicate elementPredicate +
 # nested range, m-sql, m-dialect array-traversal form). Postgres golden only — a
 # `where` carrying a non-`eq` leaf is outside MariaDB's containment scope (m-dialect,
 # "Scope of the containment golden").
@@ -23,7 +23,7 @@
 # `jsonb_typeof` rather than the golden's inline `case` and spells the range as two
 # comparisons on that one element.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, between, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, between, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

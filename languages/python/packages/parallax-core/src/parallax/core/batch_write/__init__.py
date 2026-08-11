@@ -6,7 +6,7 @@ same-entity, same-mutation single-row :class:`~parallax.core.unit_work.KeyedWrit
 instructions **collapses** into one multi-row instruction, or stays decomposed
 (``m-batch-write.md`` "Set-based flush"). This module **renders no SQL** — the
 module DAG pins it to ``base`` / ``db_port`` / ``metamodel`` / ``inheritance`` /
-``op_algebra`` / ``unit_work`` only (``modules.md`` §7's sole declared edge is
+``predicate`` / ``unit_work`` only (``modules.md`` §7's sole declared edge is
 ``m-batch-write --> m-unit-work``); the composition layer
 (:mod:`parallax.snapshot.handle`, the sole module cleared to import both this
 scope and ``m-sql``/``m-dialect``) renders the collapsed instruction's DML, and
