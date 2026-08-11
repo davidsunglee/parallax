@@ -744,6 +744,54 @@ def _deepfetch_root_entity(case: Case) -> Entity:
 _CANONICAL_AXIS_ORDER: tuple[str, ...] = ("valid-time", "transaction-time")
 
 
+@dataclass(frozen=True, slots=True)
+class _AsOfSelection:
+    coordinate: str
+
+
+@dataclass(frozen=True, slots=True)
+class _AsOfRangeSelection:
+    start: str
+    end: str
+
+
+@dataclass(frozen=True, slots=True)
+class _HistorySelection:
+    pass
+
+
+_TemporalSelection = _AsOfSelection | _AsOfRangeSelection | _HistorySelection
+
+
+def _root_temporal_selections(operation: Any) -> dict[str, _TemporalSelection]:
+    selections: dict[str, _TemporalSelection] = {}
+    node = operation
+    while isinstance(node, dict) and len(node) == 1:
+        tag = next(iter(node))
+        body = node[tag]
+        if not isinstance(body, dict):
+            break
+        if tag in ("orderBy", "limit", "narrow", "deepFetch"):
+            node = body.get("operand")
+            continue
+        dimension = body.get("dimension")
+        if tag == "asOf" and isinstance(dimension, str):
+            coordinate = body.get("coordinate")
+            if isinstance(coordinate, str):
+                selections[dimension] = _AsOfSelection(coordinate)
+        elif tag == "asOfRange" and isinstance(dimension, str):
+            start = body.get("start")
+            end = body.get("end")
+            if isinstance(start, str) and isinstance(end, str):
+                selections[dimension] = _AsOfRangeSelection(start, end)
+        elif tag == "history" and isinstance(dimension, str):
+            selections[dimension] = _HistorySelection()
+        else:
+            break
+        node = body.get("operand")
+    return selections
+
+
 def _root_asof_pins(case: Case) -> dict[str, str]:
     """Map ``{dimension: coordinate}`` from nested ``asOf`` nodes wrapping the
     deep-fetch root operand. A dimension absent here defaults to the child's own
@@ -752,24 +800,14 @@ def _root_asof_pins(case: Case) -> dict[str, str]:
     Transparent wrappers (``orderBy`` / ``limit`` / whole-result ``narrow``) are
     crossed in any interleaving with temporal wrappers, mirroring root compile.
     """
-    pins: dict[str, str] = {}
-    node: Any = _deepfetch_root_operand(case)
-    while isinstance(node, dict):
-        if "asOf" in node:
-            asof = node["asOf"]
-            pins[asof["dimension"]] = asof["coordinate"]
-            node = asof["operand"]
-            continue
-        for wrapper in ("orderBy", "limit", "narrow", "asOfRange", "history"):
-            if wrapper in node:
-                node = node[wrapper]["operand"]
-                break
-        else:
-            break
-    return pins
+    return {
+        dimension: selection.coordinate
+        for dimension, selection in _root_temporal_selections(_deepfetch_root_operand(case)).items()
+        if isinstance(selection, _AsOfSelection)
+    }
 
 
-def _expected_asof_suffix(child_entity: Entity, pins: dict[str, str]) -> list[Any]:
+def _expected_pin_suffix(child_entity: Entity, pins: dict[str, str]) -> list[Any]:
     """The as-of binds a temporal child level MUST carry, after its IN-list.
 
     Per dimension, in canonical order (Valid Time, then Transaction Time): the propagated value
@@ -1284,29 +1322,33 @@ def _read_effective_set(case: Case, family: Family, target_name: str) -> list[st
     return family.effective_concrete_set(target_name)
 
 
-def _read_asof_pins(case: Case) -> dict[str, str]:
-    """Map ``{dimension: coordinate}`` from ``asOf`` nodes wrapping a READ operation.
+def _read_temporal_selections(case: Case) -> dict[str, _TemporalSelection]:
+    """Return every canonical temporal selection on a read, keyed by dimension."""
+    return _root_temporal_selections(case.operation)
 
-    The read counterpart of :func:`_root_asof_pins` (which walks a deep-fetch root
-    operand): peel the result-directive / narrow wrappers, then descend the nested
-    ``asOf`` pins. A canonical temporal root names every declared axis; an axis
-    absent here can only be one the reached child declares and the source does not,
-    and :func:`_expected_asof_suffix` selects Latest for that unmatched child axis.
-    Empty for a non-temporal read.
-    """
-    pins: dict[str, str] = {}
-    node: Any = case.operation
-    while isinstance(node, dict) and len(node) == 1:
-        tag = next(iter(node))
-        if tag in ("orderBy", "limit", "narrow"):
-            node = node[tag].get("operand")
-        elif tag == "asOf":
-            asof = node["asOf"]
-            pins[asof["dimension"]] = asof["coordinate"]
-            node = asof.get("operand")
-        else:
-            break
-    return pins
+
+def _expected_temporal_suffix(
+    entity: Entity, selections: Mapping[str, _TemporalSelection]
+) -> list[Any]:
+    by_axis = {axis["dimension"]: axis for axis in entity.temporal_runtime_axes}
+    suffix: list[Any] = []
+    for dimension in _CANONICAL_AXIS_ORDER:
+        axis = by_axis.get(dimension)
+        if axis is None:
+            continue
+        selection = selections.get(dimension)
+        if selection is None:
+            raise CaseFailure(
+                f"temporal selection oracle is missing {dimension!r} for {entity.canonical_name}"
+            )
+        if isinstance(selection, _AsOfSelection):
+            if selection.coordinate == "latest":
+                suffix.append(axis["infinity"])
+            else:
+                suffix.extend([selection.coordinate, selection.coordinate])
+        elif isinstance(selection, _AsOfRangeSelection):
+            suffix.extend([selection.end, selection.start])
+    return suffix
 
 
 def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
@@ -1316,10 +1358,10 @@ def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
     table-per-concrete-subtype abstract-target read over a TEMPORAL family lowers to
     ``union all``, and the injected as-of predicate is applied PER BRANCH. Every
     concrete branch inherits the same axes from the abstract root, so each branch
-    carries the same as-of suffix (Valid-Time-first bind order); the union's binds
+    carries the same temporal-selection suffix (Valid-Time-first bind order); the union's binds
     are those per-branch suffixes repeated in the family's canonical ALPHABETICAL branch
     order. Recomputed from the read's complete canonical selections through
-    :func:`_expected_asof_suffix`, independent of the authored golden. A no-op unless
+    :func:`_expected_temporal_suffix`, independent of the authored golden. A no-op unless
     the target is an abstract table-per-concrete-subtype TEMPORAL position.
     """
     target_name = case.when.get("targetEntity")
@@ -1337,10 +1379,10 @@ def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
     branch_entities = [case.model.entity(name) for name in ordered]
     if not any(entity.is_temporal for entity in branch_entities):
         return  # a non-temporal TPCS abstract read carries no injected as-of binds
-    pins = _read_asof_pins(case)
+    selections = _read_temporal_selections(case)
     expected: list[Any] = []
     for entity in branch_entities:
-        expected.extend(_expected_asof_suffix(entity, pins))
+        expected.extend(_expected_temporal_suffix(entity, selections))
     actual = case.statement_binds(0, dialect)
     if len(actual) != len(expected) or not all(
         _write_value_equal(want, got) for want, got in zip(expected, actual, strict=False)
@@ -1348,7 +1390,7 @@ def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
         raise CaseFailure(
             f"{case.path.name}: temporal table-per-concrete-subtype abstract read binds "
             f"{actual!r} != the per-branch as-of binds {expected!r} — each branch injects "
-            f"its as-of predicate over its own alias (Valid-Time-first), repeated in "
+            f"its selected temporal predicate over its own alias (Valid-Time-first), repeated in "
             f"alphabetical branch order {ordered} (m-sql / m-temporal-read)."
         )
 
@@ -2325,7 +2367,7 @@ def _assert_deep_fetch(case: Case, db: DatabaseProvider) -> None:
         # dropped/wrong propagated as-of fails the case. A non-temporal child has
         # an empty suffix (no as-of term).
         expected_suffix = (
-            _expected_asof_suffix(step.child_entity, root_pins)
+            _expected_pin_suffix(step.child_entity, root_pins)
             if step.child_entity.is_temporal
             else []
         )

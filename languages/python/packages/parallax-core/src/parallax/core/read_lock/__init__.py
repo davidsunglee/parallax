@@ -3,8 +3,8 @@
 The pure, query-free read-lock POLICY scope:
 `m-read-lock` is the default (`locking`-mode) correctness strategy — an
 in-transaction **object find** that intends to write acquires the dialect's
-shared row lock; `optimistic` mode takes no lock, ever (`m-opt-lock` recovers
-correctness at write time instead) — the composed result :func:`mode_for`
+shared row lock; the same object find in `optimistic` mode omits that lock
+(`m-opt-lock` recovers correctness at write time instead) — the composed result :func:`mode_for`
 and `m-sql`'s own append site produce together (see :func:`mode_for`'s own
 docstring for exactly which half each owns). Per the dependency graph this
 module owns only the MODE -> lock-parameter mapping: it depends on
@@ -16,7 +16,7 @@ render it) — the two DAG edges `modules.md` declares for `m-read-lock`.
 This module renders **no SQL** and owns **no append site**: `m-dialect` keeps
 :meth:`~parallax.core.dialect.Dialect.read_lock_suffix` (the suffix text) and
 ``m-sql``/`~parallax.core.sql_gen` keeps the append decision. :func:`mode_for`
-is the SEPARATE, mode-driven half every transactional read consumer re-derives through, rather
+is the SEPARATE, mode-driven half every supported object-find consumer re-derives through, rather
 than re-deriving the mode -> lock mapping inline at each call site:
 :meth:`~parallax.snapshot.handle.Transaction.find`, the materializing
 predicate-write resolve in `~parallax.snapshot.handle`, and the conformance
@@ -26,7 +26,7 @@ Prior art (Reladomo; semantics, not idioms): the shared read lock mirrors
 ``FullTransactionalParticipationMode`` (a read enrolls with
 ``lockInDatabase=true``, applying the dialect's own lock suffix); optimistic
 mode mirrors ``ReadCacheWithOptimisticLockingTxParticipationMode`` (no read
-locks at all — the version gate recovers correctness at write time,
+locks on its object reads — the version gate recovers correctness at write time,
 ``docs/research/reladomo/09-transactions-locking.md``).
 """
 
@@ -54,8 +54,8 @@ def mode_for(concurrency: Concurrency | None) -> LockMode | None:
     (`~parallax.core.sql_gen._compile._append_result_shape`), which appends
     the dialect's shared-row-lock suffix; ``optimistic`` carries through
     unchanged too, but the SAME append site never triggers for it (only
-    ``"locking"`` does) — the "optimistic mode takes no lock, ever" half of
-    the policy is therefore enforced at the append site's own mode check,
+    ``"locking"`` does) — the "an optimistic object find omits the shared lock"
+    half of the policy is therefore enforced at the append site's own mode check,
     not by this function returning ``None`` for it (`m-read-lock-005`'s own
     compile-sweep witness proves the composed result). ``None`` (no owning
     unit of work — a non-transactional

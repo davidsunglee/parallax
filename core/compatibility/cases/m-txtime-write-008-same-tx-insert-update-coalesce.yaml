@@ -9,8 +9,8 @@
 # Against the loaded Balance fixtures, step 0 buffers INSERT of NEW account 9 (value
 # 100) then an UPDATE to 150, flushing as ONE INSERT [in_z = 2024-06-01,
 # out_z = infinity] at 150 — no close UPDATE, no superseded 100 row: the single INSERT
-# IS the observable proof. Step 1's Latest find (optimistic mode, so no read lock — a
-# plain temporal read) observes ONE current row at 150. In the neutral write input `at`
+# IS the observable proof. Step 1's Latest object find (optimistic mode, so it omits
+# the shared read lock) observes ONE current row at 150. In the neutral write input `at`
 # is the Clock-supplied Transaction-Time instant (in_z), never an instruction field.
 model: models/balance.yaml
 tags: [m-txtime-write, m-unit-work, m-temporal-read, same-transaction-coalescing, scenario, slice-snapshot-1]

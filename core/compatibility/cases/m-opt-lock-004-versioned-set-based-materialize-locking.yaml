@@ -22,7 +22,7 @@
 # shared-row-lock suffix (m-read-lock-002's rule) — the materialize read AND the
 # step-2 verify read — so the per-object writes need no version check: the ungated
 # version-advancing form (m-opt-lock-002 shape) per row. Optimistic mode
-# (m-opt-lock-003) differs on BOTH sides: its reads take no lock and each per-object
+# (m-opt-lock-003) differs on BOTH sides: its two object finds omit the shared lock and each per-object
 # UPDATE adds the `and version = ?` gate.
 # roundTrips = 4 (one materialize read + two per-object updates + one verify read).
 model: models/account.yaml

@@ -1,10 +1,10 @@
 # m-opt-lock — Optimistic Locking
 
-`m-opt-lock` is the **optimistic concurrency** strategy: instead of holding a row
-lock for the duration of a read-then-write (`m-read-lock`'s automatic shared-row
-lock), an entity carries a **version column** that a write **advances** and, in
-optimistic mode, **gates on**. A concurrent write that changed the version first
-makes the stale-version write match **no** row, and that *missing* row is the
+`m-opt-lock` is the **optimistic concurrency** strategy: instead of an object find
+holding a row lock for the duration of a read-then-write (`m-read-lock`'s automatic
+shared-row lock), an entity carries a **version column** that a write **advances**
+and, in optimistic mode, **gates on**. A concurrent write that changed the version
+first makes the stale-version write match **no** row, and that *missing* row is the
 conflict signal.
 
 `m-opt-lock` depends on `m-unit-work` (the unit of work whose flush issues the
@@ -25,10 +25,10 @@ optimistic key without copying Attribute Metadata.
 
 Optimistic locking is a **per-unit-of-work participation mode** the caller
 selects (`m-unit-work` strategy selection — `concurrency: optimistic`), not a
-static entity property. In optimistic mode a read takes **no** lock (so readers
-never block writers), and correctness is recovered at write time by the version
-check; the default `locking` mode instead takes the `m-read-lock` shared read lock.
-The same versioned entity can be written under either mode in different workflows.
+static entity property. In optimistic mode a participating object find takes
+**no** lock, and correctness is recovered at write time by the version check; the
+default `locking` mode instead gives that object find the `m-read-lock` shared read
+lock. The same versioned entity can be written under either mode in different workflows.
 The metamodel only **names** the version column (`optimisticLocking: true`,
 `m-descriptor`); whether the gate is emitted is the unit of work's choice.
 Optimistic mode suits read-mostly workloads and detached edits (`m-detach`), where

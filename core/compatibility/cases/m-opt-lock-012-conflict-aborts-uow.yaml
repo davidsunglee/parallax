@@ -13,7 +13,7 @@
 # and its WHERE gate binds that SAME observed version, never the advance.
 # The scenario:
 #   step 0 find  : OUR unit of work (group `ours`) observes account 2 (Linus,
-#                  250.00, version 1) — optimistic mode takes no lock.
+#                  250.00, version 1) — this optimistic object find omits the shared lock.
 #   step 1 find  : a CONCURRENT unit of work (group `concurrent`) observes the SAME
 #                  account 2 at the SAME version 1 — the classic race: both sides
 #                  read before either writes.
@@ -65,7 +65,7 @@ when:
           attr: parallax.compatibility.Account.id
           value: 2
       roundTrips: 1
-      note: OUR unit of work observes account 2 (Linus, 250.00, version 1); optimistic mode takes no lock
+      note: OUR unit of work observes account 2 (Linus, 250.00, version 1); this optimistic object find omits the shared lock
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?
