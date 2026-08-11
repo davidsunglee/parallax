@@ -135,7 +135,7 @@ declared assignments — and from nothing else, its own predicate included (the
 `Document` slot rule and *Result form*, below). The operation algebra deliberately
 carries **no projection node** (`m-op-algebra`): no read may project a proper subset of
 the derived list, and a column-subset result is expressible **only** through the
-aggregation algebra (`m-agg`, deferred). The directives `distinct`, `orderBy`, and
+future aggregate-query contract (`m-agg`, deferred). The directives `orderBy` and
 `limit` never change the list.
 
 Inheritance first resolves the target and every `narrow` to one canonical
@@ -191,12 +191,6 @@ result-key spelling. Per-type rendering seams — the `bytes`
 `encode(t0.payload, ?) payload_hex` form or reserved-word quoting
 `t0."order"` — render a selected slot without changing its position.
 
-Because every Entity projection contains its model primary-key Attribute slot,
-`distinct` over an Entity read is structurally **row-preserving**; its one
-remaining operative semantic is **read-lock suppression** — a `distinct` /
-grouped / aggregate result takes no shared read lock (`m-read-lock`;
-*Read-lock suffix*, below).
-
 ### Result form — row-form vs instance-form
 
 A read is consumed in one of two lanes, and the projection differs only in
@@ -230,8 +224,7 @@ form is declared by **which result member it asserts** (`then.rows` = row-form;
 **step** read (asserted with `expectRows` / `observeRows`) is fixed by the step's read
 semantics: a managed-object find or refresh, a relationship `load`, an operation-list
 first `access`, and a full-scalar shared concurrency read are **instance-form**; the
-internal materialized-predicate-write resolving read and a `distinct` / grouped
-concurrency-witness read are **row-form**.
+internal materialized-predicate-write resolving read is **row-form**.
 
 Everything already specified composes with this rule unchanged: a version
 Attribute is an applicable Attribute slot; a TPH abstract read selects its
@@ -332,7 +325,6 @@ left-to-right.
 | `group` | `( <operand> )` |
 | `orderBy` | `order by <key term>[, …]`, one term per key — `t0.col [asc\|desc]` for a non-nullable key, else the `m-dialect` Null Placement term |
 | `limit` | `limit ?` |
-| `distinct` | `select distinct …` |
 | `navigate`/`exists` | `exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
 | `notExists` | `not exists (select 1 from child t1 where t1.fk = t0.key [and <op>])` |
 
@@ -380,9 +372,8 @@ composes the placement itself. The canonical Postgres terms are `t0.col asc`,
 ### Clause order
 
 Directives lower into the fixed clause order (rule 5):
-`select [distinct] … from … [where …] [order by …] [limit …]`. `orderBy` and
-`limit` therefore always follow any predicate, and `distinct` attaches to the
-`select`.
+`select … from … [where …] [order by …] [limit …]`. `orderBy` and `limit`
+therefore always follow any predicate.
 
 ## Joins by navigation
 
@@ -472,7 +463,7 @@ the child's own key when it is itself a parent of a deeper level).
 The temp-table variant for very large parent key sets is a **fast-follow**
 (`m-deep-fetch`); round 1 uses the simplified `IN` form only.
 
-A **path-root guard** (`m-op-algebra`'s `{ entity, to }` beside `segments`) emits
+A **path-root guard** (`m-op-algebra`'s `{ to }` beside `segments`) emits
 **no statement and no clause of its own**. It restricts which already-fetched root
 rows a path's first level gathers its keys from, so it is observable only in that
 level's `IN` list — which carries the guarded roots' keys alone — and, through it,
@@ -484,7 +475,7 @@ guarded branch's rows.
 ```text
 # targetEntity: Animal (Dog 1 -> owner 10, Dog 2 -> owner 11, Cat 3 -> owner 10,
 # WildBoar 4 -> owner 12), one path guarded to the Dogs:
-deepFetch(all(Animal), paths = [ { narrow: { entity: Animal, to: [Dog] },
+deepFetch(all(Animal), paths = [ { narrow: { to: [Dog] },
                                    segments: [{ rel: Animal.owner }] } ])
   level 0 (root)  : select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id,
                     t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
@@ -693,10 +684,10 @@ state, not SQL — but it executes two dialect-specific SQL fragments through th
 
 An in-transaction **object find** that intends to write carries the dialect's
 shared-row-lock suffix (`m-read-lock`, `m-dialect`). The read-lock is an
-**object-find property**: a projection / aggregation SELECT — a `distinct`,
-grouped, or aggregate result — **never** carries the suffix (it has no
-identifiable base row to lock), and the `m-dialect` layer **owns applying** the
-lock (whether and where to append it — see `m-dialect`'s *Read-lock application*).
+**object-find property**, and the `m-dialect` layer **owns applying** the lock
+(whether and where to append it — see `m-dialect`'s *Read-lock application*).
+Projection and aggregation reads are outside the active query contract; their
+locking semantics land with their future query contract.
 For Postgres the suffix is `for share of t0` — `for share` qualified by the root
 alias — appended **after** every other clause (it is the last thing in the
 statement, after any `where`):
@@ -1617,8 +1608,8 @@ SELECT. PostgreSQL qualifies `for share` with that base alias; MariaDB's
 `lock in share mode` is unqualified. The derived relation projects only the
 identity needed for the join, so casts remain isolated in tag-disjoint branches
 while the returned base rows—not a materialized derived result—are locked in one
-atomic acquisition. `distinct`, ordering, limit, projection order, result form,
-and document decoding retain the same outer-read rules as an unpartitioned TPH
+atomic acquisition. Ordering, limit, projection order, result form, and document
+decoding retain the same outer-read rules as an unpartitioned TPH
 read.
 
 Partitioning is required rather than merely preferred, because the alternative

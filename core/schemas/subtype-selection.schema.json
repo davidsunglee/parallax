@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/subtype-selection.schema.json",
+  "title": "Parallax Subtype Selection (m-inheritance)",
+  "$defs": {
+    "subtypeSelection": {
+      "description": "A non-empty selection of authored Entity alternatives. Construction canonicalizes the alternatives to EntityIdentity.sort_key order and rejects exact duplicates; model-aware validation requires their resolved effective concrete-subtype sets to be pairwise disjoint (m-inheritance).",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "identity.schema.json#/$defs/entityName" }
+    }
+  }
+}

@@ -1500,7 +1500,6 @@ def _refused_predicates(entity: str) -> list[tuple[str, str, dict[str, object]]]
             "`orderBy` is a result modifier",
             {"orderBy": {"operand": inner, "keys": [{"attr": f"{entity}.balance"}]}},
         ),
-        ("distinct", "`distinct` is a result modifier", {"distinct": {"operand": inner}}),
     ]
 
 

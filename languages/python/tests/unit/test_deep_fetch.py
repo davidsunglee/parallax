@@ -35,7 +35,6 @@ from parallax.core.op_algebra import (
     NavigationPath,
     Operation,
     OrderBy,
-    PathRootNarrow,
     PathSegment,
 )
 from parallax.descriptor._serde import deserialize
@@ -50,12 +49,12 @@ def _seg(rel: str, narrow: tuple[str, ...] = ()) -> PathSegment:
     return PathSegment(rel=rel, narrow=narrow)
 
 
-def _path(*segments: PathSegment, narrow: PathRootNarrow | None = None) -> NavigationPath:
+def _path(*segments: PathSegment, narrow: tuple[str, ...] | None = None) -> NavigationPath:
     return NavigationPath(segments=segments, narrow=narrow)
 
 
-def _guard(*to: str, entity: str = "Animal") -> PathRootNarrow:
-    return PathRootNarrow(entity=entity, to=to)
+def _guard(*to: str) -> tuple[str, ...]:
+    return to
 
 
 def _plan(
@@ -291,7 +290,7 @@ def test_multi_concrete_narrow_wraps_a_narrow_node() -> None:
     assert level.narrow_to == ("Cat", "Dog")
     _target, op = level.child_operation([1])
     assert isinstance(op, Narrow)
-    assert op.entity == "parallax.compatibility.Pet"
+    assert op.to == ("Cat", "Dog")
 
 
 def test_broad_polymorphic_hop_targets_the_relationship_position_no_narrow() -> None:

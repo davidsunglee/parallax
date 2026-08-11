@@ -511,7 +511,7 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
         ),
         pytest.param(oa.NestedExists(path="Customer.address.phones"), id="nestedExists"),
         pytest.param(oa.NestedNotExists(path="Customer.address.phones"), id="nestedNotExists"),
-        pytest.param(oa.Narrow(entity="Customer", to=("Customer",), operand=oa.All()), id="narrow"),
+        pytest.param(oa.Narrow(to=("Customer",), operand=oa.All()), id="narrow"),
         pytest.param(oa.Navigate(rel="Customer.orders"), id="navigate"),
         pytest.param(oa.Exists(rel="Customer.orders"), id="exists"),
         pytest.param(oa.NotExists(rel="Customer.orders"), id="notExists"),
@@ -520,7 +520,6 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
             oa.AsOf(operand=oa.All(), dimension="valid-time", coordinate="2024-01-01"), id="asOf"
         ),
         pytest.param(oa.Limit(operand=oa.All(), count=1), id="limit"),
-        pytest.param(oa.Distinct(operand=oa.All()), id="distinct"),
     ],
 )
 def test_entity_vocabulary_inside_an_element_where_is_refused_as_one_grammar(

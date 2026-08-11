@@ -24,7 +24,6 @@ when:
       rel: parallax.compatibility.Folder.documents
       op:
         narrow:
-          entity: parallax.compatibility.Document
           to: [parallax.compatibility.FinancialDocument]
           operand:
             all: {}

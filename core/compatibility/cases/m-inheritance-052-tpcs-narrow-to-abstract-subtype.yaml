@@ -16,7 +16,6 @@ when:
   targetEntity: parallax.compatibility.Document
   operation:
     narrow:
-      entity: parallax.compatibility.Document
       to: [parallax.compatibility.FinancialDocument]
       operand:
         all: {}

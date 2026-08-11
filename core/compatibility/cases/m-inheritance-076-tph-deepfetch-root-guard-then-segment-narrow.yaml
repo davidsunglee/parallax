@@ -2,7 +2,7 @@
 # (m-deep-fetch, m-inheritance).
 #
 # The single path is
-# `{ narrow: { entity: Animal, to: [Pet] }, segments: [{ rel: Animal.owner },
+# `{ narrow: { to: [Pet] }, segments: [{ rel: Animal.owner },
 # { rel: Person.pets, narrow: { to: [Dog] } }] }` — guarded at the root to the pets
 # of the family, then narrowed at its second hop to the owners' Dogs. Both hops run
 # once (`1 + L` = 3): the owner level is keyed by the owner ids gathered from the
@@ -28,7 +28,7 @@ when:
       operand:
         all: {}
       paths:
-        - narrow: { entity: parallax.compatibility.Animal, to: [parallax.compatibility.Pet] }
+        - narrow: { to: [parallax.compatibility.Pet] }
           segments:
             - { rel: parallax.compatibility.Animal.owner }
             - { rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Dog] } }

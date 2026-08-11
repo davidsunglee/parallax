@@ -28,7 +28,6 @@ from parallax.core.op_algebra import (
     Between,
     Comparison,
     DeepFetch,
-    Distinct,
     Exists,
     Group,
     History,
@@ -54,7 +53,6 @@ from parallax.core.op_algebra import (
     Or,
     OrderBy,
     OrderKey,
-    PathRootNarrow,
     PathSegment,
     Scalar,
     StringMatch,
@@ -76,7 +74,7 @@ from parallax.descriptor._records import (
 def test_referenced_entities_collects_every_class_the_operation_names() -> None:
     # The reachable-closure seed the Entity frontend forms its early-validation
     # model from: the `Class` prefix of every attribute / nested-path /
-    # relationship reference, plus every `narrow` entity and subtype and every
+    # relationship reference, plus every Subtype Selection alternative and every
     # order key, reached through every wrapper and combinator.
     op = DeepFetch(
         operand=OrderBy(
@@ -96,7 +94,7 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
                                 )
                             )
                         ),
-                        Narrow(entity="Animal", to=("Dog", "Cat"), operand=All()),
+                        Narrow(to=("Dog", "Cat"), operand=All()),
                         Navigate(
                             rel="Person.pets",
                             op=NestedComparison(op="nestedEq", path="Pet.spec.n", value="v"),
@@ -118,7 +116,7 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
         paths=(
             NavigationPath(
                 segments=(PathSegment(rel="Root.leaves", narrow=("Leaf",)),),
-                narrow=PathRootNarrow(entity="Trunk", to=("Branch",)),
+                narrow=("Branch",),
             ),
         ),
     )
@@ -137,7 +135,6 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
             "Status",
             "Root",
             "Leaf",
-            "Trunk",
             "Branch",
             "Sorted",
         }
@@ -190,14 +187,15 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
 
 
 # --------------------------------------------------------------------------- #
-# The 20 in-slice rejected corpus cases, round-tripped end to end.            #
+# The 21 in-slice rejected corpus cases, round-tripped end to end.            #
 # --------------------------------------------------------------------------- #
 _REJECTED_CASE_IDS = (
     "m-inheritance-040",
     "m-inheritance-041",
     "m-inheritance-042",
     "m-inheritance-064",
-    "m-inheritance-072",
+    "m-inheritance-132",
+    "m-inheritance-133",
     "m-op-algebra-039",
     "m-op-algebra-040",
     "m-op-algebra-041",
@@ -364,37 +362,50 @@ def test_nested_negated_membership_type_checks_its_values_in_both_scopes() -> No
 # (m-op-algebra "the four-step validation rule").                            #
 # --------------------------------------------------------------------------- #
 def test_narrow_broadening_past_position_rejects() -> None:
-    op = Narrow(entity="Pet", to=("WildBoar",), operand=All())
+    op = Narrow(to=("Person",), operand=All())
     exc = _rejects(op, _ANIMAL, "Animal")
     assert exc.rule == "narrow-outside-position"
 
 
 def test_nested_narrow_cannot_broaden_back_out_of_the_enclosing_narrow() -> None:
     op = Narrow(
-        entity="Pet",
         to=("Dog",),
-        operand=Narrow(entity="Animal", to=("Cat",), operand=All()),
+        operand=Narrow(to=("Cat",), operand=All()),
     )
     exc = _rejects(op, _ANIMAL, "Animal")
     assert exc.rule == "narrow-outside-position"
 
 
 def test_narrow_within_position_accepts() -> None:
-    op = Narrow(entity="Animal", to=("Dog",), operand=All())
+    op = Narrow(to=("Dog",), operand=All())
     _validate("Animal", op, _ANIMAL)  # no raise
 
 
 def test_equivalent_narrow_spelling_is_not_outside_position() -> None:
     # `to=[Pet]` and `to=[Cat, Dog]` resolve to the SAME effective set — both are
-    # valid, non-broadening narrows of the Animal root (m-op-algebra "the serde
-    # preserves the authored `to` list verbatim"; the boundary this rule pins).
-    _validate("Animal", Narrow(entity="Animal", to=("Pet",), operand=All()), _ANIMAL)
-    _validate("Animal", Narrow(entity="Animal", to=("Cat", "Dog"), operand=All()), _ANIMAL)
+    # valid, non-broadening selections of the Animal root.
+    _validate("Animal", Narrow(to=("Pet",), operand=All()), _ANIMAL)
+    _validate("Animal", Narrow(to=("Cat", "Dog"), operand=All()), _ANIMAL)
+
+
+def test_subtype_selection_rejects_an_exact_duplicate() -> None:
+    exc = _rejects(Narrow(to=("Dog", "Dog"), operand=All()), _ANIMAL, "Animal")
+    assert exc.rule == "subtype-selection-duplicate-alternative"
+
+
+def test_subtype_selection_rejects_overlapping_alternatives() -> None:
+    exc = _rejects(Narrow(to=("Dog", "Pet"), operand=All()), _ANIMAL, "Animal")
+    assert exc.rule == "subtype-selection-overlapping-alternatives"
+
+
+def test_subtype_selection_checks_exact_duplicates_before_overlap() -> None:
+    exc = _rejects(Narrow(to=("Pet", "Dog", "Dog"), operand=All()), _ANIMAL, "Animal")
+    assert exc.rule == "subtype-selection-duplicate-alternative"
 
 
 def test_redundant_self_narrow_is_valid() -> None:
     # Narrowing a position to itself is a documented no-op, not a rejection.
-    _validate("Pet", Narrow(entity="Pet", to=("Pet",), operand=All()), _ANIMAL)
+    _validate("Pet", Narrow(to=("Pet",), operand=All()), _ANIMAL)
 
 
 def test_narrow_empty_effective_set_rejects() -> None:
@@ -403,7 +414,7 @@ def test_narrow_empty_effective_set_rejects() -> None:
     # compose a concrete elsewhere — a family composing none of them never forms
     # (`inheritance-missing-concrete-subtype`), so the operation rule is reached
     # only through this shape.
-    op = Narrow(entity="Animal", to=("Ghost",), operand=All())
+    op = Narrow(to=("Ghost",), operand=All())
     exc = _rejects(op, _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, "Animal")
     assert exc.rule == "narrow-empty-effective-set"
 
@@ -412,7 +423,7 @@ def test_a_narrow_to_a_name_the_model_does_not_declare_resolves_to_nothing() -> 
     # A `to` entry naming NO Entity contributes nothing and leaves the resolved set
     # empty, which the narrow rules classify. Only a spelling naming MORE than one
     # Entity is named as a resolution failure of its own.
-    op = Narrow(entity="Animal", to=("Bogus",), operand=All())
+    op = Narrow(to=("Bogus",), operand=All())
     exc = _rejects(op, _ANIMAL, "Animal")
     assert exc.rule == "narrow-empty-effective-set"
 
@@ -428,7 +439,6 @@ def test_subtype_attribute_outside_narrow_scope_rejects() -> None:
 
 def test_subtype_attribute_within_narrow_scope_accepts() -> None:
     op = Narrow(
-        entity="Animal",
         to=("Dog",),
         operand=Comparison(op="greaterThan", attr="Dog.barkVolume", value=3),
     )
@@ -452,7 +462,6 @@ def test_an_ancestors_attribute_is_addressable_from_a_descendant_position() -> N
         OrderBy(operand=All(), keys=(OrderKey(attr="Dog.name"),)),
         Comparison(op="eq", attr="Pet.licenseId", value="L-1"),
         Narrow(
-            entity="Animal",
             to=("Dog",),
             operand=Comparison(op="eq", attr="Cat.name", value="Tom"),
         ),
@@ -474,9 +483,7 @@ def test_a_subtype_spelling_is_in_scope_once_the_position_is_narrowed_to_it() ->
     # The remedy the rule names: narrowing to Dog makes `Dog.name` applicable, which
     # is what keeps the rejection above `subtype-attribute-outside-narrow-scope`
     # rather than the non-family rule.
-    op = Narrow(
-        entity="Animal", to=("Dog",), operand=Comparison(op="eq", attr="Dog.name", value="Rex")
-    )
+    op = Narrow(to=("Dog",), operand=Comparison(op="eq", attr="Dog.name", value="Rex"))
     _validate("Animal", op, _ANIMAL)
 
 
@@ -515,22 +522,21 @@ def test_the_related_entity_is_the_active_position_inside_a_navigation_filter() 
 # narrow-outside-relationship-target (m-navigate).                           #
 # --------------------------------------------------------------------------- #
 def test_narrow_to_outside_relationship_target_rejects() -> None:
-    op = Exists(rel="Person.pets", op=Narrow(entity="Pet", to=("WildBoar",), operand=All()))
+    op = Exists(rel="Person.pets", op=Narrow(to=("WildBoar",), operand=All()))
     exc = _rejects(op, _ANIMAL, "Person")
     assert exc.rule == "narrow-outside-relationship-target"
 
 
-def test_narrow_entity_outside_relationship_target_rejects() -> None:
-    op = Exists(rel="Person.pets", op=Narrow(entity="Animal", to=("Dog",), operand=All()))
+def test_empty_narrow_inside_relationship_target_keeps_the_shared_empty_rule() -> None:
+    op = Exists(rel="Person.pets", op=Narrow(to=("Bogus",), operand=All()))
     exc = _rejects(op, _ANIMAL, "Person")
-    assert exc.rule == "narrow-outside-relationship-target"
+    assert exc.rule == "narrow-empty-effective-set"
 
 
 def test_narrow_within_relationship_target_accepts() -> None:
     op = Exists(
         rel="Person.pets",
         op=Narrow(
-            entity="parallax.compatibility.Pet",
             to=("parallax.compatibility.Dog",),
             operand=All(),
         ),
@@ -543,7 +549,7 @@ def test_navigate_with_no_inner_operation_accepts() -> None:
 
 
 def test_not_exists_relationship_target_scope_propagates() -> None:
-    op = NotExists(rel="Person.pets", op=Narrow(entity="Pet", to=("WildBoar",), operand=All()))
+    op = NotExists(rel="Person.pets", op=Narrow(to=("WildBoar",), operand=All()))
     exc = _rejects(op, _ANIMAL, "Person")
     assert exc.rule == "narrow-outside-relationship-target"
 
@@ -565,7 +571,20 @@ def test_deep_fetch_path_narrow_within_relationship_target_accepts() -> None:
     _validate("Person", op, _ANIMAL)  # no raise
 
 
-def _rooted(narrow: PathRootNarrow | None) -> DeepFetch:
+def test_empty_deep_fetch_path_narrow_keeps_the_shared_empty_rule() -> None:
+    op = DeepFetch(
+        operand=All(),
+        paths=(
+            NavigationPath(
+                segments=(PathSegment(rel="Person.pets", narrow=("Bogus",)),),
+            ),
+        ),
+    )
+    exc = _rejects(op, _ANIMAL, "Person")
+    assert exc.rule == "narrow-empty-effective-set"
+
+
+def _rooted(narrow: tuple[str, ...] | None) -> DeepFetch:
     return DeepFetch(
         operand=All(),
         paths=(NavigationPath(segments=(PathSegment(rel="Animal.owner"),), narrow=narrow),),
@@ -576,15 +595,15 @@ def test_deep_fetch_path_root_narrow_within_the_queried_position_accepts() -> No
     # The ROOT guard is governed by the four-step same-position rule, not by the
     # relationship-target rule its segments follow: it names the queried position
     # and may resolve anywhere inside it, including redundantly to all of it.
-    _validate("Animal", _rooted(PathRootNarrow(entity="Animal", to=("Dog",))), _ANIMAL)
-    _validate("Animal", _rooted(PathRootNarrow(entity="Animal", to=("Pet",))), _ANIMAL)
-    _validate("Animal", _rooted(PathRootNarrow(entity="Animal", to=("Animal",))), _ANIMAL)
+    _validate("Animal", _rooted(("Dog",)), _ANIMAL)
+    _validate("Animal", _rooted(("Pet",)), _ANIMAL)
+    _validate("Animal", _rooted(("Animal",)), _ANIMAL)
 
 
 def test_deep_fetch_path_root_narrow_broadening_past_the_position_rejects() -> None:
-    # Read narrowed to Pet, guard reaching the sibling branch: the guard's `entity`
-    # is clamped to the active position first, so WildBoar is outside it.
-    op = _rooted(PathRootNarrow(entity="Animal", to=("WildBoar",)))
+    # Read narrowed to Pet, guard reaching the sibling branch: the enclosing
+    # selection supplies the active position, so WildBoar is outside it.
+    op = _rooted(("WildBoar",))
     exc = _rejects(op, _ANIMAL, "Pet")
     assert exc.rule == "narrow-outside-position"
 
@@ -593,9 +612,8 @@ def test_deep_fetch_path_root_narrow_inherits_the_enclosing_narrow_position() ->
     # The guard is checked against the position active where its `deepFetch` sits,
     # so an enclosing narrow constrains it exactly as it constrains a nested narrow.
     op = Narrow(
-        entity="Animal",
         to=("Dog",),
-        operand=_rooted(PathRootNarrow(entity="Animal", to=("Cat",))),
+        operand=_rooted(("Cat",)),
     )
     exc = _rejects(op, _ANIMAL, "Animal")
     assert exc.rule == "narrow-outside-position"
@@ -604,7 +622,7 @@ def test_deep_fetch_path_root_narrow_inherits_the_enclosing_narrow_position() ->
 def test_deep_fetch_path_root_narrow_empty_effective_set_rejects() -> None:
     # A guard whose `to` names an abstract subtype with no concrete descendants
     # resolves to nothing, which is the guard's own rejection, not a broadening.
-    op = _rooted(PathRootNarrow(entity="Animal", to=("Ghost",)))
+    op = _rooted(("Ghost",))
     exc = _rejects(op, _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, "Animal")
     assert exc.rule == "narrow-empty-effective-set"
 
@@ -999,10 +1017,6 @@ def test_negation_and_grouping_and_result_shaping_wrappers_propagate() -> None:
     exc = _rejects(Limit(operand=bad, count=1), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    _validate("Customer", Distinct(operand=good), _CUSTOMER)
-    exc = _rejects(Distinct(operand=bad), _CUSTOMER, "Customer")
-    assert exc.rule == "find-root-value-object"
-
     _validate(
         "Customer", AsOf(operand=good, dimension="valid-time", coordinate="latest"), _CUSTOMER
     )
@@ -1054,7 +1068,7 @@ def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> Non
     # concrete subtype's key is legal exactly when the result was narrowed to that
     # subtype, and not before.
     narrowed = OrderBy(
-        operand=Narrow(entity="Animal", to=("Dog",), operand=All()),
+        operand=Narrow(to=("Dog",), operand=All()),
         keys=(OrderKey(attr="Dog.barkVolume"),),
     )
     _validate("Animal", narrowed, _ANIMAL)
@@ -1064,7 +1078,7 @@ def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> Non
     assert exc.rule == "subtype-attribute-outside-narrow-scope"
 
 
-_NARROW_TO_DOG = Narrow(entity="Animal", to=("Dog",), operand=All())
+_NARROW_TO_DOG = Narrow(to=("Dog",), operand=All())
 _OWNER_PATH = NavigationPath(segments=(PathSegment(rel="Animal.owner"),))
 
 
@@ -1073,7 +1087,6 @@ _OWNER_PATH = NavigationPath(segments=(PathSegment(rel="Animal.owner"),))
     [
         _NARROW_TO_DOG,
         Limit(operand=_NARROW_TO_DOG, count=5),
-        Distinct(operand=_NARROW_TO_DOG),
         DeepFetch(operand=_NARROW_TO_DOG, paths=(_OWNER_PATH,)),
         AsOf(operand=_NARROW_TO_DOG, dimension="valid-time", coordinate="latest"),
         AsOfRange(
@@ -1185,8 +1198,7 @@ _AMBIGUOUS_BY_POSITION: Mapping[str, Operation] = {
     "rel": Exists(rel="SharedVariant.register", op=All()),
     "nested path": NestedComparison(op="nestedEq", path="SharedVariant.spec.label", value="A-1"),
     "nestedExists path": NestedExists(path="SharedVariant.spec", where=None),
-    "narrow.entity": Narrow(entity="SharedVariant", to=("Register",), operand=All()),
-    "narrow.to": Narrow(entity="Register", to=("SharedVariant",), operand=All()),
+    "narrow.to": Narrow(to=("SharedVariant",), operand=All()),
     "deepFetch.segment.rel": DeepFetch(
         operand=All(),
         paths=(NavigationPath(segments=(PathSegment(rel="SharedVariant.register"),)),),
@@ -1199,18 +1211,18 @@ _AMBIGUOUS_BY_POSITION: Mapping[str, Operation] = {
             ),
         ),
     ),
-    "deepFetch.path.narrow.entity": DeepFetch(
+    "deepFetch.path.narrow": DeepFetch(
         operand=All(),
         paths=(
             NavigationPath(
                 segments=(PathSegment(rel="Register.variant"),),
-                narrow=PathRootNarrow(entity="SharedVariant", to=("Register",)),
+                narrow=("SharedVariant",),
             ),
         ),
     ),
-    "relationship-scope narrow.entity": Exists(
+    "relationship-scope narrow.to": Exists(
         rel="Register.variant",
-        op=Narrow(entity="SharedVariant", to=("Register",), operand=All()),
+        op=Narrow(to=("SharedVariant",), operand=All()),
     ),
 }
 

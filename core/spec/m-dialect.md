@@ -537,13 +537,13 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
     appended after every other clause — **Postgres** `for share of t0` (the
     alias-qualified `for share`), **MariaDB** the unaliased **`lock in share
     mode`** (no `for share` keyword; MDEV-17514);
-  - a **projection / aggregation** read (a `distinct` / grouped / aggregate
-    result) is returned **unchanged** — it has no identifiable base row to lock and
-    the database rejects the clause on such shapes, so the dialect **omits** the
-    lock rather than erroring (ADR 0012; mirrors Reladomo's never-locking
-    `getSelectForAggregatedData` beside the object-find `getSelect(isInTransaction)`);
   - any read in **optimistic** mode is returned unchanged (`m-opt-lock` takes no
     lock).
+
+  Projection and aggregation reads are outside the active query contract; their
+  lock application semantics land with their future query contract. Prior art:
+  Reladomo keeps aggregated-data selection never-locking beside object-find
+  `getSelect(isInTransaction)`.
 
   This divergence is surfaced here and **only** here — the operation, the result,
   and the independent oracle are identical; just the lock spelling differs. Each

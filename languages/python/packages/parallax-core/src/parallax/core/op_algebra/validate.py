@@ -32,12 +32,12 @@ Rule provenance:
   concrete in that position. The two attribute rules partition one condition by
   whether the reference's Entity and the position share an inheritance family:
   inside one, narrowing is the remedy; outside it, nothing is. A deep-fetch
-  path's own root `{entity, to}` guard resolves at that same queried position
-  and is clamped by the same rule. An order key is asked of the position its
+  path's own root Subtype Selection resolves at that same queried position.
+  An order key is asked of the position its
   ordered rows occupy, which a top-level `narrow` under the ordering moves.
 - `reference-ambiguous-entity-name` — `m-op-algebra` "Entity spellings in a
   reference position": every reference position — an `attr`, a `rel`, an `orderBy`
-  key, a nested path's root, a `narrow`'s `entity` and `to` entries, a deep-fetch
+  key, a nested path's root, a `narrow`'s `to` entries, a deep-fetch
   path's hops and root guard — spells its Entity either canonically or BARE, and a
   bare local name two namespaces of the model declare names no single Entity and
   resolves nowhere. The canonical spelling of either of those two names one of them
@@ -47,8 +47,7 @@ Rule provenance:
   therefore to none.
 - `narrow-outside-relationship-target` — `m-navigate` "Polymorphic navigation":
   a `narrow` inside a navigation filter's `op` (or a deep-fetch path segment's
-  hop narrow) does **not** clamp; its `entity` MUST name the relationship
-  target exactly, and its resolved `to` set MUST be a subset of the target's
+  hop narrow) resolves its Subtype Selection inside the relationship target's
   effective concrete set.
 - `nested-path-first-segment-not-value-object` / `nested-path-unknown-member` /
   `nested-literal-type-mismatch` — `m-op-algebra` "Nested value-object
@@ -107,7 +106,6 @@ from parallax.core.op_algebra.nodes import (
     Between,
     Comparison,
     DeepFetch,
-    Distinct,
     Exists,
     Group,
     History,
@@ -142,7 +140,7 @@ _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 def referenced_entities(op: Operation) -> frozenset[str]:
     """The Entity spellings ``op`` names anywhere, exactly as authored — the Entity
     prefix of every attribute / nested-path / relationship reference, plus every
-    ``narrow`` entity and subtype name. A spelling may be bare or canonical; this
+    ``narrow`` subtype alternative. A spelling may be bare or canonical; this
     resolves neither.
 
     A caller assembling a coherent model to validate ``op`` against needs every
@@ -193,14 +191,12 @@ def _collect_entities(op: Operation, names: set[str]) -> None:
             Not(operand=operand)
             | Group(operand=operand)
             | Limit(operand=operand)
-            | Distinct(operand=operand)
             | AsOf(operand=operand)
             | AsOfRange(operand=operand)
             | History(operand=operand)
         ):
             _collect_entities(operand, names)
-        case Narrow(entity=entity, to=to, operand=operand):
-            names.add(entity)
+        case Narrow(to=to, operand=operand):
             names.update(to)
             _collect_entities(operand, names)
         case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
@@ -211,8 +207,7 @@ def _collect_entities(op: Operation, names: set[str]) -> None:
             _collect_entities(operand, names)
             for path in paths:
                 if path.narrow is not None:
-                    names.add(path.narrow.entity)
-                    names.update(path.narrow.to)
+                    names.update(path.narrow)
                 for segment in path.segments:
                     names.add(_class_of(segment.rel))
                     names.update(segment.narrow)
@@ -239,7 +234,7 @@ class _PositionScope:
     subset test taken over it. ``relationship_target`` is the canonical name of the
     relationship target, set only while validating inside a navigation filter's
     `op` (`m-navigate`): a `narrow` encountered there does not clamp like a
-    same-position narrow — its `entity` must name this target exactly.
+    same-position narrow by selecting the relationship-target rejection rule.
     """
 
     effective: frozenset[str]
@@ -308,14 +303,13 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
             Not(operand=operand)
             | Group(operand=operand)
             | Limit(operand=operand)
-            | Distinct(operand=operand)
             | AsOf(operand=operand)
             | AsOfRange(operand=operand)
             | History(operand=operand)
         ):
             _walk(operand, model, scope)
-        case Narrow(entity=entity, to=to, operand=operand):
-            new_scope = _validate_narrow(entity, to, scope, model)
+        case Narrow(to=to, operand=operand):
+            new_scope = _validate_narrow(to, scope, model)
             _walk(operand, model, new_scope)
         case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
             target = _relationship_target(
@@ -407,8 +401,8 @@ def _ambiguous_reference(
 def _check_reference_entity_name(model: Metamodel, reference: str, class_name: str) -> None:
     """Refuse ``reference`` if its Entity spelling names more than one Entity.
 
-    Used at the positions that otherwise TOLERATE a miss: a `narrow`'s `entity` and
-    `to` entries collapse an unresolved name into the empty set, which the narrow
+    Used at positions that otherwise tolerate a miss: a `narrow`'s `to` entries
+    collapse an unresolved name into the empty set, which the narrow
     rules then classify. Asking here names an ambiguous spelling as the resolution
     failure it is, rather than as the narrow rule its silence would produce.
     """
@@ -460,22 +454,41 @@ def _family_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
     return _effective_set(model, root)
 
 
-def _resolve_to_set(to: Sequence[str], model: Metamodel) -> frozenset[str]:
-    """The union of the effective concrete sets ``to``'s entries resolve to.
-
-    A `narrow`'s `entity` and each `to` entry are reference positions, so a bare
-    spelling two namespaces share is refused here rather than contributing nothing
-    and surfacing as an empty or out-of-position resolved set. A name no Entity
-    answers to still contributes nothing: which of the narrow rules that leaves is
-    the caller's to classify.
-    """
-    resolved: set[str] = set()
+def _resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[str]:
+    """Resolve one Subtype Selection and enforce its construction contract."""
+    resolved_alternatives: list[tuple[str, str, frozenset[str]]] = []
     for name in to:
         entity = _lookup_entity(model, name)
         if entity is None:
             _check_reference_entity_name(model, name, name)
-            continue
-        resolved.update(_effective_set(model, entity))
+            resolved_alternatives.append((name, name, frozenset()))
+        else:
+            resolved_alternatives.append(
+                (name, entity.identity.canonical, _effective_set(model, entity))
+            )
+
+    seen_identities: set[str] = set()
+    for name, identity, _effective in resolved_alternatives:
+        if identity in seen_identities:
+            raise OperationRejectedError(
+                "subtype-selection-duplicate-alternative",
+                f"Subtype Selection repeats alternative {name!r}",
+            )
+        seen_identities.add(identity)
+
+    resolved: set[str] = set()
+    alternatives: list[tuple[str, frozenset[str]]] = []
+    for name, _identity, effective in resolved_alternatives:
+        for previous_name, previous_effective in alternatives:
+            overlap = effective & previous_effective
+            if overlap:
+                raise OperationRejectedError(
+                    "subtype-selection-overlapping-alternatives",
+                    f"Subtype Selection alternatives {previous_name!r} and {name!r} "
+                    f"overlap at {sorted(overlap)}",
+                )
+        alternatives.append((name, effective))
+        resolved.update(effective)
     return frozenset(resolved)
 
 
@@ -484,53 +497,30 @@ def _resolve_to_set(to: Sequence[str], model: Metamodel) -> frozenset[str]:
 # m-navigate relationship scope).                                             #
 # --------------------------------------------------------------------------- #
 def _validate_narrow(
-    entity: str, to: tuple[str, ...], scope: _PositionScope, model: Metamodel
+    to: tuple[str, ...], scope: _PositionScope, model: Metamodel
 ) -> _PositionScope:
-    """The four-step validation rule (`m-op-algebra`), plus its relationship-scope
-    carve-out (`m-navigate`)."""
-    if scope.relationship_target is not None:
-        # Relationship scope does NOT clamp: `entity` MUST name the relationship
-        # target exactly, never a broader or other position. A spelling that names
-        # no single Entity fails to resolve before it can be compared to the target.
-        _check_reference_entity_name(model, entity, entity)
-        target = _lookup_entity(model, entity)
-        if target is None or target.identity.canonical != scope.relationship_target:
-            raise OperationRejectedError(
-                "narrow-outside-relationship-target",
-                f"a relationship-scope narrow's `entity` ({entity!r}) must name the "
-                f"relationship target {scope.relationship_target!r} exactly (m-navigate); "
-                "subtypes are reached only through `to`, never by naming a broader or "
-                "other position",
-            )
-        resolved = _resolve_to_set(to, model)
-        if not resolved or not resolved <= scope.effective:
-            raise OperationRejectedError(
-                "narrow-outside-relationship-target",
-                f"narrow.to {list(to)} resolves to {sorted(resolved)}, which is not a "
-                f"non-empty subset of the relationship target's effective concrete set "
-                f"{sorted(scope.effective)}",
-            )
-        return _PositionScope(effective=resolved)
-
-    # Step 1: resolve `entity` and CLAMP (intersect) it with the active position —
-    # a narrow can only ever constrain the active position, never broaden it.
-    entity_resolved = _resolve_to_set((entity,), model)
-    effective_position = entity_resolved & scope.effective
-    # Steps 2-3: resolve each `to` entry, union, and deduplicate.
-    resolved = _resolve_to_set(to, model)
-    # Step 4: accept iff the resolved set is non-empty AND a subset of the
-    # effective position; it becomes the active position for `operand`.
+    """Resolve a Subtype Selection inside the position supplied by context."""
+    resolved = _resolve_subtype_selection(to, model)
     if not resolved:
         raise OperationRejectedError(
             "narrow-empty-effective-set",
             f"narrow.to {list(to)} resolves to the empty concrete-subtype set",
         )
-    if not resolved <= effective_position:
+    if scope.relationship_target is not None:
+        if not resolved <= scope.effective:
+            raise OperationRejectedError(
+                "narrow-outside-relationship-target",
+                f"narrow.to {list(to)} resolves to {sorted(resolved)}, which is not a "
+                f"subset of the relationship target's effective concrete set "
+                f"{sorted(scope.effective)}",
+            )
+        return _PositionScope(effective=resolved)
+
+    if not resolved <= scope.effective:
         raise OperationRejectedError(
             "narrow-outside-position",
             f"narrow.to {sorted(resolved)} is not a subset of the active position "
-            f"{sorted(effective_position)} (narrow.entity {entity!r} clamped against the "
-            "position threaded into this node)",
+            f"{sorted(scope.effective)} threaded into this node",
         )
     return _PositionScope(effective=resolved)
 
@@ -541,7 +531,7 @@ def _ordered_scope(op: Operation, model: Metamodel, scope: _PositionScope) -> _P
     A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
     wrapper, so the rows an order key sees are that narrow's resolved set, reached
     through every wrapper `m-op-algebra` names as carrying it: the result-shaping
-    directives (``orderBy`` / ``limit`` / ``distinct`` / ``deepFetch``) and the
+    directives (``orderBy`` / ``limit`` / ``deepFetch``) and the
     temporal wrappers (``asOf`` / ``asOfRange`` / ``history``). None of them
     re-roots the rows its operand yields — ``deepFetch`` attaches fetched levels to
     those same rows — so all of them pass the position through. A ``narrow``
@@ -549,12 +539,11 @@ def _ordered_scope(op: Operation, model: Metamodel, scope: _PositionScope) -> _P
     same position and moves nothing (`m-op-algebra`).
     """
     match op:
-        case Narrow(entity=entity, to=to):
-            return _validate_narrow(entity, to, scope, model)
+        case Narrow(to=to):
+            return _validate_narrow(to, scope, model)
         case (
             OrderBy(operand=operand)
             | Limit(operand=operand)
-            | Distinct(operand=operand)
             | DeepFetch(operand=operand)
             | AsOf(operand=operand)
             | AsOfRange(operand=operand)
@@ -642,12 +631,7 @@ def _relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str
 
 def _check_deep_fetch_path(path: NavigationPath, model: Metamodel, scope: _PositionScope) -> None:
     if path.narrow is not None:
-        # The root guard names the QUERIED position, so it is governed by the
-        # same-position clamp the four-step rule states, not by the relationship-target
-        # rule its segments follow: `entity` is intersected with the active position and
-        # `to` must land inside that intersection. A guard is a source filter and never
-        # a view, so nothing about the resolved set is carried past this check.
-        _validate_narrow(path.narrow.entity, path.narrow.to, scope, model)
+        _validate_narrow(path.narrow, scope, model)
     for segment in path.segments:
         target = _relationship_target(
             segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
@@ -657,12 +641,18 @@ def _check_deep_fetch_path(path: NavigationPath, model: Metamodel, scope: _Posit
             # implicitly (m-op-algebra `deepFetch` directive) — so only the subset
             # check applies here; there is no separate `entity` to mismatch.
             target_effective = _effective_set(model, target)
-            resolved = _resolve_to_set(segment.narrow, model)
-            if not resolved or not resolved <= target_effective:
+            resolved = _resolve_subtype_selection(segment.narrow, model)
+            if not resolved:
+                raise OperationRejectedError(
+                    "narrow-empty-effective-set",
+                    f"deep-fetch path narrow {list(segment.narrow)} resolves to the empty "
+                    "concrete-subtype set",
+                )
+            if not resolved <= target_effective:
                 raise OperationRejectedError(
                     "narrow-outside-relationship-target",
                     f"deep-fetch path narrow {list(segment.narrow)} resolves to "
-                    f"{sorted(resolved)}, which is not a non-empty subset of "
+                    f"{sorted(resolved)}, which is not a subset of "
                     f"{target.identity.name}'s effective concrete set "
                     f"{sorted(target_effective)}",
                 )

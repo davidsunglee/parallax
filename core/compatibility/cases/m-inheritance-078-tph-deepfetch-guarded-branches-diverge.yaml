@@ -26,9 +26,9 @@ when:
       operand:
         all: {}
       paths:
-        - { narrow: { entity: parallax.compatibility.Animal, to: [parallax.compatibility.Dog] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
-        - { narrow: { entity: parallax.compatibility.Animal, to: [parallax.compatibility.WildBoar] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
-        - narrow: { entity: parallax.compatibility.Animal, to: [parallax.compatibility.Dog] }
+        - { narrow: { to: [parallax.compatibility.Dog] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
+        - { narrow: { to: [parallax.compatibility.WildBoar] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
+        - narrow: { to: [parallax.compatibility.Dog] }
           segments:
             - { rel: parallax.compatibility.Animal.owner }
             - { rel: parallax.compatibility.Person.pets }

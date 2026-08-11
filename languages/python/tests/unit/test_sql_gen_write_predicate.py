@@ -253,7 +253,6 @@ def test_inheritance_tag_guard_renders_unaliased() -> None:
     # buffer-time guards), which is the whole reason this renders through
     # `EntityScope.own_column` now rather than trusting a caller.
     op = oa.Narrow(
-        entity="Payment",
         to=("CardPayment",),
         operand=oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
     )
@@ -300,7 +299,6 @@ def test_unbound_attribute_is_refused() -> None:
     "op",
     [
         oa.Limit(operand=oa.All(), count=3),
-        oa.Distinct(operand=oa.All()),
         oa.OrderBy(operand=oa.All(), keys=()),
     ],
 )

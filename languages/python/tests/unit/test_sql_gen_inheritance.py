@@ -35,8 +35,8 @@ def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_bran
     # selected branches receive true and every other branch receives false.
     op = oa.Or(
         operands=(
-            oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All()),
-            oa.Narrow(entity="Document", to=("Memo",), operand=oa.All()),
+            oa.Narrow(to=("Invoice",), operand=oa.All()),
+            oa.Narrow(to=("Memo",), operand=oa.All()),
         )
     )
     compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Document"))
@@ -123,7 +123,7 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
 
 def test_tpcs_document_single_branch_projects_and_decodes_its_document() -> None:
     compiled = compile_read(
-        oa.Narrow(entity="Publication", to=("Book",), operand=oa.All()),
+        oa.Narrow(to=("Book",), operand=oa.All()),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Publication"),
@@ -143,7 +143,7 @@ def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
     # already position-valid; an unresolvable member therefore means the caller
     # skipped that step, and refusing loudly is what keeps it from silently
     # lowering to an empty position.
-    op = oa.Narrow(entity="Animal", to=("Unicorn",), operand=oa.All())
+    op = oa.Narrow(to=("Unicorn",), operand=oa.All())
     with pytest.raises(SqlGenError, match="names an entity the model does not declare"):
         compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
 
@@ -191,7 +191,6 @@ def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_ta
     # (cardinality-keyed).
     compiled = compile_read(
         oa.Narrow(
-            entity="Animal",
             to=("Dog",),
             operand=oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=3),
         ),
@@ -214,12 +213,10 @@ def test_tph_grouped_branch_predicates_join_by_or() -> None:
         oa.Or(
             operands=(
                 oa.Narrow(
-                    entity="Animal",
                     to=("Dog",),
                     operand=oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=5),
                 ),
                 oa.Narrow(
-                    entity="Animal",
                     to=("Cat",),
                     operand=oa.Comparison(op="eq", attr="Cat.indoor", value=True),
                 ),
@@ -239,12 +236,10 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
     op = oa.Or(
         operands=(
             oa.Narrow(
-                entity="Payment",
                 to=("CardPayment",),
                 operand=oa.Comparison(op="eq", attr="CardPayment.detail", value="visa-4242"),
             ),
             oa.Narrow(
-                entity="Payment",
                 to=("CashPayment",),
                 operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
             ),
@@ -276,7 +271,6 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
 def test_tph_top_level_narrow_partitions_before_variant_specific_document_cast() -> None:
     compiled = compile_read(
         oa.Narrow(
-            entity="Payment",
             to=("CashPayment",),
             operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
         ),
@@ -299,12 +293,10 @@ def _heterogeneous_payment_predicate() -> oa.Operation:
     return oa.Or(
         operands=(
             oa.Narrow(
-                entity="Payment",
                 to=("CardPayment",),
                 operand=oa.Comparison(op="eq", attr="CardPayment.detail", value="visa-4242"),
             ),
             oa.Narrow(
-                entity="Payment",
                 to=("CashPayment",),
                 operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
             ),
@@ -315,14 +307,14 @@ def _heterogeneous_payment_predicate() -> oa.Operation:
 def test_tph_document_partition_wraps_result_shaping_around_the_union() -> None:
     op = oa.Limit(
         operand=oa.OrderBy(
-            operand=oa.Distinct(operand=_heterogeneous_payment_predicate()),
+            operand=_heterogeneous_payment_predicate(),
             keys=(oa.OrderKey(attr="Payment.id", direction="asc"),),
         ),
         count=1,
     )
     compiled = compile_read(op, DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Payment"))
 
-    assert compiled.statement.sql.startswith("select distinct u.id, u.kind, u.payload from (")
+    assert compiled.statement.sql.startswith("select u.id, u.kind, u.payload from (")
     assert compiled.statement.sql.endswith("order by u.id asc limit ?")
     assert compiled.statement.binds[-1] == 1
 
@@ -457,7 +449,6 @@ def test_user_binds_precede_framework_tag_binds() -> None:
         oa.Exists(
             rel="Person.animals",
             op=oa.Narrow(
-                entity="Animal",
                 to=("Dog",),
                 operand=oa.Comparison(op="eq", attr="Dog.barkVolume", value=5),
             ),
@@ -491,7 +482,7 @@ def test_tph_narrowed_projection_drops_slots_outside_the_position() -> None:
     # Cat/Dog keeps every slot applicable to one of them and drops WildBoar's
     # own `tusk_length`, without disturbing the surviving tier order.
     compiled = compile_read(
-        oa.Narrow(entity="Animal", to=("Cat", "Dog"), operand=oa.All()),
+        oa.Narrow(to=("Cat", "Dog"), operand=oa.All()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -508,13 +499,13 @@ def test_tph_equivalent_narrow_spellings_collapse() -> None:
     # descendants) resolve to the same effective set and MUST lower identically,
     # regardless of the authored `to` order or spelling (m-op-algebra / m-sql).
     by_abstract = compile_read(
-        oa.Narrow(entity="Animal", to=("Pet",), operand=oa.All()),
+        oa.Narrow(to=("Pet",), operand=oa.All()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
     )
     by_concretes = compile_read(
-        oa.Narrow(entity="Animal", to=("Dog", "Cat"), operand=oa.All()),
+        oa.Narrow(to=("Dog", "Cat"), operand=oa.All()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -529,7 +520,7 @@ def test_tph_narrow_canonical_alphabetical_order_independent_of_authored_order()
     # The `to` list's authored order never leaks into the lowered `in (...)` list —
     # it is always the family's canonical alphabetical order.
     compiled = compile_read(
-        oa.Narrow(entity="Animal", to=("Dog", "Cat"), operand=oa.All()),
+        oa.Narrow(to=("Dog", "Cat"), operand=oa.All()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -723,13 +714,13 @@ def test_tpcs_string_cast_placeholder_diverges_by_declared_length() -> None:
 
 def test_tpcs_equivalent_narrow_spellings_collapse() -> None:
     by_abstract = compile_read(
-        oa.Narrow(entity="Document", to=("FinancialDocument",), operand=oa.All()),
+        oa.Narrow(to=("FinancialDocument",), operand=oa.All()),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
     )
     by_concretes = compile_read(
-        oa.Narrow(entity="Document", to=("Receipt", "Invoice"), operand=oa.All()),
+        oa.Narrow(to=("Receipt", "Invoice"), operand=oa.All()),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
@@ -747,9 +738,8 @@ def test_tph_nested_narrow_with_a_trivial_branch_needs_no_grouping() -> None:
     compiled = compile_read(
         oa.Or(
             operands=(
-                oa.Narrow(entity="Animal", to=("Dog",), operand=oa.All()),
+                oa.Narrow(to=("Dog",), operand=oa.All()),
                 oa.Narrow(
-                    entity="Animal",
                     to=("Cat",),
                     operand=oa.Comparison(op="eq", attr="Cat.indoor", value=True),
                 ),
@@ -836,7 +826,7 @@ def test_tph_tag_transform_holds_regardless_of_narrow_cardinality() -> None:
     # and still transformed. The map is the WHOLE family's, not the narrow's
     # resolved position — `WildBoar` is outside the narrow and still maps.
     compiled = compile_read(
-        oa.Narrow(entity="Animal", to=("Dog",), operand=oa.All()),
+        oa.Narrow(to=("Dog",), operand=oa.All()),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
@@ -936,7 +926,7 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     # resolved concrete has no shared table to discriminate and no sibling branch
     # to distinguish it from, so it projects — and transforms — nothing.
     compiled = compile_read(
-        oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All()),
+        oa.Narrow(to=("Invoice",), operand=oa.All()),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
@@ -972,7 +962,7 @@ def test_narrow_to_is_none_for_a_bare_read() -> None:
 
 
 def test_narrow_to_carries_a_top_level_narrows_authored_subtypes() -> None:
-    narrowed = oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All())
+    narrowed = oa.Narrow(to=("Invoice",), operand=oa.All())
     assert compile_read(narrowed, DOCUMENT, POSTGRES, target(DOCUMENT, "Document")).narrow_to == (
         "Invoice",
     )
@@ -984,7 +974,7 @@ def test_narrow_to_survives_the_directive_peel() -> None:
     # A table-per-hierarchy family carries the directives here: the
     # table-per-concrete-subtype union lane refuses them outright, so it cannot
     # witness this shape at all.
-    narrowed = oa.Narrow(entity="Animal", to=("Cat", "Dog"), operand=oa.All())
+    narrowed = oa.Narrow(to=("Cat", "Dog"), operand=oa.All())
     op = oa.Limit(operand=oa.OrderBy(operand=narrowed, keys=()), count=1)
     assert compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal")).narrow_to == ("Cat", "Dog")
 
@@ -995,12 +985,10 @@ def test_a_mid_predicate_narrow_is_not_the_reads_own_narrow() -> None:
     op = oa.Or(
         operands=(
             oa.Narrow(
-                entity="Animal",
                 to=("Dog",),
                 operand=oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=5),
             ),
             oa.Narrow(
-                entity="Animal",
                 to=("Cat",),
                 operand=oa.Comparison(op="eq", attr="Cat.indoor", value=True),
             ),

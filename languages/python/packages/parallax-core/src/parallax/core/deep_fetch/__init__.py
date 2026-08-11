@@ -107,7 +107,6 @@ from parallax.core.op_algebra import (
     Operation,
     OrderBy,
     OrderKey,
-    PathRootNarrow,
     PathSegment,
     Scalar,
 )
@@ -247,7 +246,7 @@ class FetchLevel:
         if self.as_of_terms:
             predicate = And(operands=(predicate, *self.as_of_terms))
         if self.narrow_to is not None:
-            predicate = Narrow(entity=self.child_target, to=self.narrow_to, operand=predicate)
+            predicate = Narrow(to=self.narrow_to, operand=predicate)
         if self.order_keys:
             predicate = OrderBy(operand=predicate, keys=self.order_keys)
         return self.child_target, predicate
@@ -563,16 +562,16 @@ def _resolve_position(
 
 
 def _resolve_root_source(
-    model: Metamodel, facet: InheritanceFacet, root: EntityMetadata, narrow: PathRootNarrow | None
+    model: Metamodel,
+    facet: InheritanceFacet,
+    root: EntityMetadata,
+    narrow: tuple[str, ...] | None,
 ) -> tuple[EntityIdentity, ...]:
     """The concrete source set ONE path starts from (m-deep-fetch's root hop identity).
 
     Absent a root guard the path starts from every queried object, so the source set
-    is the queried position's own effective concrete set; a guard resolves it down to
-    the guard's own ``to``. The guard's ``entity`` names the position it applies to
-    and is resolution-inert here — validation has already clamped it to the queried
-    position, and the position the planner starts from is that queried position
-    regardless of how broadly the guard spells it.
+    is the queried position's own effective concrete set; a guard resolves its
+    shared Subtype Selection inside that position.
 
     The result is the position's canonical effective set either way, so two guards
     resolving to the same concretes yield the SAME tuple — which is what makes a
@@ -582,10 +581,10 @@ def _resolve_root_source(
         return (root.identity,)
     if narrow is None:
         return tuple(_entity_view(facet, root.identity).concrete_subtypes)
-    position = _narrowed_position(model, facet, narrow.to)
+    position = _narrowed_position(model, facet, narrow)
     if position is None:
         raise DeepFetchError(
-            f"path-root narrow to {list(narrow.to)} names an entity the model does not "
+            f"path-root narrow to {list(narrow)} names an entity the model does not "
             "declare, or spans more than one inheritance family"
         )
     return position

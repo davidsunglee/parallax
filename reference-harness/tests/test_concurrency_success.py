@@ -6,7 +6,7 @@ discriminator (`read` / `write`) with its structural `expectRows` if/then, and t
 runner's minimal `kind`-based structural guard are pinned here. The DB-coupled part
 -- running two held sessions and asserting NO error + each read's `expectRows` on
 its held session -- is exercised end-to-end against real Postgres + MariaDB by the
-compatibility suite's `m-read-lock-007` / `m-read-lock-008` cases via `test_compatibility.py`.
+compatibility suite's `m-read-lock-007` case via `test_compatibility.py`.
 """
 
 from __future__ import annotations
@@ -40,6 +40,11 @@ _SHARED_READ = {
 _UPDATE = {
     "postgres": "update account set balance = ? where id = ?",
     "mariadb": "update account set balance = ? where id = ?",
+}
+
+_UNLOCKED_READ = {
+    "postgres": "select t0.id from account t0",
+    "mariadb": "select t0.id from account t0",
 }
 
 
@@ -162,13 +167,9 @@ def test_schema_accepts_shared_reader_concurrency_success_case() -> None:
     assert list(_case_validator().iter_errors(case)) == []
 
 
-def test_schema_accepts_projection_admits_writer_concurrency_success_case() -> None:
-    # m-read-lock-008: A holds an unlocked projection (kind: read + expectRows), B's UPDATE is
-    # admitted (kind: write, NO expectRows -- a write asserts only that it did not block).
-    projection = {
-        "postgres": "select distinct t0.id from account t0",
-        "mariadb": "select distinct t0.id from account t0",
-    }
+def test_schema_accepts_read_then_write_concurrency_success_case() -> None:
+    # A read step carries expectRows; a write step carries none because it asserts
+    # only that execution did not block or raise.
     case = {
         "model": "models/account.yaml",
         "shape": "concurrencySuccess",
@@ -179,7 +180,7 @@ def test_schema_accepts_projection_admits_writer_concurrency_success_case() -> N
                     {
                         "A": {
                             "kind": "read",
-                            "statements": [_entry(projection, [])],
+                            "statements": [_entry(_UNLOCKED_READ, [])],
                             "expectRows": [{"id": 1}, {"id": 2}, {"id": 3}],
                         }
                     },
@@ -192,7 +193,7 @@ def test_schema_accepts_projection_admits_writer_concurrency_success_case() -> N
             "m-dialect",
             "read-lock",
             "concurrency",
-            "projection-omits-lock",
+            "read-then-write",
             "slice-example-1",
         ],
     }
@@ -388,12 +389,8 @@ def test_runner_assert_schema_rejects_read_step_missing_expect_rows() -> None:
 
 
 def test_runner_assert_schema_allows_write_step_without_expect_rows() -> None:
-    # m-read-lock-008's shape: a kind: read step declares expectRows and the round-2 kind: write
-    # UPDATE omits it. The guard must NOT disturb the passing write step.
-    projection = {
-        "postgres": "select distinct t0.id from account t0",
-        "mariadb": "select distinct t0.id from account t0",
-    }
+    # A kind: read step declares expectRows and the round-2 kind: write UPDATE
+    # omits it. The guard must not disturb the passing write step.
     case = _concurrency_case(
         {
             "shape": "concurrencySuccess",
@@ -403,7 +400,7 @@ def test_runner_assert_schema_allows_write_step_without_expect_rows() -> None:
                         {
                             "A": {
                                 "kind": "read",
-                                "statements": [_entry(projection, [])],
+                                "statements": [_entry(_UNLOCKED_READ, [])],
                                 "expectRows": [{"id": 1}, {"id": 2}, {"id": 3}],
                             }
                         },

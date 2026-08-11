@@ -18,6 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
+from parallax.core.metamodel import EntityIdentity
+
 __all__ = [
     "QUERY_DEFINITION_CODES",
     "All",
@@ -28,7 +30,6 @@ __all__ = [
     "Comparison",
     "ComparisonOp",
     "DeepFetch",
-    "Distinct",
     "Exists",
     "Group",
     "History",
@@ -68,6 +69,23 @@ __all__ = [
 # A scalar literal usable as a bind (json/yaml primitive).
 Scalar = str | int | float | bool | None
 TemporalDimension = Literal["valid-time", "transaction-time"]
+SubtypeSelection = tuple[str, ...]
+
+
+def canonical_subtype_selection(alternatives: tuple[str, ...]) -> SubtypeSelection:
+    """Return alternatives in canonical Entity Identity order.
+
+    Duplicates are preserved so schema-valid rejected inputs can reach
+    model-aware validation. Python authoring surfaces reject them first.
+    """
+
+    def sort_key(spelling: str) -> tuple[str, str]:
+        namespace, separator, name = spelling.rpartition(".")
+        identity = EntityIdentity(namespace if separator else None, name if separator else spelling)
+        return identity.sort_key
+
+    return tuple(sorted(alternatives, key=sort_key))
+
 
 ComparisonOp = Literal[
     "eq", "notEq", "greaterThan", "greaterThanEquals", "lessThan", "lessThanEquals"
@@ -277,19 +295,14 @@ class Limit:
 
 
 @dataclass(frozen=True, slots=True)
-class Distinct:
-    """Deduplicate an inner query's rows."""
-
-    operand: Operation
-
-
-@dataclass(frozen=True, slots=True)
 class Narrow:
     """Constrain a polymorphic position to a subset of its subtypes."""
 
-    entity: str
-    to: tuple[str, ...]
+    to: SubtypeSelection
     operand: Operation
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "to", canonical_subtype_selection(self.to))
 
 
 @dataclass(frozen=True, slots=True)
@@ -402,20 +415,10 @@ class PathSegment:
     """One hop of a deep-fetch path: a relationship, optionally subtype-narrowed."""
 
     rel: str
-    narrow: tuple[str, ...] = ()
+    narrow: SubtypeSelection = ()
 
-
-@dataclass(frozen=True, slots=True)
-class PathRootNarrow:
-    """A deep-fetch path's root guard: which queried objects the path starts from.
-
-    Names the polymorphic position (``entity``) and the subtypes it is guarded to
-    (``to``). Unlike a segment's own narrow it creates NO view — every hop of a
-    guarded path fills the view its unguarded spelling would, on fewer objects.
-    """
-
-    entity: str
-    to: tuple[str, ...]
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "narrow", canonical_subtype_selection(self.narrow))
 
 
 @dataclass(frozen=True, slots=True)
@@ -428,7 +431,11 @@ class NavigationPath:
     """
 
     segments: tuple[PathSegment, ...]
-    narrow: PathRootNarrow | None = None
+    narrow: SubtypeSelection | None = None
+
+    def __post_init__(self) -> None:
+        if self.narrow is not None:
+            object.__setattr__(self, "narrow", canonical_subtype_selection(self.narrow))
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,7 +488,6 @@ Operation = (
     | Group
     | OrderBy
     | Limit
-    | Distinct
     | Narrow
     | NestedComparison
     | NestedRange

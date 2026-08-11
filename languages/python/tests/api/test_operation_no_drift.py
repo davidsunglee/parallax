@@ -75,7 +75,14 @@ from parallax.conformance.vo_models import (
     CustomerPhone,
     Supplier,
 )
-from parallax.core import DomainModel, Entity, FindQuery, OperationRejectedError, Predicate
+from parallax.core import (
+    DomainModel,
+    Entity,
+    FindQuery,
+    OperationRejectedError,
+    Predicate,
+    QueryDefinitionError,
+)
 from parallax.core.entity._model import model_of
 from parallax.core.op_algebra import serialize
 from parallax.core.temporal_read import LATEST
@@ -154,7 +161,7 @@ BUILDERS: dict[str, Callable[[], FindQuery[Any, Any]]] = {
     ),
     # Path-ROOT guards: reaching the inherited `Animal.owner` through a subtype
     # keeps that one relationship identity and guards which queried objects the
-    # path starts from, so the wire carries `narrow: {entity, to}` beside
+    # path starts from, so the wire carries `narrow: {to}` beside
     # `segments` rather than on a segment.
     "m-inheritance-074": lambda: AnimalRoot.where(AnimalRoot.all).include(Dog.owner, Cat.owner),
     "m-inheritance-075": lambda: AnimalRoot.where(AnimalRoot.all).include(
@@ -233,15 +240,13 @@ REJECTED_BUILDERS: dict[str, Callable[[], Predicate[Any]]] = {
     # predicate over the owner is CONSTRUCTIBLE at the family position and is
     # refused for naming an entity outside it rather than for naming nothing.
     "m-op-algebra-045": lambda: AnimalOwnerPerson.name == "Ada",
-    "m-inheritance-040": lambda: sm.Pet.narrow(sm.WildBoar),
+    "m-inheritance-040": lambda: AnimalRoot.narrow(AnimalOwnerPerson),
     "m-inheritance-041": lambda: sm.Dog.bark_volume > 5,
     "m-inheritance-042": lambda: sm.Pet.narrow(sm.Dog, where=sm.Animal.narrow(sm.Cat)),
     # `Person.pets` targets the abstract subtype Pet; narrowing past its
-    # reachable set (WildBoar, a sibling branch) or naming the wrong `entity`
-    # (Animal instead of Pet) both raise `narrow-outside-relationship-target`
-    # over the installed animal-owner mirror.
+    # reachable set (WildBoar, a sibling branch) raises the relationship rule.
     "m-inheritance-064": lambda: AnimalOwnerPerson.pets.exists(Pet.narrow(WildBoar)),
-    "m-inheritance-072": lambda: AnimalOwnerPerson.pets.exists(AnimalRoot.narrow(Dog)),
+    "m-inheritance-132": lambda: sm.Animal.narrow(sm.Dog, sm.Pet),
 }
 
 # case id -> the entity `Entity.where(...)` is called on to trigger validation
@@ -259,10 +264,10 @@ REJECTED_TARGETS: dict[str, type[Entity]] = {
     "m-op-algebra-044": Contact,
     "m-value-object-038": vm.Customer,
     "m-op-algebra-045": AnimalRoot,
-    "m-inheritance-040": sm.Animal,
+    "m-inheritance-040": AnimalRoot,
     "m-inheritance-041": sm.Animal,
     "m-inheritance-064": AnimalOwnerPerson,
-    "m-inheritance-072": AnimalOwnerPerson,
+    "m-inheritance-132": sm.Animal,
     "m-inheritance-042": sm.Animal,
 }
 
@@ -286,10 +291,10 @@ REJECTED_MODELS: dict[str, DomainModel] = {
     "m-op-algebra-044": CONTACT_MODEL,
     "m-value-object-038": vm.CUSTOMER_MODEL,
     "m-op-algebra-045": ANIMAL_OWNER_MODEL,
-    "m-inheritance-040": sm.ANIMAL_MODEL,
+    "m-inheritance-040": ANIMAL_OWNER_MODEL,
     "m-inheritance-041": sm.ANIMAL_MODEL,
     "m-inheritance-064": ANIMAL_OWNER_MODEL,
-    "m-inheritance-072": ANIMAL_OWNER_MODEL,
+    "m-inheritance-132": sm.ANIMAL_MODEL,
     "m-inheritance-042": sm.ANIMAL_MODEL,
 }
 
@@ -302,3 +307,14 @@ def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: s
     with pytest.raises(OperationRejectedError) as exc_info:
         preflight_find(query, model=model_of(REJECTED_MODELS[case_id]))
     assert exc_info.value.rule == expected_rule
+
+
+def test_duplicate_subtype_selection_is_rejected_during_query_construction() -> None:
+    expected = case_document(_CASES["m-inheritance-133"])["when"]["operation"]
+    assert expected["narrow"]["to"] == [
+        "parallax.compatibility.Dog",
+        "parallax.compatibility.Dog",
+    ]
+    with pytest.raises(QueryDefinitionError) as caught:
+        sm.Animal.narrow(sm.Dog, sm.Dog)
+    assert caught.value.code == "query-path-invalid"

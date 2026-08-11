@@ -17,12 +17,10 @@ when:
     or:
       operands:
         - narrow:
-            entity: parallax.compatibility.Payment
             to: [parallax.compatibility.CardPayment]
             operand:
               eq: { attr: parallax.compatibility.CardPayment.detail, value: visa-4242 }
         - narrow:
-            entity: parallax.compatibility.Payment
             to: [parallax.compatibility.CashPayment]
             operand:
               greaterThan: { attr: parallax.compatibility.CashPayment.detail, value: 10.00 }

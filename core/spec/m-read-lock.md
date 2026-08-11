@@ -14,20 +14,14 @@ Reads performed **inside a unit of work** that intends to write **MUST** be made
 correct without the caller writing locking SQL. The default (`locking`) in-
 transaction **object find** acquires a **shared row lock**.
 
-The lock applies to **object finds only**. A **projection or aggregation** read
-inside a unit of work takes **no** lock and **proceeds unlocked — it never
-errors**: its result rows have no identifiable base row to lock (the database
-rejects a row-lock clause on a `distinct` / grouped / aggregate result), and per
-ADR 0002 a projection returns **plain, unmanaged data** that never enters the
-observed-version map or the write path — so there is nothing for a lock to
-protect. Omitting the lock is therefore both necessary and safe.
+The active query contract contains object finds only. Projection and aggregation
+reads are deferred; their lock behavior lands with their future query contract.
 
 **Whether and where to attach the lock is a `m-dialect` decision**, not
 `m-unit-work`'s: the unit of work asks the dialect to apply this transaction's read
 lock to a compiled read, and the dialect returns an object find with its
 shared-row-lock form appended (Postgres `for share of t0`; MariaDB `lock in share
-mode`) and a projection/aggregation read unchanged. `m-unit-work` contains no
-dialect-specific SQL shaping.
+mode`). `m-unit-work` contains no dialect-specific SQL shaping.
 
 ### What one temporal observation locks
 
@@ -80,9 +74,5 @@ well-formed and result-correct — the observable contract it can check). The
 **behavioral** counterpart — that the emitted lock actually *behaves as a lock* —
 is proven by the two-connection concurrency cases: it **excludes a writer**
 (`m-read-lock-006`, `error`/`concurrency`), is **shared, not exclusive**
-(`m-read-lock-007`, a second reader is admitted), and an **unlocked projection
-admits a writer** (`m-read-lock-008`, the behavioral counterpart to the
-projection-omits-lock emission case) — the last two carrying the
-`concurrencySuccess` shape (two held sessions, no error raised). The
-object-find-vs-aggregation split is recorded in ADR 0012 (which supersedes-in-part
-ADR 0011).
+(`m-read-lock-007`, a second reader is admitted). The second case carries the
+`concurrencySuccess` shape (two held sessions, no error raised).

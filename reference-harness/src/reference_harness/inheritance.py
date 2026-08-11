@@ -153,6 +153,8 @@ ATTRIBUTE_OUTSIDE_ACTIVE_POSITION = "attribute-outside-active-position"
 # A narrow in a navigation filter's `op` (or a deep-fetch path segment) that
 # resolves outside the relationship target's effective concrete set.
 NARROW_OUTSIDE_RELATIONSHIP_TARGET = "narrow-outside-relationship-target"
+SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE = "subtype-selection-duplicate-alternative"
+SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES = "subtype-selection-overlapping-alternatives"
 # The resolution half of the positional rules: a reference position spells its
 # entity BARE, so a local name two namespaces of the model declare names no single
 # entity and the reference resolves nowhere.
@@ -165,6 +167,8 @@ OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
         SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
         ATTRIBUTE_OUTSIDE_ACTIVE_POSITION,
         NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+        SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE,
+        SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES,
         REFERENCE_AMBIGUOUS_ENTITY_NAME,
     }
 )
@@ -972,10 +976,10 @@ def resolve_hop_effective_set(
     target_set = family.effective_concrete_set(target) if target is not None else []
     if narrow_to is None:
         return family.canonical_concrete_order(target_set) if target else target_set, False
-    resolved = family.resolve_to_set([t for t in narrow_to if isinstance(t, str)])
+    resolved = resolve_subtype_selection(family, narrow_to)
     if not resolved:
         raise RejectionError(
-            NARROW_OUTSIDE_RELATIONSHIP_TARGET,
+            NARROW_EMPTY_EFFECTIVE_SET,
             f"deep-fetch narrow of {rel_ref!r} to {narrow_to!r} resolves to the empty "
             f"concrete-subtype set",
         )
@@ -1030,50 +1034,65 @@ def _check_path_reference(family: Family, reference: Any) -> None:
         _check_reference_entity_name(family, reference, named)
 
 
+def resolve_subtype_selection(family: Family, to_list: Any) -> list[str]:
+    """Resolve one Subtype Selection after duplicate and overlap checks."""
+    names = [name for name in to_list if isinstance(name, str)] if isinstance(to_list, list) else []
+    resolved_alternatives: list[tuple[str, str, list[str]]] = []
+    for name in names:
+        _check_reference_entity_name(family, name, name)
+        resolved_alternatives.append(
+            (
+                name,
+                family.defs.canonical_key(name),
+                family.effective_concrete_set(name) if name in family.defs else [],
+            )
+        )
+
+    seen: set[str] = set()
+    for name, identity, _effective in resolved_alternatives:
+        if identity in seen:
+            raise RejectionError(
+                SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE,
+                f"Subtype Selection repeats alternative {name!r}",
+            )
+        seen.add(identity)
+
+    alternatives: list[tuple[str, set[str]]] = []
+    resolved: list[str] = []
+    for name, _identity, effective_ordered in resolved_alternatives:
+        effective = set(effective_ordered)
+        for previous_name, previous_effective in alternatives:
+            overlap = effective & previous_effective
+            if overlap:
+                raise RejectionError(
+                    SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES,
+                    f"Subtype Selection alternatives {previous_name!r} and {name!r} "
+                    f"overlap at {sorted(overlap)}",
+                )
+        alternatives.append((name, effective))
+        resolved.extend(concrete for concrete in effective_ordered if concrete not in resolved)
+    return resolved
+
+
 def resolve_clamped_narrow(
     family: Family,
     current_set: list[str],
-    entity: Any,
     to_list: Any,
     outside_rule: str = NARROW_OUTSIDE_POSITION,
 ) -> list[str]:
-    """The resolved effective set of an ``{entity, to}`` narrow at a NAMED position.
-
-    Shared by the operation-position ``narrow`` node and a deep-fetch path's ROOT
-    guard, which resolve identically: the ``entity``-declared position is CLAMPED to
-    (intersected with) *current_set* — the active position threaded into the walk —
-    and ``to`` is accepted iff it resolves NON-EMPTY and within that clamp. Naming a
-    broader position is therefore constrained rather than rejected, while a ``to``
-    reaching outside the active position raises *outside_rule* and a ``to``
-    resolving to nothing raises ``narrow-empty-effective-set``. Binding the subset
-    check to the intersection (rather than to ``effective_concrete_set(entity)``
-    alone) is what stops a nested narrow, or one whose ``entity`` is broader than
-    the threaded position, from broadening back out.
-
-    ``entity`` and every ``to`` entry are reference positions, so a spelling that
-    names no single entity is refused there before either subset check: unresolved,
-    it would otherwise contribute nothing and surface as the empty or
-    outside-position set the narrow rules classify.
-    """
-    names = [t for t in to_list if isinstance(t, str)] if isinstance(to_list, list) else []
-    for name in [entity, *names]:
-        _check_reference_entity_name(family, name, name)
-    entity_set = family.effective_concrete_set(entity) if isinstance(entity, str) else []
-    current = set(current_set)
-    position_set = [c for c in entity_set if c in current]
-    to_set = family.resolve_to_set(names)
+    """Resolve a Subtype Selection inside the active position supplied by context."""
+    to_set = resolve_subtype_selection(family, to_list)
     if not to_set:
         raise RejectionError(
             NARROW_EMPTY_EFFECTIVE_SET,
             f"narrow to {to_list!r} resolves to the empty concrete-subtype set",
         )
-    if not set(to_set) <= set(position_set):
+    if not set(to_set) <= set(current_set):
         raise RejectionError(
             outside_rule,
-            f"narrow of {entity!r} to {to_list!r} resolves to {sorted(to_set)}, "
+            f"narrow to {to_list!r} resolves to {sorted(to_set)}, "
             f"which is not a subset of the active position's effective set "
-            f"{sorted(position_set)} (the entity position {sorted(entity_set)} "
-            f"clamped to the threaded position {sorted(current_set)})",
+            f"{sorted(current_set)}",
         )
     return to_set
 
@@ -1097,7 +1116,7 @@ def resolve_root_source_set(
     narrow = path.get("narrow") if isinstance(path, dict) else None
     if isinstance(narrow, dict):
         resolved = resolve_clamped_narrow(
-            family, family.effective_concrete_set(position), narrow.get("entity"), narrow.get("to")
+            family, family.effective_concrete_set(position), narrow.get("to")
         )
     else:
         resolved = family.effective_concrete_set(position)
@@ -1123,11 +1142,9 @@ def validate_operation_inheritance(
     *position* defaults to what ``m-op-algebra`` fixes — the inheritance family root
     when the descriptor declares one, else its first declared entity.
 
-    Each ``narrow``'s subset check binds to the ACTIVE position (threaded and
-    re-narrowed at every hop) intersected with the narrow's own ``entity``-declared
-    position — NOT to ``effective_concrete_set(narrow.entity)`` alone — so a narrow
-    cannot broaden beyond the position actually in scope even when its ``entity``
-    names a broader one.
+    Each ``narrow``'s subset check binds to the ACTIVE position threaded and
+    re-narrowed at every hop, so the shared selection cannot broaden beyond the
+    position supplied by context.
     """
     family = Family(entity_defs)
     start = position if position is not None else _default_position(entity_defs)
@@ -1141,7 +1158,6 @@ def _walk_active_position(
     current_set: list[str],
     node: Any,
     outside_rule: str = NARROW_OUTSIDE_POSITION,
-    expected_entity: str | None = None,
 ) -> None:
     """Walk *node*, judging every positional rule against the active position.
 
@@ -1155,97 +1171,44 @@ def _walk_active_position(
     (top-level) position a broadening narrow is ``narrow-outside-position``; inside a
     navigation filter's ``op`` (where the active position is the RELATIONSHIP TARGET)
     it is ``narrow-outside-relationship-target`` (resolved Q10).
-
-    *expected_entity* is the entity a positional ``narrow`` at THIS position MUST name
-    (``m-navigate``): inside a navigation filter's ``op`` the active position is the
-    relationship target, so a narrow there MUST set ``narrow.entity`` to that target
-    exactly — narrowing to subtypes is always via ``to``, never by declaring a broader
-    (or narrower) ``entity``. A mismatch is ``narrow-outside-relationship-target``. It
-    is ``None`` at the queried (top-level) position and inside a narrow's ``operand``,
-    where the general CLAMP (``m-op-algebra``) governs instead; it is carried through
-    the position-preserving wrappers (``and`` / ``or`` / ``not`` / …) and re-seeded
-    per hop at each nested navigation filter, and cleared when descending through a
-    narrow's ``operand`` (the position becomes the narrowed set — a same-position
-    narrow, clamped, not name-checked).
     """
     if not isinstance(node, dict) or len(node) != 1:
         return
     tag, body = next(iter(node.items()))
     if tag in ("navigate", "exists", "notExists"):
         # A navigation filter re-roots the active polymorphic position at the
-        # relationship TARGET; a narrow in its `op` narrows THAT position, MUST NAME
-        # the target as its `entity`, and a broadening narrow there is
+        # relationship TARGET; a narrow in its `op` narrows that position, and an
+        # escaping selection there is
         # `narrow-outside-relationship-target`. A non-polymorphic (or unresolved)
-        # target contributes its own singleton set. Re-seeds `expected_entity` to the
-        # new hop's target (never inherits the enclosing position's).
+        # target contributes its own singleton set.
         _check_member_reference(family, body.get("rel"))
         op = body.get("op")
         if op is None:
             return
         target = family.relationship_target(body.get("rel"))
         target_set = family.effective_concrete_set(target) if target is not None else []
-        _walk_active_position(family, target_set, op, NARROW_OUTSIDE_RELATIONSHIP_TARGET, target)
+        _walk_active_position(family, target_set, op, NARROW_OUTSIDE_RELATIONSHIP_TARGET)
         return
     if tag == "narrow":
-        entity = body.get("entity")
         to_list = body.get("to", []) or []
-        # A spelling that names no single entity fails to resolve before it can be
-        # compared to the relationship target or clamped to the active position.
-        _check_reference_entity_name(family, entity, entity)
-        # Relationship-scope naming (m-navigate): when this narrow sits at a navigation
-        # filter's relationship-target position, its `entity` MUST NAME that target
-        # exactly — subtypes are reached via `to`, not by renaming (or broadening) the
-        # position. `expected_entity` is None at the queried / nested same-position
-        # levels, where the CLAMP below is the whole rule.
-        if expected_entity is not None and (
-            not isinstance(entity, str) or family.defs.canonical_key(entity) != expected_entity
-        ):
-            raise RejectionError(
-                NARROW_OUTSIDE_RELATIONSHIP_TARGET,
-                f"narrow at the relationship-target position names entity {entity!r}, "
-                f"but the relationship target is {expected_entity!r}; narrow to subtypes "
-                f"with `to`, not by naming a different position",
-            )
-        # The effective polymorphic position this narrow operates on is the
-        # `entity`-declared position CLAMPED to the active position threaded into
-        # this walk (`current_set`): the read's `targetEntity` at top level, or the
-        # enclosing narrow's narrowed set when nested. `entity` names the position
-        # the author intends to narrow, but a narrow can only ever CONSTRAIN the
-        # active position, never broaden it — so an `entity` naming a position
-        # BROADER than the one in scope is clamped (not rejected), while a narrow
-        # whose `entity` names a NARROWER sub-position (e.g. a top-level rejected
-        # case, positioned at the family root, that narrows an intermediate abstract
-        # subtype) is honored. When `entity` equals the active position — the normal
-        # case, where a top-level narrow's `entity` equals the read's targetEntity —
-        # the intersection is a no-op. Binding the subset check to this intersection
-        # (rather than to `effective_concrete_set(entity)` alone) is what stops a
-        # nested narrow, or a top-level narrow whose `entity` is broader than the
-        # threaded position, from broadening back out.
-        to_set = resolve_clamped_narrow(family, current_set, entity, to_list, outside_rule)
-        # Descending into `operand`: the position becomes the narrowed set, so a
-        # nested narrow is a SAME-POSITION narrow governed by the clamp — clear
-        # `expected_entity` (the naming requirement was this narrow's alone).
-        _walk_active_position(family, to_set, body.get("operand"), outside_rule, None)
+        to_set = resolve_clamped_narrow(family, current_set, to_list, outside_rule)
+        _walk_active_position(family, to_set, body.get("operand"), outside_rule)
     elif tag in ("and", "or"):
-        # Position-preserving: a narrow directly under `and` / `or` is still the
-        # target-position narrow, so it inherits the naming requirement.
         for operand in body.get("operands", []) or []:
-            _walk_active_position(family, current_set, operand, outside_rule, expected_entity)
-    elif tag in ("not", "group", "distinct", "limit", "asOf", "asOfRange", "history"):
-        _walk_active_position(
-            family, current_set, body.get("operand"), outside_rule, expected_entity
-        )
+            _walk_active_position(family, current_set, operand, outside_rule)
+    elif tag in ("not", "group", "limit", "asOf", "asOfRange", "history"):
+        _walk_active_position(family, current_set, body.get("operand"), outside_rule)
     elif tag == "orderBy":
         operand = body.get("operand")
-        _walk_active_position(family, current_set, operand, outside_rule, expected_entity)
+        _walk_active_position(family, current_set, operand, outside_rule)
         ordered_set = _ordered_position(family, current_set, operand, outside_rule)
         for key in body.get("keys", []) or []:
             if isinstance(key, dict):
                 _check_attribute_position(family, ordered_set, key.get("attr"))
     elif tag == "deepFetch":
         # A deep-fetch path narrows at two positions with two different rules. Its
-        # ROOT `{entity, to}` guard names the queried position and is clamped to the
-        # active one exactly as an operation-position `narrow` node is
+        # ROOT `{to}` guard resolves inside the queried position exactly as an
+        # operation-position `narrow` node does
         # (`narrow-outside-position`). Each SEGMENT's `{to}` narrows that hop's
         # (polymorphic) relationship target and must resolve within it
         # (`narrow-outside-relationship-target`). The operand is the root query,
@@ -1256,7 +1219,6 @@ def _walk_active_position(
                 resolve_clamped_narrow(
                     family,
                     current_set,
-                    root_narrow.get("entity"),
                     root_narrow.get("to"),
                     outside_rule,
                 )
@@ -1269,25 +1231,7 @@ def _walk_active_position(
                     for name in to_list if isinstance(to_list, list) else []:
                         _check_reference_entity_name(family, name, name)
                     resolve_hop_effective_set(family, rel, to_list)
-        _walk_active_position(
-            family, current_set, body.get("operand"), outside_rule, expected_entity
-        )
-    elif tag == "groupBy":
-        # An aggregation names entities in three further reference positions —
-        # each group key, each projected aggregate's `attr`, and the `attr` of
-        # every aggregate a `having` leaf compares — and `m-op-algebra` "Entity
-        # spellings in a reference position" governs all of them. Only the
-        # resolution half applies here: a group key and an aggregate `attr` are
-        # not subtype-attribute references at the queried position, so their
-        # applicability is `m-agg`'s question rather than this walk's.
-        _walk_active_position(
-            family, current_set, body.get("operand"), outside_rule, expected_entity
-        )
-        for key in body.get("keys", []) or []:
-            _check_member_reference(family, key)
-        for aggregate in body.get("aggregates", []) or []:
-            _check_aggregate_reference(family, aggregate)
-        _check_having_references(family, body.get("having"))
+        _walk_active_position(family, current_set, body.get("operand"), outside_rule)
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
         _check_attribute_position(family, current_set, body.get("attr"))
     elif tag in PATH_REFERENCE_TAGS:
@@ -1300,31 +1244,6 @@ def _walk_active_position(
         # applicability to the active position stays that resolver's question.
         _check_path_reference(family, body.get("path"))
     # all / none carry no reference to a queried position here.
-
-
-def _check_aggregate_reference(family: Family, aggregate: Any) -> None:
-    """Check the entity spelling of one aggregate function's ``attr``.
-
-    ``count`` alone may omit ``attr`` (``count(*)``), which names nothing.
-    """
-    if isinstance(aggregate, dict) and len(aggregate) == 1:
-        body = next(iter(aggregate.values()))
-        if isinstance(body, dict):
-            _check_member_reference(family, body.get("attr"))
-
-
-def _check_having_references(family: Family, node: Any) -> None:
-    """Check every aggregate reference a ``having`` expression compares."""
-    if not isinstance(node, dict) or len(node) != 1:
-        return
-    tag, body = next(iter(node.items()))
-    if not isinstance(body, dict):
-        return
-    if tag in ("and", "or"):
-        for operand in body.get("operands", []) or []:
-            _check_having_references(family, operand)
-        return
-    _check_aggregate_reference(family, body.get("agg"))
 
 
 def _ordered_position(
@@ -1345,9 +1264,7 @@ def _ordered_position(
     if not isinstance(body, dict):
         return current_set
     if tag == "narrow":
-        return resolve_clamped_narrow(
-            family, current_set, body.get("entity"), body.get("to", []) or [], outside_rule
-        )
+        return resolve_clamped_narrow(family, current_set, body.get("to", []) or [], outside_rule)
     if tag in OPERAND_ROW_WRAPPER_TAGS:
         return _ordered_position(family, current_set, body.get("operand"), outside_rule)
     return current_set

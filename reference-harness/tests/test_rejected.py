@@ -978,14 +978,11 @@ def test_between_rooted_at_a_value_object_still_reports_the_find_root_rule() -> 
 
 
 def test_deep_fetch_path_root_narrow_naming_a_value_object_rejected() -> None:
-    # A path-ROOT guard resolves at the queried position, so both its members name
-    # Entities. A value object has no identity, no position, and no concrete
+    # A path-root guard resolves at the queried position, so each selection member
+    # names an Entity. A value object has no identity, no position, and no concrete
     # subtypes, so naming one there is the same refusal a value-object-rooted
     # attribute reference gets — reported against the guard, not against a segment.
-    for narrow in (
-        {"entity": "address", "to": ["Customer"]},
-        {"entity": "Customer", "to": ["address"]},
-    ):
+    for narrow in ({"to": ["address"]},):
         with pytest.raises(RejectionError) as exc:
             validate_operation(
                 _customer_entity(),
@@ -1009,7 +1006,7 @@ def test_deep_fetch_path_root_narrow_over_entities_is_accepted() -> None:
                 "operand": {"all": {}},
                 "paths": [
                     {
-                        "narrow": {"entity": "Customer", "to": ["Customer"]},
+                        "narrow": {"to": ["Customer"]},
                         "segments": [{"rel": "Customer.locations"}],
                     }
                 ],
@@ -1618,12 +1615,11 @@ def test_schema_rejects_a_reference_rooted_at_a_value_object() -> None:
 
 
 def test_schema_rejects_a_value_object_in_an_entity_position() -> None:
-    # The same grammar closes the remaining positions an operation could root at a
-    # value object: a narrow guard's polymorphic position and each subtype it
-    # narrows to.
+    # The same grammar closes each Subtype Selection alternative.
+    assert not _op_valid({"narrow": {"to": ["address"], "operand": {"all": {}}}})
+
+
+def test_schema_rejects_the_retired_narrow_entity_field() -> None:
     assert not _op_valid(
-        {"narrow": {"entity": "address", "to": ["Customer"], "operand": {"all": {}}}}
-    )
-    assert not _op_valid(
-        {"narrow": {"entity": "Customer", "to": ["address"], "operand": {"all": {}}}}
+        {"narrow": {"entity": "Customer", "to": ["Customer"], "operand": {"all": {}}}}
     )

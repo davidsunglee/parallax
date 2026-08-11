@@ -7,7 +7,7 @@ the package's only RECURSIVE dispatch over the operation union, and its only
 recursion — which is what makes "where does this node get lowered?" a question
 with one answer. (`_compile` carries the package's only two other `match`
 statements, and neither descends: `_peel_directives` walks the outer
-`limit`/`orderBy`/`distinct` chain, and `_compile_inheritance_read` selects a
+`limit`/`orderBy` chain, and `_compile_inheritance_read` selects a
 plan type, which is not an operation node at all.)
 
 **The resolution scope is the dispatch argument.** :data:`ResolutionScope` is
@@ -81,7 +81,6 @@ from parallax.core.op_algebra import (
     Between,
     Comparison,
     DeepFetch,
-    Distinct,
     Exists,
     Group,
     History,
@@ -530,7 +529,7 @@ def lower_predicate(op: Operation, scope: ResolutionScope) -> str:
                 "m-temporal-read.inject_as_of before compile_read (m-sql cannot import "
                 "m-temporal-read per the module DAG)"
             )
-        case OrderBy() | Limit() | Distinct():
+        case OrderBy() | Limit():
             raise SqlGenError("result-shaping directive nested inside a predicate")
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)

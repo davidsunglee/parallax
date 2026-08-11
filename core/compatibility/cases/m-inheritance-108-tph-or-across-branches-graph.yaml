@@ -16,12 +16,10 @@ when:
     or:
       operands:
         - narrow:
-            entity: parallax.compatibility.Animal
             to: [parallax.compatibility.Dog]
             operand:
               greaterThan: { attr: parallax.compatibility.Dog.barkVolume, value: 5 }
         - narrow:
-            entity: parallax.compatibility.Animal
             to: [parallax.compatibility.Cat]
             operand:
               eq: { attr: parallax.compatibility.Cat.indoor, value: true }

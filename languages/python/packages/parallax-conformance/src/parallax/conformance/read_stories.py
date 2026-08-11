@@ -340,7 +340,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     # The `api-conformance`-lane runtime half of
     # the read-lock matrix — `tx.find` inside a `db.transact` of the declared
     # mode. `m-read-lock-001` (the harness-lane single-connection golden) and
-    # `-006`/`-007`/`-008` (the two-session behavioral proofs) need no idiomatic
+    # `-006`/`-007` (the two-session behavioral proofs) need no idiomatic
     # story: they need no `db.transact` participation-mode CONFIGURATION to
     # demonstrate (the harness proof runs the golden verbatim; the two-session
     # proofs are a concurrency property this generic single-session runner
@@ -353,11 +353,6 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "op = Account.where(Account.id == 2)",
         concurrency="locking",
     ),
-    # `m-read-lock-003` — the locking-mode PROJECTION read — is deliberately
-    # absent: its operation is a `distinct` projection, and the Find Query
-    # surface has no `distinct` clause at all (`python.md` §2 states the clause
-    # set exactly and excludes it, because a Find Query always returns complete
-    # root Entities). See `api_suite.CASE_SKIP_REASONS` for the reasoned skip.
     ReadStory(
         "m-read-lock-005",
         "An optimistic-mode read omits the shared read lock",

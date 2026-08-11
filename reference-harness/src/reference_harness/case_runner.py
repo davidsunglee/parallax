@@ -727,14 +727,14 @@ _CANONICAL_AXIS_ORDER: tuple[str, ...] = ("valid-time", "transaction-time")
 
 
 def _peel_directive_wrappers(node: Any) -> Any:
-    """Descend past the result-directive wrappers (``distinct`` / ``orderBy`` /
-    ``limit``) that the root compile peels *before* the temporal wrappers, returning
+    """Descend past the result-directive wrappers (``orderBy`` / ``limit``) that
+    the root compile peels *before* the temporal wrappers, returning
     the innermost node. Without this, a directive-wrapped temporal root (e.g.
     ``limit(orderBy(asOf(...)))``, case m-navigate-024) would seed no child propagation pins
     and the child would wrongly default to Latest (mismatching the authored instant).
     """
     while isinstance(node, dict):
-        for directive in ("distinct", "orderBy", "limit"):
+        for directive in ("orderBy", "limit"):
             if directive in node:
                 node = node[directive]["operand"]
                 break
@@ -748,7 +748,7 @@ def _root_asof_pins(case: Case) -> dict[str, str]:
     deep-fetch root operand. A dimension absent here defaults to the child's own
     ``latest`` value at propagation time. Empty when the root is unpinned.
 
-    Result directives (``distinct`` / ``orderBy`` / ``limit``) are peeled first,
+    Result directives (``orderBy`` / ``limit``) are peeled first,
     mirroring the root compile, so a directive-wrapped temporal root still pins.
     """
     pins: dict[str, str] = {}
@@ -1288,7 +1288,7 @@ def _read_asof_pins(case: Case) -> dict[str, str]:
     node: Any = case.operation
     while isinstance(node, dict) and len(node) == 1:
         tag = next(iter(node))
-        if tag in ("distinct", "orderBy", "limit", "narrow"):
+        if tag in ("orderBy", "limit", "narrow"):
             node = node[tag].get("operand")
         elif tag == "asOf":
             asof = node["asOf"]
@@ -6757,9 +6757,8 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
     """Two-node, barrier-synchronized rounds that assert NO error and each read's rows.
 
     The non-error counterpart of :func:`_assert_error_concurrency`, reusing the same
-    barrier + two ``open_session`` plumbing: ``m-read-lock-007`` (both readers take the shared
-    lock and BOTH succeed -- shared, not exclusive) and ``m-read-lock-008`` (A holds an UNLOCKED
-    projection, B's UPDATE is admitted -- no lock to block it). Each node runs its
+    barrier + two ``open_session`` plumbing: ``m-read-lock-007`` (both readers take
+    the shared lock and BOTH succeed -- shared, not exclusive). Each node runs its
     round steps on its own held non-autocommit session; a ``kind: read`` step is
     fetched on that HELD session (``session.query`` -- inside the open transaction, so
     a locking SELECT both takes the lock and returns its rows) and its ``expectRows``
@@ -6801,9 +6800,8 @@ def _assert_concurrency_success(case: Case, db: DatabaseProvider) -> None:
                                 f"  expected: {expect!r}"
                             )
                     else:
-                        # A write step (kind: write): succeeds iff no lock blocks it
-                        # (m-read-lock-008's admitted UPDATE); it holds until the finally
-                        # rolls it back.
+                        # A write step (kind: write) succeeds iff no lock blocks it;
+                        # it holds until the finally rolls it back.
                         for sql, binds in pairs:
                             session.execute(sql, binds)
                 except Exception as exc:  # noqa: BLE001 -- any raise fails the "no error" claim
@@ -7086,7 +7084,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
 
     if case.is_concurrency_success:
         # A concurrency-success case (m-read-lock behavioral read-lock:
-        # m-read-lock-007/m-read-lock-008) also carries its golden per round inside
+        # m-read-lock-007) also carries its golden per round inside
         # `concurrency.rounds` (no top-level then.statements), so
         # branch before the then.statements access below, as a sibling of `is_error`.
         _assert_schema(case)

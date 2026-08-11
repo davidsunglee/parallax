@@ -174,7 +174,7 @@ def test_tph_abstract_subtype_relationship_target_injects_the_in_list() -> None:
 
 
 def test_tph_relationship_narrow_to_one_concrete_lowers_to_eq() -> None:
-    op = oa.Exists(rel="Person.pets", op=oa.Narrow(entity="Pet", to=("Cat",), operand=oa.All()))
+    op = oa.Exists(rel="Person.pets", op=oa.Narrow(to=("Cat",), operand=oa.All()))
     compiled = compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Person"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind = ?)"
@@ -183,9 +183,7 @@ def test_tph_relationship_narrow_to_one_concrete_lowers_to_eq() -> None:
 
 
 def test_tph_relationship_narrow_to_abstract_subtype_matches_the_broad_relationship() -> None:
-    op = oa.Exists(
-        rel="Person.animals", op=oa.Narrow(entity="Animal", to=("Pet",), operand=oa.All())
-    )
+    op = oa.Exists(rel="Person.animals", op=oa.Narrow(to=("Pet",), operand=oa.All()))
     compiled = compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Person"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from animal t1 where t1.owner_id = t0.id and t1.kind in (?, ?))"
@@ -207,7 +205,7 @@ def test_tpcs_abstract_root_relationship_target_groups_every_branch_alphabetical
 def test_tpcs_relationship_narrow_drops_the_excluded_branch_but_keeps_its_alias_slot_free() -> None:
     op = oa.Exists(
         rel="Folder.documents",
-        op=oa.Narrow(entity="Document", to=("FinancialDocument",), operand=oa.All()),
+        op=oa.Narrow(to=("FinancialDocument",), operand=oa.All()),
     )
     compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Folder"))
     assert compiled.statement.sql.endswith(
@@ -219,9 +217,7 @@ def test_tpcs_relationship_narrow_drops_the_excluded_branch_but_keeps_its_alias_
 def test_tpcs_relationship_narrow_to_a_single_concrete_is_one_exists_no_grouping() -> None:
     # m-sql "a single concrete is one EXISTS (no grouping)" — the TPCS analogue of
     # the TPH narrow-to-one-concrete case above.
-    op = oa.Exists(
-        rel="Folder.documents", op=oa.Narrow(entity="Document", to=("Invoice",), operand=oa.All())
-    )
+    op = oa.Exists(rel="Folder.documents", op=oa.Narrow(to=("Invoice",), operand=oa.All()))
     compiled = compile_read(op, DOCUMENT, POSTGRES, target(DOCUMENT, "Folder"))
     assert compiled.statement.sql.endswith(
         "where exists (select 1 from invoice t1 where t1.folder_id = t0.id)"

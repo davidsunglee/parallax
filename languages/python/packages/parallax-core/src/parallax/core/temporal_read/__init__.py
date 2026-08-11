@@ -50,7 +50,6 @@ from parallax.core.op_algebra import (
     AsOf,
     AsOfRange,
     Comparison,
-    Distinct,
     Group,
     History,
     Limit,
@@ -408,7 +407,7 @@ def inject_as_of(op: Operation, entity: EntityMetadata) -> Operation:
     entity it is a strict identity (no as-of dimension to default). For a temporal
     entity it:
 
-    - peels any result-shaping directives (``orderBy`` / ``limit`` / ``distinct``)
+    - peels any result-shaping directives (``orderBy`` / ``limit``)
       off the top, so they survive around the rewritten predicate;
     - peels the temporal wrappers (``asOf`` / ``asOfRange`` / ``history``), reading
       each axis's pin and rejecting a double-pinned or undeclared axis;
@@ -619,34 +618,29 @@ def scans_an_axis(op: Operation) -> bool:
     return False
 
 
-def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy | Distinct]]:
+def _peel_directives(op: Operation) -> tuple[Operation, list[Limit | OrderBy]]:
     """Split leading result-shaping directives off the temporal/predicate core.
 
     Returns the inner core and the peeled directive nodes outermost-first, so they
     can be rebuilt around the rewritten predicate.
 
     The peeled set is ``m-op-algebra``'s closed set of row-preserving result
-    directives — ``limit`` / ``orderBy`` / ``distinct`` — read off the algebra
-    rather than off whichever clauses an authoring surface offers. ``distinct``
-    is peeled for that reason alone: every canonical operation reaches this
-    walk, including one deserialized rather than authored, so a member left
-    unpeeled would make the walk answer a legal operation wrongly.
+    directives — ``limit`` / ``orderBy`` — read off the algebra rather than off
+    whichever clauses an authoring surface offers.
     """
-    directives: list[Limit | OrderBy | Distinct] = []
+    directives: list[Limit | OrderBy] = []
     current = op
-    while isinstance(current, (Limit, OrderBy, Distinct)):
+    while isinstance(current, (Limit, OrderBy)):
         directives.append(current)
         current = current.operand
     return current, directives
 
 
-def _rewrap_directives(op: Operation, directives: list[Limit | OrderBy | Distinct]) -> Operation:
+def _rewrap_directives(op: Operation, directives: list[Limit | OrderBy]) -> Operation:
     result = op
     for node in reversed(directives):
         if isinstance(node, Limit):
             result = Limit(operand=result, count=node.count)
-        elif isinstance(node, OrderBy):
-            result = OrderBy(operand=result, keys=node.keys)
         else:
-            result = Distinct(operand=result)
+            result = OrderBy(operand=result, keys=node.keys)
     return result

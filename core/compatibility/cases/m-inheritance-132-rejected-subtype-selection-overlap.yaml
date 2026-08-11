@@ -1,0 +1,17 @@
+# Negative (m-inheritance): one Subtype Selection contains overlapping alternatives.
+#
+# Pet resolves to {Cat, Dog}, while Dog resolves to {Dog}. Distinct authored
+# alternatives must have pairwise-disjoint effective concrete-subtype sets, so this
+# selection is refused before SQL as `subtype-selection-overlapping-alternatives`.
+# This is scoped to one selection: separate sibling root guards may still overlap.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    narrow:
+      to: [parallax.compatibility.Dog, parallax.compatibility.Pet]
+      operand:
+        all: {}
+then:
+  rejectedRule: subtype-selection-overlapping-alternatives

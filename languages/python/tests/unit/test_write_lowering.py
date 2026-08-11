@@ -717,7 +717,6 @@ def test_materializing_predicate_write_reaching_finalization_is_refused() -> Non
         # The shape that actually mis-emitted: a `narrow` renders the family's
         # framework-owned tag guard, which a read alias-qualifies.
         oa.Narrow(
-            entity="Payment",
             to=("CardPayment",),
             operand=oa.Comparison(op="eq", attr="CardPayment.cardNetwork", value="Visa"),
         ),

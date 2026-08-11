@@ -121,10 +121,10 @@ the non-`NULL` values in the declared direction.
 
 A deep-fetch hop whose relationship target is a **polymorphic position**
 (`m-inheritance` — an abstract root or abstract subtype) eagerly fetches concrete
-instances across the family. A path segment MAY carry a `narrow` (`m-op-algebra`,
-the `{ to: [ … ] }` on the segment) to fetch only a **subset** of the target's
-concrete subtypes; the narrow must resolve **within** the relationship target's
-effective concrete set (`narrow-outside-relationship-target`, `m-navigate`).
+instances across the family. A path segment MAY carry a `narrow` whose `to` is
+`m-inheritance`'s shared Subtype Selection. It fetches only the resolved subset of
+the relationship target; a selection escaping that target is
+`narrow-outside-relationship-target` (`m-navigate`).
 
 **A narrowed hop populates a distinct narrowed relationship view**, keyed by a
 **derived** name rather than the ordinary relationship name:
@@ -170,7 +170,7 @@ counting as distinct.
 
 ### Path-root guards
 
-A path MAY also carry a **root** `narrow` (`m-op-algebra`, `{ entity, to }`)
+A path MAY also carry a **root** `narrow` (`m-op-algebra`, `{ to }`)
 beside its `segments`, which **guards which queried objects the path starts
 from**. It is the deliberate opposite of a segment narrow, and the contrast is
 the whole of its semantics:
@@ -204,6 +204,11 @@ its key differs from the broad path's automatically; only a guard admitting
 **every** queried object collapses onto broad, and there every observable agrees
 (same rows, same view, same objects), so collapsing is not a special case but the
 absence of a difference.
+
+The overlapping row compares two sibling selections. It does not relax Subtype
+Selection's pairwise-disjointness rule inside either value: `[Pet, Dog]` is
+invalid because those two alternatives overlap within one selection, while the
+two separately authored guards in the table remain legal.
 
 The last three rows cost one statement more than a set-unioning planner would
 need. That cost is **deliberate**: it keeps `roundTrips` **compositional** — an

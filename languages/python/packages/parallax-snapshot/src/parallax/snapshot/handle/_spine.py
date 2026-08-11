@@ -20,7 +20,6 @@ from parallax.core.op_algebra import (
     AsOf,
     AsOfRange,
     DeepFetch,
-    Distinct,
     History,
     Limit,
     Narrow,
@@ -30,7 +29,7 @@ from parallax.core.op_algebra import (
 
 __all__ = ["SpineNode", "own_row_spine"]
 
-SpineNode = OrderBy | Limit | Distinct | Narrow | AsOf | AsOfRange | History | DeepFetch
+SpineNode = OrderBy | Limit | Narrow | AsOf | AsOfRange | History | DeepFetch
 """A node whose result is its operand's OWN rows, reshaped rather than replaced.
 
 ``m-op-algebra`` names this closed set where it resolves an order key's position
@@ -61,14 +60,7 @@ def own_row_spine(operation: Operation) -> Iterator[SpineNode]:
     while True:
         match node:
             case (
-                OrderBy()
-                | Limit()
-                | Distinct()
-                | Narrow()
-                | AsOf()
-                | AsOfRange()
-                | History()
-                | DeepFetch()
+                OrderBy() | Limit() | Narrow() | AsOf() | AsOfRange() | History() | DeepFetch()
             ) as wrapper:
                 yield wrapper
                 node = wrapper.operand

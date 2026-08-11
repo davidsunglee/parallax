@@ -217,7 +217,7 @@ op = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))
 Corpus case: `m-inheritance-040`
 
 ```python
-Animal.where(Pet.narrow(WildBoar))
+Animal.where(Animal.narrow(Person))
 # raises OperationRejectedError(rule="narrow-outside-position")
 ```
 
@@ -328,15 +328,6 @@ Corpus case: `m-inheritance-071`
 
 ```python
 op = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument)))
-```
-
-## A relationship-scope narrow naming the wrong position
-
-Corpus case: `m-inheritance-072`
-
-```python
-Person.pets.exists(Animal.narrow(Dog))
-# raises OperationRejectedError(rule="narrow-outside-relationship-target")
 ```
 
 ## Disjoint path-root guards fetch one relationship into one view
@@ -470,6 +461,24 @@ def tpcs_narrow_to_abstract_subtype_materializes_typed_per_variant_instances(
     value-object-free family, and each `Invoice`/`Receipt` instance carries
     only its own declared members."""
     return db.find(Document.where(Document.narrow(FinancialDocument)))
+```
+
+## A Subtype Selection with overlapping alternatives
+
+Corpus case: `m-inheritance-132`
+
+```python
+Animal.where(Animal.narrow(Dog, Pet))
+# raises OperationRejectedError(rule="subtype-selection-overlapping-alternatives")
+```
+
+## A Subtype Selection with an exact duplicate
+
+Corpus case: `m-inheritance-133`
+
+```python
+Animal.narrow(Dog, Dog)
+# raises QueryDefinitionError(code="query-path-invalid")
 ```
 
 ## Relationship existence (bare `.exists()`)

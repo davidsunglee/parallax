@@ -75,12 +75,12 @@ def test_op_algebra_resolver_rejects_an_ambiguous_bare_name() -> None:
     model = _model()
     root = entity_by_name(model, "a.Person")
     assert root is not None
-    # A narrow whose `entity` is the ambiguous bare "Person" must not silently
+    # A selection whose alternative is the ambiguous bare "Person" must not silently
     # resolve to whichever namespace's Person appears first. The miss is named as
     # the resolution failure it is, not as the empty resolved set it would
     # otherwise collapse into: a narrow rule would invite narrowing differently,
     # while the spelling itself is what names no position.
-    op = Narrow(entity="Person", to=("Person",), operand=All())
+    op = Narrow(to=("Person",), operand=All())
     with pytest.raises(OperationRejectedError) as excinfo:
         validate_operation(root, op, model)
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
@@ -142,12 +142,12 @@ def test_the_read_executor_refuses_a_target_the_model_does_not_declare() -> None
 def test_a_canonical_spelling_names_one_of_two_twins_at_every_reference_position() -> None:
     # The counterpart to the refusal above: the SAME two-namespace model, addressed
     # canonically. Each position that resolves an Entity spelling — a narrow's
-    # `entity` and `to` entries, an attribute's Entity prefix — names exactly one
+    # `to` entries and an attribute's Entity prefix — names exactly one
     # twin, and the twin it names is the one the namespace segment selects.
     model = _model()
     root = _named(model, "a.Person")
 
-    narrow = Narrow(entity="a.Person", to=("a.Person",), operand=All())
+    narrow = Narrow(to=("a.Person",), operand=All())
     validate_operation(root, narrow, model)
 
     predicate = oa.Comparison(op="eq", attr="a.Person.id", value=1)
@@ -259,14 +259,14 @@ def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
     model = _cross_namespace_model()
     root = _named(model, "zoo.Beast")
 
-    top_level = Narrow(entity="Beast", to=("Wolf",), operand=All())
+    top_level = Narrow(to=("Wolf",), operand=All())
     validate_operation(root, top_level, model)
     assert compile_read(top_level, model, POSTGRES, root).statement.binds == ("wolf",)
 
     branches = oa.Or(
         operands=(
-            Narrow(entity="Beast", to=("Wolf",), operand=All()),
-            Narrow(entity="Beast", to=("Bear",), operand=All()),
+            Narrow(to=("Wolf",), operand=All()),
+            Narrow(to=("Bear",), operand=All()),
         )
     )
     validate_operation(root, branches, model)
@@ -280,7 +280,7 @@ def test_sql_lowering_resolves_a_hop_and_its_narrow_across_namespaces() -> None:
     model = _cross_namespace_model()
     den = _named(model, "den.Den")
 
-    op = oa.Exists(rel="Den.beasts", op=Narrow(entity="Beast", to=("Wolf",), operand=All()))
+    op = oa.Exists(rel="Den.beasts", op=Narrow(to=("Wolf",), operand=All()))
     validate_operation(den, op, model)
     compiled = compile_read(op, model, POSTGRES, den)
     assert compiled.statement.sql == (
@@ -312,7 +312,7 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
         operand=All(),
         paths=(
             oa.NavigationPath(
-                narrow=oa.PathRootNarrow(entity="Beast", to=("Wolf",)),
+                narrow=("Wolf",),
                 segments=(oa.PathSegment(rel="Beast.den"),),
             ),
         ),
@@ -355,9 +355,7 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
     beast = _named(model, "zoo.Beast")
     wolf = _named(model, "Wolf")
 
-    hop = oa.Exists(
-        rel="den.Den.beasts", op=Narrow(entity="zoo.Beast", to=("Wolf",), operand=All())
-    )
+    hop = oa.Exists(rel="den.Den.beasts", op=Narrow(to=("Wolf",), operand=All()))
     validate_operation(den, hop, model)
     compiled = compile_read(hop, model, POSTGRES, den)
     assert compiled.statement.sql == (
@@ -370,7 +368,7 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
         operand=All(),
         paths=(
             oa.NavigationPath(
-                narrow=oa.PathRootNarrow(entity="zoo.Beast", to=("Wolf",)),
+                narrow=("Wolf",),
                 segments=(oa.PathSegment(rel="zoo.Beast.den"),),
             ),
         ),

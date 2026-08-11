@@ -29,12 +29,12 @@ from parallax.core.op_algebra import (
 
 
 def _operations() -> list[tuple[str, dict[str, Any]]]:
-    """Every authored operation in the read algebra (aggregation deferred, out of claim)."""
+    """Every authored operation in the read algebra."""
     found: list[tuple[str, dict[str, Any]]] = []
     for case in case_format.load_cases():
         when: Any = case_document(case).get("when") or {}
         operation: Any = when.get("operation")
-        if isinstance(operation, dict) and not _has_group_by(operation):
+        if isinstance(operation, dict):
             found.append((case.case_id, cast("dict[str, Any]", operation)))
         for key in ("scenario", "coherence"):
             steps: Any = when.get(key)
@@ -44,14 +44,9 @@ def _operations() -> list[tuple[str, dict[str, Any]]]:
                 if not isinstance(step, dict):
                     continue
                 inner: Any = cast("dict[str, Any]", step).get("find")
-                if isinstance(inner, dict) and not _has_group_by(inner):
+                if isinstance(inner, dict):
                     found.append((f"{case.case_id}/{key}/{index}", cast("dict[str, Any]", inner)))
     return found
-
-
-def _has_group_by(operation: Any) -> bool:
-    """Whether an operation tree uses the deferred aggregation node (out of claim)."""
-    return "groupBy" in str(operation)
 
 
 _OPERATIONS = _operations()
@@ -76,7 +71,7 @@ _IDENTITY_DEFS = cast(
 _REFERENCE_POSITIONS: dict[str, Callable[[str], dict[str, Any]]] = {
     "attributeRef": lambda ref: {"eq": {"attr": ref, "value": 1}},
     "relationshipRef": lambda ref: {"exists": {"rel": ref}},
-    "entityName": lambda ref: {"narrow": {"entity": ref, "to": [ref], "operand": {"all": {}}}},
+    "entityName": lambda ref: {"narrow": {"to": [ref], "operand": {"all": {}}}},
     "nestedRef": lambda ref: {"nestedEq": {"path": ref, "value": 1}},
     "valueObjectRef": lambda ref: {"nestedExists": {"path": ref}},
     "elementRef": lambda ref: {
@@ -132,7 +127,6 @@ def test_the_serde_accepts_exactly_what_the_shared_grammar_accepts(
         pytest.param(
             {
                 "narrow": {
-                    "entity": "catalog.Record",
                     "to": ["archive.SharedVariant"],
                     "operand": {"all": {}},
                 }
@@ -321,14 +315,14 @@ def test_scoped_where_element_predicate_round_trips() -> None:
 
 def test_deep_fetch_path_root_narrow_round_trips() -> None:
     # The path-ROOT guard rides beside `segments` rather than on one, and the two
-    # narrow positions coexist on one path: the root's `{entity, to}` and the
+    # narrow positions coexist on one path: the root's `{to}` and the
     # segment's `{to}` survive the round trip independently.
     doc: dict[str, Any] = {
         "deepFetch": {
             "operand": {"all": {}},
             "paths": [
                 {
-                    "narrow": {"entity": "Animal", "to": ["Pet"]},
+                    "narrow": {"to": ["Pet"]},
                     "segments": [
                         {"rel": "Animal.owner"},
                         {"rel": "Person.pets", "narrow": {"to": ["Dog"]}},
@@ -339,7 +333,7 @@ def test_deep_fetch_path_root_narrow_round_trips() -> None:
     }
     node = op_algebra.deserialize(doc)
     path = cast("op_algebra.DeepFetch", node).paths[0]
-    assert path.narrow == op_algebra.PathRootNarrow(entity="Animal", to=("Pet",))
+    assert path.narrow == ("Pet",)
     assert path.segments[1].narrow == ("Dog",)
     assert op_algebra.serialize(node) == doc
 
@@ -453,7 +447,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             ({"and": {"operands": [{"all": {}}]}}, "at least two"),
             ({"limit": {"operand": {"all": {}}, "count": 0}}, "positive integer"),
             ({"orderBy": {"operand": {"all": {}}, "keys": []}}, "non-empty list"),
-            ({"narrow": {"entity": "Animal", "to": [], "operand": {"all": {}}}}, "non-empty list"),
+            ({"narrow": {"to": [], "operand": {"all": {}}}}, "non-empty list"),
             ({"not": {}}, "missing required key"),
             # Closed-shape / required-property / type enforcement (m-op-algebra
             # serde MUST validate every node in operation.schema.json unchanged).
@@ -465,7 +459,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                 "`caseInsensitive` must be a boolean",
             ),
             (
-                {"narrow": {"entity": "Animal", "to": [1, 2], "operand": {"all": {}}}},
+                {"narrow": {"to": [1, 2], "operand": {"all": {}}}},
                 "`to` entries must be strings",
             ),
             (
@@ -550,7 +544,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                         "operand": {"all": {}},
                         "paths": [
                             {
-                                "narrow": {"entity": "Animal", "to": ["Dog"], "x": 1},
+                                "narrow": {"to": ["Dog"], "x": 1},
                                 "segments": [{"rel": "Animal.owner"}],
                             }
                         ],
@@ -575,7 +569,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                         "operand": {"all": {}},
                         "paths": [
                             {
-                                "narrow": {"entity": "bad name", "to": ["Dog"]},
+                                "narrow": {"to": ["bad name"]},
                                 "segments": [{"rel": "Animal.owner"}],
                             }
                         ],
@@ -589,7 +583,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                         "operand": {"all": {}},
                         "paths": [
                             {
-                                "narrow": {"entity": "Animal", "to": []},
+                                "narrow": {"to": []},
                                 "segments": [{"rel": "Animal.owner"}],
                             }
                         ],
@@ -608,11 +602,11 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                 "not a valid relationship reference",
             ),
             (
-                {"narrow": {"entity": "bad name", "to": ["Dog"], "operand": {"all": {}}}},
-                "not a valid entity name",
+                {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
+                r"narrow: unexpected key\(s\) \['entity'\]",
             ),
             (
-                {"narrow": {"entity": "Animal", "to": ["dog!"], "operand": {"all": {}}}},
+                {"narrow": {"to": ["dog!"], "operand": {"all": {}}}},
                 "not a valid entity name",
             ),
             (

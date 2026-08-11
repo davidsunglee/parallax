@@ -91,6 +91,7 @@ from _support.snapshot_models import (
     AnimalOwner,
     Cat,
     Dog,
+    Pet,
     SnapOrder,
     SnapOrderStatus,
 )
@@ -439,7 +440,6 @@ def test_a_narrow_scope_is_how_a_descendants_member_reaches_an_ancestor_position
         preflighted(Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)))
     ) == {
         "narrow": {
-            "entity": "parallax.compatibility.Animal",
             "to": ["parallax.compatibility.Dog"],
             "operand": {
                 "greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}
@@ -554,7 +554,6 @@ def test_an_ancestors_sort_key_orders_a_union_narrowed_result() -> None:
         "orderBy": {
             "operand": {
                 "narrow": {
-                    "entity": "parallax.compatibility.Animal",
                     "to": ["parallax.compatibility.Cat", "parallax.compatibility.Dog"],
                     "operand": {"all": {}},
                 }
@@ -582,7 +581,6 @@ def test_a_sort_key_orders_the_result_a_single_subtype_narrow_moved_to() -> None
         "orderBy": {
             "operand": {
                 "narrow": {
-                    "entity": "parallax.compatibility.Animal",
                     "to": ["parallax.compatibility.Dog"],
                     "operand": {"all": {}},
                 }
@@ -602,7 +600,6 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
     ] == {
         "operand": {
             "narrow": {
-                "entity": "parallax.compatibility.Animal",
                 "to": ["parallax.compatibility.Dog"],
                 "operand": {"all": {}},
             }
@@ -629,7 +626,6 @@ def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
     assert lowered_document(preflighted(admitted))["orderBy"] == {
         "operand": {
             "narrow": {
-                "entity": "parallax.compatibility.Animal",
                 "to": ["parallax.compatibility.Dog"],
                 "operand": {"all": {}},
             }
@@ -649,7 +645,6 @@ def test_narrowing_to_two_subtypes_answers_their_union() -> None:
     assert lowered_document(preflighted(admitted))["orderBy"] == {
         "operand": {
             "narrow": {
-                "entity": "parallax.compatibility.Animal",
                 "to": ["parallax.compatibility.Cat", "parallax.compatibility.Dog"],
                 "operand": {"all": {}},
             }
@@ -677,7 +672,6 @@ def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
     assert lowered_document(preflighted(admitted))["orderBy"] == {
         "operand": {
             "narrow": {
-                "entity": "parallax.compatibility.Animal",
                 "to": ["parallax.compatibility.Dog"],
                 "operand": {"all": {}},
             }
@@ -688,7 +682,6 @@ def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
     assert lowered_document(preflighted(conservative))["orderBy"] == {
         "operand": {
             "narrow": {
-                "entity": "parallax.compatibility.Animal",
                 "to": ["parallax.compatibility.Dog"],
                 "operand": {"all": {}},
             }
@@ -825,7 +818,6 @@ def test_a_descendants_path_is_a_legal_include_source_of_its_ancestors_query() -
             "paths": [
                 {
                     "narrow": {
-                        "entity": "parallax.tests.typed.Beast",
                         "to": ["parallax.tests.typed.Hound"],
                     },
                     "segments": [{"rel": "parallax.tests.typed.Beast.keeper"}],
@@ -982,14 +974,15 @@ def test_a_second_narrow_clause_is_refused_at_the_clause_alone() -> None:
         Animal.where(Animal.all).narrow(Dog).narrow(Cat)
 
 
-def test_a_narrow_inside_a_quantifier_must_name_the_relationship_target_exactly() -> None:
-    # `m-navigate`'s exact-naming rule. The quantifier's interior position is the
-    # hop's target, and a narrow naming a BROADER position satisfies the
-    # contravariant parameter while the rule refuses it: relationship scope does
-    # not clamp.
-    with pytest.raises(OperationRejectedError) as caught:
-        preflighted(AnimalOwner.where(AnimalOwner.pets.exists(Animal.narrow(Dog))))
-    assert caught.value.rule == "narrow-outside-relationship-target"
+def test_a_narrow_receiver_does_not_restate_the_relationship_position() -> None:
+    # The quantifier supplies its relationship target as context. An ancestor
+    # receiver only grants Python predicate scope; it contributes no wire field,
+    # so both spellings lower identically and the same Dog selection is legal.
+    through_target = AnimalOwner.where(AnimalOwner.pets.exists(Pet.narrow(Dog)))
+    through_ancestor = AnimalOwner.where(AnimalOwner.pets.exists(Animal.narrow(Dog)))
+    assert lowered_document(preflighted(through_ancestor)) == lowered_document(
+        preflighted(through_target)
+    )
 
 
 def test_a_narrow_to_a_class_the_position_excludes_is_refused_at_the_gate() -> None:

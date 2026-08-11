@@ -300,6 +300,54 @@ winner. Foundational canonical member-name collisions remain
 `metamodel-local-member-collision`, and duplicate physical contributors remain
 `storage-layout-column-collision` (`m-storage-layout`).
 
+## Subtype Selection
+
+A **Subtype Selection** is one non-empty value shared by every narrowing
+position. Its canonical encoding is an array of Entity spellings:
+
+```yaml
+to: [catalog.Cat, catalog.Dog]
+```
+
+Construction is model-independent:
+
+- Selection equality is order-insensitive.
+- Each resolved Entity Identity may occur exactly once. An exact duplicate is
+  invalid construction (`subtype-selection-duplicate-alternative`), never a
+  redundant union member.
+- Serialization orders alternatives by `EntityIdentity.sort_key`; a consumer
+  does not preserve a different authored order.
+
+Model-aware validation then resolves one selection inside one active
+polymorphic position. It runs before SQL and applies these steps:
+
+1. Take the active position from context: a read's `targetEntity`, a navigation
+   or deep-fetch hop's relationship target, or an enclosing narrow's resolved
+   position.
+2. Resolve every alternative to its effective concrete-subtype set: a concrete
+   subtype resolves to itself and an abstract position to its concrete
+   descendants.
+3. Require the alternatives' resolved sets to be pairwise disjoint, then union
+   them in canonical concrete-subtype order. Two distinct alternatives whose
+   sets intersect are `subtype-selection-overlapping-alternatives`.
+4. Require the union to be non-empty and a subset of the active position. An
+   empty union is `narrow-empty-effective-set`. An escaping operation or path-root
+   selection is `narrow-outside-position`; an escaping navigation or path-segment
+   selection is `narrow-outside-relationship-target`.
+
+The pairwise rule is scoped to one selection. Separate sibling selections are
+independent: two deep-fetch root guards may overlap, including sharing one
+concrete subtype, and remain legal. A redundant selection whose union equals the
+active position is also legal.
+
+The three consumers add only their own surrounding behavior:
+
+| Position | Shape | Active position supplied by | Produces |
+|---|---|---|---|
+| operation | `{ to, operand }` | the current operation position | the position `operand` evaluates over |
+| deep-fetch path root | `{ to }` | the queried root position | a source guard, with no view key |
+| deep-fetch path segment | `{ to }` | the hop's relationship target | a distinct narrowed view key |
+
 ## Abstract-position reads
 
 A read targeting an abstract position (the root or an abstract subtype,
@@ -332,13 +380,10 @@ semantics retained here and result projection retained by SQL.
 
 A deep-fetch path's **root** is a resolvable position of exactly the kind above:
 the read's own queried position, which the path's optional root `narrow`
-(`m-op-algebra`, `{ entity, to }`) may guard. Both members resolve through the
-vocabulary this module already fixes — `entity` and each `to` entry resolve to
-their effective concrete-subtype set, the union is presented in the canonical
-alphabetical order, and acceptance is the four-step rule's non-empty-subset test
-against the position clamped into that node. It reuses the existing rejections
-rather than adding any: a `to` resolving to nothing is `narrow-empty-effective-set`,
-and one escaping the clamped position is `narrow-outside-position`.
+(`m-op-algebra`, `{ to }`) may guard. Its `to` is the shared Subtype Selection
+above, resolved inside the queried position. It reuses the existing rejections:
+a selection resolving to nothing is `narrow-empty-effective-set`, and one
+escaping the queried position is `narrow-outside-position`.
 
 What the root position does **not** do is change the read. The guard selects
 which already-resolved root objects a path traverses from, so the read's own
@@ -623,16 +668,16 @@ write time.
   `position([entity])` members exactly (the ordering rule below).
 
 `position(...)` is the projection contract for an **arbitrary resolved
-position**: the resolved members of a `narrow`'s authored `to` list — each a
+position**: the resolved members of a validated Subtype Selection — each a
 root, abstract subtype, or concrete subtype — or one member for an ordinary
 position; a standalone Entity is its own trivial one-member position. It is
 total and nonthrowing, returning absent exactly when a member identity is
 outside the accepted Metamodel or the members do not all belong to one
 inheritance family (a standalone Entity forms a position only alone).
-Duplicate and overlapping members are valid input — the position denotes
-their union — and the facet resolves without re-validating: a `narrow`'s
-nonempty-subset validity rule stays with the operation algebra, so a position
-whose effective set is empty returns empty sequences rather than absence.
+The caller supplies canonical, duplicate-free, pairwise-disjoint members under
+the Subtype Selection contract above. The facet resolves without re-validating
+that construction; a position whose effective set is empty returns empty
+sequences rather than absence so the validator can classify the empty selection.
 
 - `concrete_subtypes` is the position's effective concrete-subtype set — the
   union of every member's effective set — in the canonical alphabetical order
