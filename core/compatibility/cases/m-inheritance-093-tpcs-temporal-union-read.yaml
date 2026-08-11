@@ -9,7 +9,8 @@
 # selected as Latest), in Valid-Time-first bind order. Because every concrete branch inherits the same
 # axes from the root, each branch's as-of fragment is identical, so the union's binds are
 # the per-branch suffix [2024-06-01, 2024-06-01, infinity] repeated in alphabetical branch
-# order — the harness recomputes the complete branch vectors from the read's selections.
+# order — the harness independently recomputes only these temporal contributions; the
+# canonical golden and execution checks own the complete statement bind vector.
 #
 # Every branch projects the SAME stable Position Layout sequence — identity `id`,
 # Domain slots `amount`, DepositRate's `grade`, and LoanRate's `spread`, then the four

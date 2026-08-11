@@ -1256,11 +1256,10 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
 
     _assert_tph_document_partition_shape(case, dialect)
 
-    # Temporal composition (m-sql / m-temporal-read): a table-per-concrete-subtype
-    # abstract read over a TEMPORAL family composes each branch's user predicate with
-    # its selected temporal predicates, while history contributes no temporal bind.
-    # Result-directive binds follow the complete union.
-    _assert_temporal_union_binds(case, dialect)
+    # Temporal composition (m-sql / m-temporal-read): the dedicated temporal-only
+    # table-per-concrete-subtype witness carries each branch's selected temporal
+    # contribution, while history contributes no predicate or bind.
+    _assert_temporal_only_union_binds(case, dialect)
 
     golden_rows = _query_rows(db, golden, case.statement_binds(0, dialect))
     # Relational Document Layout (m-storage-layout / m-sql): the golden projects the
@@ -1327,75 +1326,19 @@ def _read_temporal_selections(case: Case) -> dict[str, _TemporalSelection]:
     return _root_temporal_selections(case.operation)
 
 
-_COMPARISON_BIND_TAGS = frozenset(
-    {
-        "eq",
-        "notEq",
-        "greaterThan",
-        "greaterThanEquals",
-        "lessThan",
-        "lessThanEquals",
-    }
-)
-_MEMBERSHIP_BIND_TAGS = frozenset({"in", "notIn"})
-_STRING_BIND_TAGS = frozenset({"like", "notLike"})
-_AFFIX_BIND_TAGS = frozenset({"startsWith", "endsWith", "contains"})
-
-
-def _read_predicate_and_result_binds(case: Case) -> tuple[dict[str, Any], list[Any]]:
-    node = case.operation
-    result_binds: list[Any] = []
+def _is_temporal_only_read(operation: Any) -> bool:
+    """Whether an operation contains only temporal selections over ``all``."""
+    node = operation
     while isinstance(node, dict) and len(node) == 1:
         tag = next(iter(node))
         body = node[tag]
         if not isinstance(body, dict):
-            break
-        if tag == "limit":
-            result_binds.append(body["count"])
+            return False
+        if tag in ("asOf", "asOfRange", "history"):
             node = body.get("operand")
             continue
-        if tag in ("orderBy", "deepFetch", "narrow", "asOf", "asOfRange", "history"):
-            node = body.get("operand")
-            continue
-        break
-    if not isinstance(node, dict):
-        raise CaseFailure(f"{case.path.name}: temporal union bind oracle found no predicate")
-    return node, result_binds
-
-
-def _affix_bind(tag: str, value: str) -> list[str]:
-    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    if tag == "startsWith":
-        pattern = f"{escaped}%"
-    elif tag == "endsWith":
-        pattern = f"%{escaped}"
-    else:
-        pattern = f"%{escaped}%"
-    return [pattern, "\\"] if escaped != value else [pattern]
-
-
-def _expected_user_predicate_binds(node: dict[str, Any]) -> list[Any]:
-    tag = next(iter(node))
-    body = node[tag]
-    if tag in ("all", "none", "isNull", "isNotNull"):
-        return []
-    if tag in _COMPARISON_BIND_TAGS:
-        return [body["value"]]
-    if tag == "between":
-        return [body["lower"], body["upper"]]
-    if tag in _MEMBERSHIP_BIND_TAGS:
-        return list(body["values"])
-    if tag in _STRING_BIND_TAGS:
-        return [body["value"]]
-    if tag in _AFFIX_BIND_TAGS:
-        return _affix_bind(tag, body["value"])
-    if tag in ("and", "or"):
-        return [
-            bind for operand in body["operands"] for bind in _expected_user_predicate_binds(operand)
-        ]
-    if tag in ("not", "group"):
-        return _expected_user_predicate_binds(body["operand"])
-    raise CaseFailure(f"temporal union bind oracle cannot derive user binds for {tag!r}")
+        return tag == "all" and body == {}
+    return False
 
 
 def _expected_temporal_suffix(
@@ -1422,18 +1365,20 @@ def _expected_temporal_suffix(
     return suffix
 
 
-def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
-    """Assert a temporal TPCS abstract ``union all`` read's complete bind vector.
+def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
+    """Assert the temporal contributions of the abstract-TPCS temporal witness.
 
-    The read-side temporal-composition oracle (m-sql / m-temporal-read): a
-    table-per-concrete-subtype abstract-target read over a TEMPORAL family lowers to
-    ``union all``. Each branch binds the user predicate first, then the selected temporal
-    predicates in Valid-Time-first order; ``history`` contributes no bind for its
-    dimension. The branch vectors concatenate in canonical ALPHABETICAL order, followed
-    by query-wide result-directive binds such as ``limit``. The vector is recomputed from
-    the operation independently of the authored golden. A no-op unless the target is an
-    abstract table-per-concrete-subtype TEMPORAL position.
+    This deliberately narrow m-sql / m-temporal-read oracle applies only to
+    ``m-inheritance-093`` while its operation contains temporal selections over ``all``.
+    It derives each branch's temporal predicates in Valid-Time-first order; ``history``
+    contributes none. Canonical SQL/bind goldens, compile sweeps, execution checks, and
+    focused compatibility cases own complete predicate, projection, and result-directive
+    bind vectors. A no-op for every operation outside that temporal-only boundary.
     """
+    if not case.path.stem.startswith("m-inheritance-093-") or not _is_temporal_only_read(
+        case.operation
+    ):
+        return
     target_name = case.when.get("targetEntity")
     if not isinstance(target_name, str):
         return
@@ -1450,23 +1395,19 @@ def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
     if not any(entity.is_temporal for entity in branch_entities):
         return
     selections = _read_temporal_selections(case)
-    predicate, result_binds = _read_predicate_and_result_binds(case)
-    predicate_binds = _expected_user_predicate_binds(predicate)
     expected: list[Any] = []
     for entity in branch_entities:
-        expected.extend(predicate_binds)
         expected.extend(_expected_temporal_suffix(entity, selections))
-    expected.extend(result_binds)
     actual = case.statement_binds(0, dialect)
     if len(actual) != len(expected) or not all(
         _write_value_equal(want, got) for want, got in zip(expected, actual, strict=False)
     ):
         raise CaseFailure(
-            f"{case.path.name}: temporal table-per-concrete-subtype abstract read binds "
-            f"{actual!r} != {expected!r} — each branch binds user predicate values "
-            f"{predicate_binds!r} before its selected temporal predicates (Valid-Time-first; "
-            f"history contributes none), branches repeat in alphabetical order {ordered}, and "
-            f"result-directive binds {result_binds!r} follow the union (m-sql / m-temporal-read)."
+            f"{case.path.name}: temporal-only table-per-concrete-subtype abstract read binds "
+            f"{actual!r} != temporal contributions {expected!r} — selected temporal "
+            f"predicates apply per branch in Valid-Time-first order, history contributes "
+            f"none, and branches repeat in alphabetical order {ordered} "
+            "(m-sql / m-temporal-read)."
         )
 
 

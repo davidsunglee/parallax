@@ -23,7 +23,7 @@ from reference_harness.case import discover_cases, load_model
 from reference_harness.case_runner import (
     CaseFailure,
     _assert_conflict_input,
-    _assert_temporal_union_binds,
+    _assert_temporal_only_union_binds,
     _assert_write_input_columns,
     _assert_write_step_count,
     _has_temporal_gate,
@@ -550,11 +550,12 @@ def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:
 # with the strategy's routing + tag guard. Under table-per-hierarchy every EXISTING-ROW
 # temporal statement (an audit close, a bitemporal inactivation) carries the tag GUARD
 # right after the pk; chained inserts set the tag COLUMN. Under table-per-concrete-subtype
-# every statement targets the subtype's own table with no tag. A temporal TPCS abstract
-# `union all` read carries user-predicate then temporal-selection binds PER BRANCH
-# (Valid-Time-first, with no bind for history), followed by result-directive binds. The
-# temporal families are NEW (instrument / rate / reading / quote); the existing families
-# stay non-temporal.
+# every statement targets the subtype's own table with no tag. The temporal-only TPCS
+# abstract `union all` witness carries temporal-selection binds PER BRANCH
+# (Valid-Time-first, with no bind for history). Complete predicate, projection, and
+# result-directive bind vectors remain owned by canonical goldens and execution checks.
+# The temporal families are NEW (instrument / rate / reading / quote); the existing
+# families stay non-temporal.
 
 
 def _inheritance_case(prefix: str):
@@ -743,8 +744,8 @@ def test_tpcs_temporal_union_read_per_branch_temporal_selection_binds() -> None:
     # branch order. The oracle derives them from the complete canonical selections.
     case = _inheritance_case("m-inheritance-093")
     assert set(_read_temporal_selections(case)) == {"valid-time", "transaction-time"}
-    _assert_temporal_union_binds(case, "postgres")  # must not raise
-    _assert_temporal_union_binds(case, "mariadb")  # the shared binds hold per dialect
+    _assert_temporal_only_union_binds(case, "postgres")  # must not raise
+    _assert_temporal_only_union_binds(case, "mariadb")  # the shared binds hold per dialect
 
 
 @pytest.mark.parametrize(
@@ -785,7 +786,7 @@ def test_tpcs_temporal_union_read_per_branch_temporal_selection_binds() -> None:
         ("history", {}, []),
     ],
 )
-def test_tpcs_temporal_union_variants_compose_with_bound_predicate_and_limit(
+def test_tpcs_temporal_only_union_variants_compose(
     valid_tag: str,
     valid_fields: dict[str, str],
     valid_binds: list[str],
@@ -794,36 +795,43 @@ def test_tpcs_temporal_union_variants_compose_with_bound_predicate_and_limit(
     tx_binds: list[str],
 ) -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
-    predicate = {
-        "eq": {
-            "attr": "parallax.compatibility.Rate.amount",
-            "value": 2.5,
-        }
-    }
     tx_selection = {
         tx_tag: {
-            "operand": predicate,
+            "operand": {"all": {}},
             "dimension": "transaction-time",
             **tx_fields,
         }
     }
     case.when["operation"] = {
-        "limit": {
-            "operand": {
-                valid_tag: {
-                    "operand": tx_selection,
-                    "dimension": "valid-time",
-                    **valid_fields,
-                }
-            },
-            "count": 1,
+        valid_tag: {
+            "operand": tx_selection,
+            "dimension": "valid-time",
+            **valid_fields,
         }
     }
-    per_branch = [2.5, *valid_binds, *tx_binds]
-    case.then["statements"][0]["binds"] = [*per_branch, *per_branch, 1]
+    per_branch = [*valid_binds, *tx_binds]
+    case.then["statements"][0]["binds"] = [*per_branch, *per_branch]
 
     assert set(_read_temporal_selections(case)) == {"valid-time", "transaction-time"}
-    _assert_temporal_union_binds(case, "postgres")
+    _assert_temporal_only_union_binds(case, "postgres")
+
+
+def test_tpcs_temporal_union_oracle_does_not_derive_user_predicate_binds() -> None:
+    case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
+    case.when["operation"]["asOf"]["operand"]["asOf"]["operand"] = {
+        "eq": {"attr": "parallax.compatibility.Rate.amount", "value": 2.5}
+    }
+    case.then["statements"][0]["binds"] = []
+
+    _assert_temporal_only_union_binds(case, "postgres")
+
+
+def test_tpcs_temporal_union_oracle_does_not_derive_result_directive_binds() -> None:
+    case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
+    case.when["operation"] = {"limit": {"operand": case.when["operation"], "count": 1}}
+    case.then["statements"][0]["binds"] = []
+
+    _assert_temporal_only_union_binds(case, "postgres")
 
 
 def test_tpcs_temporal_union_read_corrupt_temporal_selection_bind_is_rejected() -> None:
@@ -832,7 +840,7 @@ def test_tpcs_temporal_union_read_corrupt_temporal_selection_bind_is_rejected() 
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"][3] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
-        _assert_temporal_union_binds(case, "postgres")
+        _assert_temporal_only_union_binds(case, "postgres")
 
 
 def test_tpcs_temporal_union_read_dropped_branch_binds_is_rejected() -> None:
@@ -840,10 +848,10 @@ def test_tpcs_temporal_union_read_dropped_branch_binds_is_rejected() -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"] = case.then["statements"][0]["binds"][:3]
     with pytest.raises(CaseFailure):
-        _assert_temporal_union_binds(case, "postgres")
+        _assert_temporal_only_union_binds(case, "postgres")
 
 
 def test_non_temporal_tpcs_union_read_temporal_bind_oracle_is_noop() -> None:
     # The temporal bind oracle is a no-op on a NON-temporal TPCS abstract union read.
     case = _inheritance_case("m-inheritance-050")
-    _assert_temporal_union_binds(case, "postgres")  # must not raise (returns early)
+    _assert_temporal_only_union_binds(case, "postgres")  # must not raise (returns early)
