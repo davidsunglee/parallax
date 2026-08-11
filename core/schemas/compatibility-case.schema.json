@@ -1113,6 +1113,8 @@
             "storage-layout-document-member-column-override",
             "storage-layout-index-over-document-member",
             "inheritance-materialization-key-collision",
+            "subtype-selection-duplicate-alternative",
+            "subtype-selection-overlapping-alternatives",
             "narrow-outside-position",
             "narrow-empty-effective-set",
             "subtype-attribute-outside-narrow-scope",
@@ -1538,7 +1540,7 @@
           "enum": ["read", "write"]
         },
         "expectRows": {
-          "description": "concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error. Its result form follows the read's nature (m-case-format *Read result form*, m-sql *Read projection*): a full-scalar shared read observes the object (INSTANCE-FORM / the object lane), a `distinct` / grouped witness is a projection over the values lane (ROW-FORM) — immaterial here, since every concurrency-success case reads the value-object-free `account`.",
+          "description": "concurrency-success form only: the rows this node's read MUST return on its HELD session. A read step (`kind: read`) MUST declare it; a write step (`kind: write`) omits it. Absent on the error/concurrency shape, whose only assertion is the classified error. A full-scalar shared read observes the object (INSTANCE-FORM / the object lane); every concurrency-success case reads the value-object-free `account`.",
           "type": "array",
           "items": { "type": "object" }
         }

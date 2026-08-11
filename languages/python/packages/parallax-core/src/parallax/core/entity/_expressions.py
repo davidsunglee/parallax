@@ -117,6 +117,7 @@ from parallax.core.op_algebra import (
     StringMatch,
     StringOp,
 )
+from parallax.core.op_algebra.nodes import canonical_subtype_selection
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -1012,6 +1013,12 @@ class RelationshipPath[E, R]:
                 message=f"{last.rel}: narrow requires at least one subtype",
             )
         narrowed = tuple(_subtype_name(subtype) for subtype in subtypes)
+        if len(set(narrowed)) != len(narrowed):
+            raise QueryDefinitionError(
+                code="query-path-invalid",
+                message=f"{last.rel}: narrow alternatives must not repeat the same subtype",
+            )
+        narrowed = canonical_subtype_selection(narrowed)
         new_last = PathSegment(rel=last.rel, narrow=narrowed)
         new_target = self.target
         if len(narrowed) == 1:  # a hop narrowed to one subtype points at that subtype

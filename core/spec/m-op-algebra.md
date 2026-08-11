@@ -80,8 +80,8 @@ Every operation position that names an Entity spells it either **bare** — the
 Entity's local name alone — or **canonically**, the namespace-qualified
 `<namespace>.<Entity>` of `m-metamodel`. The positions are the Entity prefix of
 an `attr`, a `rel`, an `orderBy` key, a `groupBy` key, an aggregate function's
-`attr`, and a nested value-object `path`; a `narrow`'s `entity` and each of its
-`to` entries; and a `deepFetch` path's hop `rel` and root guard.
+`attr`, and a nested value-object `path`; each Subtype Selection alternative;
+and a `deepFetch` path's hop `rel`.
 
 **Input is permissive; output is exact.** A bare spelling remains legal at every
 one of those positions and MUST resolve whenever it names exactly one declared
@@ -460,7 +460,6 @@ Directives wrap an inner operation rather than filtering:
 |---|---|---|
 | `orderBy` | `{ "orderBy": { "operand", "keys": [ { "attr", "direction"?, "nulls"? } ] } }` | order rows; `direction` ∈ `asc` (default) / `desc`; `nulls` ∈ `first` / `last` (default `last`) |
 | `limit` | `{ "limit": { "operand", "count" } }` | cap the row count |
-| `distinct` | `{ "distinct": { "operand" } }` | deduplicate rows |
 
 A Sort Key's `nulls` member is its **Null Placement**: where `NULL`s sort on that
 key, independent of `direction`. Omitting it means `last` — the canonical,
@@ -471,13 +470,12 @@ carries the per-dialect lowering that makes the observable order identical
 everywhere. It is observable only on a **nullable** attribute; on a non-nullable one
 both placements denote the same order and lower to the same term.
 
-These directives shape the **result set** — its order, its cardinality, its
-deduplication — but **none of them changes the projected column list**. The algebra
+These directives shape the **result set** — its order and cardinality — but
+**neither changes the projected column list**. The algebra
 carries **no projection node** at all: a read's `select` list is a pure function of
 its target and result form, supplied by `m-sql` (its *Read projection* section),
 never chosen by the operation. A column-subset result is therefore expressible only
-through the aggregation algebra (`m-agg`, deferred); and because the primary key is
-always projected, `distinct` over an entity read is structurally row-preserving.
+through a future aggregate-query contract (`m-agg`, deferred).
 
 ### Temporal read wrappers
 
@@ -541,7 +539,7 @@ result into an **object graph** rather than a flat row set.
 
 | Operation | Encoding | Effect |
 |---|---|---|
-| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ { "narrow"?: { "entity", "to": [ … ] }, "segments": [ { "rel": …, "narrow"? }, … ] }, … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
+| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ { "narrow"?: { "to": [ … ] }, "segments": [ { "rel": …, "narrow"? }, … ] }, … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
 
 Each `path` is a **closed object** whose required `segments` member is the
 ordered, non-empty list of **path segments** naming the chain to fetch, and
@@ -556,7 +554,7 @@ object segment is likewise the single structural carrier for a hop, so a
 `m-inheritance`) MAY add an optional `narrow` alongside `rel` — the
 `{ "to": [ … ] }` subtype narrowing of that hop's effective concrete set —
 without a second spelling of a path. Unlike the operation-position `narrow` node
-(which carries `entity` + `operand`), a path narrow carries only `to`: the
+(which also carries `operand`), a path narrow carries only `to`: the
 position is the relationship target (implicit) and a hop fetches a whole
 **view**, not a filtered predicate. A narrowed hop populates a
 **distinct narrowed view** keyed `<rel>[<Concrete>,<Concrete>]`; the narrow must
@@ -571,8 +569,8 @@ converge. Paths sharing a hop fetch it **once**. This is specified in full in [`
 proven by the round-trip-count layer of the compatibility harness
 (`m-case-format`).
 
-A path MAY additionally carry a **path-root `narrow`** — `{ "entity", "to" }`,
-both required — beside `segments`. It **guards which queried objects the path
+A path MAY additionally carry a **path-root `narrow`** — `{ "to" }` — beside
+`segments`. It **guards which queried objects the path
 starts from** without changing the read's own result set, so a caller whose
 `targetEntity` is polymorphic can eager-fetch a relationship for one branch of
 the family alone:
@@ -583,8 +581,8 @@ the family alone:
 deepFetch:
   operand: { all: {} }
   paths:
-    - { narrow: { entity: Animal, to: [Dog] }, segments: [{ rel: Animal.owner }] }
-    - { narrow: { entity: Animal, to: [Cat] }, segments: [{ rel: Animal.owner }] }
+    - { narrow: { to: [Dog] }, segments: [{ rel: Animal.owner }] }
+    - { narrow: { to: [Cat] }, segments: [{ rel: Animal.owner }] }
 ```
 
 The root position and the segment position narrow **opposite things**, and their
@@ -600,105 +598,34 @@ hop identities follow:
   set it resolves to, because the view key is derived from the authoring.
 
 `m-deep-fetch` specifies the consequences in full; `m-inheritance` owns the
-resolution of `entity` and `to`, which is the same four-step rule the
-operation-position `narrow` node below follows, with the same rejections.
+shared Subtype Selection and its resolution inside each context-supplied
+position.
 
 ## Subtype narrowing
 
-An inheritance family (`m-inheritance`) is a closed tree of one abstract `root`,
-zero or more `abstract-subtype` interior nodes, and the instantiable
-`concrete-subtype` leaves. A read starts at a **polymorphic position** — the
-`targetEntity` (`m-case-format`) — which may be abstract: an abstract root spans
-the whole family, an abstract subtype spans its concrete descendants, a concrete
-subtype is itself. The **effective concrete-subtype set** of a position is the
-concrete leaves it resolves over (`m-inheritance`), in the family's **canonical
-sibling-set order** — alphabetical by entity name (`m-inheritance`).
-
-`narrow` constrains a polymorphic position to a subset of its subtypes. It is a
-node like any other — a single-key tagged object joining the operation `oneOf`:
+`m-inheritance` owns the shared **Subtype Selection** value, its canonical
+construction, and its model-aware resolution inside a polymorphic position.
+`narrow` contributes only the operation-specific operand that selection scopes:
 
 | Operation | Encoding | Meaning |
 |---|---|---|
-| `narrow` | `{ "narrow": { "entity", "to": [ … ], "operand" } }` | evaluate `operand` over the position `entity` narrowed to the subtypes `to` |
+| `narrow` | `{ "narrow": { "to": [ … ], "operand" } }` | evaluate `operand` over the active position narrowed by the Subtype Selection `to` |
 
-Narrowing appears at exactly **three positions**, which differ in what names the
-position and in what the narrowing produces:
-
-| Position | Shape | Position named by | Produces |
-|---|---|---|---|
-| operation | `{ entity, to, operand }` | `entity`, clamped to the active position | the narrowed position `operand` evaluates over |
-| deep-fetch path root | `{ entity, to }` | `entity`, clamped the same way | a source guard — no view key |
-| deep-fetch path segment | `{ to }` | the hop's relationship target, implicitly | a distinct narrowed view key |
-
-The four-step rule below governs the first two; the third resolves against the
-relationship target instead (`narrow-outside-relationship-target`, `m-navigate`).
-
-- **`entity`** names the polymorphic position this node narrows — the queried
-  entity at top level (so `entity` equals the read's `targetEntity`), or the
-  **relationship target** when the `narrow` appears inside a navigation filter's
-  `op` (`exists` / `navigate` / `notExists`), where the active position is the
-  related entity the hop reaches (`m-navigate`). Inside a navigation filter's `op`
-  the naming is **exact**: `narrow.entity` **MUST equal** the relationship target
-  (`m-navigate` owns this rule), and subtypes are reached only through `to` — naming
-  a **different** position there, even a broader ancestor, is
-  `narrow-outside-relationship-target`, **not** clamped. A narrow whose resolved
-  `to` set then escapes the relationship target's effective set is the same rule
-  (`narrow-outside-relationship-target`, `m-navigate`, `m-case-format`).
-- **`to`** is the non-empty, **order-preserved** list of authored subtype names
-  the position is narrowed to. Each entry may name an abstract subtype (which
-  resolves to its concrete descendants) or a concrete subtype (itself).
-- **`operand`** is the inner operation evaluated over the narrowed position, so a
-  **concrete-subtype-declared attribute** — one declared on a proper descendant,
-  not inherited by every concrete in the original position — becomes referenceable
-  inside it.
+The active position comes from context: the read's `targetEntity` at the root,
+the relationship target inside `navigate` / `exists` / `notExists`, or the
+enclosing narrow's resolved selection inside a nested operand. The position is
+never repeated in the node. `operand` is evaluated over the selection's resolved
+position, so a concrete-subtype-declared attribute becomes referenceable there.
 
 ```yaml
 # targetEntity: Animal (root); narrow to Pet (abstract subtype -> Dog, Cat):
 narrow:
-  entity: Animal
   to: [Pet]
   operand: { all: {} }
 ```
 
-### The four-step validation rule
-
-A model-aware validator (never the serde) checks a `narrow` node **before any SQL
-is emitted**, threading the **active polymorphic position** as it descends — the
-read's `targetEntity` at top level (defaulting to the family root when a case pins
-no `targetEntity`), and the enclosing `narrow`'s resolved `to` set inside a nested
-narrow:
-
-1. Resolve `entity` to its effective concrete-subtype set and **intersect** it with
-   the active position threaded into this node — the **effective position's set**.
-   This clamp governs the **top-level** narrow and any **nested same-position**
-   narrow (a narrow inside another narrow's `operand`): `entity` names the position
-   this node narrows, but it can only ever *constrain* the active position, never
-   broaden it, so an `entity` naming a position **broader** than the one in scope is
-   **clamped** to the active position (not rejected), and when `entity` equals the
-   active position — the normal case, where a top-level `narrow`'s `entity` equals
-   the read's `targetEntity` — the intersection is a no-op. **Exception (relationship
-   scope):** a narrow appearing in a **navigation filter's `op`** does **not** clamp
-   — its `entity` **MUST first name the relationship target exactly** (`m-navigate`),
-   and only then does the `to` effective-set subset check (step 4) apply; naming a
-   different position there is `narrow-outside-relationship-target`, never a clamp.
-2. Resolve each `to` entry to its effective concrete-subtype set (a concrete
-   subtype -> itself; an abstract subtype -> its concrete descendants).
-3. **Union** the resolved sets and **deduplicate**; the resolved effective set is
-   presented in the family's **canonical alphabetical order** (`m-inheritance`),
-   independent of the authored `to` spelling.
-4. **Accept iff** the resolved set is **non-empty** and a **subset** of the
-   effective position's set. The resolved set then becomes the active position for
-   `operand`, so a nested `narrow` cannot broaden back out.
-
-A **path-root narrow** is checked by the same four steps against the position
-active where its `deepFetch` node sits, and raises the same
-`narrow-empty-effective-set` / `narrow-outside-position`. Only step 4's second
-half differs: a guard carries no `operand`, so its resolved set becomes the
-path's **source set** rather than an active position — it qualifies which objects
-the path's hops start from, never what the read returns and never what any
-predicate resolves against.
-
-Consequences:
+Subtype Selection construction and the clamp/resolve/union/subset rule are
+specified once in `m-inheritance`. This module adds these operand consequences:
 
 - **Redundant narrowing is valid.** Narrowing a position to itself (an abstract
   subtype `to` its own name, or `to` a list whose union equals the position's set)
@@ -706,9 +633,7 @@ Consequences:
 - **Broadening is invalid.** Narrowing the active position to a subtype **outside**
   it — even one sharing the family root — is rejected (`narrow-outside-position`).
   The check is against the **active** position, so a **nested** `narrow` cannot
-  broaden back out of the set the enclosing `narrow` established, and naming a
-  broader `entity` on the inner node does not re-widen it (the inner `entity` is
-  clamped to the active position first). A `to` list that resolves to the empty set
+  broaden back out of the set the enclosing `narrow` established. A `to` list that resolves to the empty set
   is rejected (`narrow-empty-effective-set`) (`m-case-format` rejected vocabulary).
 - **A concrete-subtype attribute needs a compatible narrowing scope.** Referencing
   a concrete-subtype-declared attribute at a position whose effective set is not a
@@ -736,14 +661,14 @@ Consequences:
   ordering an abstract position by a concrete subtype's attribute is rejected, and
   ordering that same position **narrowed to** that subtype is not. The wrappers
   that may carry the `narrow` between it and the `orderBy` are exactly those
-  returning their operand's **own rows**: `orderBy`, `limit`, `distinct`,
+  returning their operand's **own rows**: `orderBy`, `limit`,
   `deepFetch` — which attaches fetched levels to those rows rather than replacing
   them — and the temporal `asOf`, `asOfRange`, and `history`. A validator resolves
   the ordered position **through that closed set and no other node**.
-- **The serde preserves the authored `to` list verbatim.** Semantic validation and
-  SQL lowering derive the effective concrete set without rewriting the submitted
-  operation, so two authored spellings that resolve to the same set (`to: [Pet]`
-  vs `to: [Cat, Dog]`) round-trip as **distinct** canonical nodes.
+- **Serde writes canonical selection order.** Two selections are equal regardless
+  of authored order, and serialization orders alternatives by
+  `EntityIdentity.sort_key`. Distinct selections that resolve to the same effective
+  set (`to: [Pet]` versus `to: [Cat, Dog]`) remain distinct canonical nodes.
 
 `narrow`'s lowering — tag-equality / `in` selection under `table-per-hierarchy`,
 `union all` over the selected concrete tables under `table-per-concrete-subtype`,
@@ -760,5 +685,6 @@ value-object (the flat `nested*` family — `nestedEq`, `nestedNotEq`, `nestedGt
 optional element-scoped `where`) nodes are not deferred; their canonical
 encodings are part of the algebra, with observable temporal behavior specified by
 `m-temporal-read` and SQL lowering specified by `m-sql`. The aggregation nodes
-(`groupBy` and friends) are present in `operation.schema.json` but the aggregation
-feature is **deferred** — see `m-agg`.
+(`groupBy` and friends) remain present in `operation.schema.json` as unexercised
+placeholders, but the aggregation feature is contract-covered and **deferred**
+until an aggregate-query contract lands — see `m-agg`.

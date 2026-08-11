@@ -21,7 +21,6 @@ when:
       rel: parallax.compatibility.Person.animals
       op:
         narrow:
-          entity: parallax.compatibility.Animal
           to: [parallax.compatibility.Pet]
           operand:
             all: {}

@@ -1,11 +1,11 @@
 # Table-per-hierarchy narrow to MULTIPLE concrete subtypes (m-inheritance, m-op-algebra, m-sql).
 #
-# targetEntity Animal narrowed to the explicit concrete list [Dog, Cat] resolves to
+# targetEntity Animal narrowed to the explicit Subtype Selection [Cat, Dog] resolves to
 # the same effective set {Cat, Dog} as narrowing to the abstract subtype Pet
 # (m-inheritance-013) — two authored spellings, one effective set — and lowers to the
-# same `t0.kind in (?, ?)` (binds [cat, dog], alphabetical order — the serde preserves
-# the authored `to: [Dog, Cat]`, but the resolved effective set is canonicalized
-# alphabetically). The projection and familyVariant materialization are identical; this
+# same `t0.kind in (?, ?)` (binds [cat, dog], alphabetical order). The selection and
+# resolved effective set are both in canonical Entity Identity order. The projection
+# and familyVariant materialization are identical; this
 # pins that a multi-concrete narrow is a first-class spelling.
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
@@ -16,8 +16,7 @@ when:
   targetEntity: parallax.compatibility.Animal
   operation:
     narrow:
-      entity: parallax.compatibility.Animal
-      to: [parallax.compatibility.Dog, parallax.compatibility.Cat]
+      to: [parallax.compatibility.Cat, parallax.compatibility.Dog]
       operand:
         all: {}
 then:

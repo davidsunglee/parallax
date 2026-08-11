@@ -197,8 +197,8 @@ through.
 
 A **predicate-selected write** starts from one concrete entity and one **bare**
 `m-op-algebra` predicate. It is not a language method name and it is not inferred
-from golden SQL. Result modifiers (`orderBy`, `limit`, `distinct`, `deepFetch`,
-`asOf`, `asOfRange`, `history`, `groupBy`, and `narrow`) are not write targets.
+from golden SQL. Result modifiers (`orderBy`, `limit`, `deepFetch`, `asOf`,
+`asOfRange`, `history`, and `narrow`) are not write targets.
 The canonical instruction and its assignment rules are `m-case-format`.
 
 A keyed write of one versioned row gates on (optimistic) and advances (both modes)

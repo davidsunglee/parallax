@@ -27,12 +27,10 @@ _READ_MODIFIERS = frozenset(
     {
         "orderBy",
         "limit",
-        "distinct",
         "deepFetch",
         "asOf",
         "asOfRange",
         "history",
-        "groupBy",
         "narrow",
     }
 )

@@ -3,7 +3,7 @@
 The non-family, non-navigation, non-value-object lane of the read compiler: the
 supported six-name interface and its value semantics, the `LoweredStatement` value
 itself, ordinary scalar/row projection, result-shaping directive composition and
-its refusals, the read-lock suffix and its `distinct` suppression, the
+its refusals, the read-lock suffix, the
 deferred-node refusals, and the bind-ORDER invariants the whole compiler rests
 on (projection binds before predicate binds, limit bind last). Inheritance
 families, navigation hops, value-object traversal, and write predicates each
@@ -99,7 +99,7 @@ def test_deferred_nodes_are_refused(op: oa.Operation, message: str) -> None:
 
 
 def test_directive_nested_in_predicate_is_refused() -> None:
-    op = oa.Not(operand=oa.Distinct(operand=oa.All()))
+    op = oa.Not(operand=oa.Limit(operand=oa.All(), count=1))
     with pytest.raises(SqlGenError, match="result-shaping directive nested"):
         compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
 
@@ -113,19 +113,18 @@ def test_stacked_duplicate_directive_is_refused() -> None:
         compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
-def test_single_of_each_directive_still_composes() -> None:
-    # One of each directive (distinct/orderBy/limit) is the canonical stack and
+def test_order_and_limit_directives_still_compose() -> None:
+    # One of each directive (orderBy/limit) is the canonical stack and
     # lowers to the ordered clauses, unaffected by the duplicate-directive guard.
     op = oa.Limit(
         operand=oa.OrderBy(
-            operand=oa.Distinct(operand=oa.All()),
+            operand=oa.All(),
             keys=(oa.OrderKey(attr="Order.id", direction="asc"),),
         ),
         count=5,
     )
     compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith("order by t0.id asc limit ?")
-    assert "select distinct" in compiled.statement.sql
 
 
 @pytest.mark.parametrize(
@@ -368,14 +367,6 @@ def test_optimistic_and_default_reads_take_no_lock() -> None:
     for lock in (None, "optimistic"):
         compiled = compile_read(oa.All(), ACCOUNT, POSTGRES, target(ACCOUNT, "Account"), lock=lock)
         assert "for share" not in compiled.statement.sql
-
-
-def test_distinct_read_suppresses_the_lock_even_in_locking_mode() -> None:
-    # A `distinct` result has no identifiable base row to lock (read-lock suppression).
-    compiled = compile_read(
-        oa.Distinct(operand=oa.All()), ACCOUNT, POSTGRES, target(ACCOUNT, "Account"), lock="locking"
-    )
-    assert "for share" not in compiled.statement.sql
 
 
 # --------------------------------------------------------------------------- #

@@ -30,7 +30,6 @@ from parallax.core.op_algebra.nodes import (
     Comparison,
     ComparisonOp,
     DeepFetch,
-    Distinct,
     Exists,
     Group,
     History,
@@ -60,11 +59,11 @@ from parallax.core.op_algebra.nodes import (
     Or,
     OrderBy,
     OrderKey,
-    PathRootNarrow,
     PathSegment,
     Scalar,
     StringMatch,
     StringOp,
+    canonical_subtype_selection,
 )
 
 __all__ = ["OperationError", "deserialize", "serialize"]
@@ -152,10 +151,9 @@ _SHAPES: dict[str, _Shape] = {
     "or": _shape(("operands",)),
     "not": _shape(("operand",)),
     "group": _shape(("operand",)),
-    "distinct": _shape(("operand",)),
     "orderBy": _shape(("operand", "keys")),
     "limit": _shape(("operand", "count")),
-    "narrow": _shape(("entity", "to", "operand")),
+    "narrow": _shape(("to", "operand")),
     "nestedExists": _shape(("path",), ("where",)),
     "nestedNotExists": _shape(("path",), ("where",)),
     "navigate": _shape(("rel",), ("op",)),
@@ -354,18 +352,15 @@ def _paths(body: Mapping[str, object]) -> tuple[NavigationPath, ...]:
             raise OperationError("deepFetch: each path must be a mapping")
         path = cast("Mapping[str, object]", entry)
         _closed(path, frozenset({"narrow", "segments"}), "deepFetch path")
-        root_narrow: PathRootNarrow | None = None
+        root_narrow: tuple[str, ...] | None = None
         if "narrow" in path:
             root_raw = path["narrow"]
             if not isinstance(root_raw, Mapping):
                 raise OperationError("deepFetch: path `narrow` must be a mapping")
             root_body = cast("Mapping[str, object]", root_raw)
-            _closed(root_body, frozenset({"entity", "to"}), "deepFetch path root narrow")
-            root_narrow = PathRootNarrow(
-                entity=_ref(
-                    root_body, "entity", "deepFetch path root narrow", _ENTITY_NAME, "entity name"
-                ),
-                to=_to_list(root_body, "deepFetch path root narrow"),
+            _closed(root_body, frozenset({"to"}), "deepFetch path root narrow")
+            root_narrow = canonical_subtype_selection(
+                _to_list(root_body, "deepFetch path root narrow")
             )
         raw_segments = path.get("segments")
         if not isinstance(raw_segments, list) or not raw_segments:
@@ -383,7 +378,7 @@ def _paths(body: Mapping[str, object]) -> tuple[NavigationPath, ...]:
                     raise OperationError("deepFetch: path segment `narrow` must be a mapping")
                 narrow_body = cast("Mapping[str, object]", narrow_raw)
                 _closed(narrow_body, frozenset({"to"}), "deepFetch path narrow")
-                narrow = _to_list(narrow_body, "deepFetch.narrow")
+                narrow = canonical_subtype_selection(_to_list(narrow_body, "deepFetch.narrow"))
             rel = _ref(segment, "rel", "deepFetch", _MEMBER_REF, "relationship reference")
             segments.append(PathSegment(rel=rel, narrow=narrow))
         paths.append(NavigationPath(segments=tuple(segments), narrow=root_narrow))
@@ -469,12 +464,9 @@ def _deserialize(doc: object, *, element_scope: bool) -> Operation:
         if not isinstance(count, int) or isinstance(count, bool) or count < 1:
             raise OperationError("limit: `count` must be a positive integer")
         return Limit(operand=_operand(body, element_scope=element_scope), count=count)
-    if tag == "distinct":
-        return Distinct(operand=_operand(body, element_scope=element_scope))
     if tag == "narrow":
         return Narrow(
-            entity=_ref(body, "entity", tag, _ENTITY_NAME, "entity name"),
-            to=_to_list(body, tag),
+            to=canonical_subtype_selection(_to_list(body, tag)),
             operand=_operand(body, element_scope=element_scope),
         )
     if tag in _NESTED_CMP:
@@ -610,10 +602,8 @@ def serialize(op: Operation) -> dict[str, object]:
             }
         case Limit(operand=operand, count=count):
             return {"limit": {"operand": serialize(operand), "count": count}}
-        case Distinct(operand=operand):
-            return {"distinct": {"operand": serialize(operand)}}
-        case Narrow(entity=entity, to=to, operand=operand):
-            return {"narrow": {"entity": entity, "to": list(to), "operand": serialize(operand)}}
+        case Narrow(to=to, operand=operand):
+            return {"narrow": {"to": list(to), "operand": serialize(operand)}}
         case NestedComparison(op=tag, path=path, value=value):
             return {tag: {"path": path, "value": value}}
         case NestedRange(path=path, lower=lower, upper=upper):
@@ -688,6 +678,6 @@ def _path(path: NavigationPath) -> dict[str, object]:
     if path.narrow is None:
         return {"segments": segments}
     return {
-        "narrow": {"entity": path.narrow.entity, "to": list(path.narrow.to)},
+        "narrow": {"to": list(path.narrow)},
         "segments": segments,
     }

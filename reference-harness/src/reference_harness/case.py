@@ -850,9 +850,9 @@ class Case:
         error/concurrency case). It runs the barrier-separated rounds on two held
         non-autocommit sessions and asserts that NO error is raised — each read
         step's optional ``expectRows`` observed on its HELD session. Proves the
-        shared read lock is COMPATIBLE with a second reader (``m-read-lock-007``) and that an
-        unlocked projection ADMITS a writer (``m-read-lock-008``), the non-error counterpart to
-        the error branch's lock CONTENTION (``m-read-lock-006``).
+        shared read lock is COMPATIBLE with a second reader (``m-read-lock-007``),
+        the non-error counterpart to the error branch's lock CONTENTION
+        (``m-read-lock-006``).
         """
         return self.shape == "concurrencySuccess"
 

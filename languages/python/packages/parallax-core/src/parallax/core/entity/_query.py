@@ -55,10 +55,14 @@ from parallax.core.op_algebra import (
     Operation,
     OrderBy,
     OrderKey,
-    PathRootNarrow,
     QueryDefinitionError,
 )
-from parallax.core.op_algebra.nodes import TemporalDimension as WireDimension
+from parallax.core.op_algebra.nodes import (
+    TemporalDimension as WireDimension,
+)
+from parallax.core.op_algebra.nodes import (
+    canonical_subtype_selection,
+)
 from parallax.core.temporal_read import TX_TIME, VALID_TIME, Latest, TemporalDimensionConstant
 
 if TYPE_CHECKING:
@@ -157,9 +161,9 @@ class FindQuery[E, S]:
     # non-temporal Entity (every temporal clause then raises).
     _as_of_axes: tuple[AsOfAxisMetadata, ...] = ()
     # The root narrow's authored subtype list, or ``None`` for no narrow clause.
-    # Kept as the authored list rather than a built node because the serde
-    # preserves it verbatim: `to: [Pet]` and `to: [Cat, Dog]` stay distinct
-    # canonical nodes even where they resolve to the same set.
+    # Kept as the canonical Subtype Selection rather than a built node:
+    # `to: [Pet]` and `to: [Cat, Dog]` stay distinct canonical nodes even where
+    # they resolve to the same effective set.
     _narrow: tuple[str, ...] | None = None
     # The axis-keyed temporal wrappers, innermost first. Single-shot as a family:
     # one call authors every dimension it pins, and a later call is refused.
@@ -301,10 +305,13 @@ class FindQuery[E, S]:
             raise QueryDefinitionError(
                 code="query-clause-invalid", message="narrow requires at least one subtype"
             )
-        return replace(
-            self,
-            _narrow=tuple(declaration_of(subtype).identity.canonical for subtype in subtypes),
-        )
+        alternatives = tuple(declaration_of(subtype).identity.canonical for subtype in subtypes)
+        if len(set(alternatives)) != len(alternatives):
+            raise QueryDefinitionError(
+                code="query-path-invalid",
+                message="narrow alternatives must not repeat the same subtype",
+            )
+        return replace(self, _narrow=canonical_subtype_selection(alternatives))
 
     def as_of(
         self,
@@ -373,7 +380,7 @@ class FindQuery[E, S]:
         name: _DimensionName = "valid_time" if dimension.dimension == "valid-time" else "tx_time"
         return self._with_temporal((_HistoryClause(self._dimension(name)),))
 
-    def _root_guard(self, source: str | None) -> PathRootNarrow | None:
+    def _root_guard(self, source: str | None) -> tuple[str, ...] | None:
         """The path-root guard an include path seeded through ``source`` authors.
 
         A guard is what makes a path start from fewer than every queried object,
@@ -388,7 +395,7 @@ class FindQuery[E, S]:
         """
         if source is None or source == self._target.canonical:
             return None
-        return PathRootNarrow(entity=self._target.canonical, to=(source,))
+        return (source,)
 
     def _with_temporal(self, clauses: tuple[_TemporalClause, ...]) -> FindQuery[E, S]:
         if self._temporal:
@@ -440,7 +447,7 @@ class FindQuery[E, S]:
         """:func:`lower_find_query`'s body, stated where the clauses live."""
         op = self._predicate
         if self._narrow is not None:
-            op = Narrow(entity=self._target.canonical, to=self._narrow, operand=op)
+            op = Narrow(to=self._narrow, operand=op)
         for clause in self._temporal:
             op = clause.wrap(op)
         if self._order_keys:

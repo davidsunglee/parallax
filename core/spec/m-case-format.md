@@ -499,15 +499,12 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
     records is a complete Predecessor Row (`m-unit-work`); a **versioned** target's
     resolve retains only the observed version, so it projects only the documents its own
     assignments compare against, and none at all for a `delete`. A reassigned document
-    still comes from the write instruction, never from the read. A **`distinct` / grouped
-    concurrency-witness read** is likewise a projection over the values lane (`m-sql`),
-    constructing no instance.
+    still comes from the write instruction, never from the read.
 
 Row-form is **not a developer surface** — the idiomatic find API is instance-form
 (results always materialize). Row-form is the internal / conformance consumption lane
 (predicate `read` cases, the materialized predicate-write read, and future aggregation
-results — `m-agg`; a `distinct` / grouped concurrency-witness read is likewise a
-projection over the values lane, `m-sql`). The form is **structural intent** an adapter's
+results — `m-agg`). The form is **structural intent** an adapter's
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
 no case edit. The two forms' Document-slot divergence is witnessed at **case** level, by
 the `then.rows` reads over `customer`, which omit `address`, against the `then.graph`
@@ -680,7 +677,7 @@ cases `then.statements` is an **ordered list** of statement entries (root plus
 the child levels that execute) rather than a single entry, and `then.graph`
 replaces (or accompanies) `then.rows`.
 
-A **path-root guard** (`m-op-algebra`'s `{ entity, to }` beside a path's
+A **path-root guard** (`m-op-algebra`'s `{ to }` beside a path's
 `segments`) participates in this layer twice, and both are declared rather than
 inferred. Its level's authored `IN` binds must equal the keys gathered from the
 **guarded** root objects alone, so a guard that a case declares but an
@@ -1503,12 +1500,17 @@ rules:
   value object (`m-value-object` contract 4, `m-navigate`).
 - `find-root-value-object` — a `find()` is rooted at a value object
   (`m-value-object` contract 5).
+- `subtype-selection-duplicate-alternative` — one Subtype Selection repeats the
+  same resolved Entity Identity; exact duplicates are invalid construction rather
+  than redundant union members (`m-inheritance`).
+- `subtype-selection-overlapping-alternatives` — two distinct alternatives in one
+  Subtype Selection resolve to effective concrete-subtype sets with a non-empty
+  intersection; alternatives must be pairwise disjoint (`m-inheritance`). The rule
+  does not compare sibling selections.
 - `narrow-outside-position` — a `narrow` node's resolved effective concrete-subtype
-  set is not a **subset** of the **active** polymorphic position: the position
-  threaded into the node (the read's `targetEntity`, or the enclosing `narrow`'s
-  resolved set) intersected with — **clamped to** — the position the node's `entity`
-  names, so a nested `narrow`, or one whose `entity` is broader than the threaded
-  position, cannot broaden back out (`m-op-algebra` × `m-inheritance`).
+  set is not a **subset** of the **active** polymorphic position supplied by
+  context: the read's `targetEntity`, or the enclosing `narrow`'s resolved set, so
+  a nested `narrow` cannot broaden back out (`m-op-algebra` × `m-inheritance`).
 - `narrow-empty-effective-set` — a `narrow`'s authored `to` list resolves to the
   **empty** concrete-subtype set (`m-op-algebra` × `m-inheritance`).
 - `subtype-attribute-outside-narrow-scope` — a predicate or order key references a
@@ -1532,11 +1534,9 @@ rules:
   declarations — each Entity stays declarable, materializable under its exact
   qualified identity, and readable through a position naming it unambiguously.
 - `narrow-outside-relationship-target` — a `narrow` in a navigation filter's `op`,
-  or a deep-fetch path segment's `narrow`, that **either** names an `entity` which is
-  not the **relationship target** exactly (a relationship-scope narrow MUST set
-  `entity` to the target and reach subtypes via `to`, never by naming a broader or
-  other position), **or** resolves its `to` set to a concrete-subtype set that is
-  **not a subset** of the relationship target's effective concrete set — narrowing a
+  or a deep-fetch path segment's `narrow`, whose Subtype Selection resolves to a
+  concrete-subtype set that is **not a subset** of the relationship target's
+  effective concrete set — narrowing a
   polymorphic relationship to a concrete outside its reachable set, even a **sibling**
   sharing the family root (`m-navigate` / `m-deep-fetch` × `m-inheritance`,
   resolved Q10).

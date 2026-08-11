@@ -65,7 +65,6 @@ from parallax.core.op_algebra import (
     AsOfRange,
     Comparison,
     DeepFetch,
-    Distinct,
     Exists,
     Group,
     History,
@@ -133,7 +132,6 @@ def _contains_navigation(op: Operation) -> bool:
             | Narrow(operand=operand)
             | OrderBy(operand=operand)
             | Limit(operand=operand)
-            | Distinct(operand=operand)
             | AsOf(operand=operand)
             | AsOfRange(operand=operand)
             | History(operand=operand)
@@ -178,14 +176,12 @@ def _walk(
             return Not(operand=_walk(operand, model, entity, root_pins))
         case Group(operand=operand):
             return Group(operand=_walk(operand, model, entity, root_pins))
-        case Narrow(entity=narrowed, to=to, operand=operand):
-            return Narrow(entity=narrowed, to=to, operand=_walk(operand, model, entity, root_pins))
+        case Narrow(to=to, operand=operand):
+            return Narrow(to=to, operand=_walk(operand, model, entity, root_pins))
         case OrderBy(operand=operand, keys=keys):
             return OrderBy(operand=_walk(operand, model, entity, root_pins), keys=keys)
         case Limit(operand=operand, count=count):
             return Limit(operand=_walk(operand, model, entity, root_pins), count=count)
-        case Distinct(operand=operand):
-            return Distinct(operand=_walk(operand, model, entity, root_pins))
         case AsOf(operand=operand, dimension=dimension, coordinate=coordinate):
             return AsOf(
                 operand=_walk(operand, model, entity, root_pins),

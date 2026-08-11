@@ -47,7 +47,6 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.op_algebra import (
-    Distinct,
     Limit,
     Narrow,
     Operation,
@@ -364,15 +363,13 @@ def compile_read(
     applied through the m-dialect seam): an in-transaction **object find** in
     ``locking`` mode appends the dialect's shared-row-lock suffix (Postgres
     ``for share of t0``) after every other clause; ``optimistic`` mode and the
-    default (``None`` — a non-transactional read) append nothing. A ``distinct``
-    result suppresses the lock (it has no identifiable base row to lock — the
-    read-lock is an object-find property); grouped / aggregate reads are not yet
-    reachable. The conformance scenario runner derives ``lock`` from the step's unit
-    of work concurrency mode.
+    default (``None`` — a non-transactional read) append nothing. Grouped / aggregate
+    reads are not yet reachable. The conformance scenario runner derives ``lock``
+    from the step's unit of work concurrency mode.
     """
     facet = _inheritance_view(model)
     storage = _storage_view(model)
-    predicate, distinct, order_keys, limit = _peel_directives(op)
+    predicate, order_keys, limit = _peel_directives(op)
     # The read's own TOP-LEVEL authored narrow, taken from the SAME peel the
     # lowering below uses — so what the caller materializes under can never
     # disagree with what was compiled.
@@ -381,7 +378,6 @@ def compile_read(
         statement, plan_position, transform = _compile_inheritance_read(
             target,
             predicate,
-            distinct,
             order_keys,
             limit,
             model,
@@ -414,13 +410,13 @@ def compile_read(
         include_value_objects=include_value_objects,
     )
     ctx.binds.extend(proj_binds)
-    select = f"select {'distinct ' if distinct else ''}{proj_sql}"
+    select = f"select {proj_sql}"
     parts = [select, f"from {layout.table.name} {scope.alias}"]
 
     where_sql = _lower_predicate(predicate, scope)
     if where_sql:
         parts.append(f"where {where_sql}")
-    _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
+    _append_result_shape(parts, scope, order_keys, limit, lock)
 
     statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
     # A non-family read projects no tag and no variant literal, so the only
@@ -466,7 +462,6 @@ def compile_write_predicate(
 def _append_result_shape(
     parts: list[str],
     scope: _EntityScope,
-    distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     lock: LockMode | None,
@@ -483,9 +478,9 @@ def _append_result_shape(
     if limit is not None:
         parts.append(scope.dialect.limit_clause())
         scope.ctx.bind(limit)
-    if lock == "locking" and not distinct:
+    if lock == "locking":
         # The shared-row-lock suffix is the last thing in the statement (after any
-        # `where` / `order by` / `limit`); a `distinct` object read suppresses it.
+        # `where` / `order by` / `limit`).
         parts.append(scope.dialect.read_lock_suffix(scope.alias))
 
 
@@ -510,7 +505,7 @@ def _order_term(scope: _EntityScope, key: OrderKey) -> str:
     return f"{column_sql} {direction}"
 
 
-def _peel_directives(op: Operation) -> tuple[Operation, bool, tuple[OrderKey, ...], int | None]:
+def _peel_directives(op: Operation) -> tuple[Operation, tuple[OrderKey, ...], int | None]:
     """Strip result-shaping directives (any nesting) into canonical clause data.
 
     A read carries at most one of each directive. A directive kind stacked twice
@@ -518,7 +513,6 @@ def _peel_directives(op: Operation) -> tuple[Operation, bool, tuple[OrderKey, ..
     fixes only that a directive wraps one inner operation — so a repeated kind is
     refused loudly here rather than silently overwriting the outer clause.
     """
-    distinct = False
     order_keys: tuple[OrderKey, ...] = ()
     limit: int | None = None
     seen: set[str] = set()
@@ -533,12 +527,8 @@ def _peel_directives(op: Operation) -> tuple[Operation, bool, tuple[OrderKey, ..
                 _reject_stacked("orderBy", seen)
                 order_keys = keys
                 current = operand
-            case Distinct(operand=operand):
-                _reject_stacked("distinct", seen)
-                distinct = True
-                current = operand
             case _:
-                return current, distinct, order_keys, limit
+                return current, order_keys, limit
 
 
 def _reject_stacked(kind: str, seen: set[str]) -> None:
@@ -567,7 +557,6 @@ def _reject_stacked(kind: str, seen: set[str]) -> None:
 def _compile_inheritance_read(
     entity: EntityMetadata,
     predicate: Operation,
-    distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     model: Metamodel,
@@ -586,7 +575,6 @@ def _compile_inheritance_read(
     plan = _plan_inheritance_read(
         entity,
         predicate,
-        distinct,
         order_keys,
         limit,
         model,
@@ -600,7 +588,6 @@ def _compile_inheritance_read(
             statement, transform = _compile_tph_read(
                 plan,
                 entity,
-                distinct,
                 order_keys,
                 limit,
                 model,
@@ -614,7 +601,6 @@ def _compile_inheritance_read(
             statement, transform = _compile_tpcs_single(
                 plan,
                 entity,
-                distinct,
                 order_keys,
                 limit,
                 model,
@@ -634,7 +620,6 @@ def _compile_inheritance_read(
 def _compile_tph_read(
     plan: _TphPlan,
     entity: EntityMetadata,
-    distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     model: Metamodel,
@@ -660,7 +645,7 @@ def _compile_tph_read(
     proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
 
-    select = f"select {'distinct ' if distinct else ''}{proj_sql}"
+    select = f"select {proj_sql}"
     parts = [select, f"from {plan.table} {scope.alias}"]
 
     inner_sql = _lower_predicate(plan.inner, scope)
@@ -675,13 +660,12 @@ def _compile_tph_read(
     if where_terms:
         parts.append("where " + " and ".join(where_terms))
 
-    _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
+    _append_result_shape(parts, scope, order_keys, limit, lock)
     if ctx.requires_variant_partition:
         return (
             _compile_tph_partitioned(
                 plan,
                 entity,
-                distinct,
                 order_keys,
                 limit,
                 model,
@@ -699,7 +683,6 @@ def _compile_tph_read(
 def _compile_tph_partitioned(
     plan: _TphPlan,
     entity: EntityMetadata,
-    distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     model: Metamodel,
@@ -771,16 +754,16 @@ def _compile_tph_partitioned(
             for column in key_columns
         )
         parts = [
-            f"select {'distinct ' if distinct else ''}{projection}",
+            f"select {projection}",
             f"from {plan.table} {outer_scope.alias}",
             f"join ({union}) u on {join_terms}",
         ]
-        _append_result_shape(parts, outer_scope, distinct, order_keys, limit, lock)
+        _append_result_shape(parts, outer_scope, order_keys, limit, lock)
         tail_binds = outer_ctx.binds[len(projection_binds) :]
         ordered_binds = (*projection_binds, *binds, *tail_binds)
         return _normalize(LoweredStatement(" ".join(parts), ordered_binds))
 
-    if not distinct and not order_keys and limit is None:
+    if not order_keys and limit is None:
         return _normalize(LoweredStatement(union, tuple(binds)))
 
     outer_ctx = _Ctx(model, facet, storage, dialect)
@@ -795,10 +778,10 @@ def _compile_tph_partitioned(
         dialect.qualified(outer_scope.alias, column.column) for column in plan.columns
     )
     parts = [
-        f"select {'distinct ' if distinct else ''}{projection}",
+        f"select {projection}",
         f"from ({union}) {outer_scope.alias}",
     ]
-    _append_result_shape(parts, outer_scope, distinct, order_keys, limit, None)
+    _append_result_shape(parts, outer_scope, order_keys, limit, None)
     binds.extend(outer_ctx.binds)
     return _normalize(LoweredStatement(" ".join(parts), tuple(binds)))
 
@@ -817,8 +800,8 @@ def _compile_tpcs_read(
     Each branch gets a FRESH ``_Ctx``: that is the whole mechanism behind a branch
     restarting its own alias scheme at `t0`, and behind the per-branch binds being
     separable so they concatenate in the plan's canonical branch order. The
-    clause tail has no place to land in a union, which is why the plan refused a
-    `distinct` / `orderBy` / `limit` / read-lock read before reaching here.
+    clause tail has no place to land in a union, which is why the plan refused an
+    `orderBy` / `limit` / read-lock read before reaching here.
     """
     branch_sqls: list[str] = []
     all_binds: list[object] = []
@@ -847,7 +830,6 @@ def _compile_tpcs_read(
 def _compile_tpcs_single(
     plan: _TpcsSinglePlan,
     entity: EntityMetadata,
-    distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     model: Metamodel,
@@ -873,12 +855,12 @@ def _compile_tpcs_single(
     scope = _EntityScope(ctx, entity, _table_layout(storage, facet, plan.position[0]))
     proj_sql, proj_binds = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
-    select = f"select {'distinct ' if distinct else ''}{proj_sql}"
+    select = f"select {proj_sql}"
     parts = [select, f"from {plan.table} {scope.alias}"]
     where_sql = _lower_predicate(plan.inner, scope)
     if where_sql:
         parts.append(f"where {where_sql}")
-    _append_result_shape(parts, scope, distinct, order_keys, limit, lock)
+    _append_result_shape(parts, scope, order_keys, limit, lock)
     statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
     return statement, plan.transform
 

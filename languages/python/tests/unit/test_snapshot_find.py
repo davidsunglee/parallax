@@ -312,7 +312,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
             ]
         ]
     )
-    op = deserialize({"narrow": {"entity": "Document", "to": ["Invoice"], "operand": {"all": {}}}})
+    op = deserialize({"narrow": {"to": ["Invoice"], "operand": {"all": {}}}})
     result = handle.find(op, DOCUMENT, POSTGRES, "Document", port)
     assert _root(result).concrete_entity == EntityIdentity("parallax.compatibility", "Invoice")
 

@@ -55,7 +55,6 @@ from parallax.core.op_algebra import (
     NavigationPath,
     NotExists,
     OperationRejectedError,
-    PathRootNarrow,
     PathSegment,
 )
 from parallax.snapshot import DeferredFeatureError
@@ -212,9 +211,7 @@ def test_reaching_an_inherited_relationship_through_a_subtype_guards_the_path_ro
     assert path.source == "parallax.compatibility.Dog"
     op = lowered_operation(Animal.where(Animal.all).include(path))
     assert isinstance(op, DeepFetch)
-    assert op.paths[0].narrow == PathRootNarrow(
-        entity="parallax.compatibility.Animal", to=("parallax.compatibility.Dog",)
-    )
+    assert op.paths[0].narrow == ("parallax.compatibility.Dog",)
 
 
 def test_a_subtype_declared_relationship_guards_the_path_root_the_same_way() -> None:
@@ -227,9 +224,7 @@ def test_a_subtype_declared_relationship_guards_the_path_root_the_same_way() -> 
     assert path.source == "parallax.tests.include.Hound"
     op = lowered_operation(Beast.where(Beast.all).include(path))
     assert isinstance(op, DeepFetch)
-    assert op.paths[0].narrow == PathRootNarrow(
-        entity="parallax.tests.include.Beast", to=("parallax.tests.include.Hound",)
-    )
+    assert op.paths[0].narrow == ("parallax.tests.include.Hound",)
 
 
 def test_a_subtype_declared_relationship_queried_at_its_own_position_guards_nothing() -> None:
@@ -251,15 +246,11 @@ def test_include_through_two_subtypes_authors_two_guarded_paths() -> None:
     assert op.paths == (
         NavigationPath(
             segments=(PathSegment(rel="parallax.compatibility.Animal.owner"),),
-            narrow=PathRootNarrow(
-                entity="parallax.compatibility.Animal", to=("parallax.compatibility.Dog",)
-            ),
+            narrow=("parallax.compatibility.Dog",),
         ),
         NavigationPath(
             segments=(PathSegment(rel="parallax.compatibility.Animal.owner"),),
-            narrow=PathRootNarrow(
-                entity="parallax.compatibility.Animal", to=("parallax.compatibility.Cat",)
-            ),
+            narrow=("parallax.compatibility.Cat",),
         ),
     )
 
@@ -278,9 +269,7 @@ def test_a_guarded_path_keeps_its_root_guard_through_deeper_and_narrowed_hops() 
                     rel="parallax.compatibility.Person.pets", narrow=("parallax.compatibility.Dog",)
                 ),
             ),
-            narrow=PathRootNarrow(
-                entity="parallax.compatibility.Animal", to=("parallax.compatibility.Pet",)
-            ),
+            narrow=("parallax.compatibility.Pet",),
         ),
     )
 
@@ -304,9 +293,7 @@ def test_a_query_narrow_does_not_restrict_which_root_guards_are_legal() -> None:
     # observation as a guard no result row happens to match.
     op = lowered_operation(Animal.where(Animal.all).narrow(Cat).include(Dog.owner))
     assert isinstance(op, DeepFetch)
-    assert op.paths[0].narrow == PathRootNarrow(
-        entity="parallax.compatibility.Animal", to=("parallax.compatibility.Dog",)
-    )
+    assert op.paths[0].narrow == ("parallax.compatibility.Dog",)
 
 
 # --------------------------------------------------------------------------- #
@@ -356,10 +343,45 @@ def test_narrow_inside_a_relationship_scope_must_name_the_target_exactly() -> No
 def test_narrow_constructor_builds_the_canonical_node() -> None:
     predicate = im.Document.narrow(im.Invoice, im.Receipt)
     assert predicate.op == Narrow(
-        entity="parallax.compatibility.Document",
         to=("parallax.compatibility.Invoice", "parallax.compatibility.Receipt"),
         operand=All(),
     )
+
+
+def test_narrow_alternatives_are_canonicalized_by_entity_identity() -> None:
+    predicate = im.Document.narrow(im.Receipt, im.Invoice)
+    assert predicate.op == Narrow(
+        to=("parallax.compatibility.Invoice", "parallax.compatibility.Receipt"),
+        operand=All(),
+    )
+
+
+def test_narrow_constructor_requires_at_least_one_subtype() -> None:
+    with pytest.raises(QueryDefinitionError, match="at least one subtype") as caught:
+        im.Document.narrow()
+    assert caught.value.code == "query-path-invalid"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: im.Document.narrow(im.Invoice, im.Invoice),
+        lambda: im.Document.where(im.Document.all).narrow(im.Invoice, im.Invoice),
+        lambda: im.Folder.documents.narrow(im.Invoice, im.Invoice),
+    ],
+    ids=["predicate", "find-query", "relationship-path"],
+)
+def test_python_narrowing_rejects_an_exact_duplicate_at_construction(build: Any) -> None:
+    with pytest.raises(QueryDefinitionError) as caught:
+        build()
+    assert caught.value.code == "query-path-invalid"
+
+
+def test_model_aware_narrowing_rejects_overlapping_alternatives() -> None:
+    query = im.Document.where(im.Document.narrow(im.FinancialDocument, im.Invoice))
+    with pytest.raises(OperationRejectedError) as caught:
+        preflighted(query, _DOCUMENTS)
+    assert caught.value.rule == "subtype-selection-overlapping-alternatives"
 
 
 def test_narrow_with_where_scopes_attribute_access_to_the_subtype() -> None:
@@ -394,7 +416,6 @@ def test_query_level_narrow_wraps_the_conjoined_predicate() -> None:
     query = im.Document.where(im.Document.all).narrow(im.Invoice, im.Receipt)
     op = lowered_operation(query)
     assert isinstance(op, Narrow)
-    assert op.entity == "parallax.compatibility.Document"
     assert op.to == ("parallax.compatibility.Invoice", "parallax.compatibility.Receipt")
     assert op.operand == All()
 

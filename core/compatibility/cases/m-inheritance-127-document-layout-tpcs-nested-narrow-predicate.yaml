@@ -10,12 +10,10 @@ when:
     or:
       operands:
         - narrow:
-            entity: parallax.compatibility.Publication
             to: [parallax.compatibility.Book]
             operand:
               greaterThan: { attr: parallax.compatibility.Book.pages, value: 300 }
         - narrow:
-            entity: parallax.compatibility.Publication
             to: [parallax.compatibility.Film]
             operand:
               greaterThan: { attr: parallax.compatibility.Film.minutes, value: 100 }

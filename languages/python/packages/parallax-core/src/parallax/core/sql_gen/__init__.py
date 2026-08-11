@@ -31,7 +31,7 @@ That implementation is five private modules, each owning one concern:
   value-object element scope. It holds the package's only RECURSIVE dispatch over
   the node union, so "where does this node get lowered?" has one answer. (The two
   other ``match`` statements in the package both live in ``_compile`` and neither
-  descends: one peels the outer ``limit`` / ``orderBy`` / ``distinct`` chain, the
+  descends: one peels the outer ``limit`` / ``orderBy`` chain, the
   other selects an inheritance plan type.)
 * ``_navigation`` — relationship resolution and correlated-hop planning.
 * ``_inheritance`` — table-per-hierarchy and table-per-concrete-subtype

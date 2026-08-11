@@ -15,14 +15,8 @@ render it) — the two DAG edges `modules.md` declares for `m-read-lock`.
 
 This module renders **no SQL** and owns **no append site**: `m-dialect` keeps
 :meth:`~parallax.core.dialect.Dialect.read_lock_suffix` (the suffix text) and
-``m-sql``/`~parallax.core.sql_gen` keeps the append decision (a
-`distinct` projection/aggregation suppresses the suffix and never errors —
-`m-sql` *Read-lock suffix*, `m-read-lock.md` "Automatic read-lock
-correctness": a projection's result rows have no identifiable base row to
-lock, and a projection is plain unmanaged data that never enters
-the write path). That data-shape-driven suppression stays where the compiled
-read's own shape (``distinct``) is visible; :func:`mode_for` is the SEPARATE,
-mode-driven half every transactional read consumer re-derives through, rather
+``m-sql``/`~parallax.core.sql_gen` keeps the append decision. :func:`mode_for`
+is the SEPARATE, mode-driven half every transactional read consumer re-derives through, rather
 than re-deriving the mode -> lock mapping inline at each call site:
 :meth:`~parallax.snapshot.handle.Transaction.find`, the materializing
 predicate-write resolve in `~parallax.snapshot.handle`, and the conformance

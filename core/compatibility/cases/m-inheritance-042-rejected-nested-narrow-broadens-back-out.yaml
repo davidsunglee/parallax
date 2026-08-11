@@ -1,26 +1,24 @@
 # Negative (m-inheritance, m-op-algebra): a NESTED narrow broadens back out of the
 # position the enclosing narrow established.
 #
-# The outer narrow constrains the family root to [Dog], so the active polymorphic
-# position inside its operand is {Dog}. The inner narrow declares the broader `entity`
-# Animal and narrows to [Cat] — a concrete subtype of the family but OUTSIDE the {Dog}
-# position now in scope. A narrow can only ever CONSTRAIN the active position, never
-# broaden it: the inner `to` set {Cat} is non-empty yet not a SUBSET of the active
-# position {Dog}, so a model-aware validator MUST reject the operation pre-SQL
-# (narrow-outside-position). This pins that the subset check binds to the THREADED
-# active position (re-narrowed at every hop), not to the inner narrow's self-declared
-# `entity` — naming a broader `entity` cannot re-widen a narrowed position.
+# The outer selection constrains the family-root position to [Dog], so the active
+# polymorphic position inside its operand is {Dog}. The inner selection asks for
+# [Cat] — a concrete subtype of the family but OUTSIDE the {Dog} position now in
+# scope. A narrow can only constrain the position supplied by context, never broaden
+# it: the inner resolved set is non-empty yet not a subset of the threaded active
+# position, so a model-aware validator MUST reject pre-SQL as
+# `narrow-outside-position`. The flat sibling case m-inheritance-040 asks the same
+# subset rule at the root; this case pins that every nested operand receives the
+# enclosing narrow's resolved position.
 model: models/animal.yaml
 tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:
     narrow:
-      entity: parallax.compatibility.Pet
       to: [parallax.compatibility.Dog]
       operand:
         narrow:
-          entity: parallax.compatibility.Animal
           to: [parallax.compatibility.Cat]
           operand:
             all: {}

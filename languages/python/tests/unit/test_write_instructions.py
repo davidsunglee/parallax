@@ -869,7 +869,6 @@ _BARE_INNER: dict[str, Any] = {"lessThan": {"attr": "Account.balance", "value": 
 _NON_BARE_PREDICATES: list[tuple[str, dict[str, Any]]] = [
     ("orderBy", {"orderBy": {"operand": _BARE_INNER, "keys": [{"attr": "Account.balance"}]}}),
     ("limit", {"limit": {"operand": _BARE_INNER, "count": 5}}),
-    ("distinct", {"distinct": {"operand": _BARE_INNER}}),
     ("asOf", {"asOf": {"operand": _BARE_INNER, "dimension": "valid-time", "coordinate": _B1}}),
     (
         "asOfRange",
@@ -1015,7 +1014,6 @@ def test_a_whole_result_narrow_is_never_a_bare_write_predicate() -> None:
                 "entity": "CardPayment",
                 "predicate": {
                     "narrow": {
-                        "entity": "Payment",
                         "to": ["CardPayment"],
                         "operand": {"eq": {"attr": "Payment.id", "value": 1}},
                     }
@@ -1032,9 +1030,7 @@ _ANIMAL = _MODELS["animal"]
 # itself a plain non-family, non-temporal, unversioned entity — so a predicate
 # write on it is legal and the narrow inside its navigation filter is the only
 # thing under test.
-_ANIMAL_TO_DOG_NARROW: dict[str, Any] = {
-    "narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}
-}
+_ANIMAL_TO_DOG_NARROW: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"all": {}}}}
 
 
 @pytest.mark.parametrize(
@@ -1112,7 +1108,6 @@ def test_a_result_modifier_inside_a_predicate_scoped_narrow_is_still_rejected() 
                         "rel": "Person.animals",
                         "op": {
                             "narrow": {
-                                "entity": "Animal",
                                 "to": ["Dog"],
                                 "operand": {"limit": {"operand": {"all": {}}, "count": 5}},
                             }

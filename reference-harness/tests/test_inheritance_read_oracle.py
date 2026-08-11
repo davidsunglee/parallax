@@ -36,6 +36,8 @@ from reference_harness.inheritance import (
     NARROW_OUTSIDE_POSITION,
     REFERENCE_AMBIGUOUS_ENTITY_NAME,
     SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE,
+    SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE,
+    SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES,
     Family,
     tag_value_to_subtype,
     validate_operation_inheritance,
@@ -143,13 +145,13 @@ def test_valid_and_redundant_narrows_are_accepted() -> None:
     # Narrow the root to a proper subset (Pet -> Dog, Cat).
     validate_operation_inheritance(
         defs,
-        {"narrow": {"entity": "Animal", "to": ["Pet"], "operand": {"all": {}}}},
+        {"narrow": {"to": ["Pet"], "operand": {"all": {}}}},
         position="Animal",
     )
     # Redundant narrow (a position to itself) is a no-op, not a rejection.
     validate_operation_inheritance(
         defs,
-        {"narrow": {"entity": "Pet", "to": ["Pet"], "operand": {"all": {}}}},
+        {"narrow": {"to": ["Pet"], "operand": {"all": {}}}},
         position="Pet",
     )
     # A concrete-subtype attribute IS in scope once narrowed to that subtype.
@@ -157,7 +159,6 @@ def test_valid_and_redundant_narrows_are_accepted() -> None:
         defs,
         {
             "narrow": {
-                "entity": "Animal",
                 "to": ["Dog"],
                 "operand": {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
             }
@@ -166,36 +167,62 @@ def test_valid_and_redundant_narrows_are_accepted() -> None:
     )
 
 
+def test_subtype_selection_rejects_an_exact_duplicate() -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            _animal_defs(),
+            {"narrow": {"to": ["Dog", "Dog"], "operand": {"all": {}}}},
+            position="Animal",
+        )
+    assert exc.value.rule == SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE
+
+
+def test_subtype_selection_rejects_overlapping_alternatives() -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            _animal_defs(),
+            {"narrow": {"to": ["Dog", "Pet"], "operand": {"all": {}}}},
+            position="Animal",
+        )
+    assert exc.value.rule == SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES
+
+
+def test_subtype_selection_checks_exact_duplicates_before_overlap() -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            _animal_defs(),
+            {"narrow": {"to": ["Pet", "Dog", "Dog"], "operand": {"all": {}}}},
+            position="Animal",
+        )
+    assert exc.value.rule == SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE
+
+
 def test_broadening_narrow_is_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
         validate_operation_inheritance(
             _animal_defs(),
-            {"narrow": {"entity": "Pet", "to": ["WildBoar"], "operand": {"all": {}}}},
+            {"narrow": {"to": ["Person"], "operand": {"all": {}}}},
         )
     assert exc.value.rule == NARROW_OUTSIDE_POSITION
 
 
 def test_narrow_broadening_beyond_the_threaded_position_is_rejected() -> None:
-    # A top-level narrow whose `entity` names a position (Animal, {Dog, Cat, WildBoar})
-    # BROADER than the active threaded position (Pet, {Dog, Cat}) must not be able to
-    # reach a subtype outside the active position: narrowing to [WildBoar] resolves
-    # OUTSIDE Pet, so it is rejected. The subset check binds to the active position
-    # (the read's targetEntity), not to `effective_concrete_set(entity)`. This needs an
+    # A top-level selection cannot reach a subtype outside the active threaded
+    # position: narrowing Pet to [WildBoar] resolves outside Pet. This needs an
     # explicit `position="Pet"`, so it lives here as a unit test, not the corpus (a
     # `rejected` case carries no `targetEntity`).
     with pytest.raises(RejectionError) as exc:
         validate_operation_inheritance(
             _animal_defs(),
-            {"narrow": {"entity": "Animal", "to": ["WildBoar"], "operand": {"all": {}}}},
+            {"narrow": {"to": ["WildBoar"], "operand": {"all": {}}}},
             position="Pet",
         )
     assert exc.value.rule == NARROW_OUTSIDE_POSITION
 
 
 def test_nested_narrow_cannot_broaden_back_out() -> None:
-    # After the OUTER narrow (Pet -> [Dog]) the active position is {Dog}. The INNER
-    # narrow declares the broader `entity` Animal and narrows to [Cat] — broadening back
-    # out of {Dog}. Even though [Cat] is inside Animal's own set, it is outside the
+    # After the OUTER narrow ([Dog]) the active position is {Dog}. The INNER
+    # selection asks for [Cat], broadening back out of {Dog}. It is outside the
     # threaded active position, so it is rejected. (The corpus witness is
     # m-inheritance-042, which needs no targetEntity; this pins the same via the walker.)
     with pytest.raises(RejectionError) as exc:
@@ -203,26 +230,19 @@ def test_nested_narrow_cannot_broaden_back_out() -> None:
             _animal_defs(),
             {
                 "narrow": {
-                    "entity": "Pet",
                     "to": ["Dog"],
-                    "operand": {
-                        "narrow": {"entity": "Animal", "to": ["Cat"], "operand": {"all": {}}}
-                    },
+                    "operand": {"narrow": {"to": ["Cat"], "operand": {"all": {}}}},
                 }
             },
         )
     assert exc.value.rule == NARROW_OUTSIDE_POSITION
 
 
-def test_narrow_whose_entity_is_broader_than_position_but_to_is_within_is_accepted() -> None:
-    # Boundary lock (no false rejection): a narrow whose `entity` (Animal) is BROADER
-    # than the active position (Pet) is NOT rejected for the mismatch alone — the entity
-    # position is clamped to the active position. As long as `to` ([Dog]) lands inside
-    # the active position (Pet = {Dog, Cat}), the narrow is valid. This is the twin of
-    # the rejection above: identical entity/position, a `to` that stays in scope.
+def test_narrow_within_the_context_supplied_position_is_accepted() -> None:
+    # The position is supplied by context. A [Dog] selection inside Pet stays valid.
     validate_operation_inheritance(
         _animal_defs(),
-        {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
+        {"narrow": {"to": ["Dog"], "operand": {"all": {}}}},
         position="Pet",
     )
 
@@ -256,7 +276,7 @@ def test_narrow_to_empty_effective_set_is_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
         validate_operation_inheritance(
             defs,
-            {"narrow": {"entity": "Root", "to": ["Empty"], "operand": {"all": {}}}},
+            {"narrow": {"to": ["Empty"], "operand": {"all": {}}}},
         )
     assert exc.value.rule == NARROW_EMPTY_EFFECTIVE_SET
 
@@ -303,7 +323,6 @@ def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
             defs,
             {
                 "narrow": {
-                    "entity": "Animal",
                     "to": ["Dog"],
                     "operand": {"eq": {"attr": "Cat.name", "value": "Tom"}},
                 }
@@ -315,7 +334,6 @@ def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
         defs,
         {
             "narrow": {
-                "entity": "Animal",
                 "to": ["Dog"],
                 "operand": {"eq": {"attr": "Dog.name", "value": "Rex"}},
             }
@@ -441,42 +459,7 @@ _AMBIGUOUS_BY_POSITION: dict[str, dict[str, Any]] = {
     # asked of a different split than an `attr`'s and needs its own position here.
     "nested path": {"nestedEq": {"path": "SharedVariant.spec.label", "value": "A-1"}},
     "nestedExists path": {"nestedExists": {"path": "SharedVariant.spec"}},
-    # Aggregation is a harness-only surface (the Python slice defers it), but the
-    # rule governs every position that names an entity, so the implementation
-    # that HAS these positions must enforce it in them.
-    "groupBy.keys": {
-        "groupBy": {
-            "operand": {"all": {}},
-            "keys": ["SharedVariant.archiveLabel"],
-            "aggregates": [{"count": {"attr": "Register.id", "as": "n"}}],
-        }
-    },
-    "groupBy.aggregates.attr": {
-        "groupBy": {
-            "operand": {"all": {}},
-            "keys": ["Register.id"],
-            "aggregates": [{"count": {"attr": "SharedVariant.archiveLabel", "as": "n"}}],
-        }
-    },
-    "groupBy.having.agg.attr": {
-        "groupBy": {
-            "operand": {"all": {}},
-            "keys": ["Register.id"],
-            "aggregates": [{"count": {"attr": "Register.id", "as": "n"}}],
-            "having": {
-                "gt": {
-                    "agg": {"count": {"attr": "SharedVariant.archiveLabel", "as": "n"}},
-                    "value": 1,
-                }
-            },
-        }
-    },
-    "narrow.entity": {
-        "narrow": {"entity": "SharedVariant", "to": ["Register"], "operand": {"all": {}}}
-    },
-    "narrow.to": {
-        "narrow": {"entity": "Register", "to": ["SharedVariant"], "operand": {"all": {}}}
-    },
+    "narrow.to": {"narrow": {"to": ["SharedVariant"], "operand": {"all": {}}}},
     "deepFetch.segment.rel": {
         "deepFetch": {
             "operand": {"all": {}},
@@ -491,23 +474,21 @@ _AMBIGUOUS_BY_POSITION: dict[str, dict[str, Any]] = {
             ],
         }
     },
-    "deepFetch.path.narrow.entity": {
+    "deepFetch.path.narrow.to": {
         "deepFetch": {
             "operand": {"all": {}},
             "paths": [
                 {
-                    "narrow": {"entity": "SharedVariant", "to": ["Register"]},
+                    "narrow": {"to": ["SharedVariant"]},
                     "segments": [{"rel": "Register.variant"}],
                 }
             ],
         }
     },
-    "relationship-scope narrow.entity": {
+    "relationship-scope narrow.to": {
         "exists": {
             "rel": "Register.variant",
-            "op": {
-                "narrow": {"entity": "SharedVariant", "to": ["Register"], "operand": {"all": {}}}
-            },
+            "op": {"narrow": {"to": ["SharedVariant"], "operand": {"all": {}}}},
         }
     },
 }
@@ -531,19 +512,6 @@ def test_an_unambiguous_bare_name_still_resolves_in_a_two_namespace_model() -> N
     defs = _shared_local_name_defs()
     validate_operation_inheritance(defs, {"eq": {"attr": "Register.id", "value": 1}})
     validate_operation_inheritance(defs, {"exists": {"rel": "Register.variant", "op": {"all": {}}}})
-    validate_operation_inheritance(
-        defs,
-        {
-            "groupBy": {
-                "operand": {"all": {}},
-                "keys": ["Register.variantId"],
-                "aggregates": [{"count": {"attr": "Register.id", "as": "n"}}],
-                "having": {
-                    "gt": {"agg": {"count": {"attr": "Register.id", "as": "n"}}, "value": 1}
-                },
-            }
-        },
-    )
 
 
 def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None:
@@ -583,7 +551,7 @@ def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> Non
     # sort key is legal exactly when the result was narrowed to Dog, and not before.
     narrowed = {
         "orderBy": {
-            "operand": {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}},
+            "operand": {"narrow": {"to": ["Dog"], "operand": {"all": {}}}},
             "keys": [{"attr": "Dog.barkVolume"}],
         }
     }
@@ -597,9 +565,7 @@ def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> Non
     assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
 
-_NARROW_TO_DOG: dict[str, Any] = {
-    "narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}
-}
+_NARROW_TO_DOG: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"all": {}}}}
 _DEEP_FETCH_PATHS: list[dict[str, Any]] = [{"segments": [{"rel": "Animal.owner"}]}]
 
 
@@ -608,7 +574,6 @@ def _carrying_wrappers() -> list[tuple[str, dict[str, Any]]]:
     return [
         ("bare", _NARROW_TO_DOG),
         ("limit", {"limit": {"operand": _NARROW_TO_DOG, "count": 5}}),
-        ("distinct", {"distinct": {"operand": _NARROW_TO_DOG}}),
         ("deepFetch", {"deepFetch": {"operand": _NARROW_TO_DOG, "paths": _DEEP_FETCH_PATHS}}),
         (
             "asOf",
@@ -1154,7 +1119,7 @@ def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
     )
     case = _document_case(
         "Document",
-        {"narrow": {"entity": "Document", "to": ["Invoice", "Memo"], "operand": {"all": {}}}},
+        {"narrow": {"to": ["Invoice", "Memo"], "operand": {"all": {}}}},
         golden=golden,
     )
     memo_row = {
@@ -1268,11 +1233,11 @@ from reference_harness.inheritance import (  # noqa: E402
 )
 
 
-def _person_op(rel: str, narrow_entity: str, to: list[str]) -> dict[str, Any]:
+def _person_op(rel: str, to: list[str]) -> dict[str, Any]:
     return {
         "exists": {
             "rel": rel,
-            "op": {"narrow": {"entity": narrow_entity, "to": to, "operand": {"all": {}}}},
+            "op": {"narrow": {"to": to, "operand": {"all": {}}}},
         }
     }
 
@@ -1386,8 +1351,8 @@ def test_root_source_set_resolves_a_guard_against_the_queried_position() -> None
     assert resolve_root_source_set(family, "Animal", {}) == ("Cat", "Dog", "WildBoar")
     # A guard resolves to its own effective set — equivalent spellings converge on
     # the SAME tuple, which is what makes them one hop at the root position.
-    pet_guard = {"narrow": {"entity": "Animal", "to": ["Pet"]}}
-    concrete_guard = {"narrow": {"entity": "Animal", "to": ["Cat", "Dog"]}}
+    pet_guard = {"narrow": {"to": ["Pet"]}}
+    concrete_guard = {"narrow": {"to": ["Cat", "Dog"]}}
     assert resolve_root_source_set(family, "Animal", pet_guard) == ("Cat", "Dog")
     assert resolve_root_source_set(family, "Animal", concrete_guard) == ("Cat", "Dog")
     # A non-polymorphic queried position has no source set to distinguish hops by.
@@ -1408,12 +1373,12 @@ def test_root_hop_identity_keys_on_the_resolved_source_set() -> None:
         )
 
     broad = key({})
-    pet_guard = key({"narrow": {"entity": "Animal", "to": ["Pet"]}})
-    concrete_guard = key({"narrow": {"entity": "Animal", "to": ["Cat", "Dog"]}})
-    dog_guard = key({"narrow": {"entity": "Animal", "to": ["Dog"]}})
-    cat_guard = key({"narrow": {"entity": "Animal", "to": ["Cat"]}})
-    boar_dog_guard = key({"narrow": {"entity": "Animal", "to": ["Dog", "WildBoar"]}})
-    whole_guard = key({"narrow": {"entity": "Animal", "to": ["Animal"]}})
+    pet_guard = key({"narrow": {"to": ["Pet"]}})
+    concrete_guard = key({"narrow": {"to": ["Cat", "Dog"]}})
+    dog_guard = key({"narrow": {"to": ["Dog"]}})
+    cat_guard = key({"narrow": {"to": ["Cat"]}})
+    boar_dog_guard = key({"narrow": {"to": ["Dog", "WildBoar"]}})
+    whole_guard = key({"narrow": {"to": ["Animal"]}})
 
     assert pet_guard == concrete_guard  # equal / equivalent -> one hop
     assert dog_guard != cat_guard  # disjoint -> two hops
@@ -1428,7 +1393,7 @@ def test_root_guard_outside_the_queried_position_is_rejected() -> None:
     # A guard is clamped to the queried position exactly as an operation-position
     # narrow is: WildBoar is outside a read already narrowed to Pet's concretes.
     with pytest.raises(RejectionError) as exc:
-        resolve_clamped_narrow(family, ["Cat", "Dog"], "Animal", ["WildBoar"])
+        resolve_clamped_narrow(family, ["Cat", "Dog"], ["WildBoar"])
     assert exc.value.rule == NARROW_OUTSIDE_POSITION
     # An abstract subtype with no concrete descendants resolves to nothing, which
     # is the guard's own rejection rather than a position violation.
@@ -1441,7 +1406,7 @@ def test_root_guard_outside_the_queried_position_is_rejected() -> None:
         },
     ]
     with pytest.raises(RejectionError) as empty:
-        resolve_clamped_narrow(Family(childless), ["Real"], "Root", ["Empty"])
+        resolve_clamped_narrow(Family(childless), ["Real"], ["Empty"])
     assert empty.value.rule == NARROW_EMPTY_EFFECTIVE_SET
 
 
@@ -1456,75 +1421,25 @@ def test_resolve_hop_outside_relationship_target_is_rejected() -> None:
 def test_operation_narrow_in_navigation_filter_accepts_valid() -> None:
     defs = _animal_defs()
     # narrow the pets target (Pet) to [Cat] — valid; animals (Animal) to [Pet] — valid.
-    validate_operation_inheritance(
-        defs, _person_op("Person.pets", "Pet", ["Cat"]), position="Person"
-    )
-    validate_operation_inheritance(
-        defs, _person_op("Person.animals", "Animal", ["Pet"]), position="Person"
-    )
+    validate_operation_inheritance(defs, _person_op("Person.pets", ["Cat"]), position="Person")
+    validate_operation_inheritance(defs, _person_op("Person.animals", ["Pet"]), position="Person")
 
 
 def test_operation_narrow_in_navigation_filter_rejects_outside_target() -> None:
     defs = _animal_defs()
     with pytest.raises(RejectionError) as exc:
         validate_operation_inheritance(
-            defs, _person_op("Person.pets", "Pet", ["WildBoar"]), position="Person"
+            defs, _person_op("Person.pets", ["WildBoar"]), position="Person"
         )
     assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
 
 
-def test_operation_narrow_in_navigation_filter_rejects_entity_naming_wrong_position() -> None:
-    # A narrow in a navigation
-    # filter's `op` MUST NAME the relationship target as its `entity` (m-navigate).
-    # `Person.pets` targets Pet ({Cat, Dog}); a narrow declaring the BROADER root
-    # Animal as its `entity` — even one whose `to` ([Dog]) lands inside Pet's set —
-    # is invalid: the relationship-scope narrow does NOT clamp a broader entity the
-    # way a top-level narrow does; it must name the target and reach subtypes via
-    # `to`. Before the fix the entity-vs-target check was absent and this was wrongly
-    # ACCEPTED (Animal ∩ Pet = {Cat, Dog} ⊇ {Dog}).
-    defs = _animal_defs()
+def test_empty_selection_in_navigation_filter_keeps_the_shared_empty_rule() -> None:
     with pytest.raises(RejectionError) as exc:
         validate_operation_inheritance(
-            defs, _person_op("Person.pets", "Animal", ["Dog"]), position="Person"
+            _animal_defs(), _person_op("Person.pets", ["Bogus"]), position="Person"
         )
-    assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
-
-
-def test_operation_narrow_in_navigation_filter_naming_rule_holds_under_and() -> None:
-    # The naming requirement is position-scoped, so it survives a position-preserving
-    # `and` wrapper: a target-position narrow nested directly under `and` in the
-    # filter's `op` still MUST name the relationship target (Pet). A mismatched
-    # `entity` (Animal) is rejected; the correctly-named twin passes.
-    defs = _animal_defs()
-    animals_and = {
-        "exists": {
-            "rel": "Person.pets",
-            "op": {
-                "and": {
-                    "operands": [
-                        {"narrow": {"entity": "Animal", "to": ["Dog"], "operand": {"all": {}}}}
-                    ]
-                }
-            },
-        }
-    }
-    with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(defs, animals_and, position="Person")
-    assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
-    # Positive lock: the same shape naming the target (Pet) is accepted.
-    pet_and = {
-        "exists": {
-            "rel": "Person.pets",
-            "op": {
-                "and": {
-                    "operands": [
-                        {"narrow": {"entity": "Pet", "to": ["Dog"], "operand": {"all": {}}}}
-                    ]
-                }
-            },
-        }
-    }
-    validate_operation_inheritance(defs, pet_and, position="Person")
+    assert exc.value.rule == NARROW_EMPTY_EFFECTIVE_SET
 
 
 def _deep_fetch_op(rel: str, to: list[str] | None) -> dict[str, Any]:
@@ -1546,3 +1461,11 @@ def test_deep_fetch_path_segment_narrow_is_resolved_through_the_path_object() ->
             defs, _deep_fetch_op("Person.pets", ["WildBoar"]), position="Person"
         )
     assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
+
+
+def test_empty_deep_fetch_path_selection_keeps_the_shared_empty_rule() -> None:
+    with pytest.raises(RejectionError) as exc:
+        validate_operation_inheritance(
+            _animal_defs(), _deep_fetch_op("Person.pets", ["Bogus"]), position="Person"
+        )
+    assert exc.value.rule == NARROW_EMPTY_EFFECTIVE_SET

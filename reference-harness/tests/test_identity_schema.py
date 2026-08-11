@@ -1,9 +1,10 @@
 """DB-free tests for the shared Entity-identity grammars (m-metamodel).
 
 `identity.schema.json` is the single owner of every serialized Entity-identity and
-member-reference grammar: `operation.schema.json`, `write-instruction.schema.json`,
-and `compatibility-case.schema.json` reference it across files rather than each
-keeping a literal copy. These tests pin the relationship three ways:
+member-reference grammar: `operation.schema.json`, `subtype-selection.schema.json`,
+`write-instruction.schema.json`, and `compatibility-case.schema.json` reference it
+across files rather than each keeping a literal copy. These tests pin the relationship
+three ways:
 
 * the GRAMMARS themselves — what each `$def` accepts and refuses, including the
   capitalization that makes an Entity spelling separable from a member path
@@ -33,6 +34,7 @@ _IDENTITY = _SCHEMAS["identity.schema.json"]
 _METAMODEL = _SCHEMAS["metamodel.schema.json"]
 _IDENTITY_URL = _IDENTITY["$id"]
 _OPERATION_URL = _SCHEMAS["operation.schema.json"]["$id"]
+_SUBTYPE_SELECTION_URL = _SCHEMAS["subtype-selection.schema.json"]["$id"]
 _WRITE_URL = _SCHEMAS["write-instruction.schema.json"]["$id"]
 _CASE_URL = _SCHEMAS["compatibility-case.schema.json"]["$id"]
 
@@ -138,7 +140,7 @@ _CONSUMERS: dict[str, list[tuple[str, str]]] = {
     "valueObjectRef": [(_OPERATION_URL, "valueObjectRef")],
     "elementRef": [(_OPERATION_URL, "elementRef")],
     "entityName": [
-        (_OPERATION_URL, "entityName"),
+        (_SUBTYPE_SELECTION_URL, "subtypeSelection"),
         (_WRITE_URL, "entityName"),
         (_CASE_URL, "entityName"),
     ],
@@ -197,7 +199,10 @@ def test_each_consuming_ref_behaves_like_the_canonical_def() -> None:
             key = _WRAPPERS.get(consumer_pointer)
             for spelling, expected in _VECTORS[pointer]:
                 assert _valid(canonical, spelling) is expected
-                doc: Any = spelling if key is None else {key: spelling, "value": 0}
+                if consumer_pointer == "subtypeSelection":
+                    doc: Any = [spelling]
+                else:
+                    doc = spelling if key is None else {key: spelling, "value": 0}
                 assert _valid(through_ref, doc) is expected, (
                     f"{schema_url}#/$defs/{consumer_pointer} {spelling!r}"
                 )

@@ -88,9 +88,9 @@ correlated sub-select to exactly that set — the same effective-set derivation 
 top-level read uses, applied at the relationship target.
 
 `narrow` (`m-op-algebra`) MAY appear in a navigation filter's inner operation
-(`op`) to constrain the relationship target: `narrow.entity` names the
-**relationship target's** polymorphic position, and the narrowed set drives the
-semi-join. A narrow whose resolved concrete set is **not a subset** of the
+(`op`) to constrain the relationship target. Context supplies the target's
+polymorphic position, and `narrow.to` is `m-inheritance`'s shared Subtype
+Selection. A narrow whose resolved concrete set is **not a subset** of the
 relationship target's effective concrete set is rejected
 (`narrow-outside-relationship-target`, `m-case-format`) — narrowing to a concrete
 outside the reachable set, even a **sibling** sharing the family root, is invalid.

@@ -240,7 +240,6 @@ _NON_BARE_PREDICATES: Final[Mapping[type[object], str]] = MappingProxyType(
     {
         op_algebra.OrderBy: "orderBy",
         op_algebra.Limit: "limit",
-        op_algebra.Distinct: "distinct",
         op_algebra.DeepFetch: "deepFetch",
         op_algebra.AsOf: "asOf",
         op_algebra.AsOfRange: "asOfRange",
@@ -724,7 +723,7 @@ def _reject_non_bare_predicate(entity_name: str, predicate: Operation) -> None:
 
     The result position is the ROOT here, and only the root. `m-op-algebra`
     fixes the closed set of wrappers that may carry a whole-result narrow up to
-    it — ``orderBy`` / ``limit`` / ``distinct`` / ``deepFetch`` / ``asOf`` /
+    it — ``orderBy`` / ``limit`` / ``deepFetch`` / ``asOf`` /
     ``asOfRange`` / ``history``, the same set
     :func:`~parallax.core.op_algebra.validate._ordered_scope` resolves an order
     key's position through — and every one of them is itself refused above, at

@@ -104,9 +104,9 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-document-codec` | Portable document encoding, decoding, and patching | active | cases |
 | `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
 | `m-op-algebra` | Query / operation algebra | active | cases |
-| `m-agg` | Aggregation algebra (group-by / having / functions) | deferred | cases |
+| `m-agg` | Aggregation algebra (group-by / having / functions) | deferred | contract |
 | `m-sql` | SQL generation & equivalence contract | active | cases |
-| `m-sql-agg` | SQL lowering for aggregation | deferred | cases |
+| `m-sql-agg` | SQL lowering for aggregation | deferred | contract |
 | `m-dialect` | Pure dialect rules (quoting, lock suffix, casing) | active | cases |
 | `m-db-port` | Database execution port | active | contract |
 | `m-db-error` | Database error classification | active | cases |

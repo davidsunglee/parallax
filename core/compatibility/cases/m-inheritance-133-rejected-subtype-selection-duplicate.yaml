@@ -1,0 +1,17 @@
+# Negative (m-inheritance): one Subtype Selection repeats an exact alternative.
+#
+# Exact duplicate Entity Identities are invalid construction rather than a union to
+# deduplicate. A serialized ingress must refuse the schema-valid value before SQL as
+# `subtype-selection-duplicate-alternative`; Python's typed `.narrow(...)` surface
+# rejects the same repetition while constructing the query.
+model: models/animal.yaml
+tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  operation:
+    narrow:
+      to: [parallax.compatibility.Dog, parallax.compatibility.Dog]
+      operand:
+        all: {}
+then:
+  rejectedRule: subtype-selection-duplicate-alternative

@@ -27,6 +27,7 @@ from .paths import schemas_dir
 
 SCHEMA_FILES = (
     "identity.schema.json",
+    "subtype-selection.schema.json",
     "metamodel.schema.json",
     "operation.schema.json",
     "compatibility-case.schema.json",

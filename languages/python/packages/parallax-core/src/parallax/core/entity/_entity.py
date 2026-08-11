@@ -59,7 +59,8 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
 )
-from parallax.core.op_algebra import All, Narrow, Operation
+from parallax.core.op_algebra import All, Narrow, Operation, QueryDefinitionError
+from parallax.core.op_algebra.nodes import canonical_subtype_selection
 
 if TYPE_CHECKING:
     import datetime as _dt
@@ -515,7 +516,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     ) -> Predicate[E]:
         """The scoped subtype-narrowing constructor (spec §2).
 
-        ``to`` preserves the authored subtype list verbatim, and ``where=`` grants
+        ``to`` is canonicalized as one Subtype Selection, and ``where=`` grants
         attribute scope to those subtypes' declared members inside its own operand
         alone. An ordinary predicate: it composes like any other, and inside a
         relationship quantifier it must name exactly the relationship target.
@@ -536,8 +537,17 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         concrete subtypes the named classes resolve to.
         """
         to = tuple(declaration_of(subtype).identity.canonical for subtype in subtypes)
+        if not to:
+            raise QueryDefinitionError(
+                code="query-path-invalid", message="narrow requires at least one subtype"
+            )
+        if len(set(to)) != len(to):
+            raise QueryDefinitionError(
+                code="query-path-invalid",
+                message="narrow alternatives must not repeat the same subtype",
+            )
         operand: Operation = where.op if where is not None else All()
-        return Predicate(Narrow(entity=cls.identity.canonical, to=to, operand=operand))
+        return Predicate(Narrow(to=canonical_subtype_selection(to), operand=operand))
 
     def edit(self, **changes: object) -> Self:
         """The one door to an Edited Copy (spec §3).

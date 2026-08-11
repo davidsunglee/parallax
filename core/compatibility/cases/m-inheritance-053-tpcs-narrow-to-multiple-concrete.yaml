@@ -17,7 +17,6 @@ when:
   targetEntity: parallax.compatibility.Document
   operation:
     narrow:
-      entity: parallax.compatibility.Document
       to: [parallax.compatibility.Invoice, parallax.compatibility.Memo]
       operand:
         all: {}

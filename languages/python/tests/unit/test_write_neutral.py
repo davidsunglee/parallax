@@ -538,7 +538,6 @@ def test_a_narrow_between_the_deep_fetch_and_the_scan_is_the_same_deferred_featu
                                     "dimension": "transaction-time",
                                 }
                             },
-                            "entity": "parallax.compatibility.Policy",
                             "to": ["parallax.compatibility.Policy"],
                         }
                     },
@@ -562,13 +561,9 @@ def test_a_wrapper_spine_carrying_no_deep_fetch_still_answers() -> None:
             {
                 "limit": {
                     "operand": {
-                        "distinct": {
-                            "operand": {
-                                "orderBy": {
-                                    "operand": {"all": {}},
-                                    "keys": [{"attr": "parallax.compatibility.Order.id"}],
-                                }
-                            }
+                        "orderBy": {
+                            "operand": {"all": {}},
+                            "keys": [{"attr": "parallax.compatibility.Order.id"}],
                         }
                     },
                     "count": 1,

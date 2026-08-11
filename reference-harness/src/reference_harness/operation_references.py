@@ -24,8 +24,8 @@ from typing import Any
 from .references import entity_spelling
 
 # The closed set `m-op-algebra` names as the wrappers "returning their operand's
-# OWN rows": the result-shaping directives (``orderBy`` / ``limit`` / ``distinct``
-# / ``deepFetch``, which attaches fetched levels to those rows rather than
+# OWN rows": the result-shaping directives (``orderBy`` / ``limit`` /
+# ``deepFetch``, which attaches fetched levels to those rows rather than
 # replacing them) and the temporal wrappers (``asOf`` / ``asOfRange`` /
 # ``history``). None of them re-roots the rows its operand yields, so a walk
 # looking for the node that fixed those rows descends through this set AND NO
@@ -36,7 +36,6 @@ OPERAND_ROW_WRAPPER_TAGS = frozenset(
     {
         "orderBy",
         "limit",
-        "distinct",
         "deepFetch",
         "asOf",
         "asOfRange",
@@ -136,8 +135,8 @@ def collect_reference_classes(
     contain is not evidence that this node's root entity differs from the target.
 
     Read operations additionally wrap the predicate in result and temporal
-    directives (``orderBy``, ``limit``, ``deepFetch``, ``narrow``, ``groupBy``,
-    ``asOf`` …). A predicate write is a BARE predicate that carries none of these,
+    directives (``orderBy``, ``limit``, ``deepFetch``, ``narrow``, ``asOf`` …).
+    A predicate write is a BARE predicate that carries none of these,
     so its caller passes ``descend_result_modifiers=False`` to walk only the
     predicate core.
     """
@@ -176,16 +175,11 @@ def _collect_result_modifier_classes(tag: str, body: dict[str, Any], classes: se
                 segment = segments[0]
                 rel = segment.get("rel") if isinstance(segment, dict) else segment
                 _add_member_reference_class(rel, classes)
-            # A path-ROOT narrow contributes nothing here, for the same reason the
-            # `narrow` node below does not: its `entity` names a polymorphic
-            # POSITION rather than referencing a queried member, and naming a
-            # position broader than the active one is CLAMPED rather than rejected
-            # (m-op-algebra), which is exactly what a subset cross-check would
-            # refuse. Its own validity — the clamp, the empty set, the subset — is
-            # asserted by the position walk instead.
-    elif tag in ("distinct", "asOf", "asOfRange", "history", "limit", "narrow"):
-        # A narrow evaluates its operand over the SAME polymorphic position (its
-        # `entity`, which equals the read's targetEntity at top level), so the
+            # A path-root Subtype Selection contributes no queried-member class;
+            # its validity is asserted by the position walk instead.
+    elif tag in ("asOf", "asOfRange", "history", "limit", "narrow"):
+        # A narrow evaluates its operand over the polymorphic position supplied by
+        # context, so the
         # operand's queried-entity references are still cross-checked against the
         # target; the narrow's subset validity is asserted separately (op-algebra).
         collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
@@ -194,12 +188,3 @@ def _collect_result_modifier_classes(tag: str, body: dict[str, Any], classes: se
         for key in body.get("keys", []) or []:
             if isinstance(key, dict):
                 _add_member_reference_class(key.get("attr"), classes)
-    elif tag == "groupBy":
-        collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
-        for key in body.get("keys", []) or []:
-            _add_member_reference_class(key, classes)
-        for aggregate in body.get("aggregates", []) or []:
-            if isinstance(aggregate, dict) and len(aggregate) == 1:
-                inner = next(iter(aggregate.values()))
-                if isinstance(inner, dict):
-                    _add_member_reference_class(inner.get("attr"), classes)

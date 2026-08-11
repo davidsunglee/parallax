@@ -28,7 +28,7 @@ normative rule:
 * a **find() rooted at a value object** — a value object is not a queryable root
   entity (m-value-object contract 5), surfaced here as an attribute reference whose
   class segment names a declared value object rather than the entity, or as a
-  ``deepFetch`` path-ROOT narrow whose `entity` / `to` names one: the root position
+  ``deepFetch`` path-root narrow whose `to` names one: the root position
   a guard resolves at is the queried position itself.
 
 The reference harness (a non-normative oracle) runs this so the reference
@@ -38,7 +38,7 @@ each language implementation must make.
 Scope — value-object rules are enforced at ANY depth within the queried entity's
 own operation tree. :func:`validate_operation` descends through the SAME-entity
 boolean combinators (``and`` / ``or`` / ``not`` / ``group``) and the result-directive
-wrappers (``orderBy`` / ``limit`` / ``distinct`` / ``asOf`` …), so a nested-predicate
+wrappers (``orderBy`` / ``limit`` / ``asOf`` …), so a nested-predicate
 violation (an undeclared path segment, a mistyped literal, a value-object misuse) is
 rejected wherever the offending node appears — buried inside an ``and`` just as at
 the top level. The combinators do not change the root entity, so resolution stays
@@ -145,7 +145,7 @@ def _walk(entity: Entity, node: Any) -> None:
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
             _walk(entity, operand)
-    elif tag in ("not", "group", "distinct"):
+    elif tag in ("not", "group"):
         _walk(entity, body.get("operand"))
     elif tag == "orderBy":
         _walk(entity, body.get("operand"))
@@ -324,9 +324,8 @@ def _check_deep_fetch(entity: Entity, body: dict[str, Any]) -> None:
 def _check_path_root_narrow(entity: Entity, narrow: Any) -> None:
     """Reject a deep-fetch path-root guard aimed at a value object.
 
-    A path-root ``{entity, to}`` guard resolves at the QUERIED position, so both
-    members name Entities: `entity` the polymorphic position and each `to` entry a
-    subtype of it. The subtype-position rules themselves (the clamp, the empty and
+    A path-root ``{to}`` guard resolves at the QUERIED position, so every `to`
+    entry names an Entity alternative. The subtype-position rules themselves (the empty and
     outside-position rejections) belong to the inheritance walk; what belongs here
     is the value-object rule the queried root already carries — a value object has
     no identity, no position, and no concrete subtypes, so it is no more guardable
@@ -335,7 +334,7 @@ def _check_path_root_narrow(entity: Entity, narrow: Any) -> None:
     if not isinstance(narrow, dict):
         return
     to = narrow.get("to")
-    names = [narrow.get("entity"), *(to if isinstance(to, list) else [])]
+    names = to if isinstance(to, list) else []
     for name in names:
         if isinstance(name, str) and find_top_value_object(entity, name) is not None:
             raise RejectionError(

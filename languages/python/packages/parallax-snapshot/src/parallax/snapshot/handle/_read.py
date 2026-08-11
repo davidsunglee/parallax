@@ -793,7 +793,7 @@ def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -
     ``DeepFetch`` directive (``.include(...)`` composed after ``.as_of(...)``)
     is peeled first. ``m-temporal-read`` never imports ``m-deep-fetch`` (the
     DAG forbids the reverse dependency direction), so `statement_pin`'s own
-    directive-peeling (`Limit`/`OrderBy`/`Distinct` only) cannot see a
+    directive-peeling (`Limit`/`OrderBy` only) cannot see a
     `DeepFetch` wrapper — this composition is the
     handle's own job. A milestone-set read (`.history()`/`.as_of_range()`)
     never reaches here carrying an outer `DeepFetch`: that combination builds as

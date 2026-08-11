@@ -126,7 +126,7 @@ class _Report:
 
     def entity(self, spelling: Any, where: str, declarations: _Declarations) -> None:
         """Check a bare-or-canonical Entity spelling (``targetEntity``, a
-        ``narrow``'s ``entity`` or ``to`` entry, a write instruction's Entity)."""
+        ``narrow``'s ``to`` entry, or a write instruction's Entity)."""
         if not isinstance(spelling, str):
             return
         self._check(spelling, spelling, (), where, declarations)
@@ -189,8 +189,6 @@ def _walk_operation(node: Any, where: str, report: _Report, declarations: _Decla
         for index, key in enumerate(_items(body.get("keys"))):
             if isinstance(key, Mapping):
                 report.member(key.get("attr"), f"{at}.keys[{index}].attr", declarations)
-    elif tag == "groupBy":
-        _walk_group_by(body, at, report, declarations)
     elif tag == "deepFetch":
         _walk_deep_fetch(body, at, report, declarations)
     for member in _OPERAND_MEMBERS:
@@ -201,46 +199,8 @@ def _walk_operation(node: Any, where: str, report: _Report, declarations: _Decla
 def _walk_narrow(
     body: Mapping[str, Any], at: str, report: _Report, declarations: _Declarations
 ) -> None:
-    report.entity(body.get("entity"), f"{at}.entity", declarations)
     for index, name in enumerate(_items(body.get("to"))):
         report.entity(name, f"{at}.to[{index}]", declarations)
-
-
-def _walk_group_by(
-    body: Mapping[str, Any], at: str, report: _Report, declarations: _Declarations
-) -> None:
-    for index, key in enumerate(_items(body.get("keys"))):
-        report.member(key, f"{at}.keys[{index}]", declarations)
-    for index, aggregate in enumerate(_items(body.get("aggregates"))):
-        _walk_aggregate(aggregate, f"{at}.aggregates[{index}]", report, declarations)
-    _walk_having(body.get("having"), f"{at}.having", report, declarations)
-
-
-def _walk_aggregate(node: Any, at: str, report: _Report, declarations: _Declarations) -> None:
-    if not isinstance(node, Mapping) or len(node) != 1:
-        return
-    function, body = next(iter(node.items()))
-    if isinstance(body, Mapping):
-        report.member(body.get("attr"), f"{at}.{function}.attr", declarations)
-
-
-def _walk_having(node: Any, at: str, report: _Report, declarations: _Declarations) -> None:
-    """A having term compares an AGGREGATE against a literal, so its only
-    reference position is the aggregate's own ``attr``."""
-    if not isinstance(node, Mapping) or len(node) != 1:
-        return
-    tag, body = next(iter(node.items()))
-    inner = f"{at}.{tag}"
-    if not isinstance(body, Mapping):
-        return
-    if tag in ("and", "or"):
-        for index, operand in enumerate(_items(body.get("operands"))):
-            _walk_having(operand, f"{inner}.operands[{index}]", report, declarations)
-        return
-    if tag in ("not", "group"):
-        _walk_having(body.get("operand"), f"{inner}.operand", report, declarations)
-        return
-    _walk_aggregate(body.get("agg"), f"{inner}.agg", report, declarations)
 
 
 def _walk_deep_fetch(

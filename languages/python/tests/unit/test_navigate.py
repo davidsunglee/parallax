@@ -104,7 +104,6 @@ def test_walk_recurses_through_every_wrapping_node_kind() -> None:
         oa.Group(operand=hop),
         oa.OrderBy(operand=hop, keys=(oa.OrderKey(attr="Order.id"),)),
         oa.Limit(operand=hop, count=5),
-        oa.Distinct(operand=hop),
         oa.AsOf(operand=hop, dimension="transaction-time", coordinate="latest"),
         oa.AsOfRange(
             operand=hop,

@@ -329,14 +329,6 @@ def test_member_keyed_edge_rejects_a_non_instant_member() -> None:
         milestone_edge_from_members(BALANCE, {"txStart": "not-a-datetime"})
 
 
-def test_directive_distinct_survives_injection() -> None:
-    injected = inject_as_of(oa.Distinct(operand=oa.All()), BALANCE)
-    assert isinstance(injected, oa.Distinct)
-    assert injected.operand == oa.Comparison(
-        op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
-    )
-
-
 def test_pin_reports_only_pinned_axes() -> None:
     pin = Pin(tx_time=LATEST)
     assert pin.tx_time is LATEST

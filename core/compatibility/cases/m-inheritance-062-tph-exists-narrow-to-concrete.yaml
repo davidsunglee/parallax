@@ -2,8 +2,8 @@
 # (m-navigate, m-op-algebra, m-inheritance, resolved Q10).
 #
 # The relationship-target narrowing reuses the `narrow` operation node in the
-# navigation filter's `op` position: `narrow.entity` names the relationship target
-# (Pet), narrowed to [Cat]. The narrow lifts into the EXISTS's tag selection exactly
+# navigation filter's `op` position, where context supplies Pet as the position;
+# the shared selection narrows it to [Cat]. The narrow lifts into the EXISTS's tag selection exactly
 # as it does for a top-level read — one concrete resolves to `t1.kind = ?` (bind
 # [cat]). Only Alice owns a Cat (Whiskers); Bob owns only a Dog, Carol only a boar.
 #
@@ -18,7 +18,6 @@ when:
       rel: parallax.compatibility.Person.pets
       op:
         narrow:
-          entity: parallax.compatibility.Pet
           to: [parallax.compatibility.Cat]
           operand:
             all: {}

@@ -25,7 +25,6 @@ when:
       rel: parallax.compatibility.Person.pets
       op:
         narrow:
-          entity: parallax.compatibility.Pet
           to: [parallax.compatibility.Dog]
           operand:
             eq: { attr: parallax.compatibility.Dog.barkVolume, value: 7 }

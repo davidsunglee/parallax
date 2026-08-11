@@ -257,7 +257,7 @@ EXAMPLES: Final[list[Example]] = [
     Example(
         "m-inheritance-040",
         "A narrow that broadens beyond its position",
-        "Animal.where(Pet.narrow(WildBoar))\n"
+        "Animal.where(Animal.narrow(Person))\n"
         '# raises OperationRejectedError(rule="narrow-outside-position")',
     ),
     Example(
@@ -279,10 +279,15 @@ EXAMPLES: Final[list[Example]] = [
         '# raises OperationRejectedError(rule="narrow-outside-relationship-target")',
     ),
     Example(
-        "m-inheritance-072",
-        "A relationship-scope narrow naming the wrong position",
-        "Person.pets.exists(Animal.narrow(Dog))\n"
-        '# raises OperationRejectedError(rule="narrow-outside-relationship-target")',
+        "m-inheritance-132",
+        "A Subtype Selection with overlapping alternatives",
+        "Animal.where(Animal.narrow(Dog, Pet))\n"
+        '# raises OperationRejectedError(rule="subtype-selection-overlapping-alternatives")',
+    ),
+    Example(
+        "m-inheritance-133",
+        "A Subtype Selection with an exact duplicate",
+        'Animal.narrow(Dog, Dog)\n# raises QueryDefinitionError(code="query-path-invalid")',
     ),
     # Rejected-case build/buffer-time proof: the write-side counterpart of the
     # read-side proofs above —
@@ -824,29 +829,15 @@ _READ_LOCK_PARTITIONED_GOLDEN_REASON: Final[str] = (
     "the API suite's existing locking-mode object-find story already proves the "
     "developer participation-mode surface, while this case isolates SQL shape"
 )
-# `m-read-lock-003`'s operation is a `distinct` PROJECTION, and the Find Query
-# surface authors no such query: `python.md` §2 states the clause set exactly and
-# excludes `distinct`, because a Find Query always returns complete root
-# Entities and duplicate roots are a lowering defect rather than something a
-# caller masks. The lock behaviour it pins is a property of the projection shape,
-# so there is no differently-spelled idiomatic query that would exercise it.
-_READ_LOCK_PROJECTION_UNAUTHORABLE_REASON: Final[str] = (
-    "the case reads a `distinct` PROJECTION, which the Find Query surface has no clause "
-    "to author (`python.md` §2 fixes the clause set and excludes `distinct` — a Find "
-    "Query always returns complete root Entities); the lock omission it pins belongs to "
-    "the projection shape itself, so no other idiomatic spelling reaches it, and the "
-    "harness lane grades the operation independently"
-)
 # The read-lock module's two-session behavioral proofs
-# (`m-read-lock-006`/`-007`/`-008`) cover a genuine two-connection
+# (`m-read-lock-006`/`-007`) cover a genuine two-connection
 # concurrency property (a shared lock blocking/admitting a writer or a second
-# reader, or a projection's own omission admitting a writer) no single-session
-# idiomatic example can demonstrate — graded by the case-driven `when.concurrency`
-# rounds runner instead.
+# reader) no single-session idiomatic example can demonstrate — graded by the
+# case-driven `when.concurrency` rounds runner instead.
 _READ_LOCK_TWO_SESSION_REASON: Final[str] = (
     "the two-session behavioral proof (a locking-mode reader's shared lock "
-    "blocking/admitting a writer or a second reader, or a projection's own omission "
-    "admitting a writer) is graded end-to-end by the case-driven `when.concurrency` "
+    "blocking/admitting a writer or a second reader) is graded end-to-end by the "
+    "case-driven `when.concurrency` "
     "rounds runner (`parallax.conformance.concurrency_runner`, "
     "`test_run_sweep.test_read_lock_concurrency_rounds`) — a genuine two-connection "
     "concurrency property no single-session idiomatic example can demonstrate; the "
@@ -1267,10 +1258,8 @@ CASE_SKIP_REASONS: Final[dict[str, str]] = {
     "m-opt-lock-011": _OPT_LOCK_BOUNDARY_RUNNER_REASON,
     "m-opt-lock-012": _OPT_LOCK_INTERLEAVED_RACE_REASON,
     "m-read-lock-001": _READ_LOCK_HARNESS_GOLDEN_REASON,
-    "m-read-lock-003": _READ_LOCK_PROJECTION_UNAUTHORABLE_REASON,
     "m-read-lock-006": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-007": _READ_LOCK_TWO_SESSION_REASON,
-    "m-read-lock-008": _READ_LOCK_TWO_SESSION_REASON,
     "m-read-lock-010": _READ_LOCK_PARTITIONED_GOLDEN_REASON,
     "m-read-lock-011": _READ_LOCK_TWO_SESSION_REASON,
     # -- m-batch-write: versioned per-key delete materialization ------------- #

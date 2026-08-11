@@ -1,9 +1,7 @@
 """``parallax.core.read_lock`` unit tests (m-read-lock).
 
-The pure mode -> lock policy scope (:func:`~parallax.core.read_lock.mode_for`):
-mode x find-vs-projection is exercised end-to-end by the compile sweep (the
-`distinct` suppression lives at the `m-sql` append site, out of this module's
-scope by design — see the module docstring); this file pins the policy
+The pure mode -> lock policy scope (:func:`~parallax.core.read_lock.mode_for`)
+is exercised end-to-end by the compile sweep. This file pins the policy
 function itself in isolation.
 """
 

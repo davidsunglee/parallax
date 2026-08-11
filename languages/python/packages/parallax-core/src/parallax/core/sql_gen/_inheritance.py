@@ -922,7 +922,6 @@ class BranchNarrowPlan:
 def plan_inheritance_read(
     entity: EntityMetadata,
     predicate: Operation,
-    distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     model: Metamodel,
@@ -949,9 +948,7 @@ def plan_inheritance_read(
         return _plan_tph_read(
             entity, view, position, inner, facet, storage, instance_form, narrowed
         )
-    return _plan_tpcs_read(
-        position, inner, distinct, order_keys, limit, facet, storage, instance_form, lock
-    )
+    return _plan_tpcs_read(position, inner, order_keys, limit, facet, storage, instance_form, lock)
 
 
 def _read_position(
@@ -1027,7 +1024,6 @@ def _plan_tph_read(
 def _plan_tpcs_read(
     position: InheritancePositionView,
     inner: Operation,
-    distinct: bool,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     facet: InheritanceFacet,
@@ -1079,9 +1075,9 @@ def _plan_tpcs_read(
             transform=transform,
         )
 
-    if distinct or order_keys or limit is not None or lock is not None:  # pragma: no cover
+    if order_keys or limit is not None or lock is not None:  # pragma: no cover
         raise SqlGenError(
-            "distinct / orderBy / limit / a read-lock suffix over a table-per-concrete-"
+            "orderBy / limit / a read-lock suffix over a table-per-concrete-"
             "subtype union-all read (2+ effective concretes) has no goldened lowering yet"
         )
     # Instance-form: a VO-FREE family's

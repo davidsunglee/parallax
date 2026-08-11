@@ -149,10 +149,10 @@ _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
 # connection golden — the module's OWN witness for "the default (locking)
 # in-transaction object find" (`m-read-lock.md`), so its `when.uow`-free read
 # still compiles the locked golden through `engine._read_case_concurrency`'s
-# module-scoped default. `m-read-lock-002`/`-003`/`-005` are the
+# module-scoped default. `m-read-lock-002`/`-005` are the
 # `api-conformance`-lane runtime matrix (an explicit `when.uow.concurrency`
-# locking object-find lock / locking-mode projection-omits-lock / optimistic-
-# mode omits-lock): compile-eligible (no `compileEligibility` declared), so
+# locking object-find lock / optimistic-mode omits-lock): compile-eligible
+# (no `compileEligibility` declared), so
 # the compile sweep grades their golden SQL byte-exact here — the SAME lane
 # routing precedent `m-snapshot-read-011` already sets (an `api-conformance`-
 # lane read whose wire-level SQL the ordinary compile/run lanes still grade,
@@ -166,7 +166,6 @@ _READ_LOCK_READS: Final[frozenset[str]] = frozenset(
     {
         "m-read-lock-001",
         "m-read-lock-002",
-        "m-read-lock-003",
         "m-read-lock-005",
         "m-read-lock-010",
     }

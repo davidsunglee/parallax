@@ -10,9 +10,8 @@ Aggregation is deferred **as a whole feature**: no active module depends on
 `m-sql-agg`.
 
 - **Edges:** `m-sql-agg --> m-agg`, `m-sql-agg --> m-sql`.
-- **Behavioral floor.** The aggregate golden SQL is pinned by cases
-  `m-agg-001`–`m-agg-018` (which carry both `m-agg` and `m-sql-agg` tags): the
-  grouped `select`, the aggregate-expression emission with `<as>` aliases, the
-  companion sample-count column for `stdDev*` / `variance*`, and the
-  `having` binds appended after any `where` binds. That floor stays green; the
-  full lowering specification is deferred beyond it.
+- **Coverage.** This deferred module is contract-covered and carries no
+  compatibility fixtures. Its future implementation must define and fixture the
+  grouped `select`, aggregate-expression aliases, companion sample-count columns
+  for `stdDev*` / `variance*`, and `having` bind order together with the aggregate
+  query envelope that invokes them.

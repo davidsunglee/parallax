@@ -15,7 +15,6 @@ when:
   targetEntity: parallax.compatibility.Pet
   operation:
     narrow:
-      entity: parallax.compatibility.Pet
       to: [parallax.compatibility.Pet]
       operand:
         all: {}
