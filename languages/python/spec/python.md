@@ -2775,10 +2775,11 @@ or descriptor authoring form and performs no audit stamping.
   is tracked per thread; a transaction object is owned by its outermost
   closure invocation and is not thread-safe; escaping references raise on use
   after the scope ends. The per-transaction participation mode is
-  `locking` (default — in-transaction reads take the dialect's shared read
-  lock) or `optimistic` (no read locks; keyed writes gate on the observed
-  version analogue). Connections open at the database's default isolation
-  (READ COMMITTED); no isolation knob is exposed.
+  `locking` (default — a lockable in-transaction object find carries the
+  dialect's shared read lock) or `optimistic` (the same object find omits that
+  lock; keyed writes gate on the observed version analogue). Connections open
+  at the database's default isolation (READ COMMITTED); no isolation knob is
+  exposed.
 - **Buffering, flush, and read-your-own-writes.** Writes buffer in the unit of
   work and flush at commit, combined and batched per `m-batch-write` (multi-row
   INSERT collapse, per-key UPDATE batching, IN-list DELETE collapse) and

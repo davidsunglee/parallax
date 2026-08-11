@@ -11,7 +11,7 @@
 # (value 100, valid [2024-01-01, infinity)) then an UPDATE to 150, flushing as ONE
 # fully-Latest rectangle INSERT (thru_z = out_z = infinity) at the FINAL value 150 —
 # no inactivation UPDATE, no head/tail split. Step 1's bitemporal Latest find on BOTH
-# dimensions (optimistic mode, so no read lock) observes that one rectangle. In the
+# dimensions (an optimistic-mode object find, so it omits the shared read lock) observes that one rectangle. In the
 # neutral write input `validFrom` is the canonical Valid-Time lower bound (from_z), a
 # plain insert omits `until` (the window runs to infinity), and `at` is the
 # Clock-supplied Transaction-Time instant (in_z), never an instruction field.

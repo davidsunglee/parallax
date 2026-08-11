@@ -902,19 +902,21 @@ A unit of work selects, per transaction, **how** its read-then-writes are made
 correct — mirroring Reladomo's `TxParticipationMode`. Two strategies:
 
 - **`locking`** (the **default**) — the automatic in-transaction shared read lock
-  (`m-read-lock`). Reads take a row lock, and every observation-requiring write
-  records the explicit `Ungated` decision.
-- **`optimistic`** — the alternative (`m-opt-lock`): reads take **no** lock (so
-  readers never block writers), and every observation-requiring keyed write
-  carries the gate its observation supplies. Selected explicitly on the unit of
-  work (`concurrency: optimistic`).
+  (`m-read-lock`). A lockable object find participating in a read-then-write takes
+  a row lock, and every observation-requiring write records the explicit `Ungated`
+  decision.
+- **`optimistic`** — the alternative (`m-opt-lock`): the same participating object
+  find takes **no** lock, and every observation-requiring keyed write carries the
+  gate its observation supplies. Selected explicitly on the unit of work
+  (`concurrency: optimistic`).
 
 The mode is a property of the **unit of work**, not of the entity: the same
 versioned entity is written under the shared lock in one workflow and under the
 version gate in another. The metamodel only *names* the version column
-(`m-descriptor`); opting into optimistic mode is what drops the read locks and
-emits the gate. The mode is consumed **during** planning: it decides each step's
-concurrency decision and never appears in the Write Plan itself.
+(`m-descriptor`); opting into optimistic mode is what makes participating object
+finds omit the shared lock and emits the gate. The mode is consumed **during**
+planning: it decides each step's concurrency decision and never appears in the
+Write Plan itself.
 
 ## What the suite pins down
 

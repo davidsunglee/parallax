@@ -22,7 +22,7 @@ from reference_harness.case_runner import (
     _assert_child_ordering,
     _assert_deep_fetch,
     _assert_graphs,
-    _expected_asof_suffix,
+    _expected_pin_suffix,
     _FetchStep,
     _graphs_equal,
     _HopKey,
@@ -385,13 +385,13 @@ def _policy_model():
 def test_expected_suffix_both_latest():
     coverage = _policy_model().entity("Coverage")
     # No pins -> both axes default to latest -> equality on each axis.
-    assert _expected_asof_suffix(coverage, {}) == ["infinity", "infinity"]
+    assert _expected_pin_suffix(coverage, {}) == ["infinity", "infinity"]
 
 
 def test_expected_suffix_valid_past_transaction_latest():
     coverage = _policy_model().entity("Coverage")
     pins = {"valid-time": "2024-03-01T00:00:00+00:00"}  # Transaction Time defaults to latest
-    assert _expected_asof_suffix(coverage, pins) == [
+    assert _expected_pin_suffix(coverage, pins) == [
         "2024-03-01T00:00:00+00:00",
         "2024-03-01T00:00:00+00:00",
         "infinity",
@@ -401,7 +401,7 @@ def test_expected_suffix_valid_past_transaction_latest():
 def test_expected_suffix_valid_latest_transaction_past():
     coverage = _policy_model().entity("Coverage")
     pins = {"transaction-time": "2024-02-01T00:00:00+00:00"}  # Valid Time defaults to latest
-    assert _expected_asof_suffix(coverage, pins) == [
+    assert _expected_pin_suffix(coverage, pins) == [
         "infinity",
         "2024-02-01T00:00:00+00:00",
         "2024-02-01T00:00:00+00:00",
@@ -414,7 +414,7 @@ def test_expected_suffix_both_past_is_valid_time_first():
         "valid-time": "2024-03-01T00:00:00+00:00",
         "transaction-time": "2024-02-01T00:00:00+00:00",
     }
-    assert _expected_asof_suffix(coverage, pins) == [
+    assert _expected_pin_suffix(coverage, pins) == [
         "2024-03-01T00:00:00+00:00",
         "2024-03-01T00:00:00+00:00",
         "2024-02-01T00:00:00+00:00",
@@ -424,12 +424,12 @@ def test_expected_suffix_both_past_is_valid_time_first():
 
 def test_expected_suffix_transaction_only_latest():
     line = load_model(COMPATIBILITY_ROOT, "models/invoice.yaml").entity("InvoiceLine")
-    assert _expected_asof_suffix(line, {}) == ["infinity"]
+    assert _expected_pin_suffix(line, {}) == ["infinity"]
 
 
 def test_expected_suffix_non_temporal_child_is_empty():
     note = load_model(COMPATIBILITY_ROOT, "models/lease.yaml").entity("LeaseNote")
-    assert _expected_asof_suffix(note, {"transaction-time": "2024-02-01T00:00:00+00:00"}) == []
+    assert _expected_pin_suffix(note, {"transaction-time": "2024-02-01T00:00:00+00:00"}) == []
 
 
 def test_root_pins_reads_nested_asof_by_axis():

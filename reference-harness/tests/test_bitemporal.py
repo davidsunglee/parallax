@@ -27,8 +27,8 @@ from reference_harness.case_runner import (
     _assert_write_input_columns,
     _assert_write_step_count,
     _has_temporal_gate,
-    _read_asof_pins,
     _read_table,
+    _read_temporal_selections,
     _write_column_order,
 )
 from reference_harness.ddl_builder import contributor_types, ddl_for
@@ -742,12 +742,77 @@ def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
     # oracle recomputes them from the read's complete canonical selections, independent
     # of the authored golden.
     case = _inheritance_case("m-inheritance-093")
-    assert _read_asof_pins(case) == {
-        "valid-time": "2024-06-01T00:00:00+00:00",
-        "transaction-time": "latest",
-    }
+    assert set(_read_temporal_selections(case)) == {"valid-time", "transaction-time"}
     _assert_temporal_union_binds(case, "postgres")  # must not raise
     _assert_temporal_union_binds(case, "mariadb")  # the shared binds hold per dialect
+
+
+@pytest.mark.parametrize(
+    ("valid_tag", "valid_fields", "valid_binds"),
+    [
+        (
+            "asOf",
+            {"coordinate": "2024-03-01T00:00:00+00:00"},
+            ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00"],
+        ),
+        (
+            "asOfRange",
+            {
+                "start": "2024-03-01T00:00:00+00:00",
+                "end": "2024-04-01T00:00:00+00:00",
+            },
+            ["2024-04-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00"],
+        ),
+        ("history", {}, []),
+    ],
+)
+@pytest.mark.parametrize(
+    ("tx_tag", "tx_fields", "tx_binds"),
+    [
+        (
+            "asOf",
+            {"coordinate": "2024-02-01T00:00:00+00:00"},
+            ["2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"],
+        ),
+        (
+            "asOfRange",
+            {
+                "start": "2024-02-01T00:00:00+00:00",
+                "end": "2024-05-01T00:00:00+00:00",
+            },
+            ["2024-05-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"],
+        ),
+        ("history", {}, []),
+    ],
+)
+def test_tpcs_temporal_union_variants_compose_independently(
+    valid_tag: str,
+    valid_fields: dict[str, str],
+    valid_binds: list[str],
+    tx_tag: str,
+    tx_fields: dict[str, str],
+    tx_binds: list[str],
+) -> None:
+    case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
+    tx_selection = {
+        tx_tag: {
+            "operand": {"all": {}},
+            "dimension": "transaction-time",
+            **tx_fields,
+        }
+    }
+    case.when["operation"] = {
+        valid_tag: {
+            "operand": tx_selection,
+            "dimension": "valid-time",
+            **valid_fields,
+        }
+    }
+    per_branch = valid_binds + tx_binds
+    case.then["statements"][0]["binds"] = per_branch * 2
+
+    assert set(_read_temporal_selections(case)) == {"valid-time", "transaction-time"}
+    _assert_temporal_union_binds(case, "postgres")
 
 
 def test_tpcs_temporal_union_read_corrupt_branch_asof_bind_is_rejected() -> None:
