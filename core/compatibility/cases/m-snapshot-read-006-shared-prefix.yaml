@@ -1,10 +1,9 @@
-# Snapshot graph, SHARED-PREFIX paths (m-snapshot-read): two include paths sharing a
-# prefix fetch that prefix ONCE.
+# Snapshot graph, SHARED-PREFIX levels (m-snapshot-read): the canonical maximal
+# include path materializes its prefix ONCE.
 #
 # The snapshot twin of the m-deep-fetch shared-prefix shape (no m-op-list tag). The
-# includes are `{ segments: [{ rel: Order.items }] }` and
-# `{ segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }`; the shared
-# `Order.items` hop is de-duplicated, so the level count is 3, not 4:
+# include is the maximal `Order.items -> OrderItem.statuses` path; its
+# `Order.items` prefix is materialized, so the level count is 3:
 #   level 0 (root)     : all orders
 #   level 1 (items)    : items keyed by the distinct order ids {1,2,3,4,5,42}
 #   level 2 (statuses) : item-level statuses keyed by the distinct item ids
@@ -25,8 +24,13 @@ when:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: parallax.compatibility.Order.items }] }
         - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
+  equivalentEncodings:
+    - deepFetch:
+        operand: { all: {} }
+        paths:
+          - { segments: [{ rel: parallax.compatibility.Order.items }] }
+          - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
 then:
   statements:
     - sql:

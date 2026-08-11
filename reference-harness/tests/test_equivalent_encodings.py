@@ -14,6 +14,7 @@ import pytest
 
 from reference_harness.case import Case, Model
 from reference_harness.case_runner import CaseFailure, _assert_equivalent_encodings
+from reference_harness.serde import canonical
 
 
 def _case(operation: dict, equivalent_encodings: list[dict] | None = None) -> Case:
@@ -128,3 +129,49 @@ def test_scenario_step_normalizes_its_own_equivalent_encoding() -> None:
         fixtures={},
     )
     _assert_equivalent_encodings(Case(path=Path("cases/balance.yaml"), raw=raw, model=model))
+
+
+def test_include_paths_are_an_order_insensitive_canonicalized_set() -> None:
+    maximal = {
+        "segments": [
+            {"rel": "Order.items"},
+            {"rel": "OrderItem.statuses"},
+        ]
+    }
+    canonical_operation = {
+        "deepFetch": {
+            "operand": {"all": {}},
+            "paths": [maximal, {"segments": [{"rel": "Order.statuses"}]}],
+        }
+    }
+    alternate = {
+        "deepFetch": {
+            "operand": {"all": {}},
+            "paths": [
+                {"segments": [{"rel": "Order.statuses"}]},
+                {"segments": [{"rel": "Order.items"}]},
+                maximal,
+                maximal,
+            ],
+        }
+    }
+    assert canonical(alternate) == canonical(canonical_operation)
+
+
+def test_include_canonicalization_keeps_broad_and_narrowed_paths_distinct() -> None:
+    broad = {"segments": [{"rel": "Person.pets"}]}
+    narrowed = {"segments": [{"rel": "Person.pets", "narrow": {"to": ["Dog"]}}]}
+    operation = {"deepFetch": {"operand": {"all": {}}, "paths": [narrowed, broad, narrowed]}}
+    assert canonical(operation)["deepFetch"]["paths"] == [broad, narrowed]
+
+
+def test_canonicalization_keeps_other_list_order_significant() -> None:
+    and_left = {"and": {"operands": [{"x": 1}, {"y": 2}]}}
+    and_right = {"and": {"operands": [{"y": 2}, {"x": 1}]}}
+    or_left = {"or": {"operands": [{"x": 1}, {"y": 2}]}}
+    or_right = {"or": {"operands": [{"y": 2}, {"x": 1}]}}
+    narrow_left = {"narrow": {"to": ["Cat", "Dog"], "operand": {"all": {}}}}
+    narrow_right = {"narrow": {"to": ["Dog", "Cat"], "operand": {"all": {}}}}
+    assert canonical(and_left) != canonical(and_right)
+    assert canonical(or_left) != canonical(or_right)
+    assert canonical(narrow_left) != canonical(narrow_right)

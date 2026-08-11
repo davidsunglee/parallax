@@ -13,8 +13,8 @@ for BOTH the operation encoding and the model descriptor, in BOTH formats.
 The deserializer is the inverse of the serializer for the JSON/YAML data model.
 Because the canonical model is already JSON-compatible, round-trip fidelity is
 about formatting determinism: a node must serialize the same way after a
-serialize -> deserialize cycle. We canonicalize by sorting object keys so the
-written form is deterministic regardless of authoring order.
+serialize -> deserialize cycle. We canonicalize by sorting object keys and by
+normalizing the one order-insensitive list, ``deepFetch.paths``.
 """
 
 from __future__ import annotations
@@ -34,20 +34,93 @@ FORMATS = (JSON, YAML)
 def _canonicalize(value: Any) -> Any:
     """Return a deterministically-ordered, JSON-compatible copy of *value*.
 
-    Object keys are sorted; lists keep their order (order is significant in the
-    algebra and in attribute/row sequences). Scalars pass through unchanged,
-    except an :class:`~reference_harness.portable_literal.AuthoredNumber`, whose
-    authored digits are decode context rather than document content: the document
-    holds the number, which is what re-reading the written form answers, so
-    keeping the carrier would break the round-trip property this module asserts.
+    Object keys are sorted. Lists keep their order because it is significant in
+    the algebra and in attribute/row sequences, except ``deepFetch.paths``, which
+    is a canonicalized set. Scalars pass through unchanged, except an
+    :class:`~reference_harness.portable_literal.AuthoredNumber`, whose authored
+    digits are decode context rather than document content: the document holds
+    the number, which is what re-reading the written form answers, so keeping the
+    carrier would break the round-trip property this module asserts.
     """
     if isinstance(value, dict):
-        return {key: _canonicalize(value[key]) for key in sorted(value)}
+        canonical = {key: _canonicalize(value[key]) for key in sorted(value)}
+        deep_fetch = canonical.get("deepFetch")
+        if len(canonical) == 1 and isinstance(deep_fetch, dict):
+            paths = deep_fetch.get("paths")
+            if isinstance(paths, list):
+                deep_fetch["paths"] = _canonical_include_paths(paths)
+        return canonical
     if isinstance(value, list):
         return [_canonicalize(item) for item in value]
     if isinstance(value, AuthoredNumber):
         return float(value)
     return value
+
+
+def _relationship_key(spelling: str) -> tuple[str, str, str]:
+    *owner, relationship = spelling.split(".")
+    *namespace, entity = owner
+    return ".".join(namespace), entity, relationship
+
+
+def _narrow_key(value: object) -> tuple[int, tuple[object, ...]]:
+    if value is None:
+        return (0, ())
+    if not isinstance(value, dict) or not isinstance(value.get("to"), list):
+        raise TypeError
+    return (1, tuple(value["to"]))
+
+
+def _include_path_key(
+    path: dict[str, Any],
+) -> tuple[object, ...]:
+    segments = path["segments"]
+    if not isinstance(segments, list):
+        raise TypeError
+    segment_keys = tuple(
+        (_relationship_key(segment["rel"]), _narrow_key(segment.get("narrow")))
+        for segment in segments
+        if isinstance(segment, dict) and isinstance(segment.get("rel"), str)
+    )
+    if len(segment_keys) != len(segments):
+        raise TypeError
+    return segment_keys, _narrow_key(path.get("narrow"))
+
+
+def _include_path_shape(path: dict[str, Any]) -> tuple[object, tuple[object, ...]]:
+    segments = path["segments"]
+    if not isinstance(segments, list):
+        raise TypeError
+    return _freeze(path.get("narrow")), tuple(_freeze(segment) for segment in segments)
+
+
+def _freeze(value: Any) -> object:
+    if isinstance(value, dict):
+        return tuple((key, _freeze(item)) for key, item in sorted(value.items()))
+    if isinstance(value, list):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _canonical_include_paths(paths: list[Any]) -> list[Any]:
+    if not all(isinstance(path, dict) and "segments" in path for path in paths):
+        return paths
+    try:
+        unique = {_freeze(path): path for path in paths}
+        candidates = [(path, _include_path_shape(path)) for path in unique.values()]
+        maximal = [
+            path
+            for path, shape in candidates
+            if not any(
+                shape[0] == extension_shape[0]
+                and len(shape[1]) < len(extension_shape[1])
+                and extension_shape[1][: len(shape[1])] == shape[1]
+                for _, extension_shape in candidates
+            )
+        ]
+        return sorted(maximal, key=_include_path_key)
+    except (KeyError, TypeError, ValueError):
+        return paths
 
 
 # --- format writers (the pluggable seam) ----------------------------------
@@ -78,10 +151,10 @@ def canonical(value: Any) -> Any:
 
     This is the public canonicalization used to decide node *identity*: two
     authored encodings that canonicalize to the same value (object keys sorted;
-    list order preserved, since order is significant in the algebra) denote the
-    same operation. The group-precedence fixtures rely on this: a prefix surface
-    and a fluent surface are illustrative DX only, and both MUST canonicalize to
-    the single mandated ``group`` node.
+    list order preserved wherever the algebra makes it significant; include paths
+    normalized as a set) denote the same operation. The group-precedence fixtures
+    rely on this: a prefix surface and a fluent surface are illustrative DX only,
+    and both MUST canonicalize to the single mandated ``group`` node.
     """
     return _canonicalize(value)
 

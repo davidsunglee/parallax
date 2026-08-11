@@ -19,10 +19,10 @@ own read (`m-value-object`, "Materialization and navigation contract").
 ## Deep fetch: one query per non-empty relationship level
 
 `deepFetch(operand, paths)` resolves `operand` (the root query), then eagerly
-fetches each navigation `path` — a closed object whose required `segments` member
-is the ordered, non-empty list of hops that path traverses, plus an optional root
-`narrow` guarding which of the resolved objects that path starts from (*Path-root
-guards*, below). The normative guarantee:
+fetches the canonical include-path set owned by `m-op-algebra`. That module owns
+the path and segment grammar, canonical ordering, duplicate collapse, maximal-
+path rule, and the distinction between broad and narrowed paths. This module
+consumes that canonical set and owns its level planning. The normative guarantee:
 
 > The number of SQL statements is **at most `1 + L`**, where `L` is the number
 > of **distinct relationship hops** across all declared paths. A level whose
@@ -43,9 +43,12 @@ Concretely, for each relationship level:
    each child set under the relationship name (a list for a to-many relationship,
    a single object or null for a to-one).
 
-Paths that share a segment prefix (e.g. `{ segments: [{ rel: Order.items }] }` and
-`{ segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] }`) fetch the
-shared hop **once** — the hop is de-duplicated, so it counts as a single level.
+Every retained path materializes its prefixes as levels. Thus the canonical
+maximal path `{ segments: [{ rel: Order.items }, { rel:
+OrderItem.statuses }] }` fetches both `items` and `statuses`; separately spelling
+the exact `Order.items` prefix changes neither the canonical include set nor the
+plan. Paths whose retained branches share a segment prefix fetch that shared hop
+**once** — the hop is de-duplicated, so it counts as a single level.
 
 ### A level names its correlation members, not only their columns
 
@@ -121,9 +124,9 @@ the non-`NULL` values in the declared direction.
 
 A deep-fetch hop whose relationship target is a **polymorphic position**
 (`m-inheritance` — an abstract root or abstract subtype) eagerly fetches concrete
-instances across the family. A path segment MAY carry a `narrow` whose `to` is
-`m-inheritance`'s shared Subtype Selection. It fetches only the resolved subset of
-the relationship target; a selection escaping that target is
+instances across the family. `m-op-algebra` owns the segment's optional `narrow`
+grammar; this planner resolves that shared Subtype Selection and fetches only the
+resolved subset of the relationship target. A selection escaping that target is
 `narrow-outside-relationship-target` (`m-navigate`).
 
 **A narrowed hop populates a distinct narrowed relationship view**, keyed by a
@@ -170,10 +173,9 @@ counting as distinct.
 
 ### Path-root guards
 
-A path MAY also carry a **root** `narrow` (`m-op-algebra`, `{ to }`)
-beside its `segments`, which **guards which queried objects the path starts
-from**. It is the deliberate opposite of a segment narrow, and the contrast is
-the whole of its semantics:
+The optional path-root `narrow` owned by `m-op-algebra` **guards which queried
+objects the path starts from**. It is the deliberate opposite of a segment
+narrow, and the contrast is the whole of its planning semantics:
 
 | | root `narrow` | segment `narrow` |
 |---|---|---|

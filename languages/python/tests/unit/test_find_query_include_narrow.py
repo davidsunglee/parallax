@@ -168,6 +168,37 @@ def test_include_accumulates_across_calls() -> None:
     assert len(op.paths) == 2
 
 
+def test_include_accumulation_canonicalizes_order_and_literal_duplicates() -> None:
+    query = (
+        sm.SnapOrder.where(sm.SnapOrder.all)
+        .include(sm.SnapOrder.statuses, sm.SnapOrder.items)
+        .include(sm.SnapOrder.items)
+    )
+    op = lowered_operation(query)
+    assert isinstance(op, DeepFetch)
+    assert op.paths == (
+        NavigationPath(segments=(PathSegment(rel="parallax.compatibility.SnapOrder.items"),)),
+        NavigationPath(segments=(PathSegment(rel="parallax.compatibility.SnapOrder.statuses"),)),
+    )
+
+
+def test_include_retains_only_the_maximal_equivalent_path() -> None:
+    query = sm.SnapOrder.where(sm.SnapOrder.all).include(
+        sm.SnapOrder.items,
+        sm.SnapOrder.items.statuses,
+    )
+    op = lowered_operation(query)
+    assert isinstance(op, DeepFetch)
+    assert op.paths == (
+        NavigationPath(
+            segments=(
+                PathSegment(rel="parallax.compatibility.SnapOrder.items"),
+                PathSegment(rel="parallax.compatibility.SnapOrderItem.statuses"),
+            )
+        ),
+    )
+
+
 def test_include_with_no_paths_raises() -> None:
     with pytest.raises(QueryDefinitionError, match="at least one path"):
         sm.SnapOrder.where(sm.SnapOrder.all).include()
@@ -197,6 +228,27 @@ def test_include_of_a_narrowed_path_serializes_the_hop_narrow() -> None:
     op = lowered_operation(query)
     assert isinstance(op, DeepFetch)
     assert op.paths[0].segments[0].narrow == ("parallax.compatibility.Invoice",)
+
+
+def test_include_canonicalization_keeps_broad_and_narrowed_paths_distinct() -> None:
+    query = im.Folder.where(im.Folder.all).include(
+        im.Folder.documents.narrow(im.Invoice),
+        im.Folder.documents,
+        im.Folder.documents.narrow(im.Invoice),
+    )
+    op = lowered_operation(query)
+    assert isinstance(op, DeepFetch)
+    assert op.paths == (
+        NavigationPath(segments=(PathSegment(rel="parallax.compatibility.Folder.documents"),)),
+        NavigationPath(
+            segments=(
+                PathSegment(
+                    rel="parallax.compatibility.Folder.documents",
+                    narrow=("parallax.compatibility.Invoice",),
+                ),
+            )
+        ),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -248,11 +300,11 @@ def test_include_through_two_subtypes_authors_two_guarded_paths() -> None:
     assert op.paths == (
         NavigationPath(
             segments=(PathSegment(rel="parallax.compatibility.Animal.owner"),),
-            narrow=("parallax.compatibility.Dog",),
+            narrow=("parallax.compatibility.Cat",),
         ),
         NavigationPath(
             segments=(PathSegment(rel="parallax.compatibility.Animal.owner"),),
-            narrow=("parallax.compatibility.Cat",),
+            narrow=("parallax.compatibility.Dog",),
         ),
     )
 

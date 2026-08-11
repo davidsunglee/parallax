@@ -1,10 +1,10 @@
 # Two guarded branches over one relationship DIVERGE at the next level, and each
 # deeper hop descends from its own branch's parents (m-deep-fetch, m-inheritance).
 #
-# Three paths guard `Animal.owner` at the root: to {Dog}, to {WildBoar}, and to
-# {Dog} again continuing through `Person.pets`. The third path's first hop
-# deduplicates onto the first path's, so `1 + L` = 4 — the Dog owners (10, 11), the
-# WildBoar owner (12), and the pets of the DOG branch's owners alone. The semantic
+# Two canonical maximal paths guard `Animal.owner` at the root: to {WildBoar},
+# and to {Dog} continuing through `Person.pets`. The Dog path materializes its
+# first hop once, so `1 + L` = 4 — the WildBoar owner (12), the Dog owners
+# (10, 11), and the pets of the DOG branch's owners alone. The semantic
 # distinction the case pins down is branch provenance: the two guarded owner hops
 # fill the same ordinary `owner` view but keep separate parent sets, so the `pets`
 # level is keyed by 10 and 11 — never by 12, the owner the WildBoar branch reached
@@ -26,7 +26,6 @@ when:
       operand:
         all: {}
       paths:
-        - { narrow: { to: [parallax.compatibility.Dog] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
         - { narrow: { to: [parallax.compatibility.WildBoar] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
         - narrow: { to: [parallax.compatibility.Dog] }
           segments:
@@ -37,11 +36,11 @@ then:
     - sql:
         postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
     - sql:
-        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?)
-      binds: [10, 11]
-    - sql:
         postgres: select t0.id, t0.name from person t0 where t0.id in (?)
       binds: [12]
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?)
+      binds: [10, 11]
     - sql:
         postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume from animal t0 where t0.owner_id in (?, ?) and t0.kind in (?, ?)
       binds: [10, 11, cat, dog]

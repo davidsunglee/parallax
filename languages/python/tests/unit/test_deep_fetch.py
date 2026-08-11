@@ -37,6 +37,7 @@ from parallax.core.op_algebra import (
     OrderBy,
     PathSegment,
 )
+from parallax.core.op_algebra._builders import _canonical_includes
 from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
@@ -95,6 +96,18 @@ def test_shared_prefix_dedups_to_one_level() -> None:
     assert statuses.attach_key == "statuses"
     assert isinstance(statuses.parent, deep_fetch.LevelRef)
     assert statuses.parent.index == 0
+
+
+def test_canonicalized_path_set_is_idempotent_and_plans_the_same_levels() -> None:
+    authored = (
+        _path(_seg("Order.items")),
+        _path(_seg("Order.items"), _seg("OrderItem.statuses")),
+        _path(_seg("Order.items")),
+    )
+    canonical = _canonical_includes(authored)
+    assert canonical == (_path(_seg("Order.items"), _seg("OrderItem.statuses")),)
+    assert _canonical_includes(canonical) == canonical
+    assert _plan(ORDERS, "Order", authored).levels == _plan(ORDERS, "Order", canonical).levels
 
 
 def test_two_independent_paths_off_root_are_two_levels_both_rooted() -> None:
