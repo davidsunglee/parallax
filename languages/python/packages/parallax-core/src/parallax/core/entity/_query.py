@@ -58,6 +58,7 @@ from parallax.core.op_algebra import (
     OrderKey,
     QueryDefinitionError,
 )
+from parallax.core.op_algebra._builders import _canonical_includes
 from parallax.core.op_algebra.nodes import (
     TemporalDimension as WireDimension,
 )
@@ -177,14 +178,16 @@ class FindQuery[E, S]:
     _order_keys: tuple[OrderKey, ...] = ()
     _limit: int | None = None
     # Deep-fetch include paths (``m-deep-fetch``), each a hop sequence built by
-    # chained ``Rel[T]`` class access; accumulates across calls.
+    # chained ``Rel[T]`` class access; canonicalized after every accumulation.
     _include: tuple[NavigationPath, ...] = ()
 
     def include(self, *paths: RelationshipPath[E, Any]) -> FindQuery[E, S]:
         """Deep-fetch one or more relationship paths (python.md §2):
         ``Order.where(...).include(Order.items, Order.tags)``. One path grammar
         shared with predicates; a longer path implies its intermediates.
-        Accumulates across calls (not single-shot).
+        Accumulates across calls (not single-shot) into the canonical include
+        set: sorted, deduplicated, and stripped of exact prefixes a retained
+        extension already materializes.
 
         Legality is measured against the QUERIED Entity, never against the
         narrowed result: a root narrow constrains which objects come back, not
@@ -206,7 +209,7 @@ class FindQuery[E, S]:
             NavigationPath(segments=path.segments, narrow=self._root_guard(path.source))
             for path in paths
         )
-        return replace(self, _include=self._include + added)
+        return replace(self, _include=_canonical_includes(self._include + added))
 
     def order_by(self, *keys: SortKey[S]) -> FindQuery[E, S]:
         """Order the result by one or more Sort Keys (``Attr.asc()`` /

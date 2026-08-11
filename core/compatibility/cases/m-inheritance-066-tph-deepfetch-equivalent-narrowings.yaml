@@ -24,8 +24,8 @@ when:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Pet] } }] }
         - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Cat, parallax.compatibility.Dog] } }] }
+        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Pet] } }] }
 then:
   statements:
     - sql:

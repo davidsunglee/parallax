@@ -1,12 +1,13 @@
 # Two OVERLAPPING path-root guards over one relationship stay two hops, and the
 # shared roots are fetched twice (m-deep-fetch, m-inheritance).
 #
-# The two guards on `Animal.owner` are `to: [Dog, WildBoar]` and `to: [Cat, Dog]`:
+# The two guards on `Animal.owner` are canonically `to: [Cat, Dog]` and
+# `to: [Dog, WildBoar]`:
 # they share the Dog roots, yet neither contains the other, so this is the one
 # guard relation that is neither equal, nor disjoint, nor containment. Hop identity
 # keys on the resolved source set, and {Dog, WildBoar} != {Cat, Dog}, so the two
-# stay distinct — `1 + L` = 3, with the first child keyed by the Dog and WildBoar
-# roots' owner ids (10, 11, 12) and the second by the Cat and Dog roots' (10, 11).
+# stay distinct — `1 + L` = 3, with the first child keyed by the Cat and Dog
+# roots' owner ids (10, 11) and the second by the Dog and WildBoar roots' (10, 11, 12).
 # Rex and Fido, whom BOTH guards admit, therefore have their owner fetched twice.
 # The semantic distinction the case pins down is that the overlap is idempotent
 # and invisible in the object graph: both hops attach to the SAME ordinary `owner`
@@ -28,18 +29,18 @@ when:
       operand:
         all: {}
       paths:
-        - { narrow: { to: [parallax.compatibility.Dog, parallax.compatibility.WildBoar] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
         - { narrow: { to: [parallax.compatibility.Cat, parallax.compatibility.Dog] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
+        - { narrow: { to: [parallax.compatibility.Dog, parallax.compatibility.WildBoar] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
 then:
   statements:
     - sql:
         postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
     - sql:
-        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?, ?)
-      binds: [10, 11, 12]
-    - sql:
         postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?)
       binds: [10, 11]
+    - sql:
+        postgres: select t0.id, t0.name from person t0 where t0.id in (?, ?, ?)
+      binds: [10, 11, 12]
   referenceSql: select id, kind, name, owner_id, license_id, indoor, bark_volume, tusk_length from animal
   graph:
     Animal:

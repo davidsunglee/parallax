@@ -1,25 +1,14 @@
-# Deep fetch, SHARED-PREFIX levels — the canonical maximal path materializes its
-# exact prefix once (m-deep-fetch dedup).
-#
-# m-deep-fetch-004 fetches two INDEPENDENT paths off the root; this is the spec's
-# shared-prefix example after Includes canonicalization retains only the maximal
-# `Order.items -> OrderItem.statuses` path. Its `Order.items` prefix remains a
-# materialized level and MUST be fetched ONCE, so the level count is 3:
-#   level 0 (root)     : all orders
-#   level 1 (items)    : items keyed by the distinct order ids {1,2,3,4,5,42}
-#   level 2 (statuses) : item-level statuses keyed by the distinct item ids
-#                        {11,12,21,421,422}
-# A naive reading would fetch `Order.items` twice (once per path); the harness
-# asserts exactly 3 statements, proving the prefix is shared.
+# Includes maximal-prefix retention — the two-hop path canonically subsumes its
+# exact one-hop prefix, while prefix materialization still plans items and statuses
+# as two child levels and therefore preserves the three-round-trip observation.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, shared-prefix, relationship, slice-managed-1]
+tags: [m-deep-fetch, includes-prefix-retention]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order
   operation:
     deepFetch:
-      operand:
-        all: {}
+      operand: { all: {} }
       paths:
         - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
   equivalentEncodings:
@@ -78,30 +67,9 @@ then:
             quantity: 4
             shipped_on: 2024-02-20
             statuses: []
-      - id: 3
-        name: ada
-        sku: A-300
-        qty: 15
-        price: 30.25
-        active: false
-        ordered_on: 2024-03-15
-        items: []
-      - id: 4
-        name: Margaret
-        sku: null
-        qty: 20
-        price: 40.00
-        active: true
-        ordered_on: 2024-04-20
-        items: []
-      - id: 5
-        name: Alan
-        sku: "C_50%"
-        qty: 25
-        price: 50.75
-        active: false
-        ordered_on: 2024-05-25
-        items: []
+      - { id: 3, name: ada, sku: A-300, qty: 15, price: 30.25, active: false, ordered_on: 2024-03-15, items: [] }
+      - { id: 4, name: Margaret, sku: null, qty: 20, price: 40.00, active: true, ordered_on: 2024-04-20, items: [] }
+      - { id: 5, name: Alan, sku: "C_50%", qty: 25, price: 50.75, active: false, ordered_on: 2024-05-25, items: [] }
       - id: 42
         name: Grace
         sku: A-999

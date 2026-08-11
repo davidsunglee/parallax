@@ -2,7 +2,7 @@
 # includes narrowed-view identity (m-deep-fetch, m-inheritance).
 #
 # Both paths narrow the same `Person.pets` relationship, but to DIFFERENT concrete
-# sets — `to: [Dog]` and `to: [Cat]`. Because dedup identity is (relationship hop,
+# sets — canonically `to: [Cat]` then `to: [Dog]`. Because dedup identity is (relationship hop,
 # effective concrete set), these are TWO DISTINCT hops (they do NOT collapse the way
 # the equivalent spellings in m-inheritance-066 do), so each contributes to `L`:
 # `1 + L` = 3 statements, and the two narrowed views `pets[Dog]` and `pets[Cat]`
@@ -22,18 +22,18 @@ when:
       operand:
         all: {}
       paths:
-        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Dog] } }] }
         - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Cat] } }] }
+        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Dog] } }] }
 then:
   statements:
     - sql:
         postgres: select t0.id, t0.name from person t0
     - sql:
-        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind = ?
-      binds: [10, 11, 12, dog]
-    - sql:
         postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.indoor from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind = ?
       binds: [10, 11, 12, cat]
+    - sql:
+        postgres: select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume from animal t0 where t0.owner_id in (?, ?, ?) and t0.kind = ?
+      binds: [10, 11, 12, dog]
   referenceSql: select id, name from person
   graph:
     Person:

@@ -567,9 +567,32 @@ statement per distinct hop, where hop identity is the triple **(relationship,
 whether a narrow was authored, effective concrete set)** — a broad hop and any
 authored narrow over the same relationship, or two hops narrowed to different
 sets, are distinct; equivalent narrow spellings resolving to the same set
-converge. Paths sharing a hop fetch it **once**. This is specified in full in [`m-deep-fetch.md`](m-deep-fetch.md) and
-proven by the round-trip-count layer of the compatibility harness
-(`m-case-format`).
+converge. Paths sharing a hop fetch it **once**. This is specified in full in
+[`m-deep-fetch.md`](m-deep-fetch.md) and proven by the round-trip-count layer of
+the compatibility harness (`m-case-format`).
+
+`paths` denotes an **order-insensitive set**, not a precedence list. Its
+canonical serialization is the unique fixed point of these rules:
+
+1. Canonicalize every root and segment Subtype Selection in Entity Identity
+   order while preserving the order of segments inside each path.
+2. Sort paths lexicographically by each segment's structured Relationship
+   Identity and optional target narrow, using the optional path-root narrow as
+   the final tie-breaker. An absent narrow sorts before an authored one.
+3. Collapse structurally equal paths.
+4. Retain only maximal paths: when one path is an exact segment prefix of an
+   extension with the same path-root applicability and the same narrow on every
+   shared segment, remove the prefix. The extension still materializes every
+   prefix level.
+
+Broad and narrowed paths are structurally distinct. In particular, an absent
+segment narrow does not equal an authored narrow, and different path-root guards
+do not prefix one another. Canonicalization is idempotent and happens before
+planning, so permuting paths, repeating one, or spelling an already-implied
+prefix cannot change the canonical operation or its planned levels. This set
+rule is confined to `deepFetch.paths`: Boolean operand order, Sort Key order,
+Subtype Selection authoring order at serialized ingress, and segment order
+inside one path keep their existing contracts.
 
 A path MAY additionally carry a **path-root `narrow`** — `{ "to" }` — beside
 `segments`. It **guards which queried objects the path
