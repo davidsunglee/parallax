@@ -495,10 +495,9 @@ def _materialize_predicate_write(
     # what lets a successor be patched from the document the row actually held —
     # without a second extraction that could disagree with the first.
     compiled = compile_read(
-        plan_.root_operation,
+        plan_.root,
         meta,
         dialect,
-        entity,
         result_form="row",
         lock=lock,
         include_value_objects=needs_documents,

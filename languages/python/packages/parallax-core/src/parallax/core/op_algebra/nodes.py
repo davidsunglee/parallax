@@ -30,6 +30,7 @@ __all__ = [
     "Comparison",
     "ComparisonOp",
     "DeepFetch",
+    "EntityQuery",
     "Exists",
     "Group",
     "History",
@@ -292,6 +293,22 @@ class Limit:
 
     operand: Operation
     count: int
+
+
+@dataclass(frozen=True, slots=True)
+class EntityQuery:
+    """The normalized query for one root or related Entity.
+
+    Query-wide wrappers are resolved at the planning boundary. SQL compilation
+    therefore receives the target and clauses directly, with temporal terms
+    already injected into ``predicate``.
+    """
+
+    target: EntityIdentity
+    predicate: Operation
+    narrow_to: tuple[EntityIdentity, ...] | None = None
+    order_by: tuple[OrderKey, ...] = ()
+    limit: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

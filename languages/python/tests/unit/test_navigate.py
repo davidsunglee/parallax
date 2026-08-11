@@ -17,11 +17,11 @@ import pytest
 from _corpus_model_support import formed, target
 from _corpus_model_support import model as accepted_model
 
+from _support.sql import compile_read
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, TemporalDimension
 from parallax.core.navigate import canonicalize, resolve_relationship
-from parallax.core.sql_gen import compile_read
 from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
@@ -89,19 +89,23 @@ def test_resolution_answers_a_reverse_hop_with_its_compiled_inverted_direction()
     assert direction.join.target == AttributeIdentity(ORDER.identity, "id")
 
 
-def test_walk_recurses_through_every_wrapping_node_kind() -> None:
-    """Robustness/coverage: `_walk` must recurse into every node kind that could
-    nest a navigation hop, however unusual the composition — a directive or a
-    temporal wrapper nested around a hop is not a shape `inject_as_of`'s own
-    peeling would ever hand canonicalize (both are always peeled to the
-    outermost position first), but a stray one must still be walked correctly
-    rather than silently skipping the hop's own rewrite.
-    """
+def test_walk_recurses_through_predicate_combinators_only() -> None:
     hop = oa.Exists(rel="Order.items")
     wrapped_ops: list[oa.Operation] = [
         oa.Or(operands=(hop, oa.All())),
         oa.Not(operand=hop),
         oa.Group(operand=hop),
+        oa.Narrow(to=("Order",), operand=hop),
+    ]
+    for op in wrapped_ops:
+        canonical = canonicalize(op, ORDERS, ORDER)
+        assert canonical is not op
+        assert type(canonical) is type(op), op
+
+
+def test_canonicalize_never_descends_through_query_wide_wrappers() -> None:
+    hop = oa.Exists(rel="Order.items")
+    wrapped_ops: list[oa.Operation] = [
         oa.OrderBy(operand=hop, keys=(oa.OrderKey(attr="Order.id"),)),
         oa.Limit(operand=hop, count=5),
         oa.AsOf(operand=hop, dimension="transaction-time", coordinate="latest"),
@@ -115,8 +119,7 @@ def test_walk_recurses_through_every_wrapping_node_kind() -> None:
         oa.DeepFetch(operand=hop, paths=()),
     ]
     for op in wrapped_ops:
-        canonical = canonicalize(op, ORDERS, ORDER)
-        assert type(canonical) is type(op), op
+        assert canonicalize(op, ORDERS, ORDER) is op
 
 
 # --------------------------------------------------------------------------- #

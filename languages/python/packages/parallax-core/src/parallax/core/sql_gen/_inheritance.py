@@ -425,6 +425,19 @@ def narrow_position(
     return position
 
 
+def query_narrow_position(
+    facet: InheritanceFacet, to: tuple[EntityIdentity, ...]
+) -> InheritancePositionView:
+    """The canonical position denoted by an Entity Query's resolved narrowing."""
+    position = facet.position(to)
+    if position is None:
+        raise SqlGenError(
+            f"narrow to {[identity.canonical for identity in to]} spans more than one "
+            "inheritance family"
+        )
+    return position
+
+
 # --------------------------------------------------------------------------- #
 # The DEFERRED tag guard.                                                      #
 # --------------------------------------------------------------------------- #
@@ -922,6 +935,7 @@ class BranchNarrowPlan:
 def plan_inheritance_read(
     entity: EntityMetadata,
     predicate: Operation,
+    narrow_to: tuple[EntityIdentity, ...] | None,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     model: Metamodel,
@@ -943,7 +957,7 @@ def plan_inheritance_read(
     that a caller-side check would silently reorder.
     """
     view = entity_view(facet, entity.identity)
-    position, inner, narrowed = _read_position(view, predicate, model, facet)
+    position, inner, narrowed = _read_position(view, predicate, narrow_to, facet)
     if isinstance(view.strategy, TablePerHierarchy):
         return _plan_tph_read(
             entity, view, position, inner, facet, storage, instance_form, narrowed
@@ -952,18 +966,19 @@ def plan_inheritance_read(
 
 
 def _read_position(
-    view: InheritanceEntityView, predicate: Operation, model: Metamodel, facet: InheritanceFacet
+    view: InheritanceEntityView,
+    predicate: Operation,
+    narrow_to: tuple[EntityIdentity, ...] | None,
+    facet: InheritanceFacet,
 ) -> tuple[InheritancePositionView, Operation, bool]:
     """The read's queried position, the predicate left to lower under it, and
     whether a top-level `narrow` produced it.
 
-    A TOP-LEVEL `narrow` — the read's entire predicate once result-shaping
-    directives are peeled — replaces `targetEntity`'s own position with its
-    resolved `to` set and contributes its operand; anything else leaves the
-    Entity's own position standing and is lowered whole.
+    Entity Query narrowing replaces the target's own position with its resolved
+    identity set. The predicate is already separate and is lowered whole.
     """
-    if isinstance(predicate, Narrow):
-        return narrow_position(model, facet, predicate.to), predicate.operand, True
+    if narrow_to is not None:
+        return query_narrow_position(facet, narrow_to), predicate, True
     return view, predicate, False
 
 

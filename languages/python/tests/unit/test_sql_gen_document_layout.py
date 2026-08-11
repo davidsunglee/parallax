@@ -23,10 +23,11 @@ from collections.abc import Callable
 import pytest
 from _document_layout_support import columns_model, document_model, entity
 
+from _support.sql import compile_read
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
-from parallax.core.sql_gen import CompiledRead, compile_read, compile_write_predicate
+from parallax.core.sql_gen import CompiledRead, compile_write_predicate
 
 DOCUMENT = document_model()
 COLUMNS = columns_model()
@@ -259,13 +260,11 @@ def test_a_direct_column_still_binds_its_literal_as_authored() -> None:
 
 def test_an_ordering_key_over_a_document_member_lowers_through_the_same_seams() -> None:
     compiled = compile_read(
-        oa.OrderBy(
-            operand=oa.All(),
-            keys=(oa.OrderKey(attr="Person.score", direction="desc", nulls="last"),),
-        ),
+        oa.All(),
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Person"),
+        order_by=(oa.OrderKey(attr="Person.score", direction="desc", nulls="last"),),
     )
     assert compiled.statement.sql.endswith(
         "order by cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last"

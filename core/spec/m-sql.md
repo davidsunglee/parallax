@@ -1,12 +1,19 @@
 # m-sql — SQL Generation & Equivalence Contract
 
-`m-sql` is the contract that turns an `m-op-algebra` operation into per-dialect
-SQL, and the rules that make "equivalent SQL per database" **testable**. `m-sql`
-depends on `m-op-algebra` (the algebra it lowers) and `m-dialect` (the dialect
-that decides the concrete SQL). It reads canonical model identities from
-`m-metamodel`, family and discriminator semantics from `m-inheritance`,
-physical Tables and slots from `m-storage-layout`, and compiled relationship
-directions from `m-relationship`.
+`m-sql` is the contract that turns one `m-op-algebra` `EntityQuery` into
+per-dialect SQL, and the rules that make "equivalent SQL per database"
+**testable**. `m-sql` depends on `m-op-algebra` (the query value and predicate
+algebra it lowers) and `m-dialect` (the dialect that decides the concrete SQL).
+It reads canonical model identities from `m-metamodel`, family and
+discriminator semantics from `m-inheritance`, physical Tables and slots from
+`m-storage-layout`, and compiled relationship directions from `m-relationship`.
+
+The compilation interface accepts the `EntityQuery` fields directly: the exact
+target Entity Identity, a predicate with temporal terms already injected,
+optional query-wide narrowing, ordered result keys, and an optional row cap.
+Compilation resolves the target against the accepted model and lowers those
+fields; it does not discover them by peeling query-wide operation directives
+from the predicate.
 
 The core does **not** mandate *how* an implementation produces SQL (a language
 MAY lower the algebra onto an external SQL IR inside `m-sql`). The core mandates
@@ -370,7 +377,8 @@ composes the placement itself. The canonical Postgres terms are `t0.col asc`,
 
 ### Clause order
 
-Directives lower into the fixed clause order (rule 5):
+The `EntityQuery` ordering and cap fields lower into the fixed clause order
+(rule 5):
 `select … from … [where …] [order by …] [limit …]`. `orderBy` and `limit`
 therefore always follow any predicate.
 

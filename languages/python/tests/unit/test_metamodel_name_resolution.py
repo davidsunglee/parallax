@@ -18,6 +18,7 @@ from typing import cast
 
 import pytest
 
+from _support.sql import compile_read
 from parallax.core import deep_fetch, navigate
 from parallax.core import op_algebra as oa
 from parallax.core._formation_profile import form_metamodel
@@ -25,7 +26,6 @@ from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
 from parallax.core.op_algebra import All, Narrow, OperationRejectedError, validate_operation
-from parallax.core.sql_gen import compile_read
 from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel

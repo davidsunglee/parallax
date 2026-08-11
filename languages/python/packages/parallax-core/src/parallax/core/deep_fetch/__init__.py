@@ -1,8 +1,9 @@
 """``parallax.core.deep_fetch`` enforcement scope (m-deep-fetch).
 
 The **pure** deep-fetch planner: it turns a (possibly ``DeepFetch``-wrapped)
-``m-op-algebra`` operation into an ordered :class:`FetchPlan` — the canonicalized
-root query plus a flat, dependency-ordered list of :class:`FetchLevel` entries,
+``m-op-algebra`` operation into an ordered :class:`ObjectQueryPlan` — one flat
+root :class:`~parallax.core.op_algebra.EntityQuery` plus a dependency-ordered
+list of :class:`FetchLevel` entries,
 each knowing how to build its own child query from its parent level's distinct
 gathered keys. It never compiles a statement (``m-sql``), never executes
 anything (``m-db-port``), and reifies no list — the two lifecycle result
@@ -100,7 +101,12 @@ from parallax.core.metamodel import (
 )
 from parallax.core.op_algebra import (
     And,
+    AsOf,
+    AsOfRange,
     DeepFetch,
+    EntityQuery,
+    History,
+    Limit,
     Membership,
     Narrow,
     NavigationPath,
@@ -118,8 +124,8 @@ __all__ = [
     "CorrelationMember",
     "DeepFetchError",
     "FetchLevel",
-    "FetchPlan",
     "LevelRef",
+    "ObjectQueryPlan",
     "ParentRef",
     "RootRef",
     "plan",
@@ -137,7 +143,7 @@ class RootRef:
 
 @dataclass(frozen=True, slots=True)
 class LevelRef:
-    """A level's parent rows are an earlier level's, named by its ``FetchPlan.levels`` index."""
+    """A level's parent rows are an earlier level's, named by its plan index."""
 
     index: int
 
@@ -197,7 +203,7 @@ class FetchLevel:
     dispatch).
 
     A **back-reference** level (``is_back_reference`` true) carries none of the
-    above — :meth:`child_operation` is never called for it; ``back_reference_family``
+    above — :meth:`query_for` is never called for it; ``back_reference_family``
     names the family the assembler resolves through its identity map instead, as
     that map keys a row on its family ROOT's declared name. Its own ``owner`` is
     still carried: a back-reference level gathers the ancestor's key off the
@@ -221,22 +227,20 @@ class FetchLevel:
     owner: CorrelationMember
     is_back_reference: bool = False
     back_reference_family: EntityIdentity | None = None
-    child_target: str | None = None
+    child_target: EntityIdentity | None = None
     related: CorrelationMember | None = None
     as_of_terms: tuple[Operation, ...] = ()
     order_keys: tuple[OrderKey, ...] = ()
-    narrow_to: tuple[str, ...] | None = None
+    narrow_to: tuple[EntityIdentity, ...] | None = None
     source_position: tuple[EntityIdentity, ...] | None = None
 
-    def child_operation(self, parent_keys: Sequence[Scalar]) -> tuple[str, Operation]:
-        """Build ``(child entity name, child operation)`` from the gathered ``parent_keys``.
+    def query_for(self, parent_keys: Sequence[Scalar]) -> EntityQuery:
+        """Build this level's flat child query from gathered parent keys.
 
-        Plain algebra only: an ``in`` membership over the child-side
-        correlation's own reference, the
-        propagated as-of predicate ANDed after it, optionally ``Narrow``-wrapped
-        (a 2+-concrete resolved position), optionally ``OrderBy``-wrapped (the
-        declared relationship ordering) — never compiled, never executed. Raises
-        if called on a back-reference level (it issues no child query at all).
+        The membership and propagated temporal terms form the predicate. Narrowing
+        and ordering stay query fields rather than being manufactured as wrappers
+        solely for SQL compilation. Raises for a back-reference level, which
+        issues no child query.
         """
         reference = None if self.related is None else self.related.reference
         if self.is_back_reference or self.child_target is None or reference is None:
@@ -246,28 +250,29 @@ class FetchLevel:
         predicate: Operation = Membership(op="in", attr=reference, values=tuple(parent_keys))
         if self.as_of_terms:
             predicate = And(operands=(predicate, *self.as_of_terms))
-        if self.narrow_to is not None:
-            predicate = Narrow(to=self.narrow_to, operand=predicate)
-        if self.order_keys:
-            predicate = OrderBy(operand=predicate, keys=self.order_keys)
-        return self.child_target, predicate
+        return EntityQuery(
+            target=self.child_target,
+            predicate=predicate,
+            narrow_to=self.narrow_to,
+            order_by=self.order_keys,
+        )
 
 
 @dataclass(frozen=True, slots=True)
-class FetchPlan:
+class ObjectQueryPlan:
     """A deep fetch's canonicalized root query plus its ordered levels.
 
-    ``root_operation`` is ready for ``compile_read`` unchanged (as-of injected,
-    navigation canonicalized). ``levels`` is dependency-ordered: a level's own
+    ``root`` is ready for ``compile_read`` unchanged (query wrappers peeled,
+    as-of injected, navigation canonicalized). ``levels`` is dependency-ordered: a level's own
     ``parent`` (root, or an earlier level) always precedes it, so a single
     left-to-right pass satisfies every level's data dependency.
     """
 
-    root_operation: Operation
+    root: EntityQuery
     levels: tuple[FetchLevel, ...]
 
 
-def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> FetchPlan:
+def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> ObjectQueryPlan:
     """Plan a deep fetch against ``model`` after canonicalizing include paths.
 
     ``op`` is the read's raw (undeserialized-no-further, but not yet temporally
@@ -284,22 +289,94 @@ def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> FetchPlan:
     """
     families = inheritance.view(model)
     temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
-    if isinstance(op, DeepFetch):
-        root_raw: Operation = op.operand
-        paths = _canonical_includes(op.paths)
-    else:
-        root_raw = op
-        paths = ()
-
-    root_pins = resolve_pinned_instants(root_raw, temporal_entity)
-    root_injected = inject_as_of(root_raw, temporal_entity)
-    root_operation = navigate.canonicalize(root_injected, model, entity, root_pins)
+    parts = _peel_query(op)
+    root_pins = resolve_pinned_instants(parts.temporal, temporal_entity)
+    root_injected = inject_as_of(parts.predicate, parts.temporal, temporal_entity)
+    predicate = navigate.canonicalize(root_injected, model, entity, root_pins)
+    narrow_to = _resolve_identities(model, parts.narrow_to) if parts.narrow_to is not None else None
+    root = EntityQuery(
+        target=entity.identity,
+        predicate=predicate,
+        narrow_to=narrow_to,
+        order_by=parts.order_by,
+        limit=parts.limit,
+    )
 
     builder = _PlanBuilder(model=model, families=families, root_pins=root_pins)
     builder.seed_root(entity)
-    for path in paths:
+    for path in parts.paths:
         builder.add_path(path)
-    return FetchPlan(root_operation=root_operation, levels=tuple(builder.levels))
+    return ObjectQueryPlan(root=root, levels=tuple(builder.levels))
+
+
+@dataclass(frozen=True, slots=True)
+class _QueryParts:
+    predicate: Operation
+    temporal: tuple[AsOf | AsOfRange | History, ...]
+    narrow_to: tuple[str, ...] | None
+    order_by: tuple[OrderKey, ...]
+    limit: int | None
+    paths: tuple[NavigationPath, ...]
+
+
+def _peel_query(op: Operation) -> _QueryParts:
+    """Remove the query-wide wrapper spine once, at the planning boundary."""
+    temporal: list[AsOf | AsOfRange | History] = []
+    narrows: list[Narrow] = []
+    order_by: tuple[OrderKey, ...] = ()
+    limit: int | None = None
+    paths: tuple[NavigationPath, ...] = ()
+    seen: set[str] = set()
+    current = op
+    while True:
+        if isinstance(current, DeepFetch):
+            _reject_repeated("deepFetch", seen)
+            paths = _canonical_includes(current.paths)
+            current = current.operand
+        elif isinstance(current, Limit):
+            _reject_repeated("limit", seen)
+            limit = current.count
+            current = current.operand
+        elif isinstance(current, OrderBy):
+            _reject_repeated("orderBy", seen)
+            order_by = current.keys
+            current = current.operand
+        elif isinstance(current, Narrow):
+            narrows.append(current)
+            current = current.operand
+        elif isinstance(current, (AsOf, AsOfRange, History)):
+            temporal.append(current)
+            current = current.operand
+        else:
+            break
+
+    predicate = current
+    for narrow in reversed(narrows[1:]):
+        predicate = Narrow(to=narrow.to, operand=predicate)
+    return _QueryParts(
+        predicate=predicate,
+        temporal=tuple(temporal),
+        narrow_to=narrows[0].to if narrows else None,
+        order_by=order_by,
+        limit=limit,
+        paths=paths,
+    )
+
+
+def _reject_repeated(kind: str, seen: set[str]) -> None:
+    if kind in seen:
+        raise DeepFetchError(f"stacked `{kind}` directives have no defined composition semantics")
+    seen.add(kind)
+
+
+def _resolve_identities(model: Metamodel, names: Sequence[str]) -> tuple[EntityIdentity, ...]:
+    resolved: list[EntityIdentity] = []
+    for name in names:
+        entity = entity_by_name(model, name)
+        if entity is None:
+            raise DeepFetchError(f"{name!r} names no single Entity in the model")
+        resolved.append(entity.identity)
+    return tuple(resolved)
 
 
 # --------------------------------------------------------------------------- #
@@ -428,7 +505,7 @@ class _PlanBuilder:
                 source_position=source_position,
             )
         else:
-            child_target, narrow_to = _child_target(direction, position, segment)
+            child_target, narrow_to = _child_target(self.model, direction, position, segment)
             level = FetchLevel(
                 attach_key=attach_key,
                 relationship=direction.identity,
@@ -439,10 +516,10 @@ class _PlanBuilder:
                 related=CorrelationMember(
                     identity=direction.join.target,
                     column=_attribute_column(self.families, direction.join.target),
-                    reference=f"{child_target}.{direction.join.target.name}",
+                    reference=f"{child_target.canonical}.{direction.join.target.name}",
                 ),
                 as_of_terms=navigate.hop_as_of_terms(related_entity, self.model, self.root_pins),
-                order_keys=_order_keys(direction, child_target),
+                order_keys=_order_keys(direction, child_target.canonical),
                 narrow_to=narrow_to,
                 source_position=source_position,
             )
@@ -609,10 +686,11 @@ def _view_key(
 
 
 def _child_target(
+    model: Metamodel,
     direction: RelationshipMetadata,
     position: tuple[EntityIdentity, ...],
     segment: PathSegment,
-) -> tuple[str, tuple[str, ...] | None]:
+) -> tuple[EntityIdentity, tuple[EntityIdentity, ...] | None]:
     """The level's own read target entity, and its ``Narrow.to`` (or
     ``None``) — the child-level analogue of `m-sql`'s abstract-read dispatch,
     but keyed on the RESOLVED POSITION'S cardinality rather than whether the
@@ -626,10 +704,10 @@ def _child_target(
     concretes naturally needs no wrapper — `m-sql`'s own effective-set
     resolution already returns the same set from the bare target)."""
     if len(position) == 1:
-        return position[0].canonical, None
+        return position[0], None
     if segment.narrow:
-        return direction.join.target.entity.canonical, tuple(segment.narrow)
-    return direction.join.target.entity.canonical, None
+        return direction.join.target.entity, _resolve_identities(model, segment.narrow)
+    return direction.join.target.entity, None
 
 
 _SORT_DIRECTIONS: Final[Mapping[SortDirection, Literal["asc", "desc"]]] = {

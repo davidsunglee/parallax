@@ -36,7 +36,7 @@ every other literal (``m-sql``: the current-row bind is the ``infinity`` literal
 from __future__ import annotations
 
 import datetime as _dt
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -401,58 +401,33 @@ class _Scan:
 _AxisMode = _Latest | _Containment | _Range | _Scan
 
 
-def inject_as_of(op: Operation, entity: EntityMetadata) -> Operation:
-    """Rewrite the temporal wrapper nodes of ``op`` into plain ``m-op-algebra`` predicates.
+def inject_as_of(
+    predicate: Operation,
+    selections: Sequence[AsOf | AsOfRange | History],
+    entity: EntityMetadata,
+) -> Operation:
+    """Inject explicit temporal selections into a flat predicate.
 
-    The single lowering entry point for a temporal read. For a **non-temporal**
-    entity it is a strict identity (no as-of dimension to default). For a temporal
-    entity it:
+    The planning boundary has already removed query-wide wrappers. This module
+    owns only temporal semantics: it validates one selection per declared axis,
+    derives the interval terms in Valid-Time-first order, and appends them after
+    the user predicate so bind order remains user-first.
 
-    - walks transparent result-shaping, narrowing, and temporal wrappers at the
-      root in any interleaving, preserving transparent wrappers around the
-      rewritten predicate;
-    - reads each temporal axis's selection and rejects a duplicate or undeclared
-      axis;
-    - requires one explicit selection per declared axis, in
-      **Valid-Time-first** order;
-    - composes the user predicate ``and`` the per-axis interval terms into one flat
-      conjunction (user binds first, then the as-of binds).
-
-    ``history`` injects **no** term for its axis; a read whose every axis is scanned
-    (bitemporal ``history``) therefore keeps the user predicate unchanged.
+    ``history`` injects no term for its axis. A non-temporal read with no
+    selections is a strict identity; a temporal selection against a non-temporal
+    entity is rejected by the same declared-axis rule as before.
     """
-    return _inject_root_temporal(op, entity)
-
-
-def _root_wrappers(
-    op: Operation,
-) -> Iterator[Limit | OrderBy | Narrow | AsOf | AsOfRange | History]:
-    current = op
-    while isinstance(current, (Limit, OrderBy, Narrow, AsOf, AsOfRange, History)):
-        yield current
-        current = current.operand
-
-
-def _inject_root_temporal(op: Operation, entity: EntityMetadata) -> Operation:
     modes: dict[AcceptedDimension, _AxisMode] = {}
-    wrappers: list[Limit | OrderBy | Narrow] = []
-    root_nodes = list(_root_wrappers(op))
-    for node in root_nodes:
-        if isinstance(node, (Limit, OrderBy, Narrow)):
-            wrappers.append(node)
-        else:
-            axis = _declared_axis(node.dimension, entity)
-            if axis.dimension in modes:
-                raise TemporalReadError(
-                    f"{entity.identity.name}: the {node.dimension} dimension is pinned "
-                    "or scanned twice"
-                )
-            modes[axis.dimension] = _mode_of(node)
-    user_predicate = root_nodes[-1].operand if root_nodes else op
+    for selection in selections:
+        axis = _declared_axis(selection.dimension, entity)
+        if axis.dimension in modes:
+            raise TemporalReadError(
+                f"{entity.identity.name}: the {selection.dimension} dimension is pinned "
+                "or scanned twice"
+            )
+        modes[axis.dimension] = _mode_of(selection)
 
     axis_terms: list[Operation] = []
-    # A Temporal Dimension's member value IS its canonical axis rank, so
-    # Valid-Time-first needs no separate ordering table.
     for axis in sorted(entity.declared_as_of_axes, key=lambda item: item.dimension.value):
         mode = modes.get(axis.dimension)
         if mode is None:
@@ -463,12 +438,18 @@ def _inject_root_temporal(op: Operation, entity: EntityMetadata) -> Operation:
         axis_terms.extend(_terms(mode, axis, entity))
 
     if not axis_terms:
-        # Non-temporal read, or a read whose every declared axis is scanned
-        # (bitemporal history): the user predicate stands unchanged.
-        return _rewrap_transparent_wrappers(user_predicate, wrappers)
-    terms = (*conjunction_terms(user_predicate), *axis_terms)
-    injected = terms[0] if len(terms) == 1 else And(operands=terms)
-    return _rewrap_transparent_wrappers(injected, wrappers)
+        return predicate
+    terms = (*conjunction_terms(predicate), *axis_terms)
+    return terms[0] if len(terms) == 1 else And(operands=terms)
+
+
+def _root_wrappers(
+    op: Operation,
+) -> Iterator[Limit | OrderBy | Narrow | AsOf | AsOfRange | History]:
+    current = op
+    while isinstance(current, (Limit, OrderBy, Narrow, AsOf, AsOfRange, History)):
+        yield current
+        current = current.operand
 
 
 def _declared_axis(dimension: str, entity: EntityMetadata) -> AcceptedAsOfAxis:
@@ -551,7 +532,9 @@ def conjunction_terms(op: Operation) -> tuple[Operation, ...]:
     return (op,)
 
 
-def resolve_pinned_instants(op: Operation, entity: EntityMetadata) -> dict[AcceptedDimension, str]:
+def resolve_pinned_instants(
+    selections: Sequence[AsOf | AsOfRange | History], entity: EntityMetadata
+) -> dict[AcceptedDimension, str]:
     """The per-axis literal instant this read pins ``entity`` to a specific PAST
     moment (an ``asOf(..., date=<instant>)`` wrapper) — the coordinate ``m-navigate``
     re-applies, matched by axis, to a temporal entity reached by navigation.
@@ -562,19 +545,15 @@ def resolve_pinned_instants(op: Operation, entity: EntityMetadata) -> dict[Accep
     so this map omits them; the caller defaults an absent axis to latest by
     construction rather than re-deriving it here.
 
-    Called on the SAME raw (pre-:func:`inject_as_of`) operation ``inject_as_of``
-    itself consumes — an independent, side-effect-free read of the same input, not
-    incremental parsing of the root-injected result (the module DAG forbids
-    ``m-sql`` from ever seeing a temporal wrapper, so nothing downstream re-derives
-    this from already-lowered predicate nodes).
+    Called on the same selection values :func:`inject_as_of` consumes after the
+    planning boundary has removed their wrappers.
     """
     pins: dict[AcceptedDimension, str] = {}
-    for node in _root_wrappers(op):
-        if isinstance(node, (AsOf, AsOfRange, History)):
-            axis = _declared_axis(node.dimension, entity)
-            mode = _mode_of(node)
-            if isinstance(mode, _Containment):
-                pins[axis.dimension] = mode.instant
+    for selection in selections:
+        axis = _declared_axis(selection.dimension, entity)
+        mode = _mode_of(selection)
+        if isinstance(mode, _Containment):
+            pins[axis.dimension] = mode.instant
     return pins
 
 
@@ -629,17 +608,3 @@ def scans_an_axis(op: Operation) -> bool:
     graph-shaping question itself.
     """
     return any(isinstance(node, (AsOfRange, History)) for node in _root_wrappers(op))
-
-
-def _rewrap_transparent_wrappers(
-    op: Operation, wrappers: list[Limit | OrderBy | Narrow]
-) -> Operation:
-    result = op
-    for node in reversed(wrappers):
-        if isinstance(node, Limit):
-            result = Limit(operand=result, count=node.count)
-        elif isinstance(node, OrderBy):
-            result = OrderBy(operand=result, keys=node.keys)
-        else:
-            result = Narrow(to=node.to, operand=result)
-    return result

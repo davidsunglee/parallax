@@ -1,7 +1,6 @@
 """``parallax.core.sql_gen`` enforcement scope (m-sql).
 
-SQL generation: the three-stage read compiler (canonicalize -> lower ->
-normalize) that turns an ``m-op-algebra`` operation into one canonical
+SQL generation: the read compiler that lowers one flat ``EntityQuery`` into a canonical
 ``LoweredStatement`` per dialect. Dialect variation enters only through the
 injected ``Dialect`` strategy. ``m-sql`` depends on ``m-op-algebra`` and
 ``m-dialect``.
@@ -20,8 +19,8 @@ rebuilds a physical order of its own.
 
 That implementation is five private modules, each owning one concern:
 
-* ``_compile`` — the two entry points. Directive peeling, ordinary projection,
-  the shared ``order by`` / ``limit`` / read-lock tail, normalization, and
+* ``_compile`` — the two entry points. Ordinary projection, the shared
+  ``order by`` / ``limit`` / read-lock tail, normalization, and
   statement assembly, including the inheritance-family read forms it builds from
   the plans ``_inheritance`` resolves.
 * ``_predicate`` — the package's ONE recursive owner. Every descent into an
@@ -30,9 +29,8 @@ That implementation is five private modules, each owning one concern:
   its alias, and whether the statement aliases its own columns at all) or a
   value-object element scope. It holds the package's only RECURSIVE dispatch over
   the node union, so "where does this node get lowered?" has one answer. (The two
-  other ``match`` statements in the package both live in ``_compile`` and neither
-  descends: one peels the outer ``limit`` / ``orderBy`` chain, the
-  other selects an inheritance plan type.)
+  other ``match`` statement in the package lives in ``_compile`` and selects an
+  inheritance plan type rather than descending into an operation.)
 * ``_navigation`` — relationship resolution and correlated-hop planning.
 * ``_inheritance`` — table-per-hierarchy and table-per-concrete-subtype
   planning, family projection, tag predicates, and ``familyVariant`` row

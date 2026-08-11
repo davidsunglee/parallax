@@ -5,10 +5,8 @@ Every descent into an `m-op-algebra` predicate happens here. `_navigation` and
 assembles statements around the fragment this module returns. So this file holds
 the package's only RECURSIVE dispatch over the operation union, and its only
 recursion — which is what makes "where does this node get lowered?" a question
-with one answer. (`_compile` carries the package's only two other `match`
-statements, and neither descends: `_peel_directives` walks the outer
-`limit`/`orderBy` chain, and `_compile_inheritance_read` selects a
-plan type, which is not an operation node at all.)
+with one answer. (`_compile_inheritance_read` carries the package's only other
+`match`, selecting a plan type rather than an operation node.)
 
 **The resolution scope is the dispatch argument.** :data:`ResolutionScope` is
 either an :class:`EntityScope` (an active entity, its alias, and whether this

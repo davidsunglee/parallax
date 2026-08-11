@@ -1,6 +1,6 @@
 """The three-stage read compiler (m-sql): canonicalize -> lower -> normalize.
 
-``compile_read`` turns an ``m-op-algebra`` operation into one canonical
+``compile_read`` turns one flat ``m-op-algebra`` ``EntityQuery`` into one canonical
 ``LoweredStatement`` for a dialect. Lowering descends through `_predicate`'s one
 dispatcher (no visitor framework — see the third paragraph); the dialect strategy
 supplies every dialect-specific string. The emitted SQL is produced directly in
@@ -47,10 +47,8 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
 )
 from parallax.core.op_algebra import (
-    Limit,
-    Narrow,
+    EntityQuery,
     Operation,
-    OrderBy,
     OrderKey,
 )
 from parallax.core.sql_gen._context import Ctx as _Ctx
@@ -165,8 +163,7 @@ class CompiledRead:
     execute, transform" and can no longer drift from what was actually
     projected.
 
-    ``narrow_to`` is the read's own TOP-LEVEL authored narrow (its ``Narrow.to``,
-    result-shaping directives peeled) or ``None`` for a bare read: a
+    ``narrow_to`` is the read's own query-wide narrowing or ``None`` for a bare read: a
     table-per-concrete-subtype position resolving to exactly one concrete emits
     no `familyVariant` column at all, so this is what lets
     :attr:`MaterializedReadRow.resolved_entity` still name the row's own concrete
@@ -184,7 +181,7 @@ class CompiledRead:
     """
 
     statement: LoweredStatement
-    narrow_to: tuple[str, ...] | None
+    narrow_to: tuple[EntityIdentity, ...] | None
     target: EntityIdentity
     resolved_position: tuple[EntityIdentity, ...]
     documents: tuple[ValueObjectMetadata, ...]
@@ -317,10 +314,9 @@ def _projection(
 # compile_read = canonicalize -> lower -> normalize.                          #
 # --------------------------------------------------------------------------- #
 def compile_read(
-    op: Operation,
+    query: EntityQuery,
     model: Metamodel,
     dialect: Dialect,
-    target: EntityMetadata,
     *,
     result_form: _ResultForm = "row",
     lock: LockMode | None = None,
@@ -328,9 +324,9 @@ def compile_read(
 ) -> CompiledRead:
     """Compile a read operation to one self-contained :class:`CompiledRead`.
 
-    ``target`` is the queried Entity's accepted Metadata, taken from ``model``:
-    the caller already resolved which position it is reading, so this compiler
-    never re-resolves a name against the model.
+    ``query.target`` is an exact accepted Entity Identity. The compiler resolves
+    it against ``model`` and consumes the predicate, narrowing, ordering, and cap
+    directly; no query-wide wrapper reaches this boundary.
 
     The result carries everything the caller needs to consume the read's rows —
     the canonical ``LoweredStatement`` for ``dialect``, the root ``narrow_to`` to
@@ -367,17 +363,20 @@ def compile_read(
     reads are not yet reachable. The conformance scenario runner derives ``lock``
     from the step's unit of work concurrency mode.
     """
+    target = model.entity(query.target)
+    if target is None:
+        raise SqlGenError(f"{query.target.canonical!r} names no Entity in the accepted model")
     facet = _inheritance_view(model)
     storage = _storage_view(model)
-    predicate, order_keys, limit = _peel_directives(op)
-    # The read's own TOP-LEVEL authored narrow, taken from the SAME peel the
-    # lowering below uses — so what the caller materializes under can never
-    # disagree with what was compiled.
-    narrow_to = predicate.to if isinstance(predicate, Narrow) else None
+    predicate = query.predicate
+    order_keys = query.order_by
+    limit = query.limit
+    narrow_to = query.narrow_to
     if target.inheritance is not None:
         statement, plan_position, transform = _compile_inheritance_read(
             target,
             predicate,
+            narrow_to,
             order_keys,
             limit,
             model,
@@ -505,42 +504,6 @@ def _order_term(scope: _EntityScope, key: OrderKey) -> str:
     return f"{column_sql} {direction}"
 
 
-def _peel_directives(op: Operation) -> tuple[Operation, tuple[OrderKey, ...], int | None]:
-    """Strip result-shaping directives (any nesting) into canonical clause data.
-
-    A read carries at most one of each directive. A directive kind stacked twice
-    (`limit(limit(…))`) has no defined composition in `m-op-algebra` — the spec
-    fixes only that a directive wraps one inner operation — so a repeated kind is
-    refused loudly here rather than silently overwriting the outer clause.
-    """
-    order_keys: tuple[OrderKey, ...] = ()
-    limit: int | None = None
-    seen: set[str] = set()
-    current = op
-    while True:
-        match current:
-            case Limit(operand=operand, count=count):
-                _reject_stacked("limit", seen)
-                limit = count
-                current = operand
-            case OrderBy(operand=operand, keys=keys):
-                _reject_stacked("orderBy", seen)
-                order_keys = keys
-                current = operand
-            case _:
-                return current, order_keys, limit
-
-
-def _reject_stacked(kind: str, seen: set[str]) -> None:
-    if kind in seen:
-        raise SqlGenError(
-            f"stacked `{kind}` directives have no defined composition semantics "
-            "(m-op-algebra directives wrap one inner operation); refusing rather than "
-            "silently overwriting the outer clause"
-        )
-    seen.add(kind)
-
-
 # --------------------------------------------------------------------------- #
 # Inheritance-family reads                                                      #
 # (m-sql "Metamodel-extension lowering — inheritance").                         #
@@ -557,6 +520,7 @@ def _reject_stacked(kind: str, seen: set[str]) -> None:
 def _compile_inheritance_read(
     entity: EntityMetadata,
     predicate: Operation,
+    narrow_to: tuple[EntityIdentity, ...] | None,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,
     model: Metamodel,
@@ -575,6 +539,7 @@ def _compile_inheritance_read(
     plan = _plan_inheritance_read(
         entity,
         predicate,
+        narrow_to,
         order_keys,
         limit,
         model,

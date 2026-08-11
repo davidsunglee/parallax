@@ -17,7 +17,7 @@ from _corpus_model_support import model as accepted_model
 from _corpus_model_support import target
 
 from parallax.conformance import models
-from parallax.core import Edge, Pin, UndeclaredAxisError
+from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, TemporalDimension
@@ -52,9 +52,9 @@ _P = "2024-02-01T00:00:00+00:00"
 
 def _where(op: oa.Operation, entity: EntityMetadata) -> tuple[str, tuple[object, ...]]:
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
-    injected = inject_as_of(op, entity)
     model = _ACCEPTED[entity.identity.name]
-    statement = compile_read(injected, model, POSTGRES, entity).statement
+    query = deep_fetch.plan(entity, op, model).root
+    statement = compile_read(query, model, POSTGRES).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
 
@@ -70,18 +70,17 @@ def test_explicit_latest_injects_the_current_row_predicate() -> None:
 
 
 def test_narrow_is_transparent_to_temporal_selection_lowering() -> None:
-    injected = inject_as_of(
+    query = deep_fetch.plan(
+        BALANCE,
         oa.Narrow(
             to=("Balance",),
             operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
         ),
-        BALANCE,
+        _ACCEPTED["Balance"],
     )
-    assert injected == oa.Narrow(
-        to=("Balance",),
-        operand=oa.Comparison(
-            op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
-        ),
+    assert query.root.narrow_to == (BALANCE.identity,)
+    assert query.root.predicate == oa.Comparison(
+        op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
     )
 
 
@@ -91,19 +90,18 @@ def test_temporal_wrapper_outside_narrow_preserves_whole_result_narrowing() -> N
     Temporal injection must keep the Narrow as a row-position wrapper rather
     than demoting it to a conjunctive predicate term.
     """
-    injected = inject_as_of(
+    query = deep_fetch.plan(
+        BALANCE,
         oa.AsOf(
             operand=oa.Narrow(to=("Balance",), operand=oa.All()),
             dimension="transaction-time",
             coordinate="latest",
         ),
-        BALANCE,
+        _ACCEPTED["Balance"],
     )
-    assert injected == oa.Narrow(
-        to=("Balance",),
-        operand=oa.Comparison(
-            op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
-        ),
+    assert query.root.narrow_to == (BALANCE.identity,)
+    assert query.root.predicate == oa.Comparison(
+        op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
     )
 
 
@@ -225,7 +223,7 @@ def test_non_temporal_read_is_identity() -> None:
             oa.Comparison(op="greaterThan", attr="Order.qty", value=25),
         )
     )
-    assert inject_as_of(op, ORDERS) is op
+    assert inject_as_of(op, (), ORDERS) is op
 
 
 def test_directives_survive_injection() -> None:
@@ -236,13 +234,10 @@ def test_directives_survive_injection() -> None:
         ),
         count=2,
     )
-    injected = inject_as_of(op, BALANCE)
-    assert isinstance(injected, oa.Limit)
-    assert isinstance(injected.operand, oa.OrderBy)
-    # The as-of predicate is injected UNDER the peeled directives, and names its
-    # Entity by the exact identity the axis was resolved on rather than by a local
-    # name a second namespace could share.
-    assert injected.operand.operand == oa.Comparison(
+    query = deep_fetch.plan(BALANCE, op, _ACCEPTED["Balance"]).root
+    assert query.limit == 2
+    assert query.order_by == (oa.OrderKey(attr="Balance.id"),)
+    assert query.predicate == oa.Comparison(
         op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
     )
 
@@ -253,20 +248,21 @@ def test_double_pin_is_rejected() -> None:
         dimension="transaction-time",
         coordinate=_D,
     )
+    assert isinstance(op.operand, oa.AsOf)
     with pytest.raises(TemporalReadError, match="pinned or scanned twice"):
-        inject_as_of(op, BALANCE)
+        inject_as_of(oa.All(), (op, op.operand), BALANCE)
 
 
 def test_undeclared_axis_is_rejected() -> None:
     op = oa.AsOf(operand=oa.All(), dimension="valid-time", coordinate="latest")
     with pytest.raises(TemporalReadError, match="undeclared dimension"):
-        inject_as_of(op, BALANCE)
+        inject_as_of(oa.All(), (op,), BALANCE)
 
 
 def test_temporal_clause_on_non_temporal_entity_is_rejected() -> None:
     op = oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest")
     with pytest.raises(TemporalReadError, match="non-temporal entity"):
-        inject_as_of(op, ORDERS)
+        inject_as_of(oa.All(), (op,), ORDERS)
 
 
 # --------------------------------------------------------------------------- #

@@ -22,6 +22,7 @@ from typing import Any, cast
 import pytest
 from _metamodel_support import Declaration, attribute, key, source
 
+from _support.sql import compile_read
 from parallax.conformance import case_format, engine, sweep
 from parallax.conformance.temporal_state import TemporalShadow
 from parallax.core._formation_profile import form_metamodel
@@ -4661,7 +4662,6 @@ def test_render_node_keeps_a_value_object_and_a_same_named_relationship_apart() 
 def test_namespaced_duplicate_variants_flow_from_sql_plan_through_production_to_renderer() -> None:
     from parallax.core.dialect import POSTGRES
     from parallax.core.op_algebra import All
-    from parallax.core.sql_gen import compile_read
 
     root = _VARIANT_MODEL.entity(_VARIANT_ROOT)
     assert root is not None

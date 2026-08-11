@@ -15,9 +15,10 @@ from __future__ import annotations
 import pytest
 from _corpus_model_support import formed, model, target
 
+from _support.sql import compile_read
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen import SqlGenError, compile_read
+from parallax.core.sql_gen import SqlGenError
 
 ORDERS = model("orders")
 ANIMAL = model("animal")
