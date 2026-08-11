@@ -22,17 +22,20 @@ import pytest
 from _corpus_model_support import model, target
 
 from _support import fake_metamodel
+from _support.sql import compile_read
 from parallax.core import inheritance, relationship, storage_layout
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import Metamodel
+from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen import (
     CompiledPredicate,
     CompiledRead,
     LoweredStatement,
     SqlGenError,
-    compile_read,
     compile_write_predicate,
+)
+from parallax.core.sql_gen import (
+    compile_read as compile_entity_query,
 )
 
 ORDERS = model("orders")
@@ -77,6 +80,12 @@ def test_unbound_attribute_is_refused() -> None:
         )
 
 
+def test_entity_query_target_must_belong_to_the_model() -> None:
+    query = oa.EntityQuery(target=EntityIdentity(None, "Missing"), predicate=oa.All())
+    with pytest.raises(SqlGenError, match="names no Entity in the accepted model"):
+        compile_entity_query(query, ORDERS, POSTGRES)
+
+
 @pytest.mark.parametrize(
     "op, message",
     [
@@ -104,26 +113,23 @@ def test_directive_nested_in_predicate_is_refused() -> None:
         compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
-def test_stacked_duplicate_directive_is_refused() -> None:
-    # limit(limit(all, 10), 5): the outer cap of 5 must not be silently overwritten
-    # by peeling the inner cap of 10. Stacked same-kind directives have no defined
-    # composition, so lowering refuses loudly.
-    op = oa.Limit(operand=oa.Limit(operand=oa.All(), count=10), count=5)
-    with pytest.raises(SqlGenError, match=r"stacked `limit` directives"):
-        compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+def test_entity_query_carries_one_limit_without_a_wrapper_tree() -> None:
+    compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"), limit=5)
+    assert compiled.statement.sql.endswith("limit ?")
+    assert compiled.statement.binds == (5,)
 
 
 def test_order_and_limit_directives_still_compose() -> None:
     # One of each directive (orderBy/limit) is the canonical stack and
     # lowers to the ordered clauses, unaffected by the duplicate-directive guard.
-    op = oa.Limit(
-        operand=oa.OrderBy(
-            operand=oa.All(),
-            keys=(oa.OrderKey(attr="Order.id", direction="asc"),),
-        ),
-        count=5,
+    compiled = compile_read(
+        oa.All(),
+        ORDERS,
+        POSTGRES,
+        target(ORDERS, "Order"),
+        order_by=(oa.OrderKey(attr="Order.id", direction="asc"),),
+        limit=5,
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
     assert compiled.statement.sql.endswith("order by t0.id asc limit ?")
 
 
@@ -143,17 +149,14 @@ def test_nullable_order_key_lowers_through_the_placement_seam(
 ) -> None:
     # `Order.sku` is nullable, so every placement — including the omitted one, which
     # defaults to `last` — renders through the m-dialect seam.
-    op = oa.OrderBy(
-        operand=oa.All(),
-        keys=(
-            oa.OrderKey(
-                attr="Order.sku",
-                direction=cast('Literal["asc", "desc"]', direction),
-                nulls=cast('Literal["first", "last"] | None', placement),
-            ),
+    keys = (
+        oa.OrderKey(
+            attr="Order.sku",
+            direction=cast('Literal["asc", "desc"]', direction),
+            nulls=cast('Literal["first", "last"] | None', placement),
         ),
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"), order_by=keys)
     assert compiled.statement.sql.endswith(f"order by {term}")
 
 
@@ -162,17 +165,14 @@ def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None
     # `Order.qty` is non-nullable, so placement is observationally irrelevant on it:
     # there are no NULLs to place, both placements denote the same order, and the
     # plain term is emitted under either.
-    op = oa.OrderBy(
-        operand=oa.All(),
-        keys=(
-            oa.OrderKey(
-                attr="Order.qty",
-                direction="desc",
-                nulls=cast('Literal["first", "last"] | None', placement),
-            ),
+    keys = (
+        oa.OrderKey(
+            attr="Order.qty",
+            direction="desc",
+            nulls=cast('Literal["first", "last"] | None', placement),
         ),
     )
-    compiled = compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
+    compiled = compile_read(oa.All(), ORDERS, POSTGRES, target(ORDERS, "Order"), order_by=keys)
     assert compiled.statement.sql.endswith("order by t0.qty desc")
 
 
@@ -210,7 +210,7 @@ def test_the_package_exports_exactly_the_seven_supported_names() -> None:
     assert sql_gen.CompiledRead is CompiledRead
     assert sql_gen.SqlGenError is SqlGenError
     assert sql_gen.LoweredStatement is LoweredStatement
-    assert sql_gen.compile_read is compile_read
+    assert sql_gen.compile_read is compile_entity_query
     assert sql_gen.compile_write_predicate is compile_write_predicate
 
 
@@ -219,15 +219,14 @@ def test_compile_read_accepts_exactly_the_supported_call_shape() -> None:
     # is a second contract nothing else covers, so adding, renaming, or removing a
     # parameter — or turning a keyword-only one positional — is caught here rather
     # than at a caller.
-    parameters = inspect.signature(compile_read).parameters
+    parameters = inspect.signature(compile_entity_query).parameters
     assert [
         (name, parameter.kind, parameter.default is not inspect.Parameter.empty)
         for name, parameter in parameters.items()
     ] == [
-        ("op", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
+        ("query", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
         ("model", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
         ("dialect", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
-        ("target", inspect.Parameter.POSITIONAL_OR_KEYWORD, False),
         ("result_form", inspect.Parameter.KEYWORD_ONLY, True),
         ("lock", inspect.Parameter.KEYWORD_ONLY, True),
         ("include_value_objects", inspect.Parameter.KEYWORD_ONLY, True),
@@ -332,12 +331,11 @@ def test_limit_bind_lands_after_predicate_binds() -> None:
     # clause is already assembled, so its bind is last — behind both the
     # projection bind and every user-predicate bind.
     compiled = compile_read(
-        oa.Limit(
-            operand=oa.Comparison(op="greaterThan", attr="ScalarThing.f64", value=1.5), count=3
-        ),
+        oa.Comparison(op="greaterThan", attr="ScalarThing.f64", value=1.5),
         SCALARS,
         POSTGRES,
         target(SCALARS, "ScalarThing"),
+        limit=3,
     )
     assert compiled.statement.sql.endswith("from scalar_thing t0 where t0.f64 > ? limit ?")
     assert compiled.statement.binds == ("hex", 1.5, 3)

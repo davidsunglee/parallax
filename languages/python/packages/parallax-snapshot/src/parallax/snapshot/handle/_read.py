@@ -293,9 +293,7 @@ def find(
     calls = recorder if recorder is not None else TraceRecorder()
     scope = MergeScope(meta)
 
-    root_compiled = compile_read(
-        plan_.root_operation, meta, dialect, root_entity, result_form="instance", lock=lock
-    )
+    root_compiled = compile_read(plan_.root, meta, dialect, result_form="instance", lock=lock)
     root_refs = _convert_level(scope, port, dialect, root_compiled, calls, observations)
 
     level_refs: list[tuple[SnapshotNodeRef, ...]] = []
@@ -310,19 +308,14 @@ def find(
             _attach_empty(scope, level, parents)
             level_refs.append(())
             continue
-        child_target, child_op = level.child_operation(keys)
-        child_entity = _metadata(meta, child_target)
+        child_query = level.query_for(keys)
         child_compiled = compile_read(
-            child_op,
+            child_query,
             meta,
             dialect,
-            child_entity,
             result_form="instance",
             lock=lock,
         )
-        # A child level takes its narrow from `FetchLevel.narrow_to` (consumed
-        # inside `child_operation`), never from the compiled read — only the ROOT
-        # has no planner-supplied narrow to fall back on.
         child_refs = _convert_level(scope, port, dialect, child_compiled, calls, observations)
         _attach_children(scope, meta, level, parents, child_refs)
         level_refs.append(child_refs)
@@ -403,9 +396,7 @@ def find_rows(
     """
     root_entity = _metadata(meta, target)
     plan_ = deep_fetch.plan(root_entity, op, meta)
-    compiled = compile_read(
-        plan_.root_operation, meta, dialect, root_entity, result_form="row", lock=lock
-    )
+    compiled = compile_read(plan_.root, meta, dialect, result_form="row", lock=lock)
     calls = recorder if recorder is not None else TraceRecorder()
     rows = execute_read(port, dialect, compiled.statement, calls)
     return NeutralReadResult(
@@ -451,7 +442,7 @@ def find_history(
     # `_edge_sort_key`) MUST resolve through it rather than the queried target's
     # own (possibly locally-empty) axes.
     entity = declaring_metadata(meta, metadata.identity)
-    compiled = compile_read(plan_.root_operation, meta, dialect, metadata, result_form="instance")
+    compiled = compile_read(plan_.root, meta, dialect, result_form="instance")
     calls = recorder if recorder is not None else TraceRecorder()
     milestones: dict[Edge, _Milestone] = {}
     for row in _execute_compiled(port, dialect, compiled, calls):

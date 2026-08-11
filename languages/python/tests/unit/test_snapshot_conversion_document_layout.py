@@ -25,11 +25,11 @@ import pytest
 from _document_layout_support import columns_model, document_model, entity
 from _snapshot_graph_support import documents_of
 
+from _support.sql import compile_read
 from parallax.conformance import models
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import compile_read
 from parallax.snapshot.materialize import (
     LevelContext,
     MergeScope,

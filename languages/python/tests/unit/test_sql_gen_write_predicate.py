@@ -19,12 +19,12 @@ from __future__ import annotations
 import pytest
 from _corpus_model_support import model, target
 
+from _support.sql import compile_read
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import (
     CompiledPredicate,
     SqlGenError,
-    compile_read,
     compile_write_predicate,
 )
 

@@ -29,6 +29,7 @@ from _support.corpus import (
     wire_value_deep,
 )
 from _support.repo import adapter_schema
+from _support.sql import compile_read
 from _support.sweep_goldens import (
     COMPILE_EXERCISED,
     WRITE_EXERCISED,
@@ -40,7 +41,6 @@ from parallax.core import op_algebra, storage_layout
 from parallax.core.db_port import Row
 from parallax.core.dialect import dialect_for
 from parallax.core.metamodel import Metamodel
-from parallax.core.sql_gen import compile_read
 
 # Deep-fetch / snapshot CHILD-LEVEL graph shape: these cases author a child
 # level's nodes PER PROJECTION — the unnarrowed concrete superset with a sibling

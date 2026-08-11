@@ -1,8 +1,7 @@
 """``parallax.core.navigate`` enforcement scope (m-navigate).
 
-Relationship-navigation **canonicalization**: the composition-at-the-engine step
-that runs after ``m-temporal-read``'s :func:`~parallax.core.temporal_read.inject_as_of`
-and before ``m-sql``'s ``compile_read``.
+Relationship-navigation **canonicalization** over the flat predicate produced at
+the read-planning boundary.
 Its single job is **per-hop as-of propagation**: for every ``navigate`` / ``exists`` /
 ``notExists`` hop reached anywhere in an already root-injected operation, resolve the
 relationship's target entity and, when that entity (or its inheritance family) is
@@ -61,21 +60,15 @@ from parallax.core.metamodel import (
 )
 from parallax.core.op_algebra import (
     And,
-    AsOf,
-    AsOfRange,
     Comparison,
-    DeepFetch,
     Exists,
     Group,
-    History,
-    Limit,
     Narrow,
     Navigate,
     Not,
     NotExists,
     Operation,
     Or,
-    OrderBy,
 )
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import conjunction_terms
@@ -93,9 +86,10 @@ def canonicalize(
 ) -> Operation:
     """Rewrite every navigation hop in ``op`` to carry its own per-hop as-of term.
 
-    ``op`` is the operation **after** the root's own `inject_as_of` has already run
-    (the engine/handle composition order: `inject_as_of` then `canonicalize` then
-    `compile_read`). ``entity`` is the read's queried Entity: the position a hop's
+    ``op`` is the flat predicate after the root's own temporal terms have already
+    been injected. Query-wide result, temporal, and include wrappers never enter
+    this function, so canonicalization does not peel or rebuild them. ``entity``
+    is the read's queried Entity: the position a hop's
     ``Class.relationship`` reference is written against, which is ``entity`` at the
     top level and the enclosing hop's own target inside a hop's interior. That
     position locates an unresolvable reference rather than scoping resolution —
@@ -126,20 +120,7 @@ def _contains_navigation(op: Operation) -> bool:
             return True
         case And(operands=operands) | Or(operands=operands):
             return any(_contains_navigation(operand) for operand in operands)
-        case (
-            Not(operand=operand)
-            | Group(operand=operand)
-            | Narrow(operand=operand)
-            | OrderBy(operand=operand)
-            | Limit(operand=operand)
-            | AsOf(operand=operand)
-            | AsOfRange(operand=operand)
-            | History(operand=operand)
-        ):
-            return _contains_navigation(operand)
-        case DeepFetch(operand=operand):
-            # A deep-fetch level's own operations are built later (`m-deep-fetch`);
-            # only its root `operand` predicate is walked here.
+        case Not(operand=operand) | Group(operand=operand) | Narrow(operand=operand):
             return _contains_navigation(operand)
         case _:
             # Every remaining leaf (All/NoneOp/Comparison/Between/NullCheck/
@@ -178,27 +159,6 @@ def _walk(
             return Group(operand=_walk(operand, model, entity, root_pins))
         case Narrow(to=to, operand=operand):
             return Narrow(to=to, operand=_walk(operand, model, entity, root_pins))
-        case OrderBy(operand=operand, keys=keys):
-            return OrderBy(operand=_walk(operand, model, entity, root_pins), keys=keys)
-        case Limit(operand=operand, count=count):
-            return Limit(operand=_walk(operand, model, entity, root_pins), count=count)
-        case AsOf(operand=operand, dimension=dimension, coordinate=coordinate):
-            return AsOf(
-                operand=_walk(operand, model, entity, root_pins),
-                dimension=dimension,
-                coordinate=coordinate,
-            )
-        case AsOfRange(operand=operand, dimension=dimension, start=start, end=end):
-            return AsOfRange(
-                operand=_walk(operand, model, entity, root_pins),
-                dimension=dimension,
-                start=start,
-                end=end,
-            )
-        case History(operand=operand, dimension=dimension):
-            return History(operand=_walk(operand, model, entity, root_pins), dimension=dimension)
-        case DeepFetch(operand=operand, paths=paths):
-            return DeepFetch(operand=_walk(operand, model, entity, root_pins), paths=paths)
         case _:
             # Every remaining node (All/NoneOp/Comparison/Between/NullCheck/
             # StringMatch/Membership/NestedComparison/NestedMembership/

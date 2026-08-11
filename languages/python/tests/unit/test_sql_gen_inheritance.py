@@ -18,9 +18,10 @@ from typing import Any, cast
 import pytest
 from _corpus_model_support import formed, model, target
 
+from _support.sql import compile_read
 from parallax.core import op_algebra as oa
 from parallax.core.dialect import POSTGRES
-from parallax.core.sql_gen import SqlGenError, compile_read
+from parallax.core.sql_gen import SqlGenError
 
 PAYMENT = model("payment")
 ANIMAL = model("animal")
@@ -28,6 +29,10 @@ DOCUMENT = model("document")
 DOCUMENT_LAYOUT = model("document-layout")
 INSTRUMENT = model("instrument")
 RATE = model("rate")
+
+
+def _narrow(model_: Any, *names: str) -> tuple[Any, ...]:
+    return tuple(target(model_, name).identity for name in names)
 
 
 def test_narrow_nested_under_a_table_per_concrete_subtype_family_partitions_branches() -> None:
@@ -123,10 +128,11 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
 
 def test_tpcs_document_single_branch_projects_and_decodes_its_document() -> None:
     compiled = compile_read(
-        oa.Narrow(to=("Book",), operand=oa.All()),
+        oa.All(),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Publication"),
+        narrow_to=_narrow(DOCUMENT_LAYOUT, "Book"),
         result_form="instance",
     )
     assert compiled.statement.sql == "select t0.id, t0.payload from publication_book t0"
@@ -146,6 +152,17 @@ def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
     op = oa.Narrow(to=("Unicorn",), operand=oa.All())
     with pytest.raises(SqlGenError, match="names an entity the model does not declare"):
         compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal"))
+
+
+def test_entity_query_narrow_cannot_span_inheritance_families() -> None:
+    with pytest.raises(SqlGenError, match="spans more than one inheritance family"):
+        compile_read(
+            oa.All(),
+            DOCUMENT,
+            POSTGRES,
+            target(DOCUMENT, "Document"),
+            narrow_to=_narrow(DOCUMENT, "Invoice", "Folder"),
+        )
 
 
 def test_tph_tag_predicate_whole_family_root_injects_none() -> None:
@@ -190,13 +207,11 @@ def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_ta
     # abstract, never to the narrow's resolved cardinality) and still injects `=`
     # (cardinality-keyed).
     compiled = compile_read(
-        oa.Narrow(
-            to=("Dog",),
-            operand=oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=3),
-        ),
+        oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=3),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
+        narrow_to=_narrow(ANIMAL, "Dog"),
     )
     assert compiled.statement.sql == (
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.bark_volume "
@@ -270,13 +285,11 @@ def test_tph_heterogeneous_document_predicate_partitions_by_variant() -> None:
 
 def test_tph_top_level_narrow_partitions_before_variant_specific_document_cast() -> None:
     compiled = compile_read(
-        oa.Narrow(
-            to=("CashPayment",),
-            operand=oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
-        ),
+        oa.Comparison(op="greaterThan", attr="CashPayment.detail", value=10.0),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
+        narrow_to=_narrow(DOCUMENT_LAYOUT, "CashPayment"),
     )
 
     assert (
@@ -305,14 +318,14 @@ def _heterogeneous_payment_predicate() -> oa.Operation:
 
 
 def test_tph_document_partition_wraps_result_shaping_around_the_union() -> None:
-    op = oa.Limit(
-        operand=oa.OrderBy(
-            operand=_heterogeneous_payment_predicate(),
-            keys=(oa.OrderKey(attr="Payment.id", direction="asc"),),
-        ),
-        count=1,
+    compiled = compile_read(
+        _heterogeneous_payment_predicate(),
+        DOCUMENT_LAYOUT,
+        POSTGRES,
+        target(DOCUMENT_LAYOUT, "Payment"),
+        order_by=(oa.OrderKey(attr="Payment.id", direction="asc"),),
+        limit=1,
     )
-    compiled = compile_read(op, DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Payment"))
 
     assert compiled.statement.sql.startswith("select u.id, u.kind, u.payload from (")
     assert compiled.statement.sql.endswith("order by u.id asc limit ?")
@@ -321,10 +334,11 @@ def test_tph_document_partition_wraps_result_shaping_around_the_union() -> None:
 
 def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None:
     compiled = compile_read(
-        oa.Limit(operand=_heterogeneous_payment_predicate(), count=1),
+        _heterogeneous_payment_predicate(),
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
+        limit=1,
         lock="locking",
     )
 
@@ -482,10 +496,11 @@ def test_tph_narrowed_projection_drops_slots_outside_the_position() -> None:
     # Cat/Dog keeps every slot applicable to one of them and drops WildBoar's
     # own `tusk_length`, without disturbing the surviving tier order.
     compiled = compile_read(
-        oa.Narrow(to=("Cat", "Dog"), operand=oa.All()),
+        oa.All(),
         ANIMAL,
         POSTGRES,
         target(ANIMAL, "Animal"),
+        narrow_to=_narrow(ANIMAL, "Cat", "Dog"),
     )
     assert compiled.statement.sql.startswith(
         "select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, "
@@ -714,16 +729,18 @@ def test_tpcs_string_cast_placeholder_diverges_by_declared_length() -> None:
 
 def test_tpcs_equivalent_narrow_spellings_collapse() -> None:
     by_abstract = compile_read(
-        oa.Narrow(to=("FinancialDocument",), operand=oa.All()),
+        oa.All(),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
+        narrow_to=_narrow(DOCUMENT, "FinancialDocument"),
     )
     by_concretes = compile_read(
-        oa.Narrow(to=("Receipt", "Invoice"), operand=oa.All()),
+        oa.All(),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
+        narrow_to=_narrow(DOCUMENT, "Receipt", "Invoice"),
     )
     assert by_abstract.statement == by_concretes.statement
     # And matches reading the abstract subtype directly, no narrow at all.
@@ -926,10 +943,11 @@ def test_tpcs_narrow_to_a_single_concrete_carries_no_family_variant() -> None:
     # resolved concrete has no shared table to discriminate and no sibling branch
     # to distinguish it from, so it projects — and transforms — nothing.
     compiled = compile_read(
-        oa.Narrow(to=("Invoice",), operand=oa.All()),
+        oa.All(),
         DOCUMENT,
         POSTGRES,
         target(DOCUMENT, "Document"),
+        narrow_to=_narrow(DOCUMENT, "Invoice"),
     )
     assert "family_variant" not in compiled.statement.sql
     assert compiled.transform_row({"id": 1, "title": "A"}) == {"id": 1, "title": "A"}
@@ -962,21 +980,29 @@ def test_narrow_to_is_none_for_a_bare_read() -> None:
 
 
 def test_narrow_to_carries_a_top_level_narrows_authored_subtypes() -> None:
-    narrowed = oa.Narrow(to=("Invoice",), operand=oa.All())
-    assert compile_read(narrowed, DOCUMENT, POSTGRES, target(DOCUMENT, "Document")).narrow_to == (
-        "Invoice",
+    invoice = target(DOCUMENT, "Invoice").identity
+    assert compile_read(
+        oa.All(),
+        DOCUMENT,
+        POSTGRES,
+        target(DOCUMENT, "Document"),
+        narrow_to=(invoice,),
+    ).narrow_to == (invoice,)
+
+
+def test_narrow_to_is_independent_of_result_shape_fields() -> None:
+    narrowed = _narrow(ANIMAL, "Cat", "Dog")
+    assert (
+        compile_read(
+            oa.All(),
+            ANIMAL,
+            POSTGRES,
+            target(ANIMAL, "Animal"),
+            narrow_to=narrowed,
+            limit=1,
+        ).narrow_to
+        == narrowed
     )
-
-
-def test_narrow_to_survives_the_directive_peel() -> None:
-    # The narrow sits UNDER the result-shaping directives, so it is found by the
-    # same peel the lowering itself performs — never by inspecting the outer node.
-    # A table-per-hierarchy family carries the directives here: the
-    # table-per-concrete-subtype union lane refuses them outright, so it cannot
-    # witness this shape at all.
-    narrowed = oa.Narrow(to=("Cat", "Dog"), operand=oa.All())
-    op = oa.Limit(operand=oa.OrderBy(operand=narrowed, keys=()), count=1)
-    assert compile_read(op, ANIMAL, POSTGRES, target(ANIMAL, "Animal")).narrow_to == ("Cat", "Dog")
 
 
 def test_a_mid_predicate_narrow_is_not_the_reads_own_narrow() -> None:

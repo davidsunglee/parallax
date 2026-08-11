@@ -36,7 +36,7 @@ from parallax.conformance import (
     temporal_state,
 )
 from parallax.conformance.temporal_state import TemporalShadow, predecessor_row
-from parallax.core import batch_write, inheritance, navigate, opt_lock, read_lock, storage_layout
+from parallax.core import batch_write, deep_fetch, inheritance, opt_lock, read_lock, storage_layout
 from parallax.core.base import (
     INFINITY_LITERAL,
     TemporalBound,
@@ -72,6 +72,7 @@ from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.op_algebra import (
     AsOf,
     AsOfRange,
+    EntityQuery,
     History,
     Operation,
     OperationError,
@@ -84,8 +85,6 @@ from parallax.core.sql_gen import CompiledRead, LoweredStatement, SqlGenError, c
 from parallax.core.temporal_read import (
     Pin,
     TemporalReadError,
-    inject_as_of,
-    resolve_pinned_instants,
     statement_pin,
 )
 from parallax.core.unit_work import (
@@ -301,33 +300,15 @@ def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
 
 def _canonicalize_read(
     operation_doc: object, entity: EntityMetadata, model: AcceptedMetamodel
-) -> Operation:
-    """Deserialize + canonicalize one read: root as-of injection, then per-hop
-    navigation canonicalization — the composition-at-the-engine order every read
-    compile site shares.
+) -> EntityQuery:
+    """Deserialize, validate, and plan one flat root Entity Query.
 
-    Temporal reads are lowered by ``m-temporal-read`` (the interval predicate
-    for each explicit canonical selection) BEFORE ``m-sql`` compiles the
-    resulting plain predicate: the module DAG forbids ``m-sql`` from importing
-    ``m-temporal-read``, so this composition site (the conformance engine, which
-    may reference both) is the canonicalize step. ``inject_as_of`` is a strict
-    identity for a non-temporal target, and it sees the Entity that actually
-    DECLARES the family's axes: an inheritance participant's as-of axes are
-    declared on the family root alone (`m-inheritance`), so a concrete- or
-    abstract-subtype-target read's own declaration carries none of its own.
-    ``parallax.core.navigate.canonicalize`` runs immediately after: it resolves
-    the root's own pinned per-axis instant (``resolve_pinned_instants``, read
-    from the SAME raw operation) and injects the matching per-hop as-of
-    predicate into every ``navigate`` / ``exists`` / ``notExists`` node the
-    operation carries, however deeply nested — a strict identity when the
-    operation carries no navigation node at all.
+    ``m-deep-fetch`` owns the single query-wide peel and composes temporal
+    injection plus navigation canonicalization before SQL sees the result.
     """
     raw_op = deserialize(operation_doc)
     validate_read_operation(entity, raw_op, model)
-    temporal_entity = _family_declarer(model, entity)
-    root_pins = resolve_pinned_instants(raw_op, temporal_entity)
-    injected = inject_as_of(raw_op, temporal_entity)
-    return navigate.canonicalize(injected, model, entity, root_pins)
+    return deep_fetch.plan(entity, raw_op, model).root
 
 
 def _family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityMetadata:
@@ -396,7 +377,6 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
             operation,
             model,
             dialect,
-            metadata,
             result_form=_result_form(case),
             lock=lock,
         )
@@ -2282,7 +2262,6 @@ def _compile_find(
         operation,
         model,
         dialect,
-        metadata,
         result_form=result_form,
         lock=lock,
     )
@@ -2590,9 +2569,7 @@ def _compile_snapshot_scenario(
                 )
             metadata = case_entity(model, target)
             operation = _canonicalize_read(find_doc, metadata, model)
-            statement = compile_read(
-                operation, model, dialect, metadata, result_form="instance"
-            ).statement
+            statement = compile_read(operation, model, dialect, result_form="instance").statement
             emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
