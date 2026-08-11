@@ -26,7 +26,10 @@ shape: read
 when:
   targetEntity: parallax.compatibility.Balance
   operation:
-    all: {}
+    asOf:
+      operand: { all: {} }
+      dimension: transaction-time
+      coordinate: latest
 then:
   statements:
     - sql:

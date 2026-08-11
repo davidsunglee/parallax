@@ -131,7 +131,7 @@ def validate_predicate_write_materialization(
     matching_finds = [
         (index, step)
         for index, step in target_finds
-        if canonical(step["find"]) == canonical(predicate)
+        if canonical(_selection_predicate(step["find"])) == canonical(predicate)
     ]
     if not matching_finds:
         if target_finds:
@@ -157,6 +157,21 @@ def validate_predicate_write_materialization(
         "roundTrips: 1, exactly one authored golden read statement, and expectRows "
         "exposing the resolved rows (or a genuine zero-match result)"
     )
+
+
+def _selection_predicate(operation: dict[str, Any]) -> dict[str, Any]:
+    """The predicate a complete temporal read selects before materialization."""
+    node = operation
+    while len(node) == 1:
+        tag = next(iter(node))
+        body = node[tag]
+        if tag not in ("asOf", "asOfRange", "history") or not isinstance(body, dict):
+            break
+        operand = body.get("operand")
+        if not isinstance(operand, dict):  # pragma: no cover - operation schema guard
+            break
+        node = operand
+    return node
 
 
 def requires_predicate_write_materialization(entity: Entity) -> bool:

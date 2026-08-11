@@ -18,8 +18,9 @@ Lowering lives here rather than in a module of its own for one reason: it reads
 the query's private clause state, and a seam that reached it from outside would
 either publish that state or copy it. What it answers is a
 :class:`LoweredFindQuery` — a target Entity Identity and a canonical
-``m-op-algebra`` operation, and nothing else. It is TOTAL for every constructed
-Find Query, introduces no semantic validation of its own, and is never memoized:
+``m-op-algebra`` operation, and nothing else. It completes the class-local
+temporal authoring contract: omitted Transaction Time becomes explicit Latest,
+while omitted Valid Time on a Bitemporal target raises. It is never memoized:
 each call returns a fresh lowering, and one execution keeps its result locally.
 
 Authoring reaches no model. Every rule stated here is class-local — clause
@@ -132,6 +133,11 @@ class _HistoryClause:
 _TemporalClause = _AsOfClause | _AsOfRangeClause | _HistoryClause
 
 
+def _temporal_rank(clause: _TemporalClause) -> int:
+    """Canonical inner-to-outer rank: Transaction Time, then Valid Time."""
+    return 0 if clause.dimension == "transaction-time" else 1
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class FindQuery[E, S]:
     """An immutable, side-effect-free query over one target Entity.
@@ -165,8 +171,8 @@ class FindQuery[E, S]:
     # `to: [Pet]` and `to: [Cat, Dog]` stay distinct canonical nodes even where
     # they resolve to the same effective set.
     _narrow: tuple[str, ...] | None = None
-    # The axis-keyed temporal wrappers, innermost first. Single-shot as a family:
-    # one call authors every dimension it pins, and a later call is refused.
+    # The axis-keyed temporal wrappers, innermost first. Each dimension is
+    # single-shot; separate calls may fill separate dimensions.
     _temporal: tuple[_TemporalClause, ...] = ()
     _order_keys: tuple[OrderKey, ...] = ()
     _limit: int | None = None
@@ -321,10 +327,10 @@ class FindQuery[E, S]:
     ) -> FindQuery[E, S]:
         """Pin one or both temporal axes to an instant (or the ``LATEST`` sentinel).
 
-        Axis-keyed and single-shot (``m-temporal-read``): an omitted axis
-        serializes **no** wrapper (its Latest default is injected at lowering),
-        while an explicit :data:`LATEST` pin serializes its wrapper with
-        ``coordinate: latest``. When both dimensions are passed the
+        Axis-keyed and single-shot per dimension (``m-temporal-read``): an
+        omitted Transaction-Time axis normalizes to an explicit Latest wrapper
+        during lowering, while Valid Time must be selected for a Bitemporal
+        query. When both dimensions are passed the
         **Valid-Time** wrapper encloses the **Transaction-Time** wrapper (the
         corpus's bitemporal nesting order). A naive ``datetime`` is rejected here.
         """
@@ -398,14 +404,6 @@ class FindQuery[E, S]:
         return (source,)
 
     def _with_temporal(self, clauses: tuple[_TemporalClause, ...]) -> FindQuery[E, S]:
-        if self._temporal:
-            raise QueryDefinitionError(
-                code="query-clause-invalid",
-                message=(
-                    "a temporal clause is single-shot; derive from the unpinned base "
-                    "(re-pinning is a deferred additive extension)"
-                ),
-            )
         if not clauses:
             raise QueryDefinitionError(
                 code="query-clause-invalid",
@@ -413,7 +411,19 @@ class FindQuery[E, S]:
                     "a temporal clause requires at least one dimension (valid_time= / tx_time=)"
                 ),
             )
-        return replace(self, _temporal=clauses)
+        existing = {clause.dimension for clause in self._temporal}
+        for clause in clauses:
+            if clause.dimension in existing:
+                raise QueryDefinitionError(
+                    code="query-clause-invalid",
+                    message=(
+                        f"the {clause.dimension} dimension is single-shot; derive from a "
+                        "query that has not selected that dimension"
+                    ),
+                )
+            existing.add(clause.dimension)
+        merged = self._temporal + clauses
+        return replace(self, _temporal=tuple(sorted(merged, key=_temporal_rank)))
 
     def _dimension(self, name: _DimensionName) -> WireDimension:
         """The canonical wire dimension for the developer-surface coordinate
@@ -448,7 +458,7 @@ class FindQuery[E, S]:
         op = self._predicate
         if self._narrow is not None:
             op = Narrow(to=self._narrow, operand=op)
-        for clause in self._temporal:
+        for clause in self._normalized_temporal():
             op = clause.wrap(op)
         if self._order_keys:
             op = OrderBy(operand=op, keys=self._order_keys)
@@ -457,6 +467,26 @@ class FindQuery[E, S]:
         if self._include:
             op = DeepFetch(operand=op, paths=self._include)
         return LoweredFindQuery(target=self._target, operation=op)
+
+    def _normalized_temporal(self) -> tuple[_TemporalClause, ...]:
+        """Complete the target's per-dimension temporal selection for lowering."""
+        selected = {clause.dimension for clause in self._temporal}
+        declared = {
+            "valid-time" if axis.dimension is TemporalDimension.VALID_TIME else "transaction-time"
+            for axis in self._as_of_axes
+        }
+        if "valid-time" in declared and "valid-time" not in selected:
+            raise QueryDefinitionError(
+                code="query-clause-invalid",
+                message=(
+                    f"{self._target.name} is bitemporal and requires an explicit Valid-Time "
+                    "selection through valid_time= or history(VALID_TIME)"
+                ),
+            )
+        clauses = self._temporal
+        if "transaction-time" in declared and "transaction-time" not in selected:
+            clauses += (_AsOfClause("transaction-time", "latest"),)
+        return tuple(sorted(clauses, key=_temporal_rank))
 
     def _selection(self) -> MutationSelection:
         """:func:`mutation_selection`'s body, stated where the clauses live."""
@@ -532,14 +562,14 @@ def mutation_selection(query: FindQuery[Any, Any]) -> MutationSelection:
 
 
 def lower_find_query(query: FindQuery[Any, Any]) -> LoweredFindQuery:
-    """``query``'s canonical lowering — total, validating nothing, memoized nowhere.
+    """``query``'s canonical lowering, memoized nowhere.
 
     The clauses are placed in the one fixed inner-to-outer order — predicate,
     root narrow, temporal wrapper(s), ordering, limit, deep fetch — so a query
     built by any permutation of the same clause calls lowers to the identical
-    operation. Nothing here measures a clause against a model: every semantic
-    rule the operation is subject to is stated at execution preflight, against
-    the model actually connected.
+    operation. Class-local temporal completeness is settled here from the
+    target's declared axes; nothing here measures a clause against a connected
+    model, whose semantic rules remain execution-preflight concerns.
 
     Each call builds a fresh value. A Find Query caches no lowering and no global
     memo retains one, so one execution lowers once and keeps that value locally,

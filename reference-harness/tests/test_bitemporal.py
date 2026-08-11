@@ -739,9 +739,13 @@ def test_tpcs_temporal_close_routed_to_wrong_table_is_rejected() -> None:
 def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
     # m-inheritance-093: the temporal abstract `union all` read carries the per-branch as-of
     # binds — Valid-Time-first [b, b, infinity], repeated in alphabetical branch order. The
-    # oracle recomputes them from the read's pin, independent of the authored golden.
+    # oracle recomputes them from the read's complete canonical selections, independent
+    # of the authored golden.
     case = _inheritance_case("m-inheritance-093")
-    assert _read_asof_pins(case) == {"valid-time": "2024-06-01T00:00:00+00:00"}
+    assert _read_asof_pins(case) == {
+        "valid-time": "2024-06-01T00:00:00+00:00",
+        "transaction-time": "latest",
+    }
     _assert_temporal_union_binds(case, "postgres")  # must not raise
     _assert_temporal_union_binds(case, "mariadb")  # the shared binds hold per dialect
 

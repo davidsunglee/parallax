@@ -1,7 +1,7 @@
 """As-of temporal-read unit tests (m-temporal-read).
 
 Exercises the injection templates (current-row / containment / range / scan), the
-default-latest rule on omitted axes, the Valid-Time-first bitemporal
+explicit per-dimension selection rule, the Valid-Time-first bitemporal
 composition, the milestone edge-pin, and the ``Pin`` / ``Edge`` value model —
 independently of the Docker-gated compile/run sweeps. Each injection assertion
 compiles the rewritten predicate through ``m-sql`` so the fragment and bind order
@@ -62,15 +62,11 @@ def _where(op: oa.Operation, entity: EntityMetadata) -> tuple[str, tuple[object,
 # --------------------------------------------------------------------------- #
 # Single-dimension Transaction-Time-only templates.                            #
 # --------------------------------------------------------------------------- #
-def test_default_latest_injection_equals_explicit_latest() -> None:
-    # Omitting the axis defaults it to the current milestone (out_z = infinity), and
-    # an explicit `asOf(..., latest)` lowers to the IDENTICAL injected predicate.
-    defaulted = _where(oa.All(), BALANCE)
+def test_explicit_latest_injects_the_current_row_predicate() -> None:
     explicit = _where(
         oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"), BALANCE
     )
-    assert defaulted == ("t0.out_z = ?", ("infinity",))
-    assert explicit == defaulted
+    assert explicit == ("t0.out_z = ?", ("infinity",))
 
 
 def test_past_instant_is_half_open_containment() -> None:
@@ -163,10 +159,9 @@ def test_bitemporal_both_past_reads_valid_time_first() -> None:
     assert binds == (_B, _B, _P, _P)
 
 
-def test_bitemporal_omitted_tx_time_defaults_to_latest() -> None:
-    where, binds = _where(_bitemporal(_B, None), POSITION)
-    assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
-    assert binds == (_B, _B, "infinity")
+def test_injection_rejects_a_missing_declared_selection_as_an_internal_error() -> None:
+    with pytest.raises(TemporalReadError, match="received no selection"):
+        _where(_bitemporal(_B, None), POSITION)
 
 
 def test_bitemporal_history_scans_both_axes() -> None:
@@ -197,7 +192,11 @@ def test_non_temporal_read_is_identity() -> None:
 
 def test_directives_survive_injection() -> None:
     op = oa.Limit(
-        operand=oa.OrderBy(operand=oa.All(), keys=(oa.OrderKey(attr="Balance.id"),)), count=2
+        operand=oa.OrderBy(
+            operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
+            keys=(oa.OrderKey(attr="Balance.id"),),
+        ),
+        count=2,
     )
     injected = inject_as_of(op, BALANCE)
     assert isinstance(injected, oa.Limit)

@@ -523,7 +523,9 @@ def test_keyed_update_lowers_a_plain_bitemporal_correction() -> None:
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.update(fetched.edit(value=Decimal("200.00")), valid_from=valid_from)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
@@ -540,7 +542,9 @@ def test_keyed_terminate_lowers_a_plain_bitemporal_termination() -> None:
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.terminate(fetched, valid_from=valid_from)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
@@ -558,7 +562,9 @@ def test_keyed_update_until_lowers_the_rectangle_split() -> None:
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.update_until(
             fetched.edit(value=Decimal("200.00")),
             valid_from=valid_from,
@@ -585,7 +591,9 @@ def test_keyed_update_until_with_an_empty_effective_change_set_issues_no_dml() -
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         # net-zero touch
         tx.update_until(fetched.edit(value=Decimal("100.00")), valid_from=valid_from, until=until)
 
@@ -606,7 +614,9 @@ def test_keyed_update_until_with_an_empty_change_set_still_rejects_equal_bounds(
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.update_until(  # EQUAL bounds, net-zero touch
             fetched.edit(value=Decimal("100.00")), valid_from=valid_from, until=valid_from
         )
@@ -629,7 +639,9 @@ def test_keyed_update_until_with_a_naive_until_raises_the_proper_value_error() -
     naive_until = dt.datetime(2024, 9, 1)  # NAIVE -- no tzinfo
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.update_until(
             fetched.edit(value=Decimal("200.00")),
             valid_from=valid_from,
@@ -653,7 +665,9 @@ def test_keyed_terminate_until_lowers_head_and_tail_only() -> None:
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.terminate_until(fetched, valid_from=valid_from, until=until)
 
     Database.connect(port, WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(
@@ -667,7 +681,9 @@ def test_keyed_update_on_a_bitemporal_target_without_valid_from_raises() -> None
     port = RecordingPort(rows=[_position_row_dt()])
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.update(fetched.edit(value=Decimal("200.00")))
 
     with pytest.raises(ValueError, match="requires valid_from"):
@@ -704,7 +720,9 @@ def test_keyed_update_until_rejects_an_equal_window_bound() -> None:
     valid_from = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.update_until(
             fetched.edit(value=Decimal("200.00")),
             valid_from=valid_from,
@@ -723,7 +741,9 @@ def test_keyed_terminate_until_rejects_a_reversed_window_bound() -> None:
     until = dt.datetime(2024, 3, 1, tzinfo=dt.UTC)  # BEFORE valid_from — reversed
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        fetched = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.terminate_until(fetched, valid_from=valid_from, until=until)
 
     with pytest.raises(ValueError, match="requires valid_from < until"):
@@ -877,6 +897,7 @@ _CORRECTION_UNTIL = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
 
 
 def _find_pinned_position(tx: Transaction, **as_of: Any) -> Any:
+    as_of.setdefault("valid_time", LATEST)
     return tx.find(WherePosition.where(WherePosition.id == 1).as_of(**as_of)).result()
 
 

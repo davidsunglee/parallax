@@ -40,7 +40,9 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
         )
 
     def split(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
+        current = tx.find(
+            Position.where(Position.id == 1).as_of(valid_time=LATEST)
+        ).result()  # observe the rectangle
         tx.update_until(
             current.edit(value=Decimal("200.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -85,7 +87,9 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
         )
 
     def correct(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
+        current = tx.find(
+            Position.where(Position.id == 1).as_of(valid_time=LATEST)
+        ).result()  # observe the rectangle
         tx.update(
             current.edit(value=Decimal("200.00")),
             valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
@@ -400,7 +404,9 @@ db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
 Corpus case: `m-inheritance-100`
 
 ```python
-op = DepositRate.where(DepositRate.all).as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))
+op = DepositRate.where(DepositRate.all).as_of(
+    valid_time=LATEST, tx_time=datetime(2024, 1, 15, tzinfo=UTC)
+)
 ```
 
 ## A table-per-hierarchy abstract-root read materializes typed per-variant instances
@@ -560,12 +566,12 @@ op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
 )
 ```
 
-## The same semi-join, defaulted to latest (no `.as_of()` at all)
+## The same semi-join, selecting current Valid Time and defaulting Transaction Time
 
 Corpus case: `m-navigate-023`
 
 ```python
-op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00))
+op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(valid_time=LATEST)
 ```
 
 ## Equality on the primary key
@@ -1421,7 +1427,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
         )
 
     def split(tx: Transaction) -> None:
-        current = tx.find(Branch.where(Branch.id == 1)).result()  # observe the rectangle
+        current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=LATEST)).result()
         tx.update_until(
             current.edit(
                 address=Address(
@@ -1701,10 +1707,10 @@ Spec: `python.md` §3 (the recipe and the edge it transports). Graded by `tests/
 
 ```python
 def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
-    """RENDER time (bitemporal): a plain, non-transactional find — the
-    displayed rectangle plus its edge on BOTH declared axes (Valid Time and
+    """RENDER time (bitemporal): a non-transactional current-rectangle find —
+    the displayed rectangle plus its edge on BOTH declared axes (Valid Time and
     Transaction Time)."""
-    node = db.find(Branch.where(Branch.id == id)).result()
+    node = db.find(Branch.where(Branch.id == id).as_of(valid_time=LATEST)).result()
     return node, edge_of(node)
 
 

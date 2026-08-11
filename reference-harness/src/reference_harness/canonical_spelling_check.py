@@ -255,6 +255,13 @@ def _walk_case(document: Any, report: _Report, declarations: _Declarations) -> N
         at = f"when.scenario[{index}]"
         report.entity(step.get("targetEntity"), f"{at}.targetEntity", declarations)
         _walk_operation(step.get("find"), f"{at}.find", report, declarations)
+        for encoding_index, encoding in enumerate(_items(step.get("equivalentEncodings"))):
+            _walk_operation(
+                encoding,
+                f"{at}.equivalentEncodings[{encoding_index}]",
+                report,
+                declarations,
+            )
         _walk_write(step.get("write"), f"{at}.write", report, declarations)
     for index, step in enumerate(_items(when.get("coherence"))):
         if not isinstance(step, Mapping):

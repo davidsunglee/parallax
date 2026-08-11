@@ -1,10 +1,8 @@
-# Defaulted as-of read (the m-temporal-read default-injection rule, made observable).
+# Defaulted Transaction-Time authoring (normalization to explicit Latest, made observable).
 #
-# The operation is a plain `all` over Balance — the caller OMITS the transaction-time
-# dimension. The temporal MVP rule is "an omitted as-of dimension defaults to as-of
-# now", so the implementation must auto-inject the current-row predicate
-# `out_z = infinity`; the golden SQL carries that injected `t0.out_z = ?` even though
-# the operation has no asOf node. As-of now over the fixture history returns only the
+# The authoring call omits Transaction Time, and authoring normalization records
+# that choice as the canonical explicit `asOf(transaction-time, latest)` below.
+# The current-row predicate is `out_z = infinity`. Latest over the fixture history returns only the
 # CURRENT milestone of each live account — (1, 150.00) and (2, 200.00) — excluding
 # the superseded id-1 row and the terminated id-3 account, whose out_z is finite.
 # The cross-dialect infinity-fallback proof lives in the dedicated
@@ -17,7 +15,12 @@ shape: read
 when:
   targetEntity: parallax.compatibility.Balance
   operation:
-    all: {}
+    asOf:
+      operand: { all: {} }
+      dimension: transaction-time
+      coordinate: latest
+  equivalentEncodings:
+    - { all: {} }
 then:
   statements:
     - sql:

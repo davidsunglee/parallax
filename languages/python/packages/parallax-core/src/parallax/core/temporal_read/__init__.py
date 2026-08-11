@@ -2,7 +2,7 @@
 
 The as-of read model: temporal entities whose rows are **milestones** over
 ``[from, to)`` intervals, with the as-of predicate **auto-injected** on read.
-This scope owns the *interval model, the default-injection rule, and the
+This scope owns the *interval model, the explicit-selection injection rule, and the
 milestone (edge-pin) behaviour* (``m-op-algebra`` / ``m-temporal-read``);
 ``m-sql`` owns the concrete SQL fragments and bind order. Because the normative
 module DAG forbids ``m-sql`` from importing ``m-temporal-read`` (they are siblings
@@ -127,14 +127,14 @@ class UndeclaredAxisError(TemporalReadError):
 
 
 class Latest:
-    """The explicit Latest pin sentinel — spells the default injection.
+    """The explicit Latest pin sentinel — including normalized Transaction-Time omission.
 
     ``LATEST`` on an axis lowers to the **identical** current-row predicate the
-    default-injection rule produces for an omitted axis (``to = infinity``), but is
-    an *explicit* pin: it serializes its wrapper (``coordinate: latest``) rather than being
-    absent. It is deliberately not a coordinate — it re-resolves to whatever
-    milestone is current at read time, so it is never replayable (python.md, the
-    stale-web-edit recipe).
+    authoring default produces for omitted Transaction Time (``to = infinity``).
+    Canonical operations always serialize its wrapper (``coordinate: latest``)
+    rather than leaving the axis absent. It is deliberately not a coordinate —
+    it re-resolves to whatever milestone is current at read time, so it is never
+    replayable (python.md, the stale-web-edit recipe).
     """
 
     __slots__ = ()
@@ -411,8 +411,8 @@ def inject_as_of(op: Operation, entity: EntityMetadata) -> Operation:
       off the top, so they survive around the rewritten predicate;
     - peels the temporal wrappers (``asOf`` / ``asOfRange`` / ``history``), reading
       each axis's pin and rejecting a double-pinned or undeclared axis;
-    - **defaults every omitted axis to the current milestone** (the default-latest
-      rule), in **Valid-Time-first** order;
+    - requires one explicit selection per declared axis, in
+      **Valid-Time-first** order;
     - composes the user predicate ``and`` the per-axis interval terms into one flat
       conjunction (user binds first, then the as-of binds).
 
@@ -442,7 +442,12 @@ def _inject_core(core: Operation, entity: EntityMetadata) -> Operation:
     # A Temporal Dimension's member value IS its canonical axis rank, so
     # Valid-Time-first needs no separate ordering table.
     for axis in sorted(entity.declared_as_of_axes, key=lambda item: item.dimension.value):
-        mode = modes.get(axis.dimension, _Latest())
+        mode = modes.get(axis.dimension)
+        if mode is None:
+            raise TemporalReadError(
+                f"{entity.identity.name}: internal temporal lowering received no selection "
+                f"for declared dimension {axis.dimension.value!r}"
+            )
         axis_terms.extend(_terms(mode, axis, entity))
 
     if not axis_terms:
@@ -563,13 +568,14 @@ def resolve_pinned_instants(op: Operation, entity: EntityMetadata) -> dict[Accep
 
 
 def statement_pin(op: Operation, entity: EntityMetadata) -> Pin:
-    """The as-of coordinates a statement's OWN temporal wrapper explicitly
-    pins (spec §3 ``snapshot.pin``): an OMITTED axis (no wrapper at all — its
-    latest default is injected only at lowering) or a SCANNED axis (``history``
-    / ``as_of_range`` — "a scan is not a pin") is absent; a PINNED axis carries
-    its coordinate, including the explicit :data:`LATEST` sentinel
-    (``coordinate: latest``). The whole-graph pin ``Database.find`` / ``Transaction.find``
-    (``parallax.snapshot.handle``) attach to the returned ``Snapshot``.
+    """The as-of coordinates a statement's temporal selections pin.
+
+    A SCANNED axis (``history`` / ``as_of_range`` — "a scan is not a pin") is
+    absent; a PINNED axis carries its coordinate, including the explicit
+    :data:`LATEST` sentinel (``coordinate: latest``). Authoring-defaulted
+    Transaction Time has already normalized to that explicit wrapper. The
+    whole-graph pin ``Database.find`` / ``Transaction.find`` attach to the
+    returned ``Snapshot``.
 
     Called on the SAME raw (pre-:func:`inject_as_of`) operation
     :func:`resolve_pinned_instants` consumes — an independent, side-effect-free

@@ -41,7 +41,7 @@ from _support import mirrored_models as mm
 from parallax.conformance import stale_web_edit
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
-from parallax.core import TX_TIME
+from parallax.core import LATEST, TX_TIME
 from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.execution_log import TraceRecorder
@@ -158,7 +158,9 @@ def test_the_collector_takes_every_attached_level_row_as_that_level_lands() -> N
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(transaction_module, "find", _recording_find(calls))
         db.transact(
-            lambda tx: tx.find(Policy.where(Policy.id == 1).include(Policy.coverages)).result()
+            lambda tx: tx.find(
+                Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
+            ).result()
         )
     collector = calls[0]
     assert isinstance(collector, ReadObservations)
@@ -251,10 +253,10 @@ def test_db_find_resolves_a_concrete_inheritance_targets_inherited_pin_and_edge(
     )
     rate = MODELS["rate"]
     db = Database.connect(port, rate, clock=FixedClock(FIXED))
-    statement = im.DepositRate.where(im.DepositRate.all).as_of(tx_time=LATEST)
+    statement = im.DepositRate.where(im.DepositRate.all).as_of(valid_time=LATEST, tx_time=LATEST)
     snapshot = db.find(statement)
     assert snapshot.pin.tx_time is LATEST
-    assert snapshot.pin.valid_time is None
+    assert snapshot.pin.valid_time is LATEST
     edge = edge_of(snapshot.result())
     assert edge.tx_time == dt.datetime(2024, 2, 1, tzinfo=dt.UTC)
     assert edge.valid_time == dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
@@ -350,7 +352,7 @@ def test_bitemporal_update_after_a_find_carries_observed_valid_time_bounds() -> 
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
+        fetched = tx.find(mm.Branch.where(mm.Branch.id == 1).as_of(valid_time=LATEST)).result()
         tx.update(
             fetched.edit(name="Renamed Branch"),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -390,7 +392,7 @@ def test_bitemporal_update_after_a_find_keeps_the_observed_value_object_document
     db = db_for(MODELS["branch"], port)
 
     def fn(tx: Transaction) -> None:
-        fetched = tx.find(mm.Branch.where(mm.Branch.id == 1)).result()
+        fetched = tx.find(mm.Branch.where(mm.Branch.id == 1).as_of(valid_time=LATEST)).result()
         tx.update(
             fetched.edit(name="Renamed Branch"),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -628,7 +630,12 @@ def test_tx_find_refuses_a_deferred_execution_feature_with_no_adapter_activity()
     # Feature is refused there too — and before `uow.read`, which is what keeps
     # `NoIoPort` untouched: a refused read never force-flushes.
     def fn(tx: Transaction) -> None:
-        tx.find(Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages))
+        tx.find(
+            Policy.where(Policy.all)
+            .history(TX_TIME)
+            .as_of(valid_time=LATEST)
+            .include(Policy.coverages)
+        )
 
     with pytest.raises(DeferredFeatureError) as caught:
         Database.connect(NoIoPort(), POLICY_MODEL, clock=FixedClock(FIXED)).transact(fn)
@@ -693,7 +700,9 @@ def test_an_included_temporal_nodes_own_observation_licenses_its_keyed_close() -
     port = RecordingPort(row_queue=([_policy_row(from_z)], [_coverage_row(from_z)]))
 
     def fn(tx: Transaction) -> None:
-        policy = tx.find(Policy.where(Policy.id == 1).include(Policy.coverages)).result()
+        policy = tx.find(
+            Policy.where(Policy.id == 1).as_of(valid_time=LATEST).include(Policy.coverages)
+        ).result()
         tx.terminate(policy.coverages[0], valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC))
 
     db_for(POLICY_MODEL, port).transact(fn)

@@ -24,9 +24,13 @@ when:
   scenario:
     - targetEntity: parallax.compatibility.Balance
       find:
-        eq:
-          attr: parallax.compatibility.Balance.id
-          value: 2
+        asOf:
+          operand:
+            eq:
+              attr: parallax.compatibility.Balance.id
+              value: 2
+          dimension: transaction-time
+          coordinate: latest
       roundTrips: 1
       note: hold the LATEST view of id 2 (the current milestone, 200.00)
       statements:
@@ -64,9 +68,13 @@ when:
           binds: [2, B, 250.00, "2024-07-01T00:00:00+00:00", infinity]
     - targetEntity: parallax.compatibility.Balance
       find:
-        eq:
-          attr: parallax.compatibility.Balance.id
-          value: 2
+        asOf:
+          operand:
+            eq:
+              attr: parallax.compatibility.Balance.id
+              value: 2
+          dimension: transaction-time
+          coordinate: latest
       roundTrips: 1
       sameObjectAs: 0
       identityAttr: bal_id

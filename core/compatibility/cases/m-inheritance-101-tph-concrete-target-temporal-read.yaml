@@ -11,7 +11,7 @@
 # the root, does) — proving the inherited spelling resolves for a table-per-hierarchy
 # concrete position exactly as it does for table-per-concrete-subtype
 # (m-inheritance-100). Pinning valid-time to 2024-06-01 (a past instant) with
-# transaction-time defaulted to Latest selects Bond's Latest rectangle; there is NO
+# Transaction-Time explicitly selected as Latest selects Bond's Latest rectangle; there is NO
 # familyVariant (the caller queried a known variant).
 #
 # Non-trivial (temporal + tag) case => referenceSql is the independent oracle (inline
@@ -26,7 +26,11 @@ when:
   operation:
     asOf:
       operand:
-        all: {}
+        asOf:
+          operand:
+            all: {}
+          dimension: transaction-time
+          coordinate: latest
       dimension: valid-time
       coordinate: "2024-06-01T00:00:00+00:00"
 then:

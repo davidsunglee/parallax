@@ -428,7 +428,7 @@
           "$ref": "#/$defs/entityName"
         },
         "equivalentEncodings": {
-          "description": "Optional alternate surface encodings of the same operation (e.g. a prefix vs a fluent spelling, or differently-ordered keys). Each MUST canonicalize to `when.operation` via the serde seam; the harness asserts this dialect-agnostically (layer 4c), proving precedence/serialization fidelity in the fixture itself.",
+          "description": "Optional alternate authoring-surface encodings of the same operation (e.g. a prefix vs a fluent spelling, differently-ordered keys, or an omitted Transaction-Time selection). Each MUST normalize and canonicalize to `when.operation`; the harness asserts this dialect-agnostically (layer 4c).",
           "type": "array",
           "minItems": 1,
           "items": { "type": "object" }
@@ -599,6 +599,11 @@
                 "then": { "required": ["find"] }
               },
               {
+                "description": "A scenario-step `equivalentEncodings` list supplies alternate authoring forms of that step's canonical `find`, so it is legal only on a read step.",
+                "if": { "required": ["equivalentEncodings"] },
+                "then": { "required": ["find"] }
+              },
+              {
                 "description": "`uow` step-grouping is legal on a read or write step ONLY. An ACTION step (m-case-format lifecycle vocabulary) executes through the lifecycle-object engine path, which does not observe grouping, so `uow` on an action step is invalid.",
                 "if": { "required": ["action"] },
                 "then": { "not": { "required": ["uow"] } }
@@ -618,6 +623,12 @@
               "find": {
                 "description": "The operation a READ step issues (a canonical m-op-algebra algebra node). Validated against operation.schema.json by the harness. Present on read steps; absent on write steps.",
                 "type": "object"
+              },
+              "equivalentEncodings": {
+                "description": "Optional alternate authoring-surface encodings of this step's canonical `find`. Each normalizes and canonicalizes to `find`; in particular, an omitted Transaction-Time selection normalizes to explicit Latest.",
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "object" }
               },
               "targetEntity": {
                 "description": "read steps only. The entity this step's `find` targets — the queried position it starts from (m-case-format, resolved Q1). REQUIRED on every read step and absent on write steps, mirroring a read case's `when.targetEntity`.",

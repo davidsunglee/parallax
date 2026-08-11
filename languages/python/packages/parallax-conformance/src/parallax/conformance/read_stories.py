@@ -272,10 +272,15 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     ),
     ReadStory(
         "m-navigate-023",
-        "The same semi-join, defaulted to latest (no `.as_of()` at all)",
+        "The same semi-join, selecting current Valid Time and defaulting Transaction Time",
         "policy",
-        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)),
-        "op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00))",
+        lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
+            valid_time=LATEST
+        ),
+        (
+            "op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00))"
+            ".as_of(valid_time=LATEST)"
+        ),
     ),
     # -- m-inheritance (TPH/TPCS rows reads), payment/document/animal.yaml --- #
     ReadStory(
@@ -332,9 +337,11 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "Table-per-concrete-subtype concrete-target read pinning an inherited root-owned axis",
         "rate",
         lambda: DepositRate.where(DepositRate.all).as_of(
-            tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
+            valid_time=LATEST, tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
         ),
-        "op = DepositRate.where(DepositRate.all).as_of(tx_time=datetime(2024, 1, 15, tzinfo=UTC))",
+        "op = DepositRate.where(DepositRate.all).as_of(\n"
+        "    valid_time=LATEST, tx_time=datetime(2024, 1, 15, tzinfo=UTC)\n"
+        ")",
     ),
     # -- m-read-lock (the runtime lock/omit matrix), models/account.yaml ----- #
     # The `api-conformance`-lane runtime half of

@@ -428,9 +428,15 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
     )
     op = deserialize(
         {
-            "history": {
-                "operand": {"eq": {"attr": "DepositRate.id", "value": 1}},
-                "dimension": "transaction-time",
+            "asOf": {
+                "operand": {
+                    "history": {
+                        "operand": {"eq": {"attr": "DepositRate.id", "value": 1}},
+                        "dimension": "transaction-time",
+                    }
+                },
+                "dimension": "valid-time",
+                "coordinate": "latest",
             }
         }
     )
@@ -453,7 +459,18 @@ def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
     op = deserialize(
         {
             "deepFetch": {
-                "operand": {"history": {"operand": {"all": {}}, "dimension": "transaction-time"}},
+                "operand": {
+                    "asOf": {
+                        "operand": {
+                            "history": {
+                                "operand": {"all": {}},
+                                "dimension": "transaction-time",
+                            }
+                        },
+                        "dimension": "valid-time",
+                        "coordinate": "latest",
+                    }
+                },
                 "paths": [{"segments": [{"rel": "Policy.coverages"}]}],
             }
         }
@@ -483,7 +500,9 @@ def test_db_find_refuses_a_deferred_execution_feature_by_name() -> None:
     # query wrong. `NoIoPort` raises on any read or write: classification runs
     # before SQL generation, connection acquisition, and adapter access alike.
     db = handle.Database.connect(NoIoPort(), POLICY_MODEL)
-    query = Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages)
+    query = (
+        Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
+    )
     with pytest.raises(DeferredFeatureError) as caught:
         db.find(query)
     assert caught.value.code == "execution-feature-deferred"
@@ -497,7 +516,9 @@ def test_a_pinned_axis_with_includes_is_not_deferred() -> None:
     # the child level short-circuits and one statement is the whole execution.
     port = QueuePort([[]])
     db = handle.Database.connect(port, POLICY_MODEL)
-    query = Policy.where(Policy.all).as_of(tx_time=LATEST).include(Policy.coverages)
+    query = (
+        Policy.where(Policy.all).as_of(valid_time=LATEST, tx_time=LATEST).include(Policy.coverages)
+    )
     assert db.find(query).results() == []
     assert len(port.executed) == 1
 
@@ -510,6 +531,7 @@ def test_result_shaping_wrappers_do_not_hide_a_deferred_feature() -> None:
     query = (
         Policy.where(Policy.all)
         .history(TX_TIME)
+        .as_of(valid_time=LATEST)
         .order_by(Policy.id.asc())
         .limit(5)
         .include(Policy.coverages)
@@ -525,7 +547,9 @@ def test_an_undeclared_target_outranks_a_deferred_feature() -> None:
     # surfaces — a deferral result is never exposed for a query the model does
     # not even declare a target for.
     db = handle.Database.connect(NoIoPort(), ACCOUNT)
-    query = Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages)
+    query = (
+        Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
+    )
     with pytest.raises(QueryTargetError) as caught:
         db.find(query)
     assert caught.value.code == "query-target-not-in-model"
@@ -601,7 +625,7 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
     # materialization failure.
     db = handle.Database.connect(NoIoPort(), ACCOUNT)
     with pytest.raises(QueryTargetError):
-        db.find(Policy.where(Policy.all))
+        db.find(Policy.where(Policy.all).as_of(valid_time=LATEST))
 
 
 def test_a_conversion_failure_keeps_its_own_classification_and_publishes_nothing() -> None:

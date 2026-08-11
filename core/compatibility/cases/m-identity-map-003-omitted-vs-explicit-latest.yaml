@@ -3,10 +3,10 @@
 # resolve to the same managed object.
 #
 # The identity key's coordinate component is the LOWERED as-of coordinate: an
-# omitted axis and an explicit `asOf(..., latest)` both lower to the infinity
+# authored omitted Transaction Time and an explicit `asOf(..., latest)` both normalize to the infinity
 # sentinel — one canonical coordinate, not a wall-clock instant (m-identity-map).
-# Step 0 finds Balance id 1 with the coordinate OMITTED (the default-injected
-# current-row predicate, `out_z = ?` bind infinity -> the current 150.00). Step 1
+# Step 0 retains the OMITTED authoring form under `equivalentEncodings`; its
+# canonical `find` is explicit Latest (`out_z = ?` bind infinity -> the current 150.00). Step 1
 # finds the same primary key with an EXPLICIT `asOf(transaction-time, latest)`; it
 # lowers to the identical `out_z = ?` predicate, so it is the SAME lowered
 # coordinate and therefore the SAME managed view (`sameObjectAs`) — still costing a
@@ -21,11 +21,19 @@ when:
   scenario:
     - targetEntity: parallax.compatibility.Balance
       find:
-        eq:
-          attr: parallax.compatibility.Balance.id
-          value: 1
+        asOf:
+          operand:
+            eq:
+              attr: parallax.compatibility.Balance.id
+              value: 1
+          dimension: transaction-time
+          coordinate: latest
+      equivalentEncodings:
+        - eq:
+            attr: parallax.compatibility.Balance.id
+            value: 1
       roundTrips: 1
-      note: OMITTED coordinate — the default-injected current-row predicate (lowers to out_z = infinity)
+      note: OMITTED authoring coordinate canonicalizes to the explicit Latest find above (out_z = infinity)
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?

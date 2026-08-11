@@ -30,10 +30,18 @@ when:
   scenario:
     - targetEntity: parallax.compatibility.Position
       find:
-        and:
-          operands:
-            - { eq: { attr: parallax.compatibility.Position.id, value: 1 } }
-            - { eq: { attr: parallax.compatibility.Position.value, value: 200.00 } }
+        asOf:
+          operand:
+            asOf:
+              operand:
+                and:
+                  operands:
+                    - { eq: { attr: parallax.compatibility.Position.id, value: 1 } }
+                    - { eq: { attr: parallax.compatibility.Position.value, value: 200.00 } }
+              dimension: transaction-time
+              coordinate: latest
+          dimension: valid-time
+          coordinate: latest
       roundTrips: 1
       statements:
         - sql:
@@ -63,7 +71,15 @@ when:
           binds: [1, A, 200.00, "2024-06-01T00:00:00+00:00", "2024-07-01T00:00:00+00:00", "2024-10-01T00:00:00+00:00", infinity]
     - targetEntity: parallax.compatibility.Position
       find:
-        eq: { attr: parallax.compatibility.Position.value, value: 200.00 }
+        asOf:
+          operand:
+            asOf:
+              operand:
+                eq: { attr: parallax.compatibility.Position.value, value: 200.00 }
+              dimension: transaction-time
+              coordinate: latest
+          dimension: valid-time
+          coordinate: latest
       roundTrips: 1
       statements:
         - sql:

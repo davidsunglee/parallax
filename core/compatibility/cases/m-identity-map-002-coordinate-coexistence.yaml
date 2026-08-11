@@ -21,9 +21,13 @@ when:
   scenario:
     - targetEntity: parallax.compatibility.Balance
       find:
-        eq:
-          attr: parallax.compatibility.Balance.id
-          value: 1
+        asOf:
+          operand:
+            eq:
+              attr: parallax.compatibility.Balance.id
+              value: 1
+          dimension: transaction-time
+          coordinate: latest
       roundTrips: 1
       note: latest pin (default-injected current-row predicate)
       statements:
@@ -51,9 +55,13 @@ when:
         - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
     - targetEntity: parallax.compatibility.Balance
       find:
-        eq:
-          attr: parallax.compatibility.Balance.id
-          value: 1
+        asOf:
+          operand:
+            eq:
+              attr: parallax.compatibility.Balance.id
+              value: 1
+          dimension: transaction-time
+          coordinate: latest
       roundTrips: 1
       sameObjectAs: 0
       identityAttr: bal_id

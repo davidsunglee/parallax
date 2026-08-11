@@ -62,7 +62,7 @@ from typing import Any
 
 from parallax.conformance.read_models import Balance
 from parallax.conformance.vo_models import Branch
-from parallax.core import Edge
+from parallax.core import LATEST, Edge
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import edge_of
 from parallax.snapshot.handle import Database, Transaction
@@ -124,10 +124,10 @@ def submit_balance_edit(
 
 
 def render_branch_milestone(db: Database, *, id: int) -> tuple[Branch, Edge]:
-    """RENDER time (bitemporal): a plain, non-transactional find — the
-    displayed rectangle plus its edge on BOTH declared axes (Valid Time and
+    """RENDER time (bitemporal): a non-transactional current-rectangle find —
+    the displayed rectangle plus its edge on BOTH declared axes (Valid Time and
     Transaction Time)."""
-    node = db.find(Branch.where(Branch.id == id)).result()
+    node = db.find(Branch.where(Branch.id == id).as_of(valid_time=LATEST)).result()
     return node, edge_of(node)
 
 

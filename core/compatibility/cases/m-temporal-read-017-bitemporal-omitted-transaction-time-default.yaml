@@ -1,6 +1,6 @@
 # Bitemporal read with only the Valid-Time dimension pinned. The omitted Transaction-Time
-# dimension defaults to Latest, so the golden SQL includes the current Transaction-Time
-# predicate out_z = infinity.
+# authoring form is retained under `equivalentEncodings`; canonical normalization
+# makes Transaction Time explicit as Latest, so the golden SQL includes out_z = infinity.
 model: models/position.yaml
 tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, default-transaction-time, slice-snapshot-1, slice-managed-1]
 shape: read
@@ -9,9 +9,18 @@ when:
   operation:
     asOf:
       operand:
-        all: {}
+        asOf:
+          operand:
+            all: {}
+          dimension: transaction-time
+          coordinate: latest
       dimension: valid-time
       coordinate: "2024-03-01T00:00:00+00:00"
+  equivalentEncodings:
+    - asOf:
+        operand: { all: {} }
+        dimension: valid-time
+        coordinate: "2024-03-01T00:00:00+00:00"
 then:
   statements:
     - sql:

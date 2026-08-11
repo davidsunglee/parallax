@@ -27,6 +27,7 @@ from parallax.conformance.animal_owner import ANIMAL_MODEL as _ANIMAL_MODEL
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
 from parallax.conformance.read_models import Animal, Cat, Dog, Pet, WildBoar
 from parallax.core import (
+    LATEST,
     MANY_TO_ONE,
     TX_TIME,
     AbstractRoot,
@@ -46,6 +47,7 @@ from parallax.core.entity._query import build_find_query
 from parallax.core.metamodel import EntityIdentity
 from parallax.core.op_algebra import (
     All,
+    AsOf,
     AsOfRange,
     DeepFetch,
     Exists,
@@ -489,14 +491,25 @@ _COVERAGES = (
 @pytest.mark.parametrize(
     "query",
     [
-        Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages),
-        Policy.where(Policy.all).include(Policy.coverages).history(TX_TIME),
+        Policy.where(Policy.all)
+        .history(TX_TIME)
+        .as_of(valid_time=LATEST)
+        .include(Policy.coverages),
+        Policy.where(Policy.all)
+        .include(Policy.coverages)
+        .history(TX_TIME)
+        .as_of(valid_time=LATEST),
     ],
     ids=["history-then-include", "include-then-history"],
 )
 def test_history_with_includes_builds_in_either_order(query: FindQuery[Any, Any]) -> None:
     assert lowered_operation(query) == DeepFetch(
-        operand=History(operand=All(), dimension="transaction-time"), paths=_COVERAGES
+        operand=AsOf(
+            operand=History(operand=All(), dimension="transaction-time"),
+            dimension="valid-time",
+            coordinate="latest",
+        ),
+        paths=_COVERAGES,
     )
 
 
@@ -512,7 +525,7 @@ def test_as_of_range_with_includes_builds_in_either_order(query: FindQuery[Any, 
     start, end = _WINDOW
     assert lowered_operation(query) == DeepFetch(
         operand=AsOfRange(
-            operand=All(),
+            operand=AsOf(operand=All(), dimension="transaction-time", coordinate="latest"),
             dimension="valid-time",
             start=start.isoformat(),
             end=end.isoformat(),
@@ -525,7 +538,9 @@ def test_a_deferred_combination_is_a_valid_operation_the_gate_refuses_by_name() 
     # The gate validates before it classifies, so reaching the deferral at all
     # proves the operation is legal against the model: an invalid one would have
     # drawn `OperationRejectedError` one step earlier.
-    query = Policy.where(Policy.all).history(TX_TIME).include(Policy.coverages)
+    query = (
+        Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
+    )
     with pytest.raises(DeferredFeatureError) as caught:
         preflight_find(query, model=model_of(POLICY_MODEL))
     assert caught.value.features == ("snapshot-history-includes",)

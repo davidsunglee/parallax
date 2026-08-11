@@ -78,6 +78,18 @@ def _by_id() -> Operation:
     return deserialize({"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}})
 
 
+def _select_latest(operation: dict[str, object], *dimensions: str) -> dict[str, object]:
+    for dimension in dimensions:
+        operation = {
+            "asOf": {
+                "operand": operation,
+                "dimension": dimension,
+                "coordinate": "latest",
+            }
+        }
+    return operation
+
+
 def _account_slot() -> ObservationKey:
     return ObservationKey(ObjectKey(_account(), (("id", 3),)), None)
 
@@ -317,9 +329,15 @@ def test_the_neutral_read_reports_a_deferred_feature_by_name() -> None:
         operation=deserialize(
             {
                 "deepFetch": {
-                    "operand": {
-                        "history": {"operand": {"all": {}}, "dimension": "transaction-time"}
-                    },
+                    "operand": _select_latest(
+                        {
+                            "history": {
+                                "operand": {"all": {}},
+                                "dimension": "transaction-time",
+                            }
+                        },
+                        "valid-time",
+                    ),
                     "paths": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
                 }
             }
@@ -336,7 +354,7 @@ def test_a_row_form_request_refuses_the_relationship_levels_it_cannot_materializ
         operation=deserialize(
             {
                 "deepFetch": {
-                    "operand": {"all": {}},
+                    "operand": _select_latest({"all": {}}, "transaction-time", "valid-time"),
                     "paths": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
                 }
             }
@@ -424,12 +442,15 @@ def test_a_wrapper_carried_deep_fetch_over_a_scan_is_deferred_by_name() -> None:
                 "limit": {
                     "operand": {
                         "deepFetch": {
-                            "operand": {
-                                "history": {
-                                    "operand": {"all": {}},
-                                    "dimension": "transaction-time",
-                                }
-                            },
+                            "operand": _select_latest(
+                                {
+                                    "history": {
+                                        "operand": {"all": {}},
+                                        "dimension": "transaction-time",
+                                    }
+                                },
+                                "valid-time",
+                            ),
                             "paths": [
                                 {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
                             ],
@@ -459,19 +480,26 @@ def test_a_scan_wrapping_a_deep_fetch_is_the_same_deferred_feature() -> None:
     request = NeutralReadRequest.graph(
         target=_policy(),
         operation=deserialize(
-            {
-                "history": {
-                    "operand": {
-                        "deepFetch": {
-                            "operand": {"all": {}},
-                            "paths": [
-                                {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
-                            ],
-                        }
-                    },
-                    "dimension": "transaction-time",
-                }
-            }
+            _select_latest(
+                {
+                    "history": {
+                        "operand": {
+                            "deepFetch": {
+                                "operand": {"all": {}},
+                                "paths": [
+                                    {
+                                        "segments": [
+                                            {"rel": "parallax.compatibility.Policy.coverages"}
+                                        ]
+                                    }
+                                ],
+                            }
+                        },
+                        "dimension": "transaction-time",
+                    }
+                },
+                "valid-time",
+            )
         ),
     )
     with pytest.raises(DeferredFeatureError) as raised:
@@ -494,12 +522,15 @@ def test_a_deep_fetch_nested_under_another_over_a_scan_is_deferred_by_name() -> 
                 "deepFetch": {
                     "operand": {
                         "deepFetch": {
-                            "operand": {
-                                "history": {
-                                    "operand": {"all": {}},
-                                    "dimension": "transaction-time",
-                                }
-                            },
+                            "operand": _select_latest(
+                                {
+                                    "history": {
+                                        "operand": {"all": {}},
+                                        "dimension": "transaction-time",
+                                    }
+                                },
+                                "valid-time",
+                            ),
                             "paths": [
                                 {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
                             ],
@@ -532,12 +563,15 @@ def test_a_narrow_between_the_deep_fetch_and_the_scan_is_the_same_deferred_featu
                 "deepFetch": {
                     "operand": {
                         "narrow": {
-                            "operand": {
-                                "history": {
-                                    "operand": {"all": {}},
-                                    "dimension": "transaction-time",
-                                }
-                            },
+                            "operand": _select_latest(
+                                {
+                                    "history": {
+                                        "operand": {"all": {}},
+                                        "dimension": "transaction-time",
+                                    }
+                                },
+                                "valid-time",
+                            ),
                             "to": ["parallax.compatibility.Policy"],
                         }
                     },

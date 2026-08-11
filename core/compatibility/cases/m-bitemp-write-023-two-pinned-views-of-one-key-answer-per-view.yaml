@@ -10,7 +10,7 @@
 # subject; this case is what pins the subject down.
 #
 # Both steps read Position id 1. Step 0 pins it at the finite Valid-Time instant
-# 2024-03-01 with Transaction Time defaulted Latest, materializing the rectangle-split
+# 2024-03-01 with explicit Transaction-Time Latest, materializing the rectangle-split
 # head (value 100) — a WRITABLE view. Step 1 pins the SAME primary key at the finite
 # Transaction-Time instant 2024-02-01, materializing the superseded belief (value 90) —
 # a READ-ONLY view. The two coordinates resolve to two DIFFERENT milestones of one key.
@@ -65,13 +65,17 @@ when:
       find:
         asOf:
           operand:
-            eq:
-              attr: parallax.compatibility.Position.id
-              value: 1
+            asOf:
+              operand:
+                eq:
+                  attr: parallax.compatibility.Position.id
+                  value: 1
+              dimension: transaction-time
+              coordinate: latest
           dimension: valid-time
           coordinate: "2024-03-01T00:00:00+00:00"
       roundTrips: 1
-      note: pin id 1 at the finite Valid-Time instant 2024-03-01 (Transaction Time defaulted Latest) — the rectangle-split head (100.00), a WRITABLE view
+      note: pin id 1 at the finite Valid-Time instant 2024-03-01 with Transaction-Time Latest — the rectangle-split head (100.00), a WRITABLE view
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?
@@ -82,11 +86,15 @@ when:
       find:
         asOf:
           operand:
-            eq:
-              attr: parallax.compatibility.Position.id
-              value: 1
-          dimension: transaction-time
-          coordinate: "2024-02-01T00:00:00+00:00"
+            asOf:
+              operand:
+                eq:
+                  attr: parallax.compatibility.Position.id
+                  value: 1
+              dimension: transaction-time
+              coordinate: "2024-02-01T00:00:00+00:00"
+          dimension: valid-time
+          coordinate: latest
       roundTrips: 1
       note: pin the SAME primary key at the finite Transaction-Time instant 2024-02-01 — the superseded belief (90.00), a DIFFERENT milestone and a READ-ONLY view
       statements:

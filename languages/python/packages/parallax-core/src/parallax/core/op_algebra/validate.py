@@ -66,6 +66,11 @@ Rule provenance:
   contract" (points 4 and 5): a value object carries no correlation columns
   and is never a navigation, deep-fetch, or `find()` root — it is reached only
   by value, through its owner.
+- `temporal-read-dimension-selection-cardinality` — `m-temporal-read`
+  "Operations": a read carries exactly one selection for every family-effective
+  declared dimension and none for an undeclared dimension. Transaction-Time
+  omission is normalized by an authoring surface before this model-aware
+  boundary; Valid Time has no omission default.
 
 The active position's effective concrete-subtype sets come from the Inheritance
 Facet; value-object paths resolve through the accepted Metadata's own O(1)
@@ -92,6 +97,7 @@ from parallax.core.metamodel import (
     Metamodel,
     NestedValueObjectMetadata,
     RelationshipDeclaration,
+    TemporalDimension,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
@@ -132,7 +138,12 @@ from parallax.core.op_algebra.nodes import (
     StringMatch,
 )
 
-__all__ = ["OperationRejectedError", "referenced_entities", "validate_operation"]
+__all__ = [
+    "OperationRejectedError",
+    "referenced_entities",
+    "validate_operation",
+    "validate_read_operation",
+]
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
@@ -256,6 +267,52 @@ def validate_operation(root: EntityMetadata, op: Operation, model: Metamodel) ->
     """
     scope = _PositionScope(effective=_effective_set(model, root))
     _walk(op, model, scope)
+
+
+def validate_read_operation(root: EntityMetadata, op: Operation, model: Metamodel) -> None:
+    """Validate a read, including its model-aware temporal selection completeness."""
+    _validate_temporal_selections(root, op, model)
+    validate_operation(root, op, model)
+
+
+def _validate_temporal_selections(root: EntityMetadata, op: Operation, model: Metamodel) -> None:
+    family = inheritance.view(model).entity(root.identity)
+    declarer = None if family is None else model.entity(family.root)
+    if declarer is None:  # pragma: no cover - the facet covers every accepted Entity
+        return
+    declared = {
+        "valid-time" if axis.dimension is TemporalDimension.VALID_TIME else "transaction-time"
+        for axis in declarer.declared_as_of_axes
+    }
+    selected = _root_temporal_dimensions(op)
+    missing = sorted(dimension for dimension in declared if selected.count(dimension) == 0)
+    duplicate = sorted(dimension for dimension in declared if selected.count(dimension) > 1)
+    undeclared = sorted(set(selected) - declared)
+    if missing or duplicate or undeclared:
+        details = "; ".join(
+            detail
+            for detail in (
+                f"missing {missing}" if missing else "",
+                f"repeated {duplicate}" if duplicate else "",
+                f"undeclared {undeclared}" if undeclared else "",
+            )
+            if detail
+        )
+        raise OperationRejectedError(
+            "temporal-read-dimension-selection-cardinality",
+            f"{root.identity.canonical}: temporal read selections are invalid ({details}); "
+            "canonical operations name exactly one selection per declared dimension",
+        )
+
+
+def _root_temporal_dimensions(op: Operation) -> list[str]:
+    current = op
+    selected: list[str] = []
+    while isinstance(current, (OrderBy, Limit, DeepFetch, Narrow, AsOf, AsOfRange, History)):
+        if isinstance(current, (AsOf, AsOfRange, History)):
+            selected.append(current.dimension)
+        current = current.operand
+    return selected
 
 
 def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:

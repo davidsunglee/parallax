@@ -30,6 +30,7 @@ from typing import Any
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.scripted_clock import ScriptedClock
 from parallax.conformance.story_models import Position
+from parallax.core import LATEST
 from parallax.core.entity._model import model_of
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Transaction
@@ -83,7 +84,7 @@ def test_an_optimistic_close_settles_against_the_rectangle_it_read(provisioner: 
     )
 
     def correct(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1)).result()
+        current = tx.find(Position.where(Position.id == 1).as_of(valid_time=LATEST)).result()
         tx.find(Position.where(Position.id == 1).as_of(valid_time=_VP)).result()
         tx.update(current.edit(value=Decimal("150.00")), valid_from=_V3)
 

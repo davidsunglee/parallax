@@ -40,6 +40,7 @@ from .predicate_write_validate import (
 )
 from .schemas import build_registry, load_schemas
 from .storage_layout import validate_storage_layout
+from .temporal_selection_validate import validate_temporal_selections
 from .temporality import derive_temporal_structure
 from .value_object_resolve import RejectionError
 
@@ -439,6 +440,20 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                     f"case {case_path.name}",
                     errors,
                 )
+                errors.extend(
+                    f"case {case_path.name}: {problem}"
+                    for problem in validate_temporal_selections(
+                        when["operation"], when.get("targetEntity"), family
+                    )
+                )
+            for index, encoding in enumerate(when.get("equivalentEncodings", [])):
+                _validate(
+                    encoding,
+                    operation_schema,
+                    f"case {case_path.name} equivalentEncodings[{index}]",
+                    errors,
+                    registry,
+                )
         # A scenario case carries its operations per step (under `when.scenario[].find`);
         # each one must also validate against the operation algebra schema.
         if isinstance(when.get("scenario"), list):
@@ -464,6 +479,21 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         f"case {case_path.name} scenario[{index}].find",
                         errors,
                     )
+                    errors.extend(
+                        f"case {case_path.name} scenario[{index}].find: {problem}"
+                        for problem in validate_temporal_selections(
+                            step["find"], step.get("targetEntity"), family
+                        )
+                    )
+                    for encoding_index, encoding in enumerate(step.get("equivalentEncodings", [])):
+                        _validate(
+                            encoding,
+                            operation_schema,
+                            f"case {case_path.name} scenario[{index}].equivalentEncodings"
+                            f"[{encoding_index}]",
+                            errors,
+                            registry,
+                        )
                 if isinstance(step, dict) and isinstance(step.get("write"), dict):
                     entity = _validate_predicate_write(
                         step["write"],
@@ -507,6 +537,12 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                         family,
                         f"case {case_path.name} coherence[{index}].find",
                         errors,
+                    )
+                    errors.extend(
+                        f"case {case_path.name} coherence[{index}].find: {problem}"
+                        for problem in validate_temporal_selections(
+                            step["find"], step.get("targetEntity"), family
+                        )
                     )
         # The referenced model must exist.
         if isinstance(case, dict) and isinstance(case.get("model"), str):

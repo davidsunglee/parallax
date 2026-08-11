@@ -46,7 +46,15 @@ when:
   scenario:
     - targetEntity: parallax.compatibility.Mooring
       find:
-        eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
+        asOf:
+          operand:
+            asOf:
+              operand:
+                eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
+              dimension: transaction-time
+              coordinate: latest
+          dimension: valid-time
+          coordinate: latest
       roundTrips: 1
       note: the materializing read — `t0.payload` is projected for the observation, not for any member
       statements:
@@ -96,7 +104,11 @@ when:
       find:
         asOf:
           operand:
-            eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
+            asOf:
+              operand:
+                eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
+              dimension: transaction-time
+              coordinate: latest
           dimension: valid-time
           coordinate: "2026-05-01T00:00:00+00:00"
       roundTrips: 1
