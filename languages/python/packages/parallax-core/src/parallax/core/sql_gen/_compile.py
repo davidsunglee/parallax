@@ -1,6 +1,6 @@
 """The three-stage read compiler (m-sql): canonicalize -> lower -> normalize.
 
-``compile_read`` turns one flat ``m-op-algebra`` ``EntityQuery`` into one canonical
+``compile_read`` turns one flat ``m-predicate`` ``EntityQuery`` into one canonical
 ``LoweredStatement`` for a dialect. Lowering descends through `_predicate`'s one
 dispatcher (no visitor framework — see the third paragraph); the dialect strategy
 supplies every dialect-specific string. The emitted SQL is produced directly in
@@ -19,7 +19,7 @@ superset projection, table-per-concrete-subtype union-all) are ASSEMBLED here
 (`m-sql` "Metamodel-extension lowering") from plans
 `_inheritance` resolves — which is where the `parallax.core.inheritance` edge
 lives, a legal one since `modules.md` already reaches `m-inheritance`
-transitively through `m-op-algebra`. `validate_operation` runs upstream (the
+transitively through `m-predicate`. `validate_operation` runs upstream (the
 conformance engine / statement frontend), so a narrow reaching this compiler is
 already known position-valid; nothing in this package re-validates it.
 
@@ -46,10 +46,10 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectMetadata,
 )
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     EntityQuery,
-    Operation,
     OrderKey,
+    PredicateNode,
 )
 from parallax.core.sql_gen._context import Ctx as _Ctx
 from parallax.core.sql_gen._context import SqlGenError
@@ -431,7 +431,7 @@ def compile_read(
 
 
 def compile_write_predicate(
-    op: Operation, model: Metamodel, dialect: Dialect, target: EntityMetadata
+    op: PredicateNode, model: Metamodel, dialect: Dialect, target: EntityMetadata
 ) -> CompiledPredicate:
     """Render a BARE write predicate (`m-batch-write.md` "Predicate-selected
     readless forms"): the UNALIASED where-clause SQL and its ordered binds —
@@ -519,7 +519,7 @@ def _order_term(scope: _EntityScope, key: OrderKey) -> str:
 # --------------------------------------------------------------------------- #
 def _compile_inheritance_read(
     entity: EntityMetadata,
-    predicate: Operation,
+    predicate: PredicateNode,
     narrow_to: tuple[EntityIdentity, ...] | None,
     order_keys: tuple[OrderKey, ...],
     limit: int | None,

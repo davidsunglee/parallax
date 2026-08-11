@@ -71,7 +71,7 @@ concrete-subtype entity name, ordinal (Unicode codepoint) ascending** — a tota
 order that is a pure function of the entity names and **independent of the
 descriptor's declaration order and file layout**. This is specified normatively in
 `m-inheritance.md` ("Canonical concrete-subtype ordering") and referenced by
-`m-op-algebra`, `m-sql`, `m-navigate`, `m-deep-fetch`, and `m-case-format`.
+`m-predicate`, `m-sql`, `m-navigate`, `m-deep-fetch`, and `m-case-format`.
 
 Unchanged by this amendment: the **inherited-column prefix** of a superset stays
 **ancestry order** (root → abstract-subtype → concrete); a single entity's own

@@ -95,7 +95,7 @@ self-contained without a system `libpq`.
   the Phase-4 core amendment bundle, and the Phase-5 read path are landed and
   green: `just python-static` (unit coverage 99.97%, diff-cover 100%) and the
   Docker database lanes both pass.
-- **Phase 5 (SQL walking skeleton — read path):** `m-op-algebra` nodes + serde,
+- **Phase 5 (SQL walking skeleton — read path):** `m-predicate` nodes + serde,
   the pure `m-dialect` Postgres strategy, the abstract `m-db-port`, the `m-sql`
   three-stage read compiler (`compile_read` = canonicalize → lower → normalize),
   the statement half (`Entity.where`, comparison/string/null/membership
@@ -107,7 +107,7 @@ self-contained without a system `libpq`.
 - **Reachable intersection this phase:** 122 corpus cases (75 read, 18
   writeSequence, 29 rejected). After the Phase-5b read-projection amendment closed
   ledger D-11, **50 reads compile-match** the corpus and **48 run end-to-end**
-  against real Postgres: the 33 orders `m-op-algebra` reads (incl. the tracer
+  against real Postgres: the 33 orders `m-predicate` reads (incl. the tracer
   `m-op-algebra-002-eq`), the 13 value-object nested-predicate reads,
   `m-descriptor-001` (quoted identifier), and `m-core-001` (scalar round-trip); the
   2 value-object materialization reads (`m-value-object-023/024`) compile-match via
@@ -130,7 +130,7 @@ self-contained without a system `libpq`.
   - **M2 — `m-temporal-read` (`ca64903`):** as-of predicate templates,
     default-latest injection on omitted axes, the milestone edge-pin, and the
     `Pin` / `Edge` value model, expressed as a rewrite of the temporal wrapper
-    nodes into plain `m-op-algebra` predicates (the DAG forbids
+    nodes into plain `m-predicate` predicates (the DAG forbids
     `m-sql -> m-temporal-read`, so the SQL composition happens one layer up).
   - **M3 — `m-unit-work` core:** the `UnitOfWork` shell (frame join,
     rollback-only, abort-and-withhold, write buffer, observations, and the
@@ -139,7 +139,7 @@ self-contained without a system `libpq`.
     member-name honesty), the Clock Strategy, and the pure planner
     (coalesce → elide no-ops → batch → order → settle → decorate) producing a
     neutral `WritePlan`. The DAG pins
-    `m-unit-work → m-op-algebra` and `m-unit-work → m-db-port` only (no
+    `m-unit-work → m-predicate` and `m-unit-work → m-db-port` only (no
     `m-sql` / `m-dialect` edge), so the planner emits no SQL; the write-DML → SQL
     lowering is deferred to the composition surface (M4). Docker-free unit tests
     only; no write case runs yet.
@@ -187,11 +187,11 @@ self-contained without a system `libpq`.
     (checkpoint 3, M1–M4 + the two in-flight core deltas) is closed.
 - **Phase 7: Snapshot branch — increment 1 COMPLETE (`6766fe0..972a0e2`).** The
   core-amendment bundle (DQ5: `m-navigate --> m-op-list` inverted to
-  `m-navigate --> m-op-algebra`, `m-op-list --> m-deep-fetch` mirroring
+  `m-navigate --> m-predicate`, `m-op-list --> m-deep-fetch` mirroring
   `m-snapshot-read --> m-deep-fetch`; DQ3/DQ8: the rejected-case run answer —
   `observations.rejectedRule`, `roundTrips: 0`, no provisioning — added to the
   adapter envelope + schema) and the Python rejected lane: `validate_operation`
-  in `parallax.core.op_algebra` (narrow / subtype-attribute position tracking,
+  in `parallax.core.predicate` (narrow / subtype-attribute position tracking,
   value-object path grammar + typed-literal checks, including the scoped
   `nestedExists`/`nestedNotExists` `where`), the engine's `run_rejected_case`
   three-way `when.operation`/`when.model`/`when.write` dispatch (an
@@ -525,7 +525,7 @@ self-contained without a system `libpq`.
   fixes.** Landed the `.set(...)` typed assignment DSL and the `_where` verb
   family (`update_where` / `delete_where` / `terminate_where` /
   `update_until_where` / `terminate_until_where`, python.md §5): a bare
-  `m-op-algebra` predicate, readless for an unversioned non-temporal target
+  `m-predicate` predicate, readless for an unversioned non-temporal target
   (one statement, `m-batch-write` "Predicate-selected readless forms") and
   MATERIALIZING otherwise (resolve + per-row observation + gated/no-op-eliminated
   per-object writes, an atomic planned unit, `m-opt-lock` ADR 0014). The

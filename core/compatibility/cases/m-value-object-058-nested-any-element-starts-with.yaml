@@ -1,5 +1,5 @@
 # valueObject to-many affix match: nestedStartsWith through a `many` segment places the
-# trailing wildcard itself, so the authored value stays LITERAL text (m-op-algebra
+# trailing wildcard itself, so the authored value stays LITERAL text (m-predicate
 # wildcard rule + any-element, m-sql). Postgres golden only — a non-equality element
 # predicate is outside MariaDB's containment scope (m-dialect, "Scope of the containment
 # golden").
@@ -16,7 +16,7 @@
 # so a mis-derived pattern shows up as a row difference rather than as two spellings of
 # the same mistake.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, string, startsWith, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, startsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

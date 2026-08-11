@@ -1,5 +1,5 @@
 # valueObject to-many affix match: nestedEndsWith through a `many` segment places the
-# LEADING wildcard, the mirror of m-value-object-058 (m-op-algebra wildcard rule +
+# LEADING wildcard, the mirror of m-value-object-058 (m-predicate wildcard rule +
 # any-element, m-sql). Postgres golden only — a non-equality element predicate is outside
 # MariaDB's containment scope (m-dialect, "Scope of the containment golden").
 #
@@ -13,7 +13,7 @@
 # the JSON null (8), the scalar (9), the empty array (3), the null column (4), and the
 # missing keys (5, 6).
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, string, endsWith, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, endsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

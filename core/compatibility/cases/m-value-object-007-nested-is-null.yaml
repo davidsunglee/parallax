@@ -1,5 +1,5 @@
 # valueObject presence test: nestedIsNull over a shallow field (m-value-object,
-# m-op-algebra absence collapse), on Postgres AND MariaDB.
+# m-predicate absence collapse), on Postgres AND MariaDB.
 #
 # nestedIsNull(Customer.address.city) matches the rows whose city extraction is
 # 'not present'. THREE distinct storage states collapse here: the null column (4),
@@ -11,7 +11,7 @@
 # `json_value(t0.address, ?) is null`. Because MariaDB json_value maps a JSON
 # `null` leaf to SQL NULL, id 7 collapses identically on both dialects.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, nested, json, "null", absence-collapse, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, nested, json, "null", absence-collapse, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

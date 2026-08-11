@@ -1,4 +1,4 @@
-# Negative (m-op-algebra bound-ordering MUST): a `between` whose bounds are INVERTED
+# Negative (m-predicate bound-ordering MUST): a `between` whose bounds are INVERTED
 # is refused pre-SQL.
 #
 # The bounds reverse the ones m-op-algebra-008 authors over the same column, so the
@@ -10,7 +10,7 @@
 # only a STRICTLY greater lower bound is rejected: equal bounds name the
 # single-value range and stay legal.
 model: models/orders.yaml
-tags: [m-op-algebra, rejected, negative, between, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, rejected, negative, between, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

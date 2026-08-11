@@ -17,9 +17,9 @@ for the managed lifecycle, snapshot graphs for the plain-value lifecycle — are
 **peers above the shared fetch algorithm**, neither living underneath it nor
 underneath one another. Three edges change:
 
-- `m-navigate --> m-op-list` becomes `m-navigate --> m-op-algebra` — the honest
+- `m-navigate --> m-op-list` becomes `m-navigate --> m-predicate` — the honest
   replacement: navigation's `navigate` / `exists` / `notExists` nodes **are**
-  algebra vocabulary, and `m-op-algebra` was previously reachable from
+  algebra vocabulary, and `m-predicate` was previously reachable from
   `m-navigate` only transitively, through the edge being removed.
 - `m-deep-fetch --> m-op-list` is **deleted**. Deep fetch is a pure per-level
   fetch algorithm; nothing about it is a list, and a navigation filter used as a

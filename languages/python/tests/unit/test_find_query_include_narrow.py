@@ -45,7 +45,7 @@ from parallax.core.entity import FindQuery, RelationshipPath
 from parallax.core.entity._model import model_of
 from parallax.core.entity._query import build_find_query
 from parallax.core.metamodel import EntityIdentity
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     All,
     AsOf,
     AsOfRange,
@@ -355,19 +355,19 @@ def test_a_query_narrow_does_not_restrict_which_root_guards_are_legal() -> None:
 # --------------------------------------------------------------------------- #
 def test_any_with_no_predicates_is_a_bare_existence_test() -> None:
     predicate = sm.SnapOrder.items.exists()
-    assert predicate.op == Exists(rel="parallax.compatibility.SnapOrder.items", op=None)
+    assert predicate.node == Exists(rel="parallax.compatibility.SnapOrder.items", op=None)
 
 
 def test_any_with_predicates_conjoins_the_interior() -> None:
     predicate = sm.SnapOrder.items.exists(sm.SnapOrderItem.sku == "A")
-    op = predicate.op
+    op = predicate.node
     assert isinstance(op, Exists)
     assert op.rel == "parallax.compatibility.SnapOrder.items"
 
 
 def test_none_builds_not_exists() -> None:
     predicate = sm.SnapOrder.items.not_exists()
-    assert predicate.op == NotExists(rel="parallax.compatibility.SnapOrder.items", op=None)
+    assert predicate.node == NotExists(rel="parallax.compatibility.SnapOrder.items", op=None)
 
 
 def test_any_none_on_a_multi_hop_path_is_rejected() -> None:
@@ -396,7 +396,7 @@ def test_narrow_inside_a_relationship_scope_must_name_the_target_exactly() -> No
 # --------------------------------------------------------------------------- #
 def test_narrow_constructor_builds_the_canonical_node() -> None:
     predicate = im.Document.narrow(im.Invoice, im.Receipt)
-    assert predicate.op == Narrow(
+    assert predicate.node == Narrow(
         to=("parallax.compatibility.Invoice", "parallax.compatibility.Receipt"),
         operand=All(),
     )
@@ -404,7 +404,7 @@ def test_narrow_constructor_builds_the_canonical_node() -> None:
 
 def test_narrow_alternatives_are_canonicalized_by_entity_identity() -> None:
     predicate = im.Document.narrow(im.Receipt, im.Invoice)
-    assert predicate.op == Narrow(
+    assert predicate.node == Narrow(
         to=("parallax.compatibility.Invoice", "parallax.compatibility.Receipt"),
         operand=All(),
     )
@@ -440,7 +440,7 @@ def test_model_aware_narrowing_rejects_overlapping_alternatives() -> None:
 
 def test_narrow_with_where_scopes_attribute_access_to_the_subtype() -> None:
     predicate = im.Document.narrow(im.Invoice, where=im.Invoice.amount_due > 100)
-    op = predicate.op
+    op = predicate.node
     assert isinstance(op, Narrow)
     assert op.to == ("parallax.compatibility.Invoice",)
 
@@ -504,8 +504,8 @@ def test_a_query_states_no_model_rule_until_it_reaches_a_model() -> None:
     # it is why the rule is stated where the model is certain.
     out_of_scope = im.Invoice.amount_due > 3
     query = build_find_query(EntityIdentity(_DOC_NS, "Document"), (out_of_scope,))
-    assert lowered_operation(query) == out_of_scope.op
-    assert lowered_operation(query.limit(2)) == Limit(operand=out_of_scope.op, count=2)
+    assert lowered_operation(query) == out_of_scope.node
+    assert lowered_operation(query.limit(2)) == Limit(operand=out_of_scope.node, count=2)
 
 
 def test_the_narrow_clauses_no_retroactive_scope_rule_is_static_only() -> None:

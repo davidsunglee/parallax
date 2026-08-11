@@ -1,4 +1,4 @@
-# Negative (m-op-algebra non-string-member MUST, and the order the two nested string
+# Negative (m-predicate non-string-member MUST, and the order the two nested string
 # checks run in): a nested string predicate aimed at a NUMERIC member is refused as a
 # non-string member, not as a mistyped literal.
 #
@@ -6,12 +6,12 @@
 # from a member that holds none. The literal `'1'` is ALSO wrong for that leaf — a
 # string against a numeric type — which is what makes this case discriminating: a
 # resolver checking the literal first would report `nested-literal-type-mismatch` and
-# blame the value for a problem that is actually the member's. m-op-algebra fixes the
+# blame the value for a problem that is actually the member's. m-predicate fixes the
 # order as subject first, literal second, so the diagnostic names the real fault. The
 # node is schema-valid (its `value` is a plain string, as the schema requires), so
 # only model-aware validation resolving the leaf's declared type catches it.
 model: models/customer.yaml
-tags: [m-op-algebra, m-value-object, rejected, negative, nested, string, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, rejected, negative, nested, string, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

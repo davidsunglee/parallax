@@ -17,7 +17,7 @@
 # fixed schema exists to prevent, which quoting the value would have hidden.
 #
 # The rows instantiate the distinguishable presence / absence states the
-# absence-collapse rule (m-op-algebra) folds to "not present":
+# absence-collapse rule (m-predicate) folds to "not present":
 #
 #   id 1 Ada    city Oslo   geo NO  elevation 10.5  point (59.9, 10.7)  present object + scalars
 #   id 2 Linus  city Oslo   geo NO  elevation 20.0  point (59.9, 10.8)  present object + scalars
@@ -36,7 +36,7 @@
 #
 # To-many (`address.phones`, a `many` nested value object — a JSON array of
 # {type, number} documents in the SAME address column) drives the exists /
-# any-element / same-element cases (m-op-algebra to-many, m-dialect array-traversal
+# any-element / same-element cases (m-predicate to-many, m-dialect array-traversal
 # form). The phones arrays are the discriminating dataset:
 #
 #   id 1 Ada    phones [{home,555-1234},{work,555-9999}]  two elements — the DISCRIMINATOR
@@ -46,7 +46,7 @@
 #   id 4 Mary   (address null)                            NULL column — no phones
 #   id 5 Kavi / id 6 Rin  (address present, no `phones`)  MISSING phones key
 #
-# Absence collapse for a `many` member (m-op-algebra to-many / m-dialect
+# Absence collapse for a `many` member (m-predicate to-many / m-dialect
 # array-traversal): a `phones` value that is NOT a JSON array collapses to "not
 # present" — zero elements — exactly like a missing key or a NULL column. Three
 # distinguishable NON-ARRAY storage states instantiate that, and they are the

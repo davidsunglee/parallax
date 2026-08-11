@@ -1,5 +1,5 @@
 # Table-per-concrete-subtype narrow to an ABSTRACT SUBTYPE (m-inheritance,
-# m-op-algebra, m-sql).
+# m-predicate, m-sql).
 #
 # targetEntity is the abstract root Document; the `narrow` node constrains it to the
 # abstract subtype [FinancialDocument], whose effective concrete set is {Invoice,
@@ -10,7 +10,7 @@
 # broaden back to the sibling Memo. The serde preserves the authored `to: [Financial-
 # Document]`; lowering derives the effective concrete set.
 model: models/document.yaml
-tags: [m-inheritance, m-op-algebra, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Document

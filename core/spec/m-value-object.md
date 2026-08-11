@@ -56,7 +56,7 @@ inner field has no column of its own.
 | Property | Values / meaning |
 |---|---|
 | `name` | attribute name (REQUIRED) |
-| `type` | m-core **scalar** neutral type (REQUIRED) — every variant except `Json`, which `m-core` reserves for the whole-value-object storage type; normative for nested-predicate literal typing, casting, and predicate applicability — a string predicate reads a `String` member only (`m-op-algebra` / `m-sql`) |
+| `type` | m-core **scalar** neutral type (REQUIRED) — every variant except `Json`, which `m-core` reserves for the whole-value-object storage type; normative for nested-predicate literal typing, casting, and predicate applicability — a string predicate reads a `String` member only (`m-predicate` / `m-sql`) |
 | `nullable` | bool, default `false` |
 
 A `nestedValueObject` has the same shape as a top-level value object **minus**
@@ -131,7 +131,7 @@ document column.
 
 ## Reading and filtering inner fields
 
-The inner fields are **read and filtered** with the `m-op-algebra`
+The inner fields are **read and filtered** with the `m-predicate`
 nested-attribute access form over a dotted path (`Class.valueObject.path`), which
 `m-sql` lowers to a dialect-specific document extraction. Because a value object
 has no identity of its own, it is accessed by value only and is never a
@@ -179,7 +179,7 @@ storage form.
 
 A **null** value object (`nullable: true`, written absent) binds SQL `NULL` — the
 whole column is null, not a document of nulls. A `nullable: false` `one`
-occurrence MUST be present at write time (`m-op-algebra` / the `rejected`
+occurrence MUST be present at write time (`m-predicate` / the `rejected`
 write-validation cases). A `many` occurrence carries no such requirement, because
 it has no absent state to require: `m-document-codec` fixes `Missing` and `[]` as
 one logical zero state for a `Many`, so a write input that does not name one has
@@ -264,7 +264,7 @@ rather than left true by omission:
    correlation columns, no portal, and no reverse relationship to navigate.
 5. **No `find()` root.** `find()` MUST NOT be rooted at a value object — a value
    object is not a queryable root entity. It is queried only *through* its owner
-   (a nested-attribute predicate on the owner, `m-op-algebra`).
+   (a nested-attribute predicate on the owner, `m-predicate`).
 6. **Inherited temporality, no unit of work.** A value object inherits the
    owner's temporality (see [Inherited temporality](#inherited-temporality)) and
    participates in **no unit-of-work semantics of its own** — it holds no

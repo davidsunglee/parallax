@@ -68,7 +68,7 @@ separately from the DAG in [`modules.md`](modules.md).
 
 - **(decide and record — All slices)** The finder/query entry point. Show the
   idiomatic spelling of `Order where orderId == 42 and items.sku in ['A','B']`
-  and its canonical `m-op-algebra` serialization.
+  and its canonical `m-predicate` serialization.
 - **(decide and record — All slices)** The single-object find spelling and the
   behavior on no result and multiple results.
 - **(decide and record — All slices)** The `group` operator spelling. It MUST

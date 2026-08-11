@@ -120,7 +120,7 @@ from parallax.core import (
 )
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._model import model_of
-from parallax.core.op_algebra import All
+from parallax.core.predicate import All
 from parallax.core.unit_work import (
     PredicateSelection,
     PredicateWrite,

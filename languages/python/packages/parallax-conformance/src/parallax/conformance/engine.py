@@ -3,7 +3,7 @@
 The adapter path compiles and runs a compatibility case directly against the
 class-free engine spine (no dynamic class synthesis): the case's model YAML is
 ingested through the ``m-descriptor`` deserializer, its ``when.operation`` through
-the ``m-op-algebra`` deserializer, and the tree is lowered by ``m-sql``
+the ``m-predicate`` deserializer, and the tree is lowered by ``m-sql``
 ``compile_read`` to one ``CompiledRead`` — its canonical ``LoweredStatement`` together
 with the row transform that statement's own resolved position decided.
 ``compile`` emits that statement; ``run`` executes it through the injected
@@ -69,18 +69,18 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     AsOf,
     AsOfRange,
     EntityQuery,
     History,
-    Operation,
     OperationError,
     OperationRejectedError,
+    PredicateNode,
     deserialize,
     validate_read_operation,
 )
-from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
+from parallax.core.predicate import validate_operation as validate_predicate_operation
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, SqlGenError, compile_read
 from parallax.core.temporal_read import (
     Pin,
@@ -2269,7 +2269,7 @@ def _compile_find(
 
 def _find_request(
     step: Mapping[str, object], model: AcceptedMetamodel
-) -> tuple[EntityMetadata, Operation]:
+) -> tuple[EntityMetadata, PredicateNode]:
     """A scenario ``find`` step as the two facts a neutral read request states:
     the resolved target and the operation to run from it.
 
@@ -2685,7 +2685,7 @@ def _root_members(
     )
 
 
-def _find_step_pin(model: AcceptedMetamodel, target: str, raw_op: Operation) -> Pin:
+def _find_step_pin(model: AcceptedMetamodel, target: str, raw_op: PredicateNode) -> Pin:
     """A scenario find step's own statement pin — the whole-graph as-of
     coordinates the materialized view carries (`m-snapshot-read`), read from
     the SAME raw operation the find executor consumes. This is the pin
@@ -2981,7 +2981,7 @@ def _is_materializing_write_step(
     return None
 
 
-def _selection_predicate(operation: Operation | None) -> Operation | None:
+def _selection_predicate(operation: PredicateNode | None) -> PredicateNode | None:
     """Strip a read's root per-dimension temporal selections to its predicate."""
     current = operation
     while isinstance(current, (AsOf, AsOfRange, History)):
@@ -5194,7 +5194,7 @@ def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
 
     A `rejected` case never authors `targetEntity` (m-case-format schema), and a
     `when.write` input carries no explicit handle either: the model-aware
-    default `m-op-algebra` "the four-step validation rule" fixes is the
+    default `m-predicate` "the four-step validation rule" fixes is the
     inheritance family root when the model declares one, else the model's own
     first entity. For a `when.operation` case this seeds `validate_operation`'s
     narrow / subtype-attribute position tracking only (the value-object
@@ -5247,9 +5247,9 @@ def run_rejected_case(case: case_format.Case) -> str:
     `when.write` (m-case-format schema `oneOf`) — enforced by
     :func:`_rejected_when_kind` before dispatch, since the schema `oneOf` cannot
     protect a caller that reaches this engine without schema validation. An
-    `operation` input is deserialized through the same `m-op-algebra` serde
+    `operation` input is deserialized through the same `m-predicate` serde
     every read uses, then checked by the shared `validate_operation`
-    (`m-op-algebra` / `m-navigate` / `m-value-object`) — the same validator an
+    (`m-predicate` / `m-navigate` / `m-value-object`) — the same validator an
     idiomatic statement frontend calls at build time, so the two paths cannot
     drift. A `model` input first passes the descriptor frontend's own
     pre-formation family validator
@@ -5301,7 +5301,7 @@ def run_rejected_case(case: case_format.Case) -> str:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         root = case_entity(model, _rejected_target(case, model))
         try:
-            validate_op_algebra_operation(root, operation, model)
+            validate_predicate_operation(root, operation, model)
         except OperationRejectedError as exc:
             return exc.rule
         raise EngineError(

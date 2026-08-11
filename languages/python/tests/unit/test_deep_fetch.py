@@ -24,7 +24,7 @@ from parallax.core.metamodel import (
     Metamodel,
     RelationshipIdentity,
 )
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     All,
     And,
     AsOf,
@@ -34,10 +34,10 @@ from parallax.core.op_algebra import (
     Membership,
     Narrow,
     NavigationPath,
-    Operation,
     PathSegment,
+    PredicateNode,
 )
-from parallax.core.op_algebra._builders import _canonical_includes
+from parallax.core.predicate._builders import _canonical_includes
 from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
@@ -58,7 +58,7 @@ def _guard(*to: str) -> tuple[str, ...]:
     return to
 
 
-def _current_bitemporal(operand: Operation | None = None) -> Operation:
+def _current_bitemporal(operand: PredicateNode | None = None) -> PredicateNode:
     return AsOf(
         operand=AsOf(
             operand=operand if operand is not None else All(),
@@ -74,7 +74,7 @@ def _plan(
     model: Metamodel,
     target: str,
     paths: tuple[NavigationPath, ...],
-    operand: Operation | None = None,
+    operand: PredicateNode | None = None,
 ) -> deep_fetch.ObjectQueryPlan:
     op = DeepFetch(operand=operand if operand is not None else All(), paths=paths)
     return deep_fetch.plan(entity_of(model, target), op, model)

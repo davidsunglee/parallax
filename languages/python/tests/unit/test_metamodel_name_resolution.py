@@ -4,7 +4,7 @@ Pins the ambiguity-rejecting contract shared by every seam that resolves an
 authored Entity spelling against an accepted ``Metamodel``: an exact canonical
 spelling matches, a bare name matches only when a single Entity carries it, and a
 bare name two namespaces share is a miss rather than a silent first match. The
-``op_algebra.validate``, snapshot materialize, unit-of-work, and write-lowering
+``predicate.validate``, snapshot materialize, unit-of-work, and write-lowering
 seams resolve through the same ``entity_by_name`` helper, and so — the second
 suite below — do the three lowering seams an accepted operation reaches next:
 ``m-sql``'s family reads and hops, ``m-deep-fetch``'s levels, and
@@ -20,12 +20,12 @@ import pytest
 
 from _support.sql import compile_read
 from parallax.core import deep_fetch, navigate
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
-from parallax.core.op_algebra import All, Narrow, OperationRejectedError, validate_operation
+from parallax.core.predicate import All, Narrow, OperationRejectedError, validate_operation
 from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
@@ -71,7 +71,7 @@ def test_shared_helper_rejects_an_ambiguous_bare_name() -> None:
     assert entity_by_name(model, "Nope") is None
 
 
-def test_op_algebra_resolver_rejects_an_ambiguous_bare_name() -> None:
+def test_predicate_resolver_rejects_an_ambiguous_bare_name() -> None:
     model = _model()
     root = entity_by_name(model, "a.Person")
     assert root is not None
@@ -121,7 +121,7 @@ class _RefusingPort:
 
 def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
     # The read side: the find executor resolves its target spelling through the
-    # same helper, and reports the same rule through `op_algebra`'s own rejected
+    # same helper, and reports the same rule through `predicate`'s own rejected
     # carrier — so one rule and one class answer an ambiguous spelling whether
     # preflight or lowering resolves it.
     with pytest.raises(OperationRejectedError) as excinfo:

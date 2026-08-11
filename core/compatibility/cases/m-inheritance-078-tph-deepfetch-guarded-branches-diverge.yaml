@@ -13,7 +13,7 @@
 # for one branch and not the other, is exactly what the extra statement buys.
 # Whiskers, a Cat, is admitted by neither guard and so carries no `owner` key.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

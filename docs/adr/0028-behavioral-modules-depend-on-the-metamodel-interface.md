@@ -269,7 +269,7 @@ RelationshipDeclaration =
 
 Resolved operation nodes use the same identities. Relationship Join remains a
 static mapping fact rather than reusing an executable attribute-to-literal
-comparison node, preserving the one-way `m-op-algebra -> m-metamodel`
+comparison node, preserving the one-way `m-predicate -> m-metamodel`
 dependency. Python authoring gets its sole target from `Rel[T]`, while
 descriptor authoring gets it from the target side of the join. The old
 `relatedEntity` and optional `foreignKey` fields are removed from the
@@ -360,7 +360,7 @@ state. Ownerless behavioral operations consume resolved Entity Identity.
 Relationship Order is a sequence of
 `RelationshipOrder(attribute: AttributeIdentity, direction: SortDirection)`.
 Sort Direction is the closed `Ascending | Descending` algebra and is shared by
-operation Sort Keys through the existing `m-op-algebra -> m-metamodel`
+operation Sort Keys through the existing `m-predicate -> m-metamodel`
 dependency. Each relationship-order attribute belongs to the join target, and
 ordering is legal only when target Multiplicity is Many. Omitted direction on
 an authored term normalizes to Ascending. An omitted or empty order sequence

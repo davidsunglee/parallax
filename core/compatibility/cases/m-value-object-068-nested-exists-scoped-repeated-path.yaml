@@ -1,9 +1,9 @@
 # valueObject to-many: a same-element `where` MAY constrain one element-relative path
-# twice, and the conflicting form is outside MariaDB's containment scope (m-op-algebra
+# twice, and the conflicting form is outside MariaDB's containment scope (m-predicate
 # scoped `where`, m-sql to-many, m-dialect "Scope of the containment golden",
 # m-document-codec `encodeCandidate`). Postgres golden only.
 #
-# `m-op-algebra` composes a scoped `where` from the ordinary combinators over
+# `m-predicate` composes a scoped `where` from the ordinary combinators over
 # element-relative paths, with no requirement that the paths be distinct, so
 # `and(nestedEq(type, home), nestedEq(type, work))` is schema-valid and
 # resolver-valid. It is also unsatisfiable — one element cannot have two types — so it
@@ -23,7 +23,7 @@
 # outside that scope (`_POSTGRES_ONLY_ELEMENT_PREDICATE_CASES`). Two equalities
 # carrying the SAME value are one constraint, not two, and still lower.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, m-document-codec, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, m-document-codec, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

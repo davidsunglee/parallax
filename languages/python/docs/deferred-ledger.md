@@ -224,7 +224,7 @@ language target inheriting the same ingress finds it. Relates to
 `parallax.snapshot.handle._preflight.preflight_neutral`,
 `parallax.snapshot.handle._features`, `parallax.core.deep_fetch.plan`.
 
-**What.** `m-op-algebra` composes `deepFetch` freely under the nodes that return
+**What.** `m-predicate` composes `deepFetch` freely under the nodes that return
 their operand's own rows, so `limit(deepFetch(all, path), 5)` is a legal
 operation. Find Query lowering never emits one — it places the deep fetch
 outermost — but the model-neutral read ingress accepts any legal operation, so

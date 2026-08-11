@@ -1,5 +1,5 @@
 # valueObject absence collapse: FOUR storage states, one 'not present'
-# (m-value-object, m-op-algebra), on Postgres AND MariaDB.
+# (m-value-object, m-predicate), on Postgres AND MariaDB.
 #
 # nestedIsNull(Customer.address.geo.country) matches every row whose two-level
 # geo.country extraction is not present — and ALL FOUR distinct storage states
@@ -14,7 +14,7 @@
 # `jsonb_extract_path_text(t0.address, ?, ?) is null`; MariaDB
 # `json_value(t0.address, ?) is null`.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, nested, json, "null", absence-collapse, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, nested, json, "null", absence-collapse, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

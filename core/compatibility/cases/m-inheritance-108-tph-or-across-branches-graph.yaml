@@ -1,5 +1,5 @@
 # Table-per-hierarchy OR across two concrete-subtype branches, INSTANCE-FORM sibling:
-# the developer-surface per-variant node shape (m-inheritance, m-op-algebra,
+# the developer-surface per-variant node shape (m-inheritance, m-predicate,
 # m-case-format, m-sql).
 #
 # Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
@@ -8,7 +8,7 @@
 # carries NO `indoor` / `tusk_length` keys; Whiskers (Cat) carries NO `bark_volume` /
 # `tusk_length` keys. `m-inheritance-015` remains the values-lane witness.
 model: models/animal.yaml
-tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Animal

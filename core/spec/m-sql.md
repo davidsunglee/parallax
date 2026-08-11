@@ -1,8 +1,8 @@
 # m-sql — SQL Generation & Equivalence Contract
 
-`m-sql` is the contract that turns one `m-op-algebra` `EntityQuery` into
+`m-sql` is the contract that turns one `m-predicate` `EntityQuery` into
 per-dialect SQL, and the rules that make "equivalent SQL per database"
-**testable**. `m-sql` depends on `m-op-algebra` (the query value and predicate
+**testable**. `m-sql` depends on `m-predicate` (the query value and predicate
 algebra it lowers) and `m-dialect` (the dialect that decides the concrete SQL).
 It reads canonical model identities from `m-metamodel`, family and
 discriminator semantics from `m-inheritance`, physical Tables and slots from
@@ -140,7 +140,7 @@ materialized-predicate-write resolving read derives its `Document` slots from th
 **declared needs of the write it serves** — that write's target designation and its
 declared assignments — and from nothing else, its own predicate included (the
 `Document` slot rule and *Result form*, below). The operation algebra deliberately
-carries **no projection node** (`m-op-algebra`): no Object Query read may project
+carries **no projection node** (`m-predicate`): no Object Query read may project
 a proper subset of the derived list. The directives `orderBy` and `limit` never
 change the list.
 
@@ -299,13 +299,13 @@ document-resident.
 
 ## Per-operator SQL emission
 
-The table below fixes the **canonical Postgres golden SQL** each `m-op-algebra`
+The table below fixes the **canonical Postgres golden SQL** each `m-predicate`
 node lowers to. The golden form is what the `m-sql` normalizer (and the harness,
 layer 3) treats as the fixed point; an implementation's emitted SQL must equal it
 after normalization. The `?` placeholders consume the statement entry's `binds`
 left-to-right.
 
-| Operation | Canonical predicate fragment |
+| Predicate | Canonical predicate fragment |
 |---|---|
 | `all` | *(no `where` clause)* |
 | `none` | `where 1 = 0` |
@@ -410,7 +410,7 @@ formulation that must return the same rows (`m-case-format`).
 
 When a relationship target is a **polymorphic position** (`m-inheritance` — an
 abstract root / abstract subtype, optionally narrowed by a `narrow` in the filter's
-`op`, `m-op-algebra`), the semi-join constrains the sub-select to the target's
+`op`, `m-predicate`), the semi-join constrains the sub-select to the target's
 **effective concrete-subtype set**. The shape depends on the strategy:
 
 - **`table-per-hierarchy`** — one shared child table, so the hop is a **single**
@@ -470,7 +470,7 @@ the child's own key when it is itself a parent of a deeper level).
 The temp-table variant for very large parent key sets is a **fast-follow**
 (`m-deep-fetch`); round 1 uses the simplified `IN` form only.
 
-A **path-root guard** (`m-op-algebra`'s `{ to }` beside `segments`) emits
+A **path-root guard** (`m-predicate`'s `{ to }` beside `segments`) emits
 **no statement and no clause of its own**. It restricts which already-fetched root
 rows a path's first level gathers its keys from, so it is observable only in that
 level's `IN` list — which carries the guarded roots' keys alone — and, through it,
@@ -491,7 +491,7 @@ deepFetch(all(Animal), paths = [ { narrow: { to: [Dog] },
 ```
 
 A **polymorphic** hop (relationship target abstract, optionally narrowed by a path
-`narrow`, `m-op-algebra` / `m-deep-fetch`) stays **one statement per level**. Under
+`narrow`, `m-predicate` / `m-deep-fetch`) stays **one statement per level**. Under
 `table-per-hierarchy` the child level is the shared-table `IN` read with the
 effective set's tag predicate appended after the `IN` list (`… where t0.owner_id in
 (?, …) and t0.kind in (?, …)`); a polymorphic view projects the raw tag column so
@@ -835,7 +835,7 @@ SQL only where the lowering puts it, never because a user named it.
 #### Tag-predicate selection
 
 A read's queried position (`targetEntity`, optionally further constrained by a
-`narrow`, `m-op-algebra`) resolves to an **effective concrete-subtype set**. The
+`narrow`, `m-predicate`) resolves to an **effective concrete-subtype set**. The
 lowering injects a tag predicate over the root alias `t0` from that set, composed
 with any user predicate via `and` (appended **after** it, so binds read
 user-first then tag):
@@ -931,7 +931,7 @@ the applicable slots from its Entity Layout view, and it carries **no
 #### Abstract read — `union all` over the effective concrete tables
 
 A read whose queried position resolves to **two or more** concrete subtypes — an
-abstract root, an abstract subtype, or a `narrow` (`m-op-algebra`) to multiple
+abstract root, an abstract subtype, or a `narrow` (`m-predicate`) to multiple
 concretes — lowers to canonical **`union all`**, one branch per concrete subtype in
 that effective set, in the family's canonical **alphabetical order** (by entity name,
 `m-inheritance`). Each branch is an ordinary single-table read of that concrete's
@@ -1168,13 +1168,13 @@ A `valueObject` is stored in **one structured-document column** (`m-core` /
 `m-value-object`), not column-flattened. Reading the whole value object — an
 **instance-form** read selecting its layout `Document` slot — projects that backing
 column directly (`t0.address`). Reading or filtering an **inner
-attribute** uses the `m-op-algebra` nested-attribute access form and lowers through
+attribute** uses the `m-predicate` nested-attribute access form and lowers through
 the `m-dialect` **nested-extraction** seam to a per-dialect extraction. The JSON
 path is always carried as `?` bind(s) (rule 4 — never inlined, which keeps the
 golden SQL a normalizer fixed point); the extraction function and the bind shape
 differ per dialect (`m-dialect`):
 
-| Operation | Postgres canonical fragment | MariaDB canonical fragment |
+| Predicate | Postgres canonical fragment | MariaDB canonical fragment |
 |---|---|---|
 | project the whole object | `t0.address` (in the `select` list) | `t0.address` (identical) |
 | `nestedEq(Class.vo.field, v)` | `jsonb_extract_path_text(t0.address, ?) = ?` | `json_value(t0.address, ?) = ?` |
@@ -1216,7 +1216,7 @@ hole structure diverges, the `binds` are authored as a **per-dialect map**
     mariadb: ['$.geo.country', 'US']
 ```
 
-The compared `value` is a **typed** `m-op-algebra` literal, and which form is bound
+The compared `value` is a **typed** `m-predicate` literal, and which form is bound
 follows `m-dialect`'s two typed-cast tables. An attribute in the **cast** table —
 the numeric family and `boolean` — casts the extraction to its declared neutral
 type before comparing (the fragments in the table above show the uncast form; the
@@ -1251,13 +1251,13 @@ the attribute's declared type is in that seam's cast table, since text order is 
 numeric order; over a type whose canonical spelling already orders as text they
 compare the extraction directly. `nestedBetween` follows the same rule and lowers to **one**
 `<extraction> between ? and ?` — never a pair of
-comparisons (`m-op-algebra`) — binding the JSON path first, then `lower`, then
+comparisons (`m-predicate`) — binding the JSON path first, then `lower`, then
 `upper`. `nestedIn` lowers the membership to `<extraction> in (?, …)` — the JSON
 path bind(s) first, then one bind per list value in `values` order — and
 `nestedNotIn` to the same fragment under a **leading `not`**, adding no bind.
 
 The five string predicates apply **no** cast — their leaf is `String` by the
-non-string-member rule (`m-op-algebra`), so the extraction is already the text they
+non-string-member rule (`m-predicate`), so the extraction is already the text they
 match — and lower to `<extraction> like ?`, `nestedNotLike` to
 `<extraction> not like ?` (the **infix** negation the scalar `notLike` renders, not
 the leading `not` the membership and presence forms normalize
@@ -1273,7 +1273,7 @@ then `'\'`.
 `nestedIsNull` lowers to `<extraction> is null` and `nestedIsNotNull` to a
 **leading `not`** (`not <extraction> is null`) — the same negation normalization the
 scalar `isNotNull`/`notIn`/`nestedNotEq` forms use. Because every not-present state casts
-or compares SQL `NULL` (the absence-collapse rule, `m-op-algebra`), all of these
+or compares SQL `NULL` (the absence-collapse rule, `m-predicate`), all of these
 exclude the four not-present states identically, and `nestedIsNull` matches
 exactly them:
 
@@ -1303,7 +1303,7 @@ rows. **All four not-present states collapse identically on both dialects.** The
 MariaDB golden extraction is `json_value` precisely because it maps an explicit JSON
 `null` leaf — like a missing key, a non-object intermediate, and a SQL `NULL` column
 — to SQL `NULL` (as Postgres `jsonb_extract_path_text` does), so every not-present
-state casts or compares SQL `NULL` and the absence-collapse rule (`m-op-algebra`)
+state casts or compares SQL `NULL` and the absence-collapse rule (`m-predicate`)
 holds portably. The compatibility corpus pins all four states on Postgres **and**
 MariaDB (`m-value-object-013` asserts all four at `geo.country`).
 
@@ -1320,7 +1320,7 @@ element alias is the next alias after the root (`t1`, or `t1`/`t2` for two
 independent any-element subqueries).
 
 **Both dialects guard against a non-array `many` value.** Absence-collapse
-(`m-op-algebra`) folds a member that is a SQL `NULL` column, a missing key, an
+(`m-predicate`) folds a member that is a SQL `NULL` column, a missing key, an
 explicit JSON `null`, a JSON scalar, **or a JSON object** to the same "not present"
 — **zero elements**. A member stored as a non-array is a real state (the JSON is
 schema-flexible), and each dialect's traversal MUST read it as zero elements, never
@@ -1339,7 +1339,7 @@ as an error or a spurious element. So the canonical fragment carries an
   `json_type(json_extract(t0.address, ?)) = ?` (bind: the path, then the type name
   `ARRAY`) — abbreviated `<g>` below — precedes the containment/length test.
 
-| Operation | Postgres canonical fragment | MariaDB canonical fragment |
+| Predicate | Postgres canonical fragment | MariaDB canonical fragment |
 |---|---|---|
 | `nestedExists(Class.vo.arr)` (non-empty) | `exists (select 1 from jsonb_array_elements(<arr>) t1)` | `<g> and json_length(t0.address, ?) > ?` |
 | `nestedNotExists(Class.vo.arr)` (empty-or-absent) | `not exists (select 1 from jsonb_array_elements(<arr>) t1)` | `not coalesce(<g> and json_length(t0.address, ?) > ?, ?)` |
@@ -1365,7 +1365,7 @@ to contain the candidate — either would wrongly treat a non-array `phones` as
 present without the guard. The negated forms wrap the guarded containment / length
 in `coalesce(…, 0)` so an empty array, a NULL column, **and** a non-array value all
 fall on the matching side of the leading `not` — all indistinguishable here, exactly
-as `m-op-algebra`'s absence collapse requires.
+as `m-predicate`'s absence collapse requires.
 
 **The candidate document comes from `m-document-codec`, and it is a third bind
 form.** It is that module's `encodeCandidate` over the element's own shape: each
@@ -1426,7 +1426,7 @@ The unscoped `and(nestedEq(phones.type, 'home'), nestedEq(phones.number,
 subqueries with aliases `t1`, `t2`, each with its own `<arr>` guard; MariaDB two
 `<g> and json_contains` conjuncts — each flat any-element predicate self-guards), so
 a row whose two fields live in *different* elements matches — the discriminating
-contrast with the same-element scoped form above (`m-op-algebra`; corpus
+contrast with the same-element scoped form above (`m-predicate`; corpus
 `m-value-object-018` vs `-019`). The independent `then.referenceSql` oracle spells
 the traversal a **different** way per dialect: Postgres the `@>` containment operator
 (`t0.address -> 'phones' @> '[{"type":"home"}]'`, which natively returns false on a
@@ -1444,7 +1444,7 @@ element path segment(s), then the predicate's own binds in authored order — `l
 then `upper` for a range, one per list value for a membership, the pattern (then the
 escape character, when escaping applies) for a string predicate. Because the whole
 range, list, or pattern rides **one** element predicate on **one** alias, a single
-element must satisfy it (`m-op-algebra`):
+element must satisfy it (`m-predicate`):
 
 ```yaml
 # nestedBetween(Customer.address.phones.number, '555-0000', '555-1234') — any-element:
@@ -1630,7 +1630,7 @@ other's wrong answer are not a portable contract, which is why the guard is a
 statement-shape rule rather than an expression-shape rule.
 
 This reuses machinery that already exists. A subtype-declared member can never be
-referenced without a compatible `narrow` (`m-op-algebra`), so every legal
+referenced without a compatible `narrow` (`m-predicate`), so every legal
 subtype-specific predicate already carries a resolved variant position and a tag
 fragment; table-per-concrete-subtype reads are already a per-branch `union all`
 with a fresh context per branch. Partitioning applies that same fan-out at a

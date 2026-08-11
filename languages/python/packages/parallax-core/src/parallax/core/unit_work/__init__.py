@@ -7,7 +7,7 @@ single pure finalization authority — and the finalized **Planned Write** algeb
 its writes settle into — one closed semantic step per execution, delivered as an
 immutable, execution-ordered :class:`WritePlan`.
 
-The module DAG pins ``m-unit-work -> m-op-algebra``, ``m-unit-work -> m-db-port``,
+The module DAG pins ``m-unit-work -> m-predicate``, ``m-unit-work -> m-db-port``,
 and ``m-unit-work -> m-temporal-read`` (the Edge a Write Observation is filed
 under) — there is deliberately **no** edge to ``m-sql``, ``m-dialect``, or any
 optional policy module (``m-batch-write``, ``m-opt-lock``, ``m-txtime-write``,

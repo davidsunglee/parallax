@@ -1,5 +1,5 @@
 # valueObject string filter: nestedLike carries the top-level pattern and case-folding
-# semantics against a nested extraction (m-op-algebra nested string predicates, m-sql),
+# semantics against a nested extraction (m-predicate nested string predicates, m-sql),
 # on Postgres AND MariaDB.
 #
 # `address.city` is a `string` attribute, so the extraction is already the text the
@@ -16,7 +16,7 @@
 # The oracle folds the other way — `upper(...) = 'OSLO'` rather than a lowered `like` —
 # which is equivalent only because this pattern carries no wildcard.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, string, like, caseInsensitive, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, string, like, caseInsensitive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

@@ -25,7 +25,7 @@ workloads:
           mariadb: select t0.id, t0.owner, t0.balance from account t0 where t0.id = ?
         binds: [500]
   - name: range-read
-    note: a bounded range scan over the balance column (m-op-algebra range predicates)
+    note: a bounded range scan over the balance column (m-predicate range predicates)
     iterations: 100
     expectRoundTrips: 1
     statements:

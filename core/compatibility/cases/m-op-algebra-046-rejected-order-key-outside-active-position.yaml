@@ -1,4 +1,4 @@
-# Negative (m-op-algebra positional rule): an ORDER KEY reference names an entity the
+# Negative (m-predicate positional rule): an ORDER KEY reference names an entity the
 # read is not positioned at.
 #
 # The sibling of m-op-algebra-045 through the other reference site: an `orderBy` key
@@ -11,7 +11,7 @@
 # operand carries no narrow, so the position an order key is asked of is the queried
 # one.
 model: models/animal.yaml
-tags: [m-op-algebra, m-inheritance, rejected, negative, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-inheritance, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

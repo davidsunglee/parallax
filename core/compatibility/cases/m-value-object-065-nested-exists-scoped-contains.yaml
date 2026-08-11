@@ -1,5 +1,5 @@
 # valueObject to-many: the infix affix form in the element scope, completing the five
-# string predicates at this scope (m-op-algebra elementPredicate + wildcard rule, m-sql).
+# string predicates at this scope (m-predicate elementPredicate + wildcard rule, m-sql).
 # Postgres golden only — a `where` carrying a non-`eq` leaf is outside MariaDB's
 # containment scope (m-dialect, "Scope of the containment golden").
 #
@@ -13,7 +13,7 @@
 # traversal; the array-type guard reads it as zero elements, with the JSON null (8), the
 # scalar (9), the empty array (3), the null column (4), and the missing keys (5, 6).
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, contains, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, contains, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
-from parallax.core.op_algebra.nodes import NavigationPath, PathSegment, SubtypeSelection
+from parallax.core.predicate._nodes import NavigationPath, PathSegment, SubtypeSelection
 
 __all__ = ["_canonical_includes"]
 

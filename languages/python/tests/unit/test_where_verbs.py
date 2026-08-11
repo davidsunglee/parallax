@@ -41,7 +41,7 @@ from parallax.core.metamodel import (
     ValueObjectAttributeLocation,
     ValueObjectIdentity,
 )
-from parallax.core.op_algebra import All
+from parallax.core.predicate import All
 from parallax.core.temporal_read import LATEST, TX_TIME
 
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
@@ -290,7 +290,7 @@ def test_a_plain_predicate_query_is_mutation_compatible() -> None:
     query = vom.Customer.where(vom.Customer.name == "Ada")
     selection = mutation_selection(query)
     assert selection.target == vom.Customer.identity
-    assert selection.predicate == (vom.Customer.name == "Ada").op
+    assert selection.predicate == (vom.Customer.name == "Ada").node
 
 
 def test_an_explicitly_unfiltered_query_is_mutation_compatible() -> None:

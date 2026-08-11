@@ -1,4 +1,4 @@
-# Negative (m-inheritance, m-op-algebra): a narrow BROADENS beyond its position.
+# Negative (m-inheritance, m-predicate): a narrow BROADENS beyond its position.
 #
 # A rejected operation with no targetEntity starts at the descriptor's inheritance
 # root Animal, whose effective set is {Cat, Dog, WildBoar}. The selection asks for
@@ -6,7 +6,7 @@
 # subset of the active family position, so a model-aware validator MUST reject the
 # operation pre-SQL as `narrow-outside-position`.
 model: models/animal.yaml
-tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

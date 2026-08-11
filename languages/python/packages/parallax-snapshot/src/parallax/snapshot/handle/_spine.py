@@ -1,6 +1,6 @@
 """``parallax.snapshot.handle._spine`` — the result-wrapper spine walk.
 
-``m-op-algebra`` composes ``deepFetch`` and the temporal wrappers freely with the
+``m-predicate`` composes ``deepFetch`` and the temporal wrappers freely with the
 other nodes returning their operand's own rows, so the node that answers a
 structural question about a read is rarely the outermost one. The read gate asks
 two such questions — which relationship levels a request names, and whether it
@@ -16,15 +16,15 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     AsOf,
     AsOfRange,
     DeepFetch,
     History,
     Limit,
     Narrow,
-    Operation,
     OrderBy,
+    PredicateNode,
 )
 
 __all__ = ["SpineNode", "own_row_spine"]
@@ -32,7 +32,7 @@ __all__ = ["SpineNode", "own_row_spine"]
 SpineNode = OrderBy | Limit | Narrow | AsOf | AsOfRange | History | DeepFetch
 """A node whose result is its operand's OWN rows, reshaped rather than replaced.
 
-``m-op-algebra`` names this closed set where it resolves an order key's position
+``m-predicate`` names this closed set where it resolves an order key's position
 — the result-shaping directives, ``deepFetch`` (which attaches fetched levels to
 those rows rather than replacing them), and the three temporal wrappers.
 ``narrow`` belongs here for the same reason: it selects a subset of its operand's
@@ -42,7 +42,7 @@ searches FOR, not because it re-roots the rows a wrapper below it yields.
 """
 
 
-def own_row_spine(operation: Operation) -> Iterator[SpineNode]:
+def own_row_spine(operation: PredicateNode) -> Iterator[SpineNode]:
     """``operation``'s spine of own-row wrappers, outermost first.
 
     Descends through :data:`SpineNode` and no other node, stopping at the first
@@ -56,7 +56,7 @@ def own_row_spine(operation: Operation) -> Iterator[SpineNode]:
     whether ANY node on the spine satisfies its policy must therefore consume the
     whole iterator rather than stop at the first member of a given kind.
     """
-    node: Operation = operation
+    node: PredicateNode = operation
     while True:
         match node:
             case (

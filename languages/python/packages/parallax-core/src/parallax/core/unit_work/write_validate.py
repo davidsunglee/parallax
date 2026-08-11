@@ -7,7 +7,7 @@ ingresses through the one keyed judgment they share
 (``Transaction._validate_keyed``, reached from the developer verbs' ``_buffer``
 and from the model-neutral ``write_neutral``) -- the "one validator, many
 callers" pattern ``validate_operation`` established
-(`parallax.core.op_algebra.validate`): the SAME rule classification and check
+(`parallax.core.predicate.validate`): the SAME rule classification and check
 order runs on every path, so they cannot drift.
 
 A PREDICATE-SELECTED write reaches it nowhere (``write_neutral``'s own predicate
@@ -18,11 +18,11 @@ validator to measure, and member-name honesty
 of what its ingress runs.
 
 Placement (`core/spec/modules.md` §7 DAG): ``m-unit-work`` depends on
-``m-op-algebra``, ``m-db-port``, and ``m-temporal-read`` only, and its
+``m-predicate``, ``m-db-port``, and ``m-temporal-read`` only, and its
 import-linter contract forbids
 ``parallax.core.value_object`` outright (no module outside that scope's own DAG
 edge may reach it) -- but does NOT forbid ``parallax.core.inheritance``
-(transitively reachable through the ``m-op-algebra --> m-inheritance`` edge).
+(transitively reachable through the ``m-predicate --> m-inheritance`` edge).
 So the payload-shape / target-validity rules (`m-inheritance` "Concrete-subtype
 writes") are PURE functions living in their own owning scope
 (:func:`parallax.core.inheritance.validate_subtype_write`) and called directly

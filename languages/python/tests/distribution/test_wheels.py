@@ -45,7 +45,7 @@ def test_core_wheel_contains_spine_scopes(wheelhouse: Wheelhouse) -> None:
     names = _names(wheelhouse, "parallax-core")
     assert "parallax/core/__init__.py" in names
     assert "parallax/core/base/__init__.py" in names
-    assert "parallax/core/op_algebra/__init__.py" in names
+    assert "parallax/core/predicate/__init__.py" in names
 
 
 def test_core_wheel_ships_sql_gen_package(wheelhouse: Wheelhouse) -> None:

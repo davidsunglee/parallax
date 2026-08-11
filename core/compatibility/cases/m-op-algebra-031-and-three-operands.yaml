@@ -1,4 +1,4 @@
-# and — n-ary conjunction of THREE operands (m-op-algebra §Boolean combinators).
+# and — n-ary conjunction of THREE operands (m-predicate §Boolean combinators).
 #
 # m-op-algebra-020 proves the two-operand junction; this pins the n-ary (>= 3) form: the
 # operands serialize in order and the binds follow left-to-right appearance, so
@@ -6,7 +6,7 @@
 # order. active=true AND qty>5 AND qty<30 keeps orders 2 (qty 10) and 4 (qty 20);
 # order 42 (qty 30) fails qty<30 and the inactive rows fail active=true.
 model: models/orders.yaml
-tags: [m-op-algebra, and, boolean, n-ary, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, and, boolean, n-ary, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

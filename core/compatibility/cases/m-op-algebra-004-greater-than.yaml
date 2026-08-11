@@ -1,6 +1,6 @@
 # greaterThan — strict `>` range predicate.
 model: models/orders.yaml
-tags: [m-op-algebra, greaterThan, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, greaterThan, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

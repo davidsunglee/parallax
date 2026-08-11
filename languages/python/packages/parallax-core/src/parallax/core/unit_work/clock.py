@@ -13,7 +13,7 @@ instant string the Planning Request carries as context (the write-instruction
 path binds). :class:`TransactionInstant` is the attempt-owned lazy holder of that
 string — the value the Planning Request carries, so that whether the clock is
 read at all follows from the work that survives planning. ``m-unit-work`` depends
-only on ``m-op-algebra`` / ``m-db-port`` / ``m-temporal-read`` and, transitively,
+only on ``m-predicate`` / ``m-db-port`` / ``m-temporal-read`` and, transitively,
 ``m-core`` — from which the normalization rule comes.
 """
 

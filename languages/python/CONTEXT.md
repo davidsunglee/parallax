@@ -115,8 +115,8 @@ _Avoid_: where object, filter object, query, criteria
 The immutable first-party collaboration value produced from one valid Find
 Query after its independently authored clauses are placed in canonical
 operation order. It carries exactly a structured target Entity Identity and one
-canonical Operation; it is neither SQL nor a public query representation, and
-only its Operation is canonical — its target is a position the connected model
+canonical Predicate; it is neither SQL nor a public query representation, and
+only its Predicate is canonical — its target is a position the connected model
 resolves at execution.
 _Avoid_: canonical Find Query, query plan, SQL AST, serialized query
 
@@ -171,7 +171,7 @@ _Avoid_: result set, lazy list, query result proxy, domain snapshot
 
 **Neutral Read Request**:
 The immutable advanced read input that pairs an exact target Entity Identity
-with one canonical Operation and selects either row or graph materialization,
+with one canonical Predicate and selects either row or graph materialization,
 without requiring an Entity Class.
 _Avoid_: Find Query, descriptor document, SQL request, neutral query plan
 

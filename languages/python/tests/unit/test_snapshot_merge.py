@@ -40,7 +40,7 @@ from parallax.core import (
 from parallax.core.entity import GraphConstructionError, RelationshipPath
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
-from parallax.core.op_algebra import PathSegment
+from parallax.core.predicate import PathSegment
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.materialize import (

@@ -24,13 +24,13 @@ asserts set equality, independent of either author remembering to update the
 other.
 
 Parsing the prose. The "Rejected cases" section names each rule in one of two
-shapes. **Operation** / **Write** / **Subtype-write** rules are each a
+shapes. **PredicateNode** / **Write** / **Subtype-write** rules are each a
 top-level bullet whose FIRST inline-code span is the rule name (` - `rule-name`
 — description`); this module reads the rule name at the start of every such
 bullet line. **Model** rules are instead named inline, comma-separated, inside
 one prose paragraph opening "**Model** rules (...)"; this module extracts
 every inline-code span in that one paragraph, excluding a module reference
-(`` `m-inheritance` ``, `` `m-op-algebra` ``, …) or a dotted field reference
+(`` `m-inheritance` ``, `` `m-predicate` ``, …) or a dotted field reference
 (`` `when.model` ``) — neither of which is ever a `rejectedRule` value. The
 ``expectError`` vocabulary is instead one NESTED bullet list under the
 "Per-step lifecycle observables" section's ``expectError`` bullet; this module
@@ -110,7 +110,7 @@ def _section(markdown: str, heading_contains: str) -> str:
 
 
 def _bulleted_rules(section: str) -> set[str]:
-    """Every top-level bullet's own rule name (Operation / Write /
+    """Every top-level bullet's own rule name (PredicateNode / Write /
     Subtype-write rules — each a `` - `rule-name` — description`` bullet)."""
     return set(_BULLET_RULE.findall(section))
 

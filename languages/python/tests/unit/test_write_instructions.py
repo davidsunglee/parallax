@@ -20,7 +20,8 @@ from referencing import Registry, Resource
 
 from _support.repo import REPO_ROOT
 from parallax.conformance import models
-from parallax.core import inheritance, op_algebra
+from parallax.core import inheritance
+from parallax.core import predicate as predicate_algebra
 from parallax.core.unit_work import instructions as wi
 
 _SCHEMAS = REPO_ROOT / "core" / "schemas"
@@ -219,7 +220,7 @@ def test_every_shape_validates_against_the_schema(doc: dict[str, Any]) -> None:
 @pytest.mark.parametrize("doc", [d for _, d in _INSTRUCTIONS], ids=[i for i, _ in _INSTRUCTIONS])
 def test_serde_round_trip(doc: dict[str, Any]) -> None:
     # serialize(deserialize(x)) == x for every canonical shape (the write-side of
-    # the m-op-algebra serde contract), matching the schema-validated document.
+    # the m-predicate serde contract), matching the schema-validated document.
     assert wi.serialize(wi.deserialize(doc)) == doc
 
 
@@ -245,7 +246,7 @@ def test_predicate_carries_a_canonical_operation_node() -> None:
         {"mutation": "delete", "target": {"entity": "Account", "predicate": {"all": {}}}}
     )
     assert isinstance(instruction, wi.PredicateWrite)
-    assert instruction.target.predicate == op_algebra.All()
+    assert instruction.target.predicate == predicate_algebra.All()
 
 
 # --------------------------------------------------------------------------- #
@@ -414,7 +415,7 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
 
 
 def test_predicate_rejects_a_malformed_embedded_operation() -> None:
-    with pytest.raises(op_algebra.OperationError):
+    with pytest.raises(predicate_algebra.OperationError):
         wi.deserialize(
             {
                 "mutation": "delete",
@@ -815,7 +816,7 @@ def test_a_predicate_writes_inverted_between_window_is_rejected() -> None:
             },
         }
     )
-    with pytest.raises(op_algebra.OperationRejectedError) as caught:
+    with pytest.raises(predicate_algebra.OperationRejectedError) as caught:
         wi.validate_instruction(predicate, _ACCOUNT)
     assert caught.value.rule == "between-bounds-inverted"
 
@@ -831,7 +832,7 @@ def test_a_predicate_writes_out_of_position_attribute_reference_is_rejected() ->
             },
         }
     )
-    with pytest.raises(op_algebra.OperationRejectedError) as caught:
+    with pytest.raises(predicate_algebra.OperationRejectedError) as caught:
         wi.validate_instruction(predicate, orders)
     assert caught.value.rule == "attribute-outside-active-position"
 
@@ -851,14 +852,14 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
             "assignments": [{"attr": "Account.id", "value": 2}],
         }
     )
-    with pytest.raises(op_algebra.OperationRejectedError) as caught:
+    with pytest.raises(predicate_algebra.OperationRejectedError) as caught:
         wi.validate_instruction(predicate, _ACCOUNT)
     assert caught.value.rule == "between-bounds-inverted"
 
 
 # --------------------------------------------------------------------------- #
 # The bare-predicate rule (`m-case-format` `target.predicate`: "one schema-valid #
-# `m-op-algebra` operation; it is a bare write predicate, never a result         #
+# `m-predicate` operation; it is a bare write predicate, never a result         #
 # modifier"; `python.md` §5: "`order_by`, `limit`, `include`, `as_of`,           #
 # `history` / `as_of_range`, and `narrow` are all rejected on any write          #
 # target"). Every one of these is a VALID READ operation, so                     #
@@ -997,7 +998,7 @@ def test_a_bare_navigation_filter_carrying_no_inner_operation_is_accepted(
 
 
 # A `narrow` is the one entry of `python.md` §5's enumeration whose meaning is
-# POSITIONAL. `m-op-algebra` draws the line: a top-level narrow is "the node a
+# POSITIONAL. `m-predicate` draws the line: a top-level narrow is "the node a
 # whole-result narrowing produces" — the `.narrow()` clause on the write target
 # — while "a `narrow` appearing as a predicate term inside a boolean combinator
 # is a filter" over the unchanged position, as is one inside a navigation
@@ -1087,7 +1088,7 @@ def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
     instruction = wi.deserialize(
         {"mutation": "delete", "target": {"entity": "Person", "predicate": predicate}}
     )
-    op_algebra.validate_operation(
+    predicate_algebra.validate_operation(
         next(e for e in _ANIMAL.entities if e.identity.name == "Person"),
         cast("wi.PredicateWrite", instruction).target.predicate,
         _ANIMAL,
@@ -1176,7 +1177,7 @@ def test_an_invalid_predicate_outranks_the_inheritance_family_rejection() -> Non
             },
         }
     )
-    with pytest.raises(op_algebra.OperationRejectedError) as caught:
+    with pytest.raises(predicate_algebra.OperationRejectedError) as caught:
         wi.validate_instruction(instruction, _PAYMENT)
     assert caught.value.rule == "between-bounds-inverted"
 

@@ -1,5 +1,5 @@
 # valueObject to-many range: nestedBetween through a `many` segment is ANY-ELEMENT,
-# and ONE element must satisfy the WHOLE range (m-op-algebra nested range +
+# and ONE element must satisfy the WHOLE range (m-predicate nested range +
 # any-element, m-sql, m-dialect array-traversal form). Postgres golden only — a
 # non-equality element predicate is outside MariaDB's containment scope (m-dialect,
 # "Scope of the containment golden").
@@ -20,7 +20,7 @@
 # `case`, reads the element field with `->>` instead of jsonb_extract_path_text, and
 # spells the range as two comparisons on the SAME element.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, between, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, between, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

@@ -1,4 +1,4 @@
-"""Model-aware operation validation (m-op-algebra, m-navigate, m-value-object).
+"""Model-aware Predicate validation (m-predicate, m-navigate, m-value-object).
 
 A schema-valid operation can still be **structurally invalid** against a
 specific metamodel: a `narrow` that broadens past the polymorphic position in
@@ -14,7 +14,7 @@ single validator used by the corpus-facing conformance engine for the
 
 Rule provenance:
 
-- `between-bounds-inverted` — `m-op-algebra` "Bound-ordering rule": a range
+- `between-bounds-inverted` — `m-predicate` "Bound-ordering rule": a range
   predicate whose `lower` bound is strictly greater than its `upper` names an
   empty range, and is refused rather than lowered into a predicate that
   silently matches nothing. Bounds are compared by literal kind (two numbers or
@@ -24,7 +24,7 @@ Rule provenance:
   rather than ordered as a raw literal.
 - `narrow-outside-position` / `narrow-empty-effective-set` /
   `subtype-attribute-outside-narrow-scope` / `attribute-outside-active-position`
-  — `m-op-algebra` "Subtype narrowing" / "The four-step validation rule": a
+  — `m-predicate` "Subtype narrowing" / "The four-step validation rule": a
   `narrow` node's resolved concrete set is clamped (intersected) against the
   **active polymorphic position** threaded through the read (the queried
   `targetEntity`, re-narrowed by every enclosing `narrow`), and an attribute
@@ -35,7 +35,7 @@ Rule provenance:
   path's own root Subtype Selection resolves at that same queried position.
   An order key is asked of the position its
   ordered rows occupy, which a top-level `narrow` under the ordering moves.
-- `reference-ambiguous-entity-name` — `m-op-algebra` "Entity spellings in a
+- `reference-ambiguous-entity-name` — `m-predicate` "Entity spellings in a
   reference position": every reference position — an `attr`, a `rel`, an `orderBy`
   key, a nested path's root, a `narrow`'s `to` entries, a deep-fetch
   path's hops and root guard — spells its Entity either canonically or BARE, and a
@@ -50,12 +50,12 @@ Rule provenance:
   hop narrow) resolves its Subtype Selection inside the relationship target's
   effective concrete set.
 - `nested-path-first-segment-not-value-object` / `nested-path-unknown-member` /
-  `nested-literal-type-mismatch` — `m-op-algebra` "Nested value-object
+  `nested-literal-type-mismatch` — `m-predicate` "Nested value-object
   predicates": a dotted `Class.valueObject(.valueObject)*.attribute` path MUST
   resolve against the entity's **declared** value-object structure, and a
   comparison / range-bound / membership literal MUST match the leaf's declared
   neutral type.
-- `nested-string-predicate-non-string-member` — `m-op-algebra` "Non-string-member
+- `nested-string-predicate-non-string-member` — `m-predicate` "Non-string-member
   rule": a nested string predicate reads text, so its resolved leaf MUST be a
   `String` member. It is a rule of its own, checked ahead of the typed-literal one,
   because the portable literal vocabulary carries a `Date` / `Time` / `Timestamp` /
@@ -104,7 +104,7 @@ from parallax.core.metamodel import (
     split_reference,
 )
 from parallax.core.metamodel._states import ambiguous_entity_spellings
-from parallax.core.op_algebra.nodes import (
+from parallax.core.predicate._nodes import (
     All,
     And,
     AsOf,
@@ -131,9 +131,9 @@ from parallax.core.op_algebra.nodes import (
     Not,
     NotExists,
     NullCheck,
-    Operation,
     Or,
     OrderBy,
+    PredicateNode,
     Scalar,
     StringMatch,
 )
@@ -148,7 +148,7 @@ __all__ = [
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
 
-def referenced_entities(op: Operation) -> frozenset[str]:
+def referenced_entities(op: PredicateNode) -> frozenset[str]:
     """The Entity spellings ``op`` names anywhere, exactly as authored — the Entity
     prefix of every attribute / nested-path / relationship reference, plus every
     ``narrow`` subtype alternative. A spelling may be bare or canonical; this
@@ -169,7 +169,7 @@ def _class_of(reference: str) -> str:
     return entity
 
 
-def _collect_entities(op: Operation, names: set[str]) -> None:
+def _collect_entities(op: PredicateNode, names: set[str]) -> None:
     match op:
         case All() | NoneOp():
             return
@@ -237,7 +237,7 @@ class OperationRejectedError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class _PositionScope:
-    """The threaded polymorphic-position state (`m-op-algebra` four-step rule).
+    """The threaded polymorphic-position state (`m-predicate` four-step rule).
 
     ``effective`` is the active position's effective concrete-subtype set, whose
     members are CANONICAL Entity spellings (:func:`_effective_set`), so two
@@ -252,13 +252,13 @@ class _PositionScope:
     relationship_target: str | None = None
 
 
-def validate_operation(root: EntityMetadata, op: Operation, model: Metamodel) -> None:
+def validate_operation(root: EntityMetadata, op: PredicateNode, model: Metamodel) -> None:
     """Validate ``op`` against ``model``, raising :class:`OperationRejectedError`.
 
     ``root`` is the read's queried root position, already resolved to accepted
     Metadata by the caller — the `targetEntity` a normal read case authors, or,
     for a `when.operation` `rejected` case that carries none, the model-aware
-    default `m-op-algebra` fixes (the inheritance family root, or the model's own
+    default `m-predicate` fixes (the inheritance family root, or the model's own
     first entity). It seeds the initial active position for the narrow checks and
     the positional attribute checks, which measure every attribute reference — an
     unrelated standalone Entity's as much as a subtype's — against that position;
@@ -269,13 +269,15 @@ def validate_operation(root: EntityMetadata, op: Operation, model: Metamodel) ->
     _walk(op, model, scope)
 
 
-def validate_read_operation(root: EntityMetadata, op: Operation, model: Metamodel) -> None:
+def validate_read_operation(root: EntityMetadata, op: PredicateNode, model: Metamodel) -> None:
     """Validate a read, including its model-aware temporal selection completeness."""
     _validate_temporal_selections(root, op, model)
     validate_operation(root, op, model)
 
 
-def _validate_temporal_selections(root: EntityMetadata, op: Operation, model: Metamodel) -> None:
+def _validate_temporal_selections(
+    root: EntityMetadata, op: PredicateNode, model: Metamodel
+) -> None:
     family = inheritance.view(model).entity(root.identity)
     declarer = None if family is None else model.entity(family.root)
     if declarer is None:  # pragma: no cover - the facet covers every accepted Entity
@@ -305,7 +307,7 @@ def _validate_temporal_selections(root: EntityMetadata, op: Operation, model: Me
         )
 
 
-def _root_temporal_dimensions(op: Operation) -> list[str]:
+def _root_temporal_dimensions(op: PredicateNode) -> list[str]:
     current = op
     selected: list[str] = []
     while isinstance(current, (OrderBy, Limit, DeepFetch, Narrow, AsOf, AsOfRange, History)):
@@ -315,7 +317,7 @@ def _root_temporal_dimensions(op: Operation) -> list[str]:
     return selected
 
 
-def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
+def _walk(op: PredicateNode, model: Metamodel, scope: _PositionScope) -> None:
     match op:
         case All() | NoneOp():
             return
@@ -387,7 +389,7 @@ def _walk(op: Operation, model: Metamodel, scope: _PositionScope) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Range bound ordering (m-op-algebra "Bound-ordering rule").                  #
+# Range bound ordering (m-predicate "Bound-ordering rule").                  #
 # --------------------------------------------------------------------------- #
 def _bounds_inverted(lower: Scalar, upper: Scalar) -> bool:
     """Whether a range's ``lower`` bound is strictly greater than its ``upper``.
@@ -414,7 +416,7 @@ def _check_bound_ordering(subject: str, lower: Scalar, upper: Scalar) -> None:
         raise OperationRejectedError(
             "between-bounds-inverted",
             f"{subject!r}: lower bound {lower!r} is greater than upper bound {upper!r}, "
-            "so the range is empty and no row can satisfy it (m-op-algebra bound ordering)",
+            "so the range is empty and no row can satisfy it (m-predicate bound ordering)",
         )
 
 
@@ -451,7 +453,7 @@ def _ambiguous_reference(
         "reference-ambiguous-entity-name",
         f"{reference!r}: the bare Entity spelling {class_name!r} is shared by {list(canonical)}, "
         "so it names no single Entity in this model and the reference resolves nowhere "
-        "(m-op-algebra reference resolution)",
+        "(m-predicate reference resolution)",
     )
 
 
@@ -550,7 +552,7 @@ def _resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset
 
 
 # --------------------------------------------------------------------------- #
-# Narrow / subtype-attribute position tracking (m-op-algebra x m-inheritance,  #
+# Narrow / subtype-attribute position tracking (m-predicate x m-inheritance,  #
 # m-navigate relationship scope).                                             #
 # --------------------------------------------------------------------------- #
 def _validate_narrow(
@@ -582,18 +584,18 @@ def _validate_narrow(
     return _PositionScope(effective=resolved)
 
 
-def _ordered_scope(op: Operation, model: Metamodel, scope: _PositionScope) -> _PositionScope:
+def _ordered_scope(op: PredicateNode, model: Metamodel, scope: _PositionScope) -> _PositionScope:
     """The position an `orderBy`'s ordered rows occupy.
 
     A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
     wrapper, so the rows an order key sees are that narrow's resolved set, reached
-    through every wrapper `m-op-algebra` names as carrying it: the result-shaping
+    through every wrapper `m-predicate` names as carrying it: the result-shaping
     directives (``orderBy`` / ``limit`` / ``deepFetch``) and the
     temporal wrappers (``asOf`` / ``asOfRange`` / ``history``). None of them
     re-roots the rows its operand yields — ``deepFetch`` attaches fetched levels to
     those same rows — so all of them pass the position through. A ``narrow``
     appearing as a predicate term inside a boolean combinator is a filter over the
-    same position and moves nothing (`m-op-algebra`).
+    same position and moves nothing (`m-predicate`).
     """
     match op:
         case Narrow(to=to):
@@ -695,7 +697,7 @@ def _check_deep_fetch_path(path: NavigationPath, model: Metamodel, scope: _Posit
         )
         if segment.narrow:
             # A path narrow carries only `to` — the position is the hop's target,
-            # implicitly (m-op-algebra `deepFetch` directive) — so only the subset
+            # implicitly (m-predicate `deepFetch` directive) — so only the subset
             # check applies here; there is no separate `entity` to mismatch.
             target_effective = _effective_set(model, target)
             resolved = _resolve_subtype_selection(segment.narrow, model)
@@ -716,10 +718,10 @@ def _check_deep_fetch_path(path: NavigationPath, model: Metamodel, scope: _Posit
 
 
 # --------------------------------------------------------------------------- #
-# Nested value-object predicates (m-op-algebra "Nested value-object            #
+# Nested value-object predicates (m-predicate "Nested value-object            #
 # predicates"), resolved through the accepted Metadata's own O(1) nested       #
 # lookups — the value-object structural checks classify each miss at the call  #
-# site, so m-op-algebra needs no m-value-object dependency.                    #
+# site, so m-predicate needs no m-value-object dependency.                    #
 # --------------------------------------------------------------------------- #
 def _is_value_object_name_anywhere(model: Metamodel, name: str) -> bool:
     return any(entity.value_object(name) is not None for entity in model.entities)
@@ -774,7 +776,7 @@ def _resolve_nested_leaf(path: str, model: Metamodel) -> ValueObjectAttributeMet
         raise OperationRejectedError(
             "nested-path-first-segment-not-value-object",
             f"{class_name}.{vo_name} is not a declared value object on {class_name} "
-            "(m-op-algebra nested-predicate resolver MUST)",
+            "(m-predicate nested-predicate resolver MUST)",
         )
     return _resolve_leaf(path, vo, segments)
 
@@ -825,7 +827,7 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
 def _literal_matches_type(value: Scalar, neutral_type: NeutralType) -> bool:
     """Whether a polymorphic operation literal matches a leaf's declared neutral type.
 
-    `m-op-algebra`: "each type MUST match the leaf attribute's declared neutral
+    `m-predicate`: "each type MUST match the leaf attribute's declared neutral
     type; a resolver MUST reject a type-mismatched literal." The algebra's
     literal vocabulary is `string` / `number` / `boolean` / `null`; every
     m-core neutral type maps onto that portable set.
@@ -859,7 +861,7 @@ def _check_typed_literal(path: str, value: Scalar, leaf: ValueObjectAttributeMet
         raise OperationRejectedError(
             "nested-literal-type-mismatch",
             f"{path!r}: literal {value!r} does not match the leaf's declared "
-            f"type {leaf.type!r} (m-op-algebra typed literals)",
+            f"type {leaf.type!r} (m-predicate typed literals)",
         )
 
 
@@ -869,7 +871,7 @@ def _check_nested_comparison(node: NestedComparison, model: Metamodel) -> None:
 
 
 def _check_range_bounds(node: NestedRange, leaf: ValueObjectAttributeMetadata) -> None:
-    """A nested range's bound checks in the order `m-op-algebra` fixes: both typed
+    """A nested range's bound checks in the order `m-predicate` fixes: both typed
     bounds, then the bound ordering — the path having already resolved ``leaf``.
 
     Shared by both nested scopes, so the order is stated once. Ordering the bounds
@@ -903,12 +905,12 @@ def _check_string_member(path: str, leaf: ValueObjectAttributeMetadata) -> None:
         raise OperationRejectedError(
             "nested-string-predicate-non-string-member",
             f"{path!r}: a string predicate reads text, but the member's declared type is "
-            f"{leaf.type!r} (m-op-algebra non-string-member rule)",
+            f"{leaf.type!r} (m-predicate non-string-member rule)",
         )
 
 
 def _check_nested_string(node: NestedStringMatch, model: Metamodel) -> None:
-    """A nested string predicate's two checks, in the order `m-op-algebra` fixes:
+    """A nested string predicate's two checks, in the order `m-predicate` fixes:
     the resolved member's own type, then the literal's."""
     leaf = _resolve_nested_leaf(node.path, model)
     _check_string_member(node.path, leaf)
@@ -945,12 +947,12 @@ def _check_element_string(node: NestedStringMatch, container: _VoContainer) -> N
     _check_typed_literal(node.path, node.value, leaf)
 
 
-def _check_element_predicate(op: Operation, container: _VoContainer) -> None:
+def _check_element_predicate(op: PredicateNode, container: _VoContainer) -> None:
     """Validate a `nestedExists`/`nestedNotExists` `where` against ``container``
     — the TERMINAL value-object descriptor its `path` resolves to.
 
     ``op`` is assumed schema-valid (this module's own precondition): the
-    `elementPredicate` grammar (`operation.schema.json`) admits only the
+    `elementPredicate` grammar (`predicate.schema.json`) admits only the
     nested*-family and boolean combinators here, so this dispatch does not
     need to re-derive that restriction — only resolve each element-relative
     reference and typed literal against the same element (m-value-object).
@@ -974,5 +976,5 @@ def _check_element_predicate(op: Operation, container: _VoContainer) -> None:
         case _:  # pragma: no cover - the elementPredicate schema admits nothing else here
             raise ValueError(
                 f"{op!r} is not a legal nestedExists/nestedNotExists element predicate "
-                "(m-op-algebra elementPredicate)"
+                "(m-predicate elementPredicate)"
             )

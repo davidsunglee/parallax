@@ -1,5 +1,5 @@
 # orderBy ASCENDING with an explicit `nulls: last` placement over a NULLABLE key,
-# proven on BOTH dialects (m-op-algebra orderBy + m-dialect NULL ordering).
+# proven on BOTH dialects (m-predicate orderBy + m-dialect NULL ordering).
 #
 # `Order.sku` is nullable (order 4 has none), so the placement is OBSERVABLE; the
 # `limit 2` makes it observable through row MEMBERSHIP, since top-level row
@@ -11,7 +11,7 @@
 # m-op-algebra-037, whose `nulls: first` over the same key and the same limit returns
 # the NULL row instead of the second-smallest sku.
 model: models/orders.yaml
-tags: [m-op-algebra, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

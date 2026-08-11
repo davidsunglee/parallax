@@ -1,4 +1,4 @@
-# Negative (m-inheritance, m-op-algebra): a concrete-subtype attribute used OUTSIDE a
+# Negative (m-inheritance, m-predicate): a concrete-subtype attribute used OUTSIDE a
 # compatible narrowing scope.
 #
 # The operation filters on `Dog.barkVolume` — an attribute declared only on the
@@ -9,7 +9,7 @@
 # (subtype-attribute-outside-narrow-scope). Wrapping the predicate in a narrow to
 # [Dog] (m-inheritance-012) makes it valid.
 model: models/animal.yaml
-tags: [m-inheritance, m-op-algebra, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

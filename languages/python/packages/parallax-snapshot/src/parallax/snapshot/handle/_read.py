@@ -58,7 +58,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast
 
-from parallax.core import deep_fetch, inheritance, op_algebra
+from parallax.core import deep_fetch, inheritance
+from parallax.core import predicate as predicate_algebra
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
@@ -235,7 +236,7 @@ class _Milestone:
 
 
 def find(
-    op: op_algebra.Operation,
+    op: predicate_algebra.PredicateNode,
     meta: Metamodel,
     dialect: Dialect,
     target: str,
@@ -350,17 +351,19 @@ class NeutralReadRequest:
     """
 
     target: EntityIdentity
-    operation: op_algebra.Operation
+    operation: predicate_algebra.PredicateNode
     form: Literal["rows", "graph"]
 
     @classmethod
-    def rows(cls, *, target: EntityIdentity, operation: op_algebra.Operation) -> NeutralReadRequest:
+    def rows(
+        cls, *, target: EntityIdentity, operation: predicate_algebra.PredicateNode
+    ) -> NeutralReadRequest:
         """A row-form request: production's transformed rows, in result order."""
         return cls(target=target, operation=operation, form="rows")
 
     @classmethod
     def graph(
-        cls, *, target: EntityIdentity, operation: op_algebra.Operation
+        cls, *, target: EntityIdentity, operation: predicate_algebra.PredicateNode
     ) -> NeutralReadRequest:
         """A graph-form request: one neutral graph, or one per milestone for a
         scanning read."""
@@ -368,7 +371,7 @@ class NeutralReadRequest:
 
 
 def find_rows(
-    op: op_algebra.Operation,
+    op: predicate_algebra.PredicateNode,
     meta: Metamodel,
     dialect: Dialect,
     target: str,
@@ -406,7 +409,7 @@ def find_rows(
 
 
 def find_history(
-    op: op_algebra.Operation,
+    op: predicate_algebra.PredicateNode,
     meta: Metamodel,
     dialect: Dialect,
     target: str,
@@ -682,21 +685,21 @@ def _guarded_parents(
 
 def _distinct_keys(
     scope: MergeScope, parents: tuple[SnapshotNodeRef, ...], member: AttributeIdentity
-) -> list[op_algebra.Scalar]:
+) -> list[predicate_algebra.Scalar]:
     """The distinct NON-NULL values of ``member`` across ``parents``, in first-
     encountered order (m-deep-fetch: the gathered set is unordered for grading
     purposes — an implementation MUST NOT sort at runtime to match a fixture —
     so encounter order is as good as any, and deterministic run to run).
 
     A gathered key is always a declared PRIMARY-KEY (or unique FK) attribute's
-    own value — one of `m-op-algebra`'s neutral scalar types — even though a
+    own value — one of `m-predicate`'s neutral scalar types — even though a
     converted node's values are typed as plain ``object``; the cast reflects that
     runtime invariant, not a widening of the membership node's own typed-literal
     contract.
     """
     gathered = (attribute_value(scope.node(parent), member) for parent in parents)
     values = dict.fromkeys(value for value in gathered if value is not None)
-    return cast("list[op_algebra.Scalar]", list(values))
+    return cast("list[predicate_algebra.Scalar]", list(values))
 
 
 def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
@@ -705,7 +708,7 @@ def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
 
     A bare spelling two namespaces share names no single Entity and is the
     normative `reference-ambiguous-entity-name` refusal, carried by
-    ``op_algebra``'s own :class:`~parallax.core.op_algebra.OperationRejectedError`
+    ``predicate``'s own :class:`~parallax.core.predicate.OperationRejectedError`
     so one rule and one class answer it whether preflight or this executor
     resolves the reference. Any other miss names no declared Entity at all and is
     the same `query-target-not-in-model` refusal the read preflight answers with:
@@ -719,10 +722,10 @@ def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
         return metadata
     shared = ambiguous_entity_spellings(meta, name)
     if shared:
-        raise op_algebra.OperationRejectedError(
+        raise predicate_algebra.OperationRejectedError(
             "reference-ambiguous-entity-name",
             f"{name!r}: the bare Entity spelling is shared by {list(shared)}, so it names no "
-            "single Entity in this model and the read resolves nowhere (m-op-algebra reference "
+            "single Entity in this model and the read resolves nowhere (m-predicate reference "
             "resolution)",
         )
     raise QueryTargetError(
@@ -778,7 +781,7 @@ def _edge_pin(edge: Edge) -> Pin:
     return Pin(tx_time=edge.tx_time_or_none, valid_time=edge.valid_time_or_none)
 
 
-def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -> Pin:
+def deep_fetch_statement_pin(op: predicate_algebra.PredicateNode, entity: EntityMetadata) -> Pin:
     """``snapshot.pin`` for ``op`` (spec §3): identical to
     ``~parallax.core.temporal_read.statement_pin``, except that an outer
     ``DeepFetch`` directive (``.include(...)`` composed after ``.as_of(...)``)
@@ -792,7 +795,7 @@ def deep_fetch_statement_pin(op: op_algebra.Operation, entity: EntityMetadata) -
     (spec §3 ``snapshot-history-includes``) before any pin is derived, so this
     peel is unconditionally safe.
     """
-    pin_op = op.operand if isinstance(op, op_algebra.DeepFetch) else op
+    pin_op = op.operand if isinstance(op, predicate_algebra.DeepFetch) else op
     return statement_pin(pin_op, entity)
 
 

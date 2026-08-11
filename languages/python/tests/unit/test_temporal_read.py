@@ -18,7 +18,7 @@ from _corpus_model_support import target
 
 from parallax.conformance import models
 from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, TemporalDimension
 from parallax.core.sql_gen import compile_read
@@ -50,7 +50,7 @@ _B = "2024-03-01T00:00:00+00:00"
 _P = "2024-02-01T00:00:00+00:00"
 
 
-def _where(op: oa.Operation, entity: EntityMetadata) -> tuple[str, tuple[object, ...]]:
+def _where(op: oa.PredicateNode, entity: EntityMetadata) -> tuple[str, tuple[object, ...]]:
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
     model = _ACCEPTED[entity.identity.name]
     query = deep_fetch.plan(entity, op, model).root
@@ -168,8 +168,8 @@ def test_as_of_composes_after_a_user_predicate() -> None:
 # --------------------------------------------------------------------------- #
 # Bitemporal composition (Valid-Time first, Transaction-Time inner).           #
 # --------------------------------------------------------------------------- #
-def _bitemporal(valid_time: str | None, tx_time: str | None) -> oa.Operation:
-    op: oa.Operation = oa.All()
+def _bitemporal(valid_time: str | None, tx_time: str | None) -> oa.PredicateNode:
+    op: oa.PredicateNode = oa.All()
     if tx_time is not None:
         op = oa.AsOf(operand=op, dimension="transaction-time", coordinate=tx_time)
     if valid_time is not None:
@@ -406,7 +406,7 @@ def test_statement_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> N
 
 
 def test_scans_an_axis_sees_a_scan_under_a_pinned_outer_dimension() -> None:
-    # A bitemporal read nests one wrapper per dimension (m-op-algebra, canonical
+    # A bitemporal read nests one wrapper per dimension (m-predicate, canonical
     # Valid-Time-outer order), so pinning Valid Time around a Transaction-Time
     # scan still answers a milestone set: the whole nest decides, not the
     # outermost wrapper's kind.

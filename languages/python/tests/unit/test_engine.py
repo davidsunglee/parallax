@@ -282,7 +282,7 @@ def _synthetic(document: dict[str, object]) -> case_format.Case:
         path=Path("m-op-algebra-999-synthetic.yaml"),
         case_id="m-op-algebra-999",
         shape="read",
-        tags=("m-op-algebra", "slice-snapshot-1"),
+        tags=("m-predicate", "slice-snapshot-1"),
         model="models/orders.yaml",
         document=document,
     )
@@ -4047,7 +4047,7 @@ def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
         path=Path("m-op-algebra-998-synthetic-rejected.yaml"),
         case_id="m-op-algebra-998",
         shape="rejected",
-        tags=("m-op-algebra", "rejected", "slice-snapshot-1"),
+        tags=("m-predicate", "rejected", "slice-snapshot-1"),
         model="models/animal.yaml",
         document={"model": "models/animal.yaml", "when": when, "then": {"rejectedRule": "x"}},
     )
@@ -4661,7 +4661,7 @@ def test_render_node_keeps_a_value_object_and_a_same_named_relationship_apart() 
 
 def test_namespaced_duplicate_variants_flow_from_sql_plan_through_production_to_renderer() -> None:
     from parallax.core.dialect import POSTGRES
-    from parallax.core.op_algebra import All
+    from parallax.core.predicate import All
 
     root = _VARIANT_MODEL.entity(_VARIANT_ROOT)
     assert root is not None

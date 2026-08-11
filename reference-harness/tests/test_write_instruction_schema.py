@@ -1,7 +1,7 @@
 """DB-free tests for the canonical write-instruction schema (m-unit-work).
 
 `write-instruction.schema.json` is the write-side analogue of
-`operation.schema.json`: the canonical, axis-explicit vocabulary a unit of work
+`predicate.schema.json`: the canonical, axis-explicit vocabulary a unit of work
 buffers. These tests pin the two instruction shapes (keyed + predicate), the
 axis-explicit Valid-Time bounds, the absence of a Transaction-Time-instant field, and the
 verb / bound conditionals.

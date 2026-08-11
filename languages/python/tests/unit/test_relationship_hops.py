@@ -37,7 +37,7 @@ from parallax.core import (
 )
 from parallax.core.entity import RelationshipPath, RelationshipRef
 from parallax.core.entity._model import model_of
-from parallax.core.op_algebra import DeepFetch, NavigationPath, PathSegment, validate_operation
+from parallax.core.predicate import DeepFetch, NavigationPath, PathSegment, validate_operation
 
 
 class Leaf(Entity, table="leaf", namespace="orchard"):

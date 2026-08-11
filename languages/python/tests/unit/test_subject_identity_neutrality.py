@@ -19,7 +19,7 @@ import pytest
 from _support.clock_probes import inert_instant, instant_at
 from _support.planner_probes import observed_buffer
 from parallax.conformance import models
-from parallax.core import op_algebra
+from parallax.core import predicate as predicate_algebra
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.core.sql_gen import LoweredStatement
@@ -152,7 +152,9 @@ def test_a_keyed_delete_is_audit_neutral() -> None:
 def test_a_readless_predicate_write_is_audit_neutral() -> None:
     predicate = PredicateWrite(
         "delete",
-        PredicateSelection("Wallet", op_algebra.Comparison("lessThan", "Wallet.balance", 200.00)),
+        PredicateSelection(
+            "Wallet", predicate_algebra.Comparison("lessThan", "Wallet.balance", 200.00)
+        ),
     )
     _assert_neutral([predicate], _WALLET)
 

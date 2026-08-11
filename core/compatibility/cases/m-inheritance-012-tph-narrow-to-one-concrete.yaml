@@ -1,5 +1,5 @@
 # Table-per-hierarchy narrow to ONE concrete subtype with a concrete-subtype predicate
-# (m-inheritance, m-op-algebra, m-sql).
+# (m-inheritance, m-predicate, m-sql).
 #
 # targetEntity is the abstract root Animal; the `narrow` node constrains it to [Dog],
 # so `Dog.barkVolume` — a concrete-subtype-declared attribute — becomes referenceable
@@ -10,7 +10,7 @@
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
 model: models/animal.yaml
-tags: [m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Animal

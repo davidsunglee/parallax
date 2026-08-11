@@ -451,7 +451,7 @@
       ]
     },
     "valueObjectAttribute": {
-      "description": "A typed field of a value object. Unlike an entity `attribute` it carries NO per-field `column`: the whole value object (all attributes plus nested value objects) is stored in one structured-document column, so an inner field has no column of its own. Its declared `scalarType` is normative for nested-predicate literal typing and casting (m-op-algebra/m-sql), which is why an inner field is a scalar and never `json`: nesting a composite is spelled as a nested `valueObject` with its own typed fields, not as free-form structured content inside the document.",
+      "description": "A typed field of a value object. Unlike an entity `attribute` it carries NO per-field `column`: the whole value object (all attributes plus nested value objects) is stored in one structured-document column, so an inner field has no column of its own. Its declared `scalarType` is normative for nested-predicate literal typing and casting (m-predicate/m-sql), which is why an inner field is a scalar and never `json`: nesting a composite is spelled as a nested `valueObject` with its own typed fields, not as free-form structured content inside the document.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "type"],

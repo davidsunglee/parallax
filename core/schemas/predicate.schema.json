@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://parallax.dev/schemas/operation.schema.json",
-  "title": "Parallax Operation Algebra (m-op-algebra)",
-  "description": "Canonical, format-agnostic serialization of an m-op-algebra operation node. Each node is a single-key tagged object. The temporal algebra addresses axes by the closed dimensions `valid-time` and `transaction-time`: `asOf` carries `dimension` plus `coordinate`, `asOfRange` carries `dimension` plus finite `start`/`end`, and `history` carries `dimension`. An omitted Transaction-Time selection normalizes to explicit Latest; Valid Time must be selected explicitly on a bitemporal read. An explicit Latest coordinate is serialized as `latest`; finite coordinates are ordinary timestamps, with no `Now` variant. Physical interval predicates are injected by m-temporal-read and never authored in the operation. The remaining nodes cover the full predicate, relationship, nested-value-object, result-directive, and inheritance-narrowing algebra.",
-  "$ref": "#/$defs/operation",
+  "$id": "https://parallax.dev/schemas/predicate.schema.json",
+  "title": "Parallax Predicate Algebra (m-predicate)",
+  "description": "Canonical, format-agnostic serialization of an m-predicate Predicate node. Each node is a single-key tagged object. This transitional schema still carries the query-wide orderBy, limit, deepFetch, asOf, asOfRange, and history wrappers while the recursive read representation remains canonical; those wrappers are not the intended Predicate boundary. The temporal algebra addresses axes by the closed dimensions `valid-time` and `transaction-time`: `asOf` carries `dimension` plus `coordinate`, `asOfRange` carries `dimension` plus finite `start`/`end`, and `history` carries `dimension`. An omitted Transaction-Time selection normalizes to explicit Latest; Valid Time must be selected explicitly on a bitemporal read. An explicit Latest coordinate is serialized as `latest`; finite coordinates are ordinary timestamps, with no `Now` variant. Physical interval predicates are injected by m-temporal-read and never authored in the Predicate. The remaining nodes cover the full predicate, relationship, nested-value-object, result-directive, and inheritance-narrowing algebra.",
+  "$ref": "#/$defs/predicate",
   "$defs": {
     "attributeRef": {
       "description": "A metamodel attribute reference of the form Entity.attribute, whose Entity segment is bare or namespace-qualified (identity.schema.json).",
@@ -59,7 +59,7 @@
       "description": "A scalar literal value usable as a bind.",
       "type": ["string", "number", "boolean", "null"]
     },
-    "operation": {
+    "predicate": {
       "type": "object",
       "minProperties": 1,
       "maxProperties": 1,
@@ -293,7 +293,7 @@
         "operands": {
           "type": "array",
           "minItems": 2,
-          "items": { "$ref": "#/$defs/operation" }
+          "items": { "$ref": "#/$defs/predicate" }
         }
       }
     },
@@ -313,7 +313,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["operand"],
-      "properties": { "operand": { "$ref": "#/$defs/operation" } }
+      "properties": { "operand": { "$ref": "#/$defs/predicate" } }
     },
     "not": {
       "type": "object",
@@ -340,7 +340,7 @@
           "additionalProperties": false,
           "required": ["operand", "keys"],
           "properties": {
-            "operand": { "$ref": "#/$defs/operation" },
+            "operand": { "$ref": "#/$defs/predicate" },
             "keys": {
               "type": "array",
               "minItems": 1,
@@ -374,7 +374,7 @@
           "additionalProperties": false,
           "required": ["operand", "count"],
           "properties": {
-            "operand": { "$ref": "#/$defs/operation" },
+            "operand": { "$ref": "#/$defs/predicate" },
             "count": { "type": "integer", "minimum": 1 }
           }
         }
@@ -387,7 +387,7 @@
       "required": ["rel"],
       "properties": {
         "rel": { "$ref": "#/$defs/relationshipRef" },
-        "op": { "$ref": "#/$defs/operation" }
+        "op": { "$ref": "#/$defs/predicate" }
       }
     },
     "navigate": {
@@ -422,7 +422,7 @@
           "additionalProperties": false,
           "required": ["operand", "paths"],
           "properties": {
-            "operand": { "$ref": "#/$defs/operation" },
+            "operand": { "$ref": "#/$defs/predicate" },
             "paths": {
               "type": "array",
               "minItems": 1,
@@ -434,7 +434,7 @@
     },
 
     "narrow": {
-      "description": "narrow(to, operand): constrain the POLYMORPHIC position supplied by context to a Subtype Selection (m-op-algebra, m-inheritance). At top level the position is the read's targetEntity; inside a navigation filter it is the relationship target; inside another narrow it is the enclosing selection's resolved set. `operand` is evaluated over the narrowed position. Model-aware validation resolves the selection, requires a non-empty subset of the active position, and threads that resolved set into `operand`; SQL lowering lifts the narrow into tag/branch selection (m-sql).",
+      "description": "narrow(to, operand): constrain the POLYMORPHIC position supplied by context to a Subtype Selection (m-predicate, m-inheritance). At top level the position is the read's targetEntity; inside a navigation filter it is the relationship target; inside another narrow it is the enclosing selection's resolved set. `operand` is evaluated over the narrowed position. Model-aware validation resolves the selection, requires a non-empty subset of the active position, and threads that resolved set into `operand`; SQL lowering lifts the narrow into tag/branch selection (m-sql).",
       "type": "object",
       "additionalProperties": false,
       "required": ["narrow"],
@@ -445,7 +445,7 @@
           "required": ["to", "operand"],
           "properties": {
             "to": { "$ref": "subtype-selection.schema.json#/$defs/subtypeSelection" },
-            "operand": { "$ref": "#/$defs/operation" }
+            "operand": { "$ref": "#/$defs/predicate" }
           }
         }
       }
@@ -478,7 +478,7 @@
           "additionalProperties": false,
           "required": ["operand", "dimension", "coordinate"],
           "properties": {
-            "operand": { "$ref": "#/$defs/operation" },
+            "operand": { "$ref": "#/$defs/predicate" },
             "dimension": { "$ref": "#/$defs/temporalDimension" },
             "coordinate": { "$ref": "#/$defs/temporalCoordinate" }
           }
@@ -496,7 +496,7 @@
           "additionalProperties": false,
           "required": ["operand", "dimension", "start", "end"],
           "properties": {
-            "operand": { "$ref": "#/$defs/operation" },
+            "operand": { "$ref": "#/$defs/predicate" },
             "dimension": { "$ref": "#/$defs/temporalDimension" },
             "start": { "$ref": "#/$defs/finiteTemporalInstant" },
             "end": { "$ref": "#/$defs/finiteTemporalInstant" }
@@ -515,7 +515,7 @@
           "additionalProperties": false,
           "required": ["operand", "dimension"],
           "properties": {
-            "operand": { "$ref": "#/$defs/operation" },
+            "operand": { "$ref": "#/$defs/predicate" },
             "dimension": { "$ref": "#/$defs/temporalDimension" }
           }
         }
@@ -527,7 +527,7 @@
       "$ref": "identity.schema.json#/$defs/nestedRef"
     },
     "nestedComparison": {
-      "description": "A nested-field comparison: a valueObject inner attribute (referenced by a dotted path) compared against a TYPED literal. The `path` resolves against the model's declared valueObject structure (first segment a declared valueObject on the entity, intermediates nested valueObjects, leaf a declared attribute); the `value` is a polymorphic `literal` whose type MUST match the leaf attribute's declared type (m-op-algebra). The dialect-specific document extraction (m-sql/m-dialect) casts to that declared type before comparing.",
+      "description": "A nested-field comparison: a valueObject inner attribute (referenced by a dotted path) compared against a TYPED literal. The `path` resolves against the model's declared valueObject structure (first segment a declared valueObject on the entity, intermediates nested valueObjects, leaf a declared attribute); the `value` is a polymorphic `literal` whose type MUST match the leaf attribute's declared type (m-predicate). The dialect-specific document extraction (m-sql/m-dialect) casts to that declared type before comparing.",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "value"],
@@ -537,7 +537,7 @@
       }
     },
     "nestedRange": {
-      "description": "A nested-field range test: a valueObject inner attribute (referenced by a dotted path) bounded below and above by TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); BOTH bounds are `literal`s whose type MUST match the leaf attribute's declared type (m-op-algebra). A `lower` strictly greater than its `upper` names an empty range and MUST be rejected (m-op-algebra bound-ordering rule), checked AFTER the typed-literal rule so a mistyped bound is named as such. Lowers to one `<extraction> between ? and ?` — never two comparisons — with the JSON path bind(s) first, then `lower`, then `upper` (m-sql/m-dialect).",
+      "description": "A nested-field range test: a valueObject inner attribute (referenced by a dotted path) bounded below and above by TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); BOTH bounds are `literal`s whose type MUST match the leaf attribute's declared type (m-predicate). A `lower` strictly greater than its `upper` names an empty range and MUST be rejected (m-predicate bound-ordering rule), checked AFTER the typed-literal rule so a mistyped bound is named as such. Lowers to one `<extraction> between ? and ?` — never two comparisons — with the JSON path bind(s) first, then `lower`, then `upper` (m-sql/m-dialect).",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "lower", "upper"],
@@ -548,7 +548,7 @@
       }
     },
     "nestedMembership": {
-      "description": "A nested-field membership test: a valueObject inner attribute (referenced by a dotted path) tested against a non-empty list of TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); each list value is a `literal` whose type MUST match the leaf attribute's declared type (m-op-algebra). Lowers to `<extraction> in (?, ?, …)` — negated with a leading `not` for `nestedNotIn` — with the JSON path bind(s) first, then one bind per list value in order (m-sql/m-dialect).",
+      "description": "A nested-field membership test: a valueObject inner attribute (referenced by a dotted path) tested against a non-empty list of TYPED literals. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`); each list value is a `literal` whose type MUST match the leaf attribute's declared type (m-predicate). Lowers to `<extraction> in (?, ?, …)` — negated with a leading `not` for `nestedNotIn` — with the JSON path bind(s) first, then one bind per list value in order (m-sql/m-dialect).",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "values"],
@@ -562,7 +562,7 @@
       }
     },
     "nestedStringMatch": {
-      "description": "A nested-field string predicate: a valueObject inner attribute (referenced by a dotted path) matched against a pattern or a literal affix. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`) and its leaf's declared type MUST be `String`; a string predicate aimed at any other member is `nested-string-predicate-non-string-member`, checked BEFORE the typed-literal rule so a `date` / `time` / `timestamp` / `uuid` / `bytes` member — which rides the portable string literal and so would otherwise pass the typed-literal check — is named rather than silently accepted (m-op-algebra). `value` carries the top-level `stringMatch` semantics unchanged: `%` and `_` are wildcards for `nestedLike` / `nestedNotLike`, while the affix forms (`nestedStartsWith` / `nestedEndsWith` / `nestedContains`) treat it as literal text whose wildcards the implementation escapes. `caseInsensitive` defaults to false and otherwise folds BOTH sides with `lower(...)`. Lowers to `<extraction> like ?` — `<extraction> not like ?` for `nestedNotLike`, the same infix negation the scalar `notLike` renders — with the JSON path bind(s) first, then the pattern, then the escape character when escaping actually changed the literal (m-sql/m-dialect).",
+      "description": "A nested-field string predicate: a valueObject inner attribute (referenced by a dotted path) matched against a pattern or a literal affix. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`) and its leaf's declared type MUST be `String`; a string predicate aimed at any other member is `nested-string-predicate-non-string-member`, checked BEFORE the typed-literal rule so a `date` / `time` / `timestamp` / `uuid` / `bytes` member — which rides the portable string literal and so would otherwise pass the typed-literal check — is named rather than silently accepted (m-predicate). `value` carries the top-level `stringMatch` semantics unchanged: `%` and `_` are wildcards for `nestedLike` / `nestedNotLike`, while the affix forms (`nestedStartsWith` / `nestedEndsWith` / `nestedContains`) treat it as literal text whose wildcards the implementation escapes. `caseInsensitive` defaults to false and otherwise folds BOTH sides with `lower(...)`. Lowers to `<extraction> like ?` — `<extraction> not like ?` for `nestedNotLike`, the same infix negation the scalar `notLike` renders — with the JSON path bind(s) first, then the pattern, then the escape character when escaping actually changed the literal (m-sql/m-dialect).",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "value"],
@@ -573,7 +573,7 @@
       }
     },
     "nestedNullCheck": {
-      "description": "A nested-field presence test: a valueObject inner attribute referenced by a dotted path, with NO compared value. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`). Per the absence-collapse rule (m-op-algebra) every 'not present' state — SQL NULL column, missing key, JSON `null`, non-object intermediate segment — yields SQL NULL from the extraction, so `nestedIsNull` matches exactly those rows and `nestedIsNotNull` its complement.",
+      "description": "A nested-field presence test: a valueObject inner attribute referenced by a dotted path, with NO compared value. The `path` resolves against the model's declared valueObject structure (as for `nestedComparison`). Per the absence-collapse rule (m-predicate) every 'not present' state — SQL NULL column, missing key, JSON `null`, non-object intermediate segment — yields SQL NULL from the extraction, so `nestedIsNull` matches exactly those rows and `nestedIsNotNull` its complement.",
       "type": "object",
       "additionalProperties": false,
       "required": ["path"],
@@ -680,7 +680,7 @@
       "properties": { "nestedContains": { "$ref": "#/$defs/nestedStringMatch" } }
     },
     "nestedIsNull": {
-      "description": "nestedIsNull(path): filter where an embedded valueObject attribute is 'not present' (SQL NULL column, missing key, JSON null, or non-object intermediate — all collapsed per m-op-algebra).",
+      "description": "nestedIsNull(path): filter where an embedded valueObject attribute is 'not present' (SQL NULL column, missing key, JSON null, or non-object intermediate — all collapsed per m-predicate).",
       "type": "object",
       "additionalProperties": false,
       "required": ["nestedIsNull"],
@@ -695,7 +695,7 @@
     },
 
     "valueObjectRef": {
-      "description": "A path that TERMINATES at a valueObject member (not an inner attribute): an Entity spelling (bare or namespace-qualified, identity.schema.json) and its valueObject, optionally followed by nested valueObject segments (e.g. Customer.address, Customer.address.phones). Unlike `nestedRef` — which requires an ATTRIBUTE leaf and so carries at least two member segments — this path may carry just one, because its subject is the value OBJECT itself. It resolves against the declared structure (first member segment a declared valueObject on the entity, each further segment a nested valueObject declared on the preceding member); the final member's multiplicity (`one` / `many`) selects the presence vs non-empty semantics of nestedExists/nestedNotExists (m-op-algebra).",
+      "description": "A path that TERMINATES at a valueObject member (not an inner attribute): an Entity spelling (bare or namespace-qualified, identity.schema.json) and its valueObject, optionally followed by nested valueObject segments (e.g. Customer.address, Customer.address.phones). Unlike `nestedRef` — which requires an ATTRIBUTE leaf and so carries at least two member segments — this path may carry just one, because its subject is the value OBJECT itself. It resolves against the declared structure (first member segment a declared valueObject on the entity, each further segment a nested valueObject declared on the preceding member); the final member's multiplicity (`one` / `many`) selects the presence vs non-empty semantics of nestedExists/nestedNotExists (m-predicate).",
       "$ref": "identity.schema.json#/$defs/valueObjectRef"
     },
     "elementRef": {
@@ -757,7 +757,7 @@
       "properties": { "path": { "$ref": "#/$defs/elementRef" } }
     },
     "elementPredicate": {
-      "description": "A scoped sub-predicate evaluated against ONE array element inside a nestedExists/nestedNotExists `where`. It is the flat `nested*` family re-expressed over element-relative paths (`elementRef`), composed with the ordinary boolean combinators. The whole compound must be satisfied by a SINGLE element (same-element semantics), which is what distinguishes it from ANDing flat any-element predicates at the top level (m-op-algebra).",
+      "description": "A scoped sub-predicate evaluated against ONE array element inside a nestedExists/nestedNotExists `where`. It is the flat `nested*` family re-expressed over element-relative paths (`elementRef`), composed with the ordinary boolean combinators. The whole compound must be satisfied by a SINGLE element (same-element semantics), which is what distinguishes it from ANDing flat any-element predicates at the top level (m-predicate).",
       "type": "object",
       "minProperties": 1,
       "maxProperties": 1,
@@ -924,7 +924,7 @@
     },
 
     "nestedExistsBody": {
-      "description": "The body of nestedExists/nestedNotExists: a value-object-terminated `path` and an OPTIONAL element-scoped `where`. Without `where` the meaning is presence — a `one` member present (non-absent per the absence-collapse rule), a `many` member a NON-EMPTY array. With `where` (a `many` path), ONE element must satisfy the whole compound `where` sub-predicate (same-element semantics); nestedNotExists + where means NO element satisfies it (m-op-algebra). Lowers to the m-dialect array-traversal form (m-sql).",
+      "description": "The body of nestedExists/nestedNotExists: a value-object-terminated `path` and an OPTIONAL element-scoped `where`. Without `where` the meaning is presence — a `one` member present (non-absent per the absence-collapse rule), a `many` member a NON-EMPTY array. With `where` (a `many` path), ONE element must satisfy the whole compound `where` sub-predicate (same-element semantics); nestedNotExists + where means NO element satisfies it (m-predicate). Lowers to the m-dialect array-traversal form (m-sql).",
       "type": "object",
       "additionalProperties": false,
       "required": ["path"],

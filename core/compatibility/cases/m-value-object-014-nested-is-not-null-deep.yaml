@@ -1,5 +1,5 @@
 # valueObject presence test: nestedIsNotNull over a two-level path (m-value-object,
-# m-op-algebra), on Postgres AND MariaDB.
+# m-predicate), on Postgres AND MariaDB.
 #
 # nestedIsNotNull(Customer.address.geo.country) is the complement of the collapse
 # case: it matches only the rows whose geo.country is present — NO (1, 2) and US
@@ -8,7 +8,7 @@
 # to a leading `not`: Postgres `not jsonb_extract_path_text(t0.address, ?, ?) is
 # null`, MariaDB `not json_value(t0.address, ?) is null`.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, nested, json, absence-collapse, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, nested, json, absence-collapse, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

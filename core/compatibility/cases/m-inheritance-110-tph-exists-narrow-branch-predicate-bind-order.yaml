@@ -16,7 +16,7 @@
 # Non-trivial (semi-join + branch predicate + tag) => referenceSql is the naive
 # `id in (select fk …)` oracle.
 model: models/animal.yaml
-tags: [m-navigate, m-op-algebra, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Person

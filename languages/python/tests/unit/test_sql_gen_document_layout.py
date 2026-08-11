@@ -24,7 +24,7 @@ import pytest
 from _document_layout_support import columns_model, document_model, entity
 
 from _support.sql import compile_read
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
 from parallax.core.sql_gen import CompiledRead, compile_write_predicate
@@ -220,7 +220,7 @@ def test_the_raw_document_is_never_a_result_field() -> None:
     ],
 )
 def test_a_document_path_predicate_lowers_through_the_extraction_and_cast_seams(
-    operation: oa.Operation, expected: str, binds: tuple[object, ...]
+    operation: oa.PredicateNode, expected: str, binds: tuple[object, ...]
 ) -> None:
     # The path comes from the compiled Member Placement, so a top-level Attribute
     # is a ONE-segment path bind; whether the extraction casts is fixed by the

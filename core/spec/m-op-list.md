@@ -2,7 +2,7 @@
 
 `m-op-list` specifies **operation-backed list results** — the collection an
 implementation returns from a set-based query. Per the dependency graph,
-`m-op-list` depends on `m-op-algebra` (a list is backed by an operation),
+`m-op-list` depends on `m-predicate` (a list is backed by an operation),
 `m-unit-work` (it resolves within a unit of work), and `m-deep-fetch` (a lazy
 list is *populated by* deep fetch — the same relationship `m-snapshot-read`
 has with deep fetch). Lists sit *above* the shared fetch algorithm, not
@@ -17,7 +17,7 @@ A set-based query returns a **list bound to an operation**, not an eagerly
 materialized array. The canonical entry point is `findMany(operation)`:
 
 - The result is an **operation-backed view**. Constructing it performs **no**
-  database work; it carries the `m-op-algebra` operation it will resolve.
+  database work; it carries the `m-predicate` operation it will resolve.
 - It resolves **lazily on first access** (iteration, indexing, size) within the
   unit of work. Resolution issues the query and materializes the result.
 - Resolution is **idempotent and stable**: re-accessing an already-resolved list

@@ -1,7 +1,7 @@
 # Write instructions are hosted in m-unit-work, and cases declare compile eligibility
 
 Reads have a canonical, language-neutral intermediate representation — the operation
-algebra, pinned by `operation.schema.json` and hosted by `m-op-algebra`. Writes did not:
+algebra, pinned by `predicate.schema.json` and hosted by `m-predicate`. Writes did not:
 the keyed `writeSequence` shape and the predicate-selected write shape lived only inside
 `compatibility-case.schema.json`, their instant surface overloaded (`at` meant the
 processing instant on an audit-only step but the business-from on a bitemporal
@@ -15,11 +15,11 @@ Two coupled decisions resolve these gaps.
 
 First, the write side gets a canonical IR **hosted, not moduled**. The instruction
 vocabulary is extracted into [`core/schemas/write-instruction.schema.json`](../../core/schemas/write-instruction.schema.json)
-— the write-side analogue of `operation.schema.json` — and its normative prose lands as
+— the write-side analogue of `predicate.schema.json` — and its normative prose lands as
 a section of `m-unit-work`, whose defining job is buffering exactly these instructions
-and which already depends on `m-op-algebra` (making an embedded predicate legal
+and which already depends on `m-predicate` (making an embedded predicate legal
 vocabulary). This adds no DAG node, no case re-tagging, and no canonical-claim churn,
-mirroring how `m-op-algebra` hosts the operation schema. The canonical schema makes the
+mirroring how `m-predicate` hosts the operation schema. The canonical schema makes the
 instant surface **axis-explicit** — business bounds named uniformly `businessFrom` /
 `businessTo`, and the processing instant defined as harness / Clock-supplied context
 rather than an instruction field — and defines a serde round-trip contract. The corpus's

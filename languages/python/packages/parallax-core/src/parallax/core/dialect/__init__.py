@@ -236,7 +236,7 @@ class Dialect:
         the extracted value only when `jsonb_typeof` confirms it IS a JSON array,
         an empty `[]` jsonb literal otherwise — collapsing a NULL column, a
         missing key, a JSON `null`, a JSON scalar, and a JSON object alike to
-        zero elements (m-op-algebra absence collapse). ``segments`` is bound
+        zero elements (m-predicate absence collapse). ``segments`` is bound
         TWICE — the guard's own `jsonb_typeof` probe, then the `then` branch's
         re-extraction — in the same order every other path bind rides (rule 4).
         An empty ``segments`` (the value object's own top-level `many` column IS

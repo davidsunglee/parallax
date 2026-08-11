@@ -31,7 +31,7 @@ from parallax.core.entity import FindQuery, GraphConstructionError
 from parallax.core.entity._query import LoweredFindQuery, lower_find_query
 from parallax.core.execution_log import DatabaseCall, ReadCompleted, ReadTrace
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.op_algebra import deserialize
+from parallax.core.predicate import deserialize
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin, TemporalReadError
 from parallax.snapshot import (

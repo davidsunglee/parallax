@@ -1,9 +1,9 @@
-"""Operation-algebra nodes (m-op-algebra).
+"""Predicate-algebra nodes (m-predicate).
 
-Frozen ``slots`` dataclasses for the operation tree the query surface builds and
+Frozen ``slots`` dataclasses for the Predicate tree the query surface builds and
 the corpus serializes. Every node is immutable and shareable; construction is
 value-only (metamodel binding is validated by the serde/statement layers, not in
-``__init__``). The union :data:`Operation` is the exhaustive read-path algebra
+``__init__``). The union :data:`PredicateNode` is the exhaustive read-path algebra
 this phase lowers; ``m-sql`` dispatches over it with ``match`` and
 ``assert_never``. Aggregation (``groupBy``) and the write side are out of scope.
 
@@ -56,11 +56,11 @@ __all__ = [
     "NotExists",
     "NullCheck",
     "NullOp",
-    "Operation",
     "Or",
     "OrderBy",
     "OrderKey",
     "PathSegment",
+    "PredicateNode",
     "QueryDefinitionError",
     "Scalar",
     "StringMatch",
@@ -213,28 +213,28 @@ class Membership:
 class And:
     """N-ary conjunction; operand order is significant (drives bind order)."""
 
-    operands: tuple[Operation, ...]
+    operands: tuple[PredicateNode, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class Or:
     """N-ary disjunction; operand order is significant."""
 
-    operands: tuple[Operation, ...]
+    operands: tuple[PredicateNode, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class Not:
     """Logical negation of one operand."""
 
-    operand: Operation
+    operand: PredicateNode
 
 
 @dataclass(frozen=True, slots=True)
 class Group:
     """An explicit precedence-nesting node (`( … )`)."""
 
-    operand: Operation
+    operand: PredicateNode
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,7 +260,7 @@ class OrderKey:
     nulls: Literal["first", "last"] | None = None
 
     def nulls_first(self) -> OrderKey:
-        """This key with NULLs placed first. Single-shot (m-op-algebra)."""
+        """This key with NULLs placed first. Single-shot (m-predicate)."""
         return self._with_placement("first")
 
     def nulls_last(self) -> OrderKey:
@@ -283,7 +283,7 @@ class OrderKey:
 class OrderBy:
     """Order an inner query's rows by one or more keys."""
 
-    operand: Operation
+    operand: PredicateNode
     keys: tuple[OrderKey, ...]
 
 
@@ -291,7 +291,7 @@ class OrderBy:
 class Limit:
     """Cap an inner query's row count."""
 
-    operand: Operation
+    operand: PredicateNode
     count: int
 
 
@@ -305,7 +305,7 @@ class EntityQuery:
     """
 
     target: EntityIdentity
-    predicate: Operation
+    predicate: PredicateNode
     narrow_to: tuple[EntityIdentity, ...] | None = None
     order_by: tuple[OrderKey, ...] = ()
     limit: int | None = None
@@ -316,7 +316,7 @@ class Narrow:
     """Constrain a polymorphic position to a subset of its subtypes."""
 
     to: SubtypeSelection
-    operand: Operation
+    operand: PredicateNode
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "to", canonical_subtype_selection(self.to))
@@ -338,7 +338,7 @@ class NestedRange:
     One canonical node, never a pair of comparisons: through a Many occurrence the
     flat family is any-element, so `>= lower` and `<= upper` as two nodes could be
     satisfied by two *different* elements, while this node requires one element to
-    satisfy the whole range (`m-op-algebra`).
+    satisfy the whole range (`m-predicate`).
     """
 
     path: str
@@ -392,7 +392,7 @@ class NestedExists:
     """The value object at ``path`` is present / non-empty; optional element ``where``."""
 
     path: str
-    where: Operation | None = None
+    where: PredicateNode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -400,7 +400,7 @@ class NestedNotExists:
     """The complement of :class:`NestedExists`."""
 
     path: str
-    where: Operation | None = None
+    where: PredicateNode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,7 +408,7 @@ class Navigate:
     """Filter the queried entity by traversing a relationship (correlated EXISTS)."""
 
     rel: str
-    op: Operation | None = None
+    op: PredicateNode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,7 +416,7 @@ class Exists:
     """The queried entity has >=1 related row (optionally matching ``op``)."""
 
     rel: str
-    op: Operation | None = None
+    op: PredicateNode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,7 +424,7 @@ class NotExists:
     """The queried entity has no related row (optionally matching ``op``)."""
 
     rel: str
-    op: Operation | None = None
+    op: PredicateNode | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -459,7 +459,7 @@ class NavigationPath:
 class DeepFetch:
     """Resolve ``operand`` then eager-fetch each navigation path."""
 
-    operand: Operation
+    operand: PredicateNode
     paths: tuple[NavigationPath, ...] = field(default_factory=tuple)
 
 
@@ -467,7 +467,7 @@ class DeepFetch:
 class AsOf:
     """Pin one temporal dimension to a single instant."""
 
-    operand: Operation
+    operand: PredicateNode
     dimension: TemporalDimension
     coordinate: str
 
@@ -476,7 +476,7 @@ class AsOf:
 class AsOfRange:
     """Scan a temporal dimension across a half-open ``[from, to)`` window."""
 
-    operand: Operation
+    operand: PredicateNode
     dimension: TemporalDimension
     start: str
     end: str
@@ -486,12 +486,12 @@ class AsOfRange:
 class History:
     """Return the full milestone set on one axis (no as-of predicate)."""
 
-    operand: Operation
+    operand: PredicateNode
     dimension: TemporalDimension
 
 
-# The exhaustive read-path operation union (m-op-algebra); m-sql lowers over it.
-Operation = (
+# The exhaustive read-path Predicate union (m-predicate); m-sql lowers over it.
+PredicateNode = (
     All
     | NoneOp
     | Comparison

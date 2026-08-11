@@ -1,4 +1,4 @@
-"""Operation-algebra node + serde unit tests (m-op-algebra).
+"""Predicate-algebra node + serde unit tests (m-predicate).
 
 The serde round-trip contract (`serialize(deserialize(x)) == x`) is proven over
 every operation the corpus authors — reads and scenario/coherence read steps —
@@ -20,8 +20,8 @@ import pytest
 from _support.corpus import case_document
 from _support.repo import REPO_ROOT
 from parallax.conformance import case_format
-from parallax.core import op_algebra
-from parallax.core.op_algebra import (
+from parallax.core import predicate
+from parallax.core.predicate import (
     QUERY_DEFINITION_CODES,
     OperationError,
     QueryDefinitionError,
@@ -54,8 +54,8 @@ _OPERATIONS = _operations()
 
 @pytest.mark.parametrize("case_id, doc", _OPERATIONS, ids=[c for c, _ in _OPERATIONS])
 def test_operation_serde_round_trip(case_id: str, doc: dict[str, Any]) -> None:
-    node = op_algebra.deserialize(doc)
-    assert op_algebra.serialize(node) == doc
+    node = predicate.deserialize(doc)
+    assert predicate.serialize(node) == doc
 
 
 _IDENTITY_DEFS = cast(
@@ -111,7 +111,7 @@ def test_the_serde_accepts_exactly_what_the_shared_grammar_accepts(
     admitted = re.fullmatch(_IDENTITY_DEFS[definition]["pattern"], spelling) is not None
     document = _REFERENCE_POSITIONS[definition](spelling)
     try:
-        op_algebra.deserialize(document)
+        predicate.deserialize(document)
     except OperationError:
         accepted = False
     else:
@@ -145,49 +145,49 @@ def test_a_canonical_or_underscored_reference_round_trips(document: dict[str, An
     # The serde is structural: it re-emits the spelling it read, so accepting the
     # canonical form at every reference position is the whole of what the widened
     # mirrors buy. Which Entity the spelling names is resolution's question.
-    assert op_algebra.serialize(op_algebra.deserialize(document)) == document
+    assert predicate.serialize(predicate.deserialize(document)) == document
 
 
 def test_node_round_trip_from_python() -> None:
-    node = op_algebra.And(
+    node = predicate.And(
         operands=(
-            op_algebra.Comparison(op="eq", attr="Order.id", value=42),
-            op_algebra.Not(operand=op_algebra.NullCheck(op="isNull", attr="Order.sku")),
+            predicate.Comparison(op="eq", attr="Order.id", value=42),
+            predicate.Not(operand=predicate.NullCheck(op="isNull", attr="Order.sku")),
         )
     )
-    assert op_algebra.deserialize(op_algebra.serialize(node)) == node
+    assert predicate.deserialize(predicate.serialize(node)) == node
 
 
 def test_string_match_case_insensitive_default_omitted() -> None:
-    node = op_algebra.StringMatch(op="like", attr="Order.name", value="ada")
-    assert op_algebra.serialize(node) == {"like": {"attr": "Order.name", "value": "ada"}}
-    node_ci = op_algebra.StringMatch(
+    node = predicate.StringMatch(op="like", attr="Order.name", value="ada")
+    assert predicate.serialize(node) == {"like": {"attr": "Order.name", "value": "ada"}}
+    node_ci = predicate.StringMatch(
         op="like", attr="Order.name", value="ada", case_insensitive=True
     )
-    like_body = cast("dict[str, Any]", op_algebra.serialize(node_ci)["like"])
+    like_body = cast("dict[str, Any]", predicate.serialize(node_ci)["like"])
     assert like_body["caseInsensitive"] is True
 
 
 def test_string_match_explicit_case_insensitive_round_trips() -> None:
     # An explicitly authored `caseInsensitive` (either `false` or `true`) round-
     # trips verbatim; an explicit `false` is NOT dropped as if omitted (same class
-    # as the orderBy direction fix — m-op-algebra serialize(deserialize(op)) == op).
+    # as the orderBy direction fix — m-predicate serialize(deserialize(op)) == op).
     for flag in (False, True):
         doc: dict[str, Any] = {
             "like": {"attr": "Order.name", "value": "ada", "caseInsensitive": flag}
         }
-        node = op_algebra.deserialize(doc)
-        assert cast("op_algebra.StringMatch", node).case_insensitive is flag
-        assert op_algebra.serialize(node) == doc
+        node = predicate.deserialize(doc)
+        assert cast("predicate.StringMatch", node).case_insensitive is flag
+        assert predicate.serialize(node) == doc
 
 
 def test_string_match_omitted_case_insensitive_round_trips_omitted() -> None:
     # A key that OMITS `caseInsensitive` deserializes to `None` and serializes
     # back omitted (the schema-defaulted minimal form), never gaining `false`.
     doc: dict[str, Any] = {"like": {"attr": "Order.name", "value": "ada"}}
-    node = op_algebra.deserialize(doc)
-    assert cast("op_algebra.StringMatch", node).case_insensitive is None
-    assert op_algebra.serialize(node) == doc
+    node = predicate.deserialize(doc)
+    assert cast("predicate.StringMatch", node).case_insensitive is None
+    assert predicate.serialize(node) == doc
 
 
 def test_nested_range_and_negated_membership_round_trip_in_both_scopes() -> None:
@@ -222,18 +222,18 @@ def test_nested_range_and_negated_membership_round_trip_in_both_scopes() -> None
         }
     }
     for doc in (path_scoped, element_scoped):
-        assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+        assert predicate.serialize(predicate.deserialize(doc)) == doc
 
 
 def test_nested_negated_membership_keeps_its_own_tag_through_serialization() -> None:
     # One `NestedMembership` class carries both tags, so a lost `op` would silently
     # serialize `nestedNotIn` back as `nestedIn` — the same predicate with the
     # opposite meaning.
-    node = op_algebra.deserialize(
+    node = predicate.deserialize(
         {"nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}}
     )
-    assert cast("op_algebra.NestedMembership", node).op == "nestedNotIn"
-    assert next(iter(op_algebra.serialize(node))) == "nestedNotIn"
+    assert cast("predicate.NestedMembership", node).op == "nestedNotIn"
+    assert next(iter(predicate.serialize(node))) == "nestedNotIn"
 
 
 def test_nested_string_predicates_round_trip_in_both_scopes() -> None:
@@ -273,7 +273,7 @@ def test_nested_string_predicates_round_trip_in_both_scopes() -> None:
         }
     }
     for doc in (path_scoped, element_scoped):
-        assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+        assert predicate.serialize(predicate.deserialize(doc)) == doc
 
 
 def test_nested_string_predicate_keeps_its_own_tag_and_omitted_case_flag() -> None:
@@ -281,16 +281,14 @@ def test_nested_string_predicate_keeps_its_own_tag_and_omitted_case_flag() -> No
     # silently serialize `nestedNotLike` back as `nestedLike` — the complement. The
     # omitted `caseInsensitive` stays omitted and an explicit `false` round-trips,
     # exactly as the scalar `StringMatch` does.
-    node = op_algebra.deserialize(
-        {"nestedNotLike": {"path": "Customer.address.city", "value": "B"}}
-    )
-    assert cast("op_algebra.NestedStringMatch", node).op == "nestedNotLike"
-    assert cast("op_algebra.NestedStringMatch", node).case_insensitive is None
-    assert next(iter(op_algebra.serialize(node))) == "nestedNotLike"
+    node = predicate.deserialize({"nestedNotLike": {"path": "Customer.address.city", "value": "B"}})
+    assert cast("predicate.NestedStringMatch", node).op == "nestedNotLike"
+    assert cast("predicate.NestedStringMatch", node).case_insensitive is None
+    assert next(iter(predicate.serialize(node))) == "nestedNotLike"
     explicit: dict[str, Any] = {
         "nestedLike": {"path": "Customer.address.city", "value": "B", "caseInsensitive": False}
     }
-    assert op_algebra.serialize(op_algebra.deserialize(explicit)) == explicit
+    assert predicate.serialize(predicate.deserialize(explicit)) == explicit
 
 
 def test_scoped_where_element_predicate_round_trips() -> None:
@@ -310,7 +308,7 @@ def test_scoped_where_element_predicate_round_trips() -> None:
             },
         }
     }
-    assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+    assert predicate.serialize(predicate.deserialize(doc)) == doc
 
 
 def test_deep_fetch_path_root_narrow_round_trips() -> None:
@@ -331,11 +329,11 @@ def test_deep_fetch_path_root_narrow_round_trips() -> None:
             ],
         }
     }
-    node = op_algebra.deserialize(doc)
-    path = cast("op_algebra.DeepFetch", node).paths[0]
+    node = predicate.deserialize(doc)
+    path = cast("predicate.DeepFetch", node).paths[0]
     assert path.narrow == ("Pet",)
     assert path.segments[1].narrow == ("Dog",)
-    assert op_algebra.serialize(node) == doc
+    assert predicate.serialize(node) == doc
 
 
 def test_deep_fetch_path_without_a_root_narrow_round_trips_unguarded() -> None:
@@ -344,9 +342,9 @@ def test_deep_fetch_path_without_a_root_narrow_round_trips_unguarded() -> None:
     doc: dict[str, Any] = {
         "deepFetch": {"operand": {"all": {}}, "paths": [{"segments": [{"rel": "Order.items"}]}]}
     }
-    node = op_algebra.deserialize(doc)
-    assert cast("op_algebra.DeepFetch", node).paths[0].narrow is None
-    assert op_algebra.serialize(node) == doc
+    node = predicate.deserialize(doc)
+    assert cast("predicate.DeepFetch", node).paths[0].narrow is None
+    assert predicate.serialize(node) == doc
 
 
 def test_order_key_authored_direction_round_trips() -> None:
@@ -359,17 +357,17 @@ def test_order_key_authored_direction_round_trips() -> None:
                 "keys": [{"attr": "Order.id", "direction": direction}],
             }
         }
-        assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+        assert predicate.serialize(predicate.deserialize(doc)) == doc
 
 
 def test_order_key_defaulted_direction_round_trips() -> None:
     # The schema-defaulted form (a key OMITTING the optional `direction`) must
     # round-trip omitted, not gain a `direction: asc` on the way back out.
     doc: dict[str, Any] = {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.id"}]}}
-    node = op_algebra.deserialize(doc)
-    key = cast("op_algebra.OrderBy", node).keys[0]
+    node = predicate.deserialize(doc)
+    key = cast("predicate.OrderBy", node).keys[0]
     assert key.direction is None
-    assert op_algebra.serialize(node) == doc
+    assert predicate.serialize(node) == doc
 
 
 def test_order_key_authored_null_placement_round_trips() -> None:
@@ -384,7 +382,7 @@ def test_order_key_authored_null_placement_round_trips() -> None:
                     "keys": [{"attr": "Order.sku", "direction": direction, "nulls": placement}],
                 }
             }
-            assert op_algebra.serialize(op_algebra.deserialize(doc)) == doc
+            assert predicate.serialize(predicate.deserialize(doc)) == doc
 
 
 def test_order_key_omitted_null_placement_stays_distinct_from_explicit_last() -> None:
@@ -394,15 +392,15 @@ def test_order_key_omitted_null_placement_stays_distinct_from_explicit_last() ->
     omitted: dict[str, Any] = {
         "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.sku", "direction": "desc"}]}
     }
-    node = op_algebra.deserialize(omitted)
-    key = cast("op_algebra.OrderBy", node).keys[0]
+    node = predicate.deserialize(omitted)
+    key = cast("predicate.OrderBy", node).keys[0]
     assert key.nulls is None
-    assert op_algebra.serialize(node) == omitted
+    assert predicate.serialize(node) == omitted
     assert key.nulls_last().nulls == "last"
 
 
 def test_order_key_null_placement_is_single_shot() -> None:
-    key = op_algebra.OrderKey(attr="Order.sku", direction="desc")
+    key = predicate.OrderKey(attr="Order.sku", direction="desc")
     assert key.nulls_first().nulls == "first"
     with pytest.raises(QueryDefinitionError, match="single-shot") as caught:
         key.nulls_first().nulls_last()
@@ -449,8 +447,8 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             ({"orderBy": {"operand": {"all": {}}, "keys": []}}, "non-empty list"),
             ({"narrow": {"to": [], "operand": {"all": {}}}}, "non-empty list"),
             ({"not": {}}, "missing required key"),
-            # Closed-shape / required-property / type enforcement (m-op-algebra
-            # serde MUST validate every node in operation.schema.json unchanged).
+            # Closed-shape / required-property / type enforcement (m-predicate
+            # serde MUST validate every node in predicate.schema.json unchanged).
             ({"all": {"junk": 1}}, r"all: unexpected key\(s\) \['junk'\]"),
             ({"eq": {"attr": "Order.id"}}, r"eq: missing required key\(s\) \['value'\]"),
             ({"eq": {"attr": "Order.id", "value": 1, "x": 2}}, r"eq: unexpected key\(s\) \['x'\]"),
@@ -591,7 +589,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
                 },
                 "`to` must be a non-empty list",
             ),
-            # Reference-pattern enforcement (operation.schema.json $defs): each
+            # Reference-pattern enforcement (predicate.schema.json $defs): each
             # reference string must match the schema pattern for its position.
             (
                 {"eq": {"attr": "not a ref", "value": 1}},
@@ -760,12 +758,12 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
 )
 def test_deserialize_rejects_malformed(doc: object, message: str) -> None:
     with pytest.raises(OperationError, match=message):
-        op_algebra.deserialize(doc)
+        predicate.deserialize(doc)
 
 
 def test_deserialize_rejects_non_scalar_value() -> None:
     with pytest.raises(OperationError, match="scalar literal"):
-        op_algebra.deserialize({"eq": {"attr": "Order.id", "value": {"nested": 1}}})
+        predicate.deserialize({"eq": {"attr": "Order.id", "value": {"nested": 1}}})
 
 
 @pytest.mark.parametrize(
@@ -797,8 +795,8 @@ def test_deserialize_rejects_non_scalar_value() -> None:
 )
 def test_temporal_pin_round_trips(doc: dict[str, Any]) -> None:
     # A canonical temporal coordinate round-trips unchanged.
-    node = op_algebra.deserialize(doc)
-    assert op_algebra.serialize(node) == doc
+    node = predicate.deserialize(doc)
+    assert predicate.serialize(node) == doc
 
 
 def test_deserialize_canonicalizes_include_paths_before_serialization() -> None:
@@ -817,23 +815,23 @@ def test_deserialize_canonicalizes_include_paths_before_serialization() -> None:
         }
     }
 
-    assert op_algebra.serialize(op_algebra.deserialize(doc)) == {
+    assert predicate.serialize(predicate.deserialize(doc)) == {
         "deepFetch": {"operand": {"all": {}}, "paths": [maximal, statuses]}
     }
 
 
 def test_serialize_canonicalizes_directly_constructed_include_paths() -> None:
-    short = op_algebra.NavigationPath(segments=(op_algebra.PathSegment(rel="Order.items"),))
-    maximal = op_algebra.NavigationPath(
+    short = predicate.NavigationPath(segments=(predicate.PathSegment(rel="Order.items"),))
+    maximal = predicate.NavigationPath(
         segments=(
-            op_algebra.PathSegment(rel="Order.items"),
-            op_algebra.PathSegment(rel="OrderItem.statuses"),
+            predicate.PathSegment(rel="Order.items"),
+            predicate.PathSegment(rel="OrderItem.statuses"),
         )
     )
-    statuses = op_algebra.NavigationPath(segments=(op_algebra.PathSegment(rel="Order.statuses"),))
-    node = op_algebra.DeepFetch(operand=op_algebra.All(), paths=(statuses, short, maximal, maximal))
+    statuses = predicate.NavigationPath(segments=(predicate.PathSegment(rel="Order.statuses"),))
+    node = predicate.DeepFetch(operand=predicate.All(), paths=(statuses, short, maximal, maximal))
 
-    assert op_algebra.serialize(node) == {
+    assert predicate.serialize(node) == {
         "deepFetch": {
             "operand": {"all": {}},
             "paths": [

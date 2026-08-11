@@ -1,4 +1,4 @@
-# Negative (m-op-algebra bound-ordering MUST): a nested range whose bounds are
+# Negative (m-predicate bound-ordering MUST): a nested range whose bounds are
 # INVERTED is refused pre-SQL, by the same rule the top-level `between` obeys.
 #
 # The bounds reverse the ones m-value-object-048 authors over the same nested path,
@@ -10,7 +10,7 @@
 # (both numbers here) and only a STRICTLY greater lower bound is rejected, so equal
 # bounds still name the legal single-value range.
 model: models/customer.yaml
-tags: [m-op-algebra, m-value-object, rejected, negative, nested, between, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, rejected, negative, nested, between, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

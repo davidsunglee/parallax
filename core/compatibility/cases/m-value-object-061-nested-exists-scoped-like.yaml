@@ -1,5 +1,5 @@
 # valueObject to-many: a string pattern inside a scoped `where` is SAME-element — one
-# element must carry both the equality and the match (m-op-algebra elementPredicate +
+# element must carry both the equality and the match (m-predicate elementPredicate +
 # nested string predicates, m-sql). Postgres golden only — a `where` carrying a non-`eq`
 # leaf is outside MariaDB's containment scope (m-dialect, "Scope of the containment
 # golden").
@@ -22,7 +22,7 @@
 # Both element predicates lower against the SAME unnested alias t1, the structural signal
 # of same-element matching.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, like, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, like, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

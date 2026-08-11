@@ -8,7 +8,7 @@
 # while the companion read case pins one statement, one round trip, result
 # correctness, and each dialect's canonical lock suffix.
 model: models/document-layout.yaml
-tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-db-error, m-document-codec, m-op-algebra, table-per-hierarchy, document-layout, narrow, predicate, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
+tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-db-error, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, concurrency, lockWaitTimeout, slice-snapshot-1, slice-managed-1]
 shape: error
 compileEligibility:
   mode: run-only

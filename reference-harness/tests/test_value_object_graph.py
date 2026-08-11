@@ -241,7 +241,7 @@ def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_coll
     # The two halves of one boundary, at the projection the graph comparison reads. A
     # member the document does not supply is a presence state the model HAS — a
     # missing key, a JSON null, an occurrence of the wrong kind — and collapses to
-    # null / [] as the read predicates do (m-op-algebra). A leaf that IS supplied and
+    # null / [] as the read predicates do (m-predicate). A leaf that IS supplied and
     # is not an encoding of its declared type is a state the model does not have, so
     # it is refused instead of reaching the projected node as the raw stored value.
     profile = (

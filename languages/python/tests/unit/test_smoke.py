@@ -82,7 +82,7 @@ def test_every_scope_submodule_imports() -> None:
             imported.append(info.name)
     # Sanity: the core spine skeleton alone contributes many scopes.
     assert "parallax.core.base" in imported
-    assert "parallax.core.op_algebra" in imported
+    assert "parallax.core.predicate" in imported
     assert "parallax.descriptor._ingest" in imported
     assert "parallax.snapshot.materialize" in imported
     assert "parallax.postgres.adapter" in imported

@@ -18,7 +18,7 @@ from _corpus_model_support import formed, target
 from _corpus_model_support import model as accepted_model
 
 from _support.sql import compile_read
-from parallax.core import op_algebra as oa
+from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import AttributeIdentity, Cardinality, Metamodel, TemporalDimension
 from parallax.core.navigate import canonicalize, resolve_relationship
@@ -43,7 +43,7 @@ TENANT = target(LEASE, "Tenant")
 LEASE_ENTITY = target(LEASE, "Lease")
 
 
-def _where(op: oa.Operation, model: Metamodel, name: str) -> tuple[str, tuple[object, ...]]:
+def _where(op: oa.PredicateNode, model: Metamodel, name: str) -> tuple[str, tuple[object, ...]]:
     """The `where` clause and binds `m-sql` lowers ``op`` to over ``model``."""
     statement = compile_read(op, model, POSTGRES, target(model, name)).statement
     _, _, where = statement.sql.partition(" where ")
@@ -91,7 +91,7 @@ def test_resolution_answers_a_reverse_hop_with_its_compiled_inverted_direction()
 
 def test_walk_recurses_through_predicate_combinators_only() -> None:
     hop = oa.Exists(rel="Order.items")
-    wrapped_ops: list[oa.Operation] = [
+    wrapped_ops: list[oa.PredicateNode] = [
         oa.Or(operands=(hop, oa.All())),
         oa.Not(operand=hop),
         oa.Group(operand=hop),
@@ -105,7 +105,7 @@ def test_walk_recurses_through_predicate_combinators_only() -> None:
 
 def test_canonicalize_never_descends_through_query_wide_wrappers() -> None:
     hop = oa.Exists(rel="Order.items")
-    wrapped_ops: list[oa.Operation] = [
+    wrapped_ops: list[oa.PredicateNode] = [
         oa.OrderBy(operand=hop, keys=(oa.OrderKey(attr="Order.id"),)),
         oa.Limit(operand=hop, count=5),
         oa.AsOf(operand=hop, dimension="transaction-time", coordinate="latest"),

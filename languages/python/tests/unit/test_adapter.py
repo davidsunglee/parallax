@@ -50,7 +50,7 @@ class _FakePort:
 def _case(
     *,
     shape: str = "read",
-    tags: tuple[str, ...] = ("m-op-algebra", "slice-snapshot-1"),
+    tags: tuple[str, ...] = ("m-predicate", "slice-snapshot-1"),
 ) -> case_format.Case:
     return case_format.Case(
         path=Path("m-op-algebra-001-x.yaml"),
@@ -89,7 +89,7 @@ def test_classify_admits_an_in_claim_case() -> None:
         ("compile", "mariadb", _case(), "unsupported-dialect"),
         ("compile", "postgres", _case(shape="coherence"), "unsupported-case-shape"),
         ("compile", "postgres", _case(tags=("m-agg", "slice-snapshot-1")), "unsupported-module"),
-        ("compile", "postgres", _case(tags=("m-op-algebra",)), "unsupported-case-tag"),
+        ("compile", "postgres", _case(tags=("m-predicate",)), "unsupported-case-tag"),
     ],
 )
 def test_classify_names_the_first_failed_filter(
@@ -102,7 +102,7 @@ def test_classify_names_the_first_failed_filter(
 
 def test_classify_exclude_filter() -> None:
     claim = Claim(
-        modules=("m-op-algebra",),
+        modules=("m-predicate",),
         dialects=("postgres",),
         case_shapes=("read",),
         include=("slice-snapshot-1",),
@@ -110,7 +110,7 @@ def test_classify_exclude_filter() -> None:
         commands=("compile",),
         provisioning="self-managed",
     )
-    case = _case(tags=("m-op-algebra", "slice-snapshot-1", "aggregation"))
+    case = _case(tags=("m-predicate", "slice-snapshot-1", "aggregation"))
     diagnostic = adapter.classify("compile", "postgres", case, claim)
     assert diagnostic is not None
     assert diagnostic.code == "unsupported-case-tag"
@@ -441,7 +441,7 @@ def test_scenario_actions_all_mutate_guards_malformed_and_action_free_documents(
             path=Path("m-op-algebra-001-x.yaml"),
             case_id="m-op-algebra-001",
             shape="scenario",
-            tags=("m-op-algebra", "slice-snapshot-1"),
+            tags=("m-predicate", "slice-snapshot-1"),
             model="models/orders.yaml",
             document=document,
         )

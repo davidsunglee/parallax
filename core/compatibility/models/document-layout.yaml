@@ -22,7 +22,7 @@
 #
 # `note` is the presence pair: one row omits the key entirely and one writes an
 # explicit JSON null, so a case can assert that a NULL Column's single not-present
-# state and a document's two collapse to one logical answer (m-op-algebra).
+# state and a document's two collapse to one logical answer (m-predicate).
 #
 # `Trip` is the join side. `travelerId` is one endpoint of `Traveler.trips`, so the
 # layout keeps it in a Column of its own (direct-column role 2) beside the primary

@@ -1,24 +1,24 @@
-"""Model-aware OPERATION validation for the ``rejected`` case shape (m-op-algebra).
+"""Model-aware OPERATION validation for the ``rejected`` case shape (m-predicate).
 
 An operation `rejected` case (m-case-format, resolved Q7) carries a SCHEMA-VALID
-`m-op-algebra` node that a model-aware resolver MUST refuse **before any SQL is
+`m-predicate` node that a model-aware resolver MUST refuse **before any SQL is
 emitted**. This module walks the operation tree — mostly against the queried
 entity's declared value-object structure — and raises
 :class:`~reference_harness.value_object_resolve.RejectionError` naming the violated
 normative rule:
 
 * a **range** predicate whose `lower` bound is strictly greater than its `upper`,
-  comparing same-kind literals only (m-op-algebra bound ordering) — at the top level
+  comparing same-kind literals only (m-predicate bound ordering) — at the top level
   and at both nested scopes. At the top level the rule needs no model, since the two
   authored literals carry everything it compares; nested, the path and both typed
   bounds resolve FIRST, so a mistyped bound is named as a type mismatch rather than
   ordered as a raw literal;
 * a nested-predicate **path** whose first segment is not a declared value object,
-  or whose intermediate / leaf segment is undeclared (m-op-algebra resolver MUST);
+  or whose intermediate / leaf segment is undeclared (m-predicate resolver MUST);
 * a nested-comparison / range / membership **literal** whose type mismatches the leaf
-  attribute's declared neutral type (m-op-algebra typed-literal MUST);
+  attribute's declared neutral type (m-predicate typed-literal MUST);
 * a nested **string predicate** whose resolved leaf is not a `String` member
-  (m-op-algebra non-string-member MUST) — checked ahead of the typed-literal rule at
+  (m-predicate non-string-member MUST) — checked ahead of the typed-literal rule at
   both nested scopes, because the portable literal carries a `date` / `uuid` /
   `timestamp` value as a `string` and the literal rule alone would accept it;
 * a **`deepFetch`** path segment or a **relationship navigation** (`navigate` /
@@ -165,7 +165,7 @@ def _check_between(entity: Entity, body: dict[str, Any]) -> None:
 
 
 def _check_bound_ordering(subject: Any, lower: Any, upper: Any) -> None:
-    """Reject a range whose bounds are inverted (m-op-algebra bound ordering)."""
+    """Reject a range whose bounds are inverted (m-predicate bound ordering)."""
     if bounds_inverted(lower, upper):
         raise RejectionError(
             BETWEEN_BOUNDS_INVERTED,
@@ -188,7 +188,7 @@ def _check_nested_comparison(entity: Entity, body: dict[str, Any]) -> None:
 def _check_range_predicate(
     attribute: dict[str, Any], body: dict[str, Any], *, subject: str
 ) -> None:
-    """A nested range's bound checks, in the order m-op-algebra fixes: both typed
+    """A nested range's bound checks, in the order m-predicate fixes: both typed
     bounds, then the bound ordering — the path having already resolved ``attribute``.
 
     One function for both scopes, because only the resolution of ``attribute``
@@ -220,7 +220,7 @@ def _check_nested_membership(entity: Entity, body: dict[str, Any]) -> None:
 def _check_string_predicate(
     attribute: dict[str, Any], body: dict[str, Any], *, subject: str
 ) -> None:
-    """A nested string predicate's two rules, in the order m-op-algebra fixes: the
+    """A nested string predicate's two rules, in the order m-predicate fixes: the
     resolved member's own type, then the literal's.
 
     One function for both scopes, because only the resolution of ``attribute``
@@ -308,7 +308,7 @@ def _check_deep_fetch(entity: Entity, body: dict[str, Any]) -> None:
     for path in body.get("paths", []):
         _check_path_root_narrow(entity, path.get("narrow"))
         for segment in path.get("segments", []):
-            # A path segment is a closed object ``{rel, narrow?}`` (m-op-algebra);
+            # A path segment is a closed object ``{rel, narrow?}`` (m-predicate);
             # the value-object misuse rule is about the traversed relationship ref.
             rel = segment["rel"] if isinstance(segment, dict) else segment
             cls, _, member = rel.rpartition(".")

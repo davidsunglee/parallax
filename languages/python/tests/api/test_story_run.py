@@ -465,7 +465,7 @@ def _value_object_projection(value: Any) -> dict[str, Any] | None:
     leaf grades: EVERY declared member, canonically named, valued as the carrier
     reads it, recursively. A member the stored document omitted collapses to
     `None` / `()` exactly as one it stored as JSON null does — the absence
-    collapse `m-op-algebra` fixes and `m-value-object-023` states in its own
+    collapse `m-predicate` fixes and `m-value-object-023` states in its own
     words ("every declared member is present").
 
     Deliberately not `to_document`: canonical document serialization is

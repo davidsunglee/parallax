@@ -1,4 +1,4 @@
-# Negative (m-op-algebra typed-literal MUST, and the order the two range checks run
+# Negative (m-predicate typed-literal MUST, and the order the two range checks run
 # in): an element-scoped range whose BOUNDS mistype the declared leaf is refused as a
 # type mismatch, not as an inverted range.
 #
@@ -7,14 +7,14 @@
 # type. Those same two literals are also inverted as raw numbers, which is what makes
 # this case discriminating: a resolver that ordered the bounds before resolving the
 # subject would report `between-bounds-inverted` and blame the ordering for a problem
-# that is actually the bounds' types. m-op-algebra fixes the order as subject first,
+# that is actually the bounds' types. m-predicate fixes the order as subject first,
 # bounds second — the nested path resolves and both bounds are type-checked against
 # the leaf before they are compared to each other — so the diagnostic names the real
 # fault. The node is schema-valid, since the polymorphic `literal` admits a number in
 # either bound position, and the element scope is reached through the enclosing
 # `nestedExists` `where`, so only model-aware validation inside that scope catches it.
 model: models/customer.yaml
-tags: [m-op-algebra, m-value-object, rejected, negative, nested, between, scoped, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, rejected, negative, nested, between, scoped, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

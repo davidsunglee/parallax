@@ -38,7 +38,7 @@ from parallax.core.metamodel import (
     ValueObjectOccurrenceDeclaration,
     ValueObjectShapeDeclaration,
 )
-from parallax.core.op_algebra import serialize
+from parallax.core.predicate import serialize
 
 _CORPUS_TYPES: dict[str, NeutralType] = {
     "string": String(),
@@ -122,7 +122,7 @@ def test_element_scoped_access_builds_paths_with_no_entity_prefix() -> None:
     assert isinstance(expression, ElementAttributeExpr)
     predicate = expression == "home"
     assert isinstance(predicate, Predicate)
-    assert serialize(predicate.op) == {"nestedEq": {"path": "type", "value": "home"}}
+    assert serialize(predicate.node) == {"nestedEq": {"path": "type", "value": "home"}}
 
 
 def test_every_element_scoped_operator_builds_its_own_nested_node() -> None:
@@ -130,37 +130,39 @@ def test_every_element_scoped_operator_builds_its_own_nested_node() -> None:
     # `nested*` node per operator, each path element-rooted with no entity
     # prefix, as a quantifier's interior requires.
     phone_type = _element(vm.Phone.type)
-    assert serialize((phone_type != "home").op) == {
+    assert serialize((phone_type != "home").node) == {
         "nestedNotEq": {"path": "type", "value": "home"}
     }
-    assert serialize((phone_type > "a").op) == {"nestedGt": {"path": "type", "value": "a"}}
-    assert serialize((phone_type >= "a").op) == {"nestedGte": {"path": "type", "value": "a"}}
-    assert serialize((phone_type < "z").op) == {"nestedLt": {"path": "type", "value": "z"}}
-    assert serialize((phone_type <= "z").op) == {"nestedLte": {"path": "type", "value": "z"}}
-    assert serialize(phone_type.in_(["home", "work"]).op) == {
+    assert serialize((phone_type > "a").node) == {"nestedGt": {"path": "type", "value": "a"}}
+    assert serialize((phone_type >= "a").node) == {"nestedGte": {"path": "type", "value": "a"}}
+    assert serialize((phone_type < "z").node) == {"nestedLt": {"path": "type", "value": "z"}}
+    assert serialize((phone_type <= "z").node) == {"nestedLte": {"path": "type", "value": "z"}}
+    assert serialize(phone_type.in_(["home", "work"]).node) == {
         "nestedIn": {"path": "type", "values": ["home", "work"]}
     }
-    assert serialize(phone_type.not_in(["work"]).op) == {
+    assert serialize(phone_type.not_in(["work"]).node) == {
         "nestedNotIn": {"path": "type", "values": ["work"]}
     }
-    assert serialize(phone_type.between("a", "z").op) == {
+    assert serialize(phone_type.between("a", "z").node) == {
         "nestedBetween": {"path": "type", "lower": "a", "upper": "z"}
     }
-    assert serialize(phone_type.like("ho%").op) == {"nestedLike": {"path": "type", "value": "ho%"}}
-    assert serialize(phone_type.not_like("ho%").op) == {
+    assert serialize(phone_type.like("ho%").node) == {
+        "nestedLike": {"path": "type", "value": "ho%"}
+    }
+    assert serialize(phone_type.not_like("ho%").node) == {
         "nestedNotLike": {"path": "type", "value": "ho%"}
     }
-    assert serialize(phone_type.starts_with("ho").op) == {
+    assert serialize(phone_type.starts_with("ho").node) == {
         "nestedStartsWith": {"path": "type", "value": "ho"}
     }
-    assert serialize(phone_type.ends_with("me").op) == {
+    assert serialize(phone_type.ends_with("me").node) == {
         "nestedEndsWith": {"path": "type", "value": "me"}
     }
-    assert serialize(phone_type.contains("om", case_insensitive=True).op) == {
+    assert serialize(phone_type.contains("om", case_insensitive=True).node) == {
         "nestedContains": {"path": "type", "value": "om", "caseInsensitive": True}
     }
-    assert serialize(phone_type.is_null().op) == {"nestedIsNull": {"path": "type"}}
-    assert serialize(phone_type.is_not_null().op) == {"nestedIsNotNull": {"path": "type"}}
+    assert serialize(phone_type.is_null().node) == {"nestedIsNull": {"path": "type"}}
+    assert serialize(phone_type.is_not_null().node) == {"nestedIsNotNull": {"path": "type"}}
 
 
 def test_a_boolean_element_reads_as_an_explicit_nested_equality() -> None:
@@ -168,14 +170,14 @@ def test_a_boolean_element_reads_as_an_explicit_nested_equality() -> None:
         enabled: Attr[bool | None]
 
     predicate = _element(Toggle.enabled).is_(True)
-    assert serialize(predicate.op) == {"nestedEq": {"path": "enabled", "value": True}}
+    assert serialize(predicate.node) == {"nestedEq": {"path": "enabled", "value": True}}
 
 
 def test_an_element_scoped_hop_stays_element_relative_however_deep_it_goes() -> None:
     # A nested occurrence continues the element path rather than restarting it,
     # so an interior predicate over a nested leaf never grows an entity prefix.
     predicate = _element(vm.Address.geo).country == "DE"
-    assert serialize(predicate.op) == {"nestedEq": {"path": "geo.country", "value": "DE"}}
+    assert serialize(predicate.node) == {"nestedEq": {"path": "geo.country", "value": "DE"}}
 
 
 def test_an_element_expression_answers_no_private_name_and_has_no_truth_value() -> None:
@@ -191,7 +193,7 @@ def test_an_element_expression_answers_no_private_name_and_has_no_truth_value() 
 def test_an_entity_rooted_nested_predicate_carries_the_dotted_canonical_path() -> None:
     predicate = vm.Customer.address.geo.country == "DE"
     assert isinstance(predicate, Predicate)
-    assert serialize(predicate.op) == {
+    assert serialize(predicate.node) == {
         "nestedEq": {"path": "parallax.compatibility.Customer.address.geo.country", "value": "DE"}
     }
 
@@ -200,20 +202,20 @@ def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() 
     # `.between(...)` / `.not_in(...)` follow `.in_(...)`: on a value-object path they
     # build the NESTED node carrying the whole dotted path, not the scalar node over a
     # truncated `Class.member` reference.
-    assert serialize(vm.Customer.address.geo.elevation.between(5, 12).op) == {
+    assert serialize(vm.Customer.address.geo.elevation.between(5, 12).node) == {
         "nestedBetween": {
             "path": "parallax.compatibility.Customer.address.geo.elevation",
             "lower": 5,
             "upper": 12,
         }
     }
-    assert serialize(vm.Customer.address.city.not_in(["Oslo"]).op) == {
+    assert serialize(vm.Customer.address.city.not_in(["Oslo"]).node) == {
         "nestedNotIn": {"path": "parallax.compatibility.Customer.address.city", "values": ["Oslo"]}
     }
-    assert serialize(vm.Customer.address.city.starts_with("Os").op) == {
+    assert serialize(vm.Customer.address.city.starts_with("Os").node) == {
         "nestedStartsWith": {"path": "parallax.compatibility.Customer.address.city", "value": "Os"}
     }
-    assert serialize(vm.Customer.address.city.like("OS%", case_insensitive=True).op) == {
+    assert serialize(vm.Customer.address.city.like("OS%", case_insensitive=True).node) == {
         "nestedLike": {
             "path": "parallax.compatibility.Customer.address.city",
             "value": "OS%",
@@ -222,14 +224,14 @@ def test_a_nested_range_and_negated_membership_stay_nested_rather_than_scalar() 
     }
     # A non-nested attribute on the same Entity keeps the scalar spelling, and the
     # fluent surface never authors an explicit `caseInsensitive: false`.
-    assert serialize(vm.Customer.name.starts_with("A").op) == {
+    assert serialize(vm.Customer.name.starts_with("A").node) == {
         "startsWith": {"attr": "parallax.compatibility.Customer.name", "value": "A"}
     }
     # A non-nested attribute on the same Entity keeps the scalar spellings.
-    assert serialize(vm.Customer.name.not_in(["Ada"]).op) == {
+    assert serialize(vm.Customer.name.not_in(["Ada"]).node) == {
         "notIn": {"attr": "parallax.compatibility.Customer.name", "values": ["Ada"]}
     }
-    assert serialize(vm.Customer.id.between(1, 3).op) == {
+    assert serialize(vm.Customer.id.between(1, 3).node) == {
         "between": {"attr": "parallax.compatibility.Customer.id", "lower": 1, "upper": 3}
     }
 

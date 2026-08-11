@@ -37,7 +37,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.op_algebra import AsOfRange, DeepFetch, History, Operation
+from parallax.core.predicate import AsOfRange, DeepFetch, History, PredicateNode
 from parallax.snapshot.handle._spine import own_row_spine
 
 __all__ = ["DeferredFeatureError", "deferred_features"]
@@ -85,7 +85,7 @@ class DeferredFeatureError(RuntimeError):
         self.features: tuple[str, ...] = ordered
 
 
-def deferred_features(operation: Operation) -> frozenset[str]:
+def deferred_features(operation: PredicateNode) -> frozenset[str]:
     """Every Deferred Execution Feature ``operation`` requires.
 
     Empty for every operation this implementation executes, which is the
@@ -94,7 +94,7 @@ def deferred_features(operation: Operation) -> frozenset[str]:
     return _required_features(operation) & _DEFERRED_EXECUTION_FEATURES
 
 
-def _required_features(operation: Operation) -> frozenset[str]:
+def _required_features(operation: PredicateNode) -> frozenset[str]:
     """The Feature-tagged read capabilities ``operation`` requires.
 
     Only the capabilities the inventory could name are computed. An operation's
@@ -104,12 +104,12 @@ def _required_features(operation: Operation) -> frozenset[str]:
     return frozenset({"snapshot-history-includes"} if _includes_over_a_scan(operation) else ())
 
 
-def _includes_over_a_scan(operation: Operation) -> bool:
+def _includes_over_a_scan(operation: PredicateNode) -> bool:
     """Whether ``operation`` deep-fetches over a SCANNED temporal axis.
 
     A milestone-set read answers one graph per milestone, and combining that
     with includes is the ``snapshot-history-includes`` Feature. Neither half is
-    confined to a position: ``m-op-algebra`` composes both freely with every
+    confined to a position: ``m-predicate`` composes both freely with every
     node returning its operand's own rows, so the two halves are recognized
     across the whole
     :func:`~parallax.snapshot.handle._spine.own_row_spine` — an include ANYWHERE

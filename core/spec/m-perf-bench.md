@@ -42,7 +42,7 @@ out:
 
 | Workload family | Exercises | Example fixture |
 |---|---|---|
-| **operation mix** (point + range reads) | `m-op-algebra` / `m-sql` predicate evaluation, query-cache hit/miss (`m-process-cache`) | `read-mix.yaml` |
+| **operation mix** (point + range reads) | `m-predicate` / `m-sql` predicate evaluation, query-cache hit/miss (`m-process-cache`) | `read-mix.yaml` |
 | **deep-fetch shapes** (to-one, to-many, multi-hop) | `m-deep-fetch` N+1 elimination — round-trips must stay `1 + levels` regardless of fan-out | `deep-fetch.yaml` |
 | **milestone workloads** (insert / update / terminate chains) | `m-txtime-write` milestone-chaining write cost | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | `m-agg` aggregate path | folded into `read-mix.yaml` |

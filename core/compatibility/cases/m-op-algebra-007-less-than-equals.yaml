@@ -1,6 +1,6 @@
 # lessThanEquals — inclusive `<=` range predicate.
 model: models/orders.yaml
-tags: [m-op-algebra, lessThanEquals, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, lessThanEquals, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

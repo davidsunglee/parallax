@@ -33,7 +33,7 @@ from _support import mirrored_models as mm
 from _support.clock_probes import CountingClock, inert_instant
 from _support.planner_probes import TEST_SUBJECT_IDENTITY
 from parallax.conformance import models
-from parallax.core import op_algebra
+from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import (
@@ -279,7 +279,7 @@ def _predicate(entity: str, mutation: PredicateMutation) -> PredicateWrite:
     return PredicateWrite(
         mutation,
         PredicateSelection(
-            entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
         ),
     )
 
@@ -367,7 +367,7 @@ def _version_group(
     predicate = PredicateWrite(
         "update",
         PredicateSelection(
-            entity, op_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
+            entity, predicate_algebra.Comparison("lessThan", f"{entity}.balance", 1_000_000.0)
         ),
         assignments=(WriteAssignment(f"{entity}.balance", assigned),),
     )
@@ -420,7 +420,7 @@ def _temporal_group(
     predicate = PredicateWrite(
         "terminate",
         PredicateSelection(
-            entity, op_algebra.Comparison("lessThan", f"{entity}.value", 1_000_000.0)
+            entity, predicate_algebra.Comparison("lessThan", f"{entity}.value", 1_000_000.0)
         ),
     )
     return MaterializedWriteGroup(
@@ -692,7 +692,7 @@ def test_mutating_a_materialized_groups_assignment_row_leaves_steps_unaffected()
     predicate = PredicateWrite(
         "update",
         PredicateSelection(
-            "Balance", op_algebra.Comparison("lessThan", "Balance.value", 1_000_000.0)
+            "Balance", predicate_algebra.Comparison("lessThan", "Balance.value", 1_000_000.0)
         ),
         assignments=(WriteAssignment("Balance.value", 9.0),),
     )
@@ -755,7 +755,7 @@ def test_a_materialized_plan_deeply_freezes_an_assigned_value_object_document() 
     group = MaterializedWriteGroup(
         mutation=PredicateWrite(
             "update",
-            PredicateSelection("Branch", op_algebra.Comparison("eq", "Branch.id", 1)),
+            PredicateSelection("Branch", predicate_algebra.Comparison("eq", "Branch.id", 1)),
             assignments=(WriteAssignment("Branch.address", assigned_address),),
             valid_from="2024-07-01T00:00:00+00:00",
         ),

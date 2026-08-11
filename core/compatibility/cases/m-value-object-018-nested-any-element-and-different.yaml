@@ -1,5 +1,5 @@
 # valueObject to-many: two ANDed flat predicates match across DIFFERENT elements
-# (m-value-object to-many, m-op-algebra any-element), on Postgres AND MariaDB.
+# (m-value-object to-many, m-predicate any-element), on Postgres AND MariaDB.
 #
 # The unscoped `and(nestedEq(phones.type, 'home'), nestedEq(phones.number,
 # '555-9999'))` evaluates each flat predicate INDEPENDENTLY as any-element, so a
@@ -16,7 +16,7 @@
 # and Postgres would ERROR; each conjunct's array-type guard collapses the non-array
 # `phones` to not-present, so 10 (and the JSON-null 8 and scalar 9) are excluded.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

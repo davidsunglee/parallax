@@ -37,7 +37,8 @@ from _support.sweep_goldens import (
     write_golden_statements,
 )
 from parallax.conformance import adapter, case_format, concurrency_runner, engine
-from parallax.core import op_algebra, storage_layout
+from parallax.core import predicate as predicate_algebra
+from parallax.core import storage_layout
 from parallax.core.db_port import Row
 from parallax.core.dialect import dialect_for
 from parallax.core.metamodel import Metamodel
@@ -377,7 +378,7 @@ def _scenario_find_row_transforms(
             continue
         entity = engine.case_entity(model, step["targetEntity"])
         compiled = compile_read(
-            op_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
+            predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
         )
         transforms.append(compiled.transform_row)
     return transforms

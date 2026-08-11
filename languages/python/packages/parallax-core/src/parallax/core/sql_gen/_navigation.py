@@ -71,7 +71,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     entity_by_name,
 )
-from parallax.core.op_algebra import Exists, Narrow, Navigate, NotExists, Operation
+from parallax.core.predicate import Exists, Narrow, Navigate, NotExists, PredicateNode
 from parallax.core.relationship import view as _relationship_view
 from parallax.core.sql_gen._context import PlanScope as _PlanScope
 from parallax.core.sql_gen._context import SqlGenError
@@ -108,7 +108,7 @@ class HopBranch:
     table: str
     related_attr: str
     parent_column: str
-    inner: Operation | None
+    inner: PredicateNode | None
     tag: _TagPredicate | None
     keyword: str
 
@@ -148,7 +148,7 @@ class OpenBranch:
     alias: str
     table: str
     correlation: str
-    inner: Operation | None
+    inner: PredicateNode | None
     tag_fragment: tuple[str, ...]
     tag_binds: tuple[object, ...]
     keyword: str
@@ -269,7 +269,7 @@ def open_branch(branch: HopBranch, scope: _PlanScope) -> OpenBranch:
 
 def _plan_simple_hop(
     target: EntityMetadata,
-    inner: Operation | None,
+    inner: PredicateNode | None,
     parent_column: str,
     related_attr: str,
     scope: _PlanScope,
@@ -296,8 +296,8 @@ def _plan_simple_hop(
 
 
 def _hop_position(
-    model: Metamodel, facet: InheritanceFacet, target: EntityMetadata, inner: Operation | None
-) -> tuple[tuple[EntityIdentity, ...], Operation | None, bool]:
+    model: Metamodel, facet: InheritanceFacet, target: EntityMetadata, inner: PredicateNode | None
+) -> tuple[tuple[EntityIdentity, ...], PredicateNode | None, bool]:
     """The polymorphic hop's resolved effective position + remaining interior
     predicate, mirroring a top-level family read's own narrow interception: a
     top-level `narrow` in the hop's `op` (`m-navigate` "Polymorphic navigation")
@@ -319,7 +319,7 @@ def _hop_position(
 
 def _plan_polymorphic_hop(
     target: EntityMetadata,
-    inner: Operation | None,
+    inner: PredicateNode | None,
     parent_column: str,
     related_attr: str,
     scope: _PlanScope,
@@ -352,7 +352,7 @@ def _plan_polymorphic_hop(
 def _plan_tph_hop(
     root: EntityIdentity,
     position: Sequence[EntityIdentity],
-    remaining_inner: Operation | None,
+    remaining_inner: PredicateNode | None,
     parent_column: str,
     related_attr: str,
     scope: _PlanScope,
@@ -388,7 +388,7 @@ def _plan_tph_hop(
 
 def _plan_tpcs_hop(
     position: Sequence[EntityIdentity],
-    remaining_inner: Operation | None,
+    remaining_inner: PredicateNode | None,
     parent_column: str,
     related_attr: str,
     scope: _PlanScope,
@@ -421,7 +421,7 @@ def _plan_tpcs_hop(
 
 def _tpcs_branch(
     concrete: EntityIdentity,
-    remaining_inner: Operation | None,
+    remaining_inner: PredicateNode | None,
     parent_column: str,
     related_attr: str,
     scope: _PlanScope,

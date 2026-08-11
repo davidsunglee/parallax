@@ -9,7 +9,7 @@
 #   * row 100 stores `label: "opening"`, so the assignment changes it — one gated
 #     UPDATE, version 1 -> 2.
 #   * row 200 stores no `label` key at all. A missing Document Path and an explicit
-#     JSON null are one logical not-present state (m-op-algebra), which is the state
+#     JSON null are one logical not-present state (m-predicate), which is the state
 #     `null` assigns, so the row is a NO-OP: no DML, no version advance, and no
 #     flush-time work of any kind on its behalf.
 #

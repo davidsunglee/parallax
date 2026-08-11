@@ -19,7 +19,7 @@ from _snapshot_graph_support import GraphBuilder
 from _support import snapshot_models as sm
 from parallax.conformance import animal_owner, read_models
 from parallax.core.entity import RelationshipPath, UnloadedRelationshipError
-from parallax.core.op_algebra import PathSegment
+from parallax.core.predicate import PathSegment
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import (
     SnapshotInspectionError,

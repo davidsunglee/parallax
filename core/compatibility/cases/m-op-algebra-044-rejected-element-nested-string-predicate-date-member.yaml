@@ -1,4 +1,4 @@
-# Negative (m-op-algebra non-string-member MUST, element scope): the same rule fires
+# Negative (m-predicate non-string-member MUST, element scope): the same rule fires
 # inside a scoped `where`, on an element-relative path.
 #
 # The element scope is a second family of nodes over the same predicates, so a rule
@@ -8,7 +8,7 @@
 # and `expires` is the same `date` member m-op-algebra-043 aims at path-scoped — so
 # the pair differs in nothing but scope, which is exactly the asymmetry it pins.
 model: models/contact.yaml
-tags: [m-op-algebra, m-value-object, rejected, negative, nested, string, scoped, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-value-object, rejected, negative, nested, string, scoped, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
   operation:

@@ -36,7 +36,7 @@ IMPLEMENTED_MODULES: Final[frozenset[str]] = frozenset(
         "m-value-object",
         "m-document-codec",
         "m-relationship",
-        "m-op-algebra",
+        "m-predicate",
         "m-dialect",
         "m-db-port",
         "m-db-error",

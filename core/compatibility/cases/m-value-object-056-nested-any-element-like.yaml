@@ -1,5 +1,5 @@
 # valueObject to-many string match: nestedLike through a `many` segment is ANY-ELEMENT,
-# and its `value` stays a raw pattern (m-op-algebra nested string predicates +
+# and its `value` stays a raw pattern (m-predicate nested string predicates +
 # any-element, m-sql, m-dialect array-traversal form). Postgres golden only — a
 # non-equality element predicate is outside MariaDB's containment scope (m-dialect,
 # "Scope of the containment golden").
@@ -16,7 +16,7 @@
 # The oracle guards with an outer `jsonb_typeof` instead of the golden's inline `case`
 # and reads the element field with `->>` instead of jsonb_extract_path_text.
 model: models/customer.yaml
-tags: [m-value-object, m-op-algebra, m-sql, m-dialect, nested, json, to-many, any-element, string, like, array-traversal, slice-snapshot-1, slice-managed-1]
+tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, like, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Customer

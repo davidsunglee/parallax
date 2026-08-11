@@ -299,7 +299,7 @@ def test_inherited_attribute_is_always_in_scope() -> None:
 
 
 def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
-    # m-op-algebra measures the rule against the REFERENCED entity, not the ancestor
+    # m-predicate measures the rule against the REFERENCED entity, not the ancestor
     # that declares the member: "the active position's effective set is a subset of
     # the referenced Entity's". `Dog.name` therefore names dogs even though `name` is
     # declared on Animal, so at the root position it is out of scope and a narrow to
@@ -570,7 +570,7 @@ _DEEP_FETCH_PATHS: list[dict[str, Any]] = [{"segments": [{"rel": "Animal.owner"}
 
 
 def _carrying_wrappers() -> list[tuple[str, dict[str, Any]]]:
-    """One operand per wrapper `m-op-algebra` names as carrying the ordered narrow."""
+    """One operand per wrapper `m-predicate` names as carrying the ordered narrow."""
     return [
         ("bare", _NARROW_TO_DOG),
         ("limit", {"limit": {"operand": _NARROW_TO_DOG, "count": 5}}),

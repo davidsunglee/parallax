@@ -1,5 +1,5 @@
 # orderBy DESCENDING with an explicit `nulls: last` placement over a NULLABLE key,
-# proven on BOTH dialects (m-op-algebra orderBy + m-dialect NULL ordering).
+# proven on BOTH dialects (m-predicate orderBy + m-dialect NULL ordering).
 #
 # The corpus's first witness for `desc` over a nullable column, and so the first for
 # Postgres's `desc nulls last` suffix. The dialects compensate in opposite directions:
@@ -10,7 +10,7 @@
 # paired contrast is m-op-algebra-038, whose `nulls: first` over the same key and the
 # same limit returns the NULL row instead of the second-largest sku.
 model: models/orders.yaml
-tags: [m-op-algebra, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

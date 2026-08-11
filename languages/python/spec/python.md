@@ -29,7 +29,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-op-algebra", "m-opt-lock", "m-pk-gen", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -232,7 +232,7 @@ mutations, exceptions, or exports.
   consequently no translation seam: a rule that needs a whole model is stated
   once at execution preflight and once at the predicate-selected write
   boundary, and surfaces there as its owner module's own error carrying its own
-  rule code — `OperationRejectedError` for an `m-op-algebra`, inheritance,
+  rule code — `OperationRejectedError` for an `m-predicate`, inheritance,
   relationship-navigation, or deep-fetch rejection, `TemporalReadError` for a
   temporal-read one — neither rewrapped nor reclassified, so the typed and the
   serialized ingress report one rejection under one name. Deferred Execution
@@ -321,10 +321,10 @@ mutations, exceptions, or exports.
   Lowering places those clauses in the fixed canonical order and returns one
   frozen slotted value containing exactly
   `target: EntityIdentity` and
-  `operation: Operation`. The result contains no model, Entity
+  `operation: Predicate`. The result contains no model, Entity
   Class, class index, Snapshot feature tags, provider state, SQL, serialization
   method, or public execution surface. `LoweredFindQuery` is not a
-  `CanonicalFindQuery`: only its Operation is canonical, while its target is a
+  `CanonicalFindQuery`: only its Predicate is canonical, while its target is a
   position the connected model resolves at execution. Neither `LoweredFindQuery` nor
   `lower_find_query` is re-exported from top-level `parallax.core`. Each call
   returns a fresh lowering. `FindQuery` stores no cached lowering, and no global
@@ -457,7 +457,7 @@ mutations, exceptions, or exports.
   `include(Animal.owner)` performs one broad owner hop whose single child query
   receives the deduplicated parent keys from every active Dog and Cat root.
   Paths `Dog.owner` and `Dog.owner.address` share their identical guarded
-  prefix. The core expansion updates `m-op-algebra`, its schema,
+  prefix. The core expansion updates `m-predicate`, its schema,
   `m-inheritance`, `m-deep-fetch`, `m-sql`, semantic validation, planning,
   compatibility cases, and claiming frontends atomically.
   `Entity.where(...)` requires at least one Predicate, as a required positional
@@ -525,7 +525,7 @@ mutations, exceptions, or exports.
   snapshot = db.find(op)
   ```
 
-  Canonical `m-op-algebra` serialization of that Find Query:
+  Canonical `m-predicate` serialization of that Find Query:
 
   ```yaml
   targetEntity: Order
@@ -1560,7 +1560,7 @@ acquisition.
 
 One private Snapshot seam centralizes the complete read preflight:
 `preflight_find(query, *, model) -> LoweredFindQuery`. It resolves the query's
-target in the connected model, validates the lowered canonical Operation from
+target in the connected model, validates the lowered canonical Predicate from
 that resolved root, classifies it against `_DEFERRED_EXECUTION_FEATURES`, and
 returns the same local lowering when every step succeeds — in that order, which
 is the contract rather than an implementation detail. It performs no SQL, Database
@@ -2055,7 +2055,7 @@ or descriptor authoring form and performs no audit stamping.
 - **Document-resident nullability.** A **document-resident** position — a Value
   Object leaf, and a to-one or to-many occurrence inside a Structured Column —
   reaches Entity Graph Construction with its not-present states already
-  collapsed by the read seam under `m-op-algebra`'s absence-collapse rule: a
+  collapsed by the read seam under `m-predicate`'s absence-collapse rule: a
   missing key, a stored null (SQL or JSON), and a non-object intermediate all
   arrive as `None`; for a Many, a missing key, a stored null, and a non-array
   all arrive as `()`. Every such position collapses, and at one of them some
@@ -3588,38 +3588,38 @@ legalizes a forbidden edge.
 | `m-value-object` | `parallax.core.value_object` | `parallax.core.value_object` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-document-codec` | `parallax.core.document_codec` | `parallax.core.document_codec` | `m-core`, `m-metamodel` | generated forbidden contracts |
 | `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
-| `m-op-algebra` | `parallax.core.op_algebra` | `parallax.core.op_algebra` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
-| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-op-algebra`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | generated forbidden contracts |
+| `m-predicate` | `parallax.core.predicate` | `parallax.core.predicate` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
+| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-predicate`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | generated forbidden contracts |
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
-| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-op-algebra`, `m-db-port`, `m-temporal-read` | generated forbidden contracts |
+| `m-unit-work` | `parallax.core.unit_work` | `parallax.core.unit_work` | `m-predicate`, `m-db-port`, `m-temporal-read` | generated forbidden contracts |
 | `m-read-lock` | `parallax.core.read_lock` | `parallax.core.read_lock` | `m-unit-work`, `m-dialect` | generated forbidden contracts |
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
 | `m-execution-log` | `parallax.core.execution_log` | `parallax.core.execution_log` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
 | `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
-| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-op-algebra`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
+| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-predicate`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-txtime-write` | `parallax.core.txtime_write` | `parallax.core.txtime_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
 | `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-txtime-write` | generated forbidden contracts |
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
-| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-op-algebra`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
+| `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
 | `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log` | generated forbidden contracts + cross-package contract |
-| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-op-algebra`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-log`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
+| Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-log`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts + cross-package contract |
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
-| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity._query`, `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
+| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity._query`, `m-metamodel`, `m-predicate` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
 | Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
-| Entity and Find Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-op-algebra`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
-| Find Query surface (support, child of `parallax.core.entity`) | `parallax.core.entity._query` | `parallax.core.entity._query` | `m-core`, `m-metamodel`, `m-op-algebra`, `m-temporal-read` | generated forbidden contracts |
-| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-op-algebra` | generated forbidden contracts |
+| Entity and Find Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
+| Find Query surface (support, child of `parallax.core.entity`) | `parallax.core.entity._query` | `parallax.core.entity._query` | `m-core`, `m-metamodel`, `m-predicate`, `m-temporal-read` | generated forbidden contracts |
+| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-predicate` | generated forbidden contracts |
 | Entity graph-input carriers (support, child of `parallax.core.entity`) | `parallax.core.entity._graph_input` | `parallax.core.entity._graph_input` | `m-metamodel` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
@@ -3662,16 +3662,16 @@ parallax.core.entity --> parallax.core.base
 parallax.core.entity --> parallax.core.metamodel
 parallax.core.entity --> parallax.core.inheritance
 parallax.core.entity --> parallax.core.relationship
-parallax.core.entity --> parallax.core.op_algebra
+parallax.core.entity --> parallax.core.predicate
 parallax.core.entity --> parallax.core.temporal_read
 parallax.core.entity --> parallax.core.document_codec
 parallax.core.entity --> parallax.core._formation_profile
 parallax.core.entity._query --> parallax.core.base
 parallax.core.entity._query --> parallax.core.metamodel
-parallax.core.entity._query --> parallax.core.op_algebra
+parallax.core.entity._query --> parallax.core.predicate
 parallax.core.entity._query --> parallax.core.temporal_read
 parallax.core.entity._expressions --> parallax.core.metamodel
-parallax.core.entity._expressions --> parallax.core.op_algebra
+parallax.core.entity._expressions --> parallax.core.predicate
 parallax.core.entity._graph_input --> parallax.core.metamodel
 parallax.snapshot._inspection --> parallax.core.entity
 parallax.snapshot._inspection --> parallax.core.metamodel
@@ -3684,7 +3684,7 @@ parallax.snapshot.handle --> parallax.snapshot._inspection
 parallax.snapshot.handle --> parallax.core.entity
 parallax.snapshot.handle --> parallax.core.base
 parallax.snapshot.handle --> parallax.core.metamodel
-parallax.snapshot.handle --> parallax.core.op_algebra
+parallax.snapshot.handle --> parallax.core.predicate
 parallax.snapshot.handle --> parallax.core.inheritance
 parallax.snapshot.handle --> parallax.core.storage_layout
 parallax.snapshot.handle --> parallax.core.temporal_read
@@ -3717,7 +3717,7 @@ parallax.snapshot.handle._materializer --> parallax.core.inheritance
 parallax.snapshot.handle._materializer --> parallax.core.temporal_read
 parallax.snapshot.handle._preflight --> parallax.core.entity._query
 parallax.snapshot.handle._preflight --> parallax.core.metamodel
-parallax.snapshot.handle._preflight --> parallax.core.op_algebra
+parallax.snapshot.handle._preflight --> parallax.core.predicate
 parallax.snapshot.handle._errors --> (none)
 parallax.snapshot.handle._family --> parallax.core.base
 parallax.snapshot.handle._family --> parallax.core.metamodel
@@ -3911,7 +3911,7 @@ parallax.postgres --> parallax.core.dialect
   `parallax.core._formation_profile` → `m-opt-lock` → `m-unit-work` →
   `m-db-port`. Its grant is therefore the child scope
   `parallax.core.entity._query`, whose own closure is `m-core`,
-  `m-metamodel`, `m-op-algebra`, `m-temporal-read` and — reached through the
+  `m-metamodel`, `m-predicate`, `m-temporal-read` and — reached through the
   last two — `m-inheritance` and `m-model-formation`, and the ordinary
   generated row forbids `m-db-port` — along with `m-opt-lock`, `m-unit-work` and
   `parallax.core._formation_profile` — with indirect chains reported.

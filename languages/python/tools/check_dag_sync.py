@@ -74,7 +74,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-value-object": "parallax.core.value_object",
     "m-document-codec": "parallax.core.document_codec",
     "m-relationship": "parallax.core.relationship",
-    "m-op-algebra": "parallax.core.op_algebra",
+    "m-predicate": "parallax.core.predicate",
     "m-sql": "parallax.core.sql_gen",
     "m-dialect": "parallax.core.dialect",
     "m-db-port": "parallax.core.db_port",
@@ -151,7 +151,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.metamodel",
             "parallax.core.inheritance",
             "parallax.core.relationship",
-            "parallax.core.op_algebra",
+            "parallax.core.predicate",
             "parallax.core.temporal_read",
             "parallax.core.document_codec",
             "parallax.core._formation_profile",
@@ -168,7 +168,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
         {
             "parallax.core.base",
             "parallax.core.metamodel",
-            "parallax.core.op_algebra",
+            "parallax.core.predicate",
             "parallax.core.temporal_read",
         }
     ),
@@ -178,7 +178,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # metadata alone. Granting neither model formation nor any whole-model
     # semantic view is what makes that provable rather than asserted.
     "parallax.core.entity._expressions": frozenset(
-        {"parallax.core.metamodel", "parallax.core.op_algebra"}
+        {"parallax.core.metamodel", "parallax.core.predicate"}
     ),
     # Snapshot Graph Input and Entity Graph Construction share one exact recursive
     # immutable algebra, so the carriers are scoped apart from the collaboration
@@ -207,7 +207,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.entity",
             "parallax.core.base",
             "parallax.core.metamodel",
-            "parallax.core.op_algebra",
+            "parallax.core.predicate",
             "parallax.core.inheritance",
             "parallax.core.storage_layout",
             "parallax.core.temporal_read",
@@ -274,7 +274,7 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
         {
             "parallax.core.entity._query",
             "parallax.core.metamodel",
-            "parallax.core.op_algebra",
+            "parallax.core.predicate",
         }
     ),
     # The refusal leaf's emptiness IS its contract: `_preflight` and `_family`

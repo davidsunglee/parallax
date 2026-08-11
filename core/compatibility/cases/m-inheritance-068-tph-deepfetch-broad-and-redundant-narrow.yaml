@@ -17,7 +17,7 @@
 # tag predicate is `t0.kind in (?, ?)` (binds [cat, dog], alphabetical order),
 # present because Pet's set excludes the sibling WildBoar sharing the table.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-op-algebra, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

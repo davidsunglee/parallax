@@ -1,7 +1,7 @@
 """DB-free tests for the shared Entity-identity grammars (m-metamodel).
 
 `identity.schema.json` is the single owner of every serialized Entity-identity and
-member-reference grammar: `operation.schema.json`, `subtype-selection.schema.json`,
+member-reference grammar: `predicate.schema.json`, `subtype-selection.schema.json`,
 `write-instruction.schema.json`, and `compatibility-case.schema.json` reference it
 across files rather than each keeping a literal copy. These tests pin the relationship
 three ways:
@@ -33,7 +33,7 @@ _REGISTRY = build_registry(_SCHEMAS)
 _IDENTITY = _SCHEMAS["identity.schema.json"]
 _METAMODEL = _SCHEMAS["metamodel.schema.json"]
 _IDENTITY_URL = _IDENTITY["$id"]
-_OPERATION_URL = _SCHEMAS["operation.schema.json"]["$id"]
+_OPERATION_URL = _SCHEMAS["predicate.schema.json"]["$id"]
 _SUBTYPE_SELECTION_URL = _SCHEMAS["subtype-selection.schema.json"]["$id"]
 _WRITE_URL = _SCHEMAS["write-instruction.schema.json"]["$id"]
 _CASE_URL = _SCHEMAS["compatibility-case.schema.json"]["$id"]
@@ -211,7 +211,7 @@ def test_each_consuming_ref_behaves_like_the_canonical_def() -> None:
 def test_no_consuming_schema_redefines_an_identity_grammar() -> None:
     """The grammars live in one file; the consumers reference them."""
     owned = set(_IDENTITY["$defs"])
-    for name in ("operation.schema.json", "write-instruction.schema.json"):
+    for name in ("predicate.schema.json", "write-instruction.schema.json"):
         for pointer, node in _SCHEMAS[name]["$defs"].items():
             if pointer in owned:
                 assert "pattern" not in node, f"{name} redefines {pointer}"

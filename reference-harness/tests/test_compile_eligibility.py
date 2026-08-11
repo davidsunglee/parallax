@@ -84,7 +84,7 @@ def test_detectable_case_declared_single_connection_passes() -> None:
 
 
 def test_non_detectable_case_needs_no_declaration() -> None:
-    case = {"model": "models/account.yaml", "tags": ["m-op-algebra"], "shape": "read"}
+    case = {"model": "models/account.yaml", "tags": ["m-predicate"], "shape": "read"}
     assert _errors(case) == []
 
 

@@ -82,7 +82,7 @@ name the concrete storage type.
 ### Nested extraction form (`m-value-object`)
 
 Reading or filtering an inner attribute of a `valueObject` (`m-value-object`,
-`m-op-algebra`'s `nested*` predicates) is a text/value extraction from the
+`m-predicate`'s `nested*` predicates) is a text/value extraction from the
 structured-document column, and its **spelling and bind shape are a dialect
 decision** owned here — the algebra fixes only the path, not the SQL:
 
@@ -106,7 +106,7 @@ extraction is `json_value` precisely because it maps an explicit JSON `null` lea
 `NULL`, exactly as Postgres `jsonb_extract_path_text` does. `json_unquote(json_extract(…))`
 would instead yield the *string* `'null'` for a JSON `null` leaf, so that one
 not-present state would fail to collapse on MariaDB and diverge from Postgres. With
-`json_value` all four not-present states (`m-op-algebra`'s absence-collapse rule)
+`json_value` all four not-present states (`m-predicate`'s absence-collapse rule)
 resolve identically on both dialects, so the observable behavior is portable — the
 whole point of localizing the extraction here. `json_value` returns SQL `NULL` for
 a non-scalar (object/array) target as well, but the algebra only ever extracts a
@@ -190,7 +190,7 @@ surface.
 Postgres also admits the `<extraction>::type` surface; it denotes the same
 cast and normalizes to the `cast(… as …)` canonical form (`m-sql`). Because every
 not-present state casts SQL `NULL` (never a spurious value), the numeric predicates
-obey the same absence-collapse rule as the text ones (`m-op-algebra`). A future
+obey the same absence-collapse rule as the text ones (`m-predicate`). A future
 dialect (Snowflake `VARIANT`) supplies its own cast spelling behind this same
 decision point.
 
@@ -219,7 +219,7 @@ point; nothing above the seam names the concrete cast type.
 A `many` value object is a JSON **array** of documents in the same column
 (`m-value-object`). Testing it — `nestedExists` / `nestedNotExists`, or a flat
 `nested*` predicate whose path crosses the `many` member (any-element),
-`m-op-algebra` — requires **traversing the array**, and the spelling is a dialect
+`m-predicate` — requires **traversing the array**, and the spelling is a dialect
 decision owned here. The two concrete dialects pick genuinely different function
 families; both produce the identical observable row set (the independent
 `referenceSql` oracle proves it per case, `m-case-format`):
@@ -227,7 +227,7 @@ families; both produce the identical observable row set (the independent
 Both dialects **guard against a non-array** `many` value. A member is a real,
 schema-flexible JSON value, so it may be stored not just as a SQL `NULL` column, a
 missing key, or an empty array, but as an explicit JSON `null`, a JSON **scalar**,
-or a JSON **object**. Absence-collapse (`m-op-algebra`) folds every non-array to
+or a JSON **object**. Absence-collapse (`m-predicate`) folds every non-array to
 "not present" — **zero elements** — so the traversal MUST read a non-array that way,
 never as an error or a spurious element. On Postgres the array is reached through a
 **`case`/`jsonb_typeof` array guard** (`<array-guard>` below); on MariaDB a
@@ -281,7 +281,7 @@ through a `many` segment, and a **same-element `where` whose compound is a
 conjunction of equalities over distinct paths** (`nestedEq` and/or nested `and`)
 carried in one candidate object. It **cannot** express any other element predicate,
 even though
-`m-op-algebra` admits the whole scoped `nested*` family inside `where` and the flat
+`m-predicate` admits the whole scoped `nested*` family inside `where` and the flat
 `nested*` family through a `many` segment. Concretely, `json_contains` cannot lower:
 
 - a **flat any-element** non-equality predicate through a `many` segment —
@@ -322,7 +322,7 @@ Snowflake `LATERAL FLATTEN` supplies one behind this seam). The compatibility
 corpus's **dual-dialect** to-many coverage is equality-based, consistent with this
 scope; a case exercising one of the forms above carries a Postgres golden only.
 
-**MariaDB-lowering flag.** Because the schema (`operation.schema.json`)
+**MariaDB-lowering flag.** Because the schema (`predicate.schema.json`)
 *admits* these forms — the scoped `nested*` family and the flat `many`-crossing
 family are schema-valid at every operator — a MariaDB implementation MUST NOT emit
 wrong SQL for one it cannot lower. It **MUST reject it with a clear capability
@@ -436,7 +436,7 @@ contents on either dialect.
 ### `NULL` ordering
 
 An ordering key carries an authored **Null Placement** alongside its direction —
-the operation Sort Key's `nulls` member (`m-op-algebra`) and the relationship
+the operation Sort Key's `nulls` member (`m-predicate`) and the relationship
 declaration's (`m-relationship`), which lower through this one seam; an omitted
 placement is `last`,
 the canonical dialect-independent default in both directions (`m-deep-fetch`). The two

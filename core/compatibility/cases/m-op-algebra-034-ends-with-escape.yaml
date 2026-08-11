@@ -1,4 +1,4 @@
-# endsWith + wildcard escape — affix escaping (m-op-algebra §Wildcard/escape rule).
+# endsWith + wildcard escape — affix escaping (m-predicate §Wildcard/escape rule).
 #
 # The endsWith affix prepends a leading `%` to the escaped literal. `endsWith
 # '50%'` escapes the trailing literal `%` so it does NOT act as a wildcard:
@@ -6,7 +6,7 @@
 # independent `right(sku, 3)` oracle would catch an unescaped `%` (which would
 # match any suffix). Companion to m-op-algebra-033 (startsWith) and m-op-algebra-015 (contains).
 model: models/orders.yaml
-tags: [m-op-algebra, endsWith, string, escape, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, endsWith, string, escape, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   targetEntity: parallax.compatibility.Order

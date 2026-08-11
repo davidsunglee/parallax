@@ -380,7 +380,7 @@ semantics retained here and result projection retained by SQL.
 
 A deep-fetch path's **root** is a resolvable position of exactly the kind above:
 the read's own queried position, which the path's optional root `narrow`
-(`m-op-algebra`, `{ to }`) may guard. Its `to` is the shared Subtype Selection
+(`m-predicate`, `{ to }`) may guard. Its `to` is the shared Subtype Selection
 above, resolved inside the queried position. It reuses the existing rejections:
 a selection resolving to nothing is `narrow-empty-effective-set`, and one
 escaping the queried position is `narrow-outside-position`.
@@ -483,7 +483,7 @@ specified elsewhere:
 - A **single entity's own members** keep their **declared order** within that
   stream and therefore remain stable within a Storage Layout tier.
 - A `narrow` node's authored **`to` list** is preserved **verbatim** by serde
-  (`m-op-algebra`); only the *resolved/effective* concrete set it denotes is
+  (`m-predicate`); only the *resolved/effective* concrete set it denotes is
   canonicalized to this alphabetical order, so `to: [Pet]` and `to: [Cat, Dog]`
   round-trip as distinct spellings yet resolve to the same ordered set.
 

@@ -15,7 +15,7 @@ suite against real databases.
 ## How to read this spec
 
 The spec is a set of **capability modules** with canonical `m-<slug>` identifiers
-(e.g. `m-op-algebra`, `m-unit-work`). Each active module is one file
+(e.g. `m-predicate`, `m-unit-work`). Each active module is one file
 (`<module-id>.md`) defining its protocol surface, its observable behavior, and the
 compatibility cases that pin it down; a deferred module carries a short stub.
 Modules depend on one another only in the directions permitted by the **normative
@@ -77,7 +77,7 @@ their ordinary English meaning and impose no requirement.
 ## How to read a compatibility case
 
 A compatibility case is a YAML file under `core/compatibility/cases/`. It binds
-a model descriptor, a canonical **operation** (an instance of the `m-op-algebra`
+a model descriptor, a canonical **operation** (an instance of the `m-predicate`
 algebra), and the expected outcome. It carries **three independent things** the
 harness cross-checks against a freshly-provisioned real database:
 

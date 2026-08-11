@@ -3,11 +3,11 @@
 The as-of read model: temporal entities whose rows are **milestones** over
 ``[from, to)`` intervals, with the as-of predicate **auto-injected** on read.
 This scope owns the *interval model, the explicit-selection injection rule, and the
-milestone (edge-pin) behaviour* (``m-op-algebra`` / ``m-temporal-read``);
+milestone (edge-pin) behaviour* (``m-predicate`` / ``m-temporal-read``);
 ``m-sql`` owns the concrete SQL fragments and bind order. Because the normative
 module DAG forbids ``m-sql`` from importing ``m-temporal-read`` (they are siblings
-over ``m-op-algebra``), the temporal → predicate lowering is expressed **here**,
-as a rewrite of the temporal wrapper nodes into ordinary ``m-op-algebra``
+over ``m-predicate``), the temporal → predicate lowering is expressed **here**,
+as a rewrite of the temporal wrapper nodes into ordinary ``m-predicate``
 predicate nodes, which ``m-sql`` then lowers with no temporal knowledge. A caller
 that can legally compose both scopes (the conformance engine; later the snapshot
 handle and the statement compile path) applies :func:`inject_as_of` before
@@ -25,7 +25,7 @@ axis defect belongs to ``m-metamodel`` or ``m-inheritance``. Consumers reach the
 facet through :func:`view`, so generic facet retrieval stays an internal
 formation seam.
 
-``m-temporal-read`` depends on ``m-op-algebra``, ``m-metamodel``,
+``m-temporal-read`` depends on ``m-predicate``, ``m-metamodel``,
 ``m-model-formation``, and ``m-inheritance``; it never imports ``m-dialect`` or
 ``m-sql``. The open upper bound is
 carried as the ``m-core`` canonical ``infinity`` literal — a plain bind — so the
@@ -44,7 +44,7 @@ from parallax.core.base import INFINITY_LITERAL, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
-from parallax.core.op_algebra import (
+from parallax.core.predicate import (
     All,
     And,
     AsOf,
@@ -54,9 +54,9 @@ from parallax.core.op_algebra import (
     History,
     Limit,
     Narrow,
-    Operation,
     Or,
     OrderBy,
+    PredicateNode,
 )
 from parallax.core.temporal_read._compile import (
     MODEL_COMPILER,
@@ -371,7 +371,7 @@ def _edge(entity: EntityMetadata, values: Mapping[AttributeIdentity, object]) ->
 
 
 # --------------------------------------------------------------------------- #
-# As-of injection (temporal wrappers -> plain m-op-algebra predicate).         #
+# As-of injection (temporal wrappers -> plain m-predicate predicate).         #
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class _Latest:
@@ -402,10 +402,10 @@ _AxisMode = _Latest | _Containment | _Range | _Scan
 
 
 def inject_as_of(
-    predicate: Operation,
+    predicate: PredicateNode,
     selections: Sequence[AsOf | AsOfRange | History],
     entity: EntityMetadata,
-) -> Operation:
+) -> PredicateNode:
     """Inject explicit temporal selections into a flat predicate.
 
     The planning boundary has already removed query-wide wrappers. This module
@@ -427,7 +427,7 @@ def inject_as_of(
             )
         modes[axis.dimension] = _mode_of(selection)
 
-    axis_terms: list[Operation] = []
+    axis_terms: list[PredicateNode] = []
     for axis in sorted(entity.declared_as_of_axes, key=lambda item: item.dimension.value):
         mode = modes.get(axis.dimension)
         if mode is None:
@@ -444,7 +444,7 @@ def inject_as_of(
 
 
 def _root_wrappers(
-    op: Operation,
+    op: PredicateNode,
 ) -> Iterator[Limit | OrderBy | Narrow | AsOf | AsOfRange | History]:
     current = op
     while isinstance(current, (Limit, OrderBy, Narrow, AsOf, AsOfRange, History)):
@@ -478,7 +478,7 @@ def _mode_of(wrapper: AsOf | AsOfRange | History) -> _AxisMode:
     return _Containment(instant=wrapper.coordinate)
 
 
-def _terms(mode: _AxisMode, axis: AcceptedAsOfAxis, entity: EntityMetadata) -> list[Operation]:
+def _terms(mode: _AxisMode, axis: AcceptedAsOfAxis, entity: EntityMetadata) -> list[PredicateNode]:
     start_ref = f"{entity.identity.canonical}.{axis.start_attribute.name}"
     end_ref = f"{entity.identity.canonical}.{axis.end_attribute.name}"
     if isinstance(mode, _Scan):
@@ -514,7 +514,7 @@ def _column_for_attribute(entity: EntityMetadata, attribute: AttributeIdentity) 
     return declared.storage.name
 
 
-def conjunction_terms(op: Operation) -> tuple[Operation, ...]:
+def conjunction_terms(op: PredicateNode) -> tuple[PredicateNode, ...]:
     """The top-level conjuncts of a user predicate (mirrors the statement builder).
 
     ``all`` contributes nothing; an ``and`` flattens (order-preserving); an ``or``
@@ -557,7 +557,7 @@ def resolve_pinned_instants(
     return pins
 
 
-def statement_pin(op: Operation, entity: EntityMetadata) -> Pin:
+def statement_pin(op: PredicateNode, entity: EntityMetadata) -> Pin:
     """The as-of coordinates a statement's temporal selections pin.
 
     A SCANNED axis (``history`` / ``as_of_range`` — "a scan is not a pin") is
@@ -592,7 +592,7 @@ def statement_pin(op: Operation, entity: EntityMetadata) -> Pin:
     return Pin(tx_time=tx_time, valid_time=valid_time)
 
 
-def scans_an_axis(op: Operation) -> bool:
+def scans_an_axis(op: PredicateNode) -> bool:
     """Whether ``op`` SCANS ANY temporal axis (``asOfRange`` / ``history``)
     rather than pinning every axis it names — the milestone-set read shape, and
     the negative half of :func:`statement_pin`'s "a scan is not a pin" rule.
