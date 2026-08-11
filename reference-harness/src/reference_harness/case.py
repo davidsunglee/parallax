@@ -611,7 +611,8 @@ class Case:
 
         A ``harness``-lane case executes as today; an ``api-conformance``-lane case
         (every boundary case, plus the read-lock matrix reads
-        ``m-read-lock-002``-``m-read-lock-005``) is schema-validated by the
+        ``m-read-lock-002``, ``m-read-lock-004``, and ``m-read-lock-005``) is
+        schema-validated by the
         m-case-format harness but NOT executed — each language's API Conformance
         Suite satisfies it. :func:`case_runner.run_case` early-returns for the
         api-conformance lane.

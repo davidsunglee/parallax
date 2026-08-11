@@ -110,6 +110,7 @@ from parallax.core.op_algebra import (
     PathSegment,
     Scalar,
 )
+from parallax.core.op_algebra._builders import _canonical_includes
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
 
@@ -267,7 +268,7 @@ class FetchPlan:
 
 
 def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> FetchPlan:
-    """Plan a deep fetch against ``model`` — a pure function of ``op`` alone.
+    """Plan a deep fetch against ``model`` after canonicalizing include paths.
 
     ``op`` is the read's raw (undeserialized-no-further, but not yet temporally
     injected or navigation-canonicalized) operation: a ``DeepFetch`` node, or any
@@ -285,7 +286,7 @@ def plan(entity: EntityMetadata, op: Operation, model: Metamodel) -> FetchPlan:
     temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
     if isinstance(op, DeepFetch):
         root_raw: Operation = op.operand
-        paths: tuple[NavigationPath, ...] = op.paths
+        paths = _canonical_includes(op.paths)
     else:
         root_raw = op
         paths = ()

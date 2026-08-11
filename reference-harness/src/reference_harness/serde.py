@@ -14,7 +14,7 @@ The deserializer is the inverse of the serializer for the JSON/YAML data model.
 Because the canonical model is already JSON-compatible, round-trip fidelity is
 about formatting determinism: a node must serialize the same way after a
 serialize -> deserialize cycle. We canonicalize by sorting object keys and by
-normalizing the one order-insensitive list, ``deepFetch.paths``.
+normalizing the order-insensitive subtype-selection and include-path lists.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ def _canonicalize(value: Any) -> Any:
     """Return a deterministically-ordered, JSON-compatible copy of *value*.
 
     Object keys are sorted. Lists keep their order because it is significant in
-    the algebra and in attribute/row sequences, except ``deepFetch.paths``, which
-    is a canonicalized set. Scalars pass through unchanged, except an
+    the algebra and in attribute/row sequences, except subtype-selection ``to``
+    alternatives and ``deepFetch.paths``. Scalars pass through unchanged, except an
     :class:`~reference_harness.portable_literal.AuthoredNumber`, whose authored
     digits are decode context rather than document content: the document holds
     the number, which is what re-reading the written form answers, so keeping the
@@ -44,6 +44,9 @@ def _canonicalize(value: Any) -> Any:
     """
     if isinstance(value, dict):
         canonical = {key: _canonicalize(value[key]) for key in sorted(value)}
+        narrow = canonical.get("narrow")
+        if isinstance(narrow, dict) and isinstance(narrow.get("to"), list):
+            narrow["to"] = sorted(narrow["to"], key=_entity_key)
         deep_fetch = canonical.get("deepFetch")
         if len(canonical) == 1 and isinstance(deep_fetch, dict):
             paths = deep_fetch.get("paths")
@@ -61,6 +64,11 @@ def _relationship_key(spelling: str) -> tuple[str, str, str]:
     *owner, relationship = spelling.split(".")
     *namespace, entity = owner
     return ".".join(namespace), entity, relationship
+
+
+def _entity_key(spelling: str) -> tuple[str, str]:
+    *namespace, entity = spelling.split(".")
+    return ".".join(namespace), entity
 
 
 def _narrow_key(value: object) -> tuple[int, tuple[object, ...]]:
@@ -151,8 +159,9 @@ def canonical(value: Any) -> Any:
 
     This is the public canonicalization used to decide node *identity*: two
     authored encodings that canonicalize to the same value (object keys sorted;
-    list order preserved wherever the algebra makes it significant; include paths
-    normalized as a set) denote the same operation. The group-precedence fixtures
+    list order preserved wherever the algebra makes it significant; subtype
+    selections sorted by Entity Identity; include paths normalized as a set)
+    denote the same operation. The group-precedence fixtures
     rely on this: a prefix surface and a fluent surface are illustrative DX only,
     and both MUST canonicalize to the single mandated ``group`` node.
     """

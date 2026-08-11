@@ -43,7 +43,7 @@ choices at each point; both are normative for their dialect (`m-sql`). The catal
 | identifier quoting | unquoted lowercase; `"…"` quote on demand | unquoted lowercase; **backtick** quote on demand (divergent quote char) |
 | row-limit clause | `limit ?` | `limit ?` |
 | **optimizer-fence form** (`m-sql`) | append `offset 0` to each tag-filtered branch; no bind | append `limit ?` to each tag-filtered branch; bind unsigned maximum `18446744073709551615` immediately after the tag bind |
-| **read-lock application** (`m-read-lock`) | object find: `for share of t0`; projection/aggregation: omitted | object find: **`lock in share mode`** (no `for share`; MDEV-17514); projection/aggregation: omitted |
+| **read-lock application** (`m-read-lock`) | locking-mode object find: `for share of t0` | locking-mode object find: **`lock in share mode`** (no `for share`; MDEV-17514) |
 | temp-table DDL | `CREATE TEMPORARY TABLE … ON COMMIT DROP` | `CREATE TEMPORARY TABLE …` |
 | typed bind normalization | managed values render to canonical `m-core` wire values | timestamp binds remain typed `Instant`/`infinity` so the adapter can render `datetime(6)`/max-sentinel; other values render to canonical `m-core` wire values |
 | **infinity representation** | native `'infinity'::timestamptz` | **max-sentinel** `datetime` (no native infinity) |
@@ -537,13 +537,12 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
     appended after every other clause — **Postgres** `for share of t0` (the
     alias-qualified `for share`), **MariaDB** the unaliased **`lock in share
     mode`** (no `for share` keyword; MDEV-17514);
-  - any read in **optimistic** mode is returned unchanged (`m-opt-lock` takes no
-    lock).
+  - a lockable **object find** in **optimistic** mode is returned unchanged
+    (`m-opt-lock` takes no lock).
 
-  Projection and aggregation reads are outside the active query contract; their
-  lock application semantics land with their future query contract. Prior art:
-  Reladomo keeps aggregated-data selection never-locking beside object-find
-  `getSelect(isInTransaction)`.
+  This decision point specifies object-find locking only; it defines no lock
+  behavior for any other read shape. Prior art: Reladomo keeps aggregated-data
+  selection never-locking beside object-find `getSelect(isInTransaction)`.
 
   This divergence is surfaced here and **only** here — the operation, the result,
   and the independent oracle are identical; just the lock spelling differs. Each

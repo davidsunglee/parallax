@@ -1,17 +1,26 @@
-# m-sql-agg — SQL Lowering for Aggregation (deferred)
+# m-sql-agg — SQL Lowering for Aggregation
 
-**Status: deferred.** `m-sql-agg` is the SQL lowering of the aggregation algebra
-(`m-agg`): the `GROUP BY` / `HAVING` `SELECT`, the per-function emission (`sum` →
-`sum(t0.col) <as>`, the `stdDev*` / `variance*` two-column read, and so on), and
-the having-clause bind order. It is split out of core SQL generation so that
-`m-sql` never references aggregation constructs.
-
-Aggregation is deferred **as a whole feature**: no active module depends on
-`m-sql-agg`.
+`m-sql-agg` lowers the aggregate query envelope owned by `m-agg`. It is split
+from core SQL generation so `m-sql` never references aggregation constructs.
 
 - **Edges:** `m-sql-agg --> m-agg`, `m-sql-agg --> m-sql`.
-- **Coverage.** This deferred module is contract-covered and carries no
-  compatibility fixtures. Its future implementation must define and fixture the
-  grouped `select`, aggregate-expression aliases, companion sample-count columns
-  for `stdDev*` / `variance*`, and `having` bind order together with the aggregate
-  query envelope that invokes them.
+- **Select shape.** Group keys lead the `select` list in envelope order, followed
+  by aggregate expressions in envelope order. Every expression uses its declared
+  alias. `stdDev*` and `variance*` additionally select a collision-safe companion
+  sample-count alias so result decoding can distinguish an empty sample from a
+  database-specific numeric representation.
+- **Clauses.** The canonical statement order is `select`, `from`, optional
+  `where`, optional `group by`, optional `having`, then ordering or limiting
+  owned by the aggregate envelope. `group by` terms follow group-key order.
+- **Binds.** Source-filter binds precede `having` binds; within `having`, binds
+  follow expression traversal order. Alias references in `having` lower through
+  their aggregate expressions when a dialect does not admit select aliases in
+  that clause.
+- **Ownership.** `m-agg` validates envelope shape, names, and result rows;
+  `m-sql-agg` resolves Attributes, renders aggregate functions and aliases, and
+  decodes companion sample counts. `m-sql` supplies ordinary predicate and
+  dialect primitives without importing this module.
+- **Fixture obligations.** Golden SQL **MUST** cover grouped and ungrouped
+  queries, every function family, companion columns, `having` bind order, alias
+  collisions, and both supported dialects; execution fixtures **MUST** assert
+  the corresponding row-form values.

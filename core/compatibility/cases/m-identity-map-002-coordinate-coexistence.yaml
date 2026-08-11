@@ -29,7 +29,7 @@ when:
           dimension: transaction-time
           coordinate: latest
       roundTrips: 1
-      note: latest pin (default-injected current-row predicate)
+      note: explicit latest pin (current-row predicate)
       statements:
         - sql:
             postgres: select t0.bal_id, t0.acct_num, t0.val, t0.in_z, t0.out_z from balance t0 where t0.bal_id = ? and t0.out_z = ?

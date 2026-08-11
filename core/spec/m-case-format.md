@@ -126,8 +126,7 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
   on two held sessions that assert no error is raised; every present step declares
   an explicit `kind`, a `read` step's `expectRows` observed on its held session, a
   `write` step asserting only that it did not block/raise). Proves the shared read
-  lock is compatible with a second reader and that an unlocked projection admits a
-  writer.
+  lock is compatible with a second reader.
 - **`boundary`** — `when.boundary` ordered actions + `then.outcome`
   (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
   does not execute, carrying no golden SQL).
@@ -503,7 +502,7 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
 
 Row-form is **not a developer surface** — the idiomatic find API is instance-form
 (results always materialize). Row-form is the internal / conformance consumption lane
-(predicate `read` cases, the materialized predicate-write read, and future aggregation
+(predicate `read` cases, the materialized predicate-write read, and aggregation
 results — `m-agg`). The form is **structural intent** an adapter's
 `compile` MAY consume, exactly like `when.uow.concurrency`; it needs no schema field and
 no case edit. The two forms' Document-slot divergence is witnessed at **case** level, by
@@ -1854,9 +1853,9 @@ satisfies it:
   case**, with coverage enforced by the suite's own partition assertion. This
   keeps every clarified branch specified in
   core and executably covered, even the ones the harness itself cannot run. Every
-  `boundary`-shape case is `api-conformance`; the read-lock matrix reads (object
-  find locks, projection omits the lock, deep fetch locks every level, optimistic
-  reads omit the lock) are `read`-shape `api-conformance` cases.
+  `boundary`-shape case is `api-conformance`; the read-lock matrix reads (locking
+  object find, locking deep fetch, optimistic object find) are `read`-shape
+  `api-conformance` cases.
 
 ## Compile eligibility
 

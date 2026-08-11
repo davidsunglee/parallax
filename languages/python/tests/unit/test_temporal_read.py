@@ -69,6 +69,44 @@ def test_explicit_latest_injects_the_current_row_predicate() -> None:
     assert explicit == ("t0.out_z = ?", ("infinity",))
 
 
+def test_narrow_is_transparent_to_temporal_selection_lowering() -> None:
+    injected = inject_as_of(
+        oa.Narrow(
+            to=("Balance",),
+            operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
+        ),
+        BALANCE,
+    )
+    assert injected == oa.Narrow(
+        to=("Balance",),
+        operand=oa.Comparison(
+            op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
+        ),
+    )
+
+
+def test_temporal_wrapper_outside_narrow_preserves_whole_result_narrowing() -> None:
+    """A typed find wraps its whole-result Narrow in temporal selection.
+
+    Temporal injection must keep the Narrow as a row-position wrapper rather
+    than demoting it to a conjunctive predicate term.
+    """
+    injected = inject_as_of(
+        oa.AsOf(
+            operand=oa.Narrow(to=("Balance",), operand=oa.All()),
+            dimension="transaction-time",
+            coordinate="latest",
+        ),
+        BALANCE,
+    )
+    assert injected == oa.Narrow(
+        to=("Balance",),
+        operand=oa.Comparison(
+            op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
+        ),
+    )
+
+
 def test_past_instant_is_half_open_containment() -> None:
     where, binds = _where(
         oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate=_D), BALANCE
@@ -345,6 +383,19 @@ def test_statement_pin_reads_both_bitemporal_axes() -> None:
     pin = statement_pin(op, POSITION)
     assert pin.tx_time is LATEST
     assert pin.valid_time == dt.datetime.fromisoformat(_B)
+
+
+def test_temporal_walkers_cross_a_whole_result_narrow() -> None:
+    op = oa.AsOf(
+        operand=oa.Narrow(
+            to=("Position",),
+            operand=oa.History(operand=oa.All(), dimension="transaction-time"),
+        ),
+        dimension="valid-time",
+        coordinate=_B,
+    )
+    assert statement_pin(op, POSITION).valid_time == dt.datetime.fromisoformat(_B)
+    assert scans_an_axis(op)
 
 
 def test_statement_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:

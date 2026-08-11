@@ -799,3 +799,51 @@ def test_temporal_pin_round_trips(doc: dict[str, Any]) -> None:
     # A canonical temporal coordinate round-trips unchanged.
     node = op_algebra.deserialize(doc)
     assert op_algebra.serialize(node) == doc
+
+
+def test_deserialize_canonicalizes_include_paths_before_serialization() -> None:
+    short: dict[str, Any] = {"segments": [{"rel": "Order.items"}]}
+    maximal: dict[str, Any] = {
+        "segments": [
+            {"rel": "Order.items"},
+            {"rel": "OrderItem.statuses"},
+        ]
+    }
+    statuses: dict[str, Any] = {"segments": [{"rel": "Order.statuses"}]}
+    doc: dict[str, Any] = {
+        "deepFetch": {
+            "operand": {"all": {}},
+            "paths": [statuses, short, maximal, maximal],
+        }
+    }
+
+    assert op_algebra.serialize(op_algebra.deserialize(doc)) == {
+        "deepFetch": {"operand": {"all": {}}, "paths": [maximal, statuses]}
+    }
+
+
+def test_serialize_canonicalizes_directly_constructed_include_paths() -> None:
+    short = op_algebra.NavigationPath(segments=(op_algebra.PathSegment(rel="Order.items"),))
+    maximal = op_algebra.NavigationPath(
+        segments=(
+            op_algebra.PathSegment(rel="Order.items"),
+            op_algebra.PathSegment(rel="OrderItem.statuses"),
+        )
+    )
+    statuses = op_algebra.NavigationPath(segments=(op_algebra.PathSegment(rel="Order.statuses"),))
+    node = op_algebra.DeepFetch(operand=op_algebra.All(), paths=(statuses, short, maximal, maximal))
+
+    assert op_algebra.serialize(node) == {
+        "deepFetch": {
+            "operand": {"all": {}},
+            "paths": [
+                {
+                    "segments": [
+                        {"rel": "Order.items"},
+                        {"rel": "OrderItem.statuses"},
+                    ]
+                },
+                {"segments": [{"rel": "Order.statuses"}]},
+            ],
+        }
+    }

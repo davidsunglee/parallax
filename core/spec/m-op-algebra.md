@@ -65,9 +65,9 @@ against the model. Examples:
 `m-op-algebra` is the canonical operation algebra. Its schema covers the
 single-entity predicate algebra, result-shaping directives, relationship
 navigation, temporal read wrappers, and nested value-object predicates.
-Aggregation (`groupBy` / aggregate functions / `having`) is a **deferred**
-extension of the same algebra — see `m-agg`. Each node below carries a single
-canonical serialization; a conforming operation serde implementation **MUST**
+Aggregation is a separate query form owned by `m-agg`; its interchange schema
+does not extend this operation union. Each node below carries a single canonical
+serialization; a conforming operation serde implementation **MUST**
 validate and round-trip every node in `operation.schema.json` unchanged. Executing
 a node may depend on other core modules: `m-metamodel` supplies canonical local
 attributes, relationship declarations, As-Of Axes, and Value Objects;
@@ -79,8 +79,8 @@ owns SQL lowering; `m-temporal-read` owns temporal interval behavior.
 Every operation position that names an Entity spells it either **bare** — the
 Entity's local name alone — or **canonically**, the namespace-qualified
 `<namespace>.<Entity>` of `m-metamodel`. The positions are the Entity prefix of
-an `attr`, a `rel`, an `orderBy` key, a `groupBy` key, an aggregate function's
-`attr`, and a nested value-object `path`; each Subtype Selection alternative;
+an `attr`, a `rel`, an `orderBy` key, and a nested value-object `path`; each
+Subtype Selection alternative;
 and a `deepFetch` path's hop `rel`.
 
 **Input is permissive; output is exact.** A bare spelling remains legal at every
@@ -474,8 +474,7 @@ These directives shape the **result set** — its order and cardinality — but
 **neither changes the projected column list**. The algebra
 carries **no projection node** at all: a read's `select` list is a pure function of
 its target and result form, supplied by `m-sql` (its *Read projection* section),
-never chosen by the operation. A column-subset result is therefore expressible only
-through a future aggregate-query contract (`m-agg`, deferred).
+never chosen by the operation. Object Query therefore has no column-subset result.
 
 ### Temporal read wrappers
 
@@ -707,9 +706,6 @@ required operation set. The temporal (`asOf`, `asOfRange`, `history`) and nested
 value-object (the flat `nested*` family — `nestedEq`, `nestedNotEq`, `nestedGt`,
 `nestedGte`, `nestedLt`, `nestedLte`, `nestedIn`, `nestedIsNull`,
 `nestedIsNotNull` — plus the to-many `nestedExists` / `nestedNotExists` with their
-optional element-scoped `where`) nodes are not deferred; their canonical
-encodings are part of the algebra, with observable temporal behavior specified by
-`m-temporal-read` and SQL lowering specified by `m-sql`. The aggregation nodes
-(`groupBy` and friends) remain present in `operation.schema.json` as unexercised
-placeholders, but the aggregation feature is contract-covered and **deferred**
-until an aggregate-query contract lands — see `m-agg`.
+optional element-scoped `where`) nodes have canonical encodings and are part of
+the algebra, with observable temporal behavior specified by `m-temporal-read`
+and SQL lowering specified by `m-sql`.

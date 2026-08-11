@@ -47,7 +47,7 @@ _VALUE_OBJECT_MATERIALIZATION_READS: Final[frozenset[str]] = frozenset(
     {"m-value-object-023", "m-value-object-024"}
 )
 # Temporal reads (`m-temporal-read`): the as-of predicate is
-# auto-injected by m-temporal-read (default-latest on omitted axes) and m-sql projects
+# normalized by m-temporal-read (Latest only for omitted Transaction Time) and m-sql projects
 # each axis's interval columns (Valid Time before Transaction Time) from the corpus.
 # Audit-only + boundary (001-008) and bitemporal (013-017) are row-form — compiled and
 # run below.
@@ -92,8 +92,8 @@ _INHERITANCE_CONCRETE_TARGET_TEMPORAL_READS: Final[frozenset[str]] = frozenset(
 # "Joins by navigation"): the 13 row-form correlated-EXISTS/anti-join reads over
 # orders.yaml/person.yaml/policy.yaml (to-many, to-one, one-to-one, multi-hop,
 # boolean composition, and the temporal-hop propagation pair 018/023, which MUST
-# lower byte-identically since m-temporal-read's default-injection rule makes a
-# defaulted root indistinguishable from an explicit `asOf(..., now)` one) — all
+# lower byte-identically because omitted Transaction Time normalizes to the same
+# explicit Latest selection) — all
 # row-form, compiled and run below. The 11 deep-fetch-bearing navigate reads
 # (012-017/019-022/024) stay out because they declare
 # `compileEligibility: run-only` (query-result-dependent), so `compile` answers
@@ -151,7 +151,7 @@ _INHERITANCE_INSTANCE_FORM_GRAPH_READS: Final[frozenset[str]] = frozenset(
 # still compiles the locked golden through `engine._read_case_concurrency`'s
 # module-scoped default. `m-read-lock-002`/`-005` are the
 # `api-conformance`-lane runtime matrix (an explicit `when.uow.concurrency`
-# locking object-find lock / optimistic-mode omits-lock): compile-eligible
+# locking object-find lock / optimistic object-find omits-lock): compile-eligible
 # (no `compileEligibility` declared), so
 # the compile sweep grades their golden SQL byte-exact here — the SAME lane
 # routing precedent `m-snapshot-read-011` already sets (an `api-conformance`-

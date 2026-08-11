@@ -791,7 +791,7 @@ def test_read_story_runs_through_the_shipped_surface(story: ReadStory, provision
     # Grade the statements this story's find actually executed against the
     # case's authored Postgres golden
     # dialect) — asserting the `for share of t0` lock suffix's presence
-    # (`m-read-lock-002`) or absence (`-003`/`-005`/every other read story)
+    # (`m-read-lock-002`) or absence (`m-read-lock-005`/every other read story)
     # exactly as authored, reusing the SAME driver-SQL translation and
     # exact-Decimal bind comparison every other run lane uses rather than an
     # ad hoc string match.

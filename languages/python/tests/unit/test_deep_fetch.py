@@ -170,9 +170,9 @@ def test_broad_and_a_redundant_narrow_are_distinct_levels_filling_both_views() -
     plan = _plan(ANIMAL, "Person", paths)
     assert [level.attach_key for level in plan.levels] == ["pets", "pets[Cat,Dog]"]
     assert {level.child_target for level in plan.levels} == {"parallax.compatibility.Pet"}
-    # Authoring order decides only which view comes first, never how many hops.
+    # Canonical include order decides which view comes first, never how many hops.
     reversed_plan = _plan(ANIMAL, "Person", tuple(reversed(paths)))
-    assert [level.attach_key for level in reversed_plan.levels] == ["pets[Cat,Dog]", "pets"]
+    assert [level.attach_key for level in reversed_plan.levels] == ["pets", "pets[Cat,Dog]"]
 
 
 def test_two_different_narrow_sets_are_distinct_levels() -> None:

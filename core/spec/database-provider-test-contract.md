@@ -21,8 +21,8 @@ Each row proves the database's answers for the `m-dialect` decision catalog:
 - identifier quoting, including reserved and non-simple identifiers
 - neutral `NULL` ordering for ascending and descending sort keys
 - row-limit rendering
-- shared read-lock application for object reads, projection/aggregation
-  omission, and non-locking reads
+- shared read-lock application for locking-mode object reads and omission for
+  optimistic-mode object reads
 - neutral scalar to column-type mapping, including parametric decimals and
   bounded strings
 - bytes projection shape and any projection-introduced binds

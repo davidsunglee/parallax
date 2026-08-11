@@ -506,11 +506,10 @@ mutations, exceptions, or exports.
   constructor; result-set `FindQuery.narrow(*subtypes)` accepts no `where=` and
   is single-shot. Calling it on an already root-narrowed Find Query raises
   `QueryDefinitionError(query-clause-invalid)`. Every Python narrowing form
-  requires at least one subtype alternative, and the alternatives' resolved
-  concrete-subtype sets must be pairwise disjoint. Repeating the same subtype
-  or naming both an ancestor and one of its descendants raises
-  `QueryDefinitionError(query-path-invalid)` rather than silently
-  deduplicating their union.
+  requires at least one subtype alternative. Repeating the same subtype identity
+  raises `QueryDefinitionError(query-path-invalid)` during authoring. Whether
+  distinct alternatives overlap after inheritance expansion is model-dependent
+  and is rejected by model-aware preflight.
   Only `Database.find(query)` and `Transaction.find(query)` execute it.
 - **Finder/query entry point.** A free-standing, side-effect-free Find Query is
   built from classmethods on the Entity Class and executed by the Parallax

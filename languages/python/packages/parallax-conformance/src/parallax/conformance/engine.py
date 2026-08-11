@@ -163,6 +163,15 @@ class EngineError(ValueError):
     """The engine cannot compile or run a case (unsupported shape or bad reference)."""
 
 
+_READ_ERRORS = (
+    OperationError,
+    OperationRejectedError,
+    SqlGenError,
+    TemporalReadError,
+    KeyError,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class Emission:
     """One compiled statement emission (an entry of the adapter ``emissions`` array)."""
@@ -343,7 +352,7 @@ def _read_case_concurrency(case: case_format.Case) -> Concurrency | None:
     case's derivation changes).
 
     `when.uow.concurrency` when the case declares it (the read-lock matrix's
-    -002/-003/-005, `api-conformance`-lane; any future transactional read
+    -002/-005 object-find pair, `api-conformance`-lane; any future transactional read
     case that self-describes its mode the same way). The `m-read-lock`
     corpus family's OWN harness-lane witnesses (-001 and -010, the two in-slice
     read cases this default decides — -009 is the MariaDB row of the same
@@ -391,13 +400,7 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
             result_form=_result_form(case),
             lock=lock,
         )
-    except (
-        OperationError,
-        OperationRejectedError,
-        SqlGenError,
-        TemporalReadError,
-        KeyError,
-    ) as exc:
+    except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
@@ -456,13 +459,7 @@ def run_read_case(
             if concurrency is None
             else db.transact(lambda tx: tx.read_neutral(request), concurrency=concurrency).value
         )
-    except (
-        OperationError,
-        OperationRejectedError,
-        SqlGenError,
-        TemporalReadError,
-        KeyError,
-    ) as exc:
+    except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     rows = result.output
     if not isinstance(rows, handle.NeutralRows):  # pragma: no cover - a rows request answers rows
@@ -515,13 +512,7 @@ def _neutral_read(
             target=entity.identity, operation=deserialize(operation_doc)
         )
         return db.read_neutral(request)
-    except (
-        OperationError,
-        OperationRejectedError,
-        SqlGenError,
-        TemporalReadError,
-        KeyError,
-    ) as exc:
+    except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
@@ -2245,7 +2236,7 @@ def _compile_find(
     own ``when.uow.concurrency``) decides the ``m-sql`` shared-row-lock suffix
     (``for share of t0``) exactly as the production `Transaction.find` derives it
     from ``self._uow.settings.concurrency``: ``locking`` renders it after every
-    clause; ``optimistic`` renders none (an optimistic-mode read takes no lock —
+    clause; ``optimistic`` renders none (an optimistic-mode object find takes no lock —
     the `m-txtime-write-008` / `m-bitemp-write-014` coalescing witnesses exercise
     this OPTIMISTIC branch). ``None`` ALSO renders none — the caller's own
     :func:`_scenario_needs_lock` gate: a scenario whose write steps are ALL
@@ -2603,13 +2594,7 @@ def _compile_snapshot_scenario(
                 operation, model, dialect, metadata, result_form="instance"
             ).statement
             emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
-    except (
-        OperationError,
-        OperationRejectedError,
-        SqlGenError,
-        TemporalReadError,
-        KeyError,
-    ) as exc:
+    except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return emissions, len(emissions)
 
@@ -2689,13 +2674,7 @@ def _run_snapshot_scenario(
                 handle.NeutralReadRequest.graph(target=identity, operation=raw_op)
             )
             pin = _find_step_pin(model, target, raw_op)
-        except (
-            OperationError,
-            OperationRejectedError,
-            SqlGenError,
-            TemporalReadError,
-            KeyError,
-        ) as exc:
+        except _READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         for call in result.execution.calls:
             emissions.append(

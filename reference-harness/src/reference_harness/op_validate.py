@@ -156,7 +156,6 @@ def _walk(entity: Entity, node: Any) -> None:
         _walk(entity, body.get("operand"))
     elif tag in ("asOf", "asOfRange", "history"):
         _walk(entity, body.get("operand"))
-    # all / none / aggregation nodes carry no value-object reference to validate.
 
 
 def _check_between(entity: Entity, body: dict[str, Any]) -> None:

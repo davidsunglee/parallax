@@ -96,3 +96,52 @@ def test_authored_transaction_time_omission_normalizes_inside_valid_time() -> No
             "dimension": "valid-time",
         }
     }
+
+
+def test_authored_transaction_time_omission_normalizes_outside_root_narrow() -> None:
+    authored = {"narrow": {"to": ["Position"], "operand": {"all": {}}}}
+    assert normalize_authored_temporal_selections(authored, "Position", _FAMILY) == {
+        "asOf": {
+            "operand": authored,
+            "dimension": "transaction-time",
+            "coordinate": "latest",
+        }
+    }
+
+
+def test_authored_transaction_time_omission_normalizes_every_narrow_temporal_order() -> None:
+    narrow = {"narrow": {"to": ["Position"], "operand": {"all": {}}}}
+    variants = (
+        ("asOf", {"dimension": "valid-time", "coordinate": "latest"}),
+        (
+            "asOfRange",
+            {
+                "dimension": "valid-time",
+                "start": "2024-01-01T00:00:00Z",
+                "end": "2025-01-01T00:00:00Z",
+            },
+        ),
+        ("history", {"dimension": "valid-time"}),
+    )
+    for tag, fields in variants:
+        expected = {
+            tag: {
+                **fields,
+                "operand": {
+                    "asOf": {
+                        "operand": narrow,
+                        "dimension": "transaction-time",
+                        "coordinate": "latest",
+                    }
+                },
+            }
+        }
+        temporal_inside_narrow = {
+            "narrow": {
+                "to": ["Position"],
+                "operand": {tag: {**fields, "operand": {"all": {}}}},
+            }
+        }
+        temporal_outside_narrow = {tag: {**fields, "operand": narrow}}
+        for authored in (temporal_inside_narrow, temporal_outside_narrow):
+            assert normalize_authored_temporal_selections(authored, "Position", _FAMILY) == expected

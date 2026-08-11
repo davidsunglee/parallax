@@ -744,37 +744,28 @@ def _deepfetch_root_entity(case: Case) -> Entity:
 _CANONICAL_AXIS_ORDER: tuple[str, ...] = ("valid-time", "transaction-time")
 
 
-def _peel_directive_wrappers(node: Any) -> Any:
-    """Descend past the result-directive wrappers (``orderBy`` / ``limit``) that
-    the root compile peels *before* the temporal wrappers, returning
-    the innermost node. Without this, a directive-wrapped temporal root (e.g.
-    ``limit(orderBy(asOf(...)))``, case m-navigate-024) would seed no child propagation pins
-    and the child would wrongly default to Latest (mismatching the authored instant).
-    """
-    while isinstance(node, dict):
-        for directive in ("orderBy", "limit"):
-            if directive in node:
-                node = node[directive]["operand"]
-                break
-        else:
-            break
-    return node
-
-
 def _root_asof_pins(case: Case) -> dict[str, str]:
     """Map ``{dimension: coordinate}`` from nested ``asOf`` nodes wrapping the
     deep-fetch root operand. A dimension absent here defaults to the child's own
     ``latest`` value at propagation time. Empty when the root is unpinned.
 
-    Result directives (``orderBy`` / ``limit``) are peeled first,
-    mirroring the root compile, so a directive-wrapped temporal root still pins.
+    Transparent wrappers (``orderBy`` / ``limit`` / whole-result ``narrow``) are
+    crossed in any interleaving with temporal wrappers, mirroring root compile.
     """
     pins: dict[str, str] = {}
-    node: Any = _peel_directive_wrappers(_deepfetch_root_operand(case))
-    while isinstance(node, dict) and "asOf" in node:
-        asof = node["asOf"]
-        pins[asof["dimension"]] = asof["coordinate"]
-        node = asof["operand"]
+    node: Any = _deepfetch_root_operand(case)
+    while isinstance(node, dict):
+        if "asOf" in node:
+            asof = node["asOf"]
+            pins[asof["dimension"]] = asof["coordinate"]
+            node = asof["operand"]
+            continue
+        for wrapper in ("orderBy", "limit", "narrow", "asOfRange", "history"):
+            if wrapper in node:
+                node = node[wrapper]["operand"]
+                break
+        else:
+            break
     return pins
 
 
@@ -7017,8 +7008,8 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         _assert_schema(case)
         if not case.is_boundary:
             # A read-shape api-conformance case (the read-lock matrix
-            # `m-read-lock-002`-`m-read-lock-005`) still round-trips its operation +
-            # descriptor through the serde seam.
+            # `m-read-lock-002`, `m-read-lock-004`, and `m-read-lock-005`) still
+            # round-trips its operation + descriptor through the serde seam.
             _assert_serde(case)
             _assert_equivalent_encodings(case)
         return
