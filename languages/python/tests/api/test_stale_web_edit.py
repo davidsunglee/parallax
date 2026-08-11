@@ -46,6 +46,7 @@ from parallax.conformance.stale_web_edit import (
     submit_branch_edit,
 )
 from parallax.conformance.vo_models import Address, Branch, Geo
+from parallax.core import LATEST
 from parallax.core.entity._model import model_of
 from parallax.core.unit_work import Concurrency
 from parallax.snapshot import connect
@@ -188,7 +189,7 @@ def test_bitemporal_stale_web_edit_updates_the_displayed_rectangle(
         concurrency=concurrency,
     )
 
-    current = db.find(Branch.where(Branch.id == 1)).result()
+    current = db.find(Branch.where(Branch.id == 1).as_of(valid_time=LATEST)).result()
     assert current.name == "Renamed Branch"
     assert current.address is not None  # the untouched VO document survives the merge
 
@@ -213,7 +214,7 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
     peer_db = connect(peer_port, _BRANCH, clock=ScriptedClock([_I2]))
 
     def concurrent_write(tx: Transaction) -> None:
-        current = tx.find(Branch.where(Branch.id == 1)).result()
+        current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=LATEST)).result()
         tx.update(current.edit(name="Renamed By Someone Else"), valid_from=_I2)
 
     peer_db.transact(concurrent_write)
@@ -231,5 +232,5 @@ def test_bitemporal_stale_web_edit_refuses_a_superseded_rectangle(
             concurrency=concurrency,
         )
 
-    current = db.find(Branch.where(Branch.id == 1)).result()
+    current = db.find(Branch.where(Branch.id == 1).as_of(valid_time=LATEST)).result()
     assert current.name == "Renamed By Someone Else"  # the stale edit never landed

@@ -297,7 +297,7 @@ keeps the assertion honest across engines.
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
 | `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
-| `when.equivalentEncodings` | `when` | no | alternate surface encodings of `when.operation`; each MUST canonicalize to it |
+| `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `operation` or `find`; each MUST normalize and canonicalize to it |
 | `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on a boundary case |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
@@ -655,10 +655,11 @@ the harness asserts:
 4. **Serde round-trip** — `serialize(deserialize(x)) == x` for **both** the
    `operation` encoding *and* the model descriptor (the descriptor **is** the
    serialized metamodel), in **both** JSON and YAML. When a case declares
-   `equivalentEncodings`, each alternate encoding MUST canonicalize (via the same
-   serde seam) to the case's `operation` — a dialect-agnostic check that proves
-   precedence / serialization fidelity (a prefix and a fluent surface of the same
-   grouped predicate denote one canonical node) in the fixture itself.
+   `equivalentEncodings`, each alternate authoring encoding MUST normalize and
+   canonicalize to the sibling `operation` or scenario-step `find` — a
+   dialect-agnostic check that proves precedence / serialization fidelity and
+   authoring defaults (including omitted Transaction Time becoming explicit
+   Latest) in the fixture itself.
 
 A fifth layer — **round-trip-count consistency** — applies to relationship /
 deep-fetch cases: the number of authored/executed golden SQL statements equals

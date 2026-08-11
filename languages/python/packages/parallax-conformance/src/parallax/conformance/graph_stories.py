@@ -187,13 +187,14 @@ def history_of_a_concrete_temporal_node_distinguishes_milestones(db: Database) -
     by its `ReadStory`, `parallax.conformance.read_stories`, graded by
     ``test_read_story_runs_through_the_shipped_surface``). Proves the separate
     milestone-HISTORY shape: `DepositRate` declares no `as_of` of its own
-    (`Rate`, the family root, does); `.history(TX_TIME)` still resolves
+    (`Rate`, the family root, does); explicit current Valid Time composed with
+    `.history(TX_TIME)` still resolves
     `DepositRate`'s own inherited axis, and the strengthened
     ``fixtures/rate.yaml`` milestone history surfaces the closed historical
     correction and the current row as two distinct, edge-pinned nodes sharing
         one domain key.
     """
-    return db.find(DepositRate.where(DepositRate.all).history(TX_TIME))
+    return db.find(DepositRate.where(DepositRate.all).history(TX_TIME).as_of(valid_time=LATEST))
 
 
 def one_to_one_peer_attaches_as_a_single_object(db: Database) -> Snapshot[Any]:

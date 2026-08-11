@@ -52,9 +52,10 @@ from parallax.core.metamodel import (
     EntityMetadata,
     Metamodel,
     Multiplicity,
+    TemporalDimension,
     entity_by_name,
 )
-from parallax.core.op_algebra import QueryDefinitionError
+from parallax.core.op_algebra import AsOf, Operation, QueryDefinitionError
 from parallax.core.sql_gen import compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.unit_work import (
@@ -95,6 +96,21 @@ from parallax.snapshot.handle._write_inputs import (
 # The predicate mutations that carry Assignments; the rest take none at all and
 # their verbs' signatures say so.
 _ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", "updateUntil"})
+
+
+def _current_selection(predicate: Operation, entity: EntityMetadata) -> Operation:
+    """Complete an internal predicate-write resolve at Latest on every axis."""
+    operation = predicate
+    for axis in sorted(
+        entity.declared_as_of_axes,
+        key=lambda item: item.dimension.value,
+        reverse=True,
+    ):
+        dimension = (
+            "valid-time" if axis.dimension is TemporalDimension.VALID_TIME else "transaction-time"
+        )
+        operation = AsOf(operand=operation, dimension=dimension, coordinate="latest")
+    return operation
 
 
 def buffer_predicate(
@@ -398,10 +414,9 @@ def _materialize_predicate_write(
     applies.
 
     A TEMPORAL target's raw predicate carries no as-of wrapper (a
-    mutation-compatible Find Query carries no temporal clause, python.md §5) — exactly
-    like an ordinary find's omitted axis, it must still default every
-    declared axis to its CURRENT milestone (`m-temporal-read` "default-
-    latest"), so the resolve routes through the SAME
+    mutation-compatible Find Query carries no temporal clause, python.md §5),
+    so this internal authoring boundary adds one explicit Latest selection per
+    declared dimension before routing the resolve through the SAME
     :func:`~parallax.core.deep_fetch.plan` root-canonicalization every
     other read uses (:func:`~parallax.snapshot.handle.find`) rather than
     compiling the raw predicate directly — otherwise a temporal target's
@@ -412,7 +427,8 @@ def _materialize_predicate_write(
     if layout is None:  # pragma: no cover - a predicate-write target always owns rows
         raise ValueError(f"{entity.identity.canonical}: predicate-write target has no Table")
     lock: LockMode | None = read_lock.mode_for(uow.settings.concurrency)
-    plan_ = deep_fetch.plan(entity, instruction.target.predicate, meta)
+    selection = _current_selection(instruction.target.predicate, declaring_entity)
+    plan_ = deep_fetch.plan(entity, selection, meta)
     assignments = {
         assignment_member(assignment.attr): assignment.value
         for assignment in instruction.assignments

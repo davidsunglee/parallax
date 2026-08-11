@@ -59,6 +59,7 @@ from parallax.core.op_algebra import (
     deserialize,
     referenced_entities,
     validate_operation,
+    validate_read_operation,
 )
 from parallax.descriptor._family import family_of
 from parallax.descriptor._records import (
@@ -143,9 +144,11 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
 
 _MODEL_DIR = case_format.find_repo_root() / "core" / "compatibility" / "models"
 _ANIMAL = records("animal")
+_BALANCE = records("balance")
 _CONTACT = records("contact")
 _CUSTOMER = records("customer")
 _ORDERS = records("orders")
+_POSITION = records("position")
 _SHARED_LOCAL_NAME = records("shared-local-name")
 _MODEL_BY_FILE: Mapping[str, Metamodel] = {
     "animal.yaml": _ANIMAL,
@@ -184,6 +187,63 @@ def _rejects(op: Operation, meta: Metamodel, target: str) -> OperationRejectedEr
     with pytest.raises(OperationRejectedError) as excinfo:
         _validate(target, op, meta)
     return excinfo.value
+
+
+# --------------------------------------------------------------------------- #
+# temporal-read-dimension-selection-cardinality (m-temporal-read).            #
+# --------------------------------------------------------------------------- #
+def test_temporal_read_requires_one_selection_per_declared_dimension() -> None:
+    balance = formed(_BALANCE)
+    balance_root = next(entity for entity in balance.entities if entity.identity.name == "Balance")
+    with pytest.raises(OperationRejectedError) as balance_error:
+        validate_read_operation(balance_root, All(), balance)
+    assert balance_error.value.rule == "temporal-read-dimension-selection-cardinality"
+    only_valid = AsOf(operand=All(), dimension="valid-time", coordinate="latest")
+    position = formed(_POSITION)
+    position_root = next(
+        entity for entity in position.entities if entity.identity.name == "Position"
+    )
+    with pytest.raises(OperationRejectedError) as position_error:
+        validate_read_operation(position_root, only_valid, position)
+    assert position_error.value.rule == "temporal-read-dimension-selection-cardinality"
+
+
+def test_temporal_read_accepts_complete_explicit_selections() -> None:
+    balance = formed(_BALANCE)
+    balance_root = next(entity for entity in balance.entities if entity.identity.name == "Balance")
+    validate_read_operation(
+        balance_root,
+        AsOf(operand=All(), dimension="transaction-time", coordinate="latest"),
+        balance,
+    )
+    both = AsOf(
+        operand=AsOf(operand=All(), dimension="transaction-time", coordinate="latest"),
+        dimension="valid-time",
+        coordinate="latest",
+    )
+    position = formed(_POSITION)
+    position_root = next(
+        entity for entity in position.entities if entity.identity.name == "Position"
+    )
+    validate_read_operation(position_root, both, position)
+
+
+def test_temporal_read_rejects_duplicate_and_undeclared_selections() -> None:
+    balance = formed(_BALANCE)
+    balance_root = next(entity for entity in balance.entities if entity.identity.name == "Balance")
+    duplicate = AsOf(
+        operand=History(operand=All(), dimension="transaction-time"),
+        dimension="transaction-time",
+        coordinate="latest",
+    )
+    with pytest.raises(OperationRejectedError) as duplicate_error:
+        validate_read_operation(balance_root, duplicate, balance)
+    assert duplicate_error.value.rule == "temporal-read-dimension-selection-cardinality"
+
+    undeclared = AsOf(operand=All(), dimension="valid-time", coordinate="latest")
+    with pytest.raises(OperationRejectedError) as undeclared_error:
+        validate_read_operation(balance_root, undeclared, balance)
+    assert undeclared_error.value.rule == "temporal-read-dimension-selection-cardinality"
 
 
 # --------------------------------------------------------------------------- #

@@ -72,7 +72,7 @@ from typing import Any, Literal
 
 from parallax.core.entity._query import FindQuery, LoweredFindQuery, lower_find_query
 from parallax.core.metamodel import EntityIdentity, Metamodel
-from parallax.core.op_algebra import DeepFetch, Operation, validate_operation
+from parallax.core.op_algebra import DeepFetch, Operation, validate_read_operation
 from parallax.snapshot.handle._errors import QueryTargetError
 from parallax.snapshot.handle._features import DeferredFeatureError, deferred_features
 from parallax.snapshot.handle._spine import own_row_spine
@@ -135,7 +135,7 @@ def preflight_neutral(
             "the connected model declares no Entity for this read's target "
             "(query-target-not-in-model)"
         )
-    validate_operation(root, operation, model)
+    validate_read_operation(root, operation, model)
     deferred = deferred_features(operation)
     if deferred:
         raise DeferredFeatureError(deferred)

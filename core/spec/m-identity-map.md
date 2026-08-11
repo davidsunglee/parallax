@@ -51,9 +51,10 @@ The identity key is the triple:
 - **Primary key** — the entity's declared primary key (`m-descriptor`).
 - **Lowered as-of coordinates** — one coordinate per effective As-Of Axis, in
   canonical Valid-Time then Transaction-Time order (`m-temporal-read`): Latest is
-  the infinity sentinel (an omitted dimension and explicit `asOf(…, latest)` lower
-  to the same coordinate); a finite pin is the instant itself. Now is a finite
-  current-clock instant, never an alias for Latest. A non-temporal Entity has no
+  the infinity sentinel (an authored omitted Transaction-Time selection normalizes
+  to the same explicit `asOf(…, latest)` coordinate); a finite pin is the instant
+  itself. A current-clock instant is an ordinary finite coordinate, never an alias
+  or separate variant for Latest. A non-temporal Entity has no
   coordinate component: its key degrades to (family, primary key).
 
 Two lookups with the **same** lowered coordinates resolve to the same managed

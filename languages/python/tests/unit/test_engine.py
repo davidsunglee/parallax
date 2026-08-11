@@ -4848,7 +4848,7 @@ def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> 
             "then": {"graph": {}},
         }
     )
-    with pytest.raises(engine.EngineError, match="undeclared dimension"):
+    with pytest.raises(engine.EngineError, match="undeclared"):
         engine.run_graph_case(case, "postgres", QueueDbPort([]))
 
 
@@ -4901,7 +4901,7 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
             "then": {"graphs": []},
         }
     )
-    with pytest.raises(engine.EngineError, match="undeclared dimension"):
+    with pytest.raises(engine.EngineError, match="undeclared"):
         engine.run_graphs_case(case, "postgres", QueueDbPort([]))
 
 
@@ -4924,7 +4924,16 @@ def test_run_graphs_case_refuses_a_case_whose_read_answers_one_graph() -> None:
     case = _synthetic(
         {
             "model": "models/invoice.yaml",
-            "when": {"targetEntity": "InvoiceLine", "operation": {"all": {}}},
+            "when": {
+                "targetEntity": "InvoiceLine",
+                "operation": {
+                    "asOf": {
+                        "operand": {"all": {}},
+                        "dimension": "transaction-time",
+                        "coordinate": "latest",
+                    }
+                },
+            },
             "then": {"graphs": []},
         }
     )
@@ -5117,9 +5126,15 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
                 "targetEntity": "Position",
                 "find": {
                     "asOf": {
-                        "operand": {"eq": {"attr": "Position.id", "value": 1}},
-                        "dimension": "transaction-time",
-                        "coordinate": "2024-02-01T00:00:00+00:00",
+                        "operand": {
+                            "asOf": {
+                                "operand": {"eq": {"attr": "Position.id", "value": 1}},
+                                "dimension": "transaction-time",
+                                "coordinate": "2024-02-01T00:00:00+00:00",
+                            }
+                        },
+                        "dimension": "valid-time",
+                        "coordinate": "latest",
                     }
                 },
             },

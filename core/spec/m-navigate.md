@@ -53,8 +53,9 @@ semi-join for navigation filters and inside the per-level child query for deep
 fetch. At each temporal target the propagated value drives *that entity's own*
 as-of predicate: **latest** lowers to the single equality `to = infinity`; an
 **as-of instant** lowers to the half-open containment `from <= ? and to > ?`. Each
-axis propagates and lowers independently; an axis unpinned at the root defaults to
-**latest** (the `m-temporal-read` default-injection rule, applied per axis).
+axis propagates and lowers independently. A temporal query root already carries
+one canonical selection per declared axis. When a reached target declares an axis
+the source does not carry, that unmatched target axis selects **latest**.
 
 A **non-temporal** entity in the path carries **no** as-of term. A **temporal**
 entity reached from a **non-temporal** one defaults every axis to latest. Because

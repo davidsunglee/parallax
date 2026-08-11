@@ -69,7 +69,16 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
-from parallax.core.op_algebra import Operation, OperationError, OperationRejectedError, deserialize
+from parallax.core.op_algebra import (
+    AsOf,
+    AsOfRange,
+    History,
+    Operation,
+    OperationError,
+    OperationRejectedError,
+    deserialize,
+    validate_read_operation,
+)
 from parallax.core.op_algebra import validate_operation as validate_op_algebra_operation
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, SqlGenError, compile_read
 from parallax.core.temporal_read import (
@@ -288,8 +297,8 @@ def _canonicalize_read(
     navigation canonicalization — the composition-at-the-engine order every read
     compile site shares.
 
-    Temporal reads are lowered by ``m-temporal-read`` (the auto-injected as-of
-    predicate, defaulted-latest on omitted axes) BEFORE ``m-sql`` compiles the
+    Temporal reads are lowered by ``m-temporal-read`` (the interval predicate
+    for each explicit canonical selection) BEFORE ``m-sql`` compiles the
     resulting plain predicate: the module DAG forbids ``m-sql`` from importing
     ``m-temporal-read``, so this composition site (the conformance engine, which
     may reference both) is the canonicalize step. ``inject_as_of`` is a strict
@@ -305,6 +314,7 @@ def _canonicalize_read(
     operation carries no navigation node at all.
     """
     raw_op = deserialize(operation_doc)
+    validate_read_operation(entity, raw_op, model)
     temporal_entity = _family_declarer(model, entity)
     root_pins = resolve_pinned_instants(raw_op, temporal_entity)
     injected = inject_as_of(raw_op, temporal_entity)
@@ -381,7 +391,13 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
             result_form=_result_form(case),
             lock=lock,
         )
-    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+    except (
+        OperationError,
+        OperationRejectedError,
+        SqlGenError,
+        TemporalReadError,
+        KeyError,
+    ) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
@@ -440,7 +456,13 @@ def run_read_case(
             if concurrency is None
             else db.transact(lambda tx: tx.read_neutral(request), concurrency=concurrency).value
         )
-    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+    except (
+        OperationError,
+        OperationRejectedError,
+        SqlGenError,
+        TemporalReadError,
+        KeyError,
+    ) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     rows = result.output
     if not isinstance(rows, handle.NeutralRows):  # pragma: no cover - a rows request answers rows
@@ -493,7 +515,13 @@ def _neutral_read(
             target=entity.identity, operation=deserialize(operation_doc)
         )
         return db.read_neutral(request)
-    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+    except (
+        OperationError,
+        OperationRejectedError,
+        SqlGenError,
+        TemporalReadError,
+        KeyError,
+    ) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
 
@@ -2575,7 +2603,13 @@ def _compile_snapshot_scenario(
                 operation, model, dialect, metadata, result_form="instance"
             ).statement
             emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
-    except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+    except (
+        OperationError,
+        OperationRejectedError,
+        SqlGenError,
+        TemporalReadError,
+        KeyError,
+    ) as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return emissions, len(emissions)
 
@@ -2655,7 +2689,13 @@ def _run_snapshot_scenario(
                 handle.NeutralReadRequest.graph(target=identity, operation=raw_op)
             )
             pin = _find_step_pin(model, target, raw_op)
-        except (OperationError, SqlGenError, TemporalReadError, KeyError) as exc:
+        except (
+            OperationError,
+            OperationRejectedError,
+            SqlGenError,
+            TemporalReadError,
+            KeyError,
+        ) as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         for call in result.execution.calls:
             emissions.append(
@@ -2985,6 +3025,14 @@ def _is_materializing_write_step(
     return None
 
 
+def _selection_predicate(operation: Operation | None) -> Operation | None:
+    """Strip a read's root per-dimension temporal selections to its predicate."""
+    current = operation
+    while isinstance(current, (AsOf, AsOfRange, History)):
+        current = current.operand
+    return current
+
+
 def _run_materializing_pair(
     port: DbPort,
     model: AcceptedMetamodel,
@@ -3042,16 +3090,14 @@ def _run_materializing_pair(
     # aware validation MUST require that prior find to use the same concrete
     # `targetEntity` AND CANONICAL OPERATION" — same entity alone is not
     # enough (a resolving find over a DIFFERENT predicate would silently
-    # observe the wrong rows). Compared BARE (`deserialize`, no as-of
-    # injection / navigate canonicalization): `instruction.target.predicate`
-    # is itself the write's own UN-injected bare predicate
-    # (`instructions.deserialize`), so the find step's own raw operation is
-    # the one apples-to-apples comparison — `_canonicalize_read`'s temporal
-    # as-of injection would make even a genuinely matching pair compare
-    # unequal.
+    # observe the wrong rows). The canonical read now carries one explicit
+    # temporal selection per declared dimension, while the write target remains
+    # the bare predicate. Remove only that root selection nest before comparing;
+    # `_canonicalize_read` would additionally inject interval predicates and is
+    # therefore still not the apples-to-apples form.
     find_doc = find_step.get("find")
     find_operation = deserialize(find_doc) if find_doc is not None else None
-    if find_operation != instruction.target.predicate:
+    if _selection_predicate(find_operation) != instruction.target.predicate:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
             "a resolving find over the SAME canonical operation as the write's own target "

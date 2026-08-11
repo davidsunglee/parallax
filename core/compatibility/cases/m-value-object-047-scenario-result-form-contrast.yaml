@@ -73,7 +73,11 @@ when:
   scenario:
     - targetEntity: parallax.compatibility.Supplier
       find:
-        eq: { attr: parallax.compatibility.Supplier.name, value: Baltic Traders }
+        asOf:
+          operand:
+            eq: { attr: parallax.compatibility.Supplier.name, value: Baltic Traders }
+          dimension: transaction-time
+          coordinate: latest
       roundTrips: 1
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM
       statements:
@@ -94,7 +98,11 @@ when:
             phones: []
     - targetEntity: parallax.compatibility.Supplier
       find:
-        eq: { attr: parallax.compatibility.Supplier.name, value: Nordic Foods }
+        asOf:
+          operand:
+            eq: { attr: parallax.compatibility.Supplier.name, value: Nordic Foods }
+          dimension: transaction-time
+          coordinate: latest
       roundTrips: 1
       note: the predicate-write resolving read is ROW-FORM (no instance constructed) and still projects the address Document slot — the Temporal Observation it records is a complete Predecessor Row
       statements:

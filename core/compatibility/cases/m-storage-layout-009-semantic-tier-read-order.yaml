@@ -24,7 +24,10 @@ shape: read
 when:
   targetEntity: parallax.compatibility.LayoutReading
   operation:
-    all: {}
+    asOf:
+      operand: { all: {} }
+      dimension: transaction-time
+      coordinate: latest
 then:
   statements:
     - sql:

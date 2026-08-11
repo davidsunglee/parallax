@@ -311,8 +311,11 @@ mutations, exceptions, or exports.
   `is_milestone_set()`, and equivalent state-inspection helpers are not public
   methods.
   The advanced first-party `lower_find_query(query) -> LoweredFindQuery` seam
-  is total for every constructed Find Query and introduces no new semantic
-  validation. `FindQuery` privately retains independently authored, already
+  completes the target-class-local temporal authoring contract: omitted
+  Transaction Time becomes explicit Latest, while omitted Valid Time on a
+  Bitemporal target raises `QueryDefinitionError(query-clause-invalid)`.
+  It introduces no connected-model semantic validation. `FindQuery` privately
+  retains independently authored, already
   validated predicate, root-narrow, temporal, ordering, limit, and include
   clauses plus its structured target Entity Identity. It retains no model.
   Lowering places those clauses in the fixed canonical order and returns one
@@ -480,12 +483,13 @@ mutations, exceptions, or exports.
   because an `all` node names no position — `Dog.all` and `Animal.all` lower to
   the byte-identical `{"all": {}}` at the same target, which is a valid
   operation there is nothing for preflight to refuse.
-  `as_of(...)`, `history(...)`, and `as_of_range(...)` form one mutually
-  exclusive, single-shot temporal-clause family. Once any one is present, every
-  later temporal-clause call raises
-  `QueryDefinitionError(query-clause-invalid)`; calls never merge coordinates
-  or replace an earlier clause. Both dimensions must be supplied together in
-  the original `as_of(...)` or `as_of_range(...)` call when both are desired.
+  `as_of(...)`, `history(...)`, and `as_of_range(...)` form one axis-keyed
+  temporal-clause family. Each declared dimension is single-shot: a second
+  selection for one dimension raises
+  `QueryDefinitionError(query-clause-invalid)`, while separate calls selecting
+  different dimensions merge into one canonical query. Mixed variants compose
+  in either call order, so `.history(VALID_TIME).as_of(tx_time=LATEST)` and its
+  mirror lower identically. A call never replaces an earlier selection.
   Each keyword-based method requires at least one supplied dimension;
   zero-argument `as_of()` and `as_of_range()` calls raise
   `QueryDefinitionError(query-clause-invalid)`. A supplied range must be an
@@ -840,23 +844,24 @@ mutations, exceptions, or exports.
   construction. Every `as_of_range(...)` window is an exact built-in
   two-item `tuple` of finite such instants with `start < end`; lists, tuple
   subclasses, arbitrary iterables, coercion, and `LATEST` endpoints raise
-  `QueryDefinitionError(query-clause-invalid)`. An
-  omitted axis defaults to **latest** per the core default-injection rule; the
+  `QueryDefinitionError(query-clause-invalid)`. An omitted Transaction-Time
+  selection defaults to **latest** at the authoring lowering boundary; the
   module-level `LATEST` sentinel spells the same pin explicitly and lowers to
-  the identical injected predicate. Canonical serialization is deterministic:
-  each explicitly passed dimension serializes exactly one wrapper node, and
-  when both are passed the Valid-Time `asOf` is the outer wrapper enclosing the
-  Transaction-Time `asOf`; an
-  omitted axis serializes **no** wrapper — its latest default is injected at
-  lowering — while an explicit `LATEST` pin serializes its wrapper with the
-  canonical Latest value, never `now`. A finite current-clock datetime is Now
-  and lowers to containment rather than Latest's `end = infinity`. `as_of()`
+  the identical canonical wrapper and predicate. An omitted Valid-Time
+  selection on a Bitemporal target raises
+  `QueryDefinitionError(query-clause-invalid)` during lowering because Latest
+  would make a substantive claim about the business timeline rather than merely
+  selecting current database knowledge. Canonical serialization is
+  deterministic: every declared dimension serializes exactly one selection
+  wrapper, and Valid Time is outermost around Transaction Time. Latest always
+  uses the canonical value and never `now`. There is no Now variant: a finite
+  current-clock datetime is an ordinary finite coordinate and lowers to
+  containment rather than Latest's `end = infinity`. `as_of()`
   with no dimension raises `QueryDefinitionError(query-clause-invalid)` rather
   than duplicating the ordinary query's implicit-latest behavior;
-  `as_of_range()` likewise rejects an axis-free scan. Both methods are part of
-  the mutually exclusive, single-shot temporal-clause family: calling
-  `as_of`, `history`, or `as_of_range` on a Find Query that already carries any
-  temporal clause raises `QueryDefinitionError(query-clause-invalid)`.
+  `as_of_range()` likewise rejects an axis-free scan. A later temporal call may
+  select only a dimension not already selected; selecting the same dimension
+  twice raises `QueryDefinitionError(query-clause-invalid)`.
   Rejected at build: pinning or scanning an axis the entity does not declare,
   temporal clauses on non-temporal entities, and conflicting double pins.
 
@@ -2217,8 +2222,10 @@ or descriptor authoring form and performs no audit stamping.
   membership. Factories then run in allocation order; the first factory
   exception propagates unchanged and stops later factories. State attachment
   and root publication occur last.
-- **Whole-graph temporal pinning.** The Find Query's `as_of` coordinates (with
-  latest defaults per axis) pin the whole graph; the pin propagates per hop,
+- **Whole-graph temporal pinning.** The Find Query's per-dimension temporal
+  selections pin the whole graph; omitted Transaction Time is normalized to an
+  explicit Latest selection, while Valid Time is always selected explicitly.
+  The pin propagates per hop,
   matched by axis, to every temporal entity in the include tree — auto
   injected, never user-written. `history` / `as_of_range` return one root per
   milestone, each root **edge-pinned** at its milestone's from-instant;

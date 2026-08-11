@@ -43,7 +43,11 @@ when:
   scenario:
     - targetEntity: parallax.compatibility.Balance
       find:
-        lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
+        asOf:
+          operand:
+            lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
+          dimension: transaction-time
+          coordinate: latest
       roundTrips: 1
       statements:
         - sql:
@@ -78,7 +82,11 @@ when:
           binds: [2, B, 175.00, "2024-10-01T00:00:00+00:00", infinity]
     - targetEntity: parallax.compatibility.Balance
       find:
-        lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
+        asOf:
+          operand:
+            lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
+          dimension: transaction-time
+          coordinate: latest
       roundTrips: 1
       statements:
         - sql:

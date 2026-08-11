@@ -480,7 +480,7 @@ through a future aggregate-query contract (`m-agg`, deferred).
 ### Temporal read wrappers
 
 Temporal read wrappers are operation nodes. `m-temporal-read` defines the interval
-model, default-injection rule, and milestone behavior; `m-sql` fixes the SQL
+model, per-dimension selection rule, and milestone behavior; `m-sql` fixes the SQL
 fragments and bind order. These nodes are part of the algebra because operation
 serde must round-trip the temporal query tree exactly.
 
@@ -493,15 +493,17 @@ serde must round-trip the temporal query tree exactly.
 `dimension` is `valid-time` or `transaction-time`, resolved against the target
 Entity's effective As-Of Axes. `coordinate` is either the literal `latest` or an
 ISO-8601 UTC instant. Latest lowers to the dimension's physical end column equal
-to the `m-core` / `m-dialect` `infinity` sentinel. A finite current-clock instant
-is Now and lowers to interval containment; `now` is not a serde alias for Latest.
+to the `m-core` / `m-dialect` `infinity` sentinel. A finite instant obtained from
+the current clock remains an ordinary finite coordinate and lowers to interval
+containment; there is no `now` variant or serde alias for Latest.
 `start` and `end` are finite ISO-8601 UTC instants with `start < end`.
 
 Each temporal node wraps an `operand`. A Transaction-Time-Only Entity uses one
-wrapper. A Bitemporal Entity pins or unpins both dimensions by nesting one
-temporal wrapper per dimension; omitted dimensions follow the `m-temporal-read`
-default-injection rule and are read as Latest. The canonical nesting and bind
-order is Valid Time followed by Transaction Time. The injected temporal term
+wrapper. A Bitemporal Entity selects both dimensions by nesting one temporal
+wrapper per dimension. Canonical operations carry exactly one selection for every
+declared dimension; authoring may omit Transaction Time, which normalizes to an
+explicit Latest wrapper, but may not omit Valid Time. The canonical nesting and
+bind order is Valid Time followed by Transaction Time. The injected temporal term
 composes with the operand via `and`, after user predicates, so user binds precede
 temporal binds.
 

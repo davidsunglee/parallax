@@ -57,6 +57,18 @@ def _guard(*to: str) -> tuple[str, ...]:
     return to
 
 
+def _current_bitemporal(operand: Operation | None = None) -> Operation:
+    return AsOf(
+        operand=AsOf(
+            operand=operand if operand is not None else All(),
+            dimension="transaction-time",
+            coordinate="latest",
+        ),
+        dimension="valid-time",
+        coordinate="latest",
+    )
+
+
 def _plan(
     model: Metamodel,
     target: str,
@@ -95,7 +107,12 @@ def test_two_independent_paths_off_root_are_two_levels_both_rooted() -> None:
 
 
 def test_multi_hop_path_chains_levels_in_declared_order() -> None:
-    plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages"), _seg("Coverage.claims")),))
+    plan = _plan(
+        POLICY,
+        "Policy",
+        (_path(_seg("Policy.coverages"), _seg("Coverage.claims")),),
+        _current_bitemporal(),
+    )
     assert [level.attach_key for level in plan.levels] == ["coverages", "claims"]
     coverages, claims = plan.levels
     assert isinstance(coverages.parent, deep_fetch.RootRef)
@@ -249,8 +266,7 @@ def test_child_operation_has_no_order_by_when_relationship_declares_none() -> No
 
 
 def test_child_operation_appends_propagated_as_of_after_the_in_membership() -> None:
-    # every axis defaults to latest (the root operand pins none explicitly)
-    op = DeepFetch(operand=All(), paths=(_path(_seg("Policy.coverages")),))
+    op = DeepFetch(operand=_current_bitemporal(), paths=(_path(_seg("Policy.coverages")),))
     plan = deep_fetch.plan(entity_of(POLICY, "Policy"), op, POLICY)
     _target, child_op = plan.levels[0].child_operation([1, 2])
     assert isinstance(child_op, And)
@@ -667,10 +683,10 @@ def test_plan_accepts_a_non_deep_fetch_operation_with_zero_levels() -> None:
 # injected term names its DECLARING Entity by exact identity, so it stays     #
 # addressed at one Entity in a model two namespaces could share a name in.    #
 # --------------------------------------------------------------------------- #
-def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
-    plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), All(), RATE)
-    # Valid-Time-first (m-temporal-read), both defaulted to the current
-    # milestone since neither axis is pinned: `thru_z = infinity`, `out_z = infinity`.
+def test_concrete_target_root_operation_injects_explicit_latest_on_every_axis() -> None:
+    plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), _current_bitemporal(), RATE)
+    # Valid-Time-first (m-temporal-read), both explicitly select the current
+    # milestone: `thru_z = infinity`, `out_z = infinity`.
     assert plan.root_operation == And(
         operands=(
             Comparison(op="eq", attr="parallax.compatibility.Rate.validEnd", value="infinity"),
@@ -680,11 +696,19 @@ def test_concrete_target_root_operation_defaults_every_axis_to_latest() -> None:
 
 
 def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
-    op = AsOf(operand=All(), dimension="transaction-time", coordinate="2024-01-15T00:00:00+00:00")
+    op = AsOf(
+        operand=AsOf(
+            operand=All(),
+            dimension="transaction-time",
+            coordinate="2024-01-15T00:00:00+00:00",
+        ),
+        dimension="valid-time",
+        coordinate="latest",
+    )
     plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), op, RATE)
     assert plan.root_operation == And(
         operands=(
-            # Valid Time defaults to latest (never pinned by this operation)
+            # Valid Time explicitly selects latest.
             Comparison(op="eq", attr="parallax.compatibility.Rate.validEnd", value="infinity"),
             # Transaction Time is pinned to the past instant (containment)
             Comparison(

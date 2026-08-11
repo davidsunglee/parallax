@@ -11,8 +11,8 @@
 # application-lifecycle error, which the single-connection wire harness cannot
 # grade, so the harness schema-validates it and each language's conformance run
 # lane executes the step, reporting the error observation. Step 0 pins Position
-# id 1 at the finite Transaction-Time instant 2024-02-01 (Valid Time defaulted
-# Latest) — the superseded original belief 90.00, a read-only
+# id 1 at the finite Transaction-Time instant 2024-02-01 and explicitly selects
+# Valid-Time Latest — the superseded original belief 90.00, a read-only
 # Transaction-Time-past view. Step 1 attempts to mutate it (`set` value 999.00);
 # because the pin is on the finite Transaction-Time dimension, the mutation is
 # rejected with `expectError: transaction-time-pin-read-only` and buffers zero
@@ -27,13 +27,17 @@ when:
       find:
         asOf:
           operand:
-            eq:
-              attr: parallax.compatibility.Position.id
-              value: 1
-          dimension: transaction-time
-          coordinate: "2024-02-01T00:00:00+00:00"
+            asOf:
+              operand:
+                eq:
+                  attr: parallax.compatibility.Position.id
+                  value: 1
+              dimension: transaction-time
+              coordinate: "2024-02-01T00:00:00+00:00"
+          dimension: valid-time
+          coordinate: latest
       roundTrips: 1
-      note: pin id 1 at the finite Transaction-Time instant 2024-02-01 (Valid Time defaulted Latest) — a READ-ONLY Transaction-Time-past view (the superseded belief, 90.00)
+      note: pin id 1 at the finite Transaction-Time instant 2024-02-01 with Valid-Time Latest — a READ-ONLY Transaction-Time-past view (the superseded belief, 90.00)
       statements:
         - sql:
             postgres: select t0.pos_id, t0.acct_num, t0.val, t0.from_z, t0.thru_z, t0.in_z, t0.out_z from position t0 where t0.pos_id = ? and t0.thru_z = ? and t0.in_z <= ? and t0.out_z > ?

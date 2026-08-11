@@ -49,7 +49,7 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.temporal_read import Edge
+from parallax.core.temporal_read import LATEST, Edge
 from parallax.core.unit_work import (
     INFINITY,
     OPTIMISTIC_CONFLICT,
@@ -774,7 +774,9 @@ def test_a_close_addresses_the_rectangle_the_written_value_came_from(
     port = RecordingPort(row_queue=[[_CURRENT_RECTANGLE], [_RETROACTIVE_RECTANGLE]])
 
     def fn(tx: Transaction) -> None:
-        current = tx.find(WherePosition.where(WherePosition.id == 1)).result()
+        current = tx.find(
+            WherePosition.where(WherePosition.id == 1).as_of(valid_time=LATEST)
+        ).result()
         tx.find(
             WherePosition.where(WherePosition.id == 1).as_of(
                 valid_time=dt.datetime(2024, 2, 15, tzinfo=dt.UTC)

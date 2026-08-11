@@ -58,6 +58,7 @@ from parallax.core.op_algebra.validate import (
     OperationRejectedError,
     referenced_entities,
     validate_operation,
+    validate_read_operation,
 )
 
 __all__ = [
@@ -110,4 +111,5 @@ __all__ = [
     "referenced_entities",
     "serialize",
     "validate_operation",
+    "validate_read_operation",
 ]

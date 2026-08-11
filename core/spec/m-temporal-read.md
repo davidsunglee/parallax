@@ -95,14 +95,29 @@ returns the same values as its root.
 
 ## Latest and Now
 
-**Latest** is the default coordinate for an omitted declared dimension. It is
-the infinity sentinel and lowers to the single current-row predicate
+Every canonical temporal read names exactly one selection for every dimension
+the queried Entity declares. A selection is an `asOf`, `asOfRange`, or `history`
+node. This completeness rule is model-aware: the operation schema admits the
+individual nodes, while validation against the queried Entity verifies that its
+declared dimensions are covered exactly once.
+
+**Latest** is the authoring default for an omitted Transaction-Time selection.
+The authoring surface normalizes that omission to an explicit
+`asOf(transaction-time, Latest)` node before producing the canonical operation.
+Latest is the infinity sentinel and lowers to the single current-row predicate
 `end = infinity`.
 
-**Now** is a finite instant obtained from the current clock. It lowers to
-interval containment, `start <= now and end > now`. Latest and Now are not
-synonyms, and canonical descriptor/operation serde never uses `now` as the
-spelling of Latest.
+Valid Time has no omission default on a Bitemporal Entity. Omitting it is an
+error because `Latest` would make a substantive claim about the business
+timeline rather than merely selecting the database's current knowledge. This
+asymmetry follows Parallax's own contract; Reladomo's temporal defaults are
+prior art rather than a second normative surface.
+
+There is no **Now** coordinate or operation variant. A caller may pass a finite
+instant obtained from its current clock, and that ordinary finite coordinate
+lowers to interval containment, `start <= d and end > d`. It is not synonymous
+with Latest, and canonical descriptor/operation serde never uses `now` as a
+coordinate spelling.
 
 For a dimension pinned to coordinate `d`:
 
@@ -122,15 +137,16 @@ asOfRange(operand, dimension, start, end)
 history(operand, dimension)
 ```
 
-- `asOf` pins one dimension. An omitted declared dimension receives Latest.
+- `asOf` pins one dimension. Every declared dimension has its own explicit
+  selection in the canonical operation.
 - `asOfRange` scans every milestone whose interval overlaps `[start, end)`.
 - `history` removes the injected predicate for its selected dimension and
   returns the full milestone chain.
 
-For a Bitemporal Entity, a query may pin either or both dimensions; every
-unmentioned dimension is independently Latest. The canonical nested operation
-order is Valid Time outside Transaction Time, which produces Valid-Time binds
-first.
+For a Bitemporal Entity, a query selects both dimensions independently. The
+authoring surface may omit Transaction Time, which normalizes to explicit
+Latest, but it MUST select Valid Time. The canonical nested operation order is
+Valid Time outside Transaction Time, which produces Valid-Time binds first.
 
 | Valid-Time coordinate | Transaction-Time coordinate | Physical predicate |
 |---|---|---|
@@ -144,16 +160,18 @@ Time `v`?
 
 ## Pinning, edges, and relationships
 
-A Pin contains only dimensions explicitly or implicitly pinned for a read; its
+A Pin contains every selected dimension that is pinned rather than scanned; its
 coordinates may be Latest or finite. An Edge contains one finite start instant
 for every declared dimension of a materialized milestone. History and range
 results use the milestone's own start as their Edge coordinate.
 
-Relationship traversal propagates coordinates by dimension, never by physical
+Relationship traversal propagates selections by dimension, never by physical
 column or positional axis. A target that declares the same dimension receives
-the source coordinate; a target without it receives no coordinate. An omitted
-coordinate at the root is first normalized to Latest and that normalized value
-propagates through the graph.
+the source selection; a target without it receives no selection. An omitted
+Transaction-Time selection at the authoring root is first normalized to Latest
+and that normalized value propagates through the graph. A temporal target
+reached from a source that declares no matching dimension selects Latest for
+that unmatched dimension.
 
 ## Writes
 
@@ -169,8 +187,8 @@ continues to use `from_z`/`thru_z` and `in_z`/`out_z`.
 
 ## Verification
 
-Compatibility cases distinguish omitted/explicit Latest from finite Now,
-prove boundary behavior at `start` and `end`, exercise all four Bitemporal
+Compatibility cases distinguish authoring-defaulted/explicit Latest from finite
+Now, prove boundary behavior at `start` and `end`, exercise all four Bitemporal
 coordinate combinations, propagate pins across relationships, expose finite
 milestone Edges, and verify Transaction-Time-Only and Bitemporal writes without
 changing physical columns or canonical SQL shape.

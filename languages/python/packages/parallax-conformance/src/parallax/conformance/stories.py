@@ -87,6 +87,7 @@ from parallax.conformance.vo_models import (
     Supplier,
 )
 from parallax.core.entity import Entity
+from parallax.core.temporal_read import LATEST
 from parallax.core.unit_work import Clock
 from parallax.snapshot.handle import Database, Transaction
 
@@ -409,7 +410,9 @@ def bitemporal_plain_update_splits_head_and_new_tail(db: Database) -> None:
         )
 
     def correct(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
+        current = tx.find(
+            Position.where(Position.id == 1).as_of(valid_time=LATEST)
+        ).result()  # observe the rectangle
         tx.update(
             current.edit(value=Decimal("200.00")),
             valid_from=dt.datetime(2024, 6, 1, tzinfo=dt.UTC),
@@ -441,7 +444,9 @@ def bitemporal_update_until_splits_head_middle_tail(db: Database) -> None:
         )
 
     def split(tx: Transaction) -> None:
-        current = tx.find(Position.where(Position.id == 1)).result()  # observe the rectangle
+        current = tx.find(
+            Position.where(Position.id == 1).as_of(valid_time=LATEST)
+        ).result()  # observe the rectangle
         tx.update_until(
             current.edit(value=Decimal("200.00")),
             valid_from=dt.datetime(2024, 3, 1, tzinfo=dt.UTC),
@@ -536,7 +541,7 @@ def branch_bitemporal_rectangle_split_carries_the_document(db: Database) -> None
         )
 
     def split(tx: Transaction) -> None:
-        current = tx.find(Branch.where(Branch.id == 1)).result()  # observe the rectangle
+        current = tx.find(Branch.where(Branch.id == 1).as_of(valid_time=LATEST)).result()
         tx.update_until(
             current.edit(
                 address=Address(

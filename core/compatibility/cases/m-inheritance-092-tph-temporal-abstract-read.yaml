@@ -4,7 +4,7 @@
 # Targeting the abstract root Instrument (bitemporal) resolves to the whole family in the
 # shared `instrument` table, so the read injects NO tag predicate — just the as-of
 # predicate. Pinning valid-time = 2024-06-01 (a past instant, so `from_z <= ? and
-# thru_z > ?`) with transaction-time defaulted to Latest (`out_z = ?`) selects each concrete's
+# thru_z > ?`) with Transaction-Time explicitly selected as Latest (`out_z = ?`) selects each concrete's
 # Latest rectangle. The projection is the full Table Layout selection: identity `id`,
 # discriminator `kind`, Domain slots `price`, `coupon`, and `ticker`, then the four
 # Temporal interval slots. The raw tag column is where familyVariant
@@ -23,7 +23,11 @@ when:
   operation:
     asOf:
       operand:
-        all: {}
+        asOf:
+          operand:
+            all: {}
+          dimension: transaction-time
+          coordinate: latest
       dimension: valid-time
       coordinate: "2024-06-01T00:00:00+00:00"
 then:

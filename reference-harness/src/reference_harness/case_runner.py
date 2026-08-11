@@ -100,6 +100,7 @@ from .storage_layout import (
     position_view,
     validate_storage_layout,
 )
+from .temporal_selection_validate import normalize_authored_temporal_selections
 from .temporality import TEMPORAL_DIMENSION_RANK, derive_temporal_structure, temporal_axes
 from .value_object_resolve import REJECTED_RULES, RejectionError
 from .write_validate import undeclared_members, validate_subtype_write, validate_write
@@ -603,34 +604,51 @@ def _assert_serde(case: Case) -> None:
 
 
 def _assert_equivalent_encodings(case: Case) -> None:
-    """Layer 4c: every declared alternate encoding collapses to ``operation``.
+    """Layer 4c: every declared alternate encoding collapses to its canonical read.
 
-    Dialect-agnostic and database-free: each ``equivalentEncodings`` entry MUST
-    canonicalize (via the serde seam) to the same node as the case's canonical
-    ``operation``. This pins the precedence/serialization-fidelity contract — a
-    prefix and a fluent surface of the same grouped intent denote one node — in
-    the fixture itself rather than in bespoke test code.
+    Dialect-agnostic and database-free. A top-level read compares entries under
+    ``when.equivalentEncodings`` to ``when.operation``; a scenario read step does
+    the same with its own sibling field and ``find``. Authoring normalization
+    first makes an omitted Transaction-Time selection explicit, then ordinary
+    serde canonicalization proves both surface spellings denote one canonical
+    operation.
     """
+    family = Family(case.model.entity_defs)
+    if case.is_scenario:
+        for step_index, step in enumerate(case.scenario):
+            encodings = step.get("equivalentEncodings", [])
+            if not encodings:
+                continue
+            target = step.get("targetEntity")
+            canonical_operation = serde.canonical(step["find"])
+            for encoding_index, encoding in enumerate(encodings):
+                normalized = normalize_authored_temporal_selections(encoding, target, family)
+                if serde.canonical(normalized) != canonical_operation:
+                    raise CaseFailure(
+                        f"{case.path.name}: scenario[{step_index}].equivalentEncodings"
+                        f"[{encoding_index}] does not canonicalize to the step find.\n"
+                        f"  encoding (canonical):  {serde.canonical(normalized)!r}\n"
+                        f"  operation (canonical): {canonical_operation!r}"
+                    )
+        return
     if (
         case.is_write_sequence
-        or case.is_scenario
         or case.is_conflict
         or case.is_coherence
         or case.is_error
         or case.is_concurrency_success
     ):
-        # A write-sequence and a conflict case have no operation; a scenario and a
-        # coherence case carry their operations per step. An error case and a
-        # concurrency-success case have no operation either. Equivalent-encodings is a
-        # single-operation check.
         return
     canonical_operation = serde.canonical(case.operation)
     for index, encoding in enumerate(case.equivalent_encodings):
-        if serde.canonical(encoding) != canonical_operation:
+        normalized = normalize_authored_temporal_selections(
+            encoding, case.when.get("targetEntity"), family
+        )
+        if serde.canonical(normalized) != canonical_operation:
             raise CaseFailure(
                 f"{case.path.name}: equivalentEncodings[{index}] does not "
                 f"canonicalize to the case operation.\n"
-                f"  encoding (canonical):  {serde.canonical(encoding)!r}\n"
+                f"  encoding (canonical):  {serde.canonical(normalized)!r}\n"
                 f"  operation (canonical): {canonical_operation!r}"
             )
 
@@ -1280,9 +1298,10 @@ def _read_asof_pins(case: Case) -> dict[str, str]:
 
     The read counterpart of :func:`_root_asof_pins` (which walks a deep-fetch root
     operand): peel the result-directive / narrow wrappers, then descend the nested
-    ``asOf`` pins. An axis absent here defaults to the child's own default ("latest") at
-    :func:`_expected_asof_suffix` time. Empty when the read is unpinned (an omitted
-    dimension then defaults to Latest per the default-injection rule).
+    ``asOf`` pins. A canonical temporal root names every declared axis; an axis
+    absent here can only be one the reached child declares and the source does not,
+    and :func:`_expected_asof_suffix` selects Latest for that unmatched child axis.
+    Empty for a non-temporal read.
     """
     pins: dict[str, str] = {}
     node: Any = case.operation
@@ -1308,8 +1327,8 @@ def _assert_temporal_union_binds(case: Case, dialect: str) -> None:
     concrete branch inherits the same axes from the abstract root, so each branch
     carries the same as-of suffix (Valid-Time-first bind order); the union's binds
     are those per-branch suffixes repeated in the family's canonical ALPHABETICAL branch
-    order. Recomputed from the read's pin (defaulting an omitted dimension to Latest,
-    :func:`_expected_asof_suffix`), independent of the authored golden. A no-op unless
+    order. Recomputed from the read's complete canonical selections through
+    :func:`_expected_asof_suffix`, independent of the authored golden. A no-op unless
     the target is an abstract table-per-concrete-subtype TEMPORAL position.
     """
     target_name = case.when.get("targetEntity")

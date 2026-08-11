@@ -376,6 +376,16 @@ def test_as_of_latest_serializes_the_current_pin_wrapper() -> None:
     }
 
 
+def test_omitted_transaction_time_normalizes_to_explicit_latest() -> None:
+    assert lowered_document(Balance.where(Balance.all)) == {
+        "asOf": {
+            "operand": {"all": {}},
+            "dimension": "transaction-time",
+            "coordinate": "latest",
+        }
+    }
+
+
 def test_as_of_past_instant_normalizes_to_utc_iso() -> None:
     d = dt.datetime(2024, 4, 1, tzinfo=dt.UTC)
     assert lowered_document(Balance.where(Balance.all).as_of(tx_time=d)) == {
@@ -422,7 +432,13 @@ def test_as_of_range_on_valid_time() -> None:
     to = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
     assert lowered_document(Position.where(Position.all).as_of_range(valid_time=(frm, to))) == {
         "asOfRange": {
-            "operand": {"all": {}},
+            "operand": {
+                "asOf": {
+                    "operand": {"all": {}},
+                    "dimension": "transaction-time",
+                    "coordinate": "latest",
+                }
+            },
             "dimension": "valid-time",
             "start": "2024-01-01T00:00:00+00:00",
             "end": "2024-06-01T00:00:00+00:00",
@@ -490,8 +506,41 @@ def test_history_wraps_the_predicate() -> None:
 
 def test_history_on_valid_time() -> None:
     assert lowered_document(Position.where(Position.all).history(VALID_TIME)) == {
-        "history": {"operand": {"all": {}}, "dimension": "valid-time"}
+        "history": {
+            "operand": {
+                "asOf": {
+                    "operand": {"all": {}},
+                    "dimension": "transaction-time",
+                    "coordinate": "latest",
+                }
+            },
+            "dimension": "valid-time",
+        }
     }
+
+
+def test_mixed_bitemporal_variants_compose_in_both_call_orders() -> None:
+    history_first = Position.where(Position.all).history(VALID_TIME).as_of(tx_time=LATEST)
+    pin_first = Position.where(Position.all).as_of(tx_time=LATEST).history(VALID_TIME)
+    expected: dict[str, object] = {
+        "history": {
+            "operand": {
+                "asOf": {
+                    "operand": {"all": {}},
+                    "dimension": "transaction-time",
+                    "coordinate": "latest",
+                }
+            },
+            "dimension": "valid-time",
+        }
+    }
+    assert lowered_document(history_first) == expected
+    assert lowered_document(pin_first) == expected
+
+
+def test_bitemporal_query_requires_a_valid_time_selection_at_lowering() -> None:
+    with pytest.raises(QueryDefinitionError, match="requires an explicit Valid-Time selection"):
+        lower_find_query(Position.where(Position.all))
 
 
 def test_history_rejects_a_string_dimension() -> None:
@@ -514,13 +563,27 @@ def test_dimension_constants_are_frozen() -> None:
         "history": {"operand": {"all": {}}, "dimension": "transaction-time"}
     }
     assert lowered_document(Position.where(Position.all).history(VALID_TIME)) == {
-        "history": {"operand": {"all": {}}, "dimension": "valid-time"}
+        "history": {
+            "operand": {
+                "asOf": {
+                    "operand": {"all": {}},
+                    "dimension": "transaction-time",
+                    "coordinate": "latest",
+                }
+            },
+            "dimension": "valid-time",
+        }
     }
 
 
 def test_temporal_clause_is_single_shot() -> None:
     with pytest.raises(QueryDefinitionError, match="single-shot"):
         Balance.where(Balance.all).as_of(tx_time=LATEST).as_of(tx_time=LATEST)
+
+
+def test_temporal_dimension_is_single_shot_across_variants() -> None:
+    with pytest.raises(QueryDefinitionError, match=r"transaction-time.*single-shot"):
+        Balance.where(Balance.all).history(TX_TIME).as_of(tx_time=LATEST)
 
 
 def test_temporal_clause_requires_an_axis() -> None:
