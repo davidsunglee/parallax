@@ -4,7 +4,7 @@ Frozen ``slots`` dataclasses for the Predicate tree the query surface builds and
 the corpus serializes. Every node is immutable and shareable; construction is
 value-only (metamodel binding is validated by the serde/statement layers, not in
 ``__init__``). The union :data:`PredicateNode` is the exhaustive read-path algebra
-this phase lowers; ``m-sql`` dispatches over it with ``match`` and
+consumed by ``m-sql`` predicate lowering, whose dispatch uses ``match`` and
 ``assert_never``. Aggregation (``groupBy``) and the write side are out of scope.
 
 A node that doubles as a Python authoring surface — one a caller composes by

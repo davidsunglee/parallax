@@ -15,13 +15,14 @@ The canonical schema is
 
 ## Transitional boundary
 
-The current Predicate schema temporarily retains the query-wide `orderBy`,
-`limit`, `deepFetch`, `asOf`, `asOfRange`, and `history` wrappers, and the case
-envelope still names the serialized value `operation`. These wrappers are not
-the intended Predicate boundary; they remain only while the existing recursive
-read representation is still canonical. This section describes that accepted
-transitional representation rather than claiming the wrappers belong permanently
-to Predicate.
+The current Predicate schema temporarily retains the query-position `narrow` and
+the query-wide `orderBy`, `limit`, `deepFetch`, `asOf`, `asOfRange`, and `history`
+wrappers, and the case envelope still names the serialized value `operation`.
+These query-wide values are not the intended Predicate boundary; they remain only
+while the existing recursive read representation is still canonical. This section
+describes that accepted transitional representation rather than claiming those
+values belong permanently to Predicate. Predicate-scoped `narrow`, which restricts
+the active position while evaluating an inner predicate, remains part of Predicate.
 
 ## Positioning (DQ13)
 
@@ -564,8 +565,8 @@ object segment is likewise the single structural carrier for a hop, so a
 **polymorphic** hop (a relationship whose target is an abstract position,
 `m-inheritance`) MAY add an optional `narrow` alongside `rel` — the
 `{ "to": [ … ] }` subtype narrowing of that hop's effective concrete set —
-without a second spelling of a path. Unlike the operation-position `narrow` node
-(which also carries `operand`), a path narrow carries only `to`: the
+without a second spelling of a path. Unlike the transitional query-position
+`narrow` node (which also carries `operand`), a path narrow carries only `to`: the
 position is the relationship target (implicit) and a hop fetches a whole
 **view**, not a filtered predicate. A narrowed hop populates a
 **distinct narrowed view** keyed `<rel>[<Concrete>,<Concrete>]`; the narrow must
@@ -639,17 +640,23 @@ position.
 
 `m-inheritance` owns the shared **Subtype Selection** value, its canonical
 construction, and its model-aware resolution inside a polymorphic position.
-`narrow` contributes only the operation-specific operand that selection scopes:
+The transitional representation uses the same serialized `narrow` node in two
+semantic positions: the outer query-position form narrows the whole result and
+moves to Object Query, while a Predicate-scoped form narrows the active position
+for its inner predicate and remains here. In either position, `narrow` contributes
+only the operand that its selection scopes:
 
 | Predicate | Encoding | Meaning |
 |---|---|---|
 | `narrow` | `{ "narrow": { "to": [ … ], "operand" } }` | evaluate `operand` over the active position narrowed by the Subtype Selection `to` |
 
-The active position comes from context: the read's `targetEntity` at the root,
-the relationship target inside `navigate` / `exists` / `notExists`, or the
-enclosing narrow's resolved selection inside a nested operand. The position is
-never repeated in the node. `operand` is evaluated over the selection's resolved
-position, so a concrete-subtype-declared attribute becomes referenceable there.
+For the temporary query-position form, the active position is the read's
+`targetEntity`. For Predicate-scoped narrowing, it is the surrounding Predicate
+position: the root target inside a predicate, the relationship target inside
+`navigate` / `exists` / `notExists`, or the enclosing narrow's resolved selection
+inside a nested operand. The position is never repeated in the node. `operand` is
+evaluated over the selection's resolved position, so a concrete-subtype-declared
+attribute becomes referenceable there.
 
 ```yaml
 # targetEntity: Animal (root); narrow to Pet (abstract subtype -> Dog, Cat):
@@ -689,9 +696,9 @@ specified once in `m-inheritance`. This module adds these operand consequences:
 - **An order key's attribute reference is checked at the position it orders.**
   An `orderBy` key names an attribute exactly as a predicate does and takes the
   same positional rule, but the position it is asked of is the one its **ordered
-  rows** occupy: a **top-level `narrow`** in the ordered operand — the node a
-  whole-result narrowing produces — moves that position, while a `narrow` appearing
-  as a predicate term inside a boolean combinator is a filter and moves nothing. So
+  rows** occupy: the transitional **query-position `narrow`** in the ordered operand
+  moves that position, while a Predicate-scoped `narrow` appearing as a term inside
+  a boolean combinator is a filter and moves nothing. So
   ordering an abstract position by a concrete subtype's attribute is rejected, and
   ordering that same position **narrowed to** that subtype is not. The wrappers
   that may carry the `narrow` between it and the `orderBy` are exactly those

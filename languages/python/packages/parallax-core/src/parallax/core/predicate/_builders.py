@@ -1,4 +1,4 @@
-"""Canonical builders for composed operation-algebra values."""
+"""Canonical builders for composed Predicate values."""
 
 from __future__ import annotations
 

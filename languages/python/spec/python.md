@@ -339,7 +339,7 @@ mutations, exceptions, or exports.
   `as_of_range(*, valid_time=(start, end), tx_time=(start, end))`. There is no
   Find Query `.where(...)` refinement in this slice and no `distinct`, offset,
   pagination, projection, count, aggregation, execution, or serialization
-  method. The lower-level operation algebra likewise carries no distinct node:
+  method. The lower-level Predicate algebra likewise carries no distinct node:
   a Find Query always returns complete root Entities, navigation lowers through
   existence tests, and included graphs are fetched separately. Duplicate roots
   are therefore a lowering or identity-resolution defect, not a condition for
@@ -579,7 +579,7 @@ mutations, exceptions, or exports.
   construction. The frontend neither exposes provider three-valued membership
   surprises nor silently rewrites membership into an `isNull`/`isNotNull`
   Boolean combination. The collection must also be nonempty, as required by
-  the canonical operation algebra: `.in_([])` and `.not_in([])` both raise
+  the canonical Predicate algebra: `.in_([])` and `.not_in([])` both raise
   `QueryDefinitionError(query-expression-invalid)` rather than normalizing to
   match-none or match-all Predicates. Each method accepts exactly one
   collection, whose runtime type must be the built-in `list` or `tuple`. The

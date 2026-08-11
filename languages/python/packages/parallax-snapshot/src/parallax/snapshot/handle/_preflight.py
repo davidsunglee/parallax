@@ -50,7 +50,7 @@ mutation-compatible Find Query first, so a read-shaped query is refused as
 
 This is its own module precisely so that it can be proven to touch no port. Its
 ``spec/python.md`` §7 scope grants only the Entity frontend's query submodule,
-the Metamodel Interface, and the operation algebra, so the generated
+the Metamodel Interface, and Predicate, so the generated
 import-linter contract forbids it — directly or through any chain — from
 reaching SQL generation, a dialect, any Database Port, deep-fetch planning, or
 materialization. The grant stops at :mod:`parallax.core.entity._query`

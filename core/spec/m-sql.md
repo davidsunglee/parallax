@@ -139,7 +139,7 @@ form — never of the predicate**. Exactly one read takes a fourth input: the in
 materialized-predicate-write resolving read derives its `Document` slots from the
 **declared needs of the write it serves** — that write's target designation and its
 declared assignments — and from nothing else, its own predicate included (the
-`Document` slot rule and *Result form*, below). The operation algebra deliberately
+`Document` slot rule and *Result form*, below). Predicate deliberately
 carries **no projection node** (`m-predicate`): no Object Query read may project
 a proper subset of the derived list. The directives `orderBy` and `limit` never
 change the list.

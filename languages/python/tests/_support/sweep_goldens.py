@@ -34,7 +34,7 @@ _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
 _VALUE_OBJECT_TO_MANY_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (*range(15, 23), *range(50, 54), *range(56, 66), 68)
 )
-# Orders op-algebra reads use the full declared scalar projection emitted by
+# Orders Predicate reads use the full declared scalar projection emitted by
 # the default find projection. Case 028 is intentionally absent from the corpus.
 _ORDERS_OP_ALGEBRA_READS: Final[frozenset[str]] = frozenset(
     f"m-op-algebra-{n:03d}" for n in (*range(1, 28), *range(29, 39))

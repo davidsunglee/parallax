@@ -515,17 +515,15 @@ def lower_predicate(op: PredicateNode, scope: ResolutionScope) -> str:
                 "read per relationship level, each of which this compiler lowers on its own"
             )
         case AsOf() | AsOfRange() | History():
-            # Temporal reads are lowered by `m-temporal-read` (auto-injected as-of
-            # predicate + default-latest injection) into ordinary predicate nodes
-            # BEFORE compile_read runs — the module DAG forbids m-sql from importing
-            # m-temporal-read, so the composition happens in the caller (the
-            # conformance engine's canonicalize step). Reaching this branch means a
-            # temporal wrapper survived un-canonicalized, which is a wiring error, not
-            # an unsupported node.
+            # The `m-deep-fetch` planning boundary peels temporal selections and
+            # passes them with the flat predicate to `m-temporal-read`, which injects
+            # ordinary predicate nodes before producing the EntityQuery. Reaching
+            # this branch means compilation bypassed that boundary, which is a
+            # wiring error rather than an unsupported node.
             raise SqlGenError(
-                "temporal wrapper reached m-sql un-lowered; canonicalize the read with "
-                "m-temporal-read.inject_as_of before compile_read (m-sql cannot import "
-                "m-temporal-read per the module DAG)"
+                "temporal wrapper reached m-sql unplanned; plan the read with "
+                "m-deep-fetch.plan before compile_read (m-sql cannot import the planning "
+                "or temporal-read modules per the module DAG)"
             )
         case OrderBy() | Limit():
             raise SqlGenError("result-shaping directive nested inside a predicate")

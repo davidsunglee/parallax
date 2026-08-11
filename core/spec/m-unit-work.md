@@ -467,7 +467,7 @@ statement, and the registry advance an update applies to the stored value. Each
 is legal only where the statement that renders it can express it, so a Planned
 Row and Planned Assignments admit different members of the set rather than
 different value vocabularies. What neither admits is an **authored assignment
-expression** — anything a caller composes out of the operation algebra — because
+expression** — anything a caller composes out of Predicate — because
 the planner resolves every caller-supplied value before a step is settled.
 
 ### Write Target

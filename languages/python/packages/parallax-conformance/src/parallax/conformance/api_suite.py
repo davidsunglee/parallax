@@ -218,7 +218,7 @@ class Partition:
 # Registered idiomatic examples mirror corpus cases and are checked by the
 # operation no-drift guard, which serializes each statement to its case operation.
 EXAMPLES: Final[list[Example]] = [
-    # The op-algebra / temporal-read / navigate / single-concrete-inheritance
+    # The Predicate / temporal-read / navigate / single-concrete-inheritance
     # read examples: each is an executable read story
     # (`parallax.conformance.read_stories`) — the snippet is `read_story_
     # snippet(story)` (single-sourced from the story's own `concurrency`
@@ -427,7 +427,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
     ),
     "m-predicate": (
         "representative predicate/grouping/ordering spellings are exercised as idiomatic "
-        "examples; the remaining op-algebra cases are graded through the compile/run "
+        "examples; the remaining Predicate cases are graded through the compile/run "
         "lanes"
     ),
     "m-temporal-read": (

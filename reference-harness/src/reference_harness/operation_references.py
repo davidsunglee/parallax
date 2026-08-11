@@ -181,7 +181,7 @@ def _collect_result_modifier_classes(tag: str, body: dict[str, Any], classes: se
         # A narrow evaluates its operand over the polymorphic position supplied by
         # context, so the
         # operand's queried-entity references are still cross-checked against the
-        # target; the narrow's subset validity is asserted separately (op-algebra).
+        # target; the narrow's subset validity is asserted separately (Predicate).
         collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
     elif tag == "orderBy":
         collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)

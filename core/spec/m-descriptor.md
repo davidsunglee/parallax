@@ -453,7 +453,7 @@ expressible per entity.
 ## Metamodel serde (protocol seam)
 
 The descriptor is **importable and exportable** through the same
-format-agnostic canonical serde seam as the operation algebra (`m-predicate`),
+format-agnostic canonical serde seam as Predicate (`m-predicate`),
 with concrete writers for **JSON and YAML**. **Import** is the three-phase
 ingestion below; **export** is canonical export of the accepted Metamodel;
 their composition is **canonicalization**: `canonicalize(d) =

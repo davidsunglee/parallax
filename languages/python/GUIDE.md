@@ -97,7 +97,7 @@ self-contained without a system `libpq`.
   Docker database lanes both pass.
 - **Phase 5 (SQL walking skeleton — read path):** `m-predicate` nodes + serde,
   the pure `m-dialect` Postgres strategy, the abstract `m-db-port`, the `m-sql`
-  three-stage read compiler (`compile_read` = canonicalize → lower → normalize),
+  flat-Entity-Query read compiler (`compile_read` = lower → normalize),
   the statement half (`Entity.where`, comparison/string/null/membership
   operators, `&`/`|`/`~` + canonical grouping, value-object nested access,
   `order_by`/`limit`/`distinct`), the concrete psycopg adapter, and the
@@ -118,7 +118,7 @@ self-contained without a system `libpq`.
   to-many value-object array-traversal reads, both landing later in Phase 7;
   the read-side pre-SQL rejected-operation validation landed in Phase 7
   increment 1) and the write-path shapes (Phase 6/8). The operation no-drift
-  guard exercises 10 idiomatic op-algebra read spellings.
+  guard exercises 10 idiomatic Predicate read spellings.
 - **Phase 6: transactions + temporal backbone — milestones 1–4 COMPLETE (backbone review closed).**
   - **M1 — `m-db-error`:** the neutral category set + call-site predicates
     (`is_retriable` / `violates_unique_index` / `is_timed_out`) in

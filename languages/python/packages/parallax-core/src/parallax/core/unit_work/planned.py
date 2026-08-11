@@ -270,7 +270,7 @@ class PlannedAssignments:
     Unlike a Planned Row this names only the members the step changes, including
     the framework-owned advance a versioned update derives; the members it does
     not name keep their stored values. It carries no authored assignment
-    expression — nothing a caller composes out of the operation algebra — and the
+    expression — nothing a caller composes out of the Predicate algebra — and the
     only expression it admits at all is the `m-pk-gen` registry advance, which a
     revising statement computes from the very row it is rewriting.
     """

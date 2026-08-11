@@ -2,7 +2,7 @@
 
 These feed already-canonicalized operations directly (the per-hop as-of rewrite
 is `parallax.core.navigate`'s job, tested in `test_navigate.py`) — this module
-only lowers whatever op-algebra tree it receives.
+only lowers whatever Predicate tree it receives.
 
 Beyond the correlated `EXISTS` shapes themselves, this suite pins the ALIAS
 sequence: one statement allocates one depth-first, source-ordered sequence

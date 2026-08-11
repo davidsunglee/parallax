@@ -257,7 +257,7 @@ construction it may reference any behavioral module it harnesses.
 - **`m-predicate --> m-metamodel`.** Resolved operation nodes carry canonical
   model Identities, not descriptor records or authoring strings. Relationship
   execution remains owned by `m-navigate`, which consumes the compiled
-  `m-relationship` facet; the operation algebra does not rebuild that facet.
+  `m-relationship` facet; Predicate does not rebuild that facet.
 - **`m-predicate --> m-inheritance`.** The `narrow` node constrains a
   polymorphic entity position to a subset of its subtypes, and its validity rule
   (the resolved `to` list must be a non-empty subset of the position's **effective

@@ -1,7 +1,7 @@
 """The write-instruction IR (m-unit-work write-instruction vocabulary).
 
 Frozen ``slots`` dataclasses for the two canonical write-instruction shapes a unit
-of work buffers — the write-side analogue of the operation algebra — plus the
+of work buffers — the write-side analogue of the Predicate algebra — plus the
 serde that round-trips them through ``core/schemas/write-instruction.schema.json``
 (``serialize(deserialize(x)) == x``, JSON and YAML). There are exactly two shapes:
 

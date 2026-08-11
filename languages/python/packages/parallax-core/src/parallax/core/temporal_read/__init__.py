@@ -8,10 +8,10 @@ milestone (edge-pin) behaviour* (``m-predicate`` / ``m-temporal-read``);
 module DAG forbids ``m-sql`` from importing ``m-temporal-read`` (they are siblings
 over ``m-predicate``), the temporal → predicate lowering is expressed **here**,
 as a rewrite of the temporal wrapper nodes into ordinary ``m-predicate``
-predicate nodes, which ``m-sql`` then lowers with no temporal knowledge. A caller
-that can legally compose both scopes (the conformance engine; later the snapshot
-handle and the statement compile path) applies :func:`inject_as_of` before
-``compile_read``.
+predicate nodes, which ``m-sql`` then lowers with no temporal knowledge. The
+``m-deep-fetch`` planning boundary passes its peeled predicate and temporal
+selections to :func:`inject_as_of`, then places the result in the flat
+``EntityQuery`` consumed by ``compile_read``.
 
 Every entry point here takes accepted Entity Metadata, and each resolves an
 axis through the same declared lookup, so the wire dimension spelling an
@@ -567,9 +567,11 @@ def statement_pin(op: PredicateNode, entity: EntityMetadata) -> Pin:
     whole-graph pin ``Database.find`` / ``Transaction.find`` attach to the
     returned ``Snapshot``.
 
-    Called on the SAME raw (pre-:func:`inject_as_of`) operation
-    :func:`resolve_pinned_instants` consumes — an independent, side-effect-free
-    read of the statement's own temporal wrapper, never a database round trip.
+    Called on the raw wrapper tree before planning — an independent,
+    side-effect-free read of the statement's own temporal wrappers, never a
+    database round trip. The planning boundary separately peels those wrappers
+    into the selection values consumed by :func:`resolve_pinned_instants` and
+    :func:`inject_as_of`.
     """
     tx_time: _dt.datetime | Latest | None = None
     valid_time: _dt.datetime | Latest | None = None

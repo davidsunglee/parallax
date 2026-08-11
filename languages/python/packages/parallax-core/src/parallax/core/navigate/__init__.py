@@ -96,10 +96,12 @@ def canonicalize(
     the spelling itself names one Entity model-wide or none. ``root_pins`` is the root
     read's resolved per-axis instant —
     :func:`~parallax.core.temporal_read.resolve_pinned_instants` computed from the
-    SAME raw operation `inject_as_of` consumed — mapping an axis to the specific past
-    instant the root pinned; an axis absent from the map (undeclared by the root,
-    pinned/defaulted to latest, or scanned) independently defaults to **latest** at
-    every temporal hop target it reaches, never re-derived from ``op`` itself.
+    same peeled temporal selections that the planning boundary passes to
+    :func:`~parallax.core.temporal_read.inject_as_of` alongside ``op`` — mapping an
+    axis to the specific past instant the root pinned; an axis absent from the map
+    (undeclared by the root, pinned/defaulted to latest, or scanned) independently
+    defaults to **latest** at every temporal hop target it reaches, never re-derived
+    from ``op`` itself.
 
     Returns ``op`` unchanged (strict identity) when it contains no
     ``navigate`` / ``exists`` / ``notExists`` node anywhere — the common case for a
