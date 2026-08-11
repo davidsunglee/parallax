@@ -641,22 +641,26 @@ position.
 `m-inheritance` owns the shared **Subtype Selection** value, its canonical
 construction, and its model-aware resolution inside a polymorphic position.
 The transitional representation uses the same serialized `narrow` node in two
-semantic positions: the outer query-position form narrows the whole result and
-moves to Object Query, while a Predicate-scoped form narrows the active position
-for its inner predicate and remains here. In either position, `narrow` contributes
-only the operand that its selection scopes:
+semantic positions. The first `narrow` on the transparent query-wrapper spine —
+reachable from the root only through `orderBy`, `limit`, `deepFetch`, `asOf`,
+`asOfRange`, or `history` — is the query-position form: it narrows the whole
+result and moves to Object Query. A `narrow` below a Predicate operator, or
+inside that first `narrow`'s operand, is Predicate-scoped: it narrows the active
+position for its inner predicate and remains here. In either position, `narrow`
+contributes only the operand that its selection scopes:
 
 | Predicate | Encoding | Meaning |
 |---|---|---|
 | `narrow` | `{ "narrow": { "to": [ … ], "operand" } }` | evaluate `operand` over the active position narrowed by the Subtype Selection `to` |
 
 For the temporary query-position form, the active position is the read's
-`targetEntity`. For Predicate-scoped narrowing, it is the surrounding Predicate
-position: the root target inside a predicate, the relationship target inside
-`navigate` / `exists` / `notExists`, or the enclosing narrow's resolved selection
-inside a nested operand. The position is never repeated in the node. `operand` is
-evaluated over the selection's resolved position, so a concrete-subtype-declared
-attribute becomes referenceable there.
+`targetEntity`. For Predicate-scoped narrowing, the containing Predicate
+structure supplies the position: a Boolean term uses that Boolean expression's
+active position, a `navigate` / `exists` / `notExists` filter uses the
+relationship target, and a `narrow` inside another `narrow`'s operand uses the
+enclosing selection's resolved position. The position is never repeated in the
+node. `operand` is evaluated over the selection's resolved position, so a
+concrete-subtype-declared attribute becomes referenceable there.
 
 ```yaml
 # targetEntity: Animal (root); narrow to Pet (abstract subtype -> Dog, Cat):

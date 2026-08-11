@@ -753,7 +753,7 @@ def _check_value(
 
     ``collapsed`` names a document-resident position, where ``None`` is the
     member's own NOT-PRESENT state rather than a stored null: reading a document
-    applies operation-algebra absence collapse, so an absent leaf, a stored JSON
+    applies Predicate-algebra absence collapse, so an absent leaf, a stored JSON
     null, and a wrong-kind occurrence all arrive here as ``None``. Deriving a
     nullability verdict from that would contradict the collapse the read seam
     already performed, so only the declared value space is checked.
@@ -865,7 +865,7 @@ def _build_occurrence(
     if value is None:
         # A One occurrence absent from the document, stored as JSON null, or
         # stored in the wrong kind all arrive here as `None`: reading a document
-        # applies operation-algebra absence collapse, so this is the whole
+        # applies Predicate-algebra absence collapse, so this is the whole
         # composite being not present rather than a nullability verdict to
         # re-derive against a collapse that already happened.
         return None

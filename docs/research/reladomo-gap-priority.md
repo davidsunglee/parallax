@@ -15,7 +15,7 @@ explicitly excluded, partially acknowledged, or still missing.
 |---:|---|---|---|
 | 1 | Identity cache + query cache | Explicitly deferred: `m-process-cache` | Core ORM semantics. Affects identity, list behavior, unit-of-work freshness, optimistic locking ergonomics, benchmarks, and coherence. |
 | 2 | Source attributes / tenant or shard routing | Explicitly excluded, with a "not a one-way door" seam note | Highest architectural risk. Even if not implemented now, the database port and transaction seams must keep room for it. |
-| 3 | Calculated / computed attributes and SQL scalar expressions | Mostly missing | Important query-language gap: arithmetic, string functions, date extraction, expression attributes. Touches descriptor, operation algebra, SQL, and API shape. |
+| 3 | Calculated / computed attributes and SQL scalar expressions | Mostly missing | Important query-language gap: arithmetic, string functions, date extraction, expression attributes. Touches descriptor, Predicate algebra, SQL, and API shape. |
 | 4 | DB-native identity / auto-increment primary keys | Missing | Common database integration gap. Current `m-pk-gen` has `none`, `max`, and simulated `sequence`, but not DB identity columns. |
 | 5 | Aggregation and SQL lowering | Explicitly deferred: `m-agg`, `m-sql-agg` | Common reporting/query feature. Already modeled as a deferred module pair. |
 | 6 | Bitemporal overlap detection / repair | Missing | Important for temporal data integrity. Current `m-bitemp-write` handles rectangle-split writes, not remediation of bad or overlapping history. |
