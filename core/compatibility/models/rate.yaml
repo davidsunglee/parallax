@@ -17,8 +17,9 @@
 #     LoanRate    (concrete)       — its own `loan_rate` table;    adds spread
 #
 # Branch alpha order: DepositRate, LoanRate. A temporal abstract-target `union all`
-# read (m-inheritance-093) carries the per-branch as-of binds (Valid-Time-axis-first,
-# repeated in alphabetical branch order); a concrete-target read (m-inheritance-100)
+# read (m-inheritance-093) carries per-branch temporal-selection binds
+# (Valid-Time-axis-first, with no bind for history, repeated in alphabetical branch order);
+# a concrete-target read (m-inheritance-100)
 # refers to the inherited axis through the concrete position (`DepositRate.
 # transaction-time`) — proving the axes are usable there too, not just at the abstract
 # root; the bitemporal terminate / terminateUntil writes (m-inheritance-095 / -097)

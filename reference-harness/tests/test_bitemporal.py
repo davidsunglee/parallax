@@ -546,14 +546,15 @@ def test_rectangle_split_has_inactivate_plus_three_inserts() -> None:
 
 # --- temporal inheritance composition -----------------------------------------
 #
-# A temporal inheritance participant composes the milestone-chaining writes / as-of reads
+# A temporal inheritance participant composes milestone-chaining writes and temporal reads
 # with the strategy's routing + tag guard. Under table-per-hierarchy every EXISTING-ROW
 # temporal statement (an audit close, a bitemporal inactivation) carries the tag GUARD
 # right after the pk; chained inserts set the tag COLUMN. Under table-per-concrete-subtype
 # every statement targets the subtype's own table with no tag. A temporal TPCS abstract
-# `union all` read carries the injected as-of predicate PER BRANCH (Valid-Time-first, repeated
-# in alphabetical branch order). The temporal families are NEW (instrument / rate /
-# reading / quote); the existing families stay non-temporal.
+# `union all` read carries user-predicate then temporal-selection binds PER BRANCH
+# (Valid-Time-first, with no bind for history), followed by result-directive binds. The
+# temporal families are NEW (instrument / rate / reading / quote); the existing families
+# stay non-temporal.
 
 
 def _inheritance_case(prefix: str):
@@ -736,11 +737,10 @@ def test_tpcs_temporal_close_routed_to_wrong_table_is_rejected() -> None:
         _assert_write_input_columns(case, "postgres")
 
 
-def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
-    # m-inheritance-093: the temporal abstract `union all` read carries the per-branch as-of
-    # binds — Valid-Time-first [b, b, infinity], repeated in alphabetical branch order. The
-    # oracle recomputes them from the read's complete canonical selections, independent
-    # of the authored golden.
+def test_tpcs_temporal_union_read_per_branch_temporal_selection_binds() -> None:
+    # m-inheritance-093: the temporal abstract `union all` read carries the per-branch
+    # selection binds — Valid-Time-first [b, b, infinity], repeated in alphabetical
+    # branch order. The oracle derives them from the complete canonical selections.
     case = _inheritance_case("m-inheritance-093")
     assert set(_read_temporal_selections(case)) == {"valid-time", "transaction-time"}
     _assert_temporal_union_binds(case, "postgres")  # must not raise
@@ -785,7 +785,7 @@ def test_tpcs_temporal_union_read_per_branch_asof_binds() -> None:
         ("history", {}, []),
     ],
 )
-def test_tpcs_temporal_union_variants_compose_independently(
+def test_tpcs_temporal_union_variants_compose_with_bound_predicate_and_limit(
     valid_tag: str,
     valid_fields: dict[str, str],
     valid_binds: list[str],
@@ -794,30 +794,41 @@ def test_tpcs_temporal_union_variants_compose_independently(
     tx_binds: list[str],
 ) -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
+    predicate = {
+        "eq": {
+            "attr": "parallax.compatibility.Rate.amount",
+            "value": 2.5,
+        }
+    }
     tx_selection = {
         tx_tag: {
-            "operand": {"all": {}},
+            "operand": predicate,
             "dimension": "transaction-time",
             **tx_fields,
         }
     }
     case.when["operation"] = {
-        valid_tag: {
-            "operand": tx_selection,
-            "dimension": "valid-time",
-            **valid_fields,
+        "limit": {
+            "operand": {
+                valid_tag: {
+                    "operand": tx_selection,
+                    "dimension": "valid-time",
+                    **valid_fields,
+                }
+            },
+            "count": 1,
         }
     }
-    per_branch = valid_binds + tx_binds
-    case.then["statements"][0]["binds"] = per_branch * 2
+    per_branch = [2.5, *valid_binds, *tx_binds]
+    case.then["statements"][0]["binds"] = [*per_branch, *per_branch, 1]
 
     assert set(_read_temporal_selections(case)) == {"valid-time", "transaction-time"}
     _assert_temporal_union_binds(case, "postgres")
 
 
-def test_tpcs_temporal_union_read_corrupt_branch_asof_bind_is_rejected() -> None:
-    # Corrupting the SECOND branch's Valid-Time-start as-of bind (index 3) breaks the recomputed
-    # per-branch propagation, so the oracle MUST fail.
+def test_tpcs_temporal_union_read_corrupt_temporal_selection_bind_is_rejected() -> None:
+    # Corrupting the second branch's Valid-Time-start selection bind breaks the
+    # independently derived per-branch vector, so the oracle MUST fail.
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"][3] = "1999-12-31T00:00:00+00:00"
     with pytest.raises(CaseFailure):
@@ -825,16 +836,14 @@ def test_tpcs_temporal_union_read_corrupt_branch_asof_bind_is_rejected() -> None
 
 
 def test_tpcs_temporal_union_read_dropped_branch_binds_is_rejected() -> None:
-    # Dropping the second branch's as-of binds entirely fails the per-branch arity (two
-    # branches x three as-of binds each).
+    # Dropping the second branch's temporal-selection binds fails the per-branch arity.
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
     case.then["statements"][0]["binds"] = case.then["statements"][0]["binds"][:3]
     with pytest.raises(CaseFailure):
         _assert_temporal_union_binds(case, "postgres")
 
 
-def test_non_temporal_tpcs_union_read_asof_oracle_is_noop() -> None:
-    # The per-branch as-of oracle is a no-op on a NON-temporal TPCS abstract union read
-    # (the existing document family), so it never touches the non-temporal union cases.
+def test_non_temporal_tpcs_union_read_temporal_bind_oracle_is_noop() -> None:
+    # The temporal bind oracle is a no-op on a NON-temporal TPCS abstract union read.
     case = _inheritance_case("m-inheritance-050")
     _assert_temporal_union_binds(case, "postgres")  # must not raise (returns early)
