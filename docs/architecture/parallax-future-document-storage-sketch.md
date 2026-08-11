@@ -105,7 +105,7 @@ decided by this sketch.
   without relational rows and SQL?
 - How are schema creation, validation, migrations, and collection indexes
   represented without weakening Parallax's one-shape-per-Entity rule?
-- Which operation algebra and query capabilities can a document adapter
+- Which Predicate algebra and query capabilities can a document adapter
   implement faithfully, and how are unsupported capabilities classified?
 - Does Document Collection support belong behind the existing database port, or
   does it require a provider-neutral persistence interface above relational SQL?

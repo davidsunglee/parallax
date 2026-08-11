@@ -1,7 +1,7 @@
 """Canonical, format-agnostic serde for operations AND the metamodel.
 
 The canonical model is plain JSON-compatible data (dicts / lists / scalars) — the
-same in-memory shape an implementation's operation algebra and metamodel
+same in-memory shape an implementation's Predicate algebra and metamodel
 serialize to. This module provides pluggable format writers (JSON + YAML),
 mirroring Reladomo's ``SerialWriter`` seam, and the round-trip property the m-case-format
 harness asserts:

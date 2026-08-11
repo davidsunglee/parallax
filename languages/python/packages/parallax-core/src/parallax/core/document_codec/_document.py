@@ -437,7 +437,7 @@ def reduce_declared_members(
     survives the reduction rather than collapsing into it.
 
     ``collapse_invalid_occurrences`` is reserved for logical read materialization,
-    where operation-algebra absence collapse treats a wrong-kind occurrence as
+    where Predicate-algebra absence collapse treats a wrong-kind occurrence as
     not present. Mutation comparison leaves it false so invalid storage cannot
     compare equal to a replacement value. A wrong-kind occurrence the source does
     hold collapses to its empty form rather than vanishing, so the two options
