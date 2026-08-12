@@ -45,7 +45,9 @@ public-surface check promises. Where the exported names live:
   defined in a dependency-free leaf so every raiser can name them.
 - :mod:`~parallax.snapshot.handle._features` — :class:`DeferredFeatureError`,
   beside the fixed inventory of Deferred Execution Features it reports and the
-  recognizer that matches a canonical operation against them.
+  recognizer that matches a canonical Object Query against them.
+- :mod:`~parallax.snapshot.handle._preflight` — :func:`preflight`, the one read
+  gate every entry point crosses before any I/O.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, plus the result surface they build
   (:class:`Snapshot`, :class:`FindResult`, :class:`HistoryFindResult`,
@@ -86,11 +88,12 @@ already carries.
   verbs run before deriving a row.
 
 The modules behind no exported name (``_materializer``, ``_family``,
-``_keyed_sql``, ``_predicate_writes``, ``_preflight``, ``_spine``) are reached only through the
-modules above; each documents its own place in the package's acyclic internal graph.
-``_preflight`` in particular stays unexported: the read gate is an intra-package
-seam, and its own §7 scope is what proves it reaches no port; ``_spine`` is the
-one own-row wrapper walk that gate's two structural recognizers share.
+``_keyed_sql``, ``_predicate_writes``) are reached only through the modules
+above; each documents its own place in the package's acyclic internal graph.
+``_preflight`` exports :func:`preflight` alone: an adapter's compile lane must
+refuse exactly what this implementation's executor refuses, so the one gate is
+reachable without an executor, and the module's own §7 scope is what proves it
+reaches no port.
 """
 
 from __future__ import annotations
@@ -119,6 +122,7 @@ from parallax.snapshot.handle._errors import (
 )
 from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
+from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
     FindResult,
     HistoryFindResult,
@@ -192,6 +196,7 @@ __all__ = [
     "find_history",
     "lower_step",
     "plan_temporal_close",
+    "preflight",
     "stream_lowered",
     "validate_source_pin",
 ]

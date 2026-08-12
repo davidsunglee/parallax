@@ -36,15 +36,15 @@ when:
         - sql:
             postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
           binds: [9, D, 150.00, "2024-06-01T00:00:00+00:00", infinity]
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            eq:
-              attr: parallax.compatibility.Balance.id
-              value: 9
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 9
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       note: Latest over account 9 observes ONE current milestone at the coalesced value 150 (a single row, not a superseded 100 + current 150)
       statements:

@@ -65,7 +65,7 @@ _CASES = {c.case_id: c for c in case_format.load_cases()}
 def _final_find_expect_rows(case_id: str) -> list[dict[str, Any]]:
     """The last scenario find step's ``expectRows`` — the story's returned oracle."""
     steps = cast("list[dict[str, Any]]", case_document(_CASES[case_id])["when"]["scenario"])
-    finds = [step for step in steps if "find" in step]
+    finds = [step for step in steps if "objectQuery" in step]
     assert finds, case_id
     return cast("list[dict[str, Any]]", finds[-1]["expectRows"])
 

@@ -12,13 +12,16 @@ model: models/animal.yaml
 tags: [m-navigate, m-predicate, m-inheritance, table-per-hierarchy, narrow, rejected, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    exists:
-      rel: parallax.compatibility.Person.pets
-      op:
-        narrow:
-          to: [parallax.compatibility.WildBoar]
-          operand:
-            all: {}
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      exists:
+        rel: parallax.compatibility.Person.pets
+        op:
+          narrow:
+            to:
+              - parallax.compatibility.WildBoar
+            operand:
+              all: {}
 then:
   rejectedRule: narrow-outside-relationship-target

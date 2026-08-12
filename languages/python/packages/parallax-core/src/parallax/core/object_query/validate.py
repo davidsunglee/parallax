@@ -1,0 +1,168 @@
+"""Model-aware Object Query validation (m-object-query).
+
+A schema-valid Object Query can still be **structurally invalid** against a
+specific metamodel: a ``narrowTo`` that broadens past the queried position, a
+Sort Key over an attribute the narrowed result does not carry, an Include Path
+guarded by a selection outside the queried position or hopping through a value
+object, or a Temporal Selection naming a dimension the target does not declare.
+``m-case-format``'s ``rejected`` case shape requires these refusals to happen
+**before any SQL is emitted**.
+
+This module owns exactly the clause rules; the predicate's own rules stay in
+``m-predicate``, which this walk enters once, with the position the query's own
+narrowing resolved. That split is what keeps one rule in one place: the
+narrowing rule is ``m-inheritance``'s, stated once in the Predicate validator
+and applied here to the three clause positions that carry the same shared
+Subtype Selection.
+
+Rule provenance beyond ``m-predicate``'s own list:
+
+- ``narrow-outside-position`` / ``narrow-empty-effective-set`` — result narrowing
+  and an Include Path's source guard resolve inside the QUERIED position, which
+  is the query's own ``target``. An Include Path is measured against the queried
+  position rather than the narrowed result: narrowing decides which objects come
+  back, not which sources a path may start from.
+- ``narrow-outside-relationship-target`` — an Include Segment's ``narrowTo``
+  resolves inside that hop's relationship target's effective concrete set.
+- ``deep-fetch-value-object-segment`` — ``m-value-object`` contract 4: a value
+  object carries no correlation columns and is never an Include Segment.
+- ``subtype-attribute-outside-narrow-scope`` / ``attribute-outside-active-position``
+  — a Sort Key addresses the RESULT position, which ``narrowTo`` moves.
+- ``temporal-read-dimension-selection-cardinality`` — ``m-temporal-read``: a
+  canonical query names exactly one selection for every family-effective declared
+  dimension and none for an undeclared dimension. Transaction-Time omission is
+  normalized by an authoring surface before this model-aware boundary; Valid Time
+  has no omission default.
+"""
+
+from __future__ import annotations
+
+from parallax.core import inheritance
+from parallax.core.metamodel import (
+    EntityMetadata,
+    Metamodel,
+)
+from parallax.core.metamodel import (
+    TemporalDimension as AxisKind,
+)
+from parallax.core.object_query._nodes import IncludePath, ObjectQueryNode
+from parallax.core.predicate import (
+    OperationRejectedError,
+    PositionScope,
+    check_attribute_reference,
+    effective_set,
+    referenced_entities,
+    relationship_target,
+    resolve_subtype_selection,
+    root_position,
+    validate_narrow,
+    validate_operation,
+)
+
+__all__ = ["query_entities", "validate_object_query"]
+
+
+def validate_object_query(root: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> None:
+    """Validate ``query`` against ``model``, raising :class:`OperationRejectedError`.
+
+    ``root`` is the queried position, already resolved to accepted Metadata by
+    the caller from the query's own ``target``. The clause rules run in the order
+    the canonical document fixes: temporal completeness, then result narrowing —
+    whose resolved position the predicate and the Sort Keys are both measured
+    against — then Includes, measured against the unnarrowed queried position.
+    """
+    _validate_temporal_selections(root, query, model)
+    queried = root_position(model, root)
+    result = _narrowed_position(query, queried, model)
+    validate_operation(root, query.predicate, model, position=result)
+    for key in query.order_by:
+        check_attribute_reference(key.attr, model, result)
+    for path in query.includes:
+        _validate_include_path(path, model, queried)
+
+
+def query_entities(query: ObjectQueryNode) -> frozenset[str]:
+    """Every Entity spelling ``query`` names anywhere, exactly as authored.
+
+    A caller assembling a coherent model to validate ``query`` against needs each
+    of them, not only the queried target: an Include Path or a navigation names a
+    target the root's family does not otherwise reach.
+    """
+    names = {query.target.canonical, *referenced_entities(query.predicate)}
+    names.update(query.narrow_to or ())
+    for key in query.order_by:
+        entity, _, _member = key.attr.rpartition(".")
+        names.add(entity)
+    for path in query.includes:
+        names.update(path.applies_to or ())
+        for segment in path.segments:
+            entity, _, _member = segment.rel.rpartition(".")
+            names.add(entity)
+            names.update(segment.narrow_to)
+    return frozenset(names)
+
+
+def _narrowed_position(
+    query: ObjectQueryNode, queried: PositionScope, model: Metamodel
+) -> PositionScope:
+    if query.narrow_to is None:
+        return queried
+    return validate_narrow(query.narrow_to, queried, model)
+
+
+def _validate_include_path(path: IncludePath, model: Metamodel, queried: PositionScope) -> None:
+    if path.applies_to is not None:
+        validate_narrow(path.applies_to, queried, model)
+    for segment in path.segments:
+        target = relationship_target(
+            segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
+        )
+        if segment.narrow_to:
+            # A segment selection carries no from-side — the position is the hop's
+            # target, implicitly — so only the subset check applies here.
+            target_effective = effective_set(model, target)
+            resolved = resolve_subtype_selection(segment.narrow_to, model)
+            if not resolved:
+                raise OperationRejectedError(
+                    "narrow-empty-effective-set",
+                    f"include segment narrowTo {list(segment.narrow_to)} resolves to the empty "
+                    "concrete-subtype set",
+                )
+            if not resolved <= target_effective:
+                raise OperationRejectedError(
+                    "narrow-outside-relationship-target",
+                    f"include segment narrowTo {list(segment.narrow_to)} resolves to "
+                    f"{sorted(resolved)}, which is not a subset of "
+                    f"{target.identity.name}'s effective concrete set "
+                    f"{sorted(target_effective)}",
+                )
+
+
+def _validate_temporal_selections(
+    root: EntityMetadata, query: ObjectQueryNode, model: Metamodel
+) -> None:
+    family = inheritance.view(model).entity(root.identity)
+    declarer = None if family is None else model.entity(family.root)
+    if declarer is None:  # pragma: no cover - the facet covers every accepted Entity
+        return
+    declared = {
+        "valid-time" if axis.dimension is AxisKind.VALID_TIME else "transaction-time"
+        for axis in declarer.declared_as_of_axes
+    }
+    selected = set(query.temporal)
+    missing = sorted(declared - selected)
+    undeclared = sorted(selected - declared)
+    if missing or undeclared:
+        details = "; ".join(
+            detail
+            for detail in (
+                f"missing {missing}" if missing else "",
+                f"undeclared {undeclared}" if undeclared else "",
+            )
+            if detail
+        )
+        raise OperationRejectedError(
+            "temporal-read-dimension-selection-cardinality",
+            f"{root.identity.canonical}: temporal read selections are invalid ({details}); "
+            "a canonical Object Query names exactly one selection per declared dimension",
+        )

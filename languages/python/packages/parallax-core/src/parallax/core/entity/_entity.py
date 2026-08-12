@@ -37,11 +37,11 @@ from parallax.core.entity._errors import EditError, EditViolation, EntityDefinit
 from parallax.core.entity._expressions import (
     AllPredicate,
     Predicate,
+    conjoin,
     judged_edit_violation,
     serialize_member,
 )
 from parallax.core.entity._members import Attr, Document, IndexSpec, InheritanceRole
-from parallax.core.entity._query import FindQuery, build_find_query
 from parallax.core.metamodel import (
     AsOfAxisMetadata,
     AttributeMetadata,
@@ -59,6 +59,8 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     ValueObjectOccurrenceDeclaration,
 )
+from parallax.core.object_query import object_query
+from parallax.core.object_query._fluent import ObjectQuery
 from parallax.core.predicate import All, Narrow, PredicateNode, QueryDefinitionError
 from parallax.core.predicate._nodes import canonical_subtype_selection
 
@@ -292,6 +294,53 @@ def _family_axes(cls: type) -> tuple[AsOfAxisMetadata, ...]:
     return ()
 
 
+def build_object_query(
+    target: EntityIdentity,
+    predicates: tuple[Predicate[Any] | AllPredicate[Any], ...],
+    *,
+    as_of_axes: tuple[AsOfAxisMetadata, ...] = (),
+) -> ObjectQuery[Any, Any]:
+    """Build the :class:`ObjectQuery` conjoining ``predicates`` — ``Entity.where``'s
+    whole body, kept beside the value it constructs.
+
+    At least one predicate is required: an accidentally empty argument list is a
+    mistake rather than a find-all, which ``Entity.all`` spells explicitly. That
+    unfiltered spelling is the WHOLE filter or none of it, so it never combines
+    with another term.
+
+    A whole filter that is itself one narrowing is WHOLE-RESULT narrowing and
+    fills the query's ``narrowTo`` clause rather than its predicate: narrowing
+    the entire selection to a subtype decides which objects come back, which is
+    observable in the result the read returns. Narrowing reached through any
+    Boolean combination is a filter and stays in the predicate, as does a
+    narrowing nested inside the lifted one's own scope.
+    """
+    if not predicates:
+        raise QueryDefinitionError(
+            code="query-clause-invalid",
+            message=(
+                "where() requires at least one predicate; spell an explicitly unfiltered "
+                "query as where(Entity.all)"
+            ),
+        )
+    if len(predicates) > 1 and any(isinstance(p, AllPredicate) for p in predicates):
+        raise QueryDefinitionError(
+            code="query-expression-invalid",
+            message=(
+                "Entity.all is legal only as the sole where() argument; an unfiltered query "
+                "is the whole filter or it is not the filter at all"
+            ),
+        )
+    predicate = conjoin(predicates)
+    assert predicate is not None  # the empty argument list is refused above
+    narrow_to = None
+    if isinstance(predicate, Narrow):
+        predicate, narrow_to = predicate.operand, predicate.to
+    return ObjectQuery(
+        _node=object_query(target, predicate, narrow_to=narrow_to), _as_of_axes=as_of_axes
+    )
+
+
 CHANGE_RECORD_SLOT: Final = "__parallax_changes__"
 """The one private instance slot an Edited Copy's Change Record lives in.
 
@@ -483,8 +532,8 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
     @classmethod
     def where[E: Entity](
         cls: type[E], first: Predicate[E] | AllPredicate[E], /, *rest: Predicate[E]
-    ) -> FindQuery[E, E]:
-        """Build a side-effect-free Find Query conjoining its predicates.
+    ) -> ObjectQuery[E, E]:
+        """Build a side-effect-free Object Query conjoining its predicates.
 
         At least one predicate is required, so an accidentally empty argument
         list is a mistake rather than a find-all; ``where(Entity.all)`` is the
@@ -508,7 +557,7 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         root, so a concrete subtype accepts its inherited axis spelling even
         though its own declaration carries no axis.
         """
-        return build_find_query(cls.identity, (first, *rest), as_of_axes=_family_axes(cls))
+        return build_object_query(cls.identity, (first, *rest), as_of_axes=_family_axes(cls))
 
     @classmethod
     def narrow[E: Entity, S: Entity](
@@ -520,6 +569,11 @@ class Entity(BaseModel, metaclass=EntityMeta, _mint=FRAMEWORK_MINT):
         attribute scope to those subtypes' declared members inside its own operand
         alone. An ordinary predicate: it composes like any other, and inside a
         relationship quantifier it must name exactly the relationship target.
+
+        Passed to ``where()`` as the WHOLE filter, it states the query's result
+        narrowing rather than one of its filters and fills ``narrowTo``
+        (:func:`build_object_query`) — which is also what makes it the spelling
+        a checker agrees with for a predicate over the narrowed subtype.
 
         The narrowed predicate addresses the narrowing class's own position — the
         sanctioned way to reach a descendant's member from an ancestor position —

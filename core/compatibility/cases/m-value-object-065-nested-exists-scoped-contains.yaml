@@ -16,15 +16,20 @@ model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, contains, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedExists:
-      path: parallax.compatibility.Customer.address.phones
-      where:
-        and:
-          operands:
-            - nestedEq: { path: type, value: home }
-            - nestedContains: { path: number, value: '-99' }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedExists:
+        path: parallax.compatibility.Customer.address.phones
+        where:
+          and:
+            operands:
+              - nestedEq:
+                  path: type
+                  value: home
+              - nestedContains:
+                  path: number
+                  value: '-99'
 then:
   statements:
     - sql:

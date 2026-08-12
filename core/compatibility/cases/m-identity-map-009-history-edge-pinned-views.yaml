@@ -22,17 +22,17 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Position
-      find:
-        history:
-          operand:
-            history:
-              operand:
-                eq:
-                  attr: parallax.compatibility.Position.id
-                  value: 1
-              dimension: transaction-time
-          dimension: valid-time
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 1
+        temporal:
+          transaction-time:
+            history: {}
+          valid-time:
+            history: {}
       roundTrips: 1
       note: history returns all three milestones, each carrying its own edge pins (from/thru/in/out)
       statements:
@@ -43,19 +43,17 @@ when:
         - { pos_id: 1, acct_num: A, val: 90.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
         - { pos_id: 1, acct_num: A, val: 100.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: "2024-06-01T00:00:00+00:00", in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
         - { pos_id: 1, acct_num: A, val: 200.00, from_z: "2024-06-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-04-01T00:00:00+00:00", out_z: infinity }
-    - targetEntity: parallax.compatibility.Position
-      find:
-        asOf:
-          operand:
-            asOf:
-              operand:
-                eq:
-                  attr: parallax.compatibility.Position.id
-                  value: 1
-              dimension: transaction-time
-              coordinate: "2024-01-01T00:00:00+00:00"
-          dimension: valid-time
-          coordinate: "2024-01-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: '2024-01-01T00:00:00+00:00'
+          valid-time:
+            asOf: '2024-01-01T00:00:00+00:00'
       roundTrips: 1
       note: re-read at R1's edge pin (Valid-Time + Transaction-Time from-instant 2024-01-01) -> exactly R1 (90)
       statements:
@@ -64,19 +62,17 @@ when:
           binds: [1, "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00", "2024-01-01T00:00:00+00:00"]
       expectRows:
         - { pos_id: 1, acct_num: A, val: 90.00, from_z: "2024-01-01T00:00:00+00:00", thru_z: infinity, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-04-01T00:00:00+00:00" }
-    - targetEntity: parallax.compatibility.Position
-      find:
-        asOf:
-          operand:
-            asOf:
-              operand:
-                eq:
-                  attr: parallax.compatibility.Position.id
-                  value: 1
-              dimension: transaction-time
-              coordinate: "2024-04-01T00:00:00+00:00"
-          dimension: valid-time
-          coordinate: "2024-06-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: '2024-04-01T00:00:00+00:00'
+          valid-time:
+            asOf: '2024-06-01T00:00:00+00:00'
       roundTrips: 1
       differentObjectFrom: 1
       identityAttr: pos_id

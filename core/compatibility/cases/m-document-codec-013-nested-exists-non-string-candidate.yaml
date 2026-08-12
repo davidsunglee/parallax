@@ -26,17 +26,26 @@ model: models/document-codec.yaml
 tags: [m-document-codec, m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Sample
-  operation:
-    nestedExists:
-      path: parallax.compatibility.Sample.profile.entries
-      where:
-        and:
-          operands:
-            - nestedEq: { path: kind, value: home }
-            - nestedEq: { path: active, value: true }
-            - nestedEq: { path: price, value: 19.99 }
-            - nestedEq: { path: issued, value: '2026-02-01' }
+  objectQuery:
+    target: parallax.compatibility.Sample
+    predicate:
+      nestedExists:
+        path: parallax.compatibility.Sample.profile.entries
+        where:
+          and:
+            operands:
+              - nestedEq:
+                  path: kind
+                  value: home
+              - nestedEq:
+                  path: active
+                  value: true
+              - nestedEq:
+                  path: price
+                  value: 19.99
+              - nestedEq:
+                  path: issued
+                  value: '2026-02-01'
 then:
   statements:
     - sql:

@@ -5,27 +5,26 @@
 # out_z = ?`). coverage 10 -> 700 owns claim 1000 (9000); coverage 20 -> 300 owns
 # claim 2000 (4000).
 model: models/policy.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, multi-hop, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, bitemporal, multi-hop, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child levels - the Policy.coverages IN-list binds are the distinct policy ids the root query returned, and the Coverage.claims IN-list binds are the distinct coverage ids the coverages level returned, so both child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Policy
-  operation:
-    deepFetch:
-      operand:
-        asOf:
-          operand:
-            asOf:
-              operand: { all: {} }
-              dimension: transaction-time
-              coordinate: latest
-          dimension: valid-time
-          coordinate: latest
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Policy.coverages }, { rel: parallax.compatibility.Coverage.claims }] }
+  objectQuery:
+    target: parallax.compatibility.Policy
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
+      valid-time:
+        asOf: latest
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Policy.coverages
+          - rel: parallax.compatibility.Coverage.claims
 then:
   statements:
     - sql:

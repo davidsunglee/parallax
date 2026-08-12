@@ -24,20 +24,16 @@ from parallax.core.metamodel import (
     Metamodel,
     RelationshipIdentity,
 )
-from parallax.core.predicate import (
-    All,
-    And,
+from parallax.core.object_query import (
     AsOf,
-    Comparison,
-    DeepFetch,
-    Limit,
-    Membership,
-    Narrow,
-    NavigationPath,
-    PathSegment,
-    PredicateNode,
+    IncludePath,
+    IncludeSegment,
+    TemporalDimension,
+    TemporalSelection,
+    canonical_includes,
+    object_query,
 )
-from parallax.core.predicate._builders import _canonical_includes
+from parallax.core.predicate import All, And, Comparison, Membership, Narrow, PredicateNode
 from parallax.descriptor._serde import deserialize
 
 ORDERS = accepted_model("orders")
@@ -46,38 +42,41 @@ POLICY = accepted_model("policy")
 RATE = accepted_model("rate")
 
 
-def _seg(rel: str, narrow: tuple[str, ...] = ()) -> PathSegment:
-    return PathSegment(rel=rel, narrow=narrow)
+def _seg(rel: str, narrow: tuple[str, ...] = ()) -> IncludeSegment:
+    return IncludeSegment(rel=rel, narrow_to=narrow)
 
 
-def _path(*segments: PathSegment, narrow: tuple[str, ...] | None = None) -> NavigationPath:
-    return NavigationPath(segments=segments, narrow=narrow)
+def _path(*segments: IncludeSegment, narrow: tuple[str, ...] | None = None) -> IncludePath:
+    return IncludePath(segments=segments, applies_to=narrow)
 
 
 def _guard(*to: str) -> tuple[str, ...]:
     return to
 
 
-def _current_bitemporal(operand: PredicateNode | None = None) -> PredicateNode:
-    return AsOf(
-        operand=AsOf(
-            operand=operand if operand is not None else All(),
-            dimension="transaction-time",
-            coordinate="latest",
-        ),
-        dimension="valid-time",
-        coordinate="latest",
-    )
+_BITEMPORAL_LATEST: dict[TemporalDimension, TemporalSelection] = {
+    "transaction-time": AsOf("latest"),
+    "valid-time": AsOf("latest"),
+}
 
 
 def _plan(
     model: Metamodel,
     target: str,
-    paths: tuple[NavigationPath, ...],
-    operand: PredicateNode | None = None,
+    paths: tuple[IncludePath, ...],
+    temporal: dict[TemporalDimension, TemporalSelection] | None = None,
+    predicate: PredicateNode | None = None,
+    **clauses: object,
 ) -> deep_fetch.ObjectQueryPlan:
-    op = DeepFetch(operand=operand if operand is not None else All(), paths=paths)
-    return deep_fetch.plan(entity_of(model, target), op, model)
+    entity = entity_of(model, target)
+    query = object_query(
+        entity.identity,
+        predicate if predicate is not None else All(),
+        temporal=temporal,
+        includes=paths,
+        **clauses,  # pyright: ignore[reportArgumentType] - the caller names real clauses
+    )
+    return deep_fetch.plan(entity, query, model)
 
 
 # --------------------------------------------------------------------------- #
@@ -104,9 +103,9 @@ def test_canonicalized_path_set_is_idempotent_and_plans_the_same_levels() -> Non
         _path(_seg("Order.items"), _seg("OrderItem.statuses")),
         _path(_seg("Order.items")),
     )
-    canonical = _canonical_includes(authored)
+    canonical = canonical_includes(authored)
     assert canonical == (_path(_seg("Order.items"), _seg("OrderItem.statuses")),)
-    assert _canonical_includes(canonical) == canonical
+    assert canonical_includes(canonical) == canonical
     assert _plan(ORDERS, "Order", authored).levels == _plan(ORDERS, "Order", canonical).levels
 
 
@@ -124,7 +123,7 @@ def test_multi_hop_path_chains_levels_in_declared_order() -> None:
         POLICY,
         "Policy",
         (_path(_seg("Policy.coverages"), _seg("Coverage.claims")),),
-        _current_bitemporal(),
+        _BITEMPORAL_LATEST,
     )
     assert [level.attach_key for level in plan.levels] == ["coverages", "claims"]
     coverages, claims = plan.levels
@@ -278,8 +277,7 @@ def test_child_query_has_no_order_by_when_relationship_declares_none() -> None:
 
 
 def test_child_query_appends_propagated_as_of_after_the_in_membership() -> None:
-    op = DeepFetch(operand=_current_bitemporal(), paths=(_path(_seg("Policy.coverages")),))
-    plan = deep_fetch.plan(entity_of(POLICY, "Policy"), op, POLICY)
+    plan = _plan(POLICY, "Policy", (_path(_seg("Policy.coverages")),), _BITEMPORAL_LATEST)
     child_query = plan.levels[0].query_for([1, 2])
     assert isinstance(child_query.predicate, And)
     membership, *as_of_terms = child_query.predicate.operands
@@ -674,39 +672,30 @@ def test_zero_paths_plans_zero_levels() -> None:
     assert plan.levels == ()
 
 
-def test_root_operation_is_canonicalized_even_with_zero_paths() -> None:
+def test_a_query_with_no_includes_plans_zero_levels_and_keeps_its_predicate() -> None:
+    # The degenerate "materialize with no relationships" shape a plain snapshot
+    # find or a scenario's own read step needs.
     literal = Comparison(op="eq", attr="Order.id", value=1)
-    op = DeepFetch(operand=literal, paths=())
-    plan = deep_fetch.plan(entity_of(ORDERS, "Order"), op, ORDERS)
-    assert plan.root.predicate == literal
-
-
-def test_plan_accepts_a_non_deep_fetch_operation_with_zero_levels() -> None:
-    # A bare read (no DeepFetch wrapper at all) plans as a zero-level fetch —
-    # the degenerate "materialize with no relationships" shape a plain snapshot
-    # find or a scenario's own `find` step needs.
-    literal = Comparison(op="eq", attr="Order.id", value=1)
-    plan = deep_fetch.plan(entity_of(ORDERS, "Order"), literal, ORDERS)
+    plan = _plan(ORDERS, "Order", (), predicate=literal)
     assert plan.levels == ()
     assert plan.root.predicate == literal
 
 
-def test_plan_rejects_stacked_duplicate_result_directives() -> None:
-    op = Limit(operand=Limit(operand=All(), count=10), count=5)
-    with pytest.raises(deep_fetch.DeepFetchError, match=r"stacked `limit` directives"):
-        deep_fetch.plan(entity_of(ORDERS, "Order"), op, ORDERS)
+def test_plan_resolves_result_narrowing_and_leaves_a_predicate_narrow_alone() -> None:
+    plan = _plan(
+        ORDERS,
+        "Order",
+        (),
+        predicate=Narrow(to=("OrderItem",), operand=All()),
+        narrow_to=("Order",),
+    )
+    assert plan.root.narrow_to == (entity_of(ORDERS, "Order").identity,)
+    assert plan.root.predicate == Narrow(to=("OrderItem",), operand=All())
 
 
-def test_plan_keeps_a_nested_narrow_inside_the_root_predicate() -> None:
-    op = Narrow(to=("Order",), operand=Narrow(to=("OrderItem",), operand=All()))
-    planned = deep_fetch.plan(entity_of(ORDERS, "Order"), op, ORDERS)
-    assert planned.root.narrow_to == (entity_of(ORDERS, "Order").identity,)
-    assert planned.root.predicate == Narrow(to=("OrderItem",), operand=All())
-
-
-def test_plan_rejects_an_unknown_root_narrow_target() -> None:
+def test_plan_rejects_an_unknown_result_narrowing_target() -> None:
     with pytest.raises(deep_fetch.DeepFetchError, match="names no single Entity"):
-        deep_fetch.plan(entity_of(ORDERS, "Order"), Narrow(to=("Ghost",), operand=All()), ORDERS)
+        _plan(ORDERS, "Order", (), narrow_to=("Ghost",))
 
 
 # --------------------------------------------------------------------------- #
@@ -717,7 +706,7 @@ def test_plan_rejects_an_unknown_root_narrow_target() -> None:
 # addressed at one Entity in a model two namespaces could share a name in.    #
 # --------------------------------------------------------------------------- #
 def test_concrete_target_root_operation_injects_explicit_latest_on_every_axis() -> None:
-    plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), _current_bitemporal(), RATE)
+    plan = _plan(RATE, "DepositRate", (), _BITEMPORAL_LATEST)
     # Valid-Time-first (m-temporal-read), both explicitly select the current
     # milestone: `thru_z = infinity`, `out_z = infinity`.
     assert plan.root.predicate == And(
@@ -729,16 +718,11 @@ def test_concrete_target_root_operation_injects_explicit_latest_on_every_axis() 
 
 
 def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
-    op = AsOf(
-        operand=AsOf(
-            operand=All(),
-            dimension="transaction-time",
-            coordinate="2024-01-15T00:00:00+00:00",
-        ),
-        dimension="valid-time",
-        coordinate="latest",
-    )
-    plan = deep_fetch.plan(entity_of(RATE, "DepositRate"), op, RATE)
+    pinned: dict[TemporalDimension, TemporalSelection] = {
+        "transaction-time": AsOf("2024-01-15T00:00:00+00:00"),
+        "valid-time": AsOf("latest"),
+    }
+    plan = _plan(RATE, "DepositRate", (), pinned)
     assert plan.root.predicate == And(
         operands=(
             # Valid Time explicitly selects latest.

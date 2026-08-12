@@ -14,9 +14,12 @@ model: models/document-codec.yaml
 tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Sample
-  operation:
-    nestedGt: { path: parallax.compatibility.Sample.profile.ratio, value: 2 }
+  objectQuery:
+    target: parallax.compatibility.Sample
+    predicate:
+      nestedGt:
+        path: parallax.compatibility.Sample.profile.ratio
+        value: 2
 then:
   statements:
     - sql:

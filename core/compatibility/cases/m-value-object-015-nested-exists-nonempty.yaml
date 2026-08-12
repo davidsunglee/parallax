@@ -22,9 +22,11 @@ model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedExists: { path: parallax.compatibility.Customer.address.phones }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedExists:
+        path: parallax.compatibility.Customer.address.phones
 then:
   statements:
     - sql:

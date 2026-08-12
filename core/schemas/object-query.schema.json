@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://parallax.dev/schemas/object-query.schema.json",
+  "title": "Parallax Object Query (m-object-query)",
+  "description": "Canonical, format-agnostic serialization of one Object Query — the non-recursive query value that selects and returns FULL OBJECTS, optionally with related objects through Includes. Every clause is a sibling property of one flat object, so clause authoring order carries no meaning and no clause nests inside another: a row-returning directive over an eager fetch has no spelling here rather than a rejection rule. `target` names the queried position and `predicate` the selection logic, and both are required — an unfiltered query spells `{ \"all\": {} }` explicitly. The remaining clauses are optional and each occurs at most once, which is a property of JSON objects rather than a rule a validator restates. An Object Query carries no result form (it always requests full objects), no `distinct`, and no `offset` or pagination; selected-field results and aggregate values belong to future Projection / Aggregate Query work.",
+  "$ref": "#/$defs/objectQuery",
+  "$defs": {
+    "objectQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "predicate"],
+      "properties": {
+        "target": {
+          "description": "The queried Entity — the position the predicate, ordering, narrowing, and include paths are written against. It names the whole family for an abstract root, its concrete descendants for an abstract subtype, and itself for a concrete subtype (m-inheritance). Living inside the query is what lets a read envelope carry ONE document instead of pairing a query with a sibling entity field.",
+          "$ref": "identity.schema.json#/$defs/entityName"
+        },
+        "predicate": {
+          "description": "The recursive Boolean selection grammar (m-predicate). REQUIRED: an unfiltered Object Query states `{ \"all\": {} }` rather than omitting the clause.",
+          "$ref": "predicate.schema.json#/$defs/predicate"
+        },
+        "narrowTo": {
+          "description": "Constrain the RESULT position to a Subtype Selection (m-inheritance). It narrows which objects come back and nothing else — it grants no attribute scope to the predicate, creates no relationship view, and never restates `target`. Predicate-scoped narrowing stays inside `predicate`; include-path source applicability and segment narrowing stay inside `includes`.",
+          "$ref": "subtype-selection.schema.json#/$defs/subtypeSelection"
+        },
+        "temporal": {
+          "description": "The Temporal Selection of each declared Temporal Dimension, keyed by dimension (m-temporal-read). At most one selection per dimension, which the object shape states structurally. The canonical document names a selection for EVERY dimension the queried Entity declares: an omitted Transaction Time normalizes to `{ \"asOf\": \"latest\" }` on the authoring surface, while an omitted Valid Time on a bitemporal query is invalid and never normalizes silently. Both dimensions compose independently, including a scan on both. Key order carries no meaning; injection order is the declared axis rank (Valid Time first).",
+          "$ref": "#/$defs/temporalSelections"
+        },
+        "orderBy": {
+          "description": "The ordered Sort Keys, most significant first — list order IS key precedence. Sorting is exactly as authored: no primary-key or temporal-edge tiebreaker is injected, and equal authored keys leave their rows in unspecified relative order. Ordering addresses the RESULT position, so a key over a subtype requires `narrowTo` to establish that scope.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/sortKey" }
+        },
+        "limit": {
+          "description": "Cap the number of ROOT objects returned, applied after predicate filtering, result narrowing, Temporal Selection, and ordering. Includes execute only for the selected roots and included children never count toward it. An unordered limit is legal and returns an unspecified matching subset — it is a cap, not pagination. When a Temporal Selection scans milestones, each returned milestone counts independently, including several sharing one business primary key.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "includes": {
+          "description": "The requested graph shape: an ORDER-INSENSITIVE set of Include Paths to eager-fetch alongside the roots. Canonicalization sorts paths by structured Relationship Identity plus narrowing, deduplicates equivalent paths, preserves the significant segment order inside each path, retains only maximal nonredundant paths (an exact prefix is removed when an extension carries the same source applicability and narrowing), and keeps broad and narrowed paths distinct. Deep Fetch (m-deep-fetch) is the execution behavior that realizes this clause, never a query tag of its own.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/includePath" }
+        }
+      }
+    },
+
+    "temporalDimension": {
+      "description": "The closed temporal dimension vocabulary.",
+      "enum": ["valid-time", "transaction-time"]
+    },
+    "temporalCoordinate": {
+      "description": "A temporal point: the literal `latest` or a finite ISO-8601 UTC instant. There is no `Now` coordinate or `now` wire alias.",
+      "type": "string",
+      "minLength": 1,
+      "not": { "const": "now" }
+    },
+    "finiteTemporalInstant": {
+      "description": "A finite ISO-8601 UTC instant; `latest` and `now` are not valid range bounds.",
+      "type": "string",
+      "minLength": 1,
+      "not": { "enum": ["latest", "now"] }
+    },
+    "temporalSelections": {
+      "description": "A map from Temporal Dimension to that dimension's own Temporal Selection. Absent dimensions are the ones the queried Entity does not declare; a declared dimension missing from a canonical document is a model-aware defect rather than a shape the map admits.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "valid-time": { "$ref": "#/$defs/temporalSelection" },
+        "transaction-time": { "$ref": "#/$defs/temporalSelection" }
+      }
+    },
+    "temporalSelection": {
+      "description": "One dimension's selection: pin it at a coordinate (`asOf`), scan a finite half-open window (`asOfRange`), or scan its whole milestone set (`history`). A single-key tagged object, exactly as a Predicate node is.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "oneOf": [
+        { "$ref": "#/$defs/temporalAsOf" },
+        { "$ref": "#/$defs/temporalAsOfRange" },
+        { "$ref": "#/$defs/temporalHistory" }
+      ]
+    },
+    "temporalAsOf": {
+      "description": "asOf: pin this dimension to Latest or to a finite instant. Latest lowers to `end = infinity`; a finite instant lowers to interval containment.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asOf"],
+      "properties": { "asOf": { "$ref": "#/$defs/temporalCoordinate" } }
+    },
+    "temporalAsOfRange": {
+      "description": "asOfRange: scan this dimension across the finite half-open window [start, end), returning every milestone that OVERLAPS it — `milestone.start < end and milestone.end > start`, so intervals that merely touch do not overlap. Both endpoints are finite and ordered `start < end`; neither Latest nor infinity is a range endpoint, and `history` is how the unbounded scan is spelled.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asOfRange"],
+      "properties": {
+        "asOfRange": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["start", "end"],
+          "properties": {
+            "start": { "$ref": "#/$defs/finiteTemporalInstant" },
+            "end": { "$ref": "#/$defs/finiteTemporalInstant" }
+          }
+        }
+      }
+    },
+    "temporalHistory": {
+      "description": "history: return this dimension's full milestone set. No as-of term is injected on it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["history"],
+      "properties": {
+        "history": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "sortKey": {
+      "description": "One ordering term: the attribute to order by, its direction, and where NULLs sort on it. `direction` defaults to `asc`; `nulls` defaults to `last` in BOTH directions and is observable only on a nullable attribute.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attr"],
+      "properties": {
+        "attr": { "$ref": "identity.schema.json#/$defs/attributeRef" },
+        "direction": { "enum": ["asc", "desc"], "default": "asc" },
+        "nulls": { "enum": ["first", "last"], "default": "last" }
+      }
+    },
+
+    "includePath": {
+      "description": "ONE path to eager-fetch: the ordered hops it traverses under `segments`, plus the OPTIONAL `appliesTo` Subtype Selection restricting which root source variants the path starts from. `segments` is read left to right from the queried Entity and is NON-EMPTY. An Include Path requests the COMPLETE relationship view: it carries no predicate, no Sort Keys, no limit, no pagination, and no nested Object Query — child ordering comes from Relationship Metadata (m-deep-fetch). The two narrowing positions are deliberately OPPOSITE: `appliesTo` guards SOURCE objects and creates no view key, while a segment's `narrowTo` narrows one hop's TARGET and creates a distinct narrowed view.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["segments"],
+      "properties": {
+        "appliesTo": {
+          "description": "Restrict the path to queried objects in the resolved Subtype Selection, without changing the read's own result set (m-inheritance, m-deep-fetch). The root position is supplied by the query's `target`; a selection resolving outside it is `narrow-outside-position` and one resolving to nothing is `narrow-empty-effective-set`. A source guard creates NO view key: every hop populates the same ordinary (or segment-narrowed) view on fewer root objects, so hop identity at the root position keys on the resolved source set alone.",
+          "$ref": "subtype-selection.schema.json#/$defs/subtypeSelection"
+        },
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/includeSegment" }
+        }
+      }
+    },
+    "includeSegment": {
+      "description": "One hop of an Include Path: the relationship to traverse via `rel` (a `Class.relationship` reference) and OPTIONALLY the Subtype Selection narrowing that hop's polymorphic target. A broad hop (no `narrowTo`) populates the ORDINARY relationship view keyed by the local relationship name; a narrowed hop populates a DISTINCT narrowed view keyed `<rel>[<Concrete>,<Concrete>]` (the effective concrete set, canonical alphabetical order by entity name, no spaces — m-deep-fetch) and does NOT mark the broad relationship loaded. Deduplication of equivalent spellings applies BETWEEN TWO NARROWED hops: two authored selections resolving to the same effective set (`[Pet]` vs `[Cat, Dog]`) derive the SAME view key and deduplicate to one hop. A broad hop and ANY authored narrowing over the same relationship are DISTINCT hops — including a REDUNDANT one resolving to the relationship target's ENTIRE effective concrete set, which returns exactly the broad hop's rows yet populates the bracketed view key. Hop identity at a segment therefore keys on whether a narrowing was AUTHORED as well as on the effective set it resolves to. There is no inner predicate, because a hop eagerly fetches a whole VIEW rather than filtering one; validation resolves the selection inside the relationship target's effective concrete set (`narrow-outside-relationship-target` otherwise).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rel"],
+      "properties": {
+        "rel": { "$ref": "identity.schema.json#/$defs/relationshipRef" },
+        "narrowTo": { "$ref": "subtype-selection.schema.json#/$defs/subtypeSelection" }
+      }
+    }
+  }
+}

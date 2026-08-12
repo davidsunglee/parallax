@@ -1,11 +1,11 @@
-"""Predicate-algebra node + serde unit tests (m-predicate).
+"""Predicate node + serde unit tests (m-predicate).
 
 The serde round-trip contract (`serialize(deserialize(x)) == x`) is proven over
-every operation the corpus authors — reads and scenario/coherence read steps —
-so every node kind in the read algebra (identities, comparisons, string/null/
-membership, boolean + group, result-shaping, narrow, the nested value-object
-family, navigation, deep fetch, and the temporal wrappers) round-trips through
-the canonical single-key encoding. Structural rejection branches are pinned too.
+every predicate the corpus authors — the `predicate` clause of every read query
+and of every scenario/coherence read step — so every node kind in the selection
+grammar (identities, comparisons, string/null/membership, boolean + group,
+narrow, the nested value-object family, and navigation) round-trips through the
+canonical single-key encoding. Structural rejection branches are pinned too.
 """
 
 from __future__ import annotations
@@ -28,14 +28,14 @@ from parallax.core.predicate import (
 )
 
 
-def _operations() -> list[tuple[str, dict[str, Any]]]:
-    """Every authored operation in the read algebra."""
+def _predicates() -> list[tuple[str, dict[str, Any]]]:
+    """The `predicate` clause of every Object Query the corpus authors."""
     found: list[tuple[str, dict[str, Any]]] = []
     for case in case_format.load_cases():
         when: Any = case_document(case).get("when") or {}
-        operation: Any = when.get("operation")
-        if isinstance(operation, dict):
-            found.append((case.case_id, cast("dict[str, Any]", operation)))
+        query: Any = when.get("objectQuery")
+        if isinstance(query, dict):
+            found.append((case.case_id, cast("dict[str, Any]", query)["predicate"]))
         for key in ("scenario", "coherence"):
             steps: Any = when.get(key)
             if not isinstance(steps, list):
@@ -43,17 +43,22 @@ def _operations() -> list[tuple[str, dict[str, Any]]]:
             for index, step in enumerate(cast("list[Any]", steps)):
                 if not isinstance(step, dict):
                     continue
-                inner: Any = cast("dict[str, Any]", step).get("find")
+                inner: Any = cast("dict[str, Any]", step).get("objectQuery")
                 if isinstance(inner, dict):
-                    found.append((f"{case.case_id}/{key}/{index}", cast("dict[str, Any]", inner)))
+                    found.append(
+                        (
+                            f"{case.case_id}/{key}/{index}",
+                            cast("dict[str, Any]", inner)["predicate"],
+                        )
+                    )
     return found
 
 
-_OPERATIONS = _operations()
+_PREDICATES = _predicates()
 
 
-@pytest.mark.parametrize("case_id, doc", _OPERATIONS, ids=[c for c, _ in _OPERATIONS])
-def test_operation_serde_round_trip(case_id: str, doc: dict[str, Any]) -> None:
+@pytest.mark.parametrize("case_id, doc", _PREDICATES, ids=[c for c, _ in _PREDICATES])
+def test_predicate_serde_round_trip(case_id: str, doc: dict[str, Any]) -> None:
     node = predicate.deserialize(doc)
     assert predicate.serialize(node) == doc
 
@@ -311,102 +316,6 @@ def test_scoped_where_element_predicate_round_trips() -> None:
     assert predicate.serialize(predicate.deserialize(doc)) == doc
 
 
-def test_deep_fetch_path_root_narrow_round_trips() -> None:
-    # The path-ROOT guard rides beside `segments` rather than on one, and the two
-    # narrow positions coexist on one path: the root's `{to}` and the
-    # segment's `{to}` survive the round trip independently.
-    doc: dict[str, Any] = {
-        "deepFetch": {
-            "operand": {"all": {}},
-            "paths": [
-                {
-                    "narrow": {"to": ["Pet"]},
-                    "segments": [
-                        {"rel": "Animal.owner"},
-                        {"rel": "Person.pets", "narrow": {"to": ["Dog"]}},
-                    ],
-                }
-            ],
-        }
-    }
-    node = predicate.deserialize(doc)
-    path = cast("predicate.DeepFetch", node).paths[0]
-    assert path.narrow == ("Pet",)
-    assert path.segments[1].narrow == ("Dog",)
-    assert predicate.serialize(node) == doc
-
-
-def test_deep_fetch_path_without_a_root_narrow_round_trips_unguarded() -> None:
-    # The guard is optional, so an unguarded path must come back with no `narrow`
-    # key at all rather than an empty or defaulted one.
-    doc: dict[str, Any] = {
-        "deepFetch": {"operand": {"all": {}}, "paths": [{"segments": [{"rel": "Order.items"}]}]}
-    }
-    node = predicate.deserialize(doc)
-    assert cast("predicate.DeepFetch", node).paths[0].narrow is None
-    assert predicate.serialize(node) == doc
-
-
-def test_order_key_authored_direction_round_trips() -> None:
-    # An explicitly authored `direction` (either `asc` or `desc`) serializes back
-    # verbatim (the corpus authors it explicitly on every operation orderBy key).
-    for direction in ("asc", "desc"):
-        doc: dict[str, Any] = {
-            "orderBy": {
-                "operand": {"all": {}},
-                "keys": [{"attr": "Order.id", "direction": direction}],
-            }
-        }
-        assert predicate.serialize(predicate.deserialize(doc)) == doc
-
-
-def test_order_key_defaulted_direction_round_trips() -> None:
-    # The schema-defaulted form (a key OMITTING the optional `direction`) must
-    # round-trip omitted, not gain a `direction: asc` on the way back out.
-    doc: dict[str, Any] = {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.id"}]}}
-    node = predicate.deserialize(doc)
-    key = cast("predicate.OrderBy", node).keys[0]
-    assert key.direction is None
-    assert predicate.serialize(node) == doc
-
-
-def test_order_key_authored_null_placement_round_trips() -> None:
-    # Null Placement round-trips verbatim in both directions and under BOTH
-    # placements — including the explicit `last`, which denotes the same order as
-    # omission and must still survive as an authored value.
-    for direction in ("asc", "desc"):
-        for placement in ("first", "last"):
-            doc: dict[str, Any] = {
-                "orderBy": {
-                    "operand": {"all": {}},
-                    "keys": [{"attr": "Order.sku", "direction": direction, "nulls": placement}],
-                }
-            }
-            assert predicate.serialize(predicate.deserialize(doc)) == doc
-
-
-def test_order_key_omitted_null_placement_stays_distinct_from_explicit_last() -> None:
-    # Omission and an explicit `last` mean the same ORDER but are distinct
-    # authorings: the omitted form deserializes to `None` and serializes back
-    # omitted, so canonical round-trip never manufactures the default.
-    omitted: dict[str, Any] = {
-        "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.sku", "direction": "desc"}]}
-    }
-    node = predicate.deserialize(omitted)
-    key = cast("predicate.OrderBy", node).keys[0]
-    assert key.nulls is None
-    assert predicate.serialize(node) == omitted
-    assert key.nulls_last().nulls == "last"
-
-
-def test_order_key_null_placement_is_single_shot() -> None:
-    key = predicate.OrderKey(attr="Order.sku", direction="desc")
-    assert key.nulls_first().nulls == "first"
-    with pytest.raises(QueryDefinitionError, match="single-shot") as caught:
-        key.nulls_first().nulls_last()
-    assert caught.value.code == "query-expression-invalid"
-
-
 _QUERY_SPEC_CODES = frozenset(
     {
         "query-target-mismatch",
@@ -443,8 +352,6 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             ({"eq": {"attr": 1, "value": 2}}, "must be a string"),
             ({"in": {"attr": "Order.id", "values": []}}, "non-empty list"),
             ({"and": {"operands": [{"all": {}}]}}, "at least two"),
-            ({"limit": {"operand": {"all": {}}, "count": 0}}, "positive integer"),
-            ({"orderBy": {"operand": {"all": {}}, "keys": []}}, "non-empty list"),
             ({"narrow": {"to": [], "operand": {"all": {}}}}, "non-empty list"),
             ({"not": {}}, "missing required key"),
             # Closed-shape / required-property / type enforcement (m-predicate
@@ -459,135 +366,6 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             (
                 {"narrow": {"to": [1, 2], "operand": {"all": {}}}},
                 "`to` entries must be strings",
-            ),
-            (
-                {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Order.id", "x": 1}]}},
-                r"orderBy key: unexpected key\(s\) \['x'\]",
-            ),
-            (
-                {
-                    "orderBy": {
-                        "operand": {"all": {}},
-                        "keys": [{"attr": "Order.sku", "direction": "up"}],
-                    }
-                },
-                "`direction` must be 'asc' or 'desc'",
-            ),
-            (
-                {"orderBy": {"operand": {"all": {}}, "keys": ["Order.sku"]}},
-                "each key must be a mapping",
-            ),
-            (
-                {
-                    "orderBy": {
-                        "operand": {"all": {}},
-                        "keys": [{"attr": "Order.sku", "nulls": "l"}],
-                    }
-                },
-                "`nulls` must be 'first' or 'last'",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [{"segments": [{"rel": "Order.items"}], "x": 1}],
-                    }
-                },
-                r"deepFetch path: unexpected key\(s\) \['x'\]",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [[{"rel": "Order.items"}]],
-                    }
-                },
-                "each path must be a mapping",
-            ),
-            (
-                {"deepFetch": {"operand": {"all": {}}, "paths": [{"segments": []}]}},
-                "each path `segments` must be a non-empty list",
-            ),
-            (
-                {"deepFetch": {"operand": {"all": {}}, "paths": []}},
-                "`paths` must be a non-empty list",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [{"segments": [{"rel": "Order.items", "x": 1}]}],
-                    }
-                },
-                r"deepFetch path segment: unexpected key\(s\) \['x'\]",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [
-                            {
-                                "segments": [
-                                    {"rel": "Order.items", "narrow": {"to": ["Dog"], "x": 1}}
-                                ]
-                            }
-                        ],
-                    }
-                },
-                r"deepFetch path narrow: unexpected key\(s\) \['x'\]",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [
-                            {
-                                "narrow": {"to": ["Dog"], "x": 1},
-                                "segments": [{"rel": "Animal.owner"}],
-                            }
-                        ],
-                    }
-                },
-                r"deepFetch path root narrow: unexpected key\(s\) \['x'\]",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [
-                            {"narrow": ["Dog"], "segments": [{"rel": "Animal.owner"}]},
-                        ],
-                    }
-                },
-                "path `narrow` must be a mapping",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [
-                            {
-                                "narrow": {"to": ["bad name"]},
-                                "segments": [{"rel": "Animal.owner"}],
-                            }
-                        ],
-                    }
-                },
-                "not a valid entity name",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [
-                            {
-                                "narrow": {"to": []},
-                                "segments": [{"rel": "Animal.owner"}],
-                            }
-                        ],
-                    }
-                },
-                "`to` must be a non-empty list",
             ),
             # Reference-pattern enforcement (predicate.schema.json $defs): each
             # reference string must match the schema pattern for its position.
@@ -614,78 +392,6 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             (
                 {"nestedExists": {"path": "Customer"}},
                 "not a valid value-object reference",
-            ),
-            (
-                {"asOf": {"operand": {"all": {}}, "dimension": "bad", "coordinate": "latest"}},
-                "must be 'valid-time' or 'transaction-time'",
-            ),
-            # Temporal coordinates are non-empty. ``now`` is not a wire value:
-            # a finite current-clock coordinate is serialized as its instant.
-            (
-                {
-                    "asOf": {
-                        "operand": {"all": {}},
-                        "dimension": "transaction-time",
-                        "coordinate": "",
-                    }
-                },
-                "`coordinate` must be a non-empty temporal value",
-            ),
-            (
-                {
-                    "asOfRange": {
-                        "operand": {"all": {}},
-                        "dimension": "transaction-time",
-                        "start": "",
-                        "end": "2020-01-01T00:00:00Z",
-                    }
-                },
-                "`start` must be a non-empty temporal value",
-            ),
-            (
-                {
-                    "asOfRange": {
-                        "operand": {"all": {}},
-                        "dimension": "transaction-time",
-                        "start": "2020-01-01T00:00:00Z",
-                        "end": "",
-                    }
-                },
-                "`end` must be a non-empty temporal value",
-            ),
-            (
-                {
-                    "asOf": {
-                        "operand": {"all": {}},
-                        "dimension": "transaction-time",
-                        "coordinate": "now",
-                    }
-                },
-                "must be a canonical coordinate",
-            ),
-            (
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [{"segments": [{"rel": "bad rel"}]}],
-                    }
-                },
-                "not a valid relationship reference",
-            ),
-            (
-                {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "bad attr"}]}},
-                "not a valid attribute reference",
-            ),
-            # Nested `where` is the schema's `elementPredicate`: a directive, a
-            # top-level predicate, or any non-element node is illegal there.
-            (
-                {
-                    "nestedExists": {
-                        "path": "Customer.address.phones",
-                        "where": {"limit": {"operand": {"all": {}}, "count": 1}},
-                    }
-                },
-                "not a legal element predicate inside a nestedExists `where`",
             ),
             (
                 {
@@ -764,84 +470,3 @@ def test_deserialize_rejects_malformed(doc: object, message: str) -> None:
 def test_deserialize_rejects_non_scalar_value() -> None:
     with pytest.raises(OperationError, match="scalar literal"):
         predicate.deserialize({"eq": {"attr": "Order.id", "value": {"nested": 1}}})
-
-
-@pytest.mark.parametrize(
-    "doc",
-    [
-        {
-            "asOf": {
-                "operand": {"all": {}},
-                "dimension": "transaction-time",
-                "coordinate": "latest",
-            }
-        },
-        {
-            "asOf": {
-                "operand": {"all": {}},
-                "dimension": "transaction-time",
-                "coordinate": "2020-01-01T00:00:00Z",
-            }
-        },
-        {
-            "asOfRange": {
-                "operand": {"all": {}},
-                "dimension": "valid-time",
-                "start": "2020-01-01T00:00:00Z",
-                "end": "2021-01-01T00:00:00Z",
-            }
-        },
-    ],
-)
-def test_temporal_pin_round_trips(doc: dict[str, Any]) -> None:
-    # A canonical temporal coordinate round-trips unchanged.
-    node = predicate.deserialize(doc)
-    assert predicate.serialize(node) == doc
-
-
-def test_deserialize_canonicalizes_include_paths_before_serialization() -> None:
-    short: dict[str, Any] = {"segments": [{"rel": "Order.items"}]}
-    maximal: dict[str, Any] = {
-        "segments": [
-            {"rel": "Order.items"},
-            {"rel": "OrderItem.statuses"},
-        ]
-    }
-    statuses: dict[str, Any] = {"segments": [{"rel": "Order.statuses"}]}
-    doc: dict[str, Any] = {
-        "deepFetch": {
-            "operand": {"all": {}},
-            "paths": [statuses, short, maximal, maximal],
-        }
-    }
-
-    assert predicate.serialize(predicate.deserialize(doc)) == {
-        "deepFetch": {"operand": {"all": {}}, "paths": [maximal, statuses]}
-    }
-
-
-def test_serialize_canonicalizes_directly_constructed_include_paths() -> None:
-    short = predicate.NavigationPath(segments=(predicate.PathSegment(rel="Order.items"),))
-    maximal = predicate.NavigationPath(
-        segments=(
-            predicate.PathSegment(rel="Order.items"),
-            predicate.PathSegment(rel="OrderItem.statuses"),
-        )
-    )
-    statuses = predicate.NavigationPath(segments=(predicate.PathSegment(rel="Order.statuses"),))
-    node = predicate.DeepFetch(operand=predicate.All(), paths=(statuses, short, maximal, maximal))
-
-    assert predicate.serialize(node) == {
-        "deepFetch": {
-            "operand": {"all": {}},
-            "paths": [
-                {
-                    "segments": [
-                        {"rel": "Order.items"},
-                        {"rel": "OrderItem.statuses"},
-                    ]
-                },
-                {"segments": [{"rel": "Order.statuses"}]},
-            ],
-        }
-    }

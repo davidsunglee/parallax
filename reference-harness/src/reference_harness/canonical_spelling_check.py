@@ -125,7 +125,7 @@ class _Report:
         self.findings.append(f"{self.path}: {where}: expected {expected}, found {found!r}")
 
     def entity(self, spelling: Any, where: str, declarations: _Declarations) -> None:
-        """Check a bare-or-canonical Entity spelling (``targetEntity``, a
+        """Check a bare-or-canonical Entity spelling (a query ``target``, a
         ``narrow``'s ``to`` entry, or a write instruction's Entity)."""
         if not isinstance(spelling, str):
             return
@@ -165,7 +165,7 @@ class _Report:
 
 
 # --------------------------------------------------------------------------- #
-# The operation walk (m-predicate): every reference position, with its path.   #
+# The predicate / query walks: every reference position, with its path.        #
 # --------------------------------------------------------------------------- #
 def _walk_operation(node: Any, where: str, report: _Report, declarations: _Declarations) -> None:
     if not isinstance(node, Mapping) or len(node) != 1:
@@ -184,44 +184,39 @@ def _walk_operation(node: Any, where: str, report: _Report, declarations: _Decla
         for index, operand in enumerate(_items(body.get("operands"))):
             _walk_operation(operand, f"{at}.operands[{index}]", report, declarations)
     elif tag == "narrow":
-        _walk_narrow(body, at, report, declarations)
-    elif tag == "orderBy":
-        for index, key in enumerate(_items(body.get("keys"))):
-            if isinstance(key, Mapping):
-                report.member(key.get("attr"), f"{at}.keys[{index}].attr", declarations)
-    elif tag == "deepFetch":
-        _walk_deep_fetch(body, at, report, declarations)
+        _walk_selection(body.get("to"), f"{at}.to", report, declarations)
     for member in _OPERAND_MEMBERS:
         if member in body:
             _walk_operation(body[member], f"{at}.{member}", report, declarations)
 
 
-def _walk_narrow(
-    body: Mapping[str, Any], at: str, report: _Report, declarations: _Declarations
-) -> None:
-    for index, name in enumerate(_items(body.get("to"))):
-        report.entity(name, f"{at}.to[{index}]", declarations)
+def _walk_selection(selection: Any, at: str, report: _Report, declarations: _Declarations) -> None:
+    for index, name in enumerate(_items(selection)):
+        report.entity(name, f"{at}[{index}]", declarations)
 
 
-def _walk_deep_fetch(
-    body: Mapping[str, Any], at: str, report: _Report, declarations: _Declarations
-) -> None:
-    for index, path in enumerate(_items(body.get("paths"))):
+def _walk_query(node: Any, where: str, report: _Report, declarations: _Declarations) -> None:
+    """Every reference position one Object Query carries, with its path."""
+    if not isinstance(node, Mapping):
+        return
+    report.entity(node.get("target"), f"{where}.target", declarations)
+    _walk_operation(node.get("predicate"), f"{where}.predicate", report, declarations)
+    _walk_selection(node.get("narrowTo"), f"{where}.narrowTo", report, declarations)
+    for index, key in enumerate(_items(node.get("orderBy"))):
+        if isinstance(key, Mapping):
+            report.member(key.get("attr"), f"{where}.orderBy[{index}].attr", declarations)
+    for index, path in enumerate(_items(node.get("includes"))):
         if not isinstance(path, Mapping):
             continue
-        here = f"{at}.paths[{index}]"
-        root_narrow = path.get("narrow")
-        if isinstance(root_narrow, Mapping):
-            _walk_narrow(root_narrow, f"{here}.narrow", report, declarations)
+        here = f"{where}.includes[{index}]"
+        _walk_selection(path.get("appliesTo"), f"{here}.appliesTo", report, declarations)
         for position, segment in enumerate(_items(path.get("segments"))):
             spot = f"{here}.segments[{position}]"
             if not isinstance(segment, Mapping):
                 report.member(segment, f"{spot}.rel", declarations)
                 continue
             report.member(segment.get("rel"), f"{spot}.rel", declarations)
-            hop_narrow = segment.get("narrow")
-            if isinstance(hop_narrow, Mapping):
-                _walk_narrow(hop_narrow, f"{spot}.narrow", report, declarations)
+            _walk_selection(segment.get("narrowTo"), f"{spot}.narrowTo", report, declarations)
 
 
 def _items(node: Any) -> Iterator[Any]:
@@ -242,10 +237,9 @@ def _walk_case(document: Any, report: _Report, declarations: _Declarations) -> N
     # `when` member; its spellings are the authored negative and never move.
     if "model" in when:
         return
-    report.entity(when.get("targetEntity"), "when.targetEntity", declarations)
-    _walk_operation(when.get("operation"), "when.operation", report, declarations)
+    _walk_query(when.get("objectQuery"), "when.objectQuery", report, declarations)
     for index, encoding in enumerate(_items(when.get("equivalentEncodings"))):
-        _walk_operation(encoding, f"when.equivalentEncodings[{index}]", report, declarations)
+        _walk_query(encoding, f"when.equivalentEncodings[{index}]", report, declarations)
     _walk_write(when.get("write"), "when.write", report, declarations)
     for index, instruction in enumerate(_items(when.get("writeSequence"))):
         _walk_keyed_write(instruction, f"when.writeSequence[{index}]", report, declarations)
@@ -253,10 +247,9 @@ def _walk_case(document: Any, report: _Report, declarations: _Declarations) -> N
         if not isinstance(step, Mapping):
             continue
         at = f"when.scenario[{index}]"
-        report.entity(step.get("targetEntity"), f"{at}.targetEntity", declarations)
-        _walk_operation(step.get("find"), f"{at}.find", report, declarations)
+        _walk_query(step.get("objectQuery"), f"{at}.objectQuery", report, declarations)
         for encoding_index, encoding in enumerate(_items(step.get("equivalentEncodings"))):
-            _walk_operation(
+            _walk_query(
                 encoding,
                 f"{at}.equivalentEncodings[{encoding_index}]",
                 report,
@@ -267,8 +260,7 @@ def _walk_case(document: Any, report: _Report, declarations: _Declarations) -> N
         if not isinstance(step, Mapping):
             continue
         at = f"when.coherence[{index}]"
-        report.entity(step.get("targetEntity"), f"{at}.targetEntity", declarations)
-        _walk_operation(step.get("find"), f"{at}.find", report, declarations)
+        _walk_query(step.get("objectQuery"), f"{at}.objectQuery", report, declarations)
 
 
 def _walk_write(node: Any, at: str, report: _Report, declarations: _Declarations) -> None:
@@ -277,7 +269,7 @@ def _walk_write(node: Any, at: str, report: _Report, declarations: _Declarations
     A buffered sequence is a list of keyed instructions; a single instruction is
     keyed when it names an `entity` and predicate-selected when it names a
     `target`. A bare row (a label or a plain row object) names no Entity — the
-    step's own `targetEntity` does — and contributes nothing.
+    model's default write root answers for it — and contributes nothing.
     """
     if isinstance(node, Sequence) and not isinstance(node, str):
         for index, instruction in enumerate(node):

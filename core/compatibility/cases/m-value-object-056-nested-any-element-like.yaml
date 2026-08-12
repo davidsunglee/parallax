@@ -19,9 +19,12 @@ model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, like, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedLike: { path: parallax.compatibility.Customer.address.phones.number, value: '555-0%' }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedLike:
+        path: parallax.compatibility.Customer.address.phones.number
+        value: 555-0%
 then:
   statements:
     - sql:

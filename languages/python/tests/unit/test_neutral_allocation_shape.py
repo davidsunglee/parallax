@@ -24,7 +24,7 @@ from _transact_support import RecordingPort
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.story_models import Order
 from parallax.core.entity._model import model_of
-from parallax.core.entity._query import lower_find_query
+from parallax.core.object_query._fluent import object_query_node
 from parallax.snapshot import connect
 from parallax.snapshot.handle import Database, NeutralReadRequest, NeutralReadResult
 from parallax.snapshot.materialize import (
@@ -115,8 +115,9 @@ def test_the_same_query_through_read_neutral_does_construct_them(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     constructed = _count_neutral(monkeypatch)
-    lowered = lower_find_query(_query())  # pyright: ignore[reportArgumentType] - the query's own type
-    request = NeutralReadRequest.graph(target=lowered.target, operation=lowered.operation)
+    request = NeutralReadRequest.graph(
+        object_query_node(_query())  # pyright: ignore[reportArgumentType] - the query's own type
+    )
 
     per_row_count: dict[int, int] = {}
     for row_count in (5, 800):

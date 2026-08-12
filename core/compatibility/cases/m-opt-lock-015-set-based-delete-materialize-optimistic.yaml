@@ -25,9 +25,12 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        lessThan: { attr: parallax.compatibility.Account.balance, value: 200.00 }
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          lessThan:
+            attr: parallax.compatibility.Account.balance
+            value: 200.00
       roundTrips: 1
       statements:
         - sql:
@@ -51,9 +54,10 @@ when:
         - sql:
             postgres: delete from account where id = ? and version = ?
           binds: [3, 1]
-    - targetEntity: parallax.compatibility.Account
-      find:
-        all: {}
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          all: {}
       roundTrips: 1
       statements:
         - sql:

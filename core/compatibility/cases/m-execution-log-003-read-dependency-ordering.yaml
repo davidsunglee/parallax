@@ -39,11 +39,12 @@ when:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
           binds: [7, Newton, 5.00, 1]
     - uow: dependency
-      targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 7
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 7
       roundTrips: 1
       note: the dependent find forces the buffered insert out as a read-dependency batch, then observes it; the group COMMITS after this, its last step
       statements:

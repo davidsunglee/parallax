@@ -1,28 +1,24 @@
 # m-predicate — Predicate Algebra
 
 `m-predicate` defines the framework's recursive **Predicate algebra** and its
-**canonical serialization**. The algebra *is* the protocol: the compatibility
-suite's queries are instances of it, and every implementation provides Predicate
-serde behavior that round-trips them. `m-predicate` depends on `m-metamodel`
-(resolved predicates are bound to canonical Entity, Attribute,
-Relationship, and Value Object Identities) and on `m-inheritance` (the `narrow`
-node constrains a polymorphic entity position against the family's effective
-concrete-subtype set). Relationship behavior is not reconstructed here:
-`m-navigate` consumes the compiled `m-relationship` facet.
+**canonical serialization**: the selection grammar and nothing else. A Predicate
+answers *which objects*; it never states which position they are selected from,
+how they are ordered, how many come back, at which temporal coordinates, or what
+is fetched alongside them — every one of those is a sibling clause of the
+`m-object-query` value that CARRIES a predicate. Recursion therefore buys
+composition of selection logic alone, and the shapes a recursive query
+representation admits by accident — a row cap as a Boolean term, an ordering over
+an eager fetch — have no spelling here rather than a rejection rule.
+
+`m-predicate` depends on `m-metamodel` (resolved predicates are bound to
+canonical Entity, Attribute, Relationship, and Value Object Identities) and on
+`m-inheritance` (the `narrow` node constrains a polymorphic entity position
+against the family's effective concrete-subtype set). Relationship behavior is
+not reconstructed here: `m-navigate` consumes the compiled `m-relationship`
+facet.
 
 The canonical schema is
 [`core/schemas/predicate.schema.json`](../schemas/predicate.schema.json).
-
-## Transitional boundary
-
-The current Predicate schema temporarily retains the query-position `narrow` and
-the query-wide `orderBy`, `limit`, `deepFetch`, `asOf`, `asOfRange`, and `history`
-wrappers, and the case envelope still names the serialized value `operation`.
-These query-wide values are not the intended Predicate boundary; they remain only
-while the existing recursive read representation is still canonical. This section
-describes that accepted transitional representation rather than claiming those
-values belong permanently to Predicate. Predicate-scoped `narrow`, which restricts
-the active position while evaluating an inner predicate, remains part of Predicate.
 
 ## Positioning (DQ13)
 
@@ -73,11 +69,11 @@ against the model. Examples:
 
 ## Predicate set
 
-`m-predicate` is the canonical Predicate algebra. Its transitional schema covers the
-single-entity predicate algebra, result-shaping directives, relationship
-navigation, temporal read wrappers, and nested value-object predicates.
-Aggregation is a separate query form owned by `m-agg`; its interchange schema
-does not extend this Predicate union. Each node below carries a single canonical
+`m-predicate` is the canonical Predicate algebra. Its schema covers the
+single-entity predicate algebra, relationship navigation, Predicate-scoped
+subtype narrowing, and nested value-object predicates. Aggregation is a separate
+query form owned by `m-agg`; its interchange schema does not extend this
+Predicate union. Each node below carries a single canonical
 serialization; a conforming Predicate serde implementation **MUST**
 validate and round-trip every node in `predicate.schema.json` unchanged. Executing
 a node may depend on other core modules: `m-metamodel` supplies canonical local
@@ -87,17 +83,18 @@ owns SQL lowering; `m-temporal-read` owns temporal interval behavior.
 
 ### Entity spellings in a reference position
 
-Every operation position that names an Entity spells it either **bare** — the
+Every predicate position that names an Entity spells it either **bare** — the
 Entity's local name alone — or **canonically**, the namespace-qualified
 `<namespace>.<Entity>` of `m-metamodel`. The positions are the Entity prefix of
-an `attr`, a `rel`, an `orderBy` key, and a nested value-object `path`; each
-Subtype Selection alternative;
-and a `deepFetch` path's hop `rel`.
+an `attr`, a `rel`, and a nested value-object `path`, plus each Subtype Selection
+alternative. `m-object-query`'s own reference positions — the queried `target`, a
+Sort Key's `attr`, an Include Segment's `rel` — carry the identical rule.
 
 **Input is permissive; output is exact.** A bare spelling remains legal at every
 one of those positions and MUST resolve whenever it names exactly one declared
-Entity model-wide. Everything an implementation **serializes** — every operation
-document a frontend emits — MUST carry the resolved canonical Entity spelling.
+Entity model-wide. Everything an implementation **serializes** — every predicate
+or query document a frontend emits — MUST carry the resolved canonical Entity
+spelling.
 The two rules are not in tension: an implementation accepts what an author
 writes and emits what the model resolved it to.
 
@@ -463,60 +460,6 @@ than `or`, `(a or b) and c` requires a `group`, whereas `a or b and c` parses as
 `a or (b and c)` and needs none — the two are distinct canonical nodes with
 distinct golden SQL.
 
-### Result-shaping directives
-
-Directives wrap an inner operation rather than filtering:
-
-| Predicate | Encoding | Effect |
-|---|---|---|
-| `orderBy` | `{ "orderBy": { "operand", "keys": [ { "attr", "direction"?, "nulls"? } ] } }` | order rows; `direction` ∈ `asc` (default) / `desc`; `nulls` ∈ `first` / `last` (default `last`) |
-| `limit` | `{ "limit": { "operand", "count" } }` | cap the row count |
-
-A Sort Key's `nulls` member is its **Null Placement**: where `NULL`s sort on that
-key, independent of `direction`. Omitting it means `last` — the canonical,
-dialect-independent default in both directions — and an authored value survives
-canonical round-trip distinctly from omission. Placement is a property of the key,
-not of the dialect: the two dialects' native placement diverges, so `m-dialect`
-carries the per-dialect lowering that makes the observable order identical
-everywhere. It is observable only on a **nullable** attribute; on a non-nullable one
-both placements denote the same order and lower to the same term.
-
-These directives shape the **result set** — its order and cardinality — but
-**neither changes the projected column list**. The algebra
-carries **no projection node** at all: a read's `select` list is a pure function of
-its target and result form, supplied by `m-sql` (its *Read projection* section),
-never chosen by the operation. Object Query therefore has no column-subset result.
-
-### Temporal read wrappers
-
-Temporal read wrappers are operation nodes. `m-temporal-read` defines the interval
-model, per-dimension selection rule, and milestone behavior; `m-sql` fixes the SQL
-fragments and bind order. These nodes are part of the algebra because operation
-serde must round-trip the temporal query tree exactly.
-
-| Predicate | Encoding | Meaning |
-|---|---|---|
-| `asOf` | `{ "asOf": { "operand", "dimension", "coordinate" } }` | pin one temporal dimension to Latest or a finite instant |
-| `asOfRange` | `{ "asOfRange": { "operand", "dimension", "start", "end" } }` | return milestones whose interval overlaps the half-open range `[start, end)` |
-| `history` | `{ "history": { "operand", "dimension" } }` | return the full milestone set on that dimension; no as-of predicate is injected for that axis |
-
-`dimension` is `valid-time` or `transaction-time`, resolved against the target
-Entity's effective As-Of Axes. `coordinate` is either the literal `latest` or an
-ISO-8601 UTC instant. Latest lowers to the dimension's physical end column equal
-to the `m-core` / `m-dialect` `infinity` sentinel. A finite instant obtained from
-the current clock remains an ordinary finite coordinate and lowers to interval
-containment; there is no `now` variant or serde alias for Latest.
-`start` and `end` are finite ISO-8601 UTC instants with `start < end`.
-
-Each temporal node wraps an `operand`. A Transaction-Time-Only Entity uses one
-wrapper. A Bitemporal Entity selects both dimensions by nesting one temporal
-wrapper per dimension. Canonical operations carry exactly one selection for every
-declared dimension; authoring may omit Transaction Time, which normalizes to an
-explicit Latest wrapper, but may not omit Valid Time. The canonical nesting and
-bind order is Valid Time followed by Transaction Time. The injected temporal term
-composes with the operand via `and`, after user predicates, so user binds precede
-temporal binds.
-
 ## Relationship algebra
 
 Relationships are traversed **by canonical Relationship Identity** — never as a
@@ -544,126 +487,29 @@ normal operation tree resolved **against the related entity's attributes**
 (`OrderItem.sku`, …), so any predicate from the single-entity algebra composes
 inside a navigation.
 
-### `deepFetch` directive
-
-`deepFetch` is an eager-fetch **directive**, not a predicate: it shapes the
-result into an **object graph** rather than a flat row set.
-
-| Predicate | Encoding | Effect |
-|---|---|---|
-| `deepFetch` | `{ "deepFetch": { "operand", "paths": [ { "narrow"?: { "to": [ … ] }, "segments": [ { "rel": …, "narrow"? }, … ] }, … ] } }` | resolve `operand`, then eager-fetch each navigation `path` |
-
-Each `path` is a **closed object** whose required `segments` member is the
-ordered, non-empty list of **path segments** naming the chain to fetch, and
-every segment is itself a **closed object** carrying the relationship to traverse
-under `rel` (a `Class.relationship` reference) — one hop
-(`{ "segments": [{ "rel": "Order.items" }] }`) or multi-hop
-(`{ "segments": [{ "rel": "Order.items" }, { "rel": "OrderItem.statuses" }] }`).
-The object path is the single structural carrier for a path, keeping what
-qualifies the path as a whole distinguishable from what qualifies one hop. The
-object segment is likewise the single structural carrier for a hop, so a
-**polymorphic** hop (a relationship whose target is an abstract position,
-`m-inheritance`) MAY add an optional `narrow` alongside `rel` — the
-`{ "to": [ … ] }` subtype narrowing of that hop's effective concrete set —
-without a second spelling of a path. Unlike the transitional query-position
-`narrow` node (which also carries `operand`), a path narrow carries only `to`: the
-position is the relationship target (implicit) and a hop fetches a whole
-**view**, not a filtered predicate. A narrowed hop populates a
-**distinct narrowed view** keyed `<rel>[<Concrete>,<Concrete>]`; the narrow must
-resolve within the relationship target's effective set
-(`narrow-outside-relationship-target`). The normative guarantee is **one SQL
-statement per relationship level** (N+1 elimination): the root query plus one
-statement per distinct hop, where hop identity is the triple **(relationship,
-whether a narrow was authored, effective concrete set)** — a broad hop and any
-authored narrow over the same relationship, or two hops narrowed to different
-sets, are distinct; equivalent narrow spellings resolving to the same set
-converge. Paths sharing a hop fetch it **once**. This is specified in full in
-[`m-deep-fetch.md`](m-deep-fetch.md) and proven by the round-trip-count layer of
-the compatibility harness (`m-case-format`).
-
-`paths` denotes an **order-insensitive set**, not a precedence list. Its
-canonical serialization is the unique fixed point of these rules:
-
-1. Canonicalize every root and segment Subtype Selection in Entity Identity
-   order while preserving the order of segments inside each path.
-2. Sort paths lexicographically by each segment's structured Relationship
-   Identity and optional target narrow, using the optional path-root narrow as
-   the final tie-breaker. An absent narrow sorts before an authored one.
-3. Collapse structurally equal paths.
-4. Retain only maximal paths: when one path is an exact segment prefix of an
-   extension with the same path-root applicability and the same narrow on every
-   shared segment, remove the prefix. The extension still materializes every
-   prefix level.
-
-Broad and narrowed paths are structurally distinct. In particular, an absent
-segment narrow does not equal an authored narrow, and different path-root guards
-do not prefix one another. Canonicalization is idempotent and happens before
-planning, so permuting paths, repeating one, or spelling an already-implied
-prefix cannot change the canonical operation or its planned levels. This set
-rule is confined to `deepFetch.paths`: Boolean operand order, Sort Key order,
-Subtype Selection authoring order at serialized ingress, and segment order
-inside one path keep their existing contracts.
-
-A path MAY additionally carry a **path-root `narrow`** — `{ "to" }` — beside
-`segments`. It **guards which queried objects the path
-starts from** without changing the read's own result set, so a caller whose
-`targetEntity` is polymorphic can eager-fetch a relationship for one branch of
-the family alone:
-
-```yaml
-# targetEntity: Animal; `owner` is declared on Animal, so Dogs and Cats reach it
-# under the one relationship identity `Animal.owner`:
-deepFetch:
-  operand: { all: {} }
-  paths:
-    - { narrow: { to: [Dog] }, segments: [{ rel: Animal.owner }] }
-    - { narrow: { to: [Cat] }, segments: [{ rel: Animal.owner }] }
-```
-
-The root position and the segment position narrow **opposite things**, and their
-hop identities follow:
-
-- a **root** guard restricts a hop's SOURCE objects and creates **no** view key —
-  every hop of a guarded path populates the view its unguarded spelling would, on
-  fewer objects. Identity at the root keys on the **resolved source set** alone,
-  so two guards resolving to the same concretes are one hop and a guard admitting
-  every queried object *is* the broad path.
-- a **segment** narrow restricts a hop's TARGET and creates a distinct narrowed
-  view. Identity there keys on whether a narrow was **authored** as well as on the
-  set it resolves to, because the view key is derived from the authoring.
-
-`m-deep-fetch` specifies the consequences in full; `m-inheritance` owns the
-shared Subtype Selection and its resolution inside each context-supplied
-position.
-
 ## Subtype narrowing
 
 `m-inheritance` owns the shared **Subtype Selection** value, its canonical
-construction, and its model-aware resolution inside a polymorphic position.
-The transitional representation uses the same serialized `narrow` node in two
-semantic positions. The first `narrow` on the transparent query-wrapper spine —
-reachable from the root only through `orderBy`, `limit`, `deepFetch`, `asOf`,
-`asOfRange`, or `history` — is the query-position form: it narrows the whole
-result and moves to Object Query. A `narrow` below a Predicate operator, or
-inside that first `narrow`'s operand, is Predicate-scoped: it narrows the active
-position for its inner predicate and remains here. In either position, `narrow`
-contributes only the operand that its selection scopes:
+construction, and its model-aware resolution inside a polymorphic position. The
+`narrow` node here is **Predicate-scoped**: it narrows the active position for
+its own inner predicate and is therefore a filter. Whole-result narrowing is
+`narrowTo` on the Object Query and has no spelling in this grammar, so the two
+can never be confused for one another:
 
 | Predicate | Encoding | Meaning |
 |---|---|---|
 | `narrow` | `{ "narrow": { "to": [ … ], "operand" } }` | evaluate `operand` over the active position narrowed by the Subtype Selection `to` |
 
-For the temporary query-position form, the active position is the read's
-`targetEntity`. For Predicate-scoped narrowing, the containing Predicate
-structure supplies the position: a Boolean term uses that Boolean expression's
-active position, a `navigate` / `exists` / `notExists` filter uses the
-relationship target, and a `narrow` inside another `narrow`'s operand uses the
-enclosing selection's resolved position. The position is never repeated in the
-node. `operand` is evaluated over the selection's resolved position, so a
+The containing structure supplies the position: at the top of a query's
+`predicate` it is the query's own result position (its `target`, narrowed by its
+`narrowTo` clause), a Boolean term uses that Boolean expression's active
+position, a `navigate` / `exists` / `notExists` filter uses the relationship
+target, and a `narrow` inside another `narrow`'s operand uses the enclosing
+selection's resolved position. The position is never repeated in the node. `operand` is evaluated over the selection's resolved position, so a
 concrete-subtype-declared attribute becomes referenceable there.
 
 ```yaml
-# targetEntity: Animal (root); narrow to Pet (abstract subtype -> Dog, Cat):
+# target: Animal (root); narrow to Pet (abstract subtype -> Dog, Cat):
 narrow:
   to: [Pet]
   operand: { all: {} }
@@ -698,18 +544,13 @@ specified once in `m-inheritance`. This module adds these operand consequences:
   resolves nowhere and is `reference-ambiguous-entity-name` (*Entity spellings in
   a reference position*).
 - **An order key's attribute reference is checked at the position it orders.**
-  An `orderBy` key names an attribute exactly as a predicate does and takes the
-  same positional rule, but the position it is asked of is the one its **ordered
-  rows** occupy: the transitional **query-position `narrow`** in the ordered operand
-  moves that position, while a Predicate-scoped `narrow` appearing as a term inside
-  a boolean combinator is a filter and moves nothing. So
-  ordering an abstract position by a concrete subtype's attribute is rejected, and
-  ordering that same position **narrowed to** that subtype is not. The wrappers
-  that may carry the `narrow` between it and the `orderBy` are exactly those
-  returning their operand's **own rows**: `orderBy`, `limit`,
-  `deepFetch` — which attaches fetched levels to those rows rather than replacing
-  them — and the temporal `asOf`, `asOfRange`, and `history`. A validator resolves
-  the ordered position **through that closed set and no other node**.
+  A Sort Key names an attribute exactly as a predicate does and takes the same
+  positional rule, but the position it is asked of is the one its **ordered rows**
+  occupy: the query's own `narrowTo` clause, which is a sibling of `orderBy`
+  rather than a node between them. A Predicate-scoped `narrow` is a filter and
+  moves nothing. So ordering an abstract position by a concrete subtype's
+  attribute is rejected, and ordering that same position **narrowed to** that
+  subtype is not (`m-object-query`).
 - **Serde writes canonical selection order.** Two selections are equal regardless
   of authored order, and serialization orders alternatives by
   `EntityIdentity.sort_key`. Distinct selections that resolve to the same effective
@@ -723,10 +564,10 @@ is fixed by `m-sql`.
 ## Forward map of the rest of the algebra
 
 For orientation, this schema revision leaves membership `in(subquery)` out of the
-required operation set. The temporal (`asOf`, `asOfRange`, `history`) and nested
-value-object (the flat `nested*` family — `nestedEq`, `nestedNotEq`, `nestedGt`,
-`nestedGte`, `nestedLt`, `nestedLte`, `nestedIn`, `nestedIsNull`,
-`nestedIsNotNull` — plus the to-many `nestedExists` / `nestedNotExists` with their
-optional element-scoped `where`) nodes have canonical encodings and are part of
-the algebra, with observable temporal behavior specified by `m-temporal-read`
-and SQL lowering specified by `m-sql`.
+required predicate set. The nested value-object nodes — the flat `nested*` family
+(`nestedEq`, `nestedNotEq`, `nestedGt`, `nestedGte`, `nestedLt`, `nestedLte`,
+`nestedIn`, `nestedIsNull`, `nestedIsNotNull`) plus the to-many `nestedExists` /
+`nestedNotExists` with their optional element-scoped `where` — have canonical
+encodings and are part of the algebra, with SQL lowering specified by `m-sql`.
+Temporal Selection is a clause of `m-object-query`, whose observable behavior
+`m-temporal-read` specifies.

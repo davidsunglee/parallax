@@ -12,11 +12,12 @@ tags: [m-op-list, m-identity-map, identity, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Order
-      find:
-        eq:
-          attr: parallax.compatibility.Order.id
-          value: 2
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 2
       roundTrips: 1
       note: list A resolves order 2 by id (its own query)
       statements:
@@ -25,11 +26,12 @@ when:
           binds: [2]
       expectRows:
         - { id: 2, name: Linus, sku: B-200, qty: 10, price: 20.00, active: true, ordered_on: 2024-02-10 }
-    - targetEntity: parallax.compatibility.Order
-      find:
-        eq:
-          attr: parallax.compatibility.Order.name
-          value: Linus
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.name
+            value: Linus
       roundTrips: 1
       sameObjectAs: 0
       note: list B resolves the SAME row by name -> a second query, but the same coalesced object

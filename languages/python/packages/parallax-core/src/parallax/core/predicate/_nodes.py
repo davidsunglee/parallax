@@ -1,11 +1,15 @@
 """Predicate-algebra nodes (m-predicate).
 
-Frozen ``slots`` dataclasses for the Predicate tree the query surface builds and
-the corpus serializes. Every node is immutable and shareable; construction is
-value-only (metamodel binding is validated by the serde/statement layers, not in
-``__init__``). The union :data:`PredicateNode` is the exhaustive read-path algebra
-consumed by ``m-sql`` predicate lowering, whose dispatch uses ``match`` and
-``assert_never``. Aggregation (``groupBy``) and the write side are out of scope.
+Frozen ``slots`` dataclasses for the recursive selection tree the query surface
+builds and the corpus serializes. Every node is immutable and shareable;
+construction is value-only (metamodel binding is validated by the serde/statement
+layers, not in ``__init__``). The union :data:`PredicateNode` is the exhaustive
+selection algebra consumed by ``m-sql`` predicate lowering, whose dispatch uses
+``match`` and ``assert_never``. Every query-wide value — the queried position,
+result narrowing, ordering, the row cap, Temporal Selection, Includes — is a
+clause of ``m-object-query`` rather than a node here; :class:`Narrow` is the
+Predicate-scoped filter, which restricts the active position while evaluating
+its own operand. Aggregation (``groupBy``) and the write side are out of scope.
 
 A node that doubles as a Python authoring surface — one a caller composes by
 method call rather than by deserializing a document — rejects an illegal
@@ -15,7 +19,7 @@ rules that raise it.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Final, Literal
 
 from parallax.core.metamodel import EntityIdentity
@@ -24,22 +28,15 @@ __all__ = [
     "QUERY_DEFINITION_CODES",
     "All",
     "And",
-    "AsOf",
-    "AsOfRange",
     "Between",
     "Comparison",
     "ComparisonOp",
-    "DeepFetch",
-    "EntityQuery",
     "Exists",
     "Group",
-    "History",
-    "Limit",
     "Membership",
     "MembershipOp",
     "Narrow",
     "Navigate",
-    "NavigationPath",
     "NestedComparison",
     "NestedComparisonOp",
     "NestedExists",
@@ -57,19 +54,17 @@ __all__ = [
     "NullCheck",
     "NullOp",
     "Or",
-    "OrderBy",
-    "OrderKey",
-    "PathSegment",
     "PredicateNode",
     "QueryDefinitionError",
     "Scalar",
     "StringMatch",
     "StringOp",
+    "SubtypeSelection",
+    "canonical_subtype_selection",
 ]
 
 # A scalar literal usable as a bind (json/yaml primitive).
 Scalar = str | int | float | bool | None
-TemporalDimension = Literal["valid-time", "transaction-time"]
 SubtypeSelection = tuple[str, ...]
 
 
@@ -238,80 +233,6 @@ class Group:
 
 
 @dataclass(frozen=True, slots=True)
-class OrderKey:
-    """One ordering term of an ``orderBy`` directive.
-
-    ``direction`` is ``None`` when the authored key omitted it (the schema's
-    optional ``direction`` defaults to ``asc``), and ``nulls`` is ``None`` when it
-    omitted the Null Placement (schema default ``last``). Serde round-trips both
-    absences faithfully — an omitted member serializes back omitted — while SQL
-    lowering treats them as the ``asc`` and ``last`` defaults.
-
-    A Sort Key is a query-definition construct, so a rejected placement
-    composition raises :class:`QueryDefinitionError`. The relationship-declaration
-    ordering term (``OrderTerm``) carries the same single-shot placement rule but
-    is part of a model declaration rather than of a query, so it stays outside
-    that family and raises a plain :class:`ValueError`; the two spellings differ
-    because the surfaces do, not by accident.
-    """
-
-    attr: str
-    direction: Literal["asc", "desc"] | None = None
-    nulls: Literal["first", "last"] | None = None
-
-    def nulls_first(self) -> OrderKey:
-        """This key with NULLs placed first. Single-shot (m-predicate)."""
-        return self._with_placement("first")
-
-    def nulls_last(self) -> OrderKey:
-        """This key with NULLs placed last — the default, stated explicitly."""
-        return self._with_placement("last")
-
-    def _with_placement(self, placement: Literal["first", "last"]) -> OrderKey:
-        if self.nulls is not None:
-            raise QueryDefinitionError(
-                code="query-expression-invalid",
-                message=(
-                    f"{self.attr}: null placement is single-shot and is already "
-                    f"{self.nulls!r}; derive the key from the unplaced base"
-                ),
-            )
-        return OrderKey(attr=self.attr, direction=self.direction, nulls=placement)
-
-
-@dataclass(frozen=True, slots=True)
-class OrderBy:
-    """Order an inner query's rows by one or more keys."""
-
-    operand: PredicateNode
-    keys: tuple[OrderKey, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class Limit:
-    """Cap an inner query's row count."""
-
-    operand: PredicateNode
-    count: int
-
-
-@dataclass(frozen=True, slots=True)
-class EntityQuery:
-    """The normalized query for one root or related Entity.
-
-    Query-wide wrappers are resolved at the planning boundary. SQL compilation
-    therefore receives the target and clauses directly, with temporal terms
-    already injected into ``predicate``.
-    """
-
-    target: EntityIdentity
-    predicate: PredicateNode
-    narrow_to: tuple[EntityIdentity, ...] | None = None
-    order_by: tuple[OrderKey, ...] = ()
-    limit: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class Narrow:
     """Constrain a polymorphic position to a subset of its subtypes."""
 
@@ -427,69 +348,6 @@ class NotExists:
     op: PredicateNode | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class PathSegment:
-    """One hop of a deep-fetch path: a relationship, optionally subtype-narrowed."""
-
-    rel: str
-    narrow: SubtypeSelection = ()
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "narrow", canonical_subtype_selection(self.narrow))
-
-
-@dataclass(frozen=True, slots=True)
-class NavigationPath:
-    """One deep-fetch path: the ordered, non-empty hops it traverses, and the
-    optional root guard restricting which queried objects it starts from.
-
-    A path is its own node rather than a bare segment tuple, so what qualifies the
-    path as a whole stays distinguishable from what qualifies one hop.
-    """
-
-    segments: tuple[PathSegment, ...]
-    narrow: SubtypeSelection | None = None
-
-    def __post_init__(self) -> None:
-        if self.narrow is not None:
-            object.__setattr__(self, "narrow", canonical_subtype_selection(self.narrow))
-
-
-@dataclass(frozen=True, slots=True)
-class DeepFetch:
-    """Resolve ``operand`` then eager-fetch each navigation path."""
-
-    operand: PredicateNode
-    paths: tuple[NavigationPath, ...] = field(default_factory=tuple)
-
-
-@dataclass(frozen=True, slots=True)
-class AsOf:
-    """Pin one temporal dimension to a single instant."""
-
-    operand: PredicateNode
-    dimension: TemporalDimension
-    coordinate: str
-
-
-@dataclass(frozen=True, slots=True)
-class AsOfRange:
-    """Scan a temporal dimension across a half-open ``[from, to)`` window."""
-
-    operand: PredicateNode
-    dimension: TemporalDimension
-    start: str
-    end: str
-
-
-@dataclass(frozen=True, slots=True)
-class History:
-    """Return the full milestone set on one axis (no as-of predicate)."""
-
-    operand: PredicateNode
-    dimension: TemporalDimension
-
-
 # The exhaustive read-path Predicate union (m-predicate); m-sql lowers over it.
 PredicateNode = (
     All
@@ -503,8 +361,6 @@ PredicateNode = (
     | Or
     | Not
     | Group
-    | OrderBy
-    | Limit
     | Narrow
     | NestedComparison
     | NestedRange
@@ -516,8 +372,4 @@ PredicateNode = (
     | Navigate
     | Exists
     | NotExists
-    | DeepFetch
-    | AsOf
-    | AsOfRange
-    | History
 )

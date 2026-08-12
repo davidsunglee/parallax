@@ -70,8 +70,9 @@ from parallax.core.metamodel import (
     TemporalDimension,
     ValueObjectMetadata,
 )
+from parallax.core.object_query import Latest
 from parallax.core.storage_layout import EntityLayoutView
-from parallax.core.temporal_read import Edge, Latest, Pin, milestone_edge_of
+from parallax.core.temporal_read import Edge, Pin, milestone_edge_of
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     KeyedMutation,

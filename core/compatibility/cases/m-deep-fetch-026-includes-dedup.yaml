@@ -1,21 +1,25 @@
 # Includes exact deduplication — repeating one literal path is the same include set
 # as spelling it once, so the canonical document and plan retain one child level.
 model: models/orders.yaml
-tags: [m-deep-fetch, includes-dedup]
+tags: [m-deep-fetch, m-object-query, includes-dedup]
 shape: read
 when:
-  targetEntity: parallax.compatibility.OrderItem
-  operation:
-    deepFetch:
-      operand: { all: {} }
-      paths:
-        - { segments: [{ rel: parallax.compatibility.OrderItem.order }] }
+  objectQuery:
+    target: parallax.compatibility.OrderItem
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.OrderItem.order
   equivalentEncodings:
-    - deepFetch:
-        operand: { all: {} }
-        paths:
-          - { segments: [{ rel: parallax.compatibility.OrderItem.order }] }
-          - { segments: [{ rel: parallax.compatibility.OrderItem.order }] }
+    - target: parallax.compatibility.OrderItem
+      predicate:
+        all: {}
+      includes:
+        - segments:
+            - rel: parallax.compatibility.OrderItem.order
+        - segments:
+            - rel: parallax.compatibility.OrderItem.order
 then:
   statements:
     - sql:

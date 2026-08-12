@@ -14,21 +14,27 @@
 # unguarded WildBoar Tusker carries no `owner` key at all: an excluded root never
 # participated in the path, which is not the same observation as having no owner.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the guarded owner hop binds its person-table IN-list from the owner ids gathered from the Cat and Dog rows of the root query result, so the child emission depends on a query result"
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { narrow: { to: [parallax.compatibility.Cat, parallax.compatibility.Dog] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
-        - { narrow: { to: [parallax.compatibility.Pet] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    includes:
+      - appliesTo:
+          - parallax.compatibility.Cat
+          - parallax.compatibility.Dog
+        segments:
+          - rel: parallax.compatibility.Animal.owner
+      - appliesTo:
+          - parallax.compatibility.Pet
+        segments:
+          - rel: parallax.compatibility.Animal.owner
 then:
   statements:
     - sql:

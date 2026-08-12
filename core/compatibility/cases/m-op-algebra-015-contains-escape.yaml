@@ -10,11 +10,12 @@ model: models/orders.yaml
 tags: [m-predicate, contains, string, escape, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    contains:
-      attr: parallax.compatibility.Order.sku
-      value: 50%
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      contains:
+        attr: parallax.compatibility.Order.sku
+        value: 50%
 then:
   statements:
     - sql:

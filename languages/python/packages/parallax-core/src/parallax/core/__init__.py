@@ -10,9 +10,9 @@ bases (``Entity`` and the temporal framework bases ``TxTemporal`` /
 member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` / ``desc``
 factories, the core-algebra values those take (cardinality, persistence,
 inheritance role and strategy, primary-key generation, and the two narrowable
-Neutral Types), ``DomainModel``, the ``FindQuery`` surface (predicate,
-result-shaping, deep-fetch ``.include``, subtype ``.narrow``, and the axis-keyed
-temporal-read clauses), the lifecycle-neutral temporal as-of coordinate model
+Neutral Types), ``DomainModel``, the ``ObjectQuery`` surface (predicate,
+result-shaping, ``.include``, subtype ``.narrow``, and the dimension-keyed
+Temporal Selection clauses), the lifecycle-neutral temporal as-of coordinate model
 (``LATEST`` / ``VALID_TIME`` / ``TX_TIME`` / ``Pin`` / ``Edge``), and the errors
 all of these raise. Read-only metadata protocols and identity values are imported
 from ``parallax.core.metamodel`` rather than re-exported here, and canonical
@@ -49,11 +49,11 @@ from parallax.core.entity import (
     EditViolation,
     Entity,
     EntityDefinitionError,
-    FindQuery,
     Float32,
     Int32,
     MetamodelDefinitionError,
     MetamodelLookupError,
+    ObjectQuery,
     Predicate,
     Rel,
     RelationshipPath,
@@ -68,16 +68,9 @@ from parallax.core.entity import (
     index,
     rel,
 )
+from parallax.core.object_query import LATEST, TX_TIME, VALID_TIME
 from parallax.core.predicate import OperationRejectedError, QueryDefinitionError
-from parallax.core.temporal_read import (
-    LATEST,
-    TX_TIME,
-    VALID_TIME,
-    Edge,
-    Pin,
-    TemporalReadError,
-    UndeclaredAxisError,
-)
+from parallax.core.temporal_read import Edge, Pin, TemporalReadError, UndeclaredAxisError
 
 __all__ = [
     "LATEST",
@@ -104,11 +97,11 @@ __all__ = [
     "EditViolation",
     "Entity",
     "EntityDefinitionError",
-    "FindQuery",
     "Float32",
     "Int32",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
+    "ObjectQuery",
     "OperationRejectedError",
     "Pin",
     "Predicate",

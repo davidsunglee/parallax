@@ -69,8 +69,10 @@ def test_a_canonical_case_passes(tmp_path: Path) -> None:
         cases={
             "m-x-001-read.yaml": (
                 "model: models/grade.yaml\nshape: read\nwhen:\n"
-                "  targetEntity: parallax.compatibility.Grade\n"
-                "  operation:\n    eq: { attr: parallax.compatibility.Grade.id, value: 1 }\n"
+                "  objectQuery:\n"
+                "    target: parallax.compatibility.Grade\n"
+                "    predicate:\n"
+                "      eq: { attr: parallax.compatibility.Grade.id, value: 1 }\n"
             )
         },
     )
@@ -86,16 +88,17 @@ def test_a_bare_spelling_is_reported_with_file_path_expectation_and_actual(
         cases={
             "m-x-001-read.yaml": (
                 "model: models/grade.yaml\nshape: read\nwhen:\n"
-                "  targetEntity: Grade\n"
-                "  operation:\n    eq: { attr: Grade.id, value: 1 }\n"
+                "  objectQuery:\n"
+                "    target: Grade\n"
+                "    predicate:\n      eq: { attr: Grade.id, value: 1 }\n"
             )
         },
     )
     findings = check(root)
     case = root / "cases" / "m-x-001-read.yaml"
     assert findings == [
-        f"{case}: when.targetEntity: expected 'parallax.compatibility.Grade', found 'Grade'",
-        f"{case}: when.operation.eq.attr: "
+        f"{case}: when.objectQuery.target: expected 'parallax.compatibility.Grade', found 'Grade'",
+        f"{case}: when.objectQuery.predicate.eq.attr: "
         "expected 'parallax.compatibility.Grade.id', found 'Grade.id'",
     ]
 
@@ -107,11 +110,12 @@ def test_an_element_relative_path_names_no_entity_and_is_left_alone(tmp_path: Pa
         cases={
             "m-x-001-read.yaml": (
                 "model: models/grade.yaml\nshape: read\nwhen:\n"
-                "  targetEntity: parallax.compatibility.Grade\n"
-                "  operation:\n"
-                "    nestedExists:\n"
-                "      path: parallax.compatibility.Grade.address.phones\n"
-                "      where:\n        nestedEq: { path: type, value: home }\n"
+                "  objectQuery:\n"
+                "    target: parallax.compatibility.Grade\n"
+                "    predicate:\n"
+                "      nestedExists:\n"
+                "        path: parallax.compatibility.Grade.address.phones\n"
+                "        where:\n          nestedEq: { path: type, value: home }\n"
             )
         },
     )
@@ -125,18 +129,20 @@ def test_the_ambiguity_exception_admits_only_the_ambiguous_reference(tmp_path: P
         cases={
             "m-x-001-rejected-ambiguous.yaml": (
                 "model: models/shared.yaml\nshape: rejected\nwhen:\n"
-                "  operation:\n"
-                "    exists:\n"
-                "      rel: Register.variant\n"
-                "      op:\n"
-                "        eq: { attr: SharedVariant.archiveLabel, value: A-1 }\n"
+                "  objectQuery:\n"
+                "    target: parallax.compatibility.Register\n"
+                "    predicate:\n"
+                "      exists:\n"
+                "        rel: Register.variant\n"
+                "        op:\n"
+                "          eq: { attr: SharedVariant.archiveLabel, value: A-1 }\n"
                 "then:\n  rejectedRule: reference-ambiguous-entity-name\n"
             )
         },
     )
     case = root / "cases" / "m-x-001-rejected-ambiguous.yaml"
     assert check(root) == [
-        f"{case}: when.operation.exists.rel: "
+        f"{case}: when.objectQuery.predicate.exists.rel: "
         "expected 'parallax.compatibility.Register.variant', found 'Register.variant'"
     ]
 
@@ -150,13 +156,13 @@ def test_an_ambiguous_reference_outside_that_rule_is_reported_with_every_candida
         cases={
             "m-x-001-read.yaml": (
                 "model: models/shared.yaml\nshape: read\nwhen:\n"
-                "  targetEntity: SharedVariant\n  operation:\n    all: {}\n"
+                "  objectQuery:\n    target: SharedVariant\n    predicate:\n      all: {}\n"
             )
         },
     )
     case = root / "cases" / "m-x-001-read.yaml"
     assert check(root) == [
-        f"{case}: when.targetEntity: expected 'archive.SharedVariant' or "
+        f"{case}: when.objectQuery.target: expected 'archive.SharedVariant' or "
         "'catalog.SharedVariant', found 'SharedVariant'"
     ]
 
@@ -207,11 +213,12 @@ def test_a_de_canonicalized_copy_of_the_real_corpus_fails(tmp_path: Path) -> Non
     case = root / "cases" / "m-deep-fetch-001-to-one.yaml"
     case.write_text(
         case.read_text(encoding="utf-8").replace(
-            "targetEntity: parallax.compatibility.OrderItem", "targetEntity: OrderItem"
+            "target: parallax.compatibility.OrderItem", "target: OrderItem"
         ),
         encoding="utf-8",
     )
     assert check(root) == [
-        f"{case}: when.targetEntity: expected 'parallax.compatibility.OrderItem', found 'OrderItem'"
+        f"{case}: when.objectQuery.target: "
+        "expected 'parallax.compatibility.OrderItem', found 'OrderItem'"
     ]
     assert main([str(root)]) == 1

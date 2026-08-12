@@ -7,20 +7,19 @@
 # through membership — the first two rows are the active orders with the lowest
 # qty (ids 1 and 2), not any active order.
 model: models/orders.yaml
-tags: [m-predicate, orderBy, limit, directive, multi-key, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-object-query, orderBy, limit, directive, multi-key, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    limit:
-      count: 2
-      operand:
-        orderBy:
-          keys:
-            - { attr: parallax.compatibility.Order.active, direction: desc }
-            - { attr: parallax.compatibility.Order.qty, direction: asc }
-          operand:
-            all: {}
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.Order.active
+        direction: desc
+      - attr: parallax.compatibility.Order.qty
+        direction: asc
+    limit: 2
 then:
   statements:
     - sql:

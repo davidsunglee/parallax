@@ -87,7 +87,7 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.story_models import Order
 from parallax.conformance.vo_models import Branch, Customer, CustomerPhone, Supplier
-from parallax.core.temporal_read import LATEST, TX_TIME
+from parallax.core.object_query import LATEST, TX_TIME
 from parallax.snapshot.handle import Database, Snapshot, Transaction
 
 __all__ = ["GRAPH_STORIES", "GraphStory", "graph_story_snippet"]

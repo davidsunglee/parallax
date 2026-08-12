@@ -574,7 +574,7 @@ class Case:
     def when(self) -> dict[str, Any]:
         """The action group: the action under test and how the client performs it.
 
-        Holds exactly one action member per shape (``operation`` | ``writeSequence``
+        Holds exactly one action member per shape (``objectQuery`` | ``writeSequence``
         | ``scenario`` | ``coherence`` | ``concurrency`` | ``boundary`` | ``attempts``
         | ``write``) plus the context members ``uow`` / ``at`` / ``observedTxStart`` /
         ``observedValidStart`` / ``equivalentEncodings``.
@@ -641,15 +641,16 @@ class Case:
         return self.uow.get("concurrency", "locking")
 
     @property
-    def operation(self) -> dict[str, Any]:
-        return self.when["operation"]
+    def object_query(self) -> dict[str, Any]:
+        """The canonical Object Query a read or rejected case carries."""
+        return self.when["objectQuery"]
 
     @property
     def is_write_sequence(self) -> bool:
         """True for a milestone-chaining write case (m-txtime-write).
 
         A write-sequence case carries ``when.writeSequence`` (ordered mutations) and
-        a ``then.tableState`` instead of an operation + ``then.rows``.
+        a ``then.tableState`` instead of an Object Query + ``then.rows``.
         """
         return self.shape == "writeSequence"
 
@@ -679,7 +680,7 @@ class Case:
         A single-attempt conflict carries ``when.write`` + ``then.affectedRows`` (the
         affected-row count the golden write leaves behind) and an OPTIONAL out-of-band
         ``given.apply`` (a concurrent mutation, e.g. a version bump) instead of an
-        operation + ``then.rows`` — OR an ordered ``when.attempts`` retry sequence
+        Object Query + ``then.rows`` — OR an ordered ``when.attempts`` retry sequence
         (each attempt carrying its own golden write + affected-row count) that
         proves the stale-then-retry contract.
         """
@@ -756,8 +757,8 @@ class Case:
     def is_scenario(self) -> bool:
         """True for a unit-of-work, cache, or identity scenario case.
 
-        A scenario case carries ``when.scenario`` (an ordered list of operation
-        steps with per-step round-trip counts) instead of a single operation;
+        A scenario case carries ``when.scenario`` (an ordered list of
+        steps with per-step round-trip counts) instead of a single query;
         golden SQL lives per step (as each step's ``statements``).
         """
         return self.shape == "scenario"
@@ -771,7 +772,7 @@ class Case:
         """True for an m-auto-retry/m-opt-lock bounded-retry boundary case.
 
         A boundary case carries ``when.boundary`` (the portable unit-of-work actions)
-        and a ``then.outcome`` (the portable outcome) instead of an operation /
+        and a ``then.outcome`` (the portable outcome) instead of an Object Query /
         writeSequence / etc.; it is always ``lane: api-conformance`` (the m-case-format
         harness cannot provoke its injected-fault / retry-loop observable), so it is
         schema-validated but not executed.
@@ -796,7 +797,7 @@ class Case:
     def is_coherence(self) -> bool:
         """True for a cross-process cache-coherence case.
 
-        A coherence case carries ``when.coherence`` — a two-node operation sequence
+        A coherence case carries ``when.coherence`` — a two-node step sequence
         (run over two connections to one database) instead of a single operation;
         golden SQL lives per step, and the final node-B re-fetch asserts
         ``observeRows`` (node A's committed write).
@@ -861,8 +862,8 @@ class Case:
     def is_rejected(self) -> bool:
         """True for a negative-validation case (m-value-object / m-predicate, Q7).
 
-        A ``rejected`` case carries the invalid input under ``when.operation`` (a
-        schema-valid m-predicate node) OR ``when.write`` (a neutral write row) and
+        A ``rejected`` case carries the invalid input under ``when.objectQuery`` (a
+        schema-valid m-object-query document) OR ``when.write`` (a neutral write row) and
         a ``then.rejectedRule`` naming the violated normative rule. A model-aware
         validator MUST refuse it BEFORE any SQL is emitted — no golden SQL, no
         dialect, no provisioning; :func:`case_runner.run_case` runs it dialect-free.
@@ -881,13 +882,13 @@ class Case:
 
     @property
     def equivalent_encodings(self) -> list[dict[str, Any]]:
-        """Alternate surface encodings that MUST canonicalize to ``operation``.
+        """Alternate surface encodings that MUST canonicalize to ``objectQuery``.
 
-        Optional. Each entry is a full operation node authored in a different
-        surface shape (e.g. a prefix vs a fluent spelling, or differently-ordered
-        object keys); the runner asserts every one collapses to the canonical
-        ``operation`` via the serde seam, proving precedence/serialization
-        fidelity without a database.
+        Optional. Each entry is a full Object Query document authored in a
+        different surface shape (differently-ordered object keys, an unsorted
+        include set, an omitted Transaction-Time selection); the runner asserts
+        every one collapses to the canonical ``objectQuery`` via the serde seam,
+        proving precedence/serialization fidelity without a database.
         """
         return self.when.get("equivalentEncodings", [])
 

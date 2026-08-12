@@ -211,10 +211,6 @@ ACCEPTED_PRIVATE_ENTITY_REACHES: dict[tuple[str, str], frozenset[str]] = {
         {"declaration_of", "is_entity_class", "members_of"}
     ),
     ("parallax.snapshot.handle._database", "_model"): frozenset({"class_index", "model_of"}),
-    ("parallax.snapshot.handle._predicate_writes", "_query"): frozenset({"mutation_selection"}),
-    ("parallax.snapshot.handle._preflight", "_query"): frozenset(
-        {"FindQuery", "LoweredFindQuery", "lower_find_query"}
-    ),
     ("parallax.snapshot.handle._write_inputs", "_declaration"): frozenset({"declaration_of"}),
     ("parallax.snapshot.handle._write_inputs", "_entity"): frozenset({"wire_names_of"}),
     ("parallax.snapshot.materialize._convert", "_graph_input"): frozenset(
@@ -263,15 +259,15 @@ def test_snapshots_private_entity_reaches_are_exactly_the_accepted_seams() -> No
 # below is the residue that has no supported entry point to drive, and each
 # entry is a `python.md` §7 decision rather than an import someone wrote.
 #
-# One family, for one reason: the ENTITY FRONTEND seams the adapter composes
-# descriptor-backed models through. Both are already accepted private seams of
-# production's own (`ACCEPTED_PRIVATE_ENTITY_REACHES` above names `model_of` for
-# the composition root and `lower_find_query` for the read preflight), and
-# `model_of`'s own contract calls it a first-party runtime seam rather than
-# developer surface — it exists so a separately distributed frontend can read
-# the accepted model out of a Domain Model, which is exactly what these two
-# modules do. A development-only consumer of a documented first-party seam is not
-# a reason to widen `parallax.core.entity`'s shipped surface.
+# Two reasons, both `python.md` §7 decisions. `model_of` is an accepted private
+# seam of production's own (`ACCEPTED_PRIVATE_ENTITY_REACHES` above names it for
+# the composition root), and its own contract calls it a first-party runtime seam
+# rather than developer surface — it exists so a separately distributed frontend
+# can read the accepted model out of a Domain Model, which is exactly what these
+# two modules do. `parallax.core.object_query._fluent` is the typed Object Query
+# surface, deliberately absent from its own package interface so no execution
+# module can reach the Entity frontend through it; a caller that WANTS the typed
+# surface names the module, exactly as the snapshot handle does.
 #
 # The descriptor record graph is NOT here: the adapter composes corpus models
 # through the public `domain_model_from_*` doors and reads the accepted model's
@@ -282,8 +278,8 @@ def test_snapshots_private_entity_reaches_are_exactly_the_accepted_seams() -> No
 # `model_of` appears twice rather than once.
 ACCEPTED_CONFORMANCE_PRIVATE_REACHES: dict[tuple[str, str], frozenset[str]] = {
     ("parallax.conformance.another_source", "parallax.core.entity._model"): frozenset({"model_of"}),
-    ("parallax.conformance.another_source", "parallax.core.entity._query"): frozenset(
-        {"lower_find_query"}
+    ("parallax.conformance.another_source", "parallax.core.object_query._fluent"): frozenset(
+        {"ObjectQuery", "object_query_node"}
     ),
     ("parallax.conformance.models", "parallax.core.entity._model"): frozenset({"model_of"}),
 }

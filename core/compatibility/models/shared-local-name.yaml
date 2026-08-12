@@ -18,10 +18,10 @@
 #   catalog.SharedVariant — declares `catalogLabel`
 #
 # The shipped materialization-key model is NOT reusable for this: it declares two
-# independent family roots, and a `rejected` case names no `targetEntity`, so the
-# model-aware default (`the` inheritance family root, singular, else the first
-# declared entity) has no answer there. This model declares no inheritance at all,
-# which also keeps the rule visibly independent of the family rules beside it.
+# independent family roots, so a case reading through one of them would carry the
+# family rules into a claim that is purely about reference resolution. This model
+# declares no inheritance at all, which keeps the rule visibly independent of the
+# family rules beside it.
 #
 # The two labels are deliberately DIFFERENT names declared on only one twin each,
 # so a resolver that answered a bare spelling with its first declaration would find

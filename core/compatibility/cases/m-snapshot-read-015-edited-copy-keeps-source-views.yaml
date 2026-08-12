@@ -27,11 +27,12 @@ shape: scenario
 lane: api-conformance
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Order
-      find:
-        eq:
-          attr: parallax.compatibility.Order.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          eq:
+            attr: parallax.compatibility.Order.id
+            value: 1
       roundTrips: 1
       note: materialize a snapshot of order 1 (no relationships included)
       statements:

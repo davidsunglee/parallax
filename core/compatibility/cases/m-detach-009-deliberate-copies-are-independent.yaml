@@ -23,11 +23,12 @@ tags: [m-detach, detached, deep-copy, identity, scenario, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
       roundTrips: 1
       expectState: persisted
       note: find account 1 (Ada, 100.00) — a persisted, interned managed object
@@ -56,11 +57,12 @@ when:
       roundTrips: 0
       expectState: detached
       note: mutate copy A in memory (balance 500.00) — no DML; crosses to neither copy B nor the original
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
       roundTrips: 0
       sameObjectAs: 0
       expectState: persisted

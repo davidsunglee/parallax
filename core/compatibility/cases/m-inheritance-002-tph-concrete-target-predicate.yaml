@@ -14,9 +14,12 @@ model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, tag, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.CardPayment
-  operation:
-    greaterThan: { attr: parallax.compatibility.CardPayment.amount, value: 60.00 }
+  objectQuery:
+    target: parallax.compatibility.CardPayment
+    predicate:
+      greaterThan:
+        attr: parallax.compatibility.CardPayment.amount
+        value: 60.00
 then:
   statements:
     - sql:

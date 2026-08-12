@@ -45,7 +45,7 @@ def _conflict() -> OptimisticLockConflictError:
 def _emissions(*statements: LoweredStatement) -> list[engine.Emission]:
     """The envelope a run's calls correspond to: one emission per call, in
     execution order, carrying the SQL that call ran."""
-    return [engine.Emission("/operation", stmt.sql, stmt.binds) for stmt in statements]
+    return [engine.Emission("/objectQuery", stmt.sql, stmt.binds) for stmt in statements]
 
 
 def _builder(*, concurrency: str = "locking", retries: int = 10) -> ExecutionLogBuilder:

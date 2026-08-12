@@ -19,15 +19,15 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            eq:
-              attr: parallax.compatibility.Balance.id
-              value: 1
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       note: explicit latest pin (current-row predicate)
       statements:
@@ -36,15 +36,15 @@ when:
           binds: [1, infinity]
       expectRows:
         - { bal_id: 1, acct_num: A, val: 150.00, in_z: "2024-06-01T00:00:00+00:00", out_z: infinity }
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            eq:
-              attr: parallax.compatibility.Balance.id
-              value: 1
-          dimension: transaction-time
-          coordinate: "2024-04-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: '2024-04-01T00:00:00+00:00'
       roundTrips: 1
       note: finite past pin — a DISTINCT pinned view of the same primary key (the superseded milestone)
       statements:
@@ -53,15 +53,15 @@ when:
           binds: [1, "2024-04-01T00:00:00+00:00", "2024-04-01T00:00:00+00:00"]
       expectRows:
         - { bal_id: 1, acct_num: A, val: 100.00, in_z: "2024-01-01T00:00:00+00:00", out_z: "2024-06-01T00:00:00+00:00" }
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            eq:
-              attr: parallax.compatibility.Balance.id
-              value: 1
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       sameObjectAs: 0
       identityAttr: bal_id

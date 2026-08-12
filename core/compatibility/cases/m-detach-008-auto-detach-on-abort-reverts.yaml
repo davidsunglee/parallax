@@ -23,11 +23,12 @@ tags: [m-detach, m-unit-work, detached, lifecycle, scenario, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
       roundTrips: 1
       expectState: persisted
       note: find account 1 as-materialized (Ada, 100.00) — a persisted managed object

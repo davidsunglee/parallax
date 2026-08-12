@@ -33,9 +33,9 @@ attribute reference at one target. Another is `Entity.all`: an `all` node names
 no position on the wire, so nothing downstream can tell `Dog.all` from
 `Animal.all` and the parameter is the only place an unfiltered query written at
 the wrong position is refused. Another is clause order — a `where` argument or a
-sort key written before the `narrow` that scopes it — because a Find Query
+sort key written before the `narrow` that scopes it — because an Object Query
 retains clauses rather than wrapping them, so the refused spelling and the
-sanctioned one lower to one operation. Another is `FindQuery.narrow`'s
+sanctioned one lower to one operation. Another is `ObjectQuery.narrow`'s
 conservative variadic overload, which leaves the result parameter where it was
 for any subtype list the fixed one-through-three overloads cannot read, while the
 narrow it authors lowers exactly as the readable spelling's does — so a later
@@ -50,7 +50,7 @@ rule-coded ignore asserts its diagnostic, because an unsuppressed diagnostic
 fails `just python-typecheck`.
 
 Authoring reaches no model, so every runtime twin here runs the shared read gate
-`preflight_find` — the seam `Database.find` and `Transaction.find` both call —
+`preflight` — the seam `Database.find` and `Transaction.find` both call —
 rather than expecting a rejection from `Entity.where`. That is where the
 model-aware validator states these rules, and it is what covers the wire path
 and any untyped caller identically.
@@ -71,7 +71,7 @@ broad hop does.
 
 Where a claim is about a value's position rather than about a clause, the
 position is spelled as an annotation — `key: SortKey[Cat | Dog] = …` — because
-the query value that will carry a narrowed RESULT parameter is `FindQuery[E, S]`
+the query value that will carry a narrowed RESULT parameter is `ObjectQuery[E, S]`
 and it does not exist yet. The annotation is exactly the parameter its
 `order_by` will supply, and each is paired with the runtime twin the same
 narrowing produces through the gate.
@@ -85,7 +85,7 @@ import pytest
 from pydantic import PydanticUserError
 
 from _support import snapshot_models
-from _support.query_probes import lowered_document
+from _support.query_probes import canonical_document, predicate_document
 from _support.snapshot_models import (
     Animal,
     AnimalOwner,
@@ -106,8 +106,8 @@ from parallax.core import (
     EditError,
     Entity,
     EntityDefinitionError,
-    FindQuery,
     Int32,
+    ObjectQuery,
     OperationRejectedError,
     Predicate,
     QueryDefinitionError,
@@ -120,6 +120,7 @@ from parallax.core import (
 )
 from parallax.core.entity import AttributeAssignment
 from parallax.core.entity._model import model_of
+from parallax.core.object_query._fluent import object_query_node
 from parallax.core.predicate import All
 from parallax.core.unit_work import (
     PredicateSelection,
@@ -128,7 +129,7 @@ from parallax.core.unit_work import (
     WriteInstructionError,
     validate_instruction,
 )
-from parallax.snapshot.handle._preflight import preflight_find
+from parallax.snapshot.handle import preflight
 
 _ANIMALS = snapshot_models.ANIMAL_MODEL
 _ORDERS = snapshot_models.SNAP_ORDERS_MODEL
@@ -208,7 +209,9 @@ _ONE_SHARED_NAME = DomainModel(LeftShared)
 _TWO_SHARED_NAMES = DomainModel(LeftShared, RightShared)
 
 
-def preflighted(query: FindQuery[Any, Any], models: DomainModel = _ANIMALS) -> FindQuery[Any, Any]:
+def preflighted(
+    query: ObjectQuery[Any, Any], models: DomainModel = _ANIMALS
+) -> ObjectQuery[Any, Any]:
     """``query`` after the shared read preflight accepted it against ``models``,
     which defaults to the animal composition every composition case is written over.
 
@@ -216,7 +219,7 @@ def preflighted(query: FindQuery[Any, Any], models: DomainModel = _ANIMALS) -> F
     the query itself so a case can go on to assert its canonical lowering. A
     rejection propagates.
     """
-    preflight_find(query, model=model_of(models))
+    preflight(object_query_node(query), model=model_of(models), form="graph")
     return query
 
 
@@ -260,7 +263,7 @@ def test_an_ancestors_predicate_addresses_every_descendant_position() -> None:
     # The acceptance half of the same mechanism, and the case an INVARIANT
     # parameter would break: `Predicate[Animal]` lands in a `Dog` position
     # because a root-declared member is available to every concrete under it.
-    assert lowered_document(preflighted(Dog.where(Animal.name == "Ada"))) == {
+    assert predicate_document(preflighted(Dog.where(Animal.name == "Ada"))) == {
         "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
@@ -270,7 +273,7 @@ def test_an_inherited_member_is_parameterized_by_the_class_it_is_reached_through
     # `Dog`-positioned predicate while the wire keeps the DECLARING Entity — the
     # spelling that makes the reference applicable to every concrete under
     # `Animal`. The two are different questions and the two answers differ.
-    assert lowered_document(preflighted(Dog.where(Dog.name == "Ada"))) == {
+    assert predicate_document(preflighted(Dog.where(Dog.name == "Ada"))) == {
         "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
@@ -283,7 +286,7 @@ def test_a_subtype_spelling_of_an_inherited_member_is_narrower_than_the_model_is
     # under `Animal` answers. The remedy is to spell the member through the class
     # that declares it, and the suppression records the asymmetry rather than
     # leaving it to be discovered.
-    assert lowered_document(preflighted(Animal.where(Dog.name == "Ada"))) == {  # pyright: ignore[reportArgumentType]
+    assert predicate_document(preflighted(Animal.where(Dog.name == "Ada"))) == {  # pyright: ignore[reportArgumentType]
         "eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}
     }
 
@@ -298,17 +301,17 @@ def test_one_identity_reached_through_two_classes_is_refused_statically_only() -
     # runtime twin: preflight is handed nothing that differs.
     foreign = TwinLeft.where(TwinRight.id == 1)  # pyright: ignore[reportArgumentType]
     native = TwinLeft.where(TwinLeft.id == 1)
-    assert lowered_document(preflighted(foreign, _TWINS)) == {
+    assert predicate_document(preflighted(foreign, _TWINS)) == {
         "eq": {"attr": "parallax.tests.typed.TypedTwin.id", "value": 1}
     }
-    assert lowered_document(preflighted(native, _TWINS)) == lowered_document(foreign)
+    assert predicate_document(preflighted(native, _TWINS)) == predicate_document(foreign)
 
 
 def test_a_conjunction_addresses_the_position_both_of_its_operands_address() -> None:
     # An ancestor's term and a descendant's term compose, and the combination
     # lands in the descendant's query — the case a combinator demanding one
     # shared parameter would refuse for a reason no rule states.
-    assert lowered_document(
+    assert predicate_document(
         preflighted(Dog.where((Animal.name == "Ada") & (Dog.bark_volume > 3)))
     ) == {
         "and": {
@@ -325,7 +328,7 @@ def test_a_mixed_conjunction_reads_the_same_in_the_other_operand_order() -> None
     # that took the left operand's position would accept exactly one of these
     # two spellings, so both orders are pinned: the position a combination
     # addresses is the meet, which no operand order can move.
-    assert lowered_document(
+    assert predicate_document(
         preflighted(Dog.where((Dog.bark_volume > 3) & (Animal.name == "Ada")))
     ) == {
         "and": {
@@ -368,10 +371,10 @@ def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
     # `|` carries the identical parameter, so the acceptance half holds for it
     # in both orders too — the combinator, not the combination, is what the
     # position comes from.
-    ancestor_first = lowered_document(
+    ancestor_first = predicate_document(
         preflighted(Dog.where((Animal.name == "Ada") | (Dog.bark_volume > 3)))
     )
-    descendant_first = lowered_document(
+    descendant_first = predicate_document(
         preflighted(Dog.where((Dog.bark_volume > 3) | (Animal.name == "Ada")))
     )
     assert ancestor_first == {
@@ -435,30 +438,64 @@ def test_a_conjunction_of_one_positions_terms_keeps_that_position() -> None:
 def test_a_narrow_scope_is_how_a_descendants_member_reaches_an_ancestor_position() -> None:
     # The sanctioned spelling of the first rejection above: `narrow` takes the
     # subtype's predicate and answers one in the narrowing class's own position,
-    # so this composes where the bare subtype predicate cannot.
-    assert lowered_document(
+    # so this composes where the bare subtype predicate cannot. A narrowing that
+    # is the WHOLE filter narrows the result, so it lands in `narrowTo` and its
+    # own scoped predicate is what the query filters by.
+    assert canonical_document(
         preflighted(Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)))
     ) == {
-        "narrow": {
-            "to": ["parallax.compatibility.Dog"],
-            "operand": {
-                "greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}
-            },
-        }
+        "target": "parallax.compatibility.Animal",
+        "predicate": {"greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}},
+        "narrowTo": ["parallax.compatibility.Dog"],
     }
 
 
 def test_narrowing_after_the_predicate_is_refused_statically_and_only_statically() -> None:
     # The predicate twin of the sort key's clause-order rule below: the `where`
     # argument is measured at the position the query is at where the call is
-    # written, and the later `narrow` never retroactively legalizes it. It has no
-    # runtime twin because the clause order does not reach the wire — the refused
-    # spelling lowers to the very node the sanctioned one above produces, so no
-    # model-aware rule could accept one and refuse the other.
+    # written, so a subtype's bare predicate is refused there and the later
+    # `narrow` never retroactively legalizes it. It has no runtime twin because
+    # the clause order does not reach the wire — result narrowing is a clause of
+    # the query the predicate is evaluated at, so the model-aware position the
+    # predicate meets is the narrowed one either way. Narrowing FIRST is what
+    # states the same query with the checker's agreement, and the two converge on
+    # one canonical value.
     late_narrow = Animal.where(Dog.bark_volume > 3).narrow(Dog)  # pyright: ignore[reportArgumentType]
-    assert lowered_document(preflighted(late_narrow)) == lowered_document(
-        preflighted(Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)))
-    )
+    narrow_first = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))
+    document = canonical_document(preflighted(late_narrow))
+    assert document["narrowTo"] == ["parallax.compatibility.Dog"]
+    assert document["predicate"] == {
+        "greaterThan": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 3}
+    }
+    assert canonical_document(preflighted(narrow_first)) == document
+
+
+def test_a_narrowing_reached_through_a_boolean_stays_a_filter() -> None:
+    # The other side of the lift: only the whole filter is whole-result
+    # narrowing. Reached through a combinator, the same narrowing qualifies one
+    # term of the selection and the result position stays where the query is —
+    # so the query returns un-narrowed objects and carries no `narrowTo` at all.
+    combined = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3) | (Animal.name == "Ada"))
+    document = canonical_document(preflighted(combined))
+    assert "narrowTo" not in document
+    assert document["predicate"] == {
+        "or": {
+            "operands": [
+                {
+                    "narrow": {
+                        "to": ["parallax.compatibility.Dog"],
+                        "operand": {
+                            "greaterThan": {
+                                "attr": "parallax.compatibility.Dog.barkVolume",
+                                "value": 3,
+                            }
+                        },
+                    }
+                },
+                {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Ada"}},
+            ]
+        }
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -471,7 +508,7 @@ def test_a_comparison_literal_is_the_wire_value_rather_than_the_members_python_t
     # comparison literal as a number, so a value parameter narrowed to the
     # member's Python type would refuse the canonical spelling. The value stays
     # the wire's, and no suppression belongs here.
-    assert lowered_document(preflighted(SnapOrder.where(SnapOrder.price >= 600.00), _ORDERS)) == {
+    assert predicate_document(preflighted(SnapOrder.where(SnapOrder.price >= 600.00), _ORDERS)) == {
         "greaterThanEquals": {"attr": "parallax.compatibility.SnapOrder.price", "value": 600.00}
     }
 
@@ -482,7 +519,7 @@ def test_an_equality_literal_is_judged_by_the_model_rather_than_by_the_signature
     # authoring-time one on a flat attribute. Where the neutral contract states a
     # literal-type rule, the model-aware validator is what states it: the same
     # mismatch one value-object hop deeper is refused by name.
-    assert lowered_document(preflighted(SnapOrder.where(SnapOrder.price == "abc"), _ORDERS)) == {
+    assert predicate_document(preflighted(SnapOrder.where(SnapOrder.price == "abc"), _ORDERS)) == {
         "eq": {"attr": "parallax.compatibility.SnapOrder.price", "value": "abc"}
     }
     with pytest.raises(OperationRejectedError) as caught:
@@ -526,7 +563,7 @@ def test_every_addressed_value_carries_its_own_phantom_and_ships_none_of_them() 
 
 
 def test_a_subtype_sort_key_never_orders_an_ancestor_result() -> None:
-    # The annotation is the position `FindQuery.order_by` will supply over an
+    # The annotation is the position `ObjectQuery.order_by` will supply over an
     # un-narrowed `Animal` result. The runtime twin is the same rule an order
     # key's attribute reference draws against the ordered rows' position.
     key: SortKey[Animal] = Dog.bark_volume.desc()  # pyright: ignore[reportAssignmentType]
@@ -548,19 +585,16 @@ def test_an_ancestors_sort_key_orders_a_union_narrowed_result() -> None:
     # applies to every concrete a two-subtype narrow leaves in the position, so
     # `SortKey[Animal]` lands in a `Cat | Dog` result and the validator agrees.
     key: SortKey[Cat | Dog] = Animal.name.asc()
-    assert lowered_document(
+    document = canonical_document(
         preflighted(Animal.where(Animal.all).narrow(Cat, Dog).order_by(key))
-    ) == {
-        "orderBy": {
-            "operand": {
-                "narrow": {
-                    "to": ["parallax.compatibility.Cat", "parallax.compatibility.Dog"],
-                    "operand": {"all": {}},
-                }
-            },
-            "keys": [{"attr": "parallax.compatibility.Animal.name", "direction": "asc"}],
-        }
-    }
+    )
+    assert document["narrowTo"] == [
+        "parallax.compatibility.Cat",
+        "parallax.compatibility.Dog",
+    ]
+    assert document["orderBy"] == [
+        {"attr": "parallax.compatibility.Animal.name", "direction": "asc"}
+    ]
 
 
 def test_a_subtype_sort_key_never_orders_a_union_narrowed_result() -> None:
@@ -577,17 +611,11 @@ def test_a_sort_key_orders_the_result_a_single_subtype_narrow_moved_to() -> None
     # And the acceptance a narrow to ONE subtype buys: the same key the
     # un-narrowed query refused is applicable once the result is `Dog`.
     key: SortKey[Dog] = Dog.bark_volume.desc()
-    assert lowered_document(preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key))) == {
-        "orderBy": {
-            "operand": {
-                "narrow": {
-                    "to": ["parallax.compatibility.Dog"],
-                    "operand": {"all": {}},
-                }
-            },
-            "keys": [{"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}],
-        }
-    }
+    document = canonical_document(preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key)))
+    assert document["narrowTo"] == ["parallax.compatibility.Dog"]
+    assert document["orderBy"] == [
+        {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}
+    ]
 
 
 def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
@@ -595,26 +623,17 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
     # Key rather than the canonical node, and the single-shot rule stays the
     # canonical node's own.
     key: SortKey[Dog] = Dog.bark_volume.desc().nulls_first()
-    assert lowered_document(preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key)))[
-        "orderBy"
-    ] == {
-        "operand": {
-            "narrow": {
-                "to": ["parallax.compatibility.Dog"],
-                "operand": {"all": {}},
-            }
-        },
-        "keys": [
-            {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc", "nulls": "first"}
-        ],
-    }
+    document = canonical_document(preflighted(Animal.where(Animal.all).narrow(Dog).order_by(key)))
+    assert document["orderBy"] == [
+        {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc", "nulls": "first"}
+    ]
     with pytest.raises(QueryDefinitionError) as caught:
         key.nulls_last()
     assert caught.value.code == "query-expression-invalid"
 
 
 # --------------------------------------------------------------------------- #
-# What each `FindQuery.narrow` arity answers as the RESULT parameter, read     #
+# What each `ObjectQuery.narrow` arity answers as the RESULT parameter, read     #
 # through the sort keys the answered query does and does not admit — with no   #
 # annotation anywhere, so the parameter is the one `narrow` produced rather    #
 # than one the case declared. Each case carries its runtime twin.              #
@@ -623,15 +642,11 @@ def test_null_placement_stays_on_the_sort_key_and_keeps_its_position() -> None:
 
 def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
     admitted = Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())
-    assert lowered_document(preflighted(admitted))["orderBy"] == {
-        "operand": {
-            "narrow": {
-                "to": ["parallax.compatibility.Dog"],
-                "operand": {"all": {}},
-            }
-        },
-        "keys": [{"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}],
-    }
+    document = canonical_document(preflighted(admitted))
+    assert document["narrowTo"] == ["parallax.compatibility.Dog"]
+    assert document["orderBy"] == [
+        {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}
+    ]
     # A sibling's key is refused by the answered parameter and by the gate: the
     # ordered rows are Dogs, and `Cat.indoor` applies to none of them.
     refused = Animal.where(Animal.all).narrow(Dog).order_by(Cat.indoor.asc())  # pyright: ignore[reportArgumentType]
@@ -642,15 +657,14 @@ def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
 
 def test_narrowing_to_two_subtypes_answers_their_union() -> None:
     admitted = Animal.where(Animal.all).narrow(Cat, Dog).order_by(Animal.name.asc())
-    assert lowered_document(preflighted(admitted))["orderBy"] == {
-        "operand": {
-            "narrow": {
-                "to": ["parallax.compatibility.Cat", "parallax.compatibility.Dog"],
-                "operand": {"all": {}},
-            }
-        },
-        "keys": [{"attr": "parallax.compatibility.Animal.name", "direction": "asc"}],
-    }
+    document = canonical_document(preflighted(admitted))
+    assert document["narrowTo"] == [
+        "parallax.compatibility.Cat",
+        "parallax.compatibility.Dog",
+    ]
+    assert document["orderBy"] == [
+        {"attr": "parallax.compatibility.Animal.name", "direction": "asc"}
+    ]
     # `Cat | Dog` is not a subtype of `Dog`, so a Dog member does not apply to
     # every concrete the narrow left in the position — the union is what the
     # parameter answers, not the common base.
@@ -669,37 +683,29 @@ def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
     # runtime twin to raise.
     subtypes: list[type[Entity]] = [Dog]
     admitted = Animal.where(Animal.all).narrow(*subtypes).order_by(Animal.name.asc())
-    assert lowered_document(preflighted(admitted))["orderBy"] == {
-        "operand": {
-            "narrow": {
-                "to": ["parallax.compatibility.Dog"],
-                "operand": {"all": {}},
-            }
-        },
-        "keys": [{"attr": "parallax.compatibility.Animal.name", "direction": "asc"}],
-    }
+    document = canonical_document(preflighted(admitted))
+    assert document["narrowTo"] == ["parallax.compatibility.Dog"]
+    assert document["orderBy"] == [
+        {"attr": "parallax.compatibility.Animal.name", "direction": "asc"}
+    ]
     conservative = Animal.where(Animal.all).narrow(*subtypes).order_by(Dog.bark_volume.desc())  # pyright: ignore[reportArgumentType]
-    assert lowered_document(preflighted(conservative))["orderBy"] == {
-        "operand": {
-            "narrow": {
-                "to": ["parallax.compatibility.Dog"],
-                "operand": {"all": {}},
-            }
-        },
-        "keys": [{"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}],
-    }
+    assert canonical_document(preflighted(conservative))["orderBy"] == [
+        {"attr": "parallax.compatibility.Dog.barkVolume", "direction": "desc"}
+    ]
 
 
 def test_ordering_before_narrowing_is_refused_statically_and_only_statically() -> None:
     # The sort-key twin of the narrow clause's own no-retroactive-scope rule: a
-    # Find Query retains clauses rather than wrapping them, so ordering-then-
+    # Object Query retains clauses rather than wrapping them, so ordering-then-
     # narrowing and narrowing-then-ordering lower to ONE canonical operation and
     # no model-aware rule can refuse one while accepting the other. What refuses
     # the wrong order is the result parameter the receiver carries when the call
     # is written, which is why the suppression below has no runtime twin.
     late_narrow = Animal.where(Animal.all).order_by(Dog.bark_volume.desc()).narrow(Dog)  # pyright: ignore[reportArgumentType]
     early_narrow = Animal.where(Animal.all).narrow(Dog).order_by(Dog.bark_volume.desc())
-    assert lowered_document(preflighted(late_narrow)) == lowered_document(preflighted(early_narrow))
+    assert canonical_document(preflighted(late_narrow)) == canonical_document(
+        preflighted(early_narrow)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -740,7 +746,7 @@ def test_an_unfiltered_query_written_at_another_position_is_refused_statically()
     # records why: an `all` node names no position, so nothing downstream can
     # tell these two apart — which is exactly why the parameter is the only
     # place the mistake is visible at all.
-    assert lowered_document(preflighted(Animal.where(Dog.all))) == {"all": {}}  # pyright: ignore[reportArgumentType]
+    assert predicate_document(preflighted(Animal.where(Dog.all))) == {"all": {}}  # pyright: ignore[reportArgumentType]
 
 
 def test_an_unfiltered_query_is_the_whole_filter_and_composes_with_nothing() -> None:
@@ -768,8 +774,8 @@ def test_the_unfiltered_query_survives_a_class_reached_through_a_type_parameter(
         return cls.all
 
     dogs: AllPredicate[Dog] = unfiltered(Dog)
-    assert lowered_document(preflighted(Dog.where(dogs))) == {"all": {}}
-    assert lowered_document(preflighted(Animal.where(Animal.all))) == lowered_document(
+    assert predicate_document(preflighted(Dog.where(dogs))) == {"all": {}}
+    assert predicate_document(preflighted(Animal.where(Animal.all))) == predicate_document(
         preflighted(Animal.where(Animal.all))
     )
 
@@ -807,24 +813,18 @@ def test_a_declared_class_body_admits_no_stray_query_root_descriptor() -> None:
 
 
 def test_a_descendants_path_is_a_legal_include_source_of_its_ancestors_query() -> None:
-    # The annotation is the position `FindQuery.include` will supply. A path
+    # The annotation is the position `ObjectQuery.include` will supply. A path
     # rooted at a descendant starts from fewer queried objects, which is what the
-    # path-ROOT guard says, so the query accepts it and the guard resolves inside
+    # SOURCE guard says, so the query accepts it and the guard resolves inside
     # the position.
     source: RelationshipPath[Beast, Any] = Hound.keeper
-    assert lowered_document(preflighted(Beast.where(Beast.all).include(source), _BESTIARY)) == {
-        "deepFetch": {
-            "operand": {"all": {}},
-            "paths": [
-                {
-                    "narrow": {
-                        "to": ["parallax.tests.typed.Hound"],
-                    },
-                    "segments": [{"rel": "parallax.tests.typed.Beast.keeper"}],
-                }
-            ],
+    document = canonical_document(preflighted(Beast.where(Beast.all).include(source), _BESTIARY))
+    assert document["includes"] == [
+        {
+            "appliesTo": ["parallax.tests.typed.Hound"],
+            "segments": [{"rel": "parallax.tests.typed.Beast.keeper"}],
         }
-    }
+    ]
 
 
 def test_an_ancestors_path_is_not_an_include_source_of_a_descendants_query() -> None:
@@ -852,22 +852,20 @@ def test_a_hop_narrowed_to_a_descendant_stands_where_the_broad_hop_does() -> Non
     # broad one does not satisfy the narrowed position.
     narrowed: RelationshipPath[Keeper, Beast] = Keeper.beasts.narrow(Hound)
     broad: RelationshipPath[Keeper, Hound] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
-    assert lowered_document(preflighted(Keeper.where(Keeper.all).include(narrowed), _BESTIARY)) == {
-        "deepFetch": {
-            "operand": {"all": {}},
-            "paths": [
+    document = canonical_document(
+        preflighted(Keeper.where(Keeper.all).include(narrowed), _BESTIARY)
+    )
+    assert document["includes"] == [
+        {
+            "segments": [
                 {
-                    "segments": [
-                        {
-                            "rel": "parallax.tests.typed.Keeper.beasts",
-                            "narrow": {"to": ["parallax.tests.typed.Hound"]},
-                        }
-                    ]
+                    "rel": "parallax.tests.typed.Keeper.beasts",
+                    "narrowTo": ["parallax.tests.typed.Hound"],
                 }
-            ],
+            ]
         }
-    }
-    assert broad.segments[-1].narrow == ()
+    ]
+    assert broad.segments[-1].narrow_to == ()
 
 
 def test_a_hop_narrows_only_to_subtypes_of_what_it_points_at() -> None:
@@ -927,8 +925,8 @@ def test_a_reference_names_the_namespace_its_own_class_declares() -> None:
     # would have named both Entities and therefore neither.
     query = LeftShared.where(LeftShared.id == 1)
     expected = {"eq": {"attr": "parallax.tests.typed.alpha.Shared.id", "value": 1}}
-    assert lowered_document(preflighted(query, _ONE_SHARED_NAME)) == expected
-    assert lowered_document(preflighted(query, _TWO_SHARED_NAMES)) == expected
+    assert predicate_document(preflighted(query, _ONE_SHARED_NAME)) == expected
+    assert predicate_document(preflighted(query, _TWO_SHARED_NAMES)) == expected
 
 
 def test_a_relationship_hop_past_the_first_erases_and_the_gate_refuses_it() -> None:
@@ -980,7 +978,7 @@ def test_a_narrow_receiver_does_not_restate_the_relationship_position() -> None:
     # so both spellings lower identically and the same Dog selection is legal.
     through_target = AnimalOwner.where(AnimalOwner.pets.exists(Pet.narrow(Dog)))
     through_ancestor = AnimalOwner.where(AnimalOwner.pets.exists(Animal.narrow(Dog)))
-    assert lowered_document(preflighted(through_ancestor)) == lowered_document(
+    assert predicate_document(preflighted(through_ancestor)) == predicate_document(
         preflighted(through_target)
     )
 

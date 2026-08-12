@@ -13,23 +13,24 @@
 # 1 (itemsByShipDate) = 3 — one statement per level, never a fourth statement
 # for the shared rows.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, to-many, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-deep-fetch, to-many, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child levels - the Order.items and Order.itemsByShipDate IN-list binds are the distinct order ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand:
-        eq:
-          attr: parallax.compatibility.Order.id
-          value: 1
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.items }] }
-        - { segments: [{ rel: parallax.compatibility.Order.itemsByShipDate }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      eq:
+        attr: parallax.compatibility.Order.id
+        value: 1
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+      - segments:
+          - rel: parallax.compatibility.Order.itemsByShipDate
 then:
   statements:
     - sql:

@@ -5,20 +5,23 @@
 # the child levels are elided entirely: no Order.items or OrderItem.statuses SQL is
 # authored or executed. The snapshot graph is an empty root list; roundTrips is 1.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, empty-root, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-deep-fetch, empty-root, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the empty root query result means the Order.items level gathers no parent keys and issues no child statement at all, so even the statement COUNT depends on a query result"
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand:
-        eq: { attr: parallax.compatibility.Order.id, value: 999 }
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      eq:
+        attr: parallax.compatibility.Order.id
+        value: 999
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+          - rel: parallax.compatibility.OrderItem.statuses
 then:
   statements:
     - sql:

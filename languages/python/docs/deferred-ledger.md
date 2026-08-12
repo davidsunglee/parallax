@@ -213,43 +213,6 @@ wire shape, and bounded-memory streaming. It needs its own grilling session and
 ticket after conformance has been reduced to the production path; COR-93 must not
 combine that semantic migration with deleting the duplicate engine.
 
-### D-62 — A graph-form read whose deep fetch sits under a result wrapper passes the read gate and fails in SQL generation after a force-flush
-
-*Medium — a legal operation reaches execution and fails late, having already
-written.* **Owned by
-[COR-96](https://linear.app/flimflam/issue/COR-96/decide-what-a-row-returning-wrapper-over-a-deep-fetch-means), not this
-target** — what the shape denotes is a core-specification decision, and this
-entry records only what Python does until that decision is made, so a second
-language target inheriting the same ingress finds it. Relates to
-`parallax.snapshot.handle._preflight.preflight_neutral`,
-`parallax.snapshot.handle._features`, `parallax.core.deep_fetch.plan`.
-
-**What.** `m-predicate` composes `deepFetch` freely under the nodes that return
-their operand's own rows, so `limit(deepFetch(all, path), 5)` is a legal
-operation. Find Query lowering never emits one — it places the deep fetch
-outermost — but the model-neutral read ingress accepts any legal operation, so
-the shape now reaches execution. `deep_fetch.plan` reads the outer node alone: it
-plans zero levels and hands the whole operation, deep fetch included, to
-`compile_read`, which raises `SqlGenError`. On a participating read that lands
-after `uow.read`'s force-flush — the recorded port sequence is `['begin',
-'write', 'rollback']`, with the buffered DML already executed.
-
-Two neighbouring shapes are settled and are not this entry. A ROW-form request
-carrying the same operation is refused at the read gate, which walks the wrapper
-spine, because the values lane materializes no relationship level at any depth.
-A wrapper-carried deep fetch over a SCANNED temporal axis is refused one step
-earlier as the `snapshot-history-includes` Deferred Execution Feature, which
-`m-snapshot-read` already defines.
-
-**Why it is deferred rather than fixed.** Every available repair presumes an
-answer to the unstated question: what the graph a row-returning wrapper over a
-deep fetch denotes. Planner support would build one denotation into the
-implementation. A new Deferred Execution Feature would name a Feature no core tag
-defines, and would be retired the moment the denotation is stated. A gate
-rejection would report the operation invalid when the specification permits it
-and only the implementation is behind. Python therefore adds neither, states the
-bound truthfully at the gate, and follows COR-96's decision.
-
 ### D-67 — A deep-fetch or snapshot CHILD level's graph node shape is authored per projection, and production materializes one merged, narrowed node
 
 *Medium — a corpus-versus-production divergence with no defect on either side.*
@@ -295,9 +258,9 @@ database, and only the wire rendering goes ungraded. `m-inheritance-073` and
 or more concrete subtypes (`to: [Cat, Dog]` for both, plus `to: [Pet]` for `-073`
 and `to: [Dog, WildBoar]` for `-077`), and the idiomatic developer surface
 authors a path-root guard only by reaching an inherited relationship through ONE
-subtype class (`Dog.owner`) — `FindQuery._root_guard` and
-`RelationshipPath.source` (`parallax.core.entity._query`, `._expressions`) admit
-no multi-subtype union. This is not an unwritten story but the same structural
+subtype class (`Dog.owner`) — `ObjectQuery._source_guard`
+(`parallax.core.object_query._fluent`) and `RelationshipPath.source`
+(`parallax.core.entity._expressions`) admit no multi-subtype union. This is not an unwritten story but the same structural
 non-fit `parallax.conformance.api_suite.CASE_SKIP_REASONS` already records for
 both ids (`_ROOT_GUARD_MULTI_SUBTYPE_SPELLING_UNREACHABLE_REASON`), so no Python
 gate observes their graph at all, and none can be added in this shape. The
@@ -397,6 +360,7 @@ prose.
 - **D-60** → closed by this claim. The module's own source landed, so `MODULE_SCOPE` carries `parallax.core.execution_log`, the generated `[tool.importlinter]` block contracts it, `core/spec/modules.md` carries `m-snapshot-read --> m-execution-log`, and `m-snapshot-read.md` names the Read Trace its round-trip count is observed through. One consequence the entry did not foresee: `m-execution-log` reaches `m-sql`, so mapping the tag to `parallax.snapshot.materialize` would put SQL generation inside the closure of the grant `parallax.snapshot.handle._materializer` holds, dissolving the containment that child scope exists for. The tag therefore maps to `parallax.snapshot._read_result` — the scope that actually names the Read Trace — while `parallax.snapshot.materialize` carries the remaining `m-snapshot-read` edges as a support row.
 - **D-59** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). `then.execution` has one grader; `spec/python.md` §1 carries the single-witness limit.
 - **D-61** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The envelope half: `validate_execution_observation` has no envelope-grading seam, and `core/spec/m-conformance-adapter.md` *Execution provenance* binds the adapter regardless.
+- **D-62** → closed by [COR-96](https://linear.app/flimflam/issue/COR-96/decide-what-a-row-returning-wrapper-over-a-deep-fetch-means). The shape is retired rather than answered: an Object Query's Includes and its cap are sibling clauses, so a row-returning wrapper OVER a deep fetch has no spelling to reach execution with, on the typed surface or the neutral one. What remains of the neighbourhood is stated positively — a row-form request naming Include Paths is refused by the shared read gate (`handle.preflight`'s `form` argument), and Includes over a scanned temporal axis stay the `snapshot-history-includes` Deferred Execution Feature.
 - **D-63** → [COR-95](https://linear.app/flimflam/issue/COR-95/reference-harness-grades-thenexecution-second-witness-for-m-execution). The round-trip half: the eleven `then.roundTrips` authored on `boundary` and retry-shaped `conflict` cases have only this target's suites as a reader, because the harness runs no `api-conformance` lane and a retry-shaped conflict never reaches its round-trip assertion.
 - **D-64** → [COR-85](https://linear.app/flimflam/issue/COR-85/make-a-models-observable-behavior-independent-of-storage-layout). A temporal milestone this engine rebuilds carries declared members and no Structured Column, so under Relational Document Layout the write is refused rather than chained: `engine._refuse_document_layout_milestone` for a milestone a grouped find returned, `engine._refuse_unaccounted_document_milestone` for one tracked case state supplies but out-of-band statements may have overtaken. COR-85's own Phase 3 successor rule deletes both.
 - **D-65** → [COR-97](https://linear.app/flimflam/issue/COR-97/give-a-transaction-a-supported-abandon-and-the-execution-log-an-abort). A `rollback: true` step's abort sentinel records a `commit`-phase failure and an unclassified retry verdict, which no oracle reads; `engine._AbortingPort` states the untruth and its bound, and COR-97's `Transaction.abandon()` plus an `aborted` attempt status removes the decorator.

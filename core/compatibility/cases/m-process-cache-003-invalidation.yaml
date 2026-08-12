@@ -18,11 +18,12 @@ tags: [m-process-cache, query cache, cache-invalidation, freshness, scenario]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 2
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
       roundTrips: 1
       note: cache MISS — read account 2 (balance 250.00, version 1), caching the result
       statements:
@@ -38,11 +39,12 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [777.00, 2, 2]
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 2
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
       roundTrips: 1
       note: the SAME find re-resolves (cache MISS) and MUST observe 777.00 / version 2, not 250.00 / version 1
       statements:

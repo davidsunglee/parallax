@@ -18,19 +18,20 @@ from _corpus_model_support import target
 
 from parallax.conformance import models
 from parallax.core import Edge, Pin, UndeclaredAxisError, deep_fetch
+from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata, TemporalDimension
+from parallax.core.object_query import LATEST
 from parallax.core.sql_gen import compile_read
 from parallax.core.temporal_read import (
-    LATEST,
     TemporalReadError,
     inject_as_of,
     milestone_edge,
     milestone_edge_from_members,
     milestone_edge_of,
+    query_pin,
     scans_an_axis,
-    statement_pin,
 )
 
 _MODELS = models.load_models()
@@ -50,11 +51,29 @@ _B = "2024-03-01T00:00:00+00:00"
 _P = "2024-02-01T00:00:00+00:00"
 
 
-def _where(op: oa.PredicateNode, entity: EntityMetadata) -> tuple[str, tuple[object, ...]]:
+def _query(
+    entity: EntityMetadata,
+    temporal: dict[oq.TemporalDimension, oq.TemporalSelection] | None = None,
+    predicate: oa.PredicateNode | None = None,
+    **clauses: object,
+) -> oq.ObjectQueryNode:
+    return oq.object_query(
+        entity.identity,
+        predicate if predicate is not None else oa.All(),
+        temporal=temporal,
+        **clauses,  # pyright: ignore[reportArgumentType] - the caller names real clauses
+    )
+
+
+def _where(
+    entity: EntityMetadata,
+    temporal: dict[oq.TemporalDimension, oq.TemporalSelection] | None = None,
+    predicate: oa.PredicateNode | None = None,
+) -> tuple[str, tuple[object, ...]]:
     """Inject the as-of predicate, compile through m-sql, return the WHERE + binds."""
     model = _ACCEPTED[entity.identity.name]
-    query = deep_fetch.plan(entity, op, model).root
-    statement = compile_read(query, model, POSTGRES).statement
+    root = deep_fetch.plan(entity, _query(entity, temporal, predicate), model).root
+    statement = compile_read(root, model, POSTGRES).statement
     _, _, where = statement.sql.partition(" where ")
     return where, statement.binds
 
@@ -63,78 +82,44 @@ def _where(op: oa.PredicateNode, entity: EntityMetadata) -> tuple[str, tuple[obj
 # Single-dimension Transaction-Time-only templates.                            #
 # --------------------------------------------------------------------------- #
 def test_explicit_latest_injects_the_current_row_predicate() -> None:
-    explicit = _where(
-        oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"), BALANCE
-    )
+    explicit = _where(BALANCE, {"transaction-time": oq.AsOf("latest")})
     assert explicit == ("t0.out_z = ?", ("infinity",))
 
 
-def test_narrow_is_transparent_to_temporal_selection_lowering() -> None:
-    query = deep_fetch.plan(
+def test_result_narrowing_survives_temporal_selection_lowering() -> None:
+    # Result narrowing is a sibling clause of Temporal Selection, so injection
+    # can neither reorder nor demote it into a conjunctive predicate term.
+    plan = deep_fetch.plan(
         BALANCE,
-        oa.Narrow(
-            to=("Balance",),
-            operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
-        ),
+        _query(BALANCE, {"transaction-time": oq.AsOf("latest")}, narrow_to=("Balance",)),
         _ACCEPTED["Balance"],
     )
-    assert query.root.narrow_to == (BALANCE.identity,)
-    assert query.root.predicate == oa.Comparison(
-        op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
-    )
-
-
-def test_temporal_wrapper_outside_narrow_preserves_whole_result_narrowing() -> None:
-    """A typed find wraps its whole-result Narrow in temporal selection.
-
-    Temporal injection must keep the Narrow as a row-position wrapper rather
-    than demoting it to a conjunctive predicate term.
-    """
-    query = deep_fetch.plan(
-        BALANCE,
-        oa.AsOf(
-            operand=oa.Narrow(to=("Balance",), operand=oa.All()),
-            dimension="transaction-time",
-            coordinate="latest",
-        ),
-        _ACCEPTED["Balance"],
-    )
-    assert query.root.narrow_to == (BALANCE.identity,)
-    assert query.root.predicate == oa.Comparison(
+    assert plan.root.narrow_to == (BALANCE.identity,)
+    assert plan.root.predicate == oa.Comparison(
         op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
     )
 
 
 def test_past_instant_is_half_open_containment() -> None:
-    where, binds = _where(
-        oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate=_D), BALANCE
-    )
+    where, binds = _where(BALANCE, {"transaction-time": oq.AsOf(_D)})
     assert where == "t0.in_z <= ? and t0.out_z > ?"
     assert binds == (_D, _D)
 
 
 def test_temporal_upper_bound_is_exclusive() -> None:
     # AsOfAxis intervals are uniformly half-open: start inclusive, end exclusive.
-    where, _ = _where(
-        oa.AsOf(
-            operand=oa.All(),
-            dimension="transaction-time",
-            coordinate="2024-06-01T00:00:00+00:00",
-        ),
-        LEDGER,
-    )
+    where, _ = _where(LEDGER, {"transaction-time": oq.AsOf("2024-06-01T00:00:00+00:00")})
     assert where == "t0.in_z <= ? and t0.out_z > ?"
 
 
 def test_as_of_range_overlap_predicate_binds_window_end_first() -> None:
     where, binds = _where(
-        oa.AsOfRange(
-            operand=oa.All(),
-            dimension="transaction-time",
-            start="2024-06-15T00:00:00+00:00",
-            end="2024-07-01T00:00:00+00:00",
-        ),
         BALANCE,
+        {
+            "transaction-time": oq.AsOfRange(
+                start="2024-06-15T00:00:00+00:00", end="2024-07-01T00:00:00+00:00"
+            )
+        },
     )
     assert where == "t0.in_z < ? and t0.out_z > ?"
     assert binds == ("2024-07-01T00:00:00+00:00", "2024-06-15T00:00:00+00:00")
@@ -142,11 +127,9 @@ def test_as_of_range_overlap_predicate_binds_window_end_first() -> None:
 
 def test_history_injects_no_term() -> None:
     where, binds = _where(
-        oa.History(
-            operand=oa.Comparison(op="eq", attr="Balance.id", value=1),
-            dimension="transaction-time",
-        ),
         BALANCE,
+        {"transaction-time": oq.History()},
+        oa.Comparison(op="eq", attr="Balance.id", value=1),
     )
     assert where == "t0.bal_id = ?"
     assert binds == (1,)
@@ -154,12 +137,9 @@ def test_history_injects_no_term() -> None:
 
 def test_as_of_composes_after_a_user_predicate() -> None:
     where, binds = _where(
-        oa.AsOf(
-            operand=oa.Comparison(op="eq", attr="Balance.acctNum", value="A"),
-            dimension="transaction-time",
-            coordinate="latest",
-        ),
         BALANCE,
+        {"transaction-time": oq.AsOf("latest")},
+        oa.Comparison(op="eq", attr="Balance.acctNum", value="A"),
     )
     assert where == "t0.acct_num = ? and t0.out_z = ?"
     assert binds == ("A", "infinity")
@@ -168,47 +148,46 @@ def test_as_of_composes_after_a_user_predicate() -> None:
 # --------------------------------------------------------------------------- #
 # Bitemporal composition (Valid-Time first, Transaction-Time inner).           #
 # --------------------------------------------------------------------------- #
-def _bitemporal(valid_time: str | None, tx_time: str | None) -> oa.PredicateNode:
-    op: oa.PredicateNode = oa.All()
+def _bitemporal(
+    valid_time: str | None, tx_time: str | None
+) -> dict[oq.TemporalDimension, oq.TemporalSelection]:
+    selections: dict[oq.TemporalDimension, oq.TemporalSelection] = {}
     if tx_time is not None:
-        op = oa.AsOf(operand=op, dimension="transaction-time", coordinate=tx_time)
+        selections["transaction-time"] = oq.AsOf(tx_time)
     if valid_time is not None:
-        op = oa.AsOf(operand=op, dimension="valid-time", coordinate=valid_time)
-    return op
+        selections["valid-time"] = oq.AsOf(valid_time)
+    return selections
 
 
 def test_bitemporal_both_latest() -> None:
-    where, binds = _where(_bitemporal("latest", "latest"), POSITION)
+    where, binds = _where(POSITION, _bitemporal("latest", "latest"))
     assert where == "t0.thru_z = ? and t0.out_z = ?"
     assert binds == ("infinity", "infinity")
 
 
 def test_bitemporal_valid_time_past_tx_time_latest() -> None:
-    where, binds = _where(_bitemporal(_B, "latest"), POSITION)
+    where, binds = _where(POSITION, _bitemporal(_B, "latest"))
     assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.out_z = ?"
     assert binds == (_B, _B, "infinity")
 
 
 def test_bitemporal_both_past_reads_valid_time_first() -> None:
-    where, binds = _where(_bitemporal(_B, _P), POSITION)
+    where, binds = _where(POSITION, _bitemporal(_B, _P))
     assert where == "t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?"
     assert binds == (_B, _B, _P, _P)
 
 
 def test_injection_rejects_a_missing_declared_selection_as_an_internal_error() -> None:
     with pytest.raises(TemporalReadError, match="received no selection"):
-        _where(_bitemporal(_B, None), POSITION)
+        _where(POSITION, _bitemporal(_B, None))
 
 
 def test_bitemporal_history_scans_both_axes() -> None:
-    op = oa.History(
-        operand=oa.History(
-            operand=oa.Comparison(op="eq", attr="Position.id", value=1),
-            dimension="transaction-time",
-        ),
-        dimension="valid-time",
+    where, binds = _where(
+        POSITION,
+        {"transaction-time": oq.History(), "valid-time": oq.History()},
+        oa.Comparison(op="eq", attr="Position.id", value=1),
     )
-    where, binds = _where(op, POSITION)
     assert where == "t0.pos_id = ?"
     assert binds == (1,)
 
@@ -223,46 +202,54 @@ def test_non_temporal_read_is_identity() -> None:
             oa.Comparison(op="greaterThan", attr="Order.qty", value=25),
         )
     )
-    assert inject_as_of(op, (), ORDERS) is op
+    assert inject_as_of(op, {}, ORDERS) is op
 
 
-def test_directives_survive_injection() -> None:
-    op = oa.Limit(
-        operand=oa.OrderBy(
-            operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
-            keys=(oa.OrderKey(attr="Balance.id"),),
-        ),
-        count=2,
+def test_result_directives_survive_injection() -> None:
+    query = _query(
+        BALANCE,
+        {"transaction-time": oq.AsOf("latest")},
+        order_by=(oq.OrderKey(attr="Balance.id"),),
+        limit=2,
     )
-    query = deep_fetch.plan(BALANCE, op, _ACCEPTED["Balance"]).root
-    assert query.limit == 2
-    assert query.order_by == (oa.OrderKey(attr="Balance.id"),)
-    assert query.predicate == oa.Comparison(
+    root = deep_fetch.plan(BALANCE, query, _ACCEPTED["Balance"]).root
+    assert root.limit == 2
+    assert root.order_by == (oq.OrderKey(attr="Balance.id"),)
+    assert root.predicate == oa.Comparison(
         op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity"
     )
 
 
-def test_double_pin_is_rejected() -> None:
-    op = oa.AsOf(
-        operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
-        dimension="transaction-time",
-        coordinate=_D,
+def test_a_user_predicate_conjoins_with_the_injected_as_of_terms() -> None:
+    # The flattening rule the as-of injection and `m-navigate`'s hop composition
+    # share: `all` contributes no conjunct, an `and` flattens into the enclosing
+    # conjunction, and an `or` is grouped first so the injected term cannot
+    # silently re-associate into its weaker binding.
+    predicate = oa.Comparison(op="eq", attr="Balance.id", value=1)
+    conjunction = oa.And(
+        operands=(predicate, oa.Comparison(op="eq", attr="Balance.owner", value="Ada"))
     )
-    assert isinstance(op.operand, oa.AsOf)
-    with pytest.raises(TemporalReadError, match="pinned or scanned twice"):
-        inject_as_of(oa.All(), (op, op.operand), BALANCE)
+    disjunction = oa.Or(operands=(predicate, oa.Comparison(op="eq", attr="Balance.id", value=2)))
+    pin: dict[oq.TemporalDimension, oq.TemporalSelection] = {"transaction-time": oq.AsOf("latest")}
+    as_of = oa.Comparison(op="eq", attr="parallax.compatibility.Balance.txEnd", value="infinity")
+    assert inject_as_of(oa.All(), pin, BALANCE) == as_of
+    assert inject_as_of(predicate, pin, BALANCE) == oa.And(operands=(predicate, as_of))
+    assert inject_as_of(conjunction, pin, BALANCE) == oa.And(
+        operands=(*conjunction.operands, as_of)
+    )
+    assert inject_as_of(disjunction, pin, BALANCE) == oa.And(
+        operands=(oa.Group(operand=disjunction), as_of)
+    )
 
 
 def test_undeclared_axis_is_rejected() -> None:
-    op = oa.AsOf(operand=oa.All(), dimension="valid-time", coordinate="latest")
     with pytest.raises(TemporalReadError, match="undeclared dimension"):
-        inject_as_of(oa.All(), (op,), BALANCE)
+        inject_as_of(oa.All(), {"valid-time": oq.AsOf("latest")}, BALANCE)
 
 
 def test_temporal_clause_on_non_temporal_entity_is_rejected() -> None:
-    op = oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest")
     with pytest.raises(TemporalReadError, match="non-temporal entity"):
-        inject_as_of(oa.All(), (op,), ORDERS)
+        inject_as_of(oa.All(), {"transaction-time": oq.AsOf("latest")}, ORDERS)
 
 
 # --------------------------------------------------------------------------- #
@@ -370,84 +357,63 @@ def test_pin_reports_only_pinned_axes() -> None:
     assert Pin().is_empty
 
 
-def test_statement_pin_reads_both_bitemporal_axes() -> None:
-    op = oa.AsOf(
-        operand=oa.AsOf(operand=oa.All(), dimension="valid-time", coordinate=_B),
-        dimension="transaction-time",
-        coordinate="latest",
-    )
-    pin = statement_pin(op, POSITION)
+def test_query_pin_reads_both_bitemporal_axes() -> None:
+    pin = query_pin(_query(POSITION, _bitemporal(_B, "latest")), POSITION)
     assert pin.tx_time is LATEST
     assert pin.valid_time == dt.datetime.fromisoformat(_B)
 
 
-def test_temporal_walkers_cross_a_whole_result_narrow() -> None:
-    op = oa.AsOf(
-        operand=oa.Narrow(
-            to=("Position",),
-            operand=oa.History(operand=oa.All(), dimension="transaction-time"),
-        ),
-        dimension="valid-time",
-        coordinate=_B,
+def test_the_temporal_readers_are_unaffected_by_result_narrowing() -> None:
+    query = _query(
+        POSITION,
+        {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)},
+        narrow_to=("Position",),
     )
-    assert statement_pin(op, POSITION).valid_time == dt.datetime.fromisoformat(_B)
-    assert scans_an_axis(op)
+    assert query_pin(query, POSITION).valid_time == dt.datetime.fromisoformat(_B)
+    assert scans_an_axis(query)
 
 
-def test_statement_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:
-    # A scan is not a pin (spec §3): `AsOfRange` / `History` never set a
-    # coordinate, even though `statement_pin` still walks through them (called
+def test_query_pin_is_absent_for_a_scanned_asof_range_or_history_axis() -> None:
+    # A scan is not a pin (spec §3): `asOfRange` / `history` never set a
+    # coordinate, even though `query_pin` still reads them (called
     # unconditionally ahead of the milestone-set/pinned-read branch decision).
-    ranged = oa.AsOfRange(operand=oa.All(), dimension="transaction-time", start=_P, end="infinity")
-    assert statement_pin(ranged, POSITION) == Pin()
+    ranged = _query(POSITION, {"transaction-time": oq.AsOfRange(start=_P, end="infinity")})
+    assert query_pin(ranged, POSITION) == Pin()
 
-    scanned = oa.History(operand=oa.All(), dimension="transaction-time")
-    assert statement_pin(scanned, POSITION) == Pin()
+    scanned = _query(POSITION, {"transaction-time": oq.History()})
+    assert query_pin(scanned, POSITION) == Pin()
 
 
-def test_scans_an_axis_sees_a_scan_under_a_pinned_outer_dimension() -> None:
-    # A bitemporal read nests one wrapper per dimension (m-predicate, canonical
-    # Valid-Time-outer order), so pinning Valid Time around a Transaction-Time
-    # scan still answers a milestone set: the whole nest decides, not the
-    # outermost wrapper's kind.
-    pinned_over_history = oa.AsOf(
-        operand=oa.History(operand=oa.All(), dimension="transaction-time"),
-        dimension="valid-time",
-        coordinate=_B,
+def test_scans_an_axis_sees_a_scan_beside_a_pinned_dimension() -> None:
+    # Each dimension carries its own selection, so the WHOLE clause decides:
+    # pinning Valid Time beside a Transaction-Time scan still answers a
+    # milestone set.
+    pinned_over_history = _query(
+        POSITION, {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)}
     )
     assert scans_an_axis(pinned_over_history)
 
-    pinned_over_range = oa.AsOf(
-        operand=oa.AsOfRange(operand=oa.All(), dimension="transaction-time", start=_P, end=_D),
-        dimension="valid-time",
-        coordinate="latest",
+    pinned_over_range = _query(
+        POSITION,
+        {"transaction-time": oq.AsOfRange(start=_P, end=_D), "valid-time": oq.AsOf("latest")},
     )
     assert scans_an_axis(pinned_over_range)
 
-    both_pinned = oa.AsOf(
-        operand=oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
-        dimension="valid-time",
-        coordinate=_B,
-    )
+    both_pinned = _query(POSITION, _bitemporal(_B, "latest"))
     assert not scans_an_axis(both_pinned)
-    assert not scans_an_axis(oa.All())
+    assert not scans_an_axis(_query(ORDERS))
 
 
-def test_scans_an_axis_peels_result_shaping_directives_off_a_nested_scan() -> None:
-    # The directive peel and the nest walk compose: a lowering that stacks
-    # `orderBy` / `limit` over a bitemporal nest must not hide the inner scan.
-    op = oa.Limit(
-        operand=oa.OrderBy(
-            operand=oa.AsOf(
-                operand=oa.History(operand=oa.All(), dimension="transaction-time"),
-                dimension="valid-time",
-                coordinate=_B,
-            ),
-            keys=(oa.OrderKey(attr="Position.qty"),),
-        ),
-        count=5,
+def test_result_directives_never_hide_a_scan() -> None:
+    # Ordering and a cap are siblings of the Temporal Selection clause, so
+    # neither can stand between the reader and a scanned dimension.
+    query = _query(
+        POSITION,
+        {"transaction-time": oq.History(), "valid-time": oq.AsOf(_B)},
+        order_by=(oq.OrderKey(attr="Position.qty"),),
+        limit=5,
     )
-    assert scans_an_axis(op)
+    assert scans_an_axis(query)
 
 
 # Reading a `Pin` or an `Edge` OFF a materialized node is the producing

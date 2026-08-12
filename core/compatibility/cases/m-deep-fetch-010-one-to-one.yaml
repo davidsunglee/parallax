@@ -8,16 +8,16 @@
 # person 3, who has no passport, gets a null peer. Two statements, roundTrips = 2
 # (never one query per person), proving N+1 elimination holds for 1:1 too.
 model: models/person.yaml
-tags: [m-deep-fetch, m-op-list, one-to-one, relationship, nullable, slice-managed-1]
+tags: [m-deep-fetch, m-object-query, m-op-list, one-to-one, relationship, nullable, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Person
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Person.passport }] }
+  objectQuery:
+    target: parallax.compatibility.Person
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Person.passport
 then:
   statements:
     - sql:

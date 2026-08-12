@@ -1,8 +1,9 @@
-# Table-per-hierarchy narrow to an ABSTRACT subtype (m-inheritance, m-predicate, m-sql).
+# Table-per-hierarchy narrow to an ABSTRACT subtype (m-inheritance, m-object-query,
+# m-sql).
 #
-# targetEntity is the abstract root Animal, narrowed to the abstract subtype [Pet],
-# which resolves to its concrete descendants {Cat, Dog} (the sibling WildBoar is
-# excluded). The narrow lowers to `t0.kind in (?, ?)` (binds [cat, dog], alphabetical
+# The queried target is the abstract root Animal, its result narrowed to the abstract
+# subtype [Pet], which resolves to its concrete descendants {Cat, Dog} (the sibling
+# WildBoar is excluded). It lowers to `t0.kind in (?, ?)` (binds [cat, dog], alphabetical
 # order) — a narrow ALWAYS injects the tag predicate for its concretes, unlike a bare
 # abstract-root read. The projection is the {Cat, Dog} superset (no tusk_length),
 # subtype-own columns in alphabetical order (indoor, bark_volume); familyVariant is
@@ -10,15 +11,15 @@
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    narrow:
-      to: [parallax.compatibility.Pet]
-      operand:
-        all: {}
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    narrowTo:
+      - parallax.compatibility.Pet
 then:
   statements:
     - sql:

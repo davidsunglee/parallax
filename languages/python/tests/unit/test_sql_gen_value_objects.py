@@ -516,11 +516,6 @@ def test_nested_exists_scoped_where_composes_or_not_and_group() -> None:
         pytest.param(oa.Navigate(rel="Customer.orders"), id="navigate"),
         pytest.param(oa.Exists(rel="Customer.orders"), id="exists"),
         pytest.param(oa.NotExists(rel="Customer.orders"), id="notExists"),
-        pytest.param(oa.DeepFetch(operand=oa.All()), id="deepFetch"),
-        pytest.param(
-            oa.AsOf(operand=oa.All(), dimension="valid-time", coordinate="2024-01-01"), id="asOf"
-        ),
-        pytest.param(oa.Limit(operand=oa.All(), count=1), id="limit"),
     ],
 )
 def test_entity_vocabulary_inside_an_element_where_is_refused_as_one_grammar(
@@ -530,10 +525,9 @@ def test_entity_vocabulary_inside_an_element_where_is_refused_as_one_grammar(
     # keeps them different vocabularies is only where the element refusal sits in
     # it — after the shared sub-grammar (`and`/`or`/`not`/`group` and the flat
     # `nested*` family, pinned above), before everything else. Every entity-only
-    # node therefore refuses with `elementPredicate`'s single message, NOT with
-    # the differentiated deep-fetch / temporal / directive refusals the same node
-    # gets at the top level — `m-predicate`'s `elementPredicate` is one named
-    # production, so what an element `where` gets wrong is always the same thing.
+    # node therefore refuses with `elementPredicate`'s single message —
+    # `m-predicate`'s `elementPredicate` is one named production, so what an
+    # element `where` gets wrong is always the same thing.
     with pytest.raises(SqlGenError, match=r"is not a legal nestedExists/nestedNotExists element"):
         compile_read(
             oa.NestedExists(path="Customer.address.phones", where=node),

@@ -16,9 +16,12 @@ model: models/document-codec.yaml
 tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Sample
-  operation:
-    nestedEq: { path: parallax.compatibility.Sample.profile.token, value: '123E4567-E89B-12D3-A456-426614174000' }
+  objectQuery:
+    target: parallax.compatibility.Sample
+    predicate:
+      nestedEq:
+        path: parallax.compatibility.Sample.profile.token
+        value: 123E4567-E89B-12D3-A456-426614174000
 then:
   statements:
     - sql:

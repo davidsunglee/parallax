@@ -39,14 +39,12 @@ from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.entity import (
     DomainModel,
     EntityGraphWriter,
-    FindQuery,
     NodeHandle,
     graph_construction_of,
     lifecycle_state_of,
 )
 from parallax.core.entity._model import model_of
-from parallax.core.entity._query import lower_find_query
-from parallax.core.predicate import DeepFetch
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import find as execute_read
 from parallax.snapshot.materialize import SnapshotGraphInput, merge_graph_input
 
@@ -84,26 +82,24 @@ class AnotherSource:
         self._port = port
         self._dialect = dialect
 
-    def find[S](self, query: FindQuery[Any, S]) -> tuple[S, ...]:
+    def find[S](self, query: ObjectQuery[Any, S]) -> tuple[S, ...]:
         """Every root ``query`` matches, materialized by THIS source.
 
-        A real read: the query lowers to its canonical operation and runs through
-        the same find executor the developer surface runs, so what comes back is
-        rows this source read and instances this source built from them.
+        A real read: the canonical Object Query runs through the same find
+        executor the developer surface runs, so what comes back is rows this
+        source read and instances this source built from them.
 
-        A deep fetch is refused here, before any I/O: this source populates no
+        An eager fetch is refused here, before any I/O: this source populates no
         relationship view, so reading a query's levels and then dropping them
         would answer a graph the caller did not ask for.
         """
-        lowered = lower_find_query(query)
-        if isinstance(lowered.operation, DeepFetch):
+        node = object_query_node(query)
+        if node.includes:
             raise ValueError(
                 "this source materializes flat graphs only, and the query includes "
                 "a relationship level"
             )
-        result = execute_read(
-            lowered.operation, self._meta, self._dialect, lowered.target.canonical, self._port
-        )
+        result = execute_read(node, self._meta, self._dialect, self._port)
         return cast("tuple[S, ...]", self._materialize(result.graph))
 
     def produced(self, value: object) -> bool:

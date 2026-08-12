@@ -17,11 +17,12 @@ tags: [m-process-cache, query cache, cache-hit, scenario]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
       roundTrips: 1
       note: cache MISS — execute the find once against the database
       statements:
@@ -30,11 +31,12 @@ when:
           binds: [1]
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
       roundTrips: 0
       sameObjectAs: 0
       note: cache HIT — same operation, served from the query cache, zero round trips

@@ -1,14 +1,15 @@
 # Table-per-hierarchy OR across two concrete-subtype branches (m-inheritance, m-predicate, m-sql).
 #
-# targetEntity Animal, OR of two narrowed branches: Dogs with barkVolume > 5, OR Cats
+# The Animal target, OR of two narrowed branches: Dogs with barkVolume > 5, OR Cats
 # that are indoor. Each branch predicate over a concrete-subtype attribute is guarded
 # by that branch's tag (appended after the predicate) and the whole branch is grouped,
 # so the branches join with `or`:
 #   (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
 # binds [5, dog, true, cat]. The branch order follows the authored `or` operands (Dog
 # branch, then Cat branch), NOT the sibling-set ordering. Rex (bark 7) and Whiskers
-# (indoor) match; Fido (bark 3) and Tusker (a boar) do not. The top node is `or`, so
-# the position stays the whole Animal family and the projection is the full superset —
+# (indoor) match; Fido (bark 3) and Tusker (a boar) do not. Each narrowing is
+# Predicate-scoped and the query carries no `narrowTo`, so the result position stays
+# the whole Animal family and the projection is the full superset —
 # its subtype-own columns in ALPHABETICAL order (indoor, bark_volume, tusk_length);
 # familyVariant per row.
 #
@@ -17,18 +18,25 @@ model: models/animal.yaml
 tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    or:
-      operands:
-        - narrow:
-            to: [parallax.compatibility.Dog]
-            operand:
-              greaterThan: { attr: parallax.compatibility.Dog.barkVolume, value: 5 }
-        - narrow:
-            to: [parallax.compatibility.Cat]
-            operand:
-              eq: { attr: parallax.compatibility.Cat.indoor, value: true }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      or:
+        operands:
+          - narrow:
+              to:
+                - parallax.compatibility.Dog
+              operand:
+                greaterThan:
+                  attr: parallax.compatibility.Dog.barkVolume
+                  value: 5
+          - narrow:
+              to:
+                - parallax.compatibility.Cat
+              operand:
+                eq:
+                  attr: parallax.compatibility.Cat.indoor
+                  value: true
 then:
   statements:
     - sql:

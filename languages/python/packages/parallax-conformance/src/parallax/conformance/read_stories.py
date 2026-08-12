@@ -3,7 +3,7 @@
 shipped surface, never serialization-only.
 
 Every entry is ONE case-driven idiomatic read example: a pure ``build()``
-returning the SAME idiomatic ``FindQuery`` expression
+returning the SAME idiomatic ``ObjectQuery`` expression
 ``tests/api/test_operation_no_drift.py``'s ``BUILDERS`` proves
 no-drift against the corpus's own ``when.operation`` (the query-shape half),
 plus the ``case_id`` / ``title`` / ``model`` it mirrors. Execution is
@@ -65,8 +65,8 @@ from parallax.conformance.read_models import (
 )
 from parallax.conformance.read_models import Balance as _Balance
 from parallax.conformance.story_models import Account, Order, OrderItem, OrderStatus
-from parallax.core import FindQuery
-from parallax.core.temporal_read import LATEST
+from parallax.core import ObjectQuery
+from parallax.core.object_query import LATEST
 from parallax.core.unit_work import Concurrency
 
 __all__ = ["READ_STORIES", "ReadStory", "read_story_snippet"]
@@ -102,7 +102,7 @@ class ReadStory:
     case_id: str
     title: str
     model: str
-    build: Callable[[], FindQuery[Any, Any]]
+    build: Callable[[], ObjectQuery[Any, Any]]
     snippet: str
     concurrency: Concurrency | None = None
 
@@ -313,7 +313,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
     ),
     ReadStory(
         "m-inheritance-012",
-        "The `Entity.narrow(...)` constructor, narrowed to one concrete subtype",
+        "A result narrowed to one concrete subtype, filtered by its own attribute",
         "animal",
         lambda: Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)),
         "op = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))",

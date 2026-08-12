@@ -16,21 +16,24 @@
 # into their covering path a later statement-count-only change rather than a
 # semantic one.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child levels - the broad and the Dog-guarded owner hops each bind their person-table IN-list from owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Animal.owner }] }
-        - { narrow: { to: [parallax.compatibility.Dog] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Animal.owner
+      - appliesTo:
+          - parallax.compatibility.Dog
+        segments:
+          - rel: parallax.compatibility.Animal.owner
 then:
   statements:
     - sql:

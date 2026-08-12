@@ -5,10 +5,11 @@ model: models/orders.yaml
 tags: [m-predicate, isNotNull, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    isNotNull:
-      attr: parallax.compatibility.Order.sku
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      isNotNull:
+        attr: parallax.compatibility.Order.sku
 then:
   statements:
     - sql:

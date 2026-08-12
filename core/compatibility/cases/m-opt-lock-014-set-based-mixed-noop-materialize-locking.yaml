@@ -27,9 +27,12 @@ when:
   uow:
     concurrency: locking
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        lessThan: { attr: parallax.compatibility.Account.balance, value: 200.00 }
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          lessThan:
+            attr: parallax.compatibility.Account.balance
+            value: 200.00
       roundTrips: 1
       statements:
         - sql:
@@ -52,9 +55,12 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ?
           binds: [100.00, 2, 3]
-    - targetEntity: parallax.compatibility.Account
-      find:
-        lessThan: { attr: parallax.compatibility.Account.balance, value: 200.00 }
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          lessThan:
+            attr: parallax.compatibility.Account.balance
+            value: 200.00
       roundTrips: 1
       statements:
         - sql:

@@ -12,8 +12,10 @@ model: models/customer.yaml
 tags: [m-value-object, m-navigate, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    navigate:
-      rel: parallax.compatibility.Customer.address
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      navigate:
+        rel: parallax.compatibility.Customer.address
 then:
   rejectedRule: navigate-value-object-target

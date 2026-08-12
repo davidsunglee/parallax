@@ -24,6 +24,7 @@ from _corpus_model_support import model, target
 from _support import fake_metamodel
 from _support.sql import compile_read
 from parallax.core import inheritance, relationship, storage_layout
+from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
@@ -81,36 +82,9 @@ def test_unbound_attribute_is_refused() -> None:
 
 
 def test_entity_query_target_must_belong_to_the_model() -> None:
-    query = oa.EntityQuery(target=EntityIdentity(None, "Missing"), predicate=oa.All())
+    query = oq.EntityQuery(target=EntityIdentity(None, "Missing"), predicate=oa.All())
     with pytest.raises(SqlGenError, match="names no Entity in the accepted model"):
         compile_entity_query(query, ORDERS, POSTGRES)
-
-
-@pytest.mark.parametrize(
-    "op, message",
-    [
-        (
-            oa.AsOf(operand=oa.All(), dimension="transaction-time", coordinate="latest"),
-            "temporal wrapper reached",
-        ),
-        (
-            oa.DeepFetch(
-                operand=oa.All(),
-                paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Order.items"),)),),
-            ),
-            "deep fetch .* is not a predicate",
-        ),
-    ],
-)
-def test_deferred_nodes_are_refused(op: oa.PredicateNode, message: str) -> None:
-    with pytest.raises(SqlGenError, match=message):
-        compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
-
-
-def test_directive_nested_in_predicate_is_refused() -> None:
-    op = oa.Not(operand=oa.Limit(operand=oa.All(), count=1))
-    with pytest.raises(SqlGenError, match="result-shaping directive nested"):
-        compile_read(op, ORDERS, POSTGRES, target(ORDERS, "Order"))
 
 
 def test_entity_query_carries_one_limit_without_a_wrapper_tree() -> None:
@@ -127,7 +101,7 @@ def test_order_and_limit_directives_still_compose() -> None:
         ORDERS,
         POSTGRES,
         target(ORDERS, "Order"),
-        order_by=(oa.OrderKey(attr="Order.id", direction="asc"),),
+        order_by=(oq.OrderKey(attr="Order.id", direction="asc"),),
         limit=5,
     )
     assert compiled.statement.sql.endswith("order by t0.id asc limit ?")
@@ -150,7 +124,7 @@ def test_nullable_order_key_lowers_through_the_placement_seam(
     # `Order.sku` is nullable, so every placement — including the omitted one, which
     # defaults to `last` — renders through the m-dialect seam.
     keys = (
-        oa.OrderKey(
+        oq.OrderKey(
             attr="Order.sku",
             direction=cast('Literal["asc", "desc"]', direction),
             nulls=cast('Literal["first", "last"] | None', placement),
@@ -166,7 +140,7 @@ def test_non_nullable_order_key_ignores_placement(placement: str | None) -> None
     # there are no NULLs to place, both placements denote the same order, and the
     # plain term is emitted under either.
     keys = (
-        oa.OrderKey(
+        oq.OrderKey(
             attr="Order.qty",
             direction="desc",
             nulls=cast('Literal["first", "last"] | None', placement),

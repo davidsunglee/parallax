@@ -11,7 +11,7 @@
 # `then.identityChecks`, graded as reference identity by each language's API
 # Conformance Suite (api-conformance lane).
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, back-reference, cycle, relationship, graph, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-deep-fetch, back-reference, cycle, relationship, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
@@ -19,15 +19,16 @@ compileEligibility:
   note: "deep-fetch child level - the Order.items IN-list binds are the distinct order ids gathered from the root query result, so the child emissions depend on a query result (the back-reference OrderItem.order hop resolves from the already-materialized graph and issues no SQL of its own)"
 lane: api-conformance
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand:
-        eq:
-          attr: parallax.compatibility.Order.id
-          value: 1
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.order }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      eq:
+        attr: parallax.compatibility.Order.id
+        value: 1
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+          - rel: parallax.compatibility.OrderItem.order
 then:
   statements:
     - sql:

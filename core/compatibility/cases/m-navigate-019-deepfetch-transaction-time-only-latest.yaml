@@ -2,23 +2,23 @@
 # Single-axis propagation: the child carries `out_z = ?` (bind infinity). Line
 # 1000 -> 75 (current), line 1001 -> 25.
 model: models/invoice.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, audit-only, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, audit-only, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the Invoice.lines IN-list binds are the distinct invoice ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Invoice
-  operation:
-    deepFetch:
-      operand:
-        asOf:
-          operand: { all: {} }
-          dimension: transaction-time
-          coordinate: latest
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Invoice.lines }] }
+  objectQuery:
+    target: parallax.compatibility.Invoice
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Invoice.lines
 then:
   statements:
     - sql:

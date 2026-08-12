@@ -17,9 +17,12 @@ model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, contains, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedContains: { path: parallax.compatibility.Customer.address.phones.number, value: '-00' }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedContains:
+        path: parallax.compatibility.Customer.address.phones.number
+        value: '-00'
 then:
   statements:
     - sql:

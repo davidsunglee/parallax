@@ -2,8 +2,8 @@
 # Entity name two namespaces of the model declare, so it resolves to no Entity at
 # all and is refused before any SQL.
 #
-# The read is positioned at `Register` (the model's first entity, the default a
-# rejected case takes) and the predicate reaches `archive.SharedVariant` through
+# The read is positioned at `Register`, the model's only queryable owner of the hop,
+# and the predicate reaches `archive.SharedVariant` through
 # the `variant` hop, which re-roots the inner position at that Entity. The
 # reference `SharedVariant.archiveLabel` is spelled BARE — a choice, not a
 # constraint, since `attributeRef` admits the canonical spelling m-op-algebra-051
@@ -29,10 +29,14 @@ model: models/shared-local-name.yaml
 tags: [m-predicate, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    exists:
-      rel: parallax.compatibility.Register.variant
-      op:
-        eq: { attr: SharedVariant.archiveLabel, value: A-1 }
+  objectQuery:
+    target: parallax.compatibility.Register
+    predicate:
+      exists:
+        rel: parallax.compatibility.Register.variant
+        op:
+          eq:
+            attr: SharedVariant.archiveLabel
+            value: A-1
 then:
   rejectedRule: reference-ambiguous-entity-name

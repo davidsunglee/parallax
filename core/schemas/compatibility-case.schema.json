@@ -2,20 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://parallax.dev/schemas/compatibility-case.schema.json",
   "title": "Parallax Compatibility Case (m-case-format)",
-  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.operation`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered operation steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate negative validation — a schema-valid `when.operation` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
+  "description": "The case envelope, grouped as given / when / then. Identity and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator and the optional `compileEligibility` declaration (present only to mark a case RUN-ONLY for the compile sweep) stay top-level; everything else is bucketed into `given` (ambient world-state before the action: `fixtures`, `apply`, `fault`), `when` (the action under test and how the client performs it: `objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts` | `write`, plus context `uow` / `mutation` / `at` / `observedTxStart` / `observedValidStart` / `equivalentEncodings`), and `then` (everything the case asserts: `statements`, `referenceSql`, `rows`, `graph`, `tableState`, `affectedRows`, `errorClass`, `nativeCode`, `outcome`, `rejectedRule`, `roundTrips`, `tolerance`). Every SQL statement — golden or naive — is a `{sql, binds}` statement entry (`$defs/statementEntry`): its `sql` is a dialect-keyed map (`postgres` / `mariadb`) at golden locations (`then.statements`, per-step `statements`) and a plain string at naive locations (`given.apply`); `binds` is authored once per statement and defaults to `[]`. A case is one of nine shapes, named by the required top-level `shape`: a `read` case (a queryable `when.objectQuery`, asserting `then.rows` / `then.graph`); a `writeSequence` case (ordered DML under `when.writeSequence`, asserting `then.tableState`); a `scenario` case (m-unit-work — ordered steps under `when.scenario`, golden SQL per step); a `conflict` case (m-opt-lock — a single-attempt observation-requiring keyed write asserted by `then.affectedRows`, or an ordered `when.attempts` retry sequence); a `coherence` case (cross-process cache coherence — a two-node sequence under `when.coherence`); an `error` case (m-db-error — `then.errorClass` + `then.nativeCode`, triggered by top-level `then.statements` or a `when.concurrency` choreography); a `concurrencySuccess` case (m-read-lock behavioral read lock — a `when.concurrency` choreography with NO `then.errorClass`); a `boundary` case (m-auto-retry/m-opt-lock bounded automatic retry — `when.boundary` ordered actions + `then.outcome`, on the `api-conformance` lane, carrying no golden SQL); or a `rejected` case (m-value-object / m-predicate / m-object-query negative validation — a schema-valid `when.objectQuery` OR a `when.write` a model-aware validator MUST refuse PRE-SQL, naming the violated normative rule in `then.rejectedRule`, carrying no golden SQL). Every case carries an optional `lane` (`harness` default | `api-conformance`): a `harness`-lane case executes as today, while an `api-conformance`-lane case (every boundary case, plus the read-lock matrix reads) is schema-validated by the harness but satisfied by each language's API Conformance Suite.",
   "type": "object",
   "additionalProperties": false,
   "required": ["model", "tags", "shape"],
   "oneOf": [
     {
-      "description": "A read case: a queryable operation with expected rows or an expected object graph.",
+      "description": "A read case: a queryable Object Query with expected rows or an expected object graph.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "read" },
         "when": {
-          "required": ["operation", "targetEntity"],
+          "required": ["objectQuery"],
           "propertyNames": {
-            "enum": ["operation", "targetEntity", "uow", "equivalentEncodings"]
+            "enum": ["objectQuery", "uow", "equivalentEncodings"]
           }
         },
         "then": {
@@ -157,12 +157,12 @@
       }
     },
     {
-      "description": "A rejected case (m-value-object / m-predicate / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `operation` (a SCHEMA-VALID m-predicate node that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid, a predicate-selected instruction, or a whole KEYED instruction whose shape a model-aware validator refuses), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `operation`/`write`/`model`. All three `write` forms are OBJECTS, which this branch requires: the shared `when.write` vocabulary also carries the multi-key ARRAY form, and that form is the conflict lane's alone — it states one collapsed statement's aggregate affected-row count, which a rejection asserted pre-SQL has nothing to say about. Admitting it here would leave the graders reading one input two ways, since a rejected case's dispatch asks which MEMBER a write carries and an array carries none. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
+      "description": "A rejected case (m-value-object / m-predicate / m-inheritance / m-storage-layout negative validation, resolved Q7 + Q3): a model-aware validator MUST refuse the input BEFORE emitting any SQL, and `then.rejectedRule` names the violated normative rule. `when` carries EXACTLY ONE invalid input — an `objectQuery` (a SCHEMA-VALID m-object-query document, predicate included, that violates a resolver MUST or the m-value-object materialization/navigation contract), a `write` (a neutral write row whose value-object document is invalid, a predicate-selected instruction, or a whole KEYED instruction whose shape a model-aware validator refuses), OR a `model` (an inline descriptor whose accepted-model formation has a standalone/table-level defect or a cross-entity family-invariant defect). The inline `model` stays quarantined inside the case so the shared models registry remains loadable and is round-tripped through descriptor serde before semantic validation asserts the rejection. The `oneOf` below, paired with the `propertyNames` enum that forbids other keys, admits EXACTLY ONE of `objectQuery`/`write`/`model`. A rejected read names its own queried position inside its `objectQuery`, so no lane falls back to a default root. All three `write` forms are OBJECTS, which this branch requires: the shared `when.write` vocabulary also carries the multi-key ARRAY form, and that form is the conflict lane's alone — it states one collapsed statement's aggregate affected-row count, which a rejection asserted pre-SQL has nothing to say about. Admitting it here would leave the graders reading one input two ways, since a rejected case's dispatch asks which MEMBER a write carries and an array carries none. It carries NO golden SQL because rejection is asserted pre-SQL, on no dialect. Purely schema-level negatives stay schema-validation unit tests, not rejected cases.",
       "required": ["shape", "when", "then"],
       "properties": {
         "shape": { "const": "rejected" },
         "when": {
-          "propertyNames": { "enum": ["operation", "write", "model"] },
+          "propertyNames": { "enum": ["objectQuery", "write", "model"] },
           "properties": { "write": { "type": "object" } }
         },
         "then": {
@@ -174,7 +174,7 @@
         }
       },
       "oneOf": [
-        { "properties": { "when": { "required": ["operation"] } } },
+        { "properties": { "when": { "required": ["objectQuery"] } } },
         { "properties": { "when": { "required": ["write"] } } },
         { "properties": { "when": { "required": ["model"] } } }
       ]
@@ -391,7 +391,7 @@
       }
     },
     "when": {
-      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`operation` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed milestone coordinate, and alternate surface encodings.",
+      "description": "The action under test and how the client performs it. Exactly one action member is present per shape (`objectQuery` | `writeSequence` | `scenario` | `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt conflict's `write`); the context members (`uow`, `at`, `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the unit-of-work mode, transaction instant, observed milestone coordinate, and alternate surface encodings.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -415,20 +415,16 @@
             }
           }
         },
-        "operation": {
-          "description": "A canonical m-predicate algebra node (validated separately against predicate.schema.json). Present on read cases; absent on writeSequence cases.",
-          "type": "object"
+        "objectQuery": {
+          "description": "The canonical m-object-query document under test: one flat query naming its own queried `target` and carrying its `predicate`, `narrowTo`, `temporal`, `orderBy`, `limit`, and `includes` clauses as siblings. Present on read and rejected cases; absent on writeSequence cases. The `$ref` is the whole contract — no second hand-written pass validates it, and no envelope repeats the queried entity beside it.",
+          "$ref": "object-query.schema.json#"
         },
         "model": {
           "description": "rejected cases only (accepted-model formation, including m-inheritance / m-storage-layout, resolved Q3). An INLINE model descriptor document (an instance of metamodel.schema.json) carrying an accepted-model formation defect a model-aware semantic validator MUST reject before any SQL. This includes cross-entity inheritance-family invariants, a second independent owner of one structural Table, physical-column collisions within a uniquely owned Table, and rendered-key collisions that per-entity schema validation cannot express. Kept inline (never in the shared `models/` registry) so an invalid model cannot break sibling cases that load real models; round-tripped through descriptor serde before semantic validation asserts `then.rejectedRule`.",
           "type": "object"
         },
-        "targetEntity": {
-          "description": "read cases only. The entity a read TARGETS — the queried position `when.operation` starts from (m-case-format, resolved Q1). It names the whole family for an abstract root, its concrete descendants for an abstract subtype, and itself for a concrete subtype; today every entity is concrete, so it names exactly the entity whose rows the read returns. REQUIRED on every read case, so the read side reaches the same explicit-entity standard the write side already meets with `writeSequence[].entity` (an `all: {}` read no longer names its subject only in a comment or the golden SQL). A model-aware harness cross-checks it against every queried-entity `Class.attribute` / `Class.relationship` reference in the operation (until inheritance families exist, 'consistent' means 'equal').",
-          "$ref": "#/$defs/entityName"
-        },
         "equivalentEncodings": {
-          "description": "Optional alternate authoring-surface encodings of the same operation (e.g. a prefix vs a fluent spelling, differently-ordered keys, or an omitted Transaction-Time selection). Each MUST normalize and canonicalize to `when.operation`; the harness asserts this dialect-agnostically (layer 4c).",
+          "description": "Optional alternate authoring-surface encodings of the same Object Query (e.g. differently-ordered keys, an unsorted include set, or an omitted Transaction-Time selection). Each is a whole Object Query document and MUST normalize and canonicalize to `when.objectQuery`; the harness asserts this dialect-agnostically (layer 4c).",
           "type": "array",
           "minItems": 1,
           "items": { "type": "object" }
@@ -526,7 +522,7 @@
           }
         },
         "scenario": {
-          "description": "A scenario (m-unit-work) case: an ordered list of steps proving the unit-of-work / identity / query-cache contract. A step is either a READ step (issues a `find`) or a WRITE step (commits DML via `write`). Golden SQL lives PER STEP (as `statements`), not at `then.statements`: each find costs a declared number of database round trips, and an interleaved committed write lets a later step prove read-your-own-writes or query-cache invalidation. The harness asserts the round-trip counts are internally consistent with the golden SQL each step lists.",
+          "description": "A scenario (m-unit-work) case: an ordered list of steps proving the unit-of-work / identity / query-cache contract. A step is either a READ step (issues an `objectQuery`) or a WRITE step (commits DML via `write`). Golden SQL lives PER STEP (as `statements`), not at `then.statements`: each read costs a declared number of database round trips, and an interleaved committed write lets a later step prove read-your-own-writes or query-cache invalidation. The harness asserts the round-trip counts are internally consistent with the golden SQL each step lists.",
           "type": "array",
           "minItems": 1,
           "items": {
@@ -534,11 +530,11 @@
             "additionalProperties": false,
             "oneOf": [
               {
-                "description": "A read step: issues a find. A cache miss costs >= 1 round trip and lists golden SQL; a cache hit costs 0 and lists none. It names its queried entity with `targetEntity` (m-case-format, resolved Q1), exactly as a read case does.",
-                "required": ["find", "roundTrips", "targetEntity"]
+                "description": "A read step: issues one Object Query. A cache miss costs >= 1 round trip and lists golden SQL; a cache hit costs 0 and lists none. It names its queried entity inside its own `objectQuery.target`, exactly as a read case does.",
+                "required": ["objectQuery", "roundTrips"]
               },
               {
-                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK — UNGROUPED, that step's own unit of work; grouped (`uow`), the whole group's (see the sibling `uow` property). A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`. A GROUPED write MAY name the find step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then consumes the observation that find recorded, rather than one resolved from case state.",
+                "description": "A write step: applies golden DML between finds. By default the DML is COMMITTED so a later find observes it; with `rollback: true` the DML is applied and then ROLLED BACK — UNGROUPED, that step's own unit of work; grouped (`uow`), the whole group's (see the sibling `uow` property). A no-op write issues NO DML: it declares `roundTrips: 0` and lists no `statements`. A GROUPED write MAY name the read step whose result it settles against with `on` (m-case-format *Settling against a grouped find*): the write then consumes the observation that read recorded, rather than one resolved from case state.",
                 "required": ["write", "roundTrips"]
               },
               {
@@ -594,14 +590,14 @@
                 "then": { "required": ["expectError"] }
               },
               {
-                "description": "A scenario-step `referenceSql` is a naive oracle for a read (`find`) only; writes and lifecycle actions do not produce rows to compare.",
+                "description": "A scenario-step `referenceSql` is a naive oracle for a read (`objectQuery`) only; writes and lifecycle actions do not produce rows to compare.",
                 "if": { "required": ["referenceSql"] },
-                "then": { "required": ["find"] }
+                "then": { "required": ["objectQuery"] }
               },
               {
-                "description": "A scenario-step `equivalentEncodings` list supplies alternate authoring forms of that step's canonical `find`, so it is legal only on a read step.",
+                "description": "A scenario-step `equivalentEncodings` list supplies alternate authoring forms of that step's canonical `objectQuery`, so it is legal only on a read step.",
                 "if": { "required": ["equivalentEncodings"] },
-                "then": { "required": ["find"] }
+                "then": { "required": ["objectQuery"] }
               },
               {
                 "description": "`uow` step-grouping is legal on a read or write step ONLY. An ACTION step (m-case-format lifecycle vocabulary) executes through the lifecycle-object engine path, which does not observe grouping, so `uow` on an action step is invalid.",
@@ -609,7 +605,7 @@
                 "then": { "not": { "required": ["uow"] } }
               },
               {
-                "description": "A WRITE step's `on` names the find step whose result the write settles against (m-case-format *Settling against a grouped find*). The evidence a write consumes is transaction-scoped, so the reference is legal only on a step that declares `uow` — an ungrouped write shares no unit of work with any find and has nothing to settle against. It names ONE find, never an array: a keyed write settles against the one milestone the value it was handed came from, and a set of sources would name no single one. It is legal only on the BUFFERED KEYED form (`write` as an array): a legacy string label carries no instruction for an observation to reach, and a predicate-selected write selects its own rows by predicate rather than consuming one milestone a find handed over — an `on` on either would name evidence nothing consumes.",
+                "description": "A WRITE step's `on` names the read step whose result the write settles against (m-case-format *Settling against a grouped find*). The evidence a write consumes is transaction-scoped, so the reference is legal only on a step that declares `uow` — an ungrouped write shares no unit of work with any find and has nothing to settle against. It names ONE find, never an array: a keyed write settles against the one milestone the value it was handed came from, and a set of sources would name no single one. It is legal only on the BUFFERED KEYED form (`write` as an array): a legacy string label carries no instruction for an observation to reach, and a predicate-selected write selects its own rows by predicate rather than consuming one milestone a find handed over — an `on` on either would name evidence nothing consumes.",
                 "if": {
                   "allOf": [{ "required": ["write"] }, { "required": ["on"] }]
                 },
@@ -620,19 +616,15 @@
               }
             ],
             "properties": {
-              "find": {
-                "description": "The operation a READ step issues (a canonical m-predicate algebra node). Validated against predicate.schema.json by the harness. Present on read steps; absent on write steps.",
-                "type": "object"
+              "objectQuery": {
+                "description": "The Object Query a READ step issues, naming its own queried `target`. Present on read steps; absent on write steps.",
+                "$ref": "object-query.schema.json#"
               },
               "equivalentEncodings": {
-                "description": "Optional alternate authoring-surface encodings of this step's canonical `find`. Each normalizes and canonicalizes to `find`; in particular, an omitted Transaction-Time selection normalizes to explicit Latest.",
+                "description": "Optional alternate authoring-surface encodings of this step's canonical `objectQuery`. Each normalizes and canonicalizes to it; in particular, an omitted Transaction-Time selection normalizes to explicit Latest.",
                 "type": "array",
                 "minItems": 1,
                 "items": { "type": "object" }
-              },
-              "targetEntity": {
-                "description": "read steps only. The entity this step's `find` targets — the queried position it starts from (m-case-format, resolved Q1). REQUIRED on every read step and absent on write steps, mirroring a read case's `when.targetEntity`.",
-                "$ref": "#/$defs/entityName"
               },
               "write": {
                 "description": "Marks a WRITE step, in one of three forms (disjoint by JSON type). A legacy string LABEL (a coarse verb hint whose intent lives only in the golden SQL — a deferred migration, still carried by `m-identity-map-006/007/008/011`, `m-process-cache-003`, `m-detach-004`). A single predicate-selected `$defs/predicateWrite` instruction. Or a `$defs/bufferedWriteSequence` — the ORDERED buffer of one-or-more KEYED write instructions a single unit of work accumulates and flushes together (m-unit-work), so the step encodes every buffered mutation explicitly rather than in prose. The buffered form is a GENERAL ordered keyed buffer: it spans a single keyed write, a mixed multi-object flush (insert / update / delete of DIFFERENT objects), and the two-keyed same-object coalescing pair alike — same-object folding at flush is the runtime coalescing rule, not a structural constraint. Predicate-selected instructions inside a buffer stay deferred (keyed-only). Every structured form is the neutral requested operation the compile/run and API no-drift checks consume INDEPENDENTLY of golden SQL; golden SQL (`statements`) remains the independent expected lowering of the flush — for coalescing, one final-value write or NO DML — never the source an adapter deduces the writes from.",
@@ -647,7 +639,7 @@
                 "type": "boolean"
               },
               "uow": {
-                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `find`/`write`/`roundTrips`, legal on a read or write step ONLY — the sibling `allOf` conditional forbids it on an action step, whose lifecycle-object engine path does not observe grouping). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS one of its write steps declares `rollback: true`, in which case the group ROLLS BACK after its last step instead — the whole group is the doomed unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`find`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
+                "description": "Optional per-step unit-of-work GROUPING label (m-unit-work; sibling of `objectQuery`/`write`/`roundTrips`, legal on a read or write step ONLY — the sibling `allOf` conditional forbids it on an action step, whose lifecycle-object engine path does not observe grouping). Steps sharing the SAME label execute inside ONE held transaction (one unit of work, one connection) instead of each step's own default boundary; steps carrying NO `uow` key keep today's semantics exactly (an ungrouped write step is its own commit/rollback boundary; an ungrouped find runs on the autocommit connection) — grouping is opt-in and changes the meaning of no existing (unlabeled) case. Steps execute in AUTHORED order; a group's own steps need NOT be contiguous — two groups MAY interleave (the classic optimistic-lock race: one unit of work's observing find, then a concurrent unit of work's observe-and-commit, then back to the first unit of work's own doomed write). The group COMMITS after its LAST step, UNLESS one of its write steps declares `rollback: true`, in which case the group ROLLS BACK after its last step instead — the whole group is the doomed unit of work, which is what lets a step later in the SAME group (e.g. a re-issued find) observe a force-flushed write the eventual abort then erases (`core/spec/m-unit-work.md` \"Abort\"). A read (`objectQuery`) step inside a group reads THROUGH the group's own transaction (read-your-own-writes): its `expectRows` are what THAT connection observes mid-transaction, not the post-commit / post-rollback state.",
                 "type": "string",
                 "minLength": 1
               },
@@ -736,7 +728,7 @@
           }
         },
         "coherence": {
-          "description": "A coherence (cross-process cache coherence) case: an ordered list of steps run against ONE database over TWO connections modeling two application servers (node A, node B). Each step names the node it runs on, the operation it issues, and its golden SQL (`statements`); a write step (kind `write`) COMMITS on its node, a read step (kind `read`) is a query. The final step is node B's re-fetch after node A's committed write — it carries `observeRows`, the post-write rows node B MUST observe.",
+          "description": "A coherence (cross-process cache coherence) case: an ordered list of steps run against ONE database over TWO connections modeling two application servers (node A, node B). Each step names the node it runs on, the query or DML it issues, and its golden SQL (`statements`); a write step (kind `write`) COMMITS on its node, a read step (kind `read`) is a query. The final step is node B's re-fetch after node A's committed write — it carries `observeRows`, the post-write rows node B MUST observe.",
           "type": "array",
           "minItems": 2,
           "items": {
@@ -745,12 +737,12 @@
             "required": ["node", "kind", "statements"],
             "allOf": [
               {
-                "description": "A read step (`kind: read`) issues a `find` and MUST name its queried entity with `targetEntity` (m-case-format, resolved Q1), exactly as a read case does.",
+                "description": "A read step (`kind: read`) issues one `objectQuery`, which names its own queried entity in `target`, exactly as a read case does.",
                 "if": {
                   "required": ["kind"],
                   "properties": { "kind": { "const": "read" } }
                 },
-                "then": { "required": ["targetEntity"] }
+                "then": { "required": ["objectQuery"] }
               }
             ],
             "properties": {
@@ -762,13 +754,9 @@
                 "description": "`read` issues a query (a seed read or a re-fetch); `write` issues DML that COMMITS on its node (the change a peer must observe).",
                 "enum": ["read", "write"]
               },
-              "find": {
-                "description": "The operation a `read` step issues (a canonical m-predicate algebra node, validated against predicate.schema.json). Present on read steps; absent on write steps.",
-                "type": "object"
-              },
-              "targetEntity": {
-                "description": "read steps only. The entity this step's `find` targets — the queried position it starts from (m-case-format, resolved Q1). REQUIRED on every `read` step and absent on `write` steps, mirroring a read case's `when.targetEntity`.",
-                "$ref": "#/$defs/entityName"
+              "objectQuery": {
+                "description": "The Object Query a `read` step issues, naming its own queried `target`. Present on read steps; absent on write steps.",
+                "$ref": "object-query.schema.json#"
               },
               "statements": {
                 "description": "The golden SQL this step emits, as an ordered list of `{sql, binds}` statement entries (dialect-keyed map form). A read step's is a SELECT; a write step's is the committing DML.",
@@ -992,7 +980,7 @@
           "items": { "type": "object" }
         },
         "graph": {
-          "description": "The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name — OR, for a NARROWED polymorphic hop (m-deep-fetch, m-inheritance), under the DERIVED narrowed view key `<rel>[<Concrete>,<Concrete>]` (the local relationship name, the effective concrete-subtype set in canonical alphabetical order by entity name, no spaces; equivalent authored narrowings collapse to the same key). A polymorphic view's child objects additionally carry `familyVariant` (the concrete subtype name, materialized from the tag map, never projected as SQL). For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class's LOCAL name — result vocabulary, so it is derived by resolving `targetEntity` and taking the resolved Entity's local name rather than reusing the canonical spelling `targetEntity` carries — whose value is a list of root objects; a related set appears under its relationship name (or narrowed view key), and a value-object member under its declared name. When a relationship reaches an ANCESTOR node already on the current path (a true BACK-REFERENCE cycle, m-snapshot-read), recursion stops and the cycle point carries a PK-ONLY stub — ONLY the referenced node's primary-key attribute(s), no other scalars, no relationships; a diamond-shared node at a NON-cyclic position keeps its full-value representation (the stub is scoped to true cycles). The stub proves nothing about sameness by itself — the cycle's same-node claim rides `then.identityChecks`.",
+          "description": "The assembled object graph a read must produce. For a deep fetch: the root rows, each carrying its eager-fetched related rows under the relationship name — OR, for a NARROWED polymorphic hop (m-deep-fetch, m-inheritance), under the DERIVED narrowed view key `<rel>[<Concrete>,<Concrete>]` (the local relationship name, the effective concrete-subtype set in canonical alphabetical order by entity name, no spaces; equivalent authored narrowings collapse to the same key). A polymorphic view's child objects additionally carry `familyVariant` (the concrete subtype name, materialized from the tag map, never projected as SQL). For a value-object materialization read (m-value-object): the owning entity's rows, each carrying its embedded value-object values decoded from the single structured-document column under the value-object name (a nested object for a `one` member, an ordered list for a `many` member, to arbitrary depth). Keyed by the root class's LOCAL name — result vocabulary, so it is derived by resolving the query's own `target` and taking the resolved Entity's local name rather than reusing the canonical spelling `target` carries — whose value is a list of root objects; a related set appears under its relationship name (or narrowed view key), and a value-object member under its declared name. When a relationship reaches an ANCESTOR node already on the current path (a true BACK-REFERENCE cycle, m-snapshot-read), recursion stops and the cycle point carries a PK-ONLY stub — ONLY the referenced node's primary-key attribute(s), no other scalars, no relationships; a diamond-shared node at a NON-cyclic position keeps its full-value representation (the stub is scoped to true cycles). The stub proves nothing about sameness by itself — the cycle's same-node claim rides `then.identityChecks`.",
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
@@ -1341,7 +1329,7 @@
       "pattern": "^($|/.*)$"
     },
     "entityName": {
-      "description": "A metamodel Entity spelling, bare or namespace-qualified (identity.schema.json) — the queried/target entity a read starts from (m-case-format `targetEntity`), and the entity a write-sequence step mutates. The same grammar the operation schema's attribute/relationship references use before the member dot.",
+      "description": "A metamodel Entity spelling, bare or namespace-qualified (identity.schema.json) — the entity a write-sequence step mutates or a write instruction targets. The same grammar the Predicate schema's attribute/relationship references use before the member dot; a read names its queried entity inside its own Object Query.",
       "$ref": "identity.schema.json#/$defs/entityName"
     },
     "referenceSql": {

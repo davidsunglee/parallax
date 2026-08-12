@@ -1,24 +1,27 @@
 # Table-per-hierarchy narrow to ONE concrete subtype with a concrete-subtype predicate
-# (m-inheritance, m-predicate, m-sql).
+# (m-inheritance, m-object-query, m-predicate, m-sql).
 #
-# targetEntity is the abstract root Animal; the `narrow` node constrains it to [Dog],
-# so `Dog.barkVolume` — a concrete-subtype-declared attribute — becomes referenceable
-# inside the narrow's operand. The narrow lowers to the branch's tag guard, appended
-# AFTER the branch predicate: `t0.bark_volume > ? and t0.kind = ?` (binds [3, dog]).
+# The queried target is the abstract root Animal; `narrowTo` constrains the RESULT to
+# [Dog], so `Dog.barkVolume` — a concrete-subtype-declared attribute — becomes
+# referenceable in the predicate the narrowed result is measured against. The result
+# narrowing lowers to the branch's tag guard, appended AFTER the predicate:
+# `t0.bark_volume > ? and t0.kind = ?` (binds [3, dog]).
 # Only Rex (bark_volume 7 > 3) matches; Fido (3) does not. The projection is Dog's
 # layout selection (id, kind, name, owner_id, license_id, bark_volume); familyVariant is Dog.
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    narrow:
-      to: [parallax.compatibility.Dog]
-      operand:
-        greaterThan: { attr: parallax.compatibility.Dog.barkVolume, value: 3 }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      greaterThan:
+        attr: parallax.compatibility.Dog.barkVolume
+        value: 3
+    narrowTo:
+      - parallax.compatibility.Dog
 then:
   statements:
     - sql:

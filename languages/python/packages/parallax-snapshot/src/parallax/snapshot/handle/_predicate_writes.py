@@ -44,8 +44,7 @@ from parallax.core import deep_fetch, inheritance, read_lock
 from parallax.core import predicate as predicate_algebra
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import Dialect, LockMode
-from parallax.core.entity import AttributeAssignment, FindQuery
-from parallax.core.entity._query import mutation_selection
+from parallax.core.entity import AttributeAssignment
 from parallax.core.execution_log import AttemptRecorder
 from parallax.core.metamodel import (
     AttributeMetadata,
@@ -56,7 +55,15 @@ from parallax.core.metamodel import (
     TemporalDimension,
     entity_by_name,
 )
-from parallax.core.predicate import AsOf, PredicateNode, QueryDefinitionError
+from parallax.core.object_query import (
+    AsOf,
+    ObjectQueryNode,
+    TemporalSelection,
+    object_query,
+)
+from parallax.core.object_query import TemporalDimension as TemporalDimensionName
+from parallax.core.object_query._fluent import ObjectQuery, mutation_selection
+from parallax.core.predicate import PredicateNode, QueryDefinitionError
 from parallax.core.sql_gen import compile_read
 from parallax.core.storage_layout import DocumentPath
 from parallax.core.unit_work import (
@@ -99,19 +106,18 @@ from parallax.snapshot.handle._write_inputs import (
 _ASSIGNMENT_BEARING: Final[frozenset[PredicateMutation]] = frozenset({"update", "updateUntil"})
 
 
-def _current_selection(predicate: PredicateNode, entity: EntityMetadata) -> PredicateNode:
-    """Complete an internal predicate-write resolve at Latest on every axis."""
-    operation = predicate
-    for axis in sorted(
-        entity.declared_as_of_axes,
-        key=lambda item: item.dimension.value,
-        reverse=True,
-    ):
-        dimension = (
+def _current_selection(
+    target: EntityIdentity, predicate: PredicateNode, entity: EntityMetadata
+) -> ObjectQueryNode:
+    """The internal resolving query: the write's own predicate, pinned at Latest
+    on every declared dimension."""
+    temporal: dict[TemporalDimensionName, TemporalSelection] = {
+        (
             "valid-time" if axis.dimension is TemporalDimension.VALID_TIME else "transaction-time"
-        )
-        operation = AsOf(operand=operation, dimension=dimension, coordinate="latest")
-    return operation
+        ): AsOf(coordinate="latest")
+        for axis in entity.declared_as_of_axes
+    }
+    return object_query(target, predicate, temporal=temporal)
 
 
 def buffer_predicate(
@@ -120,7 +126,7 @@ def buffer_predicate(
     conn: DbPort,
     dialect: Dialect,
     mutation: PredicateMutation,
-    query: FindQuery[Any, Any],
+    query: ObjectQuery[Any, Any],
     assignments: Sequence[AttributeAssignment[Any]],
     *,
     valid_from: dt.datetime | None,
@@ -128,7 +134,7 @@ def buffer_predicate(
     attempt: AttemptRecorder,
 ) -> None:
     """The typed-authoring entry to the predicate-write lane: it turns a
-    mutation-compatible :class:`~parallax.core.entity.FindQuery` plus typed
+    mutation-compatible :class:`~parallax.core.object_query.ObjectQuery` plus typed
     ``Attr.set(...)`` assignments into the canonical
     :class:`~parallax.core.unit_work.PredicateWrite` the conformance engine
     builds directly from a case document, then hands it to the shared
@@ -145,14 +151,14 @@ def buffer_predicate(
        target only in its mutation-compatible form") — one carrying nothing but
        a target and a predicate; every result-shaping, temporal, narrowing, and
        deep-fetch clause is rejected
-       (:func:`~parallax.core.entity._query.mutation_selection`,
+       (:func:`~parallax.core.object_query.mutation_selection`,
        ``query-not-mutation-compatible``). Typed-only: the canonical instruction
        has no clause to carry, and the instruction-level counterpart is
        ``validate_instruction``'s own bare-predicate rule. What it answers is the
        ephemeral Predicate Selection the rest of this function reads, which never
        leaves this lane.
     2. **Target resolution** — the write-side spelling of a read's preflight
-       (:func:`entity_of`, ``query-target-not-in-model``): a Find Query the
+       (:func:`entity_of`, ``query-target-not-in-model``): an Object Query the
        connected model declares no Entity for is refused as a query, before
        anything is built from it. The query retains its Entity Identity, so the
        lookup is by exact spelling rather than by a bare name two namespaces
@@ -298,7 +304,7 @@ def buffer_predicate_instruction(
     inheritance-family target (`m-inheritance`), then dispatch it READLESS
     (`m-batch-write`) or MATERIALIZE it (`m-opt-lock`, ADR 0014). The typed
     ``_where`` verbs (:func:`buffer_predicate`) build ``instruction`` from
-    a mutation-compatible :class:`~parallax.core.entity.FindQuery` plus typed
+    a mutation-compatible :class:`~parallax.core.object_query.ObjectQuery` plus typed
     ``Attr.set(...)`` assignments first; the engine builds it directly
     from the case's own canonical write-instruction document.
 
@@ -415,7 +421,7 @@ def _materialize_predicate_write(
     applies.
 
     A TEMPORAL target's raw predicate carries no as-of wrapper (a
-    mutation-compatible Find Query carries no temporal clause, python.md §5),
+    mutation-compatible Object Query carries no temporal clause, python.md §5),
     so this internal authoring boundary adds one explicit Latest selection per
     declared dimension before routing the resolve through the SAME
     :func:`~parallax.core.deep_fetch.plan` root-canonicalization every
@@ -428,7 +434,7 @@ def _materialize_predicate_write(
     if layout is None:  # pragma: no cover - a predicate-write target always owns rows
         raise ValueError(f"{entity.identity.canonical}: predicate-write target has no Table")
     lock: LockMode | None = read_lock.mode_for(uow.settings.concurrency)
-    selection = _current_selection(instruction.target.predicate, declaring_entity)
+    selection = _current_selection(entity.identity, instruction.target.predicate, declaring_entity)
     plan_ = deep_fetch.plan(entity, selection, meta)
     assignments = {
         assignment_member(assignment.attr): assignment.value

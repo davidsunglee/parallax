@@ -6,7 +6,8 @@ from typing import Literal
 
 from parallax.core.dialect import Dialect, LockMode
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
-from parallax.core.predicate import EntityQuery, OrderKey, PredicateNode
+from parallax.core.object_query import EntityQuery, OrderKey
+from parallax.core.predicate import PredicateNode
 from parallax.core.sql_gen import CompiledRead
 from parallax.core.sql_gen import compile_read as compile_entity_query
 

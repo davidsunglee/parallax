@@ -8,9 +8,10 @@ model: models/member-column-defaults.yaml
 tags: [m-descriptor, m-metamodel, m-value-object, m-sql, default-column, snake-case, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.MemberColumnDefaults
-  operation:
-    all: {}
+  objectQuery:
+    target: parallax.compatibility.MemberColumnDefaults
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

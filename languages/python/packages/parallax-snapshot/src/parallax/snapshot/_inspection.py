@@ -33,7 +33,7 @@ from parallax.core.entity import lifecycle_state_of as _lifecycle_state_of
 from parallax.core.entity import relationship_value_of as _relationship_value_of
 from parallax.core.entity._declaration import declaration_of, is_entity_class, members_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
-from parallax.core.predicate import PathSegment
+from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Edge, Pin
 
 __all__ = [
@@ -234,7 +234,7 @@ def _traverse(
 
 
 def _segment_value(
-    source: object, segment: PathSegment, operation: str, *, raising: bool
+    source: object, segment: IncludeSegment, operation: str, *, raising: bool
 ) -> object:
     """One segment's already-loaded value at ``source``.
 
@@ -243,7 +243,7 @@ def _segment_value(
     is what an unrequested include left behind.
     """
     key = _view_key(segment)
-    if segment.narrow:
+    if segment.narrow_to:
         state = snapshot_state_of(source)
         views: Mapping[str, object] = {} if state is None else state.views
         if key not in views:
@@ -301,7 +301,9 @@ def _require_path(node: object, path: object, operation: str) -> RelationshipPat
     return typed
 
 
-def _owner_mismatch(node: object, segment: PathSegment, operation: str) -> SnapshotInspectionError:
+def _owner_mismatch(
+    node: object, segment: IncludeSegment, operation: str
+) -> SnapshotInspectionError:
     entity = _entity_of(node)
     reached = "an Entity this path cannot address" if entity is None else entity.canonical
     return SnapshotInspectionError(
@@ -312,7 +314,7 @@ def _owner_mismatch(node: object, segment: PathSegment, operation: str) -> Snaps
     )
 
 
-def _segment_owner(node: object, segment: PathSegment) -> RelationshipIdentity | None:
+def _segment_owner(node: object, segment: IncludeSegment) -> RelationshipIdentity | None:
     """The Relationship Identity ``segment`` names for ``node``'s concrete class,
     or ``None`` when no accepted ancestor of that class declares it.
 
@@ -336,19 +338,19 @@ def _entity_of(node: object) -> EntityIdentity | None:
     return declaration_of(cls).identity if is_entity_class(cls) else None
 
 
-def _view_key(segment: PathSegment) -> str:
+def _view_key(segment: IncludeSegment) -> str:
     """The private per-segment view key: the relationship's local name, plus the
     variant spellings of the concrete subtypes a narrowed segment names.
 
-    A view key is RESULT vocabulary while the segment's own ``rel`` and ``narrow``
+    A view key is RESULT vocabulary while the segment's own ``rel`` and ``narrowTo``
     are addressing references, so both halves shed their namespace here — the
     same local spelling deep-fetch planning derived through
     ``inheritance.family_variant_name`` when it keyed the view it populated.
     """
     local = _local(segment.rel)
-    if not segment.narrow:
+    if not segment.narrow_to:
         return local
-    return f"{local}[{','.join(sorted(_local(name) for name in segment.narrow))}]"
+    return f"{local}[{','.join(sorted(_local(name) for name in segment.narrow_to))}]"
 
 
 def _local(spelling: str) -> str:

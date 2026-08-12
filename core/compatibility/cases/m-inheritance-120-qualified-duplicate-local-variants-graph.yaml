@@ -5,9 +5,10 @@ model: models/materialization-key-compatibility.yaml
 tags: [m-inheritance, m-sql, m-api-conformance, table-per-concrete-subtype, union-all, familyVariant, graph, instance-form, entity-identity, positive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: catalog.Record
-  operation:
-    all: {}
+  objectQuery:
+    target: catalog.Record
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

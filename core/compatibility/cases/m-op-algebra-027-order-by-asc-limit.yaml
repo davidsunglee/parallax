@@ -2,19 +2,17 @@
 # is the default direction, so the canonical SQL emits the bare `asc` keyword for
 # clarity and limits to 3, selecting ids 1, 2, 3 via the ordering.
 model: models/orders.yaml
-tags: [m-predicate, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-object-query, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    limit:
-      count: 3
-      operand:
-        orderBy:
-          keys:
-            - { attr: parallax.compatibility.Order.id, direction: asc }
-          operand:
-            all: {}
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.Order.id
+        direction: asc
+    limit: 3
 then:
   statements:
     - sql:

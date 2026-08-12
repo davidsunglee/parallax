@@ -24,9 +24,13 @@ model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, notIn, absence-collapse, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedNotIn: { path: parallax.compatibility.Customer.address.phones.type, values: [work] }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedNotIn:
+        path: parallax.compatibility.Customer.address.phones.type
+        values:
+          - work
 then:
   statements:
     - sql:

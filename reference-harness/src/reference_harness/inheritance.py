@@ -39,11 +39,7 @@ import copy
 from typing import TYPE_CHECKING, Any
 
 from .naming import default_column_name
-from .operation_references import (
-    ATTRIBUTE_REFERENCE_TAGS,
-    OPERAND_ROW_WRAPPER_TAGS,
-    PATH_REFERENCE_TAGS,
-)
+from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
 from .references import entity_spelling
 from .value_object_resolve import RejectionError
 
@@ -925,23 +921,7 @@ def validate_family_defs(entity_defs: list[dict[str, Any]]) -> None:
                 _validate_materialization_keys(chain, family_variant=True)
 
 
-# --- operation-level narrow / attribute-position validation (RejectionError) ----
-
-
-def _default_position(entity_defs: list[dict[str, Any]]) -> str | None:
-    """The position an operation carrying no ``targetEntity`` starts from.
-
-    ``m-predicate``'s model-aware default: the inheritance family root when the
-    descriptor declares one, else its first declared entity — the position a
-    single-entity case queries.
-    """
-    for definition in entity_defs:
-        if isinstance(definition, dict) and role_of(definition) == ROLE_ROOT:
-            return definition["name"]
-    for definition in entity_defs:
-        if isinstance(definition, dict) and "name" in definition:
-            return str(definition["name"])
-    return None
+# --- query-level selection / attribute-position validation (RejectionError) ----
 
 
 def narrowed_view_key(family: Family, rel_ref: str, effective_set: list[str]) -> str:
@@ -1102,10 +1082,10 @@ def resolve_root_source_set(
 ) -> tuple[str, ...] | None:
     """The concrete source set ONE deep-fetch path starts from, or ``None``.
 
-    A path's root position is the read's own queried position: absent a root
-    ``narrow`` the path starts from every root object, so the source set is
-    *position*'s whole effective concrete set; a root ``narrow`` guards it down to
-    the guard's resolved set. ``None`` is a non-polymorphic root, which has no
+    A path's root position is the read's own queried position: absent an
+    ``appliesTo`` selection the path starts from every root object, so the source
+    set is *position*'s whole effective concrete set; a source guard narrows it
+    down to the guard's resolved set. ``None`` is a non-polymorphic root, which has no
     source set to distinguish hops by. The returned set is in the family's
     canonical sibling-set order, so two guards resolving to the same concretes
     yield the SAME tuple and therefore the same hop — which is what makes a
@@ -1113,44 +1093,80 @@ def resolve_root_source_set(
     """
     if position is None or inheritance_of(family.defs.get(position, {})) is None:
         return None
-    narrow = path.get("narrow") if isinstance(path, dict) else None
-    if isinstance(narrow, dict):
+    applies_to = path.get("appliesTo") if isinstance(path, dict) else None
+    if isinstance(applies_to, list):
         resolved = resolve_clamped_narrow(
-            family, family.effective_concrete_set(position), narrow.get("to")
+            family, family.effective_concrete_set(position), applies_to
         )
     else:
         resolved = family.effective_concrete_set(position)
     return tuple(family.canonical_concrete_order(resolved))
 
 
-def validate_operation_inheritance(
-    entity_defs: list[dict[str, Any]],
-    operation: Any,
-    position: str | None = None,
-) -> None:
-    """Reject an operation that narrows or references entities outside its position.
+def validate_query_inheritance(entity_defs: list[dict[str, Any]], query: Any) -> None:
+    """Reject an Object Query that selects or references entities outside its position.
 
-    The read-side counterpart of the write-derivation oracle: it walks the operation
-    tree and raises :class:`RejectionError` with the violated ``m-predicate`` narrow
+    The read-side counterpart of the write-derivation oracle: it walks every clause
+    and raises :class:`RejectionError` with the violated ``m-inheritance`` selection
     or positional-attribute rule. It runs on EVERY descriptor, not only one declaring
     an inheritance family: a standalone entity's effective concrete set is itself, so
     the same subset test rejects a reference naming an unrelated entity
     (``attribute-outside-active-position``) with no special case.
 
-    *position* is the polymorphic position the operation starts from (a read's
-    ``targetEntity``); a rejected operation case carries no ``targetEntity``, so
-    *position* defaults to what ``m-predicate`` fixes — the inheritance family root
-    when the descriptor declares one, else its first declared entity.
+    The query's own ``target`` is the polymorphic position it starts from. Result
+    narrowing resolves inside it and moves the position every Sort Key is measured
+    at; the predicate is walked at that narrowed position, since narrowing decides
+    which rows the whole query addresses. Each Include Path's source guard resolves
+    at the UNNARROWED queried position, because narrowing decides which objects come
+    back rather than which sources a path may start from.
 
     Each ``narrow``'s subset check binds to the ACTIVE position threaded and
     re-narrowed at every hop, so the shared selection cannot broaden beyond the
     position supplied by context.
     """
     family = Family(entity_defs)
-    start = position if position is not None else _default_position(entity_defs)
-    if start is None:
+    if not isinstance(query, dict):
         return
-    _walk_active_position(family, family.effective_concrete_set(start), operation)
+    target = query.get("target")
+    if not isinstance(target, str) or target not in family.defs:
+        return
+    queried = family.effective_concrete_set(target)
+    narrow_to = query.get("narrowTo")
+    result = (
+        resolve_clamped_narrow(family, queried, narrow_to)
+        if isinstance(narrow_to, list)
+        else queried
+    )
+    _walk_active_position(family, result, query.get("predicate"))
+    for key in query.get("orderBy", []) or []:
+        if isinstance(key, dict):
+            _check_attribute_position(family, result, key.get("attr"))
+    _check_includes(family, queried, query.get("includes", []) or [])
+
+
+def _check_includes(family: Family, queried: list[str], paths: Any) -> None:
+    """Judge each Include Path's two selection positions with their own rules.
+
+    A path's ``appliesTo`` guard resolves inside the QUERIED position exactly as a
+    Predicate-scoped ``narrow`` resolves inside its own (``narrow-outside-position``).
+    Each segment's ``narrowTo`` narrows that hop's (polymorphic) relationship target
+    and must resolve within it (``narrow-outside-relationship-target``).
+    """
+    for path in paths:
+        if not isinstance(path, dict):
+            continue
+        applies_to = path.get("appliesTo")
+        if isinstance(applies_to, list):
+            resolve_clamped_narrow(family, queried, applies_to)
+        segments = path.get("segments")
+        for segment in segments if isinstance(segments, list) else []:
+            rel = segment.get("rel") if isinstance(segment, dict) else None
+            _check_member_reference(family, rel)
+            narrow_to = segment.get("narrowTo") if isinstance(segment, dict) else None
+            if isinstance(rel, str) and isinstance(narrow_to, list):
+                for name in narrow_to:
+                    _check_reference_entity_name(family, name, name)
+                resolve_hop_effective_set(family, rel, narrow_to)
 
 
 def _walk_active_position(
@@ -1196,41 +1212,7 @@ def _walk_active_position(
     elif tag in ("and", "or"):
         for operand in body.get("operands", []) or []:
             _walk_active_position(family, current_set, operand, outside_rule)
-    elif tag in ("not", "group", "limit", "asOf", "asOfRange", "history"):
-        _walk_active_position(family, current_set, body.get("operand"), outside_rule)
-    elif tag == "orderBy":
-        operand = body.get("operand")
-        _walk_active_position(family, current_set, operand, outside_rule)
-        ordered_set = _ordered_position(family, current_set, operand, outside_rule)
-        for key in body.get("keys", []) or []:
-            if isinstance(key, dict):
-                _check_attribute_position(family, ordered_set, key.get("attr"))
-    elif tag == "deepFetch":
-        # A deep-fetch path narrows at two positions with two different rules. Its
-        # ROOT `{to}` guard resolves inside the queried position exactly as an
-        # operation-position `narrow` node does
-        # (`narrow-outside-position`). Each SEGMENT's `{to}` narrows that hop's
-        # (polymorphic) relationship target and must resolve within it
-        # (`narrow-outside-relationship-target`). The operand is the root query,
-        # walked at the queried position.
-        for path in body.get("paths", []) or []:
-            root_narrow = path.get("narrow") if isinstance(path, dict) else None
-            if isinstance(root_narrow, dict):
-                resolve_clamped_narrow(
-                    family,
-                    current_set,
-                    root_narrow.get("to"),
-                    outside_rule,
-                )
-            segments = path.get("segments") if isinstance(path, dict) else None
-            for segment in segments if isinstance(segments, list) else []:
-                rel = segment.get("rel") if isinstance(segment, dict) else None
-                _check_member_reference(family, rel)
-                if isinstance(rel, str) and isinstance(segment.get("narrow"), dict):
-                    to_list = segment["narrow"].get("to")
-                    for name in to_list if isinstance(to_list, list) else []:
-                        _check_reference_entity_name(family, name, name)
-                    resolve_hop_effective_set(family, rel, to_list)
+    elif tag in ("not", "group"):
         _walk_active_position(family, current_set, body.get("operand"), outside_rule)
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
         _check_attribute_position(family, current_set, body.get("attr"))
@@ -1244,30 +1226,6 @@ def _walk_active_position(
         # applicability to the active position stays that resolver's question.
         _check_path_reference(family, body.get("path"))
     # all / none carry no reference to a queried position here.
-
-
-def _ordered_position(
-    family: Family, current_set: list[str], node: Any, outside_rule: str
-) -> list[str]:
-    """The position an ``orderBy``'s ordered rows occupy.
-
-    A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
-    wrapper, so an order key is asked of that narrow's resolved set, reached
-    through the wrappers that return their operand's own rows
-    (:data:`OPERAND_ROW_WRAPPER_TAGS`) and no other node. A ``narrow`` inside a
-    boolean combinator is a predicate term over the same position and moves
-    nothing (m-predicate).
-    """
-    if not isinstance(node, dict) or len(node) != 1:
-        return current_set
-    tag, body = next(iter(node.items()))
-    if not isinstance(body, dict):
-        return current_set
-    if tag == "narrow":
-        return resolve_clamped_narrow(family, current_set, body.get("to", []) or [], outside_rule)
-    if tag in OPERAND_ROW_WRAPPER_TAGS:
-        return _ordered_position(family, current_set, body.get("operand"), outside_rule)
-    return current_set
 
 
 def _check_attribute_position(family: Family, current_set: list[str], attr_ref: Any) -> None:

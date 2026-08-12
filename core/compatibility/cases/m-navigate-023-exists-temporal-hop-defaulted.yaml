@@ -9,23 +9,23 @@
 # referenceSql oracle (an `id in (select policy_id ...)` reformulation, as-of
 # included) returning the same single row.
 model: models/policy.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, explicit-selection, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, exists, semi-join, propagation, bitemporal, explicit-selection, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Policy
-  operation:
-    asOf:
-      operand:
-        asOf:
-          operand:
-            exists:
-              rel: parallax.compatibility.Policy.coverages
-              op:
-                greaterThanEquals: { attr: parallax.compatibility.Coverage.amount, value: 600.00 }
-          dimension: transaction-time
-          coordinate: latest
-      dimension: valid-time
-      coordinate: latest
+  objectQuery:
+    target: parallax.compatibility.Policy
+    predicate:
+      exists:
+        rel: parallax.compatibility.Policy.coverages
+        op:
+          greaterThanEquals:
+            attr: parallax.compatibility.Coverage.amount
+            value: 600.00
+    temporal:
+      transaction-time:
+        asOf: latest
+      valid-time:
+        asOf: latest
 then:
   statements:
     - sql:

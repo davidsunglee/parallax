@@ -11,21 +11,27 @@
 # tag column and the harness materializes `familyVariant` per child; the tag
 # predicate is `t0.kind in (?, ?)` (binds [cat, dog], alphabetical order).
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the deduplicated pets[Cat,Dog] view's shared animal-table IN-list binds are the distinct owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Person
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Cat, parallax.compatibility.Dog] } }] }
-        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Pet] } }] }
+  objectQuery:
+    target: parallax.compatibility.Person
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Person.pets
+            narrowTo:
+              - parallax.compatibility.Cat
+              - parallax.compatibility.Dog
+      - segments:
+          - rel: parallax.compatibility.Person.pets
+            narrowTo:
+              - parallax.compatibility.Pet
 then:
   statements:
     - sql:

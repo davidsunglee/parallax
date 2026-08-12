@@ -19,6 +19,7 @@ import pytest
 from _corpus_model_support import formed, model, target
 
 from _support.sql import compile_read
+from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.sql_gen import SqlGenError
@@ -203,8 +204,8 @@ def test_tph_user_predicate_then_tag_binds_user_first() -> None:
 
 def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_tag() -> None:
     # m-inheritance-012: narrowing the abstract root to ONE concrete still projects
-    # the raw discriminator slot (its projection is keyed to `targetEntity` being
-    # abstract, never to the narrow's resolved cardinality) and still injects `=`
+    # the raw discriminator slot (its projection is keyed to the queried `target`
+    # being abstract, never to the narrowing's resolved cardinality) and still injects `=`
     # (cardinality-keyed).
     compiled = compile_read(
         oa.Comparison(op="greaterThan", attr="Dog.barkVolume", value=3),
@@ -223,7 +224,7 @@ def test_tph_narrow_to_one_concrete_from_an_abstract_target_still_carries_the_ta
 def test_tph_grouped_branch_predicates_join_by_or() -> None:
     # m-inheritance-015: an `or` of two narrowed branches groups EACH branch's
     # (predicate AND tag) in parens — no top-level tag at all, since the read's own
-    # `targetEntity` (Animal, root) is untouched by any TOP-LEVEL narrow.
+    # queried `target` (Animal, root) is untouched by any result narrowing.
     compiled = compile_read(
         oa.Or(
             operands=(
@@ -323,7 +324,7 @@ def test_tph_document_partition_wraps_result_shaping_around_the_union() -> None:
         DOCUMENT_LAYOUT,
         POSTGRES,
         target(DOCUMENT_LAYOUT, "Payment"),
-        order_by=(oa.OrderKey(attr="Payment.id", direction="asc"),),
+        order_by=(oq.OrderKey(attr="Payment.id", direction="asc"),),
         limit=1,
     )
 
@@ -839,7 +840,7 @@ def test_tph_abstract_read_transforms_rows_through_the_tag_map() -> None:
 
 def test_tph_tag_transform_holds_regardless_of_narrow_cardinality() -> None:
     # m-inheritance-012's own witness: narrowed down to ONE concrete, but the read's
-    # OWN targetEntity (Animal) is abstract, so the tag column is still projected
+    # OWN queried `target` (Animal) is abstract, so the tag column is still projected
     # and still transformed. The map is the WHOLE family's, not the narrow's
     # resolved position — `WildBoar` is outside the narrow and still maps.
     compiled = compile_read(

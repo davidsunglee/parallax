@@ -17,6 +17,7 @@ import re
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -61,7 +62,7 @@ from parallax.core.unit_work import (
     VersionObservation,
     WriteEffectError,
 )
-from parallax.snapshot import handle
+from parallax.snapshot import DeferredFeatureError, handle
 from parallax.snapshot.materialize import RelationshipViewKey
 
 
@@ -112,12 +113,12 @@ def _load_case(case_id: str) -> case_format.Case:
 def test_compile_read_case_matches_golden() -> None:
     emissions, round_trips = engine.compile_read_case(_case("m-value-object-001"), "postgres")
     assert round_trips == 1
-    assert emissions[0].case_pointer == "/operation"
+    assert emissions[0].case_pointer == "/objectQuery"
     assert emissions[0].sql == (
         "select t0.id, t0.name from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?"
     )
     assert emissions[0].binds == ("city", "Oslo")
-    assert emissions[0].to_json()["casePointer"] == "/operation"
+    assert emissions[0].to_json()["casePointer"] == "/objectQuery"
 
 
 def test_run_read_case_executes_driver_sql_and_records_rows() -> None:
@@ -216,7 +217,9 @@ def test_run_read_case_reports_an_unresolvable_target_as_an_engine_error() -> No
     case = _case("m-value-object-001")
     document = dict(case.document)
     when = dict(cast("Mapping[str, object]", document["when"]))
-    when["targetEntity"] = "parallax.compatibility.NoSuchEntity"
+    query = dict(cast("Mapping[str, object]", when["objectQuery"]))
+    query["target"] = "parallax.compatibility.NoSuchEntity"
+    when["objectQuery"] = query
     document["when"] = when
     with pytest.raises(engine.EngineError, match=case.path.name):
         engine.run_read_case(
@@ -269,6 +272,40 @@ def test_eligibility_reads_the_case_declaration() -> None:
     assert first is not None and first.reason  # a non-empty reason
 
 
+def test_the_compile_lane_refuses_a_deferred_execution_feature() -> None:
+    # The compile lane runs production's own read gate, Deferred Execution Feature
+    # classification included: an adapter whose compile lane accepted a query its
+    # own executor would refuse would claim two different supported surfaces. No
+    # corpus case authors the combination, so the witness is synthetic — and it
+    # never reaches SQL generation, which is the whole point.
+    case = case_format.Case(
+        path=Path("m-snapshot-read-999-synthetic.yaml"),
+        case_id="m-snapshot-read-999",
+        shape="read",
+        tags=("m-snapshot-read", "slice-snapshot-1"),
+        model="models/policy.yaml",
+        document={
+            "model": "models/policy.yaml",
+            "when": {
+                "objectQuery": {
+                    "target": "parallax.compatibility.Policy",
+                    "predicate": {"all": {}},
+                    "temporal": {
+                        "valid-time": {"asOf": "latest"},
+                        "transaction-time": {"history": {}},
+                    },
+                    "includes": [
+                        {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
+                    ],
+                }
+            },
+        },
+    )
+    with pytest.raises(DeferredFeatureError) as caught:
+        engine.compile_read_case(case, "postgres")
+    assert caught.value.features == ("snapshot-history-includes",)
+
+
 def test_compile_rejects_non_read_shape() -> None:
     write_seq = next(c for c in case_format.load_cases() if c.shape == "writeSequence")
     with pytest.raises(engine.EngineError, match="only `read`-shape compile"):
@@ -303,8 +340,7 @@ def test_load_case_metamodel_rejects_a_non_string_model() -> None:
     "document, message",
     [
         ({"model": "models/orders.yaml"}, "no `when`"),
-        ({"model": "models/orders.yaml", "when": {}}, "no `targetEntity`"),
-        ({"model": "models/orders.yaml", "when": {"targetEntity": "Order"}}, "no `operation`"),
+        ({"model": "models/orders.yaml", "when": {}}, "no `objectQuery`"),
     ],
 )
 def test_compile_read_case_reports_missing_fields(
@@ -407,7 +443,7 @@ def test_run_scenario_case_commits_writes_and_reads_committed_state() -> None:
     )
     assert round_trips == 2
     assert errors == []  # a keyed unit-of-work scenario reports no error observation
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/write", "/scenario/1/find"]
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/write", "/scenario/1/objectQuery"]
     assert emissions[0].sql.startswith("insert into account")
     assert emissions[1].sql.endswith("for share of t0")  # the read-lock suffix renders
     assert len(port.writes) == 1 and len(port.reads) == 1
@@ -456,9 +492,9 @@ def test_run_scenario_case_groups_a_committing_uow_span_into_one_transaction() -
     )
     assert round_trips == 3
     assert [e.case_pointer for e in emissions] == [
-        "/scenario/0/find",
+        "/scenario/0/objectQuery",
         "/scenario/1/write",
-        "/scenario/2/find",
+        "/scenario/2/objectQuery",
     ]
     # The write's SET version bind is the OBSERVED version (1) advanced to 2 —
     # a genuine transaction-scoped observation this SAME group's own find
@@ -483,9 +519,9 @@ def test_run_scenario_case_doomed_uow_span_rolls_back_as_one_unit() -> None:
     )
     assert round_trips == 3
     assert [e.case_pointer for e in emissions] == [
-        "/scenario/0/find",
+        "/scenario/0/objectQuery",
         "/scenario/1/write",
-        "/scenario/2/find",
+        "/scenario/2/objectQuery",
     ]
     assert len(port.writes) == 1  # the doomed write's DML still executed (and counted)
     assert len(port.reads) == 2  # the grouped observe find + the ungrouped post-abort find
@@ -630,15 +666,19 @@ def _two_group_interleave_steps() -> list[dict[str, object]]:
     return [
         {
             "uow": "a",
-            "targetEntity": "Account",
-            "find": {"eq": {"attr": "Account.id", "value": 1}},
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+            },
             "roundTrips": 1,
             "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [1]}],
         },
         {
             "uow": "b",
-            "targetEntity": "Account",
-            "find": {"eq": {"attr": "Account.id", "value": 2}},
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+            },
             "roundTrips": 1,
             "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}],
         },
@@ -681,7 +721,10 @@ def test_scenario_compile_lane_stages_nothing_for_a_doomed_interleaved_group() -
     steps[2]["rollback"] = True
     case = _synthetic_write("scenario", {"when": {"scenario": steps}, "then": {"roundTrips": 3}})
     emissions, _round_trips = engine.compile_scenario_case(case, "postgres")
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/find"]
+    assert [e.case_pointer for e in emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/1/objectQuery",
+    ]
 
 
 def test_run_scenario_case_routes_the_two_group_interleave_to_run_interleaved_scenario_case() -> (
@@ -709,9 +752,27 @@ def test_scenario_uow_spans_rejects_interleaving_beyond_the_two_group_shape() ->
     # raises loudly rather than silently mis-executing a THIRD concurrent
     # session no seam here provides.
     steps: list[dict[str, object]] = [
-        {"uow": "a", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
-        {"uow": "b", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 2}}},
-        {"uow": "c", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 3}}},
+        {
+            "uow": "a",
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+            },
+        },
+        {
+            "uow": "b",
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+            },
+        },
+        {
+            "uow": "c",
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": 3}},
+            },
+        },
         {
             "uow": "a",
             "write": [{"mutation": "update", "entity": "Account", "rows": [{"id": 1}]}],
@@ -808,12 +869,12 @@ def test_run_interleaved_scenario_case_renders_the_conflict_and_discards_the_abo
     assert conflict_actual == 0
     assert peer_port.closed
     assert [e.case_pointer for e in emissions] == [
-        "/scenario/0/find",
-        "/scenario/1/find",
+        "/scenario/0/objectQuery",
+        "/scenario/1/objectQuery",
         "/scenario/2/write",
         "/scenario/3/write",
         "/scenario/3/write",
-        "/scenario/4/find",
+        "/scenario/4/objectQuery",
     ]
     assert emissions[3].sql.startswith("insert into account")
     assert emissions[4].sql.startswith("update account set")
@@ -866,8 +927,10 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                 "scenario": [
                     {
                         "uow": "x",
-                        "targetEntity": "Account",
-                        "find": {"eq": {"attr": "Account.id", "value": 2}},
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                        },
                     },
                     {
                         "uow": "x",
@@ -881,8 +944,10 @@ def test_run_interleaved_scenario_case_reports_the_second_groups_own_conflict_to
                     },
                     {
                         "uow": "y",
-                        "targetEntity": "Account",
-                        "find": {"eq": {"attr": "Account.id", "value": 2}},
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                        },
                     },
                     {
                         "uow": "y",
@@ -924,8 +989,10 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
                 "scenario": [
                     {
                         "uow": "x",
-                        "targetEntity": "Account",
-                        "find": {"eq": {"attr": "Account.id", "value": 2}},
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                        },
                     },
                     {
                         "uow": "x",
@@ -951,8 +1018,10 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
                     },
                     {
                         "uow": "y",
-                        "targetEntity": "Account",
-                        "find": {"eq": {"attr": "Account.id", "value": 3}},
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {"eq": {"attr": "Account.id", "value": 3}},
+                        },
                     },
                 ],
             },
@@ -972,10 +1041,10 @@ def test_run_interleaved_group_buffers_a_non_last_write_without_flushing() -> No
     assert round_trips == 4
     assert len(main_port.writes) == 2  # buffered together, flushed once at the group's last step
     assert [e.case_pointer for e in emissions] == [
-        "/scenario/0/find",
+        "/scenario/0/objectQuery",
         "/scenario/1/write",
         "/scenario/2/write",
-        "/scenario/3/find",
+        "/scenario/3/objectQuery",
     ]
     assert find_rows == [[row_v1], [row3]]
 
@@ -1715,8 +1784,20 @@ def test_group_tx_instant_falls_back_to_inert_when_the_group_has_no_write() -> N
     # instant from, so the inert default stands in (ADR 0010: "a non-temporal
     # entry's clock value is inert, pick something deterministic").
     steps: list[dict[str, object]] = [
-        {"uow": "a", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
-        {"uow": "a", "targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
+        {
+            "uow": "a",
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+            },
+        },
+        {
+            "uow": "a",
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+            },
+        },
     ]
     assert (
         engine._group_tx_instant(steps, 0, 1)  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
@@ -1928,8 +2009,8 @@ def test_run_scenario_case_settles_a_grouped_temporal_close_against_the_find_it_
     # The close plus the two rectangles the split chains, all under the write
     # step's own pointer.
     assert [e.case_pointer for e in emissions] == [
-        "/scenario/0/find",
-        "/scenario/1/find",
+        "/scenario/0/objectQuery",
+        "/scenario/1/objectQuery",
         *["/scenario/2/write"] * 3,
     ]
     close = emissions[2]
@@ -2154,12 +2235,9 @@ def test_a_document_milestone_opened_after_out_of_band_statements_still_chains()
     assert port.writes[0][0].startswith("insert into unrelated")
 
 
-def test_a_find_step_names_its_target_and_its_operation() -> None:
-    meta = engine.load_case_metamodel(_case("m-unit-work-001"))
-    with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):
-        engine._find_request(  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
-            {"targetEntity": "Account"}, meta
-        )
+def test_a_read_step_names_its_own_object_query() -> None:
+    with pytest.raises(engine.EngineError, match="needs `objectQuery`"):
+        engine._step_query({"roundTrips": 1})  # pyright: ignore[reportPrivateUsage] - unit test drives the conformance engine's private helper directly
 
 
 def test_a_standalone_find_of_a_lockless_scenario_opens_no_transaction() -> None:
@@ -2174,7 +2252,12 @@ def test_a_standalone_find_of_a_lockless_scenario_opens_no_transaction() -> None
         meta,
         dialect_for("postgres"),
         None,
-        {"targetEntity": "Account", "find": {"eq": {"attr": "Account.id", "value": 1}}},
+        {
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": 1}},
+            }
+        },
     )
     assert result.execution.round_trips == 1
     assert port.commits == 0 and port.rollbacks == 0
@@ -2916,8 +2999,10 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
             "when": {
                 "scenario": [
                     {
-                        "targetEntity": "Account",
-                        "find": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                        },
                     },
                     {
                         "write": {
@@ -2939,7 +3024,7 @@ def test_run_scenario_case_executes_a_materializing_predicate_write_pair() -> No
     )
     emissions, round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/objectQuery", "/scenario/1/write"]
     assert emissions[1].sql == "delete from account where id = ?"
     assert len(port.writes) == 1 and len(port.reads) == 1 and port.commits == 1
 
@@ -2993,8 +3078,10 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
             "when": {
                 "scenario": [
                     {
-                        "targetEntity": "Account",
-                        "find": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {"lessThan": {"attr": "Account.balance", "value": 200.00}},
+                        },
                     },
                     {
                         "write": {
@@ -3017,7 +3104,7 @@ def test_materializing_predicate_write_rollback_aborts_but_counts_the_round_trip
     )
     emissions, round_trips, _errors, _log = engine.run_scenario_case(case, "postgres", port)
     assert round_trips == 2
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/1/write"]
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/objectQuery", "/scenario/1/write"]
     assert emissions[1].sql == "delete from account where id = ?"
     assert len(port.writes) == 1 and len(port.reads) == 1
     assert port.commits == 0 and port.rollbacks == 1
@@ -3048,8 +3135,10 @@ def _ledger_materializing_pair(at: str, *, rollback: bool = False) -> list[dict[
         write["rollback"] = True
     return [
         {
-            "targetEntity": "parallax.compatibility.Ledger",
-            "find": _ledger_predicate(),
+            "objectQuery": {
+                "target": "parallax.compatibility.Ledger",
+                "predicate": _ledger_predicate(),
+            },
             "roundTrips": 1,
         },
         write,
@@ -3166,7 +3255,7 @@ def test_is_materializing_write_step_returns_none_for_a_non_predicate_mapping() 
 def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> None:
     # `_run_materializing_pair`'s own internal target-match guard: its SOLE
     # production caller (`run_scenario_case`'s look-ahead) already verifies
-    # `find_step["targetEntity"] == pairing.target.entity` before ever
+    # the find step's own query `target` against `pairing.target.entity` before ever
     # calling this function, so the guard is unreachable through the public
     # entry point — a genuine caller-contract defense, pinned here by
     # calling the function directly with a manufactured mismatch.
@@ -3174,7 +3263,12 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
 
     meta = engine.load_case_metamodel(_case("m-unit-work-001"))
     steps: list[Mapping[str, object]] = [
-        {"targetEntity": "Wallet", "find": {"eq": {"attr": "Wallet.id", "value": 1}}},
+        {
+            "objectQuery": {
+                "target": "Wallet",
+                "predicate": {"eq": {"attr": "Wallet.id", "value": 1}},
+            }
+        },
         {
             "write": {
                 "mutation": "delete",
@@ -3196,7 +3290,7 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
     # the write's own target predicate, not merely its entity — unlike the
     # entity-mismatch guard above, this IS reachable through the public
     # `run_scenario_case` entry point: the look-ahead pairing decision
-    # (`run_scenario_case`) checks only `targetEntity`, so a same-entity,
+    # (`run_scenario_case`) checks only the query's `target`, so a same-entity,
     # DIFFERENT-predicate pair still routes into `_run_materializing_pair`,
     # whose own canonical-operation comparison is what catches it.
     case = _synthetic_write(
@@ -3205,8 +3299,10 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
             "when": {
                 "scenario": [
                     {
-                        "targetEntity": "Account",
-                        "find": {"eq": {"attr": "Account.balance", "value": 100.00}},
+                        "objectQuery": {
+                            "target": "Account",
+                            "predicate": {"eq": {"attr": "Account.balance", "value": 100.00}},
+                        },
                     },
                     {
                         "write": {
@@ -3226,7 +3322,7 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
     port = FakeWritePort(
         find_rows=[{"id": 1, "owner": "Ada", "balance": decimal.Decimal("100.00"), "version": 1}]
     )
-    with pytest.raises(engine.EngineError, match="SAME canonical operation"):
+    with pytest.raises(engine.EngineError, match="SAME canonical predicate"):
         engine.run_scenario_case(case, "postgres", port)
 
 
@@ -4015,12 +4111,9 @@ def test_scenario_case_without_a_scenario_list_is_rejected() -> None:
         engine.compile_scenario_case(_synthetic_write("scenario", {"when": {}}), "postgres")
 
 
-def test_scenario_find_step_missing_fields_is_rejected() -> None:
-    bad = _synthetic_write(
-        "scenario",
-        {"when": {"scenario": [{"find": {"eq": {"attr": "Account.id", "value": 1}}}]}},
-    )
-    with pytest.raises(engine.EngineError, match="targetEntity"):
+def test_scenario_read_step_missing_its_query_is_rejected() -> None:
+    bad = _synthetic_write("scenario", {"when": {"scenario": [{"roundTrips": 1}]}})
+    with pytest.raises(engine.EngineError, match="objectQuery"):
         engine.compile_scenario_case(bad, "postgres")
 
 
@@ -4217,9 +4310,9 @@ def test_a_default_target_over_a_multi_family_model_is_refused() -> None:
         engine.run_rejected_case(case)
 
 
-def test_run_rejected_case_raises_when_operation_unexpectedly_accepted() -> None:
-    valid: dict[str, object] = {"operation": {"all": {}}}
-    with pytest.raises(engine.EngineError, match="accepted an operation"):
+def test_run_rejected_case_raises_when_the_query_is_unexpectedly_accepted() -> None:
+    valid: dict[str, object] = {"objectQuery": {"target": "Animal", "predicate": {"all": {}}}}
+    with pytest.raises(engine.EngineError, match="accepted an Object Query"):
         engine.run_rejected_case(_synthetic_rejected(valid))
 
 
@@ -4264,8 +4357,10 @@ def test_run_rejected_case_raises_when_write_unexpectedly_accepted() -> None:
         engine.run_rejected_case(case)
 
 
-def test_run_rejected_case_raises_for_a_malformed_operation() -> None:
-    malformed_operation: dict[str, object] = {"operation": {"eq": {}}}
+def test_run_rejected_case_raises_for_a_malformed_query() -> None:
+    malformed_operation: dict[str, object] = {
+        "objectQuery": {"target": "Animal", "predicate": {"eq": {}}}
+    }
     with pytest.raises(engine.EngineError, match="missing required key"):
         engine.run_rejected_case(_synthetic_rejected(malformed_operation))
 
@@ -4308,17 +4403,17 @@ def test_run_rejected_case_raises_when_when_carries_none_of_the_three_inputs() -
         engine.run_rejected_case(_synthetic_rejected({}))
 
 
-def test_run_rejected_case_raises_when_when_carries_operation_and_model() -> None:
+def test_run_rejected_case_raises_when_when_carries_a_query_and_a_model() -> None:
     # The schema `oneOf` cannot protect a caller that reaches the engine without
     # schema validation (a hand-built synthetic case, here) — the engine's own
     # mirror guard must still refuse a multi-input `when`.
-    when: dict[str, object] = {"operation": {"all": {}}, "model": {"entities": []}}
+    when: dict[str, object] = {"objectQuery": {}, "model": {"entities": []}}
     with pytest.raises(engine.EngineError, match="EXACTLY ONE"):
         engine.run_rejected_case(_synthetic_rejected(when))
 
 
-def test_run_rejected_case_raises_when_when_carries_operation_and_write() -> None:
-    when: dict[str, object] = {"operation": {"all": {}}, "write": {}}
+def test_run_rejected_case_raises_when_when_carries_a_query_and_a_write() -> None:
+    when: dict[str, object] = {"objectQuery": {}, "write": {}}
     with pytest.raises(engine.EngineError, match="EXACTLY ONE"):
         engine.run_rejected_case(_synthetic_rejected(when))
 
@@ -4822,8 +4917,10 @@ def test_compile_read_case_wraps_a_sql_gen_error() -> None:
         {
             "model": "models/orders.yaml",
             "when": {
-                "targetEntity": "Order",
-                "operation": {"eq": {"attr": "Order.doesNotExist", "value": 1}},
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.doesNotExist", "value": 1}},
+                },
             },
         }
     )
@@ -4836,13 +4933,10 @@ def test_run_graph_case_wraps_a_temporal_read_error_from_the_find_executor() -> 
         {
             "model": "models/balance.yaml",
             "when": {
-                "targetEntity": "Balance",
-                "operation": {
-                    "asOf": {
-                        "operand": {"all": {}},
-                        "dimension": "valid-time",
-                        "coordinate": "latest",
-                    }
+                "objectQuery": {
+                    "target": "Balance",
+                    "predicate": {"all": {}},
+                    "temporal": {"valid-time": {"asOf": "latest"}},
                 },
             },
             "then": {"graph": {}},
@@ -4895,8 +4989,11 @@ def test_run_graphs_case_wraps_an_error_from_the_find_executor() -> None:
         {
             "model": "models/invoice.yaml",
             "when": {
-                "targetEntity": "InvoiceLine",
-                "operation": {"history": {"operand": {"all": {}}, "dimension": "valid-time"}},
+                "objectQuery": {
+                    "target": "InvoiceLine",
+                    "predicate": {"all": {}},
+                    "temporal": {"valid-time": {"history": {}}},
+                },
             },
             "then": {"graphs": []},
         }
@@ -4910,8 +5007,11 @@ def test_run_graph_case_refuses_a_case_whose_read_answers_a_milestone_set() -> N
         {
             "model": "models/invoice.yaml",
             "when": {
-                "targetEntity": "InvoiceLine",
-                "operation": {"history": {"operand": {"all": {}}, "dimension": "transaction-time"}},
+                "objectQuery": {
+                    "target": "InvoiceLine",
+                    "predicate": {"all": {}},
+                    "temporal": {"transaction-time": {"history": {}}},
+                },
             },
             "then": {"graph": {}},
         }
@@ -4925,13 +5025,10 @@ def test_run_graphs_case_refuses_a_case_whose_read_answers_one_graph() -> None:
         {
             "model": "models/invoice.yaml",
             "when": {
-                "targetEntity": "InvoiceLine",
-                "operation": {
-                    "asOf": {
-                        "operand": {"all": {}},
-                        "dimension": "transaction-time",
-                        "coordinate": "latest",
-                    }
+                "objectQuery": {
+                    "target": "InvoiceLine",
+                    "predicate": {"all": {}},
+                    "temporal": {"transaction-time": {"asOf": "latest"}},
                 },
             },
             "then": {"graphs": []},
@@ -4970,22 +5067,27 @@ def test_check_action_step_rejects_a_non_mutate_verb() -> None:
         )
 
 
-def test_compile_scenario_case_snapshot_lane_requires_target_and_find() -> None:
+def test_compile_scenario_case_snapshot_lane_requires_an_object_query() -> None:
     when = {
         "scenario": [
             {"action": "mutate", "on": 0, "set": {"x": 1}},
-            {"targetEntity": "Order"},
+            {"roundTrips": 1},
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):
+    with pytest.raises(engine.EngineError, match="needs `objectQuery`"):
         engine.compile_scenario_case(case, "postgres")
 
 
 def test_compile_scenario_case_snapshot_lane_wraps_a_sql_gen_error() -> None:
     when = {
         "scenario": [
-            {"targetEntity": "Order", "find": {"eq": {"attr": "Order.nope", "value": 1}}},
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.nope", "value": 1}},
+                }
+            },
             {"action": "mutate", "on": 0, "set": {"x": 1}},
         ]
     }
@@ -4994,22 +5096,27 @@ def test_compile_scenario_case_snapshot_lane_wraps_a_sql_gen_error() -> None:
         engine.compile_scenario_case(case, "postgres")
 
 
-def test_run_scenario_case_snapshot_lane_requires_target_and_find() -> None:
+def test_run_scenario_case_snapshot_lane_requires_an_object_query() -> None:
     when = {
         "scenario": [
-            {"targetEntity": "Order"},
+            {"roundTrips": 1},
             {"action": "mutate", "on": 0, "set": {"x": 1}},
         ]
     }
     case = _synthetic_write("scenario", {"model": "models/orders.yaml", "when": when})
-    with pytest.raises(engine.EngineError, match="needs `targetEntity` and `find`"):
+    with pytest.raises(engine.EngineError, match="needs `objectQuery`"):
         engine.run_scenario_case(case, "postgres", QueueDbPort([]))
 
 
 def test_run_scenario_case_snapshot_lane_wraps_an_error_from_the_find_executor() -> None:
     when = {
         "scenario": [
-            {"targetEntity": "Order", "find": {"eq": {"attr": "Order.nope", "value": 1}}},
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.nope", "value": 1}},
+                }
+            },
             {"action": "mutate", "on": 0, "set": {"x": 1}},
         ]
     }
@@ -5035,7 +5142,10 @@ def test_run_scenario_case_snapshot_lane_mutates_in_memory_with_no_writeback() -
         _case("m-snapshot-read-010"), "postgres", port
     )
     assert round_trips == 2
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/find", "/scenario/2/find"]
+    assert [e.case_pointer for e in emissions] == [
+        "/scenario/0/objectQuery",
+        "/scenario/2/objectQuery",
+    ]
     assert len(port.reads) == 2
     assert len(port.writes) == 0
     assert errors == []  # an unpinned mutate is accepted: no error observation
@@ -5047,7 +5157,12 @@ def test_run_scenario_case_snapshot_lane_refuses_a_set_the_read_cannot_assign() 
     # carries is refused at the verb rather than silently dropped.
     when = {
         "scenario": [
-            {"targetEntity": "Order", "find": {"eq": {"attr": "Order.id", "value": 1}}},
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                }
+            },
             {"action": "mutate", "on": 0, "set": {"nickname": "Mutant"}},
         ]
     }
@@ -5099,7 +5214,7 @@ def test_run_scenario_case_grades_a_transaction_time_pin_read_only_mutate() -> N
         _case("m-bitemp-write-016"), "postgres", port
     )
     assert round_trips == 1
-    assert [e.case_pointer for e in emissions] == ["/scenario/0/find"]
+    assert [e.case_pointer for e in emissions] == ["/scenario/0/objectQuery"]
     assert errors == [{"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}]
 
 
@@ -5123,19 +5238,13 @@ def test_run_scenario_case_reports_an_undeclared_pin_refusal_loudly() -> None:
     when = {
         "scenario": [
             {
-                "targetEntity": "Position",
-                "find": {
-                    "asOf": {
-                        "operand": {
-                            "asOf": {
-                                "operand": {"eq": {"attr": "Position.id", "value": 1}},
-                                "dimension": "transaction-time",
-                                "coordinate": "2024-02-01T00:00:00+00:00",
-                            }
-                        },
-                        "dimension": "valid-time",
-                        "coordinate": "latest",
-                    }
+                "objectQuery": {
+                    "target": "Position",
+                    "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+                    "temporal": {
+                        "transaction-time": {"asOf": "2024-02-01T00:00:00+00:00"},
+                        "valid-time": {"asOf": "latest"},
+                    },
                 },
             },
             {"action": "mutate", "on": 0, "set": {"value": 999.00}},
@@ -5163,7 +5272,12 @@ def test_run_scenario_case_reports_an_unraised_expect_error_loudly() -> None:
     # other direction.
     when = {
         "scenario": [
-            {"targetEntity": "Order", "find": {"eq": {"attr": "Order.id", "value": 1}}},
+            {
+                "objectQuery": {
+                    "target": "Order",
+                    "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                }
+            },
             {
                 "action": "mutate",
                 "on": 0,

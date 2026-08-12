@@ -1,11 +1,11 @@
 """Predicate serde (m-predicate canonical single-key tagged encoding).
 
 ``serialize`` emits the canonical single-key tagged object for each node exactly
-as ``predicate.schema.json`` fixes it (an OMITTED optional key — ``direction``,
-``caseInsensitive`` — stays omitted; an explicitly authored one round-trips
-verbatim). ``deserialize`` reads that form into frozen nodes and canonicalizes
-order-insensitive Subtype Selections and include paths. The pair round-trips
-every already-canonical node in the read algebra, in both JSON and YAML (the
+as ``predicate.schema.json`` fixes it (an OMITTED optional ``caseInsensitive``
+stays omitted; an explicitly authored one round-trips verbatim).
+``deserialize`` reads that form into frozen nodes and canonicalizes
+order-insensitive Subtype Selections. The pair round-trips
+every already-canonical node in the selection algebra, in both JSON and YAML (the
 format is irrelevant — the document is plain dict/list/scalar). ``deserialize``
 is structural and type-checked: it validates
 each node's closed shape, enforces every reference string against the schema
@@ -20,27 +20,20 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Literal, cast
+from typing import cast
 
-from parallax.core.predicate._builders import _canonical_includes
 from parallax.core.predicate._nodes import (
     All,
     And,
-    AsOf,
-    AsOfRange,
     Between,
     Comparison,
     ComparisonOp,
-    DeepFetch,
     Exists,
     Group,
-    History,
-    Limit,
     Membership,
     MembershipOp,
     Narrow,
     Navigate,
-    NavigationPath,
     NestedComparison,
     NestedComparisonOp,
     NestedExists,
@@ -58,9 +51,6 @@ from parallax.core.predicate._nodes import (
     NullCheck,
     NullOp,
     Or,
-    OrderBy,
-    OrderKey,
-    PathSegment,
     PredicateNode,
     Scalar,
     StringMatch,
@@ -107,11 +97,11 @@ _NESTED_REF = re.compile(rf"^{_ENTITY}\.{_MEMBER}(\.{_MEMBER})+$")
 _VALUE_OBJECT_REF = re.compile(rf"^{_ENTITY}(\.{_MEMBER})+$")
 _ELEMENT_REF = re.compile(rf"^{_MEMBER}(\.{_MEMBER})*$")
 
-# The operation kinds `predicate.schema.json` admits inside a nestedExists /
+# The predicate kinds `predicate.schema.json` admits inside a nestedExists /
 # nestedNotExists `where` (its `elementPredicate` oneOf): the scoped nested*
 # family over element-relative paths, composed with the boolean combinators. Every
-# other kind — a result directive, a top-level predicate, navigation, a temporal
-# wrapper, `all`/`none` — is illegal there and rejected before construction.
+# other kind — a top-level predicate, navigation, narrowing, `all`/`none` — is
+# illegal there and rejected before construction.
 _ELEMENT_TAGS: frozenset[str] = (
     _NESTED_CMP
     | _NESTED_RANGE
@@ -153,18 +143,12 @@ _SHAPES: dict[str, _Shape] = {
     "or": _shape(("operands",)),
     "not": _shape(("operand",)),
     "group": _shape(("operand",)),
-    "orderBy": _shape(("operand", "keys")),
-    "limit": _shape(("operand", "count")),
     "narrow": _shape(("to", "operand")),
     "nestedExists": _shape(("path",), ("where",)),
     "nestedNotExists": _shape(("path",), ("where",)),
     "navigate": _shape(("rel",), ("op",)),
     "exists": _shape(("rel",), ("op",)),
     "notExists": _shape(("rel",), ("op",)),
-    "deepFetch": _shape(("operand", "paths")),
-    "asOf": _shape(("operand", "dimension", "coordinate")),
-    "asOfRange": _shape(("operand", "dimension", "start", "end")),
-    "history": _shape(("operand", "dimension")),
 }
 _SHAPES.update({tag: _shape(("attr", "value")) for tag in _COMPARISONS})
 _SHAPES.update({tag: _shape(("attr",)) for tag in _NULLS})
@@ -186,13 +170,6 @@ def _check_shape(tag: str, shape: _Shape, body: Mapping[str, object]) -> None:
     missing = sorted(required - body.keys())
     if missing:
         raise OperationError(f"{tag}: missing required key(s) {missing}")
-
-
-def _closed(node: Mapping[str, object], allowed: frozenset[str], where: str) -> None:
-    """Reject a nested sub-object (order key / path segment / narrow) with extra keys."""
-    extra = sorted(set(node) - allowed)
-    if extra:
-        raise OperationError(f"{where}: unexpected key(s) {extra}")
 
 
 # --------------------------------------------------------------------------- #
@@ -225,31 +202,6 @@ def _ref(
     value = _str(body, key, tag)
     if pattern.match(value) is None:
         raise OperationError(f"{tag}: `{key}` {value!r} is not a valid {kind}")
-    return value
-
-
-def _temporal(body: Mapping[str, object], key: str, tag: str, *, finite: bool = False) -> str:
-    """Read a temporal coordinate and enforce the schema's non-empty constraint.
-
-    ``latest`` is canonical only for an ``asOf`` coordinate. Range bounds must
-    be finite, and ``now`` is never a serialized coordinate: callers obtain a
-    finite current-clock instant before construction.
-    """
-    value = _str(body, key, tag)
-    if not value:
-        raise OperationError(f"{tag}: `{key}` must be a non-empty temporal value")
-    if value == "now" or (finite and value == "latest"):
-        qualifier = "finite " if finite else ""
-        raise OperationError(f"{tag}: `{key}` must be a {qualifier}canonical coordinate")
-    return value
-
-
-def _dimension(body: Mapping[str, object], tag: str) -> Literal["valid-time", "transaction-time"]:
-    value = _str(body, "dimension", tag)
-    if value not in ("valid-time", "transaction-time"):
-        raise OperationError(
-            f"{tag}: `dimension` must be 'valid-time' or 'transaction-time', got {value!r}"
-        )
     return value
 
 
@@ -297,38 +249,6 @@ def _operands(
     return tuple(_deserialize(item, element_scope=element_scope) for item in items)
 
 
-def _order_keys(body: Mapping[str, object]) -> tuple[OrderKey, ...]:
-    raw = body.get("keys")
-    if not isinstance(raw, list) or not raw:
-        raise OperationError("orderBy: `keys` must be a non-empty list")
-    keys: list[OrderKey] = []
-    for item in cast("list[object]", raw):
-        if not isinstance(item, Mapping):
-            raise OperationError("orderBy: each key must be a mapping")
-        key = cast("Mapping[str, object]", item)
-        _closed(key, frozenset({"attr", "direction", "nulls"}), "orderBy key")
-        if "attr" not in key:
-            raise OperationError("orderBy: key missing required key `attr`")
-        # `direction` and `nulls` are optional (schema defaults `asc` and `last`); a
-        # key that omits one deserializes to `None` so serialization can omit it
-        # back (round-trip).
-        direction: Literal["asc", "desc"] | None = None
-        if "direction" in key:
-            raw_direction = key["direction"]
-            if raw_direction not in ("asc", "desc"):
-                raise OperationError("orderBy: `direction` must be 'asc' or 'desc'")
-            direction = raw_direction
-        nulls: Literal["first", "last"] | None = None
-        if "nulls" in key:
-            raw_nulls = key["nulls"]
-            if raw_nulls not in ("first", "last"):
-                raise OperationError("orderBy: `nulls` must be 'first' or 'last'")
-            nulls = raw_nulls
-        attr = _ref(key, "attr", "orderBy", _MEMBER_REF, "attribute reference")
-        keys.append(OrderKey(attr=attr, direction=direction, nulls=nulls))
-    return tuple(keys)
-
-
 def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
     raw = body.get("to")
     if not isinstance(raw, list) or not raw:
@@ -342,49 +262,6 @@ def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
             raise OperationError(f"{tag}: `to` entry {item!r} is not a valid entity name")
         out.append(item)
     return tuple(out)
-
-
-def _paths(body: Mapping[str, object]) -> tuple[NavigationPath, ...]:
-    raw = body.get("paths")
-    if not isinstance(raw, list) or not raw:
-        raise OperationError("deepFetch: `paths` must be a non-empty list")
-    paths: list[NavigationPath] = []
-    for entry in cast("list[object]", raw):
-        if not isinstance(entry, Mapping):
-            raise OperationError("deepFetch: each path must be a mapping")
-        path = cast("Mapping[str, object]", entry)
-        _closed(path, frozenset({"narrow", "segments"}), "deepFetch path")
-        root_narrow: tuple[str, ...] | None = None
-        if "narrow" in path:
-            root_raw = path["narrow"]
-            if not isinstance(root_raw, Mapping):
-                raise OperationError("deepFetch: path `narrow` must be a mapping")
-            root_body = cast("Mapping[str, object]", root_raw)
-            _closed(root_body, frozenset({"to"}), "deepFetch path root narrow")
-            root_narrow = canonical_subtype_selection(
-                _to_list(root_body, "deepFetch path root narrow")
-            )
-        raw_segments = path.get("segments")
-        if not isinstance(raw_segments, list) or not raw_segments:
-            raise OperationError("deepFetch: each path `segments` must be a non-empty list")
-        segments: list[PathSegment] = []
-        for seg in cast("list[object]", raw_segments):
-            if not isinstance(seg, Mapping):
-                raise OperationError("deepFetch: each path segment must be a mapping")
-            segment = cast("Mapping[str, object]", seg)
-            _closed(segment, frozenset({"rel", "narrow"}), "deepFetch path segment")
-            narrow: tuple[str, ...] = ()
-            if "narrow" in segment:
-                narrow_raw = segment["narrow"]
-                if not isinstance(narrow_raw, Mapping):
-                    raise OperationError("deepFetch: path segment `narrow` must be a mapping")
-                narrow_body = cast("Mapping[str, object]", narrow_raw)
-                _closed(narrow_body, frozenset({"to"}), "deepFetch path narrow")
-                narrow = canonical_subtype_selection(_to_list(narrow_body, "deepFetch.narrow"))
-            rel = _ref(segment, "rel", "deepFetch", _MEMBER_REF, "relationship reference")
-            segments.append(PathSegment(rel=rel, narrow=narrow))
-        paths.append(NavigationPath(segments=tuple(segments), narrow=root_narrow))
-    return _canonical_includes(tuple(paths))
 
 
 def _nested_where(body: Mapping[str, object]) -> PredicateNode | None:
@@ -459,13 +336,6 @@ def _deserialize(doc: object, *, element_scope: bool) -> PredicateNode:
         return Not(operand=_operand(body, element_scope=element_scope))
     if tag == "group":
         return Group(operand=_operand(body, element_scope=element_scope))
-    if tag == "orderBy":
-        return OrderBy(operand=_operand(body, element_scope=element_scope), keys=_order_keys(body))
-    if tag == "limit":
-        count = body.get("count")
-        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
-            raise OperationError("limit: `count` must be a positive integer")
-        return Limit(operand=_operand(body, element_scope=element_scope), count=count)
     if tag == "narrow":
         return Narrow(
             to=canonical_subtype_selection(_to_list(body, tag)),
@@ -523,26 +393,6 @@ def _deserialize(doc: object, *, element_scope: bool) -> PredicateNode:
         return NotExists(
             rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
         )
-    if tag == "deepFetch":
-        return DeepFetch(operand=_operand(body, element_scope=element_scope), paths=_paths(body))
-    if tag == "asOf":
-        return AsOf(
-            operand=_operand(body, element_scope=element_scope),
-            dimension=_dimension(body, tag),
-            coordinate=_temporal(body, "coordinate", tag),
-        )
-    if tag == "asOfRange":
-        return AsOfRange(
-            operand=_operand(body, element_scope=element_scope),
-            dimension=_dimension(body, tag),
-            start=_temporal(body, "start", tag, finite=True),
-            end=_temporal(body, "end", tag, finite=True),
-        )
-    if tag == "history":
-        return History(
-            operand=_operand(body, element_scope=element_scope),
-            dimension=_dimension(body, tag),
-        )
     raise OperationError(f"unknown operation node {tag!r}")
 
 
@@ -571,8 +421,8 @@ def _emit_nav(rel: str, op: PredicateNode | None) -> dict[str, object]:
 def serialize(op: PredicateNode) -> dict[str, object]:
     """Emit the canonical single-key tagged document for one node.
 
-    Subtype Selections and ``DeepFetch.paths`` are canonicalized defensively so
-    directly constructed nodes have the same wire identity as deserialized ones.
+    A ``narrow``'s Subtype Selection is canonicalized defensively so a directly
+    constructed node has the same wire identity as a deserialized one.
     """
     match op:
         case All():
@@ -602,12 +452,6 @@ def serialize(op: PredicateNode) -> dict[str, object]:
             return {"not": {"operand": serialize(operand)}}
         case Group(operand=operand):
             return {"group": {"operand": serialize(operand)}}
-        case OrderBy(operand=operand, keys=keys):
-            return {
-                "orderBy": {"operand": serialize(operand), "keys": [_order_key(k) for k in keys]}
-            }
-        case Limit(operand=operand, count=count):
-            return {"limit": {"operand": serialize(operand), "count": count}}
         case Narrow(to=to, operand=operand):
             return {"narrow": {"to": list(to), "operand": serialize(operand)}}
         case NestedComparison(op=tag, path=path, value=value):
@@ -633,61 +477,3 @@ def serialize(op: PredicateNode) -> dict[str, object]:
             return {"exists": _emit_nav(rel, inner)}
         case NotExists(rel=rel, op=inner):
             return {"notExists": _emit_nav(rel, inner)}
-        case DeepFetch(operand=operand, paths=paths):
-            canonical_paths = _canonical_includes(paths)
-            return {
-                "deepFetch": {
-                    "operand": serialize(operand),
-                    "paths": [_path(p) for p in canonical_paths],
-                }
-            }
-        case AsOf(operand=operand, dimension=dimension, coordinate=coordinate):
-            return {
-                "asOf": {
-                    "operand": serialize(operand),
-                    "dimension": dimension,
-                    "coordinate": coordinate,
-                }
-            }
-        case AsOfRange(operand=operand, dimension=dimension, start=start, end=end):
-            return {
-                "asOfRange": {
-                    "operand": serialize(operand),
-                    "dimension": dimension,
-                    "start": start,
-                    "end": end,
-                }
-            }
-        case History(operand=operand, dimension=dimension):
-            return {"history": {"operand": serialize(operand), "dimension": dimension}}
-
-
-def _order_key(key: OrderKey) -> dict[str, object]:
-    # `direction` and `nulls` are optional in the schema (defaults `asc` and
-    # `last`); each is emitted only when it was authored, so a key that omitted one
-    # round-trips omitted and a key that authored it round-trips verbatim — including
-    # an explicit `last`, which is distinguishable from omission —
-    # satisfying `serialize(deserialize(op)) == op` for either authored form.
-    entry: dict[str, object] = {"attr": key.attr}
-    if key.direction is not None:
-        entry["direction"] = key.direction
-    if key.nulls is not None:
-        entry["nulls"] = key.nulls
-    return entry
-
-
-def _path(path: NavigationPath) -> dict[str, object]:
-    segments: list[dict[str, object]] = []
-    for seg in path.segments:
-        entry: dict[str, object] = {"rel": seg.rel}
-        if seg.narrow:
-            entry["narrow"] = {"to": list(seg.narrow)}
-        segments.append(entry)
-    # The path-root guard is optional, so an unguarded path round-trips without a
-    # `narrow` key rather than with an empty one.
-    if path.narrow is None:
-        return {"segments": segments}
-    return {
-        "narrow": {"to": list(path.narrow)},
-        "segments": segments,
-    }

@@ -40,26 +40,24 @@ structured identity — into the nodes they seed, and reach no model to do it.
 owns only immutable Attribute Expressions, Relationship Paths, Predicates,
 Assignments, and Sort Keys. It performs no Python class lookup and imports no
 member, Entity, query, or model implementation; its enforcement scope grants
-`m-metamodel` and `m-predicate` alone. `entity._query` depends forward
+`m-metamodel` and `m-predicate` alone. The typed query surface depends forward
 on that class-free algebra and on errors. No lazy back-import is used to
 hide a cycle.
 
-`FindQuery[E, S]` retains its independently authored, already validated clauses
-as private authoring state so method-call order does not become canonical
-operation order. `E` is the Entity queried and `S` the Entity the result
+`ObjectQuery[E, S]` holds the canonical query value its independently authored,
+already validated clauses build, so method-call order reaches nothing: every
+clause is a sibling of every other. `E` is the Entity queried and `S` the Entity
+the result
 returns, which `narrow` and only `narrow` moves; the split is what lets
 `include` measure a path's source against the queried position while
 `order_by` measures a Sort Key against the returned one. The advanced
-first-party `lower_find_query` seam performs the
-total frontend-to-operation transformation and returns a `LoweredFindQuery`
-containing only a structured target Entity Identity and one
-canonical Predicate. It exposes no model, Entity Class, class index, Snapshot
+first-party `object_query_node` seam answers that value, settling the one
+class-local rule further clauses could still have changed — the target's own
+temporal completeness. It exposes no model, Entity Class, class index, Snapshot
 feature classification, SQL, serialization, or developer-facing inspection
-surface. It is deliberately not named `CanonicalFindQuery`: only the Predicate
-is canonical, while the target is a position the connected model resolves at
-execution. Lowering is recomputed
-once per execution and retained only for that execution; the Find Query and
-global runtime carry no memoized lowering.
+surface. The value's target is a position the connected model resolves at
+execution, so an accepted query is not yet a validated one. Nothing is
+memoized globally; one execution reads the value once and keeps it locally.
 
 `entity._errors` is a strict leaf within the Entity implementation cluster. It
 imports only the standard library and class-free core identity/issue values,
@@ -541,7 +539,7 @@ Entity Class.
 
 What replaces model identity is Python's type system. Every Attribute
 Expression, Relationship Path including narrowing, Predicate, Assignment, Sort
-Key, and Find Query is parameterized by the Entity it addresses, and variance
+Key, and Object Query is parameterized by the Entity it addresses, and variance
 states the inheritance rule: a Predicate, Sort Key, Assignment, and match-all
 Predicate are contravariant in their position, a Relationship Path covariant in
 its source and target. Composing a value from an inapplicable Entity is
@@ -559,22 +557,23 @@ executed through a Database whose connected model declares no Entity for its
 target raises `QueryTargetError(code="query-target-not-in-model")`, retaining
 neither the query, the model, nor the Database, before operation validation,
 deferred-feature classification, or any I/O — a resolution failure rather than
-an ownership one. After the target resolves and the operation validates,
+an ownership one. After the target resolves and the query validates,
 Snapshot compares
-the privately lowered canonical operation's Snapshot execution classification
-with its private set of explicitly deferred execution features. The Find Query
+the canonical query's Snapshot execution classification
+with its private set of explicitly deferred execution features. The Object Query
 carries no Snapshot feature tags. A match raises Snapshot's
 `DeferredFeatureError(code="execution-feature-deferred",
 features=<ascending core Feature tags>)` before SQL or Database Port access.
 Thus the valid staged `snapshot-history-includes` composition is never
 misclassified as an invalid query, while a missing implementation for a Feature
 claimed by the active Conformance Slice remains a defect rather than an
-allowable deferral. All four steps are one private seam, `preflight_find`, in
-that fixed order, which `Database.find`, `Transaction.find`, and the later
+allowable deferral. All four steps are one private seam, `preflight`, in
+that fixed order, which `Database.find`, `Transaction.find`, both neutral entry
+points, and the later
 Session read boundary call rather than reimplementing.
 
 Predicate-selected writes introduce no public mutation-query type. All five
-`_where` verbs accept the ordinary `FindQuery[E, S]` from `Entity.where(...)`,
+`_where` verbs accept the ordinary `ObjectQuery[E, S]` from `Entity.where(...)`,
 but only its mutation-compatible form carrying nothing beyond target and
 predicate. Any
 include, order, limit, narrow, temporal read, history/range, or other
@@ -583,7 +582,7 @@ result-shaping clause raises
 method privately normalizes the accepted value to an ephemeral
 `MutationSelection(target, predicate)` that is neither exported
 nor serialized, and the write boundary builds the canonical, model-neutral
-`PredicateSelection` from those two facts, so a Find Query never reaches the
+`PredicateSelection` from those two facts, so an Object Query never reaches the
 Unit of Work, the planner, or SQL lowering. Assignment-bearing verbs also
 require every Assignment to address the exact Entity target; mismatch raises
 `QueryDefinitionError(code="query-assignment-target-mismatch")` before Unit of
@@ -652,11 +651,11 @@ nothing to give up. The retirements, one for one:
 | opaque exact-hub identity on every expression, path, predicate, assignment, sort key, and query | the value's own Entity type parameter, with variance stating the inheritance rule |
 | `QueryDefinitionError(query-hub-mismatch)` | a static type error at the composition site, plus the model-aware positional rules at preflight |
 | `QueryOwnershipError(query-owner-mismatch)` | `QueryTargetError(query-target-not-in-model)` — resolution, not ownership |
-| `LoweredFindQuery.hub_identity` | removed; the value is exactly `target` and `operation` |
+| the lowered query's `hub_identity` | removed; the canonical query carries exactly its own clauses |
 | `PredicateSelection(target, predicate, hub_identity)` as the frontend's normalization | `MutationSelection(target, predicate)`, from which the write boundary builds the canonical `PredicateSelection` |
 | `sealed_model(hub)` / `SealedModel` | the `model_of` / `class_index` pair |
 | `snapshot-class-backed-hub-required` | `snapshot-class-backed-model-required` |
-| `FindQuery[T]` | `FindQuery[E, S]` — queried Entity and returned Entity |
+| `FindQuery[T]` | `ObjectQuery[E, S]` — queried Entity and returned Entity |
 
 Two consequences are worth stating because they are easy to misread as
 regressions. First, **authoring-time model validation is gone**: a clause is
@@ -664,7 +663,7 @@ measured against the connected model at execution preflight instead, which is
 also what covers the serialized ingress and any untyped caller, so no rule was
 dropped — only relocated to the one place that can state it for every ingress.
 Second, **narrowing relatedness has no static half**. Neither
-`Entity.narrow(*subtypes, where=...)` nor `FindQuery.narrow(*subtypes)` states
+`Entity.narrow(*subtypes, where=...)` nor `ObjectQuery.narrow(*subtypes)` states
 that the classes it names are subtypes of the position it narrows: a type
 parameter's bound may not itself be generic, and the two things a narrowing
 signature could spend its parameter on — checking the position or moving the

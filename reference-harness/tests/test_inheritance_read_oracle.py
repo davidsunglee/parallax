@@ -40,7 +40,7 @@ from reference_harness.inheritance import (
     SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES,
     Family,
     tag_value_to_subtype,
-    validate_operation_inheritance,
+    validate_query_inheritance,
 )
 from reference_harness.storage_layout import compile_storage_layout, position_projection
 from reference_harness.value_object_resolve import RejectionError
@@ -51,6 +51,15 @@ _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
 
 def _animal_defs() -> list[dict[str, Any]]:
     return load_model(_COMPATIBILITY_ROOT, "models/animal.yaml").entity_defs
+
+
+def _judge(defs: list[dict[str, Any]], position: str, **clauses: Any) -> None:
+    """Judge the Object Query ``clauses`` author at the queried position ``position``.
+
+    The walk judges a whole query, so a claim about one clause is stated by naming
+    that clause and letting every other take its unfiltered default.
+    """
+    validate_query_inheritance(defs, {"target": position, "predicate": {"all": {}}, **clauses})
 
 
 # --- effective concrete-set derivation --------------------------------------
@@ -143,79 +152,72 @@ def test_canonical_concrete_order_sorts_exact_identities_then_renders_unique_loc
 def test_valid_and_redundant_narrows_are_accepted() -> None:
     defs = _animal_defs()
     # Narrow the root to a proper subset (Pet -> Dog, Cat).
-    validate_operation_inheritance(
-        defs,
-        {"narrow": {"to": ["Pet"], "operand": {"all": {}}}},
-        position="Animal",
-    )
+    _judge(defs, "Animal", predicate={"narrow": {"to": ["Pet"], "operand": {"all": {}}}})
     # Redundant narrow (a position to itself) is a no-op, not a rejection.
-    validate_operation_inheritance(
-        defs,
-        {"narrow": {"to": ["Pet"], "operand": {"all": {}}}},
-        position="Pet",
-    )
+    _judge(defs, "Pet", predicate={"narrow": {"to": ["Pet"], "operand": {"all": {}}}})
     # A concrete-subtype attribute IS in scope once narrowed to that subtype.
-    validate_operation_inheritance(
+    _judge(
         defs,
-        {
+        "Animal",
+        predicate={
             "narrow": {
                 "to": ["Dog"],
                 "operand": {"greaterThan": {"attr": "Dog.barkVolume", "value": 3}},
             }
         },
-        position="Animal",
     )
 
 
 def test_subtype_selection_rejects_an_exact_duplicate() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _animal_defs(),
-            {"narrow": {"to": ["Dog", "Dog"], "operand": {"all": {}}}},
-            position="Animal",
+            "Animal",
+            predicate={"narrow": {"to": ["Dog", "Dog"], "operand": {"all": {}}}},
         )
     assert exc.value.rule == SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE
 
 
 def test_subtype_selection_rejects_overlapping_alternatives() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _animal_defs(),
-            {"narrow": {"to": ["Dog", "Pet"], "operand": {"all": {}}}},
-            position="Animal",
+            "Animal",
+            predicate={"narrow": {"to": ["Dog", "Pet"], "operand": {"all": {}}}},
         )
     assert exc.value.rule == SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES
 
 
 def test_subtype_selection_checks_exact_duplicates_before_overlap() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _animal_defs(),
-            {"narrow": {"to": ["Pet", "Dog", "Dog"], "operand": {"all": {}}}},
-            position="Animal",
+            "Animal",
+            predicate={"narrow": {"to": ["Pet", "Dog", "Dog"], "operand": {"all": {}}}},
         )
     assert exc.value.rule == SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE
 
 
 def test_broadening_narrow_is_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _animal_defs(),
-            {"narrow": {"to": ["Person"], "operand": {"all": {}}}},
+            "Animal",
+            predicate={"narrow": {"to": ["Person"], "operand": {"all": {}}}},
         )
     assert exc.value.rule == NARROW_OUTSIDE_POSITION
 
 
 def test_narrow_broadening_beyond_the_threaded_position_is_rejected() -> None:
-    # A top-level selection cannot reach a subtype outside the active threaded
-    # position: narrowing Pet to [WildBoar] resolves outside Pet. This needs an
-    # explicit `position="Pet"`, so it lives here as a unit test, not the corpus (a
-    # `rejected` case carries no `targetEntity`).
+    # A predicate-root selection cannot reach a subtype outside the active threaded
+    # position: narrowing Pet to [WildBoar] resolves outside Pet. It lives here as a
+    # unit test rather than in the corpus because the corpus already pins the same
+    # subset rule at the queried position (m-inheritance-040).
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _animal_defs(),
-            {"narrow": {"to": ["WildBoar"], "operand": {"all": {}}}},
-            position="Pet",
+            "Pet",
+            predicate={"narrow": {"to": ["WildBoar"], "operand": {"all": {}}}},
         )
     assert exc.value.rule == NARROW_OUTSIDE_POSITION
 
@@ -224,11 +226,12 @@ def test_nested_narrow_cannot_broaden_back_out() -> None:
     # After the OUTER narrow ([Dog]) the active position is {Dog}. The INNER
     # selection asks for [Cat], broadening back out of {Dog}. It is outside the
     # threaded active position, so it is rejected. (The corpus witness is
-    # m-inheritance-042, which needs no targetEntity; this pins the same via the walker.)
+    # m-inheritance-042; this pins the same claim directly through the walker.)
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _animal_defs(),
-            {
+            "Animal",
+            predicate={
                 "narrow": {
                     "to": ["Dog"],
                     "operand": {"narrow": {"to": ["Cat"], "operand": {"all": {}}}},
@@ -240,11 +243,7 @@ def test_nested_narrow_cannot_broaden_back_out() -> None:
 
 def test_narrow_within_the_context_supplied_position_is_accepted() -> None:
     # The position is supplied by context. A [Dog] selection inside Pet stays valid.
-    validate_operation_inheritance(
-        _animal_defs(),
-        {"narrow": {"to": ["Dog"], "operand": {"all": {}}}},
-        position="Pet",
-    )
+    _judge(_animal_defs(), "Pet", predicate={"narrow": {"to": ["Dog"], "operand": {"all": {}}}})
 
 
 def test_narrow_to_empty_effective_set_is_rejected() -> None:
@@ -274,18 +273,16 @@ def test_narrow_to_empty_effective_set_is_rejected() -> None:
         },
     ]
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
-            defs,
-            {"narrow": {"to": ["Empty"], "operand": {"all": {}}}},
-        )
+        _judge(defs, "Root", predicate={"narrow": {"to": ["Empty"], "operand": {"all": {}}}})
     assert exc.value.rule == NARROW_EMPTY_EFFECTIVE_SET
 
 
 def test_subtype_attribute_outside_narrow_scope_is_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _animal_defs(),
-            {"greaterThan": {"attr": "Dog.barkVolume", "value": 5}},
+            "Animal",
+            predicate={"greaterThan": {"attr": "Dog.barkVolume", "value": 5}},
         )
     assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
@@ -293,9 +290,7 @@ def test_subtype_attribute_outside_narrow_scope_is_rejected() -> None:
 def test_inherited_attribute_is_always_in_scope() -> None:
     # `name` is declared on the root Animal, so it is available to every concrete in
     # any position — a root-position predicate on it is NOT a subtype-scope violation.
-    validate_operation_inheritance(
-        _animal_defs(), {"eq": {"attr": "Animal.name", "value": "Rex"}}, position="Animal"
-    )
+    _judge(_animal_defs(), "Animal", predicate={"eq": {"attr": "Animal.name", "value": "Rex"}})
 
 
 def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
@@ -309,19 +304,18 @@ def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
     defs = _animal_defs()
     for reference in ("Dog.name", "Cat.name", "Pet.licenseId"):
         with pytest.raises(RejectionError) as exc:
-            validate_operation_inheritance(defs, {"eq": {"attr": reference, "value": "Rex"}})
+            _judge(defs, "Animal", predicate={"eq": {"attr": reference, "value": "Rex"}})
         assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
     with pytest.raises(RejectionError) as ordered:
-        validate_operation_inheritance(
-            defs, {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Dog.name"}]}}
-        )
+        _judge(defs, "Animal", orderBy=[{"attr": "Dog.name"}])
     assert ordered.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
     with pytest.raises(RejectionError) as sibling:
-        validate_operation_inheritance(
+        _judge(
             defs,
-            {
+            "Animal",
+            predicate={
                 "narrow": {
                     "to": ["Dog"],
                     "operand": {"eq": {"attr": "Cat.name", "value": "Tom"}},
@@ -330,9 +324,10 @@ def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
         )
     assert sibling.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
-    validate_operation_inheritance(
+    _judge(
         defs,
-        {
+        "Animal",
+        predicate={
             "narrow": {
                 "to": ["Dog"],
                 "operand": {"eq": {"attr": "Dog.name", "value": "Rex"}},
@@ -343,7 +338,7 @@ def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
 
 def test_non_inheritance_model_accepts_its_own_entitys_attribute() -> None:
     defs = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml").entity_defs
-    validate_operation_inheritance(defs, {"eq": {"attr": "Customer.name", "value": "Ada"}})
+    _judge(defs, "Customer", predicate={"eq": {"attr": "Customer.name", "value": "Ada"}})
 
 
 def test_a_standalone_entitys_attribute_is_outside_an_unrelated_standalone_position() -> None:
@@ -354,13 +349,11 @@ def test_a_standalone_entitys_attribute_is_outside_an_unrelated_standalone_posit
     # a question about items. Pinned by m-op-algebra-047.
     defs = load_model(_COMPATIBILITY_ROOT, "models/orders.yaml").entity_defs
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(defs, {"eq": {"attr": "OrderItem.sku", "value": "SKU-1"}})
+        _judge(defs, "Order", predicate={"eq": {"attr": "OrderItem.sku", "value": "SKU-1"}})
     assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
 
     with pytest.raises(RejectionError) as ordered:
-        validate_operation_inheritance(
-            defs, {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "OrderItem.sku"}]}}
-        )
+        _judge(defs, "Order", orderBy=[{"attr": "OrderItem.sku"}])
     assert ordered.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
 
 
@@ -368,14 +361,20 @@ def test_a_navigation_filter_re_roots_the_position_in_a_non_inheritance_model() 
     # The hop's target is the active position for the inner predicate, so the related
     # entity's own attribute is in scope there and the SOURCE entity's is not.
     defs = load_model(_COMPATIBILITY_ROOT, "models/orders.yaml").entity_defs
-    validate_operation_inheritance(
+    _judge(
         defs,
-        {"exists": {"rel": "Order.items", "op": {"eq": {"attr": "OrderItem.sku", "value": "s"}}}},
+        "Order",
+        predicate={
+            "exists": {"rel": "Order.items", "op": {"eq": {"attr": "OrderItem.sku", "value": "s"}}}
+        },
     )
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             defs,
-            {"exists": {"rel": "Order.items", "op": {"eq": {"attr": "Order.sku", "value": "s"}}}},
+            "Order",
+            predicate={
+                "exists": {"rel": "Order.items", "op": {"eq": {"attr": "Order.sku", "value": "s"}}}
+            },
         )
     assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
 
@@ -386,17 +385,23 @@ def test_a_canonically_spelled_reference_resolves_to_the_entity_it_names() -> No
     # first dot instead yields `parallax`, which names no entity, and the reference
     # escapes the positional check entirely.
     defs = _animal_defs()
-    validate_operation_inheritance(
-        defs, {"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Rex"}}
+    _judge(
+        defs,
+        "Animal",
+        predicate={"eq": {"attr": "parallax.compatibility.Animal.name", "value": "Rex"}},
     )
     with pytest.raises(RejectionError) as foreign:
-        validate_operation_inheritance(
-            defs, {"eq": {"attr": "parallax.compatibility.Person.name", "value": "Ada"}}
+        _judge(
+            defs,
+            "Animal",
+            predicate={"eq": {"attr": "parallax.compatibility.Person.name", "value": "Ada"}},
         )
     assert foreign.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
     with pytest.raises(RejectionError) as subtype:
-        validate_operation_inheritance(
-            defs, {"eq": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 5}}
+        _judge(
+            defs,
+            "Animal",
+            predicate={"eq": {"attr": "parallax.compatibility.Dog.barkVolume", "value": 5}},
         )
     assert subtype.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
@@ -427,16 +432,16 @@ def test_two_namespaces_sharing_a_local_name_stay_distinct_positions() -> None:
     # Each namespace's entity is its own effective concrete set, so a canonically
     # spelled reference to the OTHER namespace's same-named entity is outside the
     # position rather than silently equal to it.
-    validate_operation_inheritance(
+    _judge(
         _TWO_NAMESPACES,
-        {"eq": {"attr": "crm.Customer.name", "value": "Ada"}},
-        position="crm.Customer",
+        "crm.Customer",
+        predicate={"eq": {"attr": "crm.Customer.name", "value": "Ada"}},
     )
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _TWO_NAMESPACES,
-            {"eq": {"attr": "sales.Customer.name", "value": "Ada"}},
-            position="crm.Customer",
+            "crm.Customer",
+            predicate={"eq": {"attr": "sales.Customer.name", "value": "Ada"}},
         )
     assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
 
@@ -450,45 +455,30 @@ def _shared_local_name_defs() -> list[dict[str, Any]]:
 # rule is about the spelling failing to resolve, so it fires wherever a position is
 # named, not only where an attribute is referenced.
 _AMBIGUOUS_BY_POSITION: dict[str, dict[str, Any]] = {
-    "attr": {"eq": {"attr": "SharedVariant.archiveLabel", "value": "A-1"}},
-    "orderBy.keys": {
-        "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "SharedVariant.archiveLabel"}]}
-    },
-    "rel": {"exists": {"rel": "SharedVariant.register", "op": {"all": {}}}},
+    "attr": {"predicate": {"eq": {"attr": "SharedVariant.archiveLabel", "value": "A-1"}}},
+    "orderBy.attr": {"orderBy": [{"attr": "SharedVariant.archiveLabel"}]},
+    "rel": {"predicate": {"exists": {"rel": "SharedVariant.register", "op": {"all": {}}}}},
     # A nested path spells its entity as its FIRST segment, so its resolution is
     # asked of a different split than an `attr`'s and needs its own position here.
-    "nested path": {"nestedEq": {"path": "SharedVariant.spec.label", "value": "A-1"}},
-    "nestedExists path": {"nestedExists": {"path": "SharedVariant.spec"}},
-    "narrow.to": {"narrow": {"to": ["SharedVariant"], "operand": {"all": {}}}},
-    "deepFetch.segment.rel": {
-        "deepFetch": {
-            "operand": {"all": {}},
-            "paths": [{"segments": [{"rel": "SharedVariant.register"}]}],
-        }
+    "nested path": {
+        "predicate": {"nestedEq": {"path": "SharedVariant.spec.label", "value": "A-1"}}
     },
-    "deepFetch.segment.narrow.to": {
-        "deepFetch": {
-            "operand": {"all": {}},
-            "paths": [
-                {"segments": [{"rel": "Register.variant", "narrow": {"to": ["SharedVariant"]}}]}
-            ],
-        }
+    "nestedExists path": {"predicate": {"nestedExists": {"path": "SharedVariant.spec"}}},
+    "narrow.to": {"predicate": {"narrow": {"to": ["SharedVariant"], "operand": {"all": {}}}}},
+    "narrowTo": {"narrowTo": ["SharedVariant"]},
+    "includes.segment.rel": {"includes": [{"segments": [{"rel": "SharedVariant.register"}]}]},
+    "includes.segment.narrowTo": {
+        "includes": [{"segments": [{"rel": "Register.variant", "narrowTo": ["SharedVariant"]}]}]
     },
-    "deepFetch.path.narrow.to": {
-        "deepFetch": {
-            "operand": {"all": {}},
-            "paths": [
-                {
-                    "narrow": {"to": ["SharedVariant"]},
-                    "segments": [{"rel": "Register.variant"}],
-                }
-            ],
-        }
+    "includes.appliesTo": {
+        "includes": [{"appliesTo": ["SharedVariant"], "segments": [{"rel": "Register.variant"}]}]
     },
     "relationship-scope narrow.to": {
-        "exists": {
-            "rel": "Register.variant",
-            "op": {"narrow": {"to": ["SharedVariant"], "operand": {"all": {}}}},
+        "predicate": {
+            "exists": {
+                "rel": "Register.variant",
+                "op": {"narrow": {"to": ["SharedVariant"], "operand": {"all": {}}}},
+            }
         }
     },
 }
@@ -499,7 +489,7 @@ def test_a_bare_name_two_namespaces_share_is_rejected_in_every_reference_positio
     position: str,
 ) -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(_shared_local_name_defs(), _AMBIGUOUS_BY_POSITION[position])
+        _judge(_shared_local_name_defs(), "Register", **_AMBIGUOUS_BY_POSITION[position])
     assert exc.value.rule == REFERENCE_AMBIGUOUS_ENTITY_NAME
     assert "archive.SharedVariant" in exc.value.detail
     assert "catalog.SharedVariant" in exc.value.detail
@@ -510,8 +500,8 @@ def test_an_unambiguous_bare_name_still_resolves_in_a_two_namespace_model() -> N
     # answers every bare name only one namespace declares, so declaring the
     # collision costs the rest of the model nothing.
     defs = _shared_local_name_defs()
-    validate_operation_inheritance(defs, {"eq": {"attr": "Register.id", "value": 1}})
-    validate_operation_inheritance(defs, {"exists": {"rel": "Register.variant", "op": {"all": {}}}})
+    _judge(defs, "Register", predicate={"eq": {"attr": "Register.id", "value": 1}})
+    _judge(defs, "Register", predicate={"exists": {"rel": "Register.variant", "op": {"all": {}}}})
 
 
 def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None:
@@ -521,101 +511,63 @@ def test_an_unrelated_entitys_attribute_is_outside_the_active_position() -> None
     # declares a `name` of its own, so an unchecked reference would silently answer
     # a different question.
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
-            _animal_defs(), {"eq": {"attr": "Person.name", "value": "Ada"}}
-        )
+        _judge(_animal_defs(), "Animal", predicate={"eq": {"attr": "Person.name", "value": "Ada"}})
     assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
 
 
 def test_a_related_entitys_attribute_is_in_scope_inside_a_navigation_filter() -> None:
     # The hop re-roots the active position at the relationship target, so the inner
     # predicate is asked of Pet's concretes, not of Person's.
-    validate_operation_inheritance(
+    _judge(
         _animal_defs(),
-        {"exists": {"rel": "Person.pets", "op": {"eq": {"attr": "Animal.name", "value": "Rex"}}}},
-        position="Person",
+        "Person",
+        predicate={
+            "exists": {"rel": "Person.pets", "op": {"eq": {"attr": "Animal.name", "value": "Rex"}}}
+        },
     )
 
 
 def test_an_order_key_outside_the_active_position_is_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
-            _animal_defs(),
-            {"orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Person.name"}]}},
-        )
+        _judge(_animal_defs(), "Animal", orderBy=[{"attr": "Person.name"}])
     assert exc.value.rule == ATTRIBUTE_OUTSIDE_ACTIVE_POSITION
 
 
-def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> None:
-    # `orderBy` wraps the narrow, so the ordered rows are the NARROWED ones: a Dog
-    # sort key is legal exactly when the result was narrowed to Dog, and not before.
-    narrowed = {
-        "orderBy": {
-            "operand": {"narrow": {"to": ["Dog"], "operand": {"all": {}}}},
-            "keys": [{"attr": "Dog.barkVolume"}],
-        }
-    }
-    validate_operation_inheritance(_animal_defs(), narrowed)
+def test_an_order_key_reads_the_position_result_narrowing_moved_it_to() -> None:
+    # A Sort Key addresses the rows the query RETURNS, so a Dog key is legal exactly
+    # when `narrowTo` narrowed the result to Dog, and refused when it did not.
+    _judge(_animal_defs(), "Animal", narrowTo=["Dog"], orderBy=[{"attr": "Dog.barkVolume"}])
 
-    unnarrowed = {
-        "orderBy": {"operand": {"all": {}}, "keys": [{"attr": "Dog.barkVolume"}]},
-    }
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(_animal_defs(), unnarrowed)
+        _judge(_animal_defs(), "Animal", orderBy=[{"attr": "Dog.barkVolume"}])
     assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
 
 _NARROW_TO_DOG: dict[str, Any] = {"narrow": {"to": ["Dog"], "operand": {"all": {}}}}
-_DEEP_FETCH_PATHS: list[dict[str, Any]] = [{"segments": [{"rel": "Animal.owner"}]}]
+_INCLUDE_OWNER: list[dict[str, Any]] = [{"segments": [{"rel": "Animal.owner"}]}]
 
 
-def _carrying_wrappers() -> list[tuple[str, dict[str, Any]]]:
-    """One operand per wrapper `m-predicate` names as carrying the ordered narrow."""
-    return [
-        ("bare", _NARROW_TO_DOG),
-        ("limit", {"limit": {"operand": _NARROW_TO_DOG, "count": 5}}),
-        ("deepFetch", {"deepFetch": {"operand": _NARROW_TO_DOG, "paths": _DEEP_FETCH_PATHS}}),
-        (
-            "asOf",
-            {
-                "asOf": {
-                    "operand": _NARROW_TO_DOG,
-                    "dimension": "valid-time",
-                    "coordinate": "latest",
-                }
-            },
-        ),
-        ("history", {"history": {"operand": _NARROW_TO_DOG, "dimension": "valid-time"}}),
-        (
-            "orderBy",
-            {"orderBy": {"operand": _NARROW_TO_DOG, "keys": [{"attr": "Animal.name"}]}},
-        ),
-        (
-            "limit(deepFetch)",
-            {
-                "limit": {
-                    "operand": {
-                        "deepFetch": {"operand": _NARROW_TO_DOG, "paths": _DEEP_FETCH_PATHS}
-                    },
-                    "count": 5,
-                }
-            },
-        ),
-    ]
-
-
-@pytest.mark.parametrize(("label", "operand"), _carrying_wrappers(), ids=lambda value: str(value))
-def test_every_result_shaping_wrapper_carries_the_ordered_position(
-    label: str, operand: dict[str, Any]
-) -> None:
-    # A wrapper that returns its operand's own rows cannot move the position those
-    # rows occupy, so the ordered narrow is reached through all of them alike —
-    # `deepFetch` included, which attaches fetched levels rather than replacing the
-    # rows. Missing one silently rejects an order key that IS in scope.
-    assert label
-    validate_operation_inheritance(
+@pytest.mark.parametrize(
+    "clauses",
+    [
+        {"limit": 5},
+        {"includes": _INCLUDE_OWNER},
+        {"temporal": {"valid-time": {"asOf": "latest"}}},
+        {"limit": 5, "includes": _INCLUDE_OWNER},
+    ],
+    ids=["limit", "includes", "temporal", "limit+includes"],
+)
+def test_no_other_clause_moves_the_ordered_position(clauses: dict[str, Any]) -> None:
+    # Result narrowing is the ONLY clause that moves the position a Sort Key is
+    # measured at. Every other clause is its sibling and shapes something else, so
+    # adding any of them beside the narrowing leaves the same key in scope — which
+    # is a property of the flat query rather than a rule anything restates.
+    _judge(
         _animal_defs(),
-        {"orderBy": {"operand": operand, "keys": [{"attr": "Dog.barkVolume"}]}},
+        "Animal",
+        narrowTo=["Dog"],
+        orderBy=[{"attr": "Dog.barkVolume"}],
+        **clauses,
     )
 
 
@@ -623,15 +575,17 @@ def test_every_result_shaping_wrapper_carries_the_ordered_position(
 def test_a_narrow_inside_a_boolean_combinator_moves_no_ordered_position(combinator: str) -> None:
     # A narrow used as a predicate term filters the same position rather than
     # narrowing the result, so the order key is still asked of the whole family.
-    operand = (
+    predicate = (
         {combinator: {"operands": [_NARROW_TO_DOG]}}
         if combinator in ("and", "or")
         else {combinator: {"operand": _NARROW_TO_DOG}}
     )
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
+        _judge(
             _animal_defs(),
-            {"orderBy": {"operand": operand, "keys": [{"attr": "Dog.barkVolume"}]}},
+            "Animal",
+            predicate=predicate,
+            orderBy=[{"attr": "Dog.barkVolume"}],
         )
     assert exc.value.rule == SUBTYPE_ATTRIBUTE_OUTSIDE_NARROW_SCOPE
 
@@ -650,26 +604,21 @@ class _RefusingDb:
 
 def test_run_case_validates_a_deep_fetch_reads_positions_before_any_sql() -> None:
     # Guards the WIRING: every read result form reaches the positional oracle through
-    # one owner in `run_case`, so a deep-fetch read is validated exactly as a flat one
-    # is. This operation orders the whole Animal family by a Dog-declared attribute
-    # with no narrow to bring it into scope; if the graph forms were left unvalidated
-    # the refusal would go unnoticed and the case would reach a database.
+    # one owner in `run_case`, so a read carrying Includes is validated exactly as a
+    # flat one is. This query orders the whole Animal family by a Dog-declared
+    # attribute with no narrowing to bring it into scope; if the graph forms were
+    # left unvalidated the refusal would go unnoticed and the case would reach a
+    # database.
     raw = {
         "model": "models/animal.yaml",
         "tags": ["m-inheritance"],
         "shape": "read",
         "when": {
-            "targetEntity": "Animal",
-            "operation": {
-                "deepFetch": {
-                    "operand": {
-                        "orderBy": {
-                            "operand": {"all": {}},
-                            "keys": [{"attr": "Dog.barkVolume"}],
-                        }
-                    },
-                    "paths": _DEEP_FETCH_PATHS,
-                }
+            "objectQuery": {
+                "target": "Animal",
+                "predicate": {"all": {}},
+                "orderBy": [{"attr": "Dog.barkVolume"}],
+                "includes": _INCLUDE_OWNER,
             },
         },
         # SQL text is inert: the refusal precedes execution, so nothing runs it.
@@ -815,13 +764,13 @@ _ANIMAL_GOLDEN = (
 )
 
 
-def _read_case(target: str, operation: dict[str, Any], golden: str = _ANIMAL_GOLDEN) -> Case:
+def _read_case(target: str, golden: str = _ANIMAL_GOLDEN, **clauses: Any) -> Case:
     model = load_model(_COMPATIBILITY_ROOT, "models/animal.yaml")
     raw = {
         "model": "models/animal.yaml",
         "tags": ["m-inheritance"],
         "shape": "read",
-        "when": {"targetEntity": target, "operation": operation},
+        "when": {"objectQuery": {"target": target, "predicate": {"all": {}}, **clauses}},
         "then": {"statements": [{"sql": {"postgres": golden}}], "rows": []},
     }
     return Case(path=Path("m-inheritance-999-x.yaml"), raw=raw, model=model)
@@ -841,7 +790,7 @@ def _dog_row() -> dict[str, Any]:
 
 
 def test_materialize_replaces_tag_with_family_variant() -> None:
-    case = _read_case("Animal", {"all": {}})
+    case = _read_case("Animal")
     out = _materialize_family_variant(case, [_dog_row()])
     assert out == [
         {
@@ -858,7 +807,7 @@ def test_materialize_replaces_tag_with_family_variant() -> None:
 
 
 def test_materialize_is_noop_for_concrete_target() -> None:
-    case = _read_case("Dog", {"all": {}})
+    case = _read_case("Dog")
     rows = [{"id": 1, "name": "Rex", "license_id": "L-100", "bark_volume": 7}]
     assert _materialize_family_variant(case, rows) == rows
 
@@ -870,7 +819,7 @@ def test_materialize_fails_when_superset_column_missing() -> None:
         "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
         "t0.indoor, t0.kind from animal t0"
     )
-    case = _read_case("Animal", {"all": {}}, golden=golden)
+    case = _read_case("Animal", golden)
     with pytest.raises(CaseFailure, match="concrete-superset column"):
         _materialize_family_variant(case, [_dog_row()])
 
@@ -884,20 +833,15 @@ def test_materialize_reads_the_narrowed_projection_through_a_deep_fetch() -> Non
     # A deep fetch attaches fetched levels to the rows its operand yields rather than
     # replacing them, so its ROOT projection follows the operand's own narrow: a root
     # narrowed to Dog projects Dog's chain and no sibling column. Reading the position
-    # from `targetEntity` alone would demand Cat's `indoor` and WildBoar's
+    # from the queried `target` alone would demand Cat's `indoor` and WildBoar's
     # `tusk_length` here and reject a golden the compiler correctly emits.
-    operation = {
-        "deepFetch": {
-            "operand": {
-                "orderBy": {
-                    "operand": _NARROW_TO_DOG,
-                    "keys": [{"attr": "Dog.barkVolume", "direction": "desc"}],
-                }
-            },
-            "paths": _DEEP_FETCH_PATHS,
-        }
-    }
-    case = _read_case("Animal", operation, golden=_DOG_NARROWED_GOLDEN)
+    case = _read_case(
+        "Animal",
+        _DOG_NARROWED_GOLDEN,
+        narrowTo=["Dog"],
+        orderBy=[{"attr": "Dog.barkVolume", "direction": "desc"}],
+        includes=_INCLUDE_OWNER,
+    )
     row = {
         "id": 1,
         "kind": "dog",
@@ -924,7 +868,7 @@ def test_materialize_fails_when_tag_column_missing() -> None:
         "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
         "t0.indoor from animal t0"
     )
-    case = _read_case("Pet", {"all": {}}, golden=golden)
+    case = _read_case("Pet", golden)
     row = {
         "id": 1,
         "name": "Rex",
@@ -951,7 +895,7 @@ def test_materialize_zero_row_missing_superset_column_still_fails() -> None:
         "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
         "t0.indoor, t0.kind from animal t0"  # WildBoar's tusk_length dropped
     )
-    case = _read_case("Animal", {"all": {}}, golden=golden)
+    case = _read_case("Animal", golden)
     with pytest.raises(CaseFailure, match="concrete-superset column"):
         _materialize_family_variant(case, [])
 
@@ -961,7 +905,7 @@ def test_materialize_zero_row_missing_tag_column_still_fails() -> None:
         "select t0.id, t0.name, t0.owner_id, t0.license_id, t0.bark_volume, "
         "t0.indoor, t0.tusk_length from animal t0"  # tag column `kind` dropped
     )
-    case = _read_case("Animal", {"all": {}}, golden=golden)
+    case = _read_case("Animal", golden)
     with pytest.raises(CaseFailure, match="tag column"):
         _materialize_family_variant(case, [])
 
@@ -969,7 +913,7 @@ def test_materialize_zero_row_missing_tag_column_still_fails() -> None:
 def test_materialize_zero_row_correct_golden_passes() -> None:
     # Positive twin: an empty result over a correct full-superset + tag golden
     # materializes nothing and does NOT raise.
-    case = _read_case("Animal", {"all": {}})
+    case = _read_case("Animal")
     assert _materialize_family_variant(case, []) == []
 
 
@@ -1013,15 +957,13 @@ _DOCUMENT_ROOT_UNION = (
 )
 
 
-def _document_case(
-    target: str, operation: dict[str, Any], golden: str = _DOCUMENT_ROOT_UNION
-) -> Case:
+def _document_case(target: str, golden: str = _DOCUMENT_ROOT_UNION, **clauses: Any) -> Case:
     model = _document_model()
     raw = {
         "model": "models/document.yaml",
         "tags": ["m-inheritance"],
         "shape": "read",
-        "when": {"targetEntity": target, "operation": operation},
+        "when": {"objectQuery": {"target": target, "predicate": {"all": {}}, **clauses}},
         "then": {"statements": [{"sql": {"postgres": golden}}], "rows": []},
     }
     return Case(path=Path("m-inheritance-999-x.yaml"), raw=raw, model=model)
@@ -1039,7 +981,7 @@ def test_document_effective_sets_and_canonical_order() -> None:
 def test_tpcs_materialize_renames_family_variant_literal() -> None:
     # The DB projects the per-branch literal under `family_variant`; the oracle
     # renames it to `familyVariant` (no raw tag column exists to map).
-    case = _document_case("Document", {"all": {}})
+    case = _document_case("Document")
     invoice_row = {
         "id": 1,
         "title": "Invoice-A",
@@ -1057,14 +999,14 @@ def test_tpcs_materialize_renames_family_variant_literal() -> None:
 def test_tpcs_zero_row_still_asserts_union_shape() -> None:
     # A correct golden over an empty result raises nothing but still runs the shape
     # assertion (row-count-independent, parsed from the golden text).
-    case = _document_case("Document", {"all": {}})
+    case = _document_case("Document")
     assert _materialize_family_variant(case, []) == []
 
 
 def test_tpcs_wrong_branch_count_is_rejected() -> None:
     # Two branches for a three-concrete abstract root (Memo branch dropped).
     two_branch = " union all ".join(_DOCUMENT_ROOT_UNION.split(" union all ")[:2])
-    case = _document_case("Document", {"all": {}}, golden=two_branch)
+    case = _document_case("Document", two_branch)
     with pytest.raises(CaseFailure, match="union all"):
         _materialize_family_variant(case, [])
 
@@ -1074,7 +1016,7 @@ def test_tpcs_wrong_branch_order_is_rejected() -> None:
     # order (Invoice, Memo, Receipt), so a leading Memo branch is rejected.
     parts = _DOCUMENT_ROOT_UNION.split(" union all ")
     swapped = " union all ".join([parts[1], parts[0], parts[2]])
-    case = _document_case("Document", {"all": {}}, golden=swapped)
+    case = _document_case("Document", swapped)
     with pytest.raises(CaseFailure, match="alphabetical-order"):
         _materialize_family_variant(case, [])
 
@@ -1083,7 +1025,7 @@ def test_tpcs_missing_superset_column_is_rejected() -> None:
     # Drop `body` from every branch's projection: the stable superset is incomplete.
     golden = _DOCUMENT_ROOT_UNION.replace(", cast(null as varchar(64)) body", "")
     golden = golden.replace(", t0.body", "")
-    case = _document_case("Document", {"all": {}}, golden=golden)
+    case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="stable superset"):
         _materialize_family_variant(case, [])
 
@@ -1091,7 +1033,7 @@ def test_tpcs_missing_superset_column_is_rejected() -> None:
 def test_tpcs_wrong_variant_literal_is_rejected() -> None:
     # A branch whose familyVariant literal is not its concrete subtype name.
     golden = _DOCUMENT_ROOT_UNION.replace("'Memo' family_variant", "'Note' family_variant")
-    case = _document_case("Document", {"all": {}}, golden=golden)
+    case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="familyVariant literal"):
         _materialize_family_variant(case, [])
 
@@ -1099,9 +1041,7 @@ def test_tpcs_wrong_variant_literal_is_rejected() -> None:
 def test_tpcs_concrete_target_is_a_noop() -> None:
     # A concrete-target TPCS read (Invoice) is an ordinary single-table read with no
     # familyVariant and no union — the oracle leaves it untouched.
-    case = _document_case(
-        "Invoice", {"all": {}}, golden="select t0.id, t0.amount_due from invoice t0"
-    )
+    case = _document_case("Invoice", "select t0.id, t0.amount_due from invoice t0")
     rows = [{"id": 1, "amount_due": 120}]
     assert _materialize_family_variant(case, rows) == rows
 
@@ -1117,11 +1057,7 @@ def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
         "cast(null as decimal(18, 2)) amount_due, t0.body, 'Memo' family_variant "
         "from memo t0"
     )
-    case = _document_case(
-        "Document",
-        {"narrow": {"to": ["Invoice", "Memo"], "operand": {"all": {}}}},
-        golden=golden,
-    )
+    case = _document_case("Document", golden, narrowTo=["Invoice", "Memo"])
     memo_row = {
         "id": 1,
         "title": "Memo-A",
@@ -1148,7 +1084,7 @@ def test_tpcs_narrow_to_multiple_concretes_shape() -> None:
 def test_tpcs_plain_union_is_rejected() -> None:
     # First arm is a de-duplicating `union`, not `union all` — the oracle must reject it.
     plain = _DOCUMENT_ROOT_UNION.replace(" union all ", " union ", 1)
-    case = _document_case("Document", {"all": {}}, golden=plain)
+    case = _document_case("Document", plain)
     with pytest.raises(CaseFailure, match="union all"):
         _materialize_family_variant(case, [])
 
@@ -1159,7 +1095,7 @@ def test_tpcs_bare_null_placeholder_no_cast_is_rejected() -> None:
     golden = _DOCUMENT_ROOT_UNION.replace(
         "cast(null as decimal(18, 2)) paid_amount", "null paid_amount"
     )
-    case = _document_case("Document", {"all": {}}, golden=golden)
+    case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="cast"):
         _materialize_family_variant(case, [])
 
@@ -1169,7 +1105,7 @@ def test_tpcs_wrong_typed_placeholder_cast_is_rejected() -> None:
     golden = _DOCUMENT_ROOT_UNION.replace(
         "cast(null as decimal(18, 2)) paid_amount", "cast(null as varchar(9)) paid_amount"
     )
-    case = _document_case("Document", {"all": {}}, golden=golden)
+    case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="declared type"):
         _materialize_family_variant(case, [])
 
@@ -1180,7 +1116,7 @@ def test_tpcs_applicable_column_projected_as_null_is_rejected() -> None:
     golden = _DOCUMENT_ROOT_UNION.replace(
         "t0.amount_due,", "cast(null as decimal(18, 2)) amount_due,", 1
     )
-    case = _document_case("Document", {"all": {}}, golden=golden)
+    case = _document_case("Document", golden)
     with pytest.raises(CaseFailure, match="APPLICABLE"):
         _materialize_family_variant(case, [])
 
@@ -1192,7 +1128,7 @@ _DOCUMENT_ROOT_UNION_MARIADB = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char
 
 
 def test_tpcs_mariadb_char_cast_golden_is_accepted() -> None:
-    case = _document_case("Document", {"all": {}})
+    case = _document_case("Document")
     case.raw["then"]["statements"][0]["sql"]["mariadb"] = _DOCUMENT_ROOT_UNION_MARIADB
     assert _materialize_family_variant(case, []) == []
 
@@ -1201,14 +1137,14 @@ def test_tpcs_mariadb_varchar_cast_golden_is_rejected() -> None:
     # A MariaDB golden that used `varchar` (a Postgres-only CAST target) is rejected by
     # the per-dialect cast-type check.
     bad_mariadb = _DOCUMENT_ROOT_UNION.replace("varchar(64)", "char(64)")  # leaves varchar(3)
-    case = _document_case("Document", {"all": {}})
+    case = _document_case("Document")
     case.raw["then"]["statements"][0]["sql"] = {"mariadb": bad_mariadb}
     with pytest.raises(CaseFailure, match="declared type"):
         _materialize_family_variant(case, [])
 
 
 def test_tpcs_family_variant_column_requires_a_hygienic_internal_alias() -> None:
-    case = copy.deepcopy(_document_case("Document", {"all": {}}))
+    case = copy.deepcopy(_document_case("Document"))
     for definition in case.model.entity_defs:
         if definition["name"] == "Memo":
             definition["attributes"].append(
@@ -1295,7 +1231,7 @@ def test_resolve_hop_effective_set_broad_and_narrowed() -> None:
 
 def test_hop_key_separates_a_broad_hop_from_a_redundant_narrow() -> None:
     # `Person.pets` targets Pet, whose effective concrete set is exactly {Cat, Dog},
-    # so `narrow: {to: [Pet]}` is REDUNDANT: it resolves to the very set the broad
+    # so `narrowTo: [Pet]` is REDUNDANT: it resolves to the very set the broad
     # hop already reaches. The two hops nonetheless stay distinct, because a
     # segment's view key is derived from whether a narrow was AUTHORED — `pets`
     # versus `pets[Cat,Dog]` — so hop identity must carry that flag and cannot key
@@ -1307,13 +1243,13 @@ def test_hop_key_separates_a_broad_hop_from_a_redundant_narrow() -> None:
     assert (broad_narrowed, redundant_narrowed) == (False, True)
 
     broad_key = _segment_key(family, {"rel": "Person.pets"})
-    redundant_key = _segment_key(family, {"rel": "Person.pets", "narrow": {"to": ["Pet"]}})
+    redundant_key = _segment_key(family, {"rel": "Person.pets", "narrowTo": ["Pet"]})
     assert broad_key != redundant_key
     assert narrowed_view_key(family, "Person.pets", redundant_set) == "pets[Cat,Dog]"
 
     # Two AUTHORED narrows resolving to that same set still converge on one hop —
     # dedup of equivalent spellings applies between two narrowed hops only.
-    equivalent = _segment_key(family, {"rel": "Person.pets", "narrow": {"to": ["Cat", "Dog"]}})
+    equivalent = _segment_key(family, {"rel": "Person.pets", "narrowTo": ["Cat", "Dog"]})
     assert equivalent == redundant_key
 
 
@@ -1351,8 +1287,8 @@ def test_root_source_set_resolves_a_guard_against_the_queried_position() -> None
     assert resolve_root_source_set(family, "Animal", {}) == ("Cat", "Dog", "WildBoar")
     # A guard resolves to its own effective set — equivalent spellings converge on
     # the SAME tuple, which is what makes them one hop at the root position.
-    pet_guard = {"narrow": {"to": ["Pet"]}}
-    concrete_guard = {"narrow": {"to": ["Cat", "Dog"]}}
+    pet_guard = {"appliesTo": ["Pet"]}
+    concrete_guard = {"appliesTo": ["Cat", "Dog"]}
     assert resolve_root_source_set(family, "Animal", pet_guard) == ("Cat", "Dog")
     assert resolve_root_source_set(family, "Animal", concrete_guard) == ("Cat", "Dog")
     # A non-polymorphic queried position has no source set to distinguish hops by.
@@ -1373,12 +1309,12 @@ def test_root_hop_identity_keys_on_the_resolved_source_set() -> None:
         )
 
     broad = key({})
-    pet_guard = key({"narrow": {"to": ["Pet"]}})
-    concrete_guard = key({"narrow": {"to": ["Cat", "Dog"]}})
-    dog_guard = key({"narrow": {"to": ["Dog"]}})
-    cat_guard = key({"narrow": {"to": ["Cat"]}})
-    boar_dog_guard = key({"narrow": {"to": ["Dog", "WildBoar"]}})
-    whole_guard = key({"narrow": {"to": ["Animal"]}})
+    pet_guard = key({"appliesTo": ["Pet"]})
+    concrete_guard = key({"appliesTo": ["Cat", "Dog"]})
+    dog_guard = key({"appliesTo": ["Dog"]})
+    cat_guard = key({"appliesTo": ["Cat"]})
+    boar_dog_guard = key({"appliesTo": ["Dog", "WildBoar"]})
+    whole_guard = key({"appliesTo": ["Animal"]})
 
     assert pet_guard == concrete_guard  # equal / equivalent -> one hop
     assert dog_guard != cat_guard  # disjoint -> two hops
@@ -1390,8 +1326,8 @@ def test_root_hop_identity_keys_on_the_resolved_source_set() -> None:
 
 def test_root_guard_outside_the_queried_position_is_rejected() -> None:
     family = Family(_animal_defs())
-    # A guard is clamped to the queried position exactly as an operation-position
-    # narrow is: WildBoar is outside a read already narrowed to Pet's concretes.
+    # A guard is clamped to the queried position exactly as result narrowing is:
+    # WildBoar is outside a read already narrowed to Pet's concretes.
     with pytest.raises(RejectionError) as exc:
         resolve_clamped_narrow(family, ["Cat", "Dog"], ["WildBoar"])
     assert exc.value.rule == NARROW_OUTSIDE_POSITION
@@ -1421,51 +1357,44 @@ def test_resolve_hop_outside_relationship_target_is_rejected() -> None:
 def test_operation_narrow_in_navigation_filter_accepts_valid() -> None:
     defs = _animal_defs()
     # narrow the pets target (Pet) to [Cat] — valid; animals (Animal) to [Pet] — valid.
-    validate_operation_inheritance(defs, _person_op("Person.pets", ["Cat"]), position="Person")
-    validate_operation_inheritance(defs, _person_op("Person.animals", ["Pet"]), position="Person")
+    _judge(defs, "Person", predicate=_person_op("Person.pets", ["Cat"]))
+    _judge(defs, "Person", predicate=_person_op("Person.animals", ["Pet"]))
 
 
 def test_operation_narrow_in_navigation_filter_rejects_outside_target() -> None:
     defs = _animal_defs()
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
-            defs, _person_op("Person.pets", ["WildBoar"]), position="Person"
-        )
+        _judge(defs, "Person", predicate=_person_op("Person.pets", ["WildBoar"]))
     assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
 
 
 def test_empty_selection_in_navigation_filter_keeps_the_shared_empty_rule() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
-            _animal_defs(), _person_op("Person.pets", ["Bogus"]), position="Person"
-        )
+        _judge(_animal_defs(), "Person", predicate=_person_op("Person.pets", ["Bogus"]))
     assert exc.value.rule == NARROW_EMPTY_EFFECTIVE_SET
 
 
-def _deep_fetch_op(rel: str, to: list[str] | None) -> dict[str, Any]:
+def _include(rel: str, to: list[str] | None) -> list[dict[str, Any]]:
     segment: dict[str, Any] = {"rel": rel}
     if to is not None:
-        segment["narrow"] = {"to": to}
-    return {"deepFetch": {"operand": {"all": {}}, "paths": [{"segments": [segment]}]}}
+        segment["narrowTo"] = to
+    return [{"segments": [segment]}]
 
 
-def test_deep_fetch_path_segment_narrow_is_resolved_through_the_path_object() -> None:
+def test_include_segment_narrowing_is_resolved_through_the_path_object() -> None:
     # A path is a closed object carrying its hops under `segments`, so the position
-    # walk reaches a segment narrow only through that member. A hop narrowed outside
-    # the relationship target is rejected exactly as it is in a navigation filter.
+    # walk reaches a segment's narrowing only through that member. A hop narrowed
+    # outside the relationship target is rejected exactly as it is in a navigation
+    # filter.
     defs = _animal_defs()
-    validate_operation_inheritance(defs, _deep_fetch_op("Person.pets", ["Dog"]), position="Person")
-    validate_operation_inheritance(defs, _deep_fetch_op("Person.pets", None), position="Person")
+    _judge(defs, "Person", includes=_include("Person.pets", ["Dog"]))
+    _judge(defs, "Person", includes=_include("Person.pets", None))
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
-            defs, _deep_fetch_op("Person.pets", ["WildBoar"]), position="Person"
-        )
+        _judge(defs, "Person", includes=_include("Person.pets", ["WildBoar"]))
     assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
 
 
-def test_empty_deep_fetch_path_selection_keeps_the_shared_empty_rule() -> None:
+def test_empty_include_segment_selection_keeps_the_shared_empty_rule() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation_inheritance(
-            _animal_defs(), _deep_fetch_op("Person.pets", ["Bogus"]), position="Person"
-        )
+        _judge(_animal_defs(), "Person", includes=_include("Person.pets", ["Bogus"]))
     assert exc.value.rule == NARROW_EMPTY_EFFECTIVE_SET

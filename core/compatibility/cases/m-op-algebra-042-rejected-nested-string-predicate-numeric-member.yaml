@@ -14,7 +14,11 @@ model: models/customer.yaml
 tags: [m-predicate, m-value-object, rejected, negative, nested, string, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    nestedStartsWith: { path: parallax.compatibility.Customer.address.geo.elevation, value: '1' }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedStartsWith:
+        path: parallax.compatibility.Customer.address.geo.elevation
+        value: '1'
 then:
   rejectedRule: nested-string-predicate-non-string-member

@@ -87,7 +87,7 @@ from parallax.conformance.vo_models import (
     Supplier,
 )
 from parallax.core.entity import Entity
-from parallax.core.temporal_read import LATEST
+from parallax.core.object_query import LATEST
 from parallax.core.unit_work import Clock
 from parallax.snapshot.handle import Database, Transaction
 

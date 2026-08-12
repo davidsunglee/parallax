@@ -11,7 +11,11 @@ model: models/customer.yaml
 tags: [m-value-object, m-predicate, rejected, negative, nested, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    nestedEq: { path: parallax.compatibility.Customer.address.city, value: 42 }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedEq:
+        path: parallax.compatibility.Customer.address.city
+        value: 42
 then:
   rejectedRule: nested-literal-type-mismatch

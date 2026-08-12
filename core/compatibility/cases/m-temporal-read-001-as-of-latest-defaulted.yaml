@@ -10,17 +10,20 @@
 # dialect-neutral); this case stays Postgres-only because its `then.referenceSql`
 # uses the Postgres-specific `'infinity'::timestamptz` cast.
 model: models/balance.yaml
-tags: [m-temporal-read, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, m-core, as-of, audit-only, defaulted, infinity, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Balance
-  operation:
-    asOf:
-      operand: { all: {} }
-      dimension: transaction-time
-      coordinate: latest
+  objectQuery:
+    target: parallax.compatibility.Balance
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
   equivalentEncodings:
-    - { all: {} }
+    - target: parallax.compatibility.Balance
+      predicate:
+        all: {}
 then:
   statements:
     - sql:

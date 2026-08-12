@@ -15,19 +15,19 @@
 # expected emitted SQL — the ordinary `m-deep-fetch-001` deep fetch with the lock appended to
 # each level.
 model: models/orders.yaml
-tags: [m-read-lock, m-dialect, m-deep-fetch, m-op-list, m-api-conformance, locking-mode, slice-managed-1]
+tags: [m-read-lock, m-object-query, m-dialect, m-deep-fetch, m-op-list, m-api-conformance, locking-mode, slice-managed-1]
 lane: api-conformance
 shape: read
 when:
-  targetEntity: parallax.compatibility.OrderItem
   uow:
     concurrency: locking
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.OrderItem.order }] }
+  objectQuery:
+    target: parallax.compatibility.OrderItem
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.OrderItem.order
 then:
   statements:
     - sql:

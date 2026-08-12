@@ -2,22 +2,27 @@
 # independent paths canonicalizes to the one Relationship-Identity-ordered document
 # while preserving each path's segment order and the same three planned statements.
 model: models/orders.yaml
-tags: [m-deep-fetch, includes-canonical-order]
+tags: [m-deep-fetch, m-object-query, includes-canonical-order]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand: { all: {} }
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.items }] }
-        - { segments: [{ rel: parallax.compatibility.Order.statuses }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+      - segments:
+          - rel: parallax.compatibility.Order.statuses
   equivalentEncodings:
-    - deepFetch:
-        operand: { all: {} }
-        paths:
-          - { segments: [{ rel: parallax.compatibility.Order.statuses }] }
-          - { segments: [{ rel: parallax.compatibility.Order.items }] }
+    - target: parallax.compatibility.Order
+      predicate:
+        all: {}
+      includes:
+        - segments:
+            - rel: parallax.compatibility.Order.statuses
+        - segments:
+            - rel: parallax.compatibility.Order.items
 then:
   statements:
     - sql:

@@ -11,9 +11,12 @@ model: models/customer.yaml
 tags: [m-value-object, m-sql, m-dialect, nested, json, cast, numeric, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedLte: { path: parallax.compatibility.Customer.address.geo.point.lat, value: 50 }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedLte:
+        path: parallax.compatibility.Customer.address.geo.point.lat
+        value: 50
 then:
   statements:
     - sql:

@@ -3,11 +3,12 @@ model: models/orders.yaml
 tags: [m-predicate, greaterThanEquals, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    greaterThanEquals:
-      attr: parallax.compatibility.Order.qty
-      value: 20
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      greaterThanEquals:
+        attr: parallax.compatibility.Order.qty
+        value: 20
 then:
   statements:
     - sql:

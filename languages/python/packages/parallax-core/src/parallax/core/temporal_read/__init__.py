@@ -3,15 +3,15 @@
 The as-of read model: temporal entities whose rows are **milestones** over
 ``[from, to)`` intervals, with the as-of predicate **auto-injected** on read.
 This scope owns the *interval model, the explicit-selection injection rule, and the
-milestone (edge-pin) behaviour* (``m-predicate`` / ``m-temporal-read``);
+milestone (edge-pin) behaviour* (``m-object-query`` / ``m-temporal-read``);
 ``m-sql`` owns the concrete SQL fragments and bind order. Because the normative
-module DAG forbids ``m-sql`` from importing ``m-temporal-read`` (they are siblings
-over ``m-predicate``), the temporal → predicate lowering is expressed **here**,
-as a rewrite of the temporal wrapper nodes into ordinary ``m-predicate``
-predicate nodes, which ``m-sql`` then lowers with no temporal knowledge. The
-``m-deep-fetch`` planning boundary passes its peeled predicate and temporal
-selections to :func:`inject_as_of`, then places the result in the flat
-``EntityQuery`` consumed by ``compile_read``.
+module DAG forbids ``m-sql`` from importing ``m-temporal-read``, the temporal →
+predicate lowering is expressed **here**, as a rewrite of an Object Query's
+Temporal Selection clause into ordinary ``m-predicate`` predicate nodes, which
+``m-sql`` then lowers with no temporal knowledge. The ``m-deep-fetch`` planning
+boundary passes the query's predicate and Temporal Selections to
+:func:`inject_as_of`, then places the result in the flat ``EntityQuery``
+consumed by ``compile_read``.
 
 Every entry point here takes accepted Entity Metadata, and each resolves an
 axis through the same declared lookup, so the wire dimension spelling an
@@ -25,9 +25,10 @@ axis defect belongs to ``m-metamodel`` or ``m-inheritance``. Consumers reach the
 facet through :func:`view`, so generic facet retrieval stays an internal
 formation seam.
 
-``m-temporal-read`` depends on ``m-predicate``, ``m-metamodel``,
-``m-model-formation``, and ``m-inheritance``; it never imports ``m-dialect`` or
-``m-sql``. The open upper bound is
+``m-temporal-read`` depends on ``m-object-query``, ``m-predicate``,
+``m-metamodel``, ``m-model-formation``, and ``m-inheritance``; it never imports
+``m-dialect`` or ``m-sql``. The Temporal Selection VALUE belongs to the query it
+is a clause of, so this scope consumes it rather than defining it. The open upper bound is
 carried as the ``m-core`` canonical ``infinity`` literal — a plain bind — so the
 dialect's physical infinity representation stays owned by the adapter, exactly as
 every other literal (``m-sql``: the current-row bind is the ``infinity`` literal).
@@ -36,7 +37,7 @@ every other literal (``m-sql``: the current-row bind is the ``infinity`` literal
 from __future__ import annotations
 
 import datetime as _dt
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -44,20 +45,17 @@ from parallax.core.base import INFINITY_LITERAL, normalize_instant
 from parallax.core.metamodel import AsOfAxisMetadata as AcceptedAsOfAxis
 from parallax.core.metamodel import AttributeIdentity, EntityMetadata
 from parallax.core.metamodel import TemporalDimension as AcceptedDimension
-from parallax.core.predicate import (
-    All,
-    And,
+from parallax.core.object_query import (
+    LATEST,
     AsOf,
     AsOfRange,
-    Comparison,
-    Group,
     History,
-    Limit,
-    Narrow,
-    Or,
-    OrderBy,
-    PredicateNode,
+    Latest,
+    ObjectQueryNode,
+    TemporalSelection,
 )
+from parallax.core.object_query import TemporalDimension as WireDimension
+from parallax.core.predicate import All, And, Comparison, Group, Or, PredicateNode
 from parallax.core.temporal_read._compile import (
     MODEL_COMPILER,
     TemporalReadModelCompiler,
@@ -77,18 +75,13 @@ from parallax.core.temporal_read._facet import (
 
 __all__ = [
     "FACET_KEY",
-    "LATEST",
     "MODEL_COMPILER",
     "NON_TEMPORAL",
     "TEMPORAL_READ_MODULE",
-    "TX_TIME",
-    "VALID_TIME",
     "Bitemporal",
     "Edge",
-    "Latest",
     "NonTemporal",
     "Pin",
-    "TemporalDimensionConstant",
     "TemporalFacet",
     "TemporalReadError",
     "TemporalReadModelCompiler",
@@ -101,17 +94,16 @@ __all__ = [
     "milestone_edge",
     "milestone_edge_from_members",
     "milestone_edge_of",
+    "query_pin",
     "resolve_pinned_instants",
     "scans_an_axis",
-    "statement_pin",
     "view",
 ]
 
-# The wire dimension spelling an operation node carries, mapped to the accepted
-# model's own Temporal Dimension. The two vocabularies meet only here. Valid Time
-# is the OUTER pin (the corpus's bitemporal nesting order) and its injected
-# fragment reads first; that rank is the Dimension's own member value, so
-# ordering axes needs no table of its own.
+# The wire dimension spelling a Temporal Selection is keyed by, mapped to the
+# accepted model's own Temporal Dimension. The two vocabularies meet only here.
+# Valid Time's injected fragment reads first; that rank is the Dimension's own
+# member value, so ordering axes needs no table of its own.
 _DIMENSIONS: Final[Mapping[str, AcceptedDimension]] = {
     "valid-time": AcceptedDimension.VALID_TIME,
     "transaction-time": AcceptedDimension.TRANSACTION_TIME,
@@ -125,80 +117,6 @@ class TemporalReadError(ValueError):
 class UndeclaredAxisError(TemporalReadError):
     """A strict :class:`Edge` / :class:`Pin` axis accessor named an axis the entity
     does not declare (the arity-accessor house pattern; use the ``*_or_none`` form)."""
-
-
-class Latest:
-    """The explicit Latest pin sentinel — including normalized Transaction-Time omission.
-
-    ``LATEST`` on an axis lowers to the **identical** current-row predicate the
-    authoring default produces for omitted Transaction Time (``to = infinity``).
-    Canonical operations always serialize its wrapper (``coordinate: latest``)
-    rather than leaving the axis absent. It is deliberately not a coordinate —
-    it re-resolves to whatever milestone is current at read time, so it is never
-    replayable (python.md, the stale-web-edit recipe).
-    """
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:  # pragma: no cover - debug aid only
-        return "LATEST"
-
-
-LATEST: Final[Latest] = Latest()
-
-
-class TemporalDimensionConstant:
-    """One exported Temporal Dimension constant — :data:`VALID_TIME` / :data:`TX_TIME`.
-
-    The developer-surface spelling of a Temporal Dimension value wherever the
-    statement surface takes a dimension argument (``.history(TX_TIME)``),
-    following the :data:`LATEST` sentinel pattern: one ``Final`` module-level
-    singleton per dimension of the closed two-member algebra, giving completion
-    and static checking where a string offers neither. A string dimension
-    spelling is rejected at statement build — a dual-accept surface would be an
-    alias. Instances are immutable: the statement surface accepts the constants
-    by identity, so a mutable dimension could silently flip what an accepted
-    constant lowers to.
-    """
-
-    __slots__ = ("_dimension",)
-
-    _dimension: str
-
-    def __init__(self, dimension: str) -> None:
-        # Frozen by hand, matching `Edge`: construction writes through
-        # `object.__setattr__`, and the overrides below refuse every later
-        # assignment or deletion.
-        object.__setattr__(self, "_dimension", dimension)
-
-    def __setattr__(self, name: str, value: object) -> None:
-        raise AttributeError(f"TemporalDimensionConstant is frozen; cannot assign {name!r}")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError(f"TemporalDimensionConstant is frozen; cannot delete {name!r}")
-
-    @property
-    def dimension(self) -> str:
-        """The canonical dimension spelling this constant maps to at the wire boundary."""
-        return self._dimension
-
-    def __repr__(self) -> str:  # pragma: no cover - debug aid only
-        return "VALID_TIME" if self._dimension == "valid-time" else "TX_TIME"
-
-
-VALID_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("valid-time")
-"""The Valid Time dimension constant: the sole developer-surface spelling of the
-``valid-time`` dimension wherever a statement takes a dimension argument
-(``.history(VALID_TIME)``). A frozen module-level singleton — the statement
-surface accepts exactly this instance, by identity, never an equal copy or a
-string."""
-
-TX_TIME: Final[TemporalDimensionConstant] = TemporalDimensionConstant("transaction-time")
-"""The Transaction Time dimension constant: the sole developer-surface spelling
-of the ``transaction-time`` dimension wherever a statement takes a dimension
-argument (``.history(TX_TIME)``). A frozen module-level singleton — the
-statement surface accepts exactly this instance, by identity, never an equal
-copy or a string."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,7 +289,7 @@ def _edge(entity: EntityMetadata, values: Mapping[AttributeIdentity, object]) ->
 
 
 # --------------------------------------------------------------------------- #
-# As-of injection (temporal wrappers -> plain m-predicate predicate).         #
+# As-of injection (Temporal Selections -> plain m-predicate terms).          #
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
 class _Latest:
@@ -403,28 +321,24 @@ _AxisMode = _Latest | _Containment | _Range | _Scan
 
 def inject_as_of(
     predicate: PredicateNode,
-    selections: Sequence[AsOf | AsOfRange | History],
+    selections: Mapping[WireDimension, TemporalSelection],
     entity: EntityMetadata,
 ) -> PredicateNode:
-    """Inject explicit temporal selections into a flat predicate.
+    """Inject an Object Query's explicit Temporal Selections into its predicate.
 
-    The planning boundary has already removed query-wide wrappers. This module
-    owns only temporal semantics: it validates one selection per declared axis,
-    derives the interval terms in Valid-Time-first order, and appends them after
-    the user predicate so bind order remains user-first.
+    ``selections`` is the query's own dimension-keyed clause, so "at most one
+    selection per dimension" is settled by the mapping rather than re-checked
+    here. This module owns only temporal semantics: it derives the interval terms
+    in Valid-Time-first order and appends them after the user predicate so bind
+    order remains user-first.
 
-    ``history`` injects no term for its axis. A non-temporal read with no
-    selections is a strict identity; a temporal selection against a non-temporal
-    entity is rejected by the same declared-axis rule as before.
+    ``history`` injects no term for its dimension. A non-temporal read with no
+    selections is a strict identity; a selection naming a dimension the entity
+    does not declare is rejected by the same declared-axis rule as before.
     """
     modes: dict[AcceptedDimension, _AxisMode] = {}
-    for selection in selections:
-        axis = _declared_axis(selection.dimension, entity)
-        if axis.dimension in modes:
-            raise TemporalReadError(
-                f"{entity.identity.name}: the {selection.dimension} dimension is pinned "
-                "or scanned twice"
-            )
+    for dimension, selection in selections.items():
+        axis = _declared_axis(dimension, entity)
         modes[axis.dimension] = _mode_of(selection)
 
     axis_terms: list[PredicateNode] = []
@@ -443,15 +357,6 @@ def inject_as_of(
     return terms[0] if len(terms) == 1 else And(operands=terms)
 
 
-def _root_wrappers(
-    op: PredicateNode,
-) -> Iterator[Limit | OrderBy | Narrow | AsOf | AsOfRange | History]:
-    current = op
-    while isinstance(current, (Limit, OrderBy, Narrow, AsOf, AsOfRange, History)):
-        yield current
-        current = current.operand
-
-
 def _declared_axis(dimension: str, entity: EntityMetadata) -> AcceptedAsOfAxis:
     """The As-Of Axis ``entity`` declares for the wire dimension ``dimension``.
 
@@ -468,14 +373,14 @@ def _declared_axis(dimension: str, entity: EntityMetadata) -> AcceptedAsOfAxis:
     )
 
 
-def _mode_of(wrapper: AsOf | AsOfRange | History) -> _AxisMode:
-    if isinstance(wrapper, History):
+def _mode_of(selection: TemporalSelection) -> _AxisMode:
+    if isinstance(selection, History):
         return _Scan()
-    if isinstance(wrapper, AsOfRange):
-        return _Range(from_=wrapper.start, to=wrapper.end)
-    if wrapper.coordinate == "latest":
+    if isinstance(selection, AsOfRange):
+        return _Range(from_=selection.start, to=selection.end)
+    if selection.coordinate == "latest":
         return _Latest()
-    return _Containment(instant=wrapper.coordinate)
+    return _Containment(instant=selection.coordinate)
 
 
 def _terms(mode: _AxisMode, axis: AcceptedAsOfAxis, entity: EntityMetadata) -> list[PredicateNode]:
@@ -533,10 +438,10 @@ def conjunction_terms(op: PredicateNode) -> tuple[PredicateNode, ...]:
 
 
 def resolve_pinned_instants(
-    selections: Sequence[AsOf | AsOfRange | History], entity: EntityMetadata
+    selections: Mapping[WireDimension, TemporalSelection], entity: EntityMetadata
 ) -> dict[AcceptedDimension, str]:
     """The per-axis literal instant this read pins ``entity`` to a specific PAST
-    moment (an ``asOf(..., date=<instant>)`` wrapper) — the coordinate ``m-navigate``
+    moment (an ``asOf`` Temporal Selection) — the coordinate ``m-navigate``
     re-applies, matched by axis, to a temporal entity reached by navigation.
 
     Every other axis — undeclared by ``entity``, pinned to Latest, or
@@ -545,68 +450,56 @@ def resolve_pinned_instants(
     so this map omits them; the caller defaults an absent axis to latest by
     construction rather than re-deriving it here.
 
-    Called on the same selection values :func:`inject_as_of` consumes after the
-    planning boundary has removed their wrappers.
+    Called on the same Temporal Selection clause :func:`inject_as_of` consumes.
     """
     pins: dict[AcceptedDimension, str] = {}
-    for selection in selections:
-        axis = _declared_axis(selection.dimension, entity)
+    for dimension, selection in selections.items():
+        axis = _declared_axis(dimension, entity)
         mode = _mode_of(selection)
         if isinstance(mode, _Containment):
             pins[axis.dimension] = mode.instant
     return pins
 
 
-def statement_pin(op: PredicateNode, entity: EntityMetadata) -> Pin:
-    """The as-of coordinates a statement's temporal selections pin.
+def query_pin(query: ObjectQueryNode, entity: EntityMetadata) -> Pin:
+    """The as-of coordinates ``query``'s Temporal Selections pin.
 
-    A SCANNED axis (``history`` / ``as_of_range`` — "a scan is not a pin") is
-    absent; a PINNED axis carries its coordinate, including the explicit
-    :data:`LATEST` sentinel (``coordinate: latest``). Authoring-defaulted
-    Transaction Time has already normalized to that explicit wrapper. The
-    whole-graph pin ``Database.find`` / ``Transaction.find`` attach to the
-    returned ``Snapshot``.
+    A SCANNED dimension (``history`` / ``asOfRange`` — "a scan is not a pin") is
+    absent; a PINNED dimension carries its coordinate, including the explicit
+    :data:`LATEST` sentinel. Authoring-defaulted Transaction Time has already
+    normalized to that explicit selection. The whole-graph pin ``Database.find``
+    / ``Transaction.find`` attach to the returned ``Snapshot``.
 
-    Called on the raw wrapper tree before planning — an independent,
-    side-effect-free read of the statement's own temporal wrappers, never a
-    database round trip. The planning boundary separately peels those wrappers
-    into the selection values consumed by :func:`resolve_pinned_instants` and
-    :func:`inject_as_of`.
+    A side-effect-free read of the query's own clause, never a database round
+    trip.
     """
     tx_time: _dt.datetime | Latest | None = None
     valid_time: _dt.datetime | Latest | None = None
-    for node in _root_wrappers(op):
-        axis = (
-            _declared_axis(node.dimension, entity)
-            if isinstance(node, (AsOf, AsOfRange, History))
-            else None
+    for dimension, selection in query.temporal.items():
+        if not isinstance(selection, AsOf):
+            continue
+        axis = _declared_axis(dimension, entity)
+        value: _dt.datetime | Latest = (
+            LATEST
+            if selection.coordinate == "latest"
+            else _dt.datetime.fromisoformat(selection.coordinate)
         )
-        if isinstance(node, AsOf):
-            value: _dt.datetime | Latest = (
-                LATEST
-                if node.coordinate == "latest"
-                else _dt.datetime.fromisoformat(node.coordinate)
-            )
-            if axis is not None and axis.dimension is AcceptedDimension.TRANSACTION_TIME:
-                tx_time = value
-            else:
-                valid_time = value
+        if axis.dimension is AcceptedDimension.TRANSACTION_TIME:
+            tx_time = value
+        else:
+            valid_time = value
     return Pin(tx_time=tx_time, valid_time=valid_time)
 
 
-def scans_an_axis(op: PredicateNode) -> bool:
-    """Whether ``op`` SCANS ANY temporal axis (``asOfRange`` / ``history``)
-    rather than pinning every axis it names — the milestone-set read shape, and
-    the negative half of :func:`statement_pin`'s "a scan is not a pin" rule.
+def scans_an_axis(query: ObjectQueryNode) -> bool:
+    """Whether ``query`` SCANS ANY temporal dimension (``asOfRange`` / ``history``)
+    rather than pinning every dimension it names — the milestone-set read shape,
+    and the negative half of :func:`query_pin`'s "a scan is not a pin" rule.
 
-    A read pins or unpins each dimension with its own wrapper, so a bitemporal
-    read nests one wrapper per dimension and the WHOLE nest decides: one scanned
-    dimension answers a milestone set however the other dimension is pinned, and
-    ``asOf(valid-time, history(transaction-time, …))`` therefore scans.
-
-    Transparent wrappers are crossed, so a scan stays a scan under result-shaping
-    or whole-result narrowing. An outer ``deepFetch`` is deliberately NOT crossed: this scope takes
-    no ``m-deep-fetch`` edge, so a caller composing the two holds the
-    graph-shaping question itself.
+    Each dimension carries its own selection, so the WHOLE clause decides: one
+    scanned dimension answers a milestone set however the other is pinned.
+    Includes are deliberately NOT consulted: this scope takes no
+    ``m-deep-fetch`` edge, so a caller composing the two holds the graph-shaping
+    question itself.
     """
-    return any(isinstance(node, (AsOfRange, History)) for node in _root_wrappers(op))
+    return any(isinstance(selection, (AsOfRange, History)) for selection in query.temporal.values())

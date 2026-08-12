@@ -19,15 +19,16 @@
 # metadata rather than projected. The explicit Latest Transaction-Time pin selects
 # the open milestone alone, so the superseded 20.00 row is not observed.
 model: models/storage-layout.yaml
-tags: [m-storage-layout, m-inheritance, m-temporal-read, m-value-object, m-sql, table-per-hierarchy, root, temporal, as-of, document, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-object-query, m-inheritance, m-temporal-read, m-value-object, m-sql, table-per-hierarchy, root, temporal, as-of, document, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.LayoutReading
-  operation:
-    asOf:
-      operand: { all: {} }
-      dimension: transaction-time
-      coordinate: latest
+  objectQuery:
+    target: parallax.compatibility.LayoutReading
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
 then:
   statements:
     - sql:

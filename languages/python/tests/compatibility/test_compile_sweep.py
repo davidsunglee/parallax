@@ -123,7 +123,7 @@ def _pointer_ok(shape: str, pointer: str) -> bool:
     """Whether an emission ``casePointer`` is well-formed for a write case's shape."""
     if shape == "writeSequence":
         return re.fullmatch(r"/writeSequence/\d+", pointer) is not None
-    return re.fullmatch(r"/scenario/\d+/(write|find)", pointer) is not None
+    return re.fullmatch(r"/scenario/\d+/(write|objectQuery)", pointer) is not None
 
 
 def _assert_write_emissions(case: case_format.Case, envelope: dict[str, Any]) -> None:
@@ -165,7 +165,7 @@ def test_compile_sweep(case: case_format.Case) -> None:
     emissions = envelope["emissions"]
     assert len(emissions) == 1
     emission = emissions[0]
-    assert emission["casePointer"] == "/operation"
+    assert emission["casePointer"] == "/objectQuery"
     golden_sql, golden_binds = golden(case)
     assert emission["sql"] == golden_sql
     assert emission["binds"] == golden_binds

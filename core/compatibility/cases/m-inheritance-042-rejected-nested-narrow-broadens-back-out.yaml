@@ -11,16 +11,18 @@
 # subset rule at the root; this case pins that every nested operand receives the
 # enclosing narrow's resolved position.
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-object-query, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    narrow:
-      to: [parallax.compatibility.Dog]
-      operand:
-        narrow:
-          to: [parallax.compatibility.Cat]
-          operand:
-            all: {}
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      narrow:
+        to:
+          - parallax.compatibility.Cat
+        operand:
+          all: {}
+    narrowTo:
+      - parallax.compatibility.Dog
 then:
   rejectedRule: narrow-outside-position

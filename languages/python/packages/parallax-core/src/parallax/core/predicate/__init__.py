@@ -1,9 +1,10 @@
 """``parallax.core.predicate`` enforcement scope (m-predicate).
 
-The Predicate algebra: frozen node types for the read-path query tree and the
-canonical single-key tagged serde that round-trips them (the corpus's normative
-encoding). ``m-predicate`` depends only on ``m-descriptor`` and ``m-inheritance``;
-SQL lowering lives above it in ``m-sql``.
+The Predicate algebra: frozen node types for the recursive selection grammar and
+the canonical single-key tagged serde that round-trips them (the corpus's
+normative encoding). ``m-predicate`` depends only on ``m-metamodel`` and
+``m-inheritance``; the query value that carries a predicate lives above it in
+``m-object-query``, and SQL lowering above that in ``m-sql``.
 """
 
 from __future__ import annotations
@@ -12,22 +13,15 @@ from parallax.core.predicate._nodes import (
     QUERY_DEFINITION_CODES,
     All,
     And,
-    AsOf,
-    AsOfRange,
     Between,
     Comparison,
     ComparisonOp,
-    DeepFetch,
-    EntityQuery,
     Exists,
     Group,
-    History,
-    Limit,
     Membership,
     MembershipOp,
     Narrow,
     Navigate,
-    NavigationPath,
     NestedComparison,
     NestedComparisonOp,
     NestedExists,
@@ -45,43 +39,41 @@ from parallax.core.predicate._nodes import (
     NullCheck,
     NullOp,
     Or,
-    OrderBy,
-    OrderKey,
-    PathSegment,
     PredicateNode,
     QueryDefinitionError,
     Scalar,
     StringMatch,
     StringOp,
+    SubtypeSelection,
+    canonical_subtype_selection,
 )
 from parallax.core.predicate.serde import OperationError, deserialize, serialize
 from parallax.core.predicate.validate import (
     OperationRejectedError,
+    PositionScope,
+    check_attribute_reference,
+    effective_set,
     referenced_entities,
+    relationship_target,
+    resolve_subtype_selection,
+    root_position,
+    validate_narrow,
     validate_operation,
-    validate_read_operation,
 )
 
 __all__ = [
     "QUERY_DEFINITION_CODES",
     "All",
     "And",
-    "AsOf",
-    "AsOfRange",
     "Between",
     "Comparison",
     "ComparisonOp",
-    "DeepFetch",
-    "EntityQuery",
     "Exists",
     "Group",
-    "History",
-    "Limit",
     "Membership",
     "MembershipOp",
     "Narrow",
     "Navigate",
-    "NavigationPath",
     "NestedComparison",
     "NestedComparisonOp",
     "NestedExists",
@@ -101,17 +93,22 @@ __all__ = [
     "OperationError",
     "OperationRejectedError",
     "Or",
-    "OrderBy",
-    "OrderKey",
-    "PathSegment",
+    "PositionScope",
     "PredicateNode",
     "QueryDefinitionError",
     "Scalar",
     "StringMatch",
     "StringOp",
+    "SubtypeSelection",
+    "canonical_subtype_selection",
+    "check_attribute_reference",
     "deserialize",
+    "effective_set",
     "referenced_entities",
+    "relationship_target",
+    "resolve_subtype_selection",
+    "root_position",
     "serialize",
+    "validate_narrow",
     "validate_operation",
-    "validate_read_operation",
 ]

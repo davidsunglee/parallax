@@ -4,7 +4,7 @@
 A rejected case executes no SQL and touches no database (m-case-format "Rejected
 cases"): grading its `run` envelope needs no provisioner, so — unlike
 `test_run_sweep.py`, whose every test function threads the Testcontainers
-`provisioner` fixture — this sweep runs entirely in-process. `when.operation` /
+`provisioner` fixture — this sweep runs entirely in-process. `when.objectQuery` /
 `when.model` / `when.write` inputs are all exercised end-to-end (the
 `when.write` half via `validate_write`): the classified
 `rejectedRule` observation is compared against the case's own
@@ -49,11 +49,11 @@ class _RefusingPort:
 
 def _when_kind(case: case_format.Case) -> str:
     when = cast("dict[str, Any]", case_document(case).get("when") or {})
-    for kind in ("operation", "model", "write"):
+    for kind in ("objectQuery", "model", "write"):
         if kind in when:
             return kind
     raise AssertionError(
-        f"{case.case_id}: rejected case carries none of operation/model/write"
+        f"{case.case_id}: rejected case carries none of objectQuery/model/write"
     )  # pragma: no cover
 
 
@@ -74,11 +74,11 @@ def test_reachable_rejected_population_is_non_empty() -> None:
 
 
 def test_reachable_rejected_population_spans_every_when_kind() -> None:
-    # `operation` / `model` / `write` inputs are all exercised above. All three
+    # `objectQuery` / `model` / `write` inputs are all exercised above. All three
     # kinds should be present in the reachable set so no dispatch arm silently
     # goes untested.
     kinds = {_when_kind(case) for case in _REACHABLE_REJECTED}
-    assert kinds == {"operation", "model", "write"}, kinds
+    assert kinds == {"objectQuery", "model", "write"}, kinds
 
 
 def test_reachable_rejected_population_spans_every_write_form() -> None:

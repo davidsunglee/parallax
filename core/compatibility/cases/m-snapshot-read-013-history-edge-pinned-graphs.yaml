@@ -10,17 +10,18 @@
 # nor a single shared-pin `then.graph`). One round trip; the harness partitions the
 # milestone rows by edge pin and grades each independently pinned graph.
 model: models/invoice.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-temporal-read, temporal, history, edge-pinned, graph, audit-only, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-temporal-read, temporal, history, edge-pinned, graph, audit-only, slice-snapshot-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.InvoiceLine
-  operation:
-    history:
-      operand:
-        eq:
-          attr: parallax.compatibility.InvoiceLine.id
-          value: 1000
-      dimension: transaction-time
+  objectQuery:
+    target: parallax.compatibility.InvoiceLine
+    predicate:
+      eq:
+        attr: parallax.compatibility.InvoiceLine.id
+        value: 1000
+    temporal:
+      transaction-time:
+        history: {}
 then:
   statements:
     - sql:

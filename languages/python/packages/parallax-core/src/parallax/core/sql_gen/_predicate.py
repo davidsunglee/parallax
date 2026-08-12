@@ -74,15 +74,10 @@ from parallax.core.metamodel import (
 from parallax.core.predicate import (
     All,
     And,
-    AsOf,
-    AsOfRange,
     Between,
     Comparison,
-    DeepFetch,
     Exists,
     Group,
-    History,
-    Limit,
     Membership,
     Narrow,
     Navigate,
@@ -99,7 +94,6 @@ from parallax.core.predicate import (
     NotExists,
     NullCheck,
     Or,
-    OrderBy,
     PredicateNode,
     StringMatch,
     StringOp,
@@ -205,7 +199,7 @@ class EntityScope:
     reads, so every reference to a member's column is answered by a Storage
     Layout slot rather than by re-reading the member's own storage declaration.
     A branch of a table-per-concrete-subtype union carries its OWN branch layout
-    even though its active entity stays the read's `targetEntity`, which is what
+    even though its active entity stays the read's queried `target`, which is what
     makes "does this branch physically carry that member?" a question the scope
     can answer at all.
     """
@@ -508,25 +502,6 @@ def lower_predicate(op: PredicateNode, scope: ResolutionScope) -> str:
             return _lower_branch_narrow(op, scope)
         case Navigate() | Exists() | NotExists():
             return _lower_navigation(op, scope)
-        case DeepFetch():
-            raise SqlGenError(
-                "deep fetch (eager graph materialization across relationship levels) is not "
-                "a predicate and is never lowered here: `m-deep-fetch` plans it into one "
-                "read per relationship level, each of which this compiler lowers on its own"
-            )
-        case AsOf() | AsOfRange() | History():
-            # The `m-deep-fetch` planning boundary peels temporal selections and
-            # passes them with the flat predicate to `m-temporal-read`, which injects
-            # ordinary predicate nodes before producing the EntityQuery. Reaching
-            # this branch means compilation bypassed that boundary, which is a
-            # wiring error rather than an unsupported node.
-            raise SqlGenError(
-                "temporal wrapper reached m-sql unplanned; plan the read with "
-                "m-deep-fetch.plan before compile_read (m-sql cannot import the planning "
-                "or temporal-read modules per the module DAG)"
-            )
-        case OrderBy() | Limit():
-            raise SqlGenError("result-shaping directive nested inside a predicate")
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
 

@@ -10,8 +10,9 @@ It performs m-case-format layer 1 statically (no database needed):
   (Draft 2020-12).
 * **Descriptor validation** — every model under ``models/`` validates against the
   metamodel schema.
-* **Predicate validation** — every case's ``when.operation`` (and each
-  scenario/coherence step's ``find``) validates against the operation schema.
+* **Object Query validation** — every case's ``when.objectQuery`` (and each
+  scenario/coherence step's own) validates against the Object Query schema, which
+  reaches the Predicate and Subtype Selection grammars through it.
 * **Case validation** — every case validates against the compatibility-case
   schema, and its referenced model + golden-SQL dialect keys are coherent.
 """
@@ -32,7 +33,7 @@ from .execution_validate import validate_execution
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
 from .keyed_write_validate import undeclared_row_members, validate_keyed_write
 from .metamodel import validate_index_identities
-from .operation_references import collect_reference_classes
+from .operation_references import collect_query_reference_classes
 from .predicate_write_validate import (
     PredicateWriteValidationError,
     validate_predicate_write,
@@ -100,32 +101,33 @@ def _descriptor_entity_defs(descriptor: Any) -> list[dict[str, Any]]:
     return [entity] if isinstance(entity, dict) else []
 
 
-# --- targetEntity consistency (m-case-format, resolved Q1; m-inheritance) ----
+# --- Object Query self-consistency (m-case-format; m-inheritance) ------------
 #
-# A read names the entity it targets with `targetEntity`; the class part of every
-# queried-entity reference in the operation MUST be CONSISTENT with it. This is the
-# structural invariant that makes the read-targeting migration self-verifying. It
-# is FAMILY-AWARE (m-inheritance): a reference class is consistent when its
+# A query names the entity it targets in its own `target`; the class part of every
+# queried-entity reference the query carries MUST be CONSISTENT with it. This is
+# one document checked against itself rather than two sibling fields reconciled.
+# It is FAMILY-AWARE (m-inheritance): a reference class is consistent when its
 # effective concrete-subtype set is a subset of the target's — an abstract root
 # names its whole family, an abstract subtype its concrete descendants, a concrete
 # subtype itself. For a non-inheritance entity the effective set is the entity
-# itself, so "subset" reduces to "equal" (the pre-inheritance meaning). A
-# navigation's INNER operation resolves against the RELATED entity, so it is
-# intentionally not descended into.
+# itself, so "subset" reduces to "equal". A navigation's INNER predicate resolves
+# against the RELATED entity, so it is intentionally not descended into.
 
 
-def _check_target_entity(
-    operation: Any,
-    target_entity: Any,
+def _check_query_target(
+    query: Any,
     family: Family | None,
     label: str,
     errors: list[str],
 ) -> None:
-    """Assert every queried-entity reference class is family-consistent with *target_entity*."""
+    """Assert every queried-entity reference class is family-consistent with ``target``."""
+    if not isinstance(query, dict):
+        return  # a malformed query is already a schema error
+    target_entity = query.get("target")
     if not isinstance(target_entity, str):
-        return  # a missing / malformed targetEntity is already a schema error
+        return
     classes: set[str] = set()
-    collect_reference_classes(operation, classes, descend_result_modifiers=True)
+    collect_query_reference_classes(query, classes)
 
     def effective(name: str) -> set[str]:
         return set(family.effective_concrete_set(name)) if family is not None else {name}
@@ -134,7 +136,7 @@ def _check_target_entity(
     inconsistent = sorted(cls for cls in classes if not (effective(cls) <= target_set))
     if inconsistent:
         errors.append(
-            f"{label}: targetEntity {target_entity!r} is inconsistent with the "
+            f"{label}: objectQuery target {target_entity!r} is inconsistent with the "
             f"queried-entity reference class(es) {inconsistent}"
         )
 
@@ -173,12 +175,12 @@ def _scenario_reference_sql_dialect_keys(
 def _validate_predicate_write(
     write: Any,
     entity_defs: list[dict[str, Any]],
-    operation_schema: dict[str, Any],
+    predicate_schema: dict[str, Any],
     label: str,
     errors: list[str],
     registry: Registry | None = None,
 ) -> Entity | None:
-    """Validate the operation and model-dependent parts of one write instruction."""
+    """Validate the predicate and model-dependent parts of one write instruction."""
     if not isinstance(write, dict):
         return None  # legacy string writes remain valid and need no predicate walk
     target = write.get("target")
@@ -186,7 +188,7 @@ def _validate_predicate_write(
         return None  # the case schema owns missing/malformed target errors
     predicate = target.get("predicate")
     if predicate is not None:
-        _validate(predicate, operation_schema, f"{label} target.predicate", errors, registry)
+        _validate(predicate, predicate_schema, f"{label} target.predicate", errors, registry)
     target_name = target.get("entity")
     if not isinstance(target_name, str):
         return None
@@ -220,7 +222,7 @@ def _effective_entity(entity_defs: list[dict[str, Any]], entity_name: str) -> En
 def _validate_buffered_write(
     instructions: list[Any],
     entity_defs: list[dict[str, Any]],
-    operation_schema: dict[str, Any],
+    predicate_schema: dict[str, Any],
     label: str,
     errors: list[str],
     registry: Registry | None = None,
@@ -263,7 +265,7 @@ def _validate_buffered_write(
             continue  # the case schema owns non-object entries
         if "target" in instruction:
             _validate_predicate_write(
-                instruction, entity_defs, operation_schema, entry_label, errors, registry
+                instruction, entity_defs, predicate_schema, entry_label, errors, registry
             )
             continue
         entity_name = instruction.get("entity")
@@ -373,7 +375,8 @@ def validate_tree(compatibility_root: Path) -> list[str]:
             errors.append(f"meta-schema: {name} is not a valid JSON Schema: {exc}")
 
     metamodel_schema = schema_map["metamodel.schema.json"]
-    operation_schema = schema_map["predicate.schema.json"]
+    predicate_schema = schema_map["predicate.schema.json"]
+    object_query_schema = schema_map["object-query.schema.json"]
     case_schema = schema_map["compatibility-case.schema.json"]
 
     # 2. Every model descriptor validates against the metamodel schema, the
@@ -381,7 +384,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
     #    validators for Inheritance and Storage Layout. Inheritance validates
     #    family topology when present; Storage Layout also validates standalone
     #    Table ownership and Column claims. A family resolver per model backs the
-    #    family-aware targetEntity cross-check below.
+    #    family-aware query self-consistency cross-check below.
     models_dir = compatibility_root / "models"
     families: dict[str, Family] = {}
     model_entities: dict[str, list[dict[str, Any]]] = {}
@@ -417,78 +420,57 @@ def validate_tree(compatibility_root: Path) -> list[str]:
             errors.extend(
                 f"case {case_path.name}: {problem}" for problem in validate_execution(case)
             )
-        # The action under test lives under `when`; a read case's operation and a
-        # scenario/coherence step's `find` are canonical m-predicate nodes that
-        # must also validate against the Predicate schema.
+        # The action under test lives under `when`; a read or rejected case's
+        # Object Query and each scenario/coherence step's own are canonical
+        # m-object-query documents that must also validate against that schema.
         when = case.get("when") if isinstance(case, dict) else None
         when = when if isinstance(when, dict) else {}
-        if "operation" in when:
+        if "objectQuery" in when:
             _validate(
-                when["operation"],
-                operation_schema,
-                f"case {case_path.name} operation",
+                when["objectQuery"],
+                object_query_schema,
+                f"case {case_path.name} objectQuery",
                 errors,
                 registry,
             )
-            # A read case names its queried entity with `targetEntity`; cross-check it
-            # against the operation's queried-entity references (m-case-format Q1).
+            # A `rejected` case authors a query that a model-aware rule refuses,
+            # so its own references are deliberately inconsistent with its target.
             if case.get("shape") == "read":
-                _check_target_entity(
-                    when["operation"],
-                    when.get("targetEntity"),
-                    family,
-                    f"case {case_path.name}",
-                    errors,
-                )
+                _check_query_target(when["objectQuery"], family, f"case {case_path.name}", errors)
                 errors.extend(
                     f"case {case_path.name}: {problem}"
-                    for problem in validate_temporal_selections(
-                        when["operation"], when.get("targetEntity"), family
-                    )
+                    for problem in validate_temporal_selections(when["objectQuery"], family)
                 )
             for index, encoding in enumerate(when.get("equivalentEncodings", [])):
                 _validate(
                     encoding,
-                    operation_schema,
+                    object_query_schema,
                     f"case {case_path.name} equivalentEncodings[{index}]",
                     errors,
                     registry,
                 )
-        # A scenario case carries its operations per step (under `when.scenario[].find`);
-        # each one must also validate against the Predicate schema.
+        # A scenario case carries its Object Query per step (under
+        # `when.scenario[].objectQuery`); each one validates the same way.
         if isinstance(when.get("scenario"), list):
             for index, step in enumerate(when["scenario"]):
-                if isinstance(step, dict) and "find" in step:
-                    _validate(
-                        step["find"],
-                        operation_schema,
-                        f"case {case_path.name} scenario[{index}].find",
-                        errors,
-                        registry,
-                    )
+                if isinstance(step, dict) and "objectQuery" in step:
+                    label = f"case {case_path.name} scenario[{index}].objectQuery"
+                    _validate(step["objectQuery"], object_query_schema, label, errors, registry)
                     _validate_scenario_reference_sql(
                         step,
                         case_schema,
                         f"case {case_path.name} scenario[{index}]",
                         errors,
                     )
-                    _check_target_entity(
-                        step["find"],
-                        step.get("targetEntity"),
-                        family,
-                        f"case {case_path.name} scenario[{index}].find",
-                        errors,
-                    )
+                    _check_query_target(step["objectQuery"], family, label, errors)
                     errors.extend(
-                        f"case {case_path.name} scenario[{index}].find: {problem}"
-                        for problem in validate_temporal_selections(
-                            step["find"], step.get("targetEntity"), family
-                        )
+                        f"{label}: {problem}"
+                        for problem in validate_temporal_selections(step["objectQuery"], family)
                     )
                     for encoding_index, encoding in enumerate(step.get("equivalentEncodings", [])):
                         _validate(
                             encoding,
-                            operation_schema,
+                            object_query_schema,
                             f"case {case_path.name} scenario[{index}].equivalentEncodings"
                             f"[{encoding_index}]",
                             errors,
@@ -498,7 +480,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                     entity = _validate_predicate_write(
                         step["write"],
                         model_entities.get(model_name or "", []),
-                        operation_schema,
+                        predicate_schema,
                         f"case {case_path.name} scenario[{index}]",
                         errors,
                         registry,
@@ -514,35 +496,22 @@ def validate_tree(compatibility_root: Path) -> list[str]:
                     _validate_buffered_write(
                         step["write"],
                         model_entities.get(model_name or "", []),
-                        operation_schema,
+                        predicate_schema,
                         f"case {case_path.name} scenario[{index}]",
                         errors,
                         registry,
                     )
-        # A coherence case likewise carries read-step operations under
-        # `when.coherence[].find`; each must validate against the Predicate schema.
+        # A coherence case likewise carries read-step queries under
+        # `when.coherence[].objectQuery`.
         if isinstance(when.get("coherence"), list):
             for index, step in enumerate(when["coherence"]):
-                if isinstance(step, dict) and "find" in step:
-                    _validate(
-                        step["find"],
-                        operation_schema,
-                        f"case {case_path.name} coherence[{index}].find",
-                        errors,
-                        registry,
-                    )
-                    _check_target_entity(
-                        step["find"],
-                        step.get("targetEntity"),
-                        family,
-                        f"case {case_path.name} coherence[{index}].find",
-                        errors,
-                    )
+                if isinstance(step, dict) and "objectQuery" in step:
+                    label = f"case {case_path.name} coherence[{index}].objectQuery"
+                    _validate(step["objectQuery"], object_query_schema, label, errors, registry)
+                    _check_query_target(step["objectQuery"], family, label, errors)
                     errors.extend(
-                        f"case {case_path.name} coherence[{index}].find: {problem}"
-                        for problem in validate_temporal_selections(
-                            step["find"], step.get("targetEntity"), family
-                        )
+                        f"{label}: {problem}"
+                        for problem in validate_temporal_selections(step["objectQuery"], family)
                     )
         # The referenced model must exist.
         if isinstance(case, dict) and isinstance(case.get("model"), str):

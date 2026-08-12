@@ -12,11 +12,13 @@ tags: [m-deep-fetch, relationship, deferred-load, m-unit-work, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Order
-      find:
-        in:
-          attr: parallax.compatibility.Order.id
-          values: [1]
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          in:
+            attr: parallax.compatibility.Order.id
+            values:
+              - 1
       roundTrips: 1
       note: the source order
       statements:

@@ -35,11 +35,12 @@ when:
         - sql:
             postgres: insert into account(id, owner, balance, version) values (?, ?, ?, ?)
           binds: [8, Turing, 99.00, 1]
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 8
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 8
       roundTrips: 1
       note: a dependent find observes the combined insert's final values (read-your-own-writes)
       statements:

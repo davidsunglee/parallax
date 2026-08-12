@@ -34,11 +34,12 @@ when:
         - sql:
             postgres: insert into badge(id, holder) values (?, ?)
           binds: [1, Bo]
-    - targetEntity: parallax.compatibility.Badge
-      find:
-        eq:
-          attr: parallax.compatibility.Badge.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Badge
+        predicate:
+          eq:
+            attr: parallax.compatibility.Badge.id
+            value: 1
       roundTrips: 1
       identityAttr: id
       note: a subsequent find returns the now-interned generated-key object

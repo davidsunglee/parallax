@@ -19,7 +19,7 @@ from _snapshot_graph_support import GraphBuilder
 from _support import snapshot_models as sm
 from parallax.conformance import animal_owner, read_models
 from parallax.core.entity import RelationshipPath, UnloadedRelationshipError
-from parallax.core.predicate import PathSegment
+from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import (
     SnapshotInspectionError,
@@ -249,7 +249,7 @@ def test_equivalent_narrow_spellings_name_one_view() -> None:
     root = _narrowed_owner("pets[Cat,Dog]")
     directly = RelationshipPath[Any, Any](
         segments=(
-            PathSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow=("Dog", "Cat")),
+            IncludeSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow_to=("Dog", "Cat")),
         ),
         target=None,
     )
@@ -294,8 +294,8 @@ def test_a_deeper_segment_whose_owner_does_not_apply_is_refused_mid_traversal() 
     # spelled from an unrelated owner reaches nothing that declares it.
     path = RelationshipPath[Any, Any](
         segments=(
-            PathSegment(rel="parallax.compatibility.AnimalOwner.animals"),
-            PathSegment(rel="parallax.compatibility.SnapOrder.items"),
+            IncludeSegment(rel="parallax.compatibility.AnimalOwner.animals"),
+            IncludeSegment(rel="parallax.compatibility.SnapOrder.items"),
         ),
         target=None,
     )

@@ -11,9 +11,10 @@ tags: [m-op-list, m-deep-fetch, relationship, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Order
-      find:
-        all: {}
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          all: {}
       roundTrips: 1
       note: the root orders
       statements:

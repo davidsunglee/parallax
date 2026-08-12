@@ -3,14 +3,14 @@
 `m-deep-fetch` specifies how **deep fetch** eagerly populates an object graph
 while **eliminating N+1** round trips. Per the dependency graph, `m-deep-fetch`
 depends on `m-navigate` alone (deep fetch traverses relationships). The
-`deepFetch` **algebra node** is `m-predicate`; the **SQL emission** is `m-sql`.
+**Includes** clause is `m-object-query`; the **SQL emission** is `m-sql`.
 This module ties them to observable behavior. The two lifecycle result surfaces
 — operation-backed lists (`m-op-list`) for the managed lifecycle, snapshot
 graphs (`m-snapshot-read`) for the plain-value lifecycle — sit **above** deep
 fetch and are populated by it; deep fetch itself is a pure per-level fetch
 algorithm and reifies neither.
 
-Every `deepFetch` path segment names a **relationship** between identity-bearing
+Every Include Path segment names a **relationship** between identity-bearing
 entities; a **value-object segment is invalid** in the path grammar and MUST be
 rejected. Value objects have no identity, no correlation columns, and no
 deep-fetch statement — they materialize *with* their owning entity in the owner's
@@ -18,7 +18,7 @@ own read (`m-value-object`, "Materialization and navigation contract").
 
 ## Deep fetch: one query per non-empty relationship level
 
-`deepFetch(operand, paths)` resolves `operand` (the root query), then eagerly
+A query's `includes` clause resolves the root query first, then eagerly
 fetches the canonical include-path set owned by `m-predicate`. That module owns
 the path and segment grammar, canonical ordering, duplicate collapse, maximal-
 path rule, and the distinction between broad and narrowed paths. This module

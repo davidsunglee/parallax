@@ -46,8 +46,8 @@ from parallax.core import (
     Document,
     DomainModel,
     Entity,
-    FindQuery,
     Int32,
+    ObjectQuery,
     QueryDefinitionError,
     TxTemporal,
     ValueObject,
@@ -1449,7 +1449,7 @@ def test_no_typed_bound_reaches_the_neutral_ingress_uncanonicalized() -> None:
 
 def _bounded_write(
     tx: Transaction,
-    query: FindQuery[Any, Any],
+    query: ObjectQuery[Any, Any],
     valid_from: dt.datetime,
     until: dt.datetime | None,
 ) -> None:
@@ -1477,9 +1477,10 @@ def _bounded_write(
 # m-opt-lock-015).                                                              #
 #                                                                               #
 # The predicates cover both refusal families a write target carries: the        #
-# model-aware `between-bounds-inverted` rejection, and each result modifier     #
-# `m-case-format` `target.predicate` forbids ("a bare write predicate, never a  #
-# result modifier").                                                            #
+# model-aware `between-bounds-inverted` rejection, and a node the Predicate     #
+# grammar does not admit at all — every query-wide clause is an Object Query    #
+# clause now, so a write target carrying one is a malformed document rather     #
+# than a rule a validator applies.                                              #
 # --------------------------------------------------------------------------- #
 _READLESS_ENGINE_META = engine.load_case_metamodel(
     next(case for case in case_format.load_cases() if case.case_id == "m-batch-write-005")
@@ -1491,14 +1492,12 @@ _ENGINE_TX_INSTANT = "2024-06-01T00:00:00+00:00"
 
 
 def _refused_predicates(entity: str) -> list[tuple[str, str, dict[str, object]]]:
-    inner: dict[str, object] = {"lessThan": {"attr": f"{entity}.balance", "value": 200.00}}
     return [
         ("between", "upper bound", {"between": {"attr": f"{entity}.id", "lower": 10, "upper": 1}}),
-        ("limit", "`limit` is a result modifier", {"limit": {"operand": inner, "count": 1}}),
         (
-            "orderBy",
-            "`orderBy` is a result modifier",
-            {"orderBy": {"operand": inner, "keys": [{"attr": f"{entity}.balance"}]}},
+            "unknown-node",
+            "unknown operation node 'limit'",
+            {"limit": {"operand": {"all": {}}, "count": 1}},
         ),
     ]
 

@@ -15,9 +15,12 @@ model: models/document-codec.yaml
 tags: [m-document-codec, m-value-object, m-sql, m-dialect, nested, json, temporal, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Sample
-  operation:
-    nestedEq: { path: parallax.compatibility.Sample.profile.clock, value: '09:30' }
+  objectQuery:
+    target: parallax.compatibility.Sample
+    predicate:
+      nestedEq:
+        path: parallax.compatibility.Sample.profile.clock
+        value: 09:30
 then:
   statements:
     - sql:

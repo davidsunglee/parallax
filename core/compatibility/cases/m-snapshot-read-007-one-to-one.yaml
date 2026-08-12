@@ -9,20 +9,20 @@
 # has no passport, gets a null peer. Two statements, roundTrips = 2 (never one query
 # per person), so N+1 elimination holds for a 1:1 snapshot too.
 model: models/person.yaml
-tags: [m-snapshot-read, m-deep-fetch, one-to-one, relationship, nullable, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-deep-fetch, one-to-one, relationship, nullable, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the Person.passport IN-list binds are the distinct person ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Person
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Person.passport }] }
+  objectQuery:
+    target: parallax.compatibility.Person
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Person.passport
 then:
   statements:
     - sql:

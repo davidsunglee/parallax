@@ -57,7 +57,6 @@ from parallax.core.entity import (
     DomainModel,
     EntityGraphConstruction,
     EntityRowCodec,
-    FindQuery,
     graph_construction_of,
     row_codec_of,
 )
@@ -71,6 +70,7 @@ from parallax.core.execution_log import (
     WriteCompleted,
 )
 from parallax.core.metamodel import Metamodel
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     Clock,
@@ -92,7 +92,7 @@ from parallax.core.unit_work import (
 )
 from parallax.snapshot.handle._errors import SnapshotConnectionError
 from parallax.snapshot.handle._planning import build_write_planner
-from parallax.snapshot.handle._preflight import preflight_find
+from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
     NeutralReadRequest,
     NeutralReadResult,
@@ -297,17 +297,17 @@ class Database:
             )
         return cls(adapter, model, dialect=dialect, clock=clock)
 
-    def find[S](self, query: FindQuery[Any, S]) -> Snapshot[S]:
+    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Execute ``query`` exactly once, materializing fully, and return
         ``Snapshot[S]`` (spec §3). Non-transactional: no read lock, no
         participation mode. ``.history()`` / ``.as_of_range()`` return one root
         per milestone, each edge-pinned at its own milestone's from-instant.
 
-        Lowering, target resolution, and operation validation are the shared
-        :func:`~parallax.snapshot.handle._preflight.preflight_find` seam's, so
-        this and :meth:`Transaction.find` differ only in locking, unit-of-work
-        wrapping, and observation recording. The lowering the seam answers is
-        kept locally through this execution and recomputed on the next one.
+        Target resolution and query validation are the shared
+        :func:`~parallax.snapshot.handle._preflight.preflight` seam's, so this
+        and :meth:`Transaction.find` differ only in locking, unit-of-work
+        wrapping, and observation recording. The canonical query is read once
+        here and kept locally through this execution.
 
         There being no unit of work to observe into, this passes the executor no
         observation collector at all, so a non-transactional read builds no
@@ -322,12 +322,12 @@ class Database:
         # all answers that before it answers anything about this query, so the
         # two entry points refuse a classless connection in the same order.
         construction = self._connected.materializing()
-        lowered = preflight_find(query, model=self._meta)
-        target, op = lowered.target.canonical, lowered.operation
-        if scans_an_axis(op):
-            history_result = find_history(op, self._meta, self._dialect, target, self._port)
+        node = object_query_node(query)
+        preflight(node, model=self._meta, form="graph")
+        if scans_an_axis(node):
+            history_result = find_history(node, self._meta, self._dialect, self._port)
             return snapshot_from_history_result(history_result, self._meta, construction)
-        find_result = find(op, self._meta, self._dialect, target, self._port)
+        find_result = find(node, self._meta, self._dialect, self._port)
         return snapshot_from_find_result(find_result, self._meta, construction)
 
     def read_neutral(self, request: NeutralReadRequest) -> NeutralReadResult:

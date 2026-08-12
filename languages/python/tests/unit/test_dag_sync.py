@@ -22,10 +22,10 @@ importer exemption), and the support-scope additions:
   one importing a scope from outside its own package, one importing a sibling
   child scope inside it, the half a package-scoped row can only reach by naming
   siblings as targets; and
-* a child scope named as another scope's GRANT, which is how the read-preflight
-  seam takes the Entity frontend's Find Query surface without taking what the
-  rest of the frontend reaches — with two canaries, one importing the Database
-  Port into the seam directly and one reaching it through a chain.
+* a child scope named as another scope's GRANT, which is how the typed query
+  surface takes the Entity frontend without the rest of `m-object-query` taking
+  it — with two canaries, one importing the Database Port into the read-preflight
+  seam directly and one reaching it through a chain.
 """
 
 from __future__ import annotations
@@ -714,19 +714,19 @@ def test_parse_support_scope_graph_rejects_no_grants_beside_a_real_grant() -> No
 # --------------------------------------------------------------------------
 # A child scope as a GRANT: the narrow part of a wide package.
 # --------------------------------------------------------------------------
-def test_the_preflight_seam_grants_the_query_scope_not_the_frontend() -> None:
+def test_the_preflight_seam_grants_the_query_module_not_the_frontend() -> None:
     # The whole point of the narrowing: the frontend PACKAGE reaches the port
     # (`_formation_profile -> opt_lock -> unit_work -> db_port`), and a forbidden
     # row is the complement of a closure, so granting the package would put the
-    # port permanently out of the row's reach. The Find Query child scope does
-    # not reach it, so the ordinary row forbids it.
+    # port permanently out of the row's reach. The Object Query module does not
+    # reach it, so the ordinary row forbids it.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     scope = "parallax.snapshot.handle._preflight"
     assert dag.SUPPORT_SCOPE_DEPS[scope] == frozenset(
         {
-            "parallax.core.entity._query",
             "parallax.core.metamodel",
             "parallax.core.predicate",
+            "parallax.core.object_query",
         }
     )
     assert "parallax.core.db_port" in dag.transitive_closure(adjacency, "parallax.core.entity")
@@ -745,28 +745,30 @@ def test_the_preflight_seam_grants_the_query_scope_not_the_frontend() -> None:
 
 def test_granting_a_child_scope_omits_that_childs_ancestors_from_the_row() -> None:
     # A forbidden entry is package-scoped, so naming `parallax.core.entity` would
-    # also forbid the `parallax.core.entity._query` the row exists to permit.
-    # Only the ancestor's NAME is given up — what the rest of that package reaches
-    # stays forbidden, and the `_hub` canary below proves it is still reported.
+    # also forbid the `parallax.core.entity._expressions` the row exists to
+    # permit. Only the ancestor's NAME is given up — what the rest of that
+    # package reaches stays forbidden.
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    scope = "parallax.snapshot.handle._preflight"
-    assert "parallax.core.entity" not in dag.transitive_closure(adjacency, scope)
+    scope = "parallax.core.object_query._fluent"
+    assert "parallax.core.entity" in dag.transitive_closure(adjacency, scope)
     assert "parallax.core.entity" not in forbidden[scope]
     # A scope granted neither the child nor its parent is still forbidden the
     # parent outright.
     assert "parallax.core.entity" in forbidden["parallax.descriptor"]
 
 
-def test_the_query_scope_is_narrower_than_the_frontend_it_sits_in() -> None:
+def test_the_expression_scope_is_narrower_than_the_frontend_it_sits_in() -> None:
     adjacency = dag.build_adjacency(dag.parse_dependency_graph(dag.MODULES_MD.read_text()))
     forbidden = dag.compute_forbidden(adjacency)
-    assert dag.CHILD_SCOPE_PARENT["parallax.core.entity._query"] == "parallax.core.entity"
-    assert set(forbidden["parallax.core.entity"]) < set(forbidden["parallax.core.entity._query"])
-    assert "parallax.core._formation_profile" in forbidden["parallax.core.entity._query"]
+    parent = dag.CHILD_SCOPE_PARENT["parallax.core.entity._expressions"]
+    assert parent == "parallax.core.entity"
+    assert set(forbidden["parallax.core.entity"]) < set(
+        forbidden["parallax.core.entity._expressions"]
+    )
+    assert "parallax.core._formation_profile" in forbidden["parallax.core.entity._expressions"]
     # A child named as another scope's grant needs no `ignore_imports` entry from
     # its own parent's row: the parent package already covers it.
-    assert dag.child_grant_exceptions(adjacency, "parallax.core.entity") == []
     assert dag.child_grant_exceptions(adjacency, "parallax.snapshot.handle") == []
 
 

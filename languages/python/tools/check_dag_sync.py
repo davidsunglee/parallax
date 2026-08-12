@@ -21,9 +21,9 @@ while the third disagrees.
 A forbidden row is the complement of a *closure*, so a scope is never forbidden
 what its own grants reach transitively. A scope that exists in order to stay
 clear of some boundary therefore has to be granted narrowly enough that the
-boundary falls outside its closure — the read preflight seam grants the Entity
-frontend's Find Query submodule rather than the whole frontend for exactly that
-reason — rather than granted widely and excepted afterwards.
+boundary falls outside its closure — the read preflight seam grants the Object
+Query scope rather than the Entity frontend that re-exports its typed surface,
+for exactly that reason — rather than granted widely and excepted afterwards.
 
 The core conformance-family exception (``modules.md``) is encoded structurally:
 conformance scopes (``parallax.conformance.*``) are exempt on the *importing*
@@ -75,6 +75,7 @@ MODULE_SCOPE: Mapping[str, str] = {
     "m-document-codec": "parallax.core.document_codec",
     "m-relationship": "parallax.core.relationship",
     "m-predicate": "parallax.core.predicate",
+    "m-object-query": "parallax.core.object_query",
     "m-sql": "parallax.core.sql_gen",
     "m-dialect": "parallax.core.dialect",
     "m-db-port": "parallax.core.db_port",
@@ -152,24 +153,10 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
             "parallax.core.inheritance",
             "parallax.core.relationship",
             "parallax.core.predicate",
+            "parallax.core.object_query",
             "parallax.core.temporal_read",
             "parallax.core.document_codec",
             "parallax.core._formation_profile",
-        }
-    ),
-    # The Find Query surface is scoped apart from the rest of the Entity frontend
-    # so a consumer that needs only `FindQuery` and its lowering can grant only
-    # this, rather than the whole frontend and everything model formation drags
-    # behind it. The invariant this scope carries is that the query surface
-    # preflight needs does not reach the Hub-construction boundary: nothing here
-    # reaches `parallax.core._formation_profile`, and therefore nothing here
-    # reaches a Database Port.
-    "parallax.core.entity._query": frozenset(
-        {
-            "parallax.core.base",
-            "parallax.core.metamodel",
-            "parallax.core.predicate",
-            "parallax.core.temporal_read",
         }
     ),
     # Query authoring reaches no model: an Attribute Expression carries the
@@ -178,7 +165,11 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # metadata alone. Granting neither model formation nor any whole-model
     # semantic view is what makes that provable rather than asserted.
     "parallax.core.entity._expressions": frozenset(
-        {"parallax.core.metamodel", "parallax.core.predicate"}
+        {
+            "parallax.core.metamodel",
+            "parallax.core.predicate",
+            "parallax.core.object_query",
+        }
     ),
     # Snapshot Graph Input and Entity Graph Construction share one exact recursive
     # immutable algebra, so the carriers are scoped apart from the collaboration
@@ -186,6 +177,19 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     # producer structurally unable to reach the writer, `construct`, or model
     # formation — the layering rule stays enforced rather than merely asserted.
     "parallax.core.entity._graph_input": frozenset({"parallax.core.metamodel"}),
+    # The typed Object Query is generic over Entity Classes, so it reaches the
+    # Entity frontend for the descriptor values a clause call is written with. Its
+    # parent package must stay reachable by every execution module that realizes a
+    # clause, and none of those may reach that frontend — so the widening is
+    # declared here and the parent's own interface never imports this module.
+    "parallax.core.object_query._fluent": frozenset(
+        {
+            "parallax.core.base",
+            "parallax.core.metamodel",
+            "parallax.core.predicate",
+            "parallax.core.entity",
+        }
+    ),
     # The Snapshot slice's own node-inspection surface is scoped apart from both
     # snapshot packages: it reads a node's loaded views, pin, and milestone edge
     # through the advanced Entity seam and nothing else, so its row proves it
@@ -263,18 +267,18 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
     ),
     # The read gate is scoped apart from its own package so the generated
     # contract proves what its module docstring claims: a preflight that resolves
-    # a target and validates an operation names no SQL generation, no dialect, no
+    # a target and validates a query names no SQL generation, no dialect, no
     # Database Port, no deep-fetch planning and no materialization. The grant is
-    # the Find Query submodule rather than the whole Entity frontend precisely so
+    # the Object Query scope rather than the Entity frontend precisely so
     # the Database Port falls OUTSIDE this row's closure: the frontend package
     # reaches one through `_formation_profile -> opt_lock -> unit_work ->
     # db_port`, and a forbidden row is the complement of a closure, so a grant
     # wide enough to include that chain could never forbid its endpoint.
     "parallax.snapshot.handle._preflight": frozenset(
         {
-            "parallax.core.entity._query",
             "parallax.core.metamodel",
             "parallax.core.predicate",
+            "parallax.core.object_query",
         }
     ),
     # The refusal leaf's emptiness IS its contract: `_preflight` and `_family`
@@ -321,8 +325,8 @@ SUPPORT_SCOPE_DEPS: Mapping[str, frozenset[str]] = {
 #   fails when a module beside one is import-free and undeclared — a sibling
 #   shape such a row cannot reach.
 CHILD_SCOPE_PARENT: Mapping[str, str] = {
-    "parallax.core.entity._query": "parallax.core.entity",
     "parallax.core.entity._expressions": "parallax.core.entity",
+    "parallax.core.object_query._fluent": "parallax.core.object_query",
     "parallax.core.entity._graph_input": "parallax.core.entity",
     "parallax.descriptor._hub": "parallax.descriptor",
     "parallax.snapshot.handle._materializer": "parallax.snapshot.handle",

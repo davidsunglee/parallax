@@ -1,16 +1,16 @@
 """Model-aware Predicate validation (m-predicate, m-navigate, m-value-object).
 
-A schema-valid operation can still be **structurally invalid** against a
+A schema-valid predicate can still be **structurally invalid** against a
 specific metamodel: a `narrow` that broadens past the polymorphic position in
 scope, a predicate that reaches a concrete-subtype attribute nobody in the
-active position declares, a navigation / deep-fetch path aimed at a value
-object rather than a relationship, or a `find()` rooted at a value object
-rather than a queryable entity. It can also be invalid on its own authored
-terms, needing no model at all: a range predicate whose two bounds are
-inverted. `m-case-format`'s `rejected` case shape requires
-these refusals to happen **before any SQL is emitted**. This module is the
-single validator used by the corpus-facing conformance engine for the
-`when.operation` rejected lane.
+active position declares, a navigation aimed at a value object rather than a
+relationship, or a predicate rooted at a value object rather than a queryable
+entity. It can also be invalid on its own authored terms, needing no model at
+all: a range predicate whose two bounds are inverted. `m-case-format`'s
+`rejected` case shape requires these refusals to happen **before any SQL is
+emitted**. The query-wide clauses that carry a predicate — result narrowing,
+ordering, Includes, Temporal Selection — are validated by ``m-object-query``,
+which threads the position it resolves into this walk.
 
 Rule provenance:
 
@@ -26,19 +26,15 @@ Rule provenance:
   `subtype-attribute-outside-narrow-scope` / `attribute-outside-active-position`
   — `m-predicate` "Subtype narrowing" / "The four-step validation rule": a
   `narrow` node's resolved concrete set is clamped (intersected) against the
-  **active polymorphic position** threaded through the read (the queried
-  `targetEntity`, re-narrowed by every enclosing `narrow`), and an attribute
-  reference — in a predicate or in an `orderBy` key — must be applicable to every
-  concrete in that position. The two attribute rules partition one condition by
-  whether the reference's Entity and the position share an inheritance family:
-  inside one, narrowing is the remedy; outside it, nothing is. A deep-fetch
-  path's own root Subtype Selection resolves at that same queried position.
-  An order key is asked of the position its
-  ordered rows occupy, which a top-level `narrow` under the ordering moves.
+  **active polymorphic position** threaded into it (the query's own `target`,
+  narrowed by its `narrowTo` clause and by every enclosing `narrow`), and an
+  attribute reference must be applicable to every concrete in that position. The
+  two attribute rules partition one condition by whether the reference's Entity
+  and the position share an inheritance family: inside one, narrowing is the
+  remedy; outside it, nothing is.
 - `reference-ambiguous-entity-name` — `m-predicate` "Entity spellings in a
-  reference position": every reference position — an `attr`, a `rel`, an `orderBy`
-  key, a nested path's root, a `narrow`'s `to` entries, a deep-fetch
-  path's hops and root guard — spells its Entity either canonically or BARE, and a
+  reference position": every reference position — an `attr`, a `rel`, a nested
+  path's root, a `narrow`'s `to` entries — spells its Entity either canonically or BARE, and a
   bare local name two namespaces of the model declare names no single Entity and
   resolves nowhere. The canonical spelling of either of those two names one of them
   and resolves. It is the resolution half of the positional rules above, which
@@ -46,9 +42,8 @@ Rule provenance:
   Entity outside the position, this one when it resolves to more than one and
   therefore to none.
 - `narrow-outside-relationship-target` — `m-navigate` "Polymorphic navigation":
-  a `narrow` inside a navigation filter's `op` (or a deep-fetch path segment's
-  hop narrow) resolves its Subtype Selection inside the relationship target's
-  effective concrete set.
+  a `narrow` inside a navigation filter's `op` resolves its Subtype Selection
+  inside the relationship target's effective concrete set.
 - `nested-path-first-segment-not-value-object` / `nested-path-unknown-member` /
   `nested-literal-type-mismatch` — `m-predicate` "Nested value-object
   predicates": a dotted `Class.valueObject(.valueObject)*.attribute` path MUST
@@ -61,16 +56,10 @@ Rule provenance:
   because the portable literal vocabulary carries a `Date` / `Time` / `Timestamp` /
   `Uuid` / `Bytes` value as a `str` — the literal rule alone would accept the very
   case this one exists to name.
-- `deep-fetch-value-object-segment` / `navigate-value-object-target` /
-  `find-root-value-object` — `m-value-object` "Materialization and navigation
-  contract" (points 4 and 5): a value object carries no correlation columns
-  and is never a navigation, deep-fetch, or `find()` root — it is reached only
-  by value, through its owner.
-- `temporal-read-dimension-selection-cardinality` — `m-temporal-read`
-  "Operations": a read carries exactly one selection for every family-effective
-  declared dimension and none for an undeclared dimension. Transaction-Time
-  omission is normalized by an authoring surface before this model-aware
-  boundary; Valid Time has no omission default.
+- `navigate-value-object-target` / `find-root-value-object` — `m-value-object`
+  "Materialization and navigation contract" (points 4 and 5): a value object
+  carries no correlation columns and is never a navigation or query root — it is
+  reached only by value, through its owner.
 
 The active position's effective concrete-subtype sets come from the Inheritance
 Facet; value-object paths resolve through the accepted Metadata's own O(1)
@@ -97,7 +86,6 @@ from parallax.core.metamodel import (
     Metamodel,
     NestedValueObjectMetadata,
     RelationshipDeclaration,
-    TemporalDimension,
     ValueObjectAttributeMetadata,
     ValueObjectMetadata,
     entity_by_name,
@@ -107,19 +95,13 @@ from parallax.core.metamodel._states import ambiguous_entity_spellings
 from parallax.core.predicate._nodes import (
     All,
     And,
-    AsOf,
-    AsOfRange,
     Between,
     Comparison,
-    DeepFetch,
     Exists,
     Group,
-    History,
-    Limit,
     Membership,
     Narrow,
     Navigate,
-    NavigationPath,
     NestedComparison,
     NestedExists,
     NestedMembership,
@@ -132,7 +114,6 @@ from parallax.core.predicate._nodes import (
     NotExists,
     NullCheck,
     Or,
-    OrderBy,
     PredicateNode,
     Scalar,
     StringMatch,
@@ -140,9 +121,15 @@ from parallax.core.predicate._nodes import (
 
 __all__ = [
     "OperationRejectedError",
+    "PositionScope",
+    "check_attribute_reference",
+    "effective_set",
     "referenced_entities",
+    "relationship_target",
+    "resolve_subtype_selection",
+    "root_position",
+    "validate_narrow",
     "validate_operation",
-    "validate_read_operation",
 ]
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
@@ -155,8 +142,8 @@ def referenced_entities(op: PredicateNode) -> frozenset[str]:
     resolves neither.
 
     A caller assembling a coherent model to validate ``op`` against needs every
-    Entity the operation reaches, not only the read's own root: a deep-fetch or
-    navigation path names a target the root's family does not otherwise reach."""
+    Entity the predicate reaches, not only the query's own root: a navigation
+    names a target the root's family does not otherwise reach."""
     names: set[str] = set()
     _collect_entities(op, names)
     return frozenset(names)
@@ -194,18 +181,7 @@ def _collect_entities(op: PredicateNode, names: set[str]) -> None:
         case And(operands=operands) | Or(operands=operands):
             for operand in operands:
                 _collect_entities(operand, names)
-        case OrderBy(operand=operand, keys=keys):
-            _collect_entities(operand, names)
-            for key in keys:
-                names.add(_class_of(key.attr))
-        case (
-            Not(operand=operand)
-            | Group(operand=operand)
-            | Limit(operand=operand)
-            | AsOf(operand=operand)
-            | AsOfRange(operand=operand)
-            | History(operand=operand)
-        ):
+        case Not(operand=operand) | Group(operand=operand):
             _collect_entities(operand, names)
         case Narrow(to=to, operand=operand):
             names.update(to)
@@ -214,14 +190,6 @@ def _collect_entities(op: PredicateNode, names: set[str]) -> None:
             names.add(_class_of(rel))
             if inner is not None:
                 _collect_entities(inner, names)
-        case DeepFetch(operand=operand, paths=paths):
-            _collect_entities(operand, names)
-            for path in paths:
-                if path.narrow is not None:
-                    names.update(path.narrow)
-                for segment in path.segments:
-                    names.add(_class_of(segment.rel))
-                    names.update(segment.narrow)
 
 
 class OperationRejectedError(ValueError):
@@ -236,11 +204,11 @@ class OperationRejectedError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
-class _PositionScope:
+class PositionScope:
     """The threaded polymorphic-position state (`m-predicate` four-step rule).
 
     ``effective`` is the active position's effective concrete-subtype set, whose
-    members are CANONICAL Entity spellings (:func:`_effective_set`), so two
+    members are CANONICAL Entity spellings, so two
     Entities sharing a local name across namespaces stay distinct members of every
     subset test taken over it. ``relationship_target`` is the canonical name of the
     relationship target, set only while validating inside a navigation filter's
@@ -252,72 +220,40 @@ class _PositionScope:
     relationship_target: str | None = None
 
 
-def validate_operation(root: EntityMetadata, op: PredicateNode, model: Metamodel) -> None:
+def validate_operation(
+    root: EntityMetadata,
+    op: PredicateNode,
+    model: Metamodel,
+    *,
+    position: PositionScope | None = None,
+) -> None:
     """Validate ``op`` against ``model``, raising :class:`OperationRejectedError`.
 
-    ``root`` is the read's queried root position, already resolved to accepted
-    Metadata by the caller — the `targetEntity` a normal read case authors, or,
-    for a `when.operation` `rejected` case that carries none, the model-aware
-    default `m-predicate` fixes (the inheritance family root, or the model's own
-    first entity). It seeds the initial active position for the narrow checks and
-    the positional attribute checks, which measure every attribute reference — an
-    unrelated standalone Entity's as much as a subtype's — against that position;
-    the value-object structural checks below resolve their own entity from each
-    node's own `Class.member` reference and do not otherwise depend on ``root``.
+    ``root`` is the queried root position, already resolved to accepted Metadata
+    by the caller — the ``target`` an Object Query names. It seeds the initial
+    active position for the narrow checks and the positional attribute checks,
+    which measure every attribute reference — an unrelated standalone Entity's as
+    much as a subtype's — against that position; the value-object structural
+    checks below resolve their own entity from each node's own `Class.member`
+    reference and do not otherwise depend on ``root``.
+
+    ``position`` overrides that seed with a position the caller has already
+    resolved, which is how an Object Query threads its own result narrowing into
+    the predicate it carries: whole-result narrowing is a query clause rather
+    than an enclosing node, so nothing inside the predicate could derive it.
     """
-    scope = _PositionScope(effective=_effective_set(model, root))
+    scope = (
+        position if position is not None else PositionScope(effective=effective_set(model, root))
+    )
     _walk(op, model, scope)
 
 
-def validate_read_operation(root: EntityMetadata, op: PredicateNode, model: Metamodel) -> None:
-    """Validate a read, including its model-aware temporal selection completeness."""
-    _validate_temporal_selections(root, op, model)
-    validate_operation(root, op, model)
+def root_position(model: Metamodel, root: EntityMetadata) -> PositionScope:
+    """The active position a read starts from: ``root``'s effective concrete set."""
+    return PositionScope(effective=effective_set(model, root))
 
 
-def _validate_temporal_selections(
-    root: EntityMetadata, op: PredicateNode, model: Metamodel
-) -> None:
-    family = inheritance.view(model).entity(root.identity)
-    declarer = None if family is None else model.entity(family.root)
-    if declarer is None:  # pragma: no cover - the facet covers every accepted Entity
-        return
-    declared = {
-        "valid-time" if axis.dimension is TemporalDimension.VALID_TIME else "transaction-time"
-        for axis in declarer.declared_as_of_axes
-    }
-    selected = _root_temporal_dimensions(op)
-    missing = sorted(dimension for dimension in declared if selected.count(dimension) == 0)
-    duplicate = sorted(dimension for dimension in declared if selected.count(dimension) > 1)
-    undeclared = sorted(set(selected) - declared)
-    if missing or duplicate or undeclared:
-        details = "; ".join(
-            detail
-            for detail in (
-                f"missing {missing}" if missing else "",
-                f"repeated {duplicate}" if duplicate else "",
-                f"undeclared {undeclared}" if undeclared else "",
-            )
-            if detail
-        )
-        raise OperationRejectedError(
-            "temporal-read-dimension-selection-cardinality",
-            f"{root.identity.canonical}: temporal read selections are invalid ({details}); "
-            "canonical operations name exactly one selection per declared dimension",
-        )
-
-
-def _root_temporal_dimensions(op: PredicateNode) -> list[str]:
-    current = op
-    selected: list[str] = []
-    while isinstance(current, (OrderBy, Limit, DeepFetch, Narrow, AsOf, AsOfRange, History)):
-        if isinstance(current, (AsOf, AsOfRange, History)):
-            selected.append(current.dimension)
-        current = current.operand
-    return selected
-
-
-def _walk(op: PredicateNode, model: Metamodel, scope: _PositionScope) -> None:
+def _walk(op: PredicateNode, model: Metamodel, scope: PositionScope) -> None:
     match op:
         case All() | NoneOp():
             return
@@ -327,9 +263,9 @@ def _walk(op: PredicateNode, model: Metamodel, scope: _PositionScope) -> None:
             | StringMatch(attr=attr)
             | Membership(attr=attr)
         ):
-            _check_attr_ref(attr, model, scope)
+            check_attribute_reference(attr, model, scope)
         case Between(attr=attr, lower=lower, upper=upper):
-            _check_attr_ref(attr, model, scope)
+            check_attribute_reference(attr, model, scope)
             _check_bound_ordering(attr, lower, upper)
         case NestedComparison():
             _check_nested_comparison(op, model)
@@ -353,37 +289,19 @@ def _walk(op: PredicateNode, model: Metamodel, scope: _PositionScope) -> None:
         case And(operands=operands) | Or(operands=operands):
             for operand in operands:
                 _walk(operand, model, scope)
-        case OrderBy(operand=operand, keys=keys):
-            _walk(operand, model, scope)
-            ordered = _ordered_scope(operand, model, scope)
-            for key in keys:
-                _check_attr_ref(key.attr, model, ordered)
-        case (
-            Not(operand=operand)
-            | Group(operand=operand)
-            | Limit(operand=operand)
-            | AsOf(operand=operand)
-            | AsOfRange(operand=operand)
-            | History(operand=operand)
-        ):
+        case Not(operand=operand) | Group(operand=operand):
             _walk(operand, model, scope)
         case Narrow(to=to, operand=operand):
-            new_scope = _validate_narrow(to, scope, model)
+            new_scope = validate_narrow(to, scope, model)
             _walk(operand, model, new_scope)
         case Navigate(rel=rel, op=inner) | Exists(rel=rel, op=inner) | NotExists(rel=rel, op=inner):
-            target = _relationship_target(
-                rel, model, wrong_kind_rule="navigate-value-object-target"
-            )
-            hop_scope = _PositionScope(
-                effective=_effective_set(model, target),
+            target = relationship_target(rel, model, wrong_kind_rule="navigate-value-object-target")
+            hop_scope = PositionScope(
+                effective=effective_set(model, target),
                 relationship_target=target.identity.canonical,
             )
             if inner is not None:
                 _walk(inner, model, hop_scope)
-        case DeepFetch(operand=operand, paths=paths):
-            _walk(operand, model, scope)
-            for path in paths:
-                _check_deep_fetch_path(path, model, scope)
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(op)
 
@@ -483,7 +401,7 @@ def _unresolved_reference(model: Metamodel, reference: str, class_name: str) -> 
     )
 
 
-def _effective_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
+def effective_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
     """``entity``'s effective concrete-subtype set: itself for a standalone Entity,
     else its family view's concrete descendants.
 
@@ -509,12 +427,18 @@ def _family_set(model: Metamodel, entity: EntityMetadata) -> frozenset[str]:
     view = inheritance.view(model).entity(entity.identity)
     root = None if view is None else model.entity(view.root)
     if root is None:  # pragma: no cover - the facet covers every accepted Entity
-        return _effective_set(model, entity)
-    return _effective_set(model, root)
+        return effective_set(model, entity)
+    return effective_set(model, root)
 
 
-def _resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[str]:
-    """Resolve one Subtype Selection and enforce its construction contract."""
+def resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[str]:
+    """Resolve one Subtype Selection to its effective concrete set and enforce its
+    construction contract (no duplicate and no overlapping alternative).
+
+    Exported for the query clauses that carry the same shared value — result
+    narrowing and an Include Path's two selections — so all four positions
+    resolve one way.
+    """
     resolved_alternatives: list[tuple[str, str, frozenset[str]]] = []
     for name in to:
         entity = _lookup_entity(model, name)
@@ -523,7 +447,7 @@ def _resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset
             resolved_alternatives.append((name, name, frozenset()))
         else:
             resolved_alternatives.append(
-                (name, entity.identity.canonical, _effective_set(model, entity))
+                (name, entity.identity.canonical, effective_set(model, entity))
             )
 
     seen_identities: set[str] = set()
@@ -555,11 +479,15 @@ def _resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset
 # Narrow / subtype-attribute position tracking (m-predicate x m-inheritance,  #
 # m-navigate relationship scope).                                             #
 # --------------------------------------------------------------------------- #
-def _validate_narrow(
-    to: tuple[str, ...], scope: _PositionScope, model: Metamodel
-) -> _PositionScope:
-    """Resolve a Subtype Selection inside the position supplied by context."""
-    resolved = _resolve_subtype_selection(to, model)
+def validate_narrow(to: tuple[str, ...], scope: PositionScope, model: Metamodel) -> PositionScope:
+    """Resolve a Subtype Selection inside the position supplied by context, and
+    answer the narrowed position.
+
+    Exported so an Object Query's own ``narrowTo`` clause resolves by the same
+    rule the Predicate-scoped node does — the only difference being which
+    position each is measured against.
+    """
+    resolved = resolve_subtype_selection(to, model)
     if not resolved:
         raise OperationRejectedError(
             "narrow-empty-effective-set",
@@ -573,7 +501,7 @@ def _validate_narrow(
                 f"subset of the relationship target's effective concrete set "
                 f"{sorted(scope.effective)}",
             )
-        return _PositionScope(effective=resolved)
+        return PositionScope(effective=resolved)
 
     if not resolved <= scope.effective:
         raise OperationRejectedError(
@@ -581,39 +509,16 @@ def _validate_narrow(
             f"narrow.to {sorted(resolved)} is not a subset of the active position "
             f"{sorted(scope.effective)} threaded into this node",
         )
-    return _PositionScope(effective=resolved)
+    return PositionScope(effective=resolved)
 
 
-def _ordered_scope(op: PredicateNode, model: Metamodel, scope: _PositionScope) -> _PositionScope:
-    """The position an `orderBy`'s ordered rows occupy.
+def check_attribute_reference(attr_ref: str, model: Metamodel, scope: PositionScope) -> None:
+    """Resolve one ``Class.attribute`` reference and check it against ``scope``.
 
-    A whole-result narrowing lowers to a TOP-LEVEL ``narrow`` under the ordering
-    wrapper, so the rows an order key sees are that narrow's resolved set, reached
-    through every wrapper `m-predicate` names as carrying it: the result-shaping
-    directives (``orderBy`` / ``limit`` / ``deepFetch``) and the
-    temporal wrappers (``asOf`` / ``asOfRange`` / ``history``). None of them
-    re-roots the rows its operand yields — ``deepFetch`` attaches fetched levels to
-    those same rows — so all of them pass the position through. A ``narrow``
-    appearing as a predicate term inside a boolean combinator is a filter over the
-    same position and moves nothing (`m-predicate`).
+    Exported so a query clause that addresses an attribute outside any predicate
+    — a Sort Key over the result position — meets the same rule the predicate's
+    own references do, rather than a second copy of it.
     """
-    match op:
-        case Narrow(to=to):
-            return _validate_narrow(to, scope, model)
-        case (
-            OrderBy(operand=operand)
-            | Limit(operand=operand)
-            | DeepFetch(operand=operand)
-            | AsOf(operand=operand)
-            | AsOfRange(operand=operand)
-            | History(operand=operand)
-        ):
-            return _ordered_scope(operand, model, scope)
-        case _:
-            return scope
-
-
-def _check_attr_ref(attr_ref: str, model: Metamodel, scope: _PositionScope) -> None:
     class_name, _, _attr_name = attr_ref.rpartition(".")
     entity = _lookup_entity(model, class_name)
     if entity is None:
@@ -629,7 +534,7 @@ def _check_attr_ref(attr_ref: str, model: Metamodel, scope: _PositionScope) -> N
 
 
 def _check_attribute_position(
-    model: Metamodel, entity: EntityMetadata, scope: _PositionScope
+    model: Metamodel, entity: EntityMetadata, scope: PositionScope
 ) -> None:
     """The positional rule: an attribute reference MUST be applicable to every
     concrete in the active position.
@@ -639,7 +544,7 @@ def _check_attribute_position(
     `narrow` could ever be the remedy: within the reference's own inheritance
     family it can, and outside it nothing can.
     """
-    own_effective = _effective_set(model, entity)
+    own_effective = effective_set(model, entity)
     if scope.effective <= own_effective:
         return
     if scope.effective <= _family_set(model, entity):
@@ -667,7 +572,7 @@ def _declaration_target(declaration: RelationshipDeclaration) -> EntityIdentity:
     return declaration.reverse_of.source_entity
 
 
-def _relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str) -> EntityMetadata:
+def relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str) -> EntityMetadata:
     class_name, _, member_name = rel_ref.rpartition(".")
     entity = _lookup_entity(model, class_name)
     if entity is None:
@@ -686,35 +591,6 @@ def _relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str
             "never via a fetch level or semi-join (m-value-object contract 4)",
         )
     raise ValueError(f"{rel_ref!r} names no declared relationship on {entity.identity.name}")
-
-
-def _check_deep_fetch_path(path: NavigationPath, model: Metamodel, scope: _PositionScope) -> None:
-    if path.narrow is not None:
-        _validate_narrow(path.narrow, scope, model)
-    for segment in path.segments:
-        target = _relationship_target(
-            segment.rel, model, wrong_kind_rule="deep-fetch-value-object-segment"
-        )
-        if segment.narrow:
-            # A path narrow carries only `to` — the position is the hop's target,
-            # implicitly (m-predicate `deepFetch` directive) — so only the subset
-            # check applies here; there is no separate `entity` to mismatch.
-            target_effective = _effective_set(model, target)
-            resolved = _resolve_subtype_selection(segment.narrow, model)
-            if not resolved:
-                raise OperationRejectedError(
-                    "narrow-empty-effective-set",
-                    f"deep-fetch path narrow {list(segment.narrow)} resolves to the empty "
-                    "concrete-subtype set",
-                )
-            if not resolved <= target_effective:
-                raise OperationRejectedError(
-                    "narrow-outside-relationship-target",
-                    f"deep-fetch path narrow {list(segment.narrow)} resolves to "
-                    f"{sorted(resolved)}, which is not a subset of "
-                    f"{target.identity.name}'s effective concrete set "
-                    f"{sorted(target_effective)}",
-                )
 
 
 # --------------------------------------------------------------------------- #

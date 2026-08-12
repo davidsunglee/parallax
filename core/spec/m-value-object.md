@@ -257,7 +257,7 @@ rather than left true by omission:
    temporal target retains the whole predecessor row (`m-unit-work`).
 3. **No reverse getters.** A value object has no identity and holds no reference
    back to its owner; a reverse (value-object → owner) getter MUST NOT exist.
-4. **Not a navigation or deep-fetch target.** A `deepFetch` path and a
+4. **Not a navigation or deep-fetch target.** An Include Path and a
    relationship-navigation path (`m-deep-fetch` / `m-navigate`) traverse
    relationships **between identity-bearing entities**; a value-object segment is
    invalid in either grammar and MUST be rejected. Value objects carry no
@@ -275,7 +275,7 @@ One-round-trip materialization is proven by `read` cases carrying `then.graph` a
 to-many value-object values, decoded from the single document column, with **no**
 child statement (`m-value-object-023` materializes every row's full nested
 composite under `all`; `m-value-object-024` materializes the matching owners'
-composites under a nested-field filter). A `deepFetch` or navigation path through a
+composites under a nested-field filter). An Include Path or navigation path through a
 value object is pinned as a pre-SQL `rejected` case (`m-case-format`): a value
 object's occurrence name is a legal *member* segment, so such a path is spellable
 and only a model-aware resolver knows the member it names is a value object.

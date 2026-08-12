@@ -27,7 +27,7 @@ their own proof.
 | | Conformance adapter grade | API Conformance Suite |
 | --- | --- | --- |
 | Subject under test | the CLI envelope (`describe` / `compile` / `run`) | the idiomatic public developer API |
-| Execution surface | corpus `operation` YAML, compiled and run through the adapter | the developer DSL, run through the shipped adapter |
+| Execution surface | corpus `objectQuery` YAML, compiled and run through the adapter | the developer DSL, run through the shipped adapter |
 | Compared against | the corpus oracles at wire level | the corpus oracles, plus developer-surface guarantees |
 | Golden SQL text | compared (compile lane) | out of scope |
 | Role | the official conformance grade | additive proof beside the grade |

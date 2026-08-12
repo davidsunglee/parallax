@@ -12,18 +12,25 @@ model: models/document-layout.yaml
 tags: [m-read-lock, m-inheritance, m-storage-layout, m-sql, m-dialect, m-document-codec, m-predicate, table-per-hierarchy, document-layout, narrow, predicate, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Payment
-  operation:
-    or:
-      operands:
-        - narrow:
-            to: [parallax.compatibility.CardPayment]
-            operand:
-              eq: { attr: parallax.compatibility.CardPayment.detail, value: visa-4242 }
-        - narrow:
-            to: [parallax.compatibility.CashPayment]
-            operand:
-              greaterThan: { attr: parallax.compatibility.CashPayment.detail, value: 10.00 }
+  objectQuery:
+    target: parallax.compatibility.Payment
+    predicate:
+      or:
+        operands:
+          - narrow:
+              to:
+                - parallax.compatibility.CardPayment
+              operand:
+                eq:
+                  attr: parallax.compatibility.CardPayment.detail
+                  value: visa-4242
+          - narrow:
+              to:
+                - parallax.compatibility.CashPayment
+              operand:
+                greaterThan:
+                  attr: parallax.compatibility.CashPayment.detail
+                  value: 10.00
 then:
   statements:
     - sql:

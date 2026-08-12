@@ -32,9 +32,12 @@ when:
         - sql:
             postgres: delete from customer where jsonb_extract_path_text(address, ?) = ?
           binds: [city, Boston]
-    - targetEntity: parallax.compatibility.Customer
-      find:
-        nestedEq: { path: parallax.compatibility.Customer.address.city, value: Boston }
+    - objectQuery:
+        target: parallax.compatibility.Customer
+        predicate:
+          nestedEq:
+            path: parallax.compatibility.Customer.address.city
+            value: Boston
       roundTrips: 1
       statements:
         - sql:

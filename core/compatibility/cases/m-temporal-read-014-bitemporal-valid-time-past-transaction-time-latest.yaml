@@ -11,20 +11,18 @@
 # R1 is superseded on Transaction Time (out_z finite), excluded. The Valid-Time and
 # Transaction-Time binds read Valid-Time-first (the outer pin), then Transaction Time.
 model: models/position.yaml
-tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, past, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, bitemporal, temporal, as-of, both-axes, past, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Position
-  operation:
-    asOf:
-      operand:
-        asOf:
-          operand:
-            all: {}
-          dimension: transaction-time
-          coordinate: latest
-      dimension: valid-time
-      coordinate: "2024-03-01T00:00:00+00:00"
+  objectQuery:
+    target: parallax.compatibility.Position
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
+      valid-time:
+        asOf: '2024-03-01T00:00:00+00:00'
 then:
   statements:
     - sql:

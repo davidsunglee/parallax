@@ -57,7 +57,7 @@ def _read_case() -> dict[str, Any]:
         "model": "models/orders.yaml",
         "tags": ["m-agg"],
         "shape": "read",
-        "when": {"targetEntity": "Order", "operation": {"all": {}}},
+        "when": {"objectQuery": {"target": "Order", "predicate": {"all": {}}}},
         "then": {
             "statements": [{"sql": {"postgres": "select t0.id from orders t0"}, "binds": []}],
             "rows": [{"id": 1}],
@@ -93,8 +93,10 @@ def _scenario_case() -> dict[str, Any]:
         "when": {
             "scenario": [
                 {
-                    "targetEntity": "Account",
-                    "find": {"eq": {"attr": "Account.id", "value": 7}},
+                    "objectQuery": {
+                        "target": "Account",
+                        "predicate": {"eq": {"attr": "Account.id", "value": 7}},
+                    },
                     "roundTrips": 1,
                     "statements": [
                         {
@@ -126,8 +128,10 @@ def _settled_write_scenario_case() -> dict[str, Any]:
             "scenario": [
                 {
                     "uow": "g",
-                    "targetEntity": "Position",
-                    "find": {"eq": {"attr": "Position.id", "value": 1}},
+                    "objectQuery": {
+                        "target": "Position",
+                        "predicate": {"eq": {"attr": "Position.id", "value": 1}},
+                    },
                     "roundTrips": 1,
                     "statements": [
                         {
@@ -173,8 +177,10 @@ def _action_scenario_case() -> dict[str, Any]:
         "when": {
             "scenario": [
                 {
-                    "targetEntity": "Order",
-                    "find": {"in": {"attr": "Order.id", "values": [1, 2]}},
+                    "objectQuery": {
+                        "target": "Order",
+                        "predicate": {"in": {"attr": "Order.id", "values": [1, 2]}},
+                    },
                     "roundTrips": 1,
                     "statements": [
                         {
@@ -231,8 +237,10 @@ def _action_identity_error_case() -> dict[str, Any]:
         "when": {
             "scenario": [
                 {
-                    "targetEntity": "Order",
-                    "find": {"eq": {"attr": "Order.id", "value": 1}},
+                    "objectQuery": {
+                        "target": "Order",
+                        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    },
                     "roundTrips": 1,
                     "statements": [
                         {
@@ -335,7 +343,7 @@ def _coherence_case() -> dict[str, Any]:
                 {
                     "node": "B",
                     "kind": "read",
-                    "targetEntity": "Account",
+                    "objectQuery": {"target": "Account", "predicate": {"all": {}}},
                     "statements": step_sql,
                     "observeRows": [{"id": 2}],
                 },
@@ -459,13 +467,18 @@ def _boundary_case() -> dict[str, Any]:
     }
 
 
-def _rejected_operation_case() -> dict[str, Any]:
-    """A rejected case carrying an invalid OPERATION and the violated rule."""
+def _rejected_query_case() -> dict[str, Any]:
+    """A rejected case carrying an invalid QUERY and the violated rule."""
     return {
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
         "shape": "rejected",
-        "when": {"operation": {"nestedEq": {"path": "Customer.contact.city", "value": "Oslo"}}},
+        "when": {
+            "objectQuery": {
+                "target": "Customer",
+                "predicate": {"nestedEq": {"path": "Customer.contact.city", "value": "Oslo"}},
+            }
+        },
         "then": {"rejectedRule": "nested-path-first-segment-not-value-object"},
     }
 
@@ -475,7 +488,7 @@ def _rejected_case_declaring_zero_round_trips() -> dict[str, Any]:
 
     The count a pre-SQL refusal can accurately state, which the property's own
     default of one — written for the shapes that reach the database — cannot."""
-    doc = _rejected_operation_case()
+    doc = _rejected_query_case()
     doc["then"]["roundTrips"] = 0
     return doc
 
@@ -527,8 +540,10 @@ def _action_boundary_no_on_case() -> dict[str, Any]:
         "when": {
             "scenario": [
                 {
-                    "targetEntity": "Order",
-                    "find": {"eq": {"attr": "Order.id", "value": 1}},
+                    "objectQuery": {
+                        "target": "Order",
+                        "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                    },
                     "roundTrips": 1,
                     "statements": [
                         {
@@ -570,12 +585,10 @@ def _graphs_read_case() -> dict[str, Any]:
         "tags": ["m-snapshot-read", "m-deep-fetch"],
         "shape": "read",
         "when": {
-            "targetEntity": "InvoiceLine",
-            "operation": {
-                "history": {
-                    "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
-                    "dimension": "InvoiceLine.transaction-time",
-                }
+            "objectQuery": {
+                "target": "InvoiceLine",
+                "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+                "temporal": {"transaction-time": {"history": {}}},
             },
         },
         "then": {
@@ -614,12 +627,10 @@ def _identity_checks_read_case() -> dict[str, Any]:
         "tags": ["m-snapshot-read", "m-deep-fetch"],
         "shape": "read",
         "when": {
-            "targetEntity": "Order",
-            "operation": {
-                "deepFetch": {
-                    "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                    "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
-                }
+            "objectQuery": {
+                "target": "Order",
+                "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+                "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
             },
         },
         "then": {
@@ -657,7 +668,7 @@ VALID_CASES = {
     "boundary": _boundary_case,
     "read-graphs": _graphs_read_case,
     "read-identity-checks": _identity_checks_read_case,
-    "rejected-operation": _rejected_operation_case,
+    "rejected-query": _rejected_query_case,
     "rejected-declaring-its-zero-cost": _rejected_case_declaring_zero_round_trips,
     "rejected-write": _rejected_write_case,
     "rejected-keyed-write": _rejected_keyed_write_case,
@@ -755,7 +766,7 @@ def _legacy_layout() -> dict[str, Any]:
     return {
         "model": "models/orders.yaml",
         "tags": ["m-agg"],
-        "operation": {"all": {}},
+        "objectQuery": {"target": "Order", "predicate": {"all": {}}},
         "goldenSql": {"postgres": "select t0.id from orders t0"},
         "binds": [],
         "expectedRows": [{"id": 1}],
@@ -815,7 +826,7 @@ def _cross_shape_when_member() -> dict[str, Any]:
     """A read case carrying a stray cross-shape `when.boundary` block (finding 2).
 
     The read branch now constrains `when` to only that shape's members
-    (`operation` / `targetEntity` / `uow` / `equivalentEncodings`), so a
+    (`objectQuery` / `uow` / `equivalentEncodings`), so a
     mislabeled/mixed document that also carries an unrelated action member fails its
     shape branch and no other branch matches — the `oneOf` rejects it.
     """
@@ -824,51 +835,52 @@ def _cross_shape_when_member() -> dict[str, Any]:
     return doc
 
 
-def _read_missing_target_entity() -> dict[str, Any]:
-    """A read case missing `when.targetEntity` (m-case-format Q1): the branch requires it."""
+def _read_missing_target() -> dict[str, Any]:
+    """A read case whose query omits its own `target` (m-case-format Q1)."""
     doc = _read_case()
-    del doc["when"]["targetEntity"]
+    del doc["when"]["objectQuery"]["target"]
     return doc
 
 
-def _scenario_find_missing_target_entity() -> dict[str, Any]:
-    """A scenario read step missing `targetEntity` (Q1): the read-step branch requires it."""
+def _scenario_find_missing_query() -> dict[str, Any]:
+    """A scenario read step carrying no `objectQuery` (Q1): the branch requires it."""
     doc = _scenario_case()
-    del doc["when"]["scenario"][0]["targetEntity"]
+    del doc["when"]["scenario"][0]["objectQuery"]
     return doc
 
 
-def _coherence_read_missing_target_entity() -> dict[str, Any]:
-    """A coherence read step missing `targetEntity` (Q1): the read conditional requires it."""
+def _coherence_read_missing_query() -> dict[str, Any]:
+    """A coherence read step carrying no `objectQuery` (Q1): the read conditional
+    requires it."""
     doc = _coherence_case()
-    del doc["when"]["coherence"][0]["targetEntity"]
+    del doc["when"]["coherence"][0]["objectQuery"]
     return doc
 
 
 def _rejected_without_rule() -> dict[str, Any]:
     """A rejected case missing `then.rejectedRule`: the branch requires it."""
-    doc = _rejected_operation_case()
+    doc = _rejected_query_case()
     del doc["then"]["rejectedRule"]
     return doc
 
 
 def _rejected_unknown_rule() -> dict[str, Any]:
     """A rejected case naming a rule outside the closed vocabulary — the enum rejects it."""
-    doc = _rejected_operation_case()
+    doc = _rejected_query_case()
     doc["then"]["rejectedRule"] = "not-a-real-rule"
     return doc
 
 
 def _rejected_with_golden_statements() -> dict[str, Any]:
     """A rejected case carrying golden `then.statements` — disallowed (rejection is pre-SQL)."""
-    doc = _rejected_operation_case()
+    doc = _rejected_query_case()
     doc["then"]["statements"] = [{"sql": {"postgres": "select t0.id from customer t0"}}]
     return doc
 
 
 def _rejected_cross_shape_when_member() -> dict[str, Any]:
     """A rejected case carrying a stray `when.boundary` (its `when` allows only operation/write)."""
-    doc = _rejected_operation_case()
+    doc = _rejected_query_case()
     doc["when"]["boundary"] = [{"action": "read"}]
     return doc
 
@@ -881,7 +893,7 @@ def _rejected_both_operation_and_write() -> dict[str, Any]:
     matches BOTH alternatives when both are present, so `oneOf` fails — closing the
     gap the earlier `anyOf` (>= 1, not exactly 1) left open.
     """
-    doc = _rejected_operation_case()
+    doc = _rejected_query_case()
     doc["when"]["write"] = {"id": 1, "name": "Acme", "address": {"city": "Oslo"}}
     return doc
 
@@ -893,8 +905,8 @@ def _rejected_neither_operation_nor_write() -> dict[str, Any]:
     no other top-level branch matches (the `shape` const gates them) — the document
     is rejected.
     """
-    doc = _rejected_operation_case()
-    del doc["when"]["operation"]
+    doc = _rejected_query_case()
+    del doc["when"]["objectQuery"]
     return doc
 
 
@@ -1187,8 +1199,10 @@ def _write_value_scenario_mixing_another_step() -> dict[str, Any]:
     doc = _write_value_scenario_case()
     doc["when"]["scenario"].append(
         {
-            "targetEntity": "parallax.compatibility.Account",
-            "find": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 2}},
+            "objectQuery": {
+                "target": "parallax.compatibility.Account",
+                "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 2}},
+            },
             "roundTrips": 1,
             "statements": [
                 {
@@ -1219,7 +1233,7 @@ def _rejected_case_costing_a_round_trip() -> dict[str, Any]:
 
     A rejected case's input is refused before any statement is composed, so one
     round trip is not merely unasserted but impossible."""
-    doc = _rejected_operation_case()
+    doc = _rejected_query_case()
     doc["then"]["roundTrips"] = 1
     return doc
 
@@ -1241,9 +1255,9 @@ REJECTED_CASES = {
     "binds-outside-statement-entry": _binds_outside_statement_entry,
     "attempt-legacy-affected-rows": _attempt_legacy_affected_rows,
     "cross-shape-when-member": _cross_shape_when_member,
-    "read-missing-target-entity": _read_missing_target_entity,
-    "scenario-find-missing-target-entity": _scenario_find_missing_target_entity,
-    "coherence-read-missing-target-entity": _coherence_read_missing_target_entity,
+    "read-missing-target": _read_missing_target,
+    "scenario-find-missing-query": _scenario_find_missing_query,
+    "coherence-read-missing-query": _coherence_read_missing_query,
     "rejected-without-rule": _rejected_without_rule,
     "rejected-unknown-rule": _rejected_unknown_rule,
     "rejected-with-golden-statements": _rejected_with_golden_statements,

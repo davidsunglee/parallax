@@ -15,23 +15,26 @@
 # is deferred to the API Conformance Suite, exactly like the plain diamond
 # (m-snapshot-read-001). 1 (root) + 2 (one per view) = 3 round trips.
 model: models/animal.yaml
-tags: [m-snapshot-read, m-deep-fetch, m-inheritance, table-per-hierarchy, diamond, familyVariant, graph, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-deep-fetch, m-inheritance, table-per-hierarchy, diamond, familyVariant, graph, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child levels - the broad Person.animals and narrowed pets[Dog] IN-list binds are both the distinct owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Person
-  operation:
-    deepFetch:
-      operand:
-        eq:
-          attr: parallax.compatibility.Person.id
-          value: 10
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Person.animals }] }
-        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Dog] } }] }
+  objectQuery:
+    target: parallax.compatibility.Person
+    predicate:
+      eq:
+        attr: parallax.compatibility.Person.id
+        value: 10
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Person.animals
+      - segments:
+          - rel: parallax.compatibility.Person.pets
+            narrowTo:
+              - parallax.compatibility.Dog
 then:
   statements:
     - sql:

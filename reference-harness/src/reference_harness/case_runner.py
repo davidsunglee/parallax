@@ -62,7 +62,7 @@ from .inheritance import (
     tag_of,
     tag_value_to_subtype,
     validate_family,
-    validate_operation_inheritance,
+    validate_query_inheritance,
 )
 from .keyed_write_validate import (
     KEYED_WRITE_REJECTED_RULES,
@@ -75,8 +75,7 @@ from .metamodel import (
 from .metamodel import (
     validate_index_identities,
 )
-from .op_validate import validate_operation
-from .operation_references import OPERAND_ROW_WRAPPER_TAGS
+from .op_validate import validate_object_query
 from .predicate_write_validate import (
     requires_predicate_write_materialization,
     validate_predicate_write,
@@ -440,22 +439,22 @@ def _assert_schema(case: Case) -> None:
                 f"{case.rejected_rule!r} is not a known rule"
             )
         # A rejected case pins a SINGLE invalid input, so its `when` MUST carry
-        # EXACTLY ONE of `operation` / `write` / `model` (the normative "exactly one
-        # invalid input" rule, m-case-format Rejected cases). This guard is a
+        # EXACTLY ONE of `objectQuery` / `write` / `model` (the normative "exactly
+        # one invalid input" rule, m-case-format Rejected cases). This guard is a
         # defense-in-depth mirror of the schema's `oneOf`
         # (compatibility-case.schema.json rejected branch): it keeps the constraint
         # enforced even if some future caller reaches the runner without schema
         # validation, and `_assert_rejected` below dispatches on the single member
         # present.
-        present = [member for member in ("operation", "write", "model") if member in case.when]
+        present = [member for member in ("objectQuery", "write", "model") if member in case.when]
         if len(present) != 1:
             raise CaseFailure(
                 f"{case.path.name}: a rejected case MUST carry EXACTLY ONE of "
-                f"when.operation / when.write / when.model (one invalid input); found "
+                f"when.objectQuery / when.write / when.model (one invalid input); found "
                 f"{present or 'none'}."
             )
-    elif "operation" not in case.when:
-        raise CaseFailure(f"{case.path.name}: missing operation")
+    elif "objectQuery" not in case.when:
+        raise CaseFailure(f"{case.path.name}: missing objectQuery")
     if not case.model.class_name:
         raise CaseFailure(f"{case.path.name}: model has no class name")
     _assert_binds_dialect_keys(case)
@@ -567,30 +566,28 @@ def _assert_normalization(case: Case, dialect: str) -> None:
 
 
 def _assert_serde(case: Case) -> None:
-    # Layer 4a: operation serde. A read case has one top-level operation; a
-    # scenario case has one operation per step (under `find`); a write-sequence
-    # case and a conflict case (m-opt-lock) have none. Layer 4b: metamodel (descriptor)
+    # Layer 4a: Object Query serde. A read case has one top-level query; a
+    # scenario or coherence case has one per read step; a write-sequence case and a
+    # conflict case (m-opt-lock) have none. Layer 4b: metamodel (descriptor)
     # serde — always.
     if case.is_scenario:
         for step in case.scenario:
-            # Read steps carry an operation under `find`; write steps carry none.
-            if "find" in step:
-                serde.assert_roundtrip(step["find"])
+            # Read steps carry an `objectQuery`; write steps carry none.
+            if "objectQuery" in step:
+                serde.assert_roundtrip(step["objectQuery"])
     elif case.is_coherence:
-        # A coherence case's read steps carry an operation under `find`; write
-        # steps carry none. Round-trip each present operation through the serde.
         for step in case.coherence:
-            if "find" in step:
-                serde.assert_roundtrip(step["find"])
+            if "objectQuery" in step:
+                serde.assert_roundtrip(step["objectQuery"])
     elif case.is_rejected:
-        # A rejected case carries the invalid input under `when.operation` (a
-        # schema-valid m-predicate node — serde it), `when.write` (a neutral write
-        # row, which has no operation to serde), OR `when.model` (an inline invalid
+        # A rejected case carries the invalid input under `when.objectQuery` (a
+        # schema-valid m-object-query document — serde it), `when.write` (a neutral
+        # write row, which has no query to serde), OR `when.model` (an inline invalid
         # inheritance descriptor — round-tripped through descriptor serde before
         # semantic validation asserts the rejection, m-inheritance resolved Q3). The
         # referenced (valid) descriptor still round-trips below.
-        if "operation" in case.when:
-            serde.assert_roundtrip(case.when["operation"])
+        if "objectQuery" in case.when:
+            serde.assert_roundtrip(case.when["objectQuery"])
         elif "model" in case.when:
             serde.assert_roundtrip(case.when["model"])
     elif (
@@ -599,7 +596,7 @@ def _assert_serde(case: Case) -> None:
         and not case.is_error
         and not case.is_concurrency_success
     ):
-        serde.assert_roundtrip(case.operation)
+        serde.assert_roundtrip(case.object_query)
     serde.assert_roundtrip(case.model.descriptor)
 
 
@@ -607,11 +604,11 @@ def _assert_equivalent_encodings(case: Case) -> None:
     """Layer 4c: every declared alternate encoding collapses to its canonical read.
 
     Dialect-agnostic and database-free. A top-level read compares entries under
-    ``when.equivalentEncodings`` to ``when.operation``; a scenario read step does
-    the same with its own sibling field and ``find``. Authoring normalization
+    ``when.equivalentEncodings`` to ``when.objectQuery``; a scenario read step does
+    the same with its own sibling field and its own query. Authoring normalization
     first makes an omitted Transaction-Time selection explicit, then ordinary
     serde canonicalization proves both surface spellings denote one canonical
-    operation.
+    query.
     """
     family = Family(case.model.entity_defs)
     if case.is_scenario:
@@ -619,16 +616,15 @@ def _assert_equivalent_encodings(case: Case) -> None:
             encodings = step.get("equivalentEncodings", [])
             if not encodings:
                 continue
-            target = step.get("targetEntity")
-            canonical_operation = serde.canonical(step["find"])
+            canonical_query = serde.canonical(step["objectQuery"])
             for encoding_index, encoding in enumerate(encodings):
-                normalized = normalize_authored_temporal_selections(encoding, target, family)
-                if serde.canonical(normalized) != canonical_operation:
+                normalized = normalize_authored_temporal_selections(encoding, family)
+                if serde.canonical(normalized) != canonical_query:
                     raise CaseFailure(
                         f"{case.path.name}: scenario[{step_index}].equivalentEncodings"
-                        f"[{encoding_index}] does not canonicalize to the step find.\n"
-                        f"  encoding (canonical):  {serde.canonical(normalized)!r}\n"
-                        f"  operation (canonical): {canonical_operation!r}"
+                        f"[{encoding_index}] does not canonicalize to the step query.\n"
+                        f"  encoding (canonical): {serde.canonical(normalized)!r}\n"
+                        f"  query (canonical):    {canonical_query!r}"
                     )
         return
     if (
@@ -639,17 +635,15 @@ def _assert_equivalent_encodings(case: Case) -> None:
         or case.is_concurrency_success
     ):
         return
-    canonical_operation = serde.canonical(case.operation)
+    canonical_query = serde.canonical(case.object_query)
     for index, encoding in enumerate(case.equivalent_encodings):
-        normalized = normalize_authored_temporal_selections(
-            encoding, case.when.get("targetEntity"), family
-        )
-        if serde.canonical(normalized) != canonical_operation:
+        normalized = normalize_authored_temporal_selections(encoding, family)
+        if serde.canonical(normalized) != canonical_query:
             raise CaseFailure(
                 f"{case.path.name}: equivalentEncodings[{index}] does not "
-                f"canonicalize to the case operation.\n"
-                f"  encoding (canonical):  {serde.canonical(normalized)!r}\n"
-                f"  operation (canonical): {canonical_operation!r}"
+                f"canonicalize to the case query.\n"
+                f"  encoding (canonical): {serde.canonical(normalized)!r}\n"
+                f"  query (canonical):    {canonical_query!r}"
             )
 
 
@@ -686,44 +680,38 @@ def _resolve_rel_ref(model: Model, rel_ref: str) -> tuple[Entity, dict[str, Any]
 def _deepfetch_paths(case: Case) -> list[list[str]]:
     """The deep-fetch paths as ordered lists of ``Class.relationship`` refs.
 
-    A path is a closed object ``{narrow?, segments}`` whose entries are closed
-    ``{rel, narrow?}`` segments (m-predicate); this projection keeps only the ``rel``
-    and is used where narrowing is irrelevant (root-entity resolution). Narrow-aware
-    hop identity is built from :func:`_deepfetch_paths_raw`.
+    A path is a closed object ``{appliesTo?, segments}`` whose entries are closed
+    ``{rel, narrowTo?}`` segments (m-object-query); this projection keeps only the
+    ``rel`` and is used where narrowing is irrelevant (root-entity resolution).
+    Narrow-aware hop identity is built from :func:`_deepfetch_paths_raw`.
     """
     return [
-        [segment["rel"] for segment in path["segments"]]
-        for path in case.operation["deepFetch"]["paths"]
+        [segment["rel"] for segment in path["segments"]] for path in case.object_query["includes"]
     ]
 
 
 def _deepfetch_paths_raw(case: Case) -> list[dict[str, Any]]:
-    """The deep-fetch paths as authored: closed ``{narrow?, segments}`` objects.
+    """The Include Paths as authored: closed ``{appliesTo?, segments}`` objects.
 
-    Preserves both narrow positions — the path-ROOT guard and each hop's own
-    ``narrow`` — so the fetch machinery can derive the narrowed view key, the root
-    participation filter, and the dedup identity built from both.
+    Preserves both selection positions — the SOURCE guard and each hop's own
+    ``narrowTo`` — so the fetch machinery can derive the narrowed view key, the
+    root participation filter, and the dedup identity built from both.
     """
-    return list(case.operation["deepFetch"]["paths"])
+    return list(case.object_query["includes"])
 
 
 def _deepfetch_root_position(case: Case) -> str | None:
     """The polymorphic position a deep fetch's paths are rooted at.
 
-    The read's own ``targetEntity`` when it names an entity of the model, which is
-    what a path-root guard clamps against; ``None`` for a case that authors none
-    (the guard then has no position to resolve in).
+    The query's own ``target`` when it names an entity of the model, which is what
+    a source guard clamps against.
     """
-    target = case.when.get("targetEntity")
+    target = case.object_query.get("target")
     return target if isinstance(target, str) else None
 
 
-def _deepfetch_root_operand(case: Case) -> dict[str, Any]:
-    return case.operation["deepFetch"]["operand"]
-
-
 def _is_deep_fetch(case: Case) -> bool:
-    return "deepFetch" in case.operation
+    return bool(case.object_query.get("includes"))
 
 
 def _deepfetch_root_entity(case: Case) -> Entity:
@@ -763,46 +751,37 @@ class _HistorySelection:
 _TemporalSelection = _AsOfSelection | _AsOfRangeSelection | _HistorySelection
 
 
-def _root_temporal_selections(operation: Any) -> dict[str, _TemporalSelection]:
+def _query_temporal_selections(query: Any) -> dict[str, _TemporalSelection]:
+    """One Object Query's Temporal Selection clause, keyed by dimension."""
+    temporal = query.get("temporal") if isinstance(query, dict) else None
+    if not isinstance(temporal, dict):
+        return {}
     selections: dict[str, _TemporalSelection] = {}
-    node = operation
-    while isinstance(node, dict) and len(node) == 1:
-        tag = next(iter(node))
-        body = node[tag]
-        if not isinstance(body, dict):
-            break
-        if tag in ("orderBy", "limit", "narrow", "deepFetch"):
-            node = body.get("operand")
+    for dimension, selection in temporal.items():
+        if not isinstance(selection, dict) or len(selection) != 1:
             continue
-        dimension = body.get("dimension")
-        if tag == "asOf" and isinstance(dimension, str):
-            coordinate = body.get("coordinate")
-            if isinstance(coordinate, str):
-                selections[dimension] = _AsOfSelection(coordinate)
-        elif tag == "asOfRange" and isinstance(dimension, str):
+        tag = next(iter(selection))
+        body = selection[tag]
+        if tag == "asOf" and isinstance(body, str):
+            selections[dimension] = _AsOfSelection(body)
+        elif tag == "asOfRange" and isinstance(body, dict):
             start = body.get("start")
             end = body.get("end")
             if isinstance(start, str) and isinstance(end, str):
                 selections[dimension] = _AsOfRangeSelection(start, end)
-        elif tag == "history" and isinstance(dimension, str):
+        elif tag == "history":
             selections[dimension] = _HistorySelection()
-        else:
-            break
-        node = body.get("operand")
     return selections
 
 
 def _root_asof_pins(case: Case) -> dict[str, str]:
-    """Map ``{dimension: coordinate}`` from nested ``asOf`` nodes wrapping the
-    deep-fetch root operand. A dimension absent here defaults to the child's own
-    ``latest`` value at propagation time. Empty when the root is unpinned.
-
-    Transparent wrappers (``orderBy`` / ``limit`` / whole-result ``narrow``) are
-    crossed in any interleaving with temporal wrappers, mirroring root compile.
+    """Map ``{dimension: coordinate}`` from the read's own ``asOf`` selections. A
+    dimension absent here defaults to the child's own ``latest`` value at
+    propagation time. Empty when the root is unpinned.
     """
     return {
         dimension: selection.coordinate
-        for dimension, selection in _root_temporal_selections(_deepfetch_root_operand(case)).items()
+        for dimension, selection in _query_temporal_selections(case.object_query).items()
         if isinstance(selection, _AsOfSelection)
     }
 
@@ -1007,7 +986,7 @@ def _resolve_hop(
     guard already selected and is separated by *parent* instead.
     """
     rel_ref = segment["rel"]
-    narrow_to = segment["narrow"]["to"] if isinstance(segment.get("narrow"), dict) else None
+    narrow_to = segment.get("narrowTo") if isinstance(segment.get("narrowTo"), list) else None
     target = family.relationship_target(rel_ref)
     if target is not None and inheritance_of(family.defs.get(target, {})) is not None:
         effective_set, is_narrowed = resolve_hop_effective_set(family, rel_ref, narrow_to)
@@ -1300,45 +1279,39 @@ def _assert_flat_equivalence(case: Case, db: DatabaseProvider) -> None:
 def _read_effective_set(case: Case, family: Family, target_name: str) -> list[str]:
     """The effective concrete-subtype set an abstract-target read resolves over.
 
-    The queried position is *target_name*, further constrained when the operation's
-    leading node is a ``narrow`` — then the narrowed ``to`` set drives the projection
-    superset. The wrappers descended to reach it are the closed set that returns its
-    operand's own rows (:data:`OPERAND_ROW_WRAPPER_TAGS`), so a deep fetch's ROOT
-    projection follows its operand's narrow. A ``narrow`` buried in an ``or`` (grouped
-    branch predicates) leaves the target's full family in scope, as does a deep-fetch
-    path's own root guard, which qualifies a path's source objects rather than the
-    read's result.
+    The queried position is *target_name*, further constrained by the query's own
+    ``narrowTo`` clause — then the narrowed selection drives the projection
+    superset. A ``narrow`` inside the predicate (grouped branch predicates) leaves
+    the target's full family in scope, as does an Include Path's own source guard,
+    which qualifies a path's source objects rather than the read's result.
     """
-    node: Any = case.operation
-    while isinstance(node, dict) and len(node) == 1:
-        tag = next(iter(node))
-        if tag in OPERAND_ROW_WRAPPER_TAGS:
-            node = node[tag].get("operand")
-        elif tag == "narrow":
-            return family.resolve_to_set(node["narrow"].get("to", []) or [])
-        else:
-            break
+    narrow_to = case.object_query.get("narrowTo")
+    if isinstance(narrow_to, list):
+        return family.resolve_to_set(narrow_to)
     return family.effective_concrete_set(target_name)
 
 
 def _read_temporal_selections(case: Case) -> dict[str, _TemporalSelection]:
-    """Return every canonical temporal selection on a read, keyed by dimension."""
-    return _root_temporal_selections(case.operation)
+    """Return every canonical Temporal Selection on a read, keyed by dimension."""
+    return _query_temporal_selections(case.object_query)
 
 
-def _is_temporal_only_read(operation: Any) -> bool:
-    """Whether an operation contains only temporal selections over ``all``."""
-    node = operation
-    while isinstance(node, dict) and len(node) == 1:
-        tag = next(iter(node))
-        body = node[tag]
-        if not isinstance(body, dict):
-            return False
-        if tag in ("asOf", "asOfRange", "history"):
-            node = body.get("operand")
-            continue
-        return tag == "all" and body == {}
-    return False
+def _is_temporal_only_read(query: Any) -> bool:
+    """Whether a query selects and shapes on nothing but its Temporal Selections.
+
+    Every clause that contributes a bind of its own disqualifies it, because the
+    per-branch bind vector this predicate gates is derived from the Temporal
+    Selections alone: a user predicate, result narrowing, an ordering, and the cap
+    each add binds the derivation does not model.
+    """
+    if not isinstance(query, dict):
+        return False
+    return (
+        query.get("predicate") == {"all": {}}
+        and not query.get("narrowTo")
+        and not query.get("orderBy")
+        and query.get("limit") is None
+    )
 
 
 def _expected_temporal_suffix(
@@ -1369,17 +1342,17 @@ def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
     """Assert the temporal contributions of the abstract-TPCS temporal witness.
 
     This deliberately narrow m-sql / m-temporal-read oracle applies only to
-    ``m-inheritance-093`` while its operation contains temporal selections over ``all``.
+    ``m-inheritance-093`` while its query filters on nothing but Temporal Selections.
     It derives each branch's temporal predicates in Valid-Time-first order; ``history``
     contributes none. Canonical SQL/bind goldens, compile sweeps, execution checks, and
     focused compatibility cases own complete predicate, projection, and result-directive
     bind vectors. A no-op for every operation outside that temporal-only boundary.
     """
     if not case.path.stem.startswith("m-inheritance-093-") or not _is_temporal_only_read(
-        case.operation
+        case.object_query
     ):
         return
-    target_name = case.when.get("targetEntity")
+    target_name = case.object_query.get("target")
     if not isinstance(target_name, str):
         return
     family = Family(case.model.entity_defs)
@@ -1413,7 +1386,7 @@ def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
 
 def _assert_tph_document_partition_shape(case: Case, dialect: str) -> None:
     """Grade a TPH document `union all` as one tag-filtered branch per variant."""
-    target_name = case.when.get("targetEntity")
+    target_name = case.object_query.get("target")
     if not isinstance(target_name, str):
         return
     family = Family(case.model.entity_defs)
@@ -1568,10 +1541,11 @@ def _materialize_target_document_layout(
 ) -> list[dict[str, Any]]:
     """:func:`_materialize_document_layout` over the case's own read target.
 
-    A top-level read's rows belong to ``when.targetEntity``; a deep fetch's child
-    level does not, which is why the entity is an argument there and resolved here.
+    A top-level read's rows belong to its query's own ``target``; a deep fetch's
+    child level does not, which is why the entity is an argument there and resolved
+    here.
     """
-    target_name = case.when.get("targetEntity")
+    target_name = case.object_query.get("target")
     if not isinstance(target_name, str):
         return rows
     return _materialize_document_layout(
@@ -1586,7 +1560,7 @@ def _materialize_target_tph_document_layout(
     case: Case, rows: list[dict[str, Any]], *, include_value_objects: bool
 ) -> list[dict[str, Any]]:
     """Decode an abstract TPH document only after its raw tag resolves the variant."""
-    target_name = case.when.get("targetEntity")
+    target_name = case.object_query.get("target")
     if not isinstance(target_name, str):
         return rows
     family = Family(case.model.entity_defs)
@@ -1704,7 +1678,7 @@ def _materialize_family_variant(case: Case, rows: list[dict[str, Any]]) -> list[
     tag column with the derived ``familyVariant`` (``tagValue`` -> concrete subtype
     name) so the materialized rows can be compared to ``then.rows``.
     """
-    target_name = case.when.get("targetEntity")
+    target_name = case.object_query.get("target")
     if not isinstance(target_name, str):
         return rows
     entity_defs = case.model.entity_defs
@@ -2471,9 +2445,9 @@ def _graphs_root_entity(case: Case) -> Entity:
 
     A milestone-set graph read (`then.graphs`) is a flat temporal read (no deep-fetch
     includes — history-with-includes is out of scope for both v1 slices), so the root
-    is the read's `when.targetEntity`.
+    is the read's own query ``target``.
     """
-    return case.model.entity(case.when["targetEntity"])
+    return case.model.entity(case.object_query["target"])
 
 
 def _assert_graphs(case: Case, db: DatabaseProvider) -> None:
@@ -2918,7 +2892,7 @@ def _materialize_owner_node(entity: Entity, row: dict[str, Any]) -> dict[str, An
 
 
 def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
-    """Assert a top-level ``then.graph`` read (no ``deepFetch``, no milestone set)
+    """Assert a top-level ``then.graph`` read (no Includes, no milestone set)
     materializes from its ONE golden statement, with no child statement.
 
     This is the non-deep-fetch, single-instant ``then.graph`` grader — the dispatch
@@ -2953,7 +2927,7 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
     """
     dialect = db.dialect
     (golden,) = case.golden_statements(dialect)
-    entity = case.model.entity(case.when["targetEntity"])
+    entity = case.model.entity(case.object_query["target"])
 
     value_object_columns = {vo["column"] for vo in entity.value_objects}
     # An instance form additionally carries every applicable occurrence, so a
@@ -3010,10 +2984,11 @@ def _assert_single_statement_graph(case: Case, db: DatabaseProvider) -> None:
 def _assert_rejected(case: Case) -> None:
     """Assert one of the three rejected inputs is refused before SQL.
 
-    A rejected case carries exactly one schema-valid ``when.operation``,
+    A rejected case carries exactly one schema-valid ``when.objectQuery``,
     ``when.write``, or inline ``when.model`` and names the violated rule in
-    ``then.rejectedRule``. Operations run ``validate_operation`` and Inheritance's
-    ``validate_operation_inheritance``.
+    ``then.rejectedRule``. A query runs ``validate_object_query`` and Inheritance's
+    ``validate_query_inheritance``, resolved against the position the query itself
+    names.
 
     A write is dispatched on the members it carries, never on the rule the case
     names (`m-case-format` Rejected cases): a ``target`` is a predicate-selected
@@ -3037,13 +3012,13 @@ def _assert_rejected(case: Case) -> None:
     """
     expected = case.rejected_rule
     try:
-        if "operation" in case.when:
-            entity = _rejected_default_root(case)
-            validate_operation(entity, case.when["operation"])
-            # Inheritance narrow / subtype-scope validation (m-predicate x
+        if "objectQuery" in case.when:
+            query = case.when["objectQuery"]
+            validate_object_query(case.model.entity(query["target"]), query)
+            # Inheritance selection / subtype-scope validation (m-object-query x
             # m-inheritance): a no-op on a non-inheritance model, so it runs after
             # the value-object validation without disturbing the existing cases.
-            validate_operation_inheritance(case.model.entity_defs, case.when["operation"])
+            validate_query_inheritance(case.model.entity_defs, query)
         elif "write" in case.when:
             write = _rejected_write_input(case)
             if "target" in write:
@@ -3098,11 +3073,11 @@ def _assert_rejected(case: Case) -> None:
 def _rejected_default_root(case: Case) -> Entity:
     """The entity a rejected case's ``when`` is resolved against but never names.
 
-    A rejected case authors no ``targetEntity``, and neither an ``operation`` nor a
-    bare ``when.write`` row carries an entity handle of its own, so both resolve
+    A bare ``when.write`` row carries no entity handle of its own, so it resolves
     against the model's DEFAULT write root (`m-case-format` Rejected cases): the
     inheritance-family root when the model declares exactly one family, else — when
-    the model declares no family at all — its own first entity.
+    the model declares no family at all — its own first entity. A rejected
+    ``when.objectQuery`` names its own queried position and reaches none of this.
 
     A model declaring SEVERAL families names no single root, so it has no default
     and the case must carry its own handle; resolving such a model to whichever
@@ -5671,7 +5646,7 @@ def _assert_scenario_source_finds(case: Case) -> None:
                 f"not a real EARLIER step (0 <= source < {index})."
             )
         origin = case.scenario[source]
-        if "find" not in origin or origin.get("uow") != label:
+        if "objectQuery" not in origin or origin.get("uow") != label:
             raise CaseFailure(
                 f"{case.path.name}: scenario[{index}] settles against step {source}, which is "
                 f"not a find step of its own `uow` group {label!r}."
@@ -5849,16 +5824,16 @@ def _scenario_step_read_entity(
     Resolving the PER-STEP read entity — rather than assuming the scenario root —
     is what lets a step reading a DIFFERENT, value-object-bearing entity decode its
     document column with the RIGHT composite schema (m-sql *Read projection*, slot 4;
-    m-case-format *Read result form*). A read (``find``) step names its queried
-    position with ``targetEntity`` (m-case-format Q1). A ``load`` / ``access`` action
+    m-case-format *Read result form*). A read step names its queried position
+    inside its own ``objectQuery.target``. A ``load`` / ``access`` action
     navigates from an earlier object (``on``, required for the read verbs): with a
     ``path`` its rows are the path's TERMINAL entity; a path-less operation-list
     ``access`` resolves the constructed list's own (source) entity. Every other step
     (a write, a boundary / in-memory action) observes no rows, so it decodes nothing
     (``None``).
     """
-    if "find" in step:
-        return case.model.entity(step["targetEntity"])
+    if "objectQuery" in step:
+        return case.model.entity(step["objectQuery"]["target"])
     if step.get("action") in _ACTION_READ_VERBS:
         on = step["on"]
         source = on[0] if isinstance(on, list) else on
@@ -6229,12 +6204,12 @@ def _assert_scenario(case: Case, db: DatabaseProvider) -> None:
                     case, index, step, rows, results, tolerance, default_identity
                 )
                 continue
-            # Every remaining step is a read (`find`, per the schema's exactly-one-of
-            # find/write/action): its read entity resolves through the SAME per-step
-            # helper the action branch uses (`_scenario_step_read_entity`, the single
-            # source of truth) — for a `find` that is the step's declared `targetEntity`
-            # (m-case-format Q1), so its value-object document is decoded with THAT
-            # entity's composite schema, not the scenario root's.
+            # Every remaining step is a read (per the schema's exactly-one-of
+            # objectQuery/write/action): its read entity resolves through the SAME
+            # per-step helper the action branch uses (`_scenario_step_read_entity`,
+            # the single source of truth) — for a read that is its query's own
+            # `target`, so its value-object document is decoded with THAT entity's
+            # composite schema, not the scenario root's.
             read_entity = _scenario_step_read_entity(case, step, step_entities)
             if read_entity is None:
                 raise CaseFailure(
@@ -7200,9 +7175,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
     # write-derivation oracle). It runs before provisioning because the rule it enforces
     # is a pre-SQL refusal: a read whose reference escapes its active position must fail
     # the case, not reach a database.
-    validate_operation_inheritance(
-        case.model.entity_defs, case.operation, position=case.when.get("targetEntity")
-    )
+    validate_query_inheritance(case.model.entity_defs, case.object_query)
     _assert_round_trip_count(case, dialect)  # layer 5 (count)
     _provision(case, db)
     if _is_deep_fetch(case):
@@ -7213,7 +7186,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         # milestone, asserted from `then.graphs`.
         _assert_graphs(case, db)  # layer 2 + 5 (per-milestone graphs)
     elif case.expected_graph is not None:
-        # A top-level, single-instant `then.graph` read (no deepFetch): the single
+        # A top-level, single-instant `then.graph` read (no Includes): the single
         # golden statement materializes into the graph with no child statement.
         # Value-object decoding (m-value-object) and inheritance per-variant
         # narrowing are each a conditional step inside —

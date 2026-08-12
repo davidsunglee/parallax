@@ -48,7 +48,6 @@ from parallax.core.entity import _declaration as engine
 from parallax.core.entity import _entity as entity_module
 from parallax.core.entity._entity import CHANGE_RECORD_SLOT, wire_names_of
 from parallax.core.entity._errors import EditError
-from parallax.core.entity._query import lower_find_query
 from parallax.core.metamodel import (
     APPLICATION_ASSIGNED,
     MAX,
@@ -68,7 +67,9 @@ from parallax.core.metamodel import (
     derive_temporal_structure,
 )
 from parallax.core.metamodel import Document as AcceptedDocument
-from parallax.core.predicate import Comparison, PathSegment, serialize
+from parallax.core.object_query import IncludeSegment
+from parallax.core.object_query._fluent import object_query_node
+from parallax.core.predicate import Comparison, serialize
 
 
 class Customer(Entity, table="customer", namespace="sales"):
@@ -584,7 +585,7 @@ def test_class_level_member_access_seeds_operation_nodes() -> None:
     assert isinstance(path, RelationshipPath)
     # A relationship reference names its owner locally, as the wire does; the
     # path's own target keeps the namespace a continuing hop resolves in.
-    assert path.segments == (PathSegment(rel="sales.Order.customer"),)
+    assert path.segments == (IncludeSegment(rel="sales.Order.customer"),)
     assert path.target == "sales.Customer"
 
 
@@ -593,9 +594,9 @@ def test_a_query_over_a_class_no_model_composed_still_builds() -> None:
     # it: every class in this module belongs to no DomainModel, and a query over
     # one is an ordinary query. Whether the queried Entity is declared is the
     # connected model's question, answered at execution preflight.
-    lowered = lower_find_query(Order.where(Order.id == 1))
-    assert lowered.target == Order.identity
-    assert serialize(lowered.operation) == {"eq": {"attr": "sales.Order.id", "value": 1}}
+    node = object_query_node(Order.where(Order.id == 1))
+    assert node.target == Order.identity
+    assert serialize(node.predicate) == {"eq": {"attr": "sales.Order.id", "value": 1}}
 
 
 def test_instance_access_returns_the_member_value_and_relationships_stay_closed_world() -> None:

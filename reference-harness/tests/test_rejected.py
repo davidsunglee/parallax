@@ -1,7 +1,7 @@
 """Negative-validation (`rejected` shape) tests — DB-free (m-value-object, Q7).
 
 A `rejected` case (m-case-format resolved Q7) asserts a model-aware validator
-refuses an operation OR a write **before any SQL is emitted**, naming the violated
+refuses a query OR a write **before any SQL is emitted**, naming the violated
 normative rule in `then.rejectedRule`. These tests exercise, without a database:
 
 * every authored `rejected` case runs through :func:`run_case` with NO provider —
@@ -9,12 +9,12 @@ normative rule in `then.rejectedRule`. These tests exercise, without a database:
   rule is the one the validator raises. This module is their sole runner, and the
   partition against the dialect-parametrized collection is pinned here;
 * the model-aware validators (:mod:`op_validate` / :mod:`write_validate`) ACCEPT
-  valid operations / documents and RAISE the exact rule for each misuse;
+  valid queries / documents and RAISE the exact rule for each misuse;
 * the runner FAILS loudly when a valid input is (mis)authored as rejected or the
   wrong rule is named; and
 * the purely regex-level negatives (an empty path after the value-object name, a
   bad-cased segment, a reference rooted at a value object rather than an Entity)
-  are the OPERATION SCHEMA's job — they are rejected by `predicate.schema.json`'s
+  are the PREDICATE SCHEMA's job — they are rejected by `predicate.schema.json`'s
   reference grammars, NOT by a `rejected` case (resolved Q7 keeps them as
   schema-validation unit tests).
 """
@@ -56,7 +56,7 @@ from reference_harness.metamodel import (
 from reference_harness.metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
 )
-from reference_harness.op_validate import validate_operation
+from reference_harness.op_validate import validate_object_query, validate_predicate
 from reference_harness.schemas import build_registry, load_schemas
 from reference_harness.storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,
@@ -690,14 +690,14 @@ def test_rejected_and_dialect_executed_cases_partition_the_harness_lane() -> Non
 # --- the validators ACCEPT valid inputs (no false rejections) ---------------
 
 
-def test_validate_operation_accepts_valid_nested_predicates() -> None:
+def test_validate_predicate_accepts_valid_nested_predicates() -> None:
     entity = _customer_entity()
-    validate_operation(entity, {"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}})
-    validate_operation(
+    validate_predicate(entity, {"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}})
+    validate_predicate(
         entity, {"nestedGte": {"path": "Customer.address.geo.elevation", "value": 5}}
     )
-    validate_operation(entity, {"nestedIsNull": {"path": "Customer.address.geo.point.lat"}})
-    validate_operation(
+    validate_predicate(entity, {"nestedIsNull": {"path": "Customer.address.geo.point.lat"}})
+    validate_predicate(
         entity,
         {
             "nestedExists": {
@@ -713,14 +713,14 @@ def test_validate_operation_accepts_valid_nested_predicates() -> None:
             }
         },
     )
-    validate_operation(
+    validate_predicate(
         entity,
         {"nestedBetween": {"path": "Customer.address.geo.elevation", "lower": 5, "upper": 12}},
     )
-    validate_operation(
+    validate_predicate(
         entity, {"nestedNotIn": {"path": "Customer.address.city", "values": ["Oslo"]}}
     )
-    validate_operation(
+    validate_predicate(
         entity,
         {
             "nestedExists": {
@@ -743,7 +743,7 @@ def test_validate_operation_accepts_valid_nested_predicates() -> None:
         },
     )
     # A normal scalar predicate rooted at the ENTITY is not a find-root misuse.
-    validate_operation(entity, {"eq": {"attr": "Customer.name", "value": "Ada"}})
+    validate_predicate(entity, {"eq": {"attr": "Customer.name", "value": "Ada"}})
 
 
 def _complete_contact_row() -> dict[str, Any]:
@@ -782,7 +782,7 @@ def test_validate_write_accepts_complete_and_null_documents() -> None:
 
 def test_unknown_first_segment_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _customer_entity(), {"nestedEq": {"path": "Customer.contact.city", "value": "x"}}
         )
     assert exc.value.rule == NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT
@@ -790,7 +790,7 @@ def test_unknown_first_segment_rejected() -> None:
 
 def test_unknown_intermediate_segment_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _customer_entity(), {"nestedEq": {"path": "Customer.address.bogus.x", "value": "x"}}
         )
     assert exc.value.rule == NESTED_PATH_UNKNOWN_MEMBER
@@ -798,7 +798,7 @@ def test_unknown_intermediate_segment_rejected() -> None:
 
 def test_unknown_leaf_attribute_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _customer_entity(), {"nestedEq": {"path": "Customer.address.bogus", "value": "x"}}
         )
     assert exc.value.rule == NESTED_PATH_UNKNOWN_MEMBER
@@ -806,7 +806,7 @@ def test_unknown_leaf_attribute_rejected() -> None:
 
 def test_membership_literal_type_mismatch_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _customer_entity(), {"nestedIn": {"path": "Customer.address.city", "values": [1, 2]}}
         )
     assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
@@ -816,7 +816,7 @@ def test_negated_membership_literal_type_mismatch_rejected() -> None:
     # The negated form carries the identical typed-literal obligation; the two share
     # one arm rather than the negation reaching an untyped shortcut.
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _customer_entity(), {"nestedNotIn": {"path": "Customer.address.city", "values": [42]}}
         )
     assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
@@ -841,7 +841,7 @@ def test_nested_range_bound_type_mismatch_is_reported_before_the_ordering(
     # discriminates the check order: a validator that ordered the bounds before
     # resolving the subject would report the inversion and blame the wrong thing.
     with pytest.raises(RejectionError) as exc:
-        validate_operation(_customer_entity(), node)
+        validate_predicate(_customer_entity(), node)
     assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
 
 
@@ -857,7 +857,7 @@ def test_nested_range_with_inverted_bounds_rejected_in_both_scopes(node: dict[st
     # Correctly typed bounds, so resolution passes and the shared bound-ordering rule
     # is what fires — the same rule the top-level `between` obeys, at both scopes.
     with pytest.raises(RejectionError) as exc:
-        validate_operation(_customer_entity(), node)
+        validate_predicate(_customer_entity(), node)
     assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
 
 
@@ -869,11 +869,11 @@ def test_nested_range_with_inverted_bounds_rejected_in_both_scopes(node: dict[st
 )
 def test_nested_string_predicate_accepts_a_string_member_in_both_scopes(tag: str) -> None:
     entity = _customer_entity()
-    validate_operation(entity, {tag: {"path": "Customer.address.city", "value": "Os"}})
-    validate_operation(
+    validate_predicate(entity, {tag: {"path": "Customer.address.city", "value": "Os"}})
+    validate_predicate(
         entity, {tag: {"path": "Customer.address.city", "value": "Os", "caseInsensitive": True}}
     )
-    validate_operation(entity, _element_where({tag: {"path": "number", "value": "555"}}))
+    validate_predicate(entity, _element_where({tag: {"path": "number", "value": "555"}}))
 
 
 @pytest.mark.parametrize(
@@ -886,7 +886,7 @@ def test_nested_string_predicate_on_a_numeric_member_reports_the_member_not_the_
     # apply — which is what discriminates their order. A validator checking the
     # literal first would blame the value for the member's problem.
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _customer_entity(), {tag: {"path": "Customer.address.geo.elevation", "value": "1"}}
         )
     assert exc.value.rule == NESTED_STRING_PREDICATE_NON_STRING_MEMBER
@@ -912,7 +912,7 @@ def test_nested_string_predicate_on_a_date_member_rejected_in_both_scopes(
     # literal, so `literal_matches_type` finds '2024' perfectly well-typed for it and
     # the typed-literal rule alone would ACCEPT a text pattern over a date.
     with pytest.raises(RejectionError) as exc:
-        validate_operation(_contact_entity(), node)
+        validate_predicate(_contact_entity(), node)
     assert exc.value.rule == NESTED_STRING_PREDICATE_NON_STRING_MEMBER
 
 
@@ -933,7 +933,7 @@ def _between(lower: Any, upper: Any) -> dict[str, Any]:
 )
 def test_between_with_inverted_same_kind_bounds_rejected(lower: Any, upper: Any) -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation(_order_entity(), _between(lower, upper))
+        validate_predicate(_order_entity(), _between(lower, upper))
     assert exc.value.rule == BETWEEN_BOUNDS_INVERTED
 
 
@@ -954,12 +954,12 @@ def test_between_with_inverted_same_kind_bounds_rejected(lower: Any, upper: Any)
 def test_between_bounds_the_rule_stands_aside_for_are_accepted(lower: Any, upper: Any) -> None:
     # Ordered and equal same-kind bounds are legal ranges; a mixed-kind pair, a null
     # bound, and a boolean pair are all skipped rather than guessed.
-    validate_operation(_order_entity(), _between(lower, upper))
+    validate_predicate(_order_entity(), _between(lower, upper))
 
 
 def test_between_bound_ordering_is_checked_at_any_depth() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _order_entity(),
             {"and": {"operands": [{"all": {}}, _between(50.75, 20.00)]}},
         )
@@ -970,7 +970,7 @@ def test_between_rooted_at_a_value_object_still_reports_the_find_root_rule() -> 
     # The subject is checked before the bounds, so a value-object-rooted range names
     # the root misuse rather than blaming its (also inverted) bounds.
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _customer_entity(),
             {"between": {"attr": "address.city", "lower": "b", "upper": "a"}},
         )
@@ -982,42 +982,36 @@ def test_deep_fetch_path_root_narrow_naming_a_value_object_rejected() -> None:
     # names an Entity. A value object has no identity, no position, and no concrete
     # subtypes, so naming one there is the same refusal a value-object-rooted
     # attribute reference gets — reported against the guard, not against a segment.
-    for narrow in ({"to": ["address"]},):
-        with pytest.raises(RejectionError) as exc:
-            validate_operation(
-                _customer_entity(),
-                {
-                    "deepFetch": {
-                        "operand": {"all": {}},
-                        "paths": [{"narrow": narrow, "segments": [{"rel": "Customer.locations"}]}],
-                    }
-                },
-            )
-        assert exc.value.rule == FIND_ROOT_VALUE_OBJECT
+    with pytest.raises(RejectionError) as exc:
+        validate_object_query(
+            _customer_entity(),
+            {
+                "target": "Customer",
+                "predicate": {"all": {}},
+                "includes": [
+                    {"appliesTo": ["address"], "segments": [{"rel": "Customer.locations"}]}
+                ],
+            },
+        )
+    assert exc.value.rule == FIND_ROOT_VALUE_OBJECT
 
 
 def test_deep_fetch_path_root_narrow_over_entities_is_accepted() -> None:
     # The subtype-position rules themselves belong to the inheritance walk, so a
     # guard naming Entities passes this validator untouched.
-    validate_operation(
+    validate_object_query(
         _customer_entity(),
         {
-            "deepFetch": {
-                "operand": {"all": {}},
-                "paths": [
-                    {
-                        "narrow": {"to": ["Customer"]},
-                        "segments": [{"rel": "Customer.locations"}],
-                    }
-                ],
-            }
+            "target": "Customer",
+            "predicate": {"all": {}},
+            "includes": [{"appliesTo": ["Customer"], "segments": [{"rel": "Customer.locations"}]}],
         },
     )
 
 
 def test_scoped_where_undeclared_member_rejected() -> None:
     with pytest.raises(RejectionError) as exc:
-        validate_operation(
+        validate_predicate(
             _customer_entity(),
             {
                 "nestedExists": {
@@ -1031,7 +1025,7 @@ def test_scoped_where_undeclared_member_rejected() -> None:
 
 # --- value-object rules fire at ANY depth in the queried entity's op tree -----
 #
-# `validate_operation` descends through the SAME-entity boolean combinators
+# `validate_predicate` descends through the SAME-entity boolean combinators
 # (and/or/not/group), so a nested-predicate violation buried inside a combinator is
 # rejected with its exact rule — not silently accepted because it is not top-level.
 # These regression tests pin that recursion (case m-value-object-018 shows nested
@@ -1049,7 +1043,7 @@ def test_nested_path_violation_buried_inside_and_is_rejected() -> None:
         }
     }
     with pytest.raises(RejectionError) as exc:
-        validate_operation(entity, operation)
+        validate_predicate(entity, operation)
     assert exc.value.rule == NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT
 
 
@@ -1080,7 +1074,7 @@ def test_nested_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -
         }
     }
     with pytest.raises(RejectionError) as exc:
-        validate_operation(entity, operation)
+        validate_predicate(entity, operation)
     assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
 
 
@@ -1525,12 +1519,15 @@ def _rejected_case_with_when(
     return Case(path=Path("m-value-object-999-x.yaml"), raw=raw, model=model)
 
 
-def test_assert_schema_rejects_both_operation_and_write() -> None:
+def test_assert_schema_rejects_both_a_query_and_a_write() -> None:
     from reference_harness.case_runner import _assert_schema
 
     case = _rejected_case_with_when(
         {
-            "operation": {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},
+            "objectQuery": {
+                "target": "Customer",
+                "predicate": {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},
+            },
             "write": {"id": 1, "name": "Acme", "address": {"city": "Oslo"}},
         }
     )
@@ -1538,7 +1535,7 @@ def test_assert_schema_rejects_both_operation_and_write() -> None:
         _assert_schema(case)
 
 
-def test_assert_schema_rejects_neither_operation_nor_write() -> None:
+def test_assert_schema_rejects_neither_a_query_nor_a_write() -> None:
     from reference_harness.case_runner import _assert_schema
 
     case = _rejected_case_with_when({})

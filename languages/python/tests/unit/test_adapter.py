@@ -128,7 +128,7 @@ def test_compile_case_emits_for_a_claimed_read() -> None:
     assert envelope["status"] == "ok"
     assert envelope["caseShape"] == "read"
     assert envelope["roundTrips"] == 1
-    assert envelope["emissions"][0]["casePointer"] == "/operation"
+    assert envelope["emissions"][0]["casePointer"] == "/objectQuery"
 
 
 def test_compile_case_unsupported_for_an_out_of_claim_dialect() -> None:
@@ -210,7 +210,7 @@ def test_run_case_scenario_reports_round_trips_only() -> None:
     assert envelope["observations"] == {"roundTrips": 2}
     assert [e["casePointer"] for e in envelope["emissions"]] == [
         "/scenario/0/write",
-        "/scenario/1/find",
+        "/scenario/1/objectQuery",
     ]
 
 
@@ -349,7 +349,7 @@ def test_compile_case_compiles_an_expect_error_scenarios_find_steps() -> None:
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
     assert envelope["roundTrips"] == 1
-    assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/find"]
+    assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
 
 
 _TX_PAST_READ_ONLY_CASE = (
@@ -408,7 +408,7 @@ def test_run_case_grades_the_managed_pin_case_end_to_end_under_a_scoped_claim() 
     )
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok", envelope
-    assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/find"]
+    assert [e["casePointer"] for e in envelope["emissions"]] == ["/scenario/0/objectQuery"]
     assert envelope["observations"]["roundTrips"] == 1
     assert envelope["observations"]["errors"] == [
         {"at": "/scenario/1", "errorClass": "transaction-time-pin-read-only"}
@@ -451,7 +451,7 @@ def test_scenario_actions_all_mutate_guards_malformed_and_action_free_documents(
         ({"when": {"scenario": "not-a-list"}}, False),
         # No lifecycle action step at all: nothing for the mutate lane to
         # grade, so the ordinary api-conformance dispatch still applies.
-        ({"when": {"scenario": [{"find": {}, "targetEntity": "Order"}]}}, False),
+        ({"when": {"scenario": [{"objectQuery": {"target": "Order"}}]}}, False),
         ({"when": {"scenario": [{"action": "mutate"}, {"action": "access"}]}}, False),
         ({"when": {"scenario": [{"action": "mutate", "on": 0}]}}, True),
     ]

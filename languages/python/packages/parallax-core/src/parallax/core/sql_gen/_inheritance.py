@@ -43,13 +43,12 @@ this module through exactly one signature, :func:`tag_guard`, and it arrives as 
 merely unused here, they are unreachable.
 
 The read's queried **position** is the resolved effective concrete-subtype set
-the whole read targets: a top-level `narrow` (the read's ENTIRE predicate after
-peeling result-shaping directives) replaces `targetEntity`'s own position with
-its resolved `to` set; a `narrow` reached anywhere else (nested inside
-and/or/not/group) is a local BRANCH guard and never changes the read's own
+the whole read targets: the query's own `narrowTo` clause replaces its `target`'s
+position with that clause's resolved set; a `narrow` inside the predicate (nested
+inside and/or/not/group) is a local BRANCH guard and never changes the read's own
 position (`m-inheritance-015`'s `or` of two narrowed branches is the corpus
-witness — the projection and the whole-family "no tag" rule stay keyed to
-`targetEntity`, only each branch's own tag guard is injected).
+witness — the projection and the whole-family "no tag" rule stay keyed to the
+query's `target`, only each branch's own tag guard is injected).
 
 Named without a leading underscore because the MODULE carries the privacy, the
 package convention `_context` already established: importers alias to the
@@ -84,7 +83,8 @@ from parallax.core.metamodel import (
     ValueObjectMetadata,
     entity_by_name,
 )
-from parallax.core.predicate import Narrow, OrderKey, PredicateNode
+from parallax.core.object_query import OrderKey
+from parallax.core.predicate import Narrow, PredicateNode
 from parallax.core.sql_gen._context import ColumnScope as _ColumnScope
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -746,7 +746,7 @@ def select_projection(
     position, so this selects rather than orders: a contributor absent from
     ``attributes`` / ``value_objects`` is not projected, which is how a row-form
     read omits every `Document` slot. The discriminator is projected iff the
-    read's own `targetEntity` is abstract, independently of what the position
+    read's own queried `target` is abstract, independently of what the position
     resolved to, and keeps its own tier position rather than trailing the
     scalars.
     """
@@ -792,11 +792,11 @@ class TphPlan:
     table-per-hierarchy lowering").
 
     The tag PREDICATE (:attr:`tag`) is keyed purely to the resolved position's
-    SIZE — one concrete lowers to `=` whether reached by a direct concrete
-    `targetEntity` or a narrow, several lower to `in`, and only an untouched
-    abstract-**root** `targetEntity` (no top-level narrow at all) carries no tag
-    predicate at all, which is ``None``. Whether the discriminator slot appears
-    in :attr:`columns` is instead keyed to whether `targetEntity` itself is
+    SIZE — one concrete lowers to `=` whether reached by a directly concrete
+    `target` or by result narrowing, several lower to `in`, and only an untouched
+    abstract-**root** `target` (no `narrowTo` at all) carries no tag predicate at
+    all, which is ``None``. Whether the discriminator slot appears in
+    :attr:`columns` is instead keyed to whether the queried `target` itself is
     abstract — independent of the narrow's resolved cardinality
     (`m-inheritance-012`: `Animal` narrowed to the single concrete `Dog` still
     projects `t0.kind` and still carries `familyVariant`, because the caller
@@ -822,7 +822,7 @@ class TpcsSinglePlan:
     """A table-per-concrete-subtype read resolving to exactly one concrete: an
     ordinary single-table read of that subtype's own table, no tag, no union, no
     `familyVariant` — attribute resolution still widens across the family (the
-    RESOLUTION SCOPE's entity stays the read's own `targetEntity`, e.g. an
+    RESOLUTION SCOPE's entity stays the read's own queried `target`, e.g. an
     abstract position narrowed down to this one concrete, so its attribute search
     spans the family's superset rather than only that entity's own declared
     attributes), matching the table-per-hierarchy concrete-target form.
@@ -1049,7 +1049,7 @@ def _plan_tpcs_read(
     """Table-per-concrete-subtype (m-sql "Inheritance — table-per-concrete-subtype
     lowering"). Unlike table-per-hierarchy, the single-vs-several split is the ONLY
     thing that decides `familyVariant` here — there is no table-per-concrete-subtype
-    analogue of the abstract-`targetEntity` slot-2 rule, because a resolved single
+    analogue of the abstract-`target` slot-2 rule, because a resolved single
     concrete has no shared table to discriminate and no sibling branch to
     distinguish it from (m-sql, explicit).
 

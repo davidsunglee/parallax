@@ -1,20 +1,15 @@
-"""Shared operation-tag vocabularies and the reference-class walker.
+"""Shared Predicate-tag vocabularies and the reference-class walker.
 
-The operation schema distinguishes scalar attribute references from value-object
-paths. Several validators ask the SAME question of an operation node — which
+The Predicate schema distinguishes scalar attribute references from value-object
+paths. Several validators ask the SAME question of a predicate — which
 queried-entity classes does it name? — so both the tag sets and the single walk
 that consumes them live here rather than being copied into each caller.
 
-Two callers share the walk: the read ``targetEntity`` cross-check
+Two callers share the walk: the Object Query self-consistency cross-check
 (``schema_validate``) and the predicate-write scope check
 (``predicate_write_validate``). They differ only in what surrounds the predicate:
-a read wraps it in result / temporal directives (``orderBy``, ``deepFetch``, …),
-whereas a predicate write is a BARE predicate that carries none of them.
-
-A vocabulary also lives here when its consumers ask DIFFERENT questions of the
-same closed set — :data:`OPERAND_ROW_WRAPPER_TAGS` is shared by walks that do not
-otherwise resemble each other — so that one ``m-predicate`` set has one owner
-whatever it is being asked.
+a read carries it as one clause of a query whose other clauses name classes of
+their own, whereas a predicate write is the bare predicate alone.
 """
 
 from __future__ import annotations
@@ -22,26 +17,6 @@ from __future__ import annotations
 from typing import Any
 
 from .references import entity_spelling
-
-# The closed set `m-predicate` names as the wrappers "returning their operand's
-# OWN rows": the result-shaping directives (``orderBy`` / ``limit`` /
-# ``deepFetch``, which attaches fetched levels to those rows rather than
-# replacing them) and the temporal wrappers (``asOf`` / ``asOfRange`` /
-# ``history``). None of them re-roots the rows its operand yields, so a walk
-# looking for the node that fixed those rows descends through this set AND NO
-# OTHER NODE. Deliberately purpose-neutral: what a walk does when it stops is its
-# own — resolving the position an order key is measured at, or the narrow an
-# abstract read's projection superset follows — and only the vocabulary is shared.
-OPERAND_ROW_WRAPPER_TAGS = frozenset(
-    {
-        "orderBy",
-        "limit",
-        "deepFetch",
-        "asOf",
-        "asOfRange",
-        "history",
-    }
-)
 
 ATTRIBUTE_REFERENCE_TAGS = frozenset(
     {
@@ -122,23 +97,16 @@ def _add_path_reference_class(reference: Any, classes: set[str]) -> None:
         classes.add(named)
 
 
-def collect_reference_classes(
-    node: Any, classes: set[str], *, descend_result_modifiers: bool
-) -> None:
+def collect_reference_classes(node: Any, classes: set[str]) -> None:
     """Collect the class part of every queried-entity reference in *node*.
 
     Descends the same-entity boolean combinators (``and`` / ``or`` / ``not`` /
-    ``group``) and adds the class named by an attribute (``attr``), a value-object
-    path (``path``), or a relationship (``rel``). A navigation's INNER operation
-    and a ``nestedExists`` ``where`` resolve against a DIFFERENT scope (the related
-    entity / the array element), so they are NOT descended: the reference they
-    contain is not evidence that this node's root entity differs from the target.
-
-    Read operations additionally wrap the predicate in result and temporal
-    directives (``orderBy``, ``limit``, ``deepFetch``, ``narrow``, ``asOf`` …).
-    A predicate write is a BARE predicate that carries none of these,
-    so its caller passes ``descend_result_modifiers=False`` to walk only the
-    predicate core.
+    ``group``) and the Predicate-scoped ``narrow``, and adds the class named by an
+    attribute (``attr``), a value-object path (``path``), or a relationship
+    (``rel``). A navigation's INNER predicate and a ``nestedExists`` ``where``
+    resolve against a DIFFERENT scope (the related entity / the array element), so
+    they are NOT descended: the reference they contain is not evidence that this
+    predicate's root entity differs from the target.
     """
     if not isinstance(node, dict) or len(node) != 1:
         return
@@ -153,38 +121,34 @@ def collect_reference_classes(
         _add_member_reference_class(body.get("rel"), classes)
     elif tag in ("and", "or"):
         for operand in body.get("operands", []) or []:
-            collect_reference_classes(
-                operand, classes, descend_result_modifiers=descend_result_modifiers
-            )
-    elif tag in ("not", "group"):
-        collect_reference_classes(
-            body.get("operand"), classes, descend_result_modifiers=descend_result_modifiers
-        )
-    elif descend_result_modifiers:
-        _collect_result_modifier_classes(tag, body, classes)
-    # all / none (and, for a bare predicate, any result modifier) name no class.
-
-
-def _collect_result_modifier_classes(tag: str, body: dict[str, Any], classes: set[str]) -> None:
-    """Collect classes from a read-only result / temporal directive around the predicate."""
-    if tag == "deepFetch":
-        collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
-        for path in body.get("paths", []) or []:
-            segments = path.get("segments") if isinstance(path, dict) else None
-            if segments:
-                segment = segments[0]
-                rel = segment.get("rel") if isinstance(segment, dict) else segment
-                _add_member_reference_class(rel, classes)
-            # A path-root Subtype Selection contributes no queried-member class;
-            # its validity is asserted by the position walk instead.
-    elif tag in ("asOf", "asOfRange", "history", "limit", "narrow"):
+            collect_reference_classes(operand, classes)
+    elif tag in ("not", "group", "narrow"):
         # A narrow evaluates its operand over the polymorphic position supplied by
-        # context, so the
-        # operand's queried-entity references are still cross-checked against the
-        # target; the narrow's subset validity is asserted separately (Predicate).
-        collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
-    elif tag == "orderBy":
-        collect_reference_classes(body.get("operand"), classes, descend_result_modifiers=True)
-        for key in body.get("keys", []) or []:
-            if isinstance(key, dict):
-                _add_member_reference_class(key.get("attr"), classes)
+        # context, so the operand's queried-entity references are still
+        # cross-checked against the target; the narrow's own subset validity is
+        # asserted separately (m-inheritance).
+        collect_reference_classes(body.get("operand"), classes)
+    # all / none name no class.
+
+
+def collect_query_reference_classes(query: Any, classes: set[str]) -> None:
+    """Collect every queried-entity reference class one Object Query names.
+
+    The predicate contributes through :func:`collect_reference_classes`; the
+    ordering clause contributes each Sort Key's attribute, and each Include Path
+    its FIRST hop's relationship, which is the only segment written against the
+    queried position. A Subtype Selection contributes no queried-member class —
+    its validity is a position judgement rather than a reference one.
+    """
+    if not isinstance(query, dict):
+        return
+    collect_reference_classes(query.get("predicate"), classes)
+    for key in query.get("orderBy", []) or []:
+        if isinstance(key, dict):
+            _add_member_reference_class(key.get("attr"), classes)
+    for path in query.get("includes", []) or []:
+        segments = path.get("segments") if isinstance(path, dict) else None
+        if segments:
+            segment = segments[0]
+            rel = segment.get("rel") if isinstance(segment, dict) else segment
+            _add_member_reference_class(rel, classes)
