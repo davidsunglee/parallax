@@ -47,9 +47,9 @@ from parallax.core.predicate._nodes import (
     SubtypeSelection,
     canonical_subtype_selection,
 )
-from parallax.core.predicate.serde import OperationError, deserialize, serialize
+from parallax.core.predicate.serde import CanonicalDocumentError, deserialize, serialize
 from parallax.core.predicate.validate import (
-    OperationRejectedError,
+    ModelRejectedError,
     PositionScope,
     check_attribute_reference,
     effective_set,
@@ -58,7 +58,7 @@ from parallax.core.predicate.validate import (
     resolve_subtype_selection,
     root_position,
     validate_narrow,
-    validate_operation,
+    validate_predicate,
 )
 
 __all__ = [
@@ -66,12 +66,14 @@ __all__ = [
     "All",
     "And",
     "Between",
+    "CanonicalDocumentError",
     "Comparison",
     "ComparisonOp",
     "Exists",
     "Group",
     "Membership",
     "MembershipOp",
+    "ModelRejectedError",
     "Narrow",
     "Navigate",
     "NestedComparison",
@@ -90,8 +92,6 @@ __all__ = [
     "NotExists",
     "NullCheck",
     "NullOp",
-    "OperationError",
-    "OperationRejectedError",
     "Or",
     "PositionScope",
     "PredicateNode",
@@ -110,5 +110,5 @@ __all__ = [
     "root_position",
     "serialize",
     "validate_narrow",
-    "validate_operation",
+    "validate_predicate",
 ]

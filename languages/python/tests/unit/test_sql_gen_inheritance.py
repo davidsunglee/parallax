@@ -146,7 +146,7 @@ def test_tpcs_document_single_branch_projects_and_decodes_its_document() -> None
 
 
 def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
-    # `validate_operation` runs upstream, so a narrow reaching this compiler is
+    # `validate_predicate` runs upstream, so a narrow reaching this compiler is
     # already position-valid; an unresolvable member therefore means the caller
     # skipped that step, and refusing loudly is what keeps it from silently
     # lowering to an empty position.

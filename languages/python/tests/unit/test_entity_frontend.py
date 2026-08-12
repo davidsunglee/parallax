@@ -575,7 +575,7 @@ def test_indices_are_local_declaration_ordered_and_lowered_to_identities() -> No
     assert declared.unique is False
 
 
-def test_class_level_member_access_seeds_operation_nodes() -> None:
+def test_class_level_member_access_seeds_predicate_nodes() -> None:
     assert isinstance(Order.id, AttributeExpr)
     predicate = Order.id == 1
     assert isinstance(predicate, Predicate)

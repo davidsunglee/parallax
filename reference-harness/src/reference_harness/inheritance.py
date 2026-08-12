@@ -39,7 +39,7 @@ import copy
 from typing import TYPE_CHECKING, Any
 
 from .naming import default_column_name
-from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
+from .query_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
 from .references import entity_spelling
 from .value_object_resolve import RejectionError
 

@@ -1,7 +1,7 @@
 """Model-aware Predicate validation unit tests (m-predicate / m-navigate /
 m-value-object).
 
-Each rejected rule is pinned with the exact identifier `validate_operation`
+Each rejected rule is pinned with the exact identifier `validate_predicate`
 raises, alongside the representative VALID predicates that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
 that is NOT outside the active position). The 21 in-slice rejected corpus
@@ -42,6 +42,7 @@ from parallax.core.predicate import (
     Exists,
     Group,
     Membership,
+    ModelRejectedError,
     Narrow,
     Navigate,
     NestedComparison,
@@ -56,12 +57,11 @@ from parallax.core.predicate import (
     Not,
     NotExists,
     NullCheck,
-    OperationRejectedError,
     Or,
     PredicateNode,
     Scalar,
     StringMatch,
-    validate_operation,
+    validate_predicate,
 )
 from parallax.descriptor._records import (
     Attribute,
@@ -174,7 +174,7 @@ def _validate(target: str, op: PredicateNode, meta: Metamodel) -> None:
     """Form ``meta`` into an accepted model, resolve ``target`` to its accepted
     root Metadata, and run the model-aware validator over ``op``."""
     model = formed(meta)
-    validate_operation(_root(model, target), op, model)
+    validate_predicate(_root(model, target), op, model)
 
 
 def _root(model: object, target: str) -> Any:
@@ -193,14 +193,14 @@ def _validate_query(target: str, meta: Metamodel, **clauses: Any) -> None:
     validate_object_query(root, object_query(root.identity, predicate, **clauses), model)
 
 
-def _query_rejects(target: str, meta: Metamodel, **clauses: Any) -> OperationRejectedError:
-    with pytest.raises(OperationRejectedError) as excinfo:
+def _query_rejects(target: str, meta: Metamodel, **clauses: Any) -> ModelRejectedError:
+    with pytest.raises(ModelRejectedError) as excinfo:
         _validate_query(target, meta, **clauses)
     return excinfo.value
 
 
-def _rejects(op: PredicateNode, meta: Metamodel, target: str) -> OperationRejectedError:
-    with pytest.raises(OperationRejectedError) as excinfo:
+def _rejects(op: PredicateNode, meta: Metamodel, target: str) -> ModelRejectedError:
+    with pytest.raises(ModelRejectedError) as excinfo:
         _validate(target, op, meta)
     return excinfo.value
 
@@ -246,17 +246,17 @@ _REJECTED_CASE_IDS = (
     "m-inheritance-064",
     "m-inheritance-132",
     "m-inheritance-133",
-    "m-op-algebra-039",
-    "m-op-algebra-040",
-    "m-op-algebra-041",
-    "m-op-algebra-042",
-    "m-op-algebra-043",
-    "m-op-algebra-044",
-    "m-op-algebra-045",
-    "m-op-algebra-046",
-    "m-op-algebra-047",
-    "m-op-algebra-048",
-    "m-op-algebra-049",
+    "m-predicate-039",
+    "m-predicate-040",
+    "m-predicate-041",
+    "m-predicate-042",
+    "m-predicate-043",
+    "m-predicate-044",
+    "m-predicate-045",
+    "m-object-query-008",
+    "m-predicate-047",
+    "m-predicate-048",
+    "m-predicate-049",
     "m-value-object-034",
     "m-value-object-035",
     "m-value-object-036",
@@ -278,7 +278,7 @@ def test_corpus_rejected_case_classifies_to_its_own_rejected_rule(case_id: str) 
     query = deserialize_query(cast("Mapping[str, object]", when["objectQuery"]))
     model = formed(meta)
     root = _root(model, query.target.canonical)
-    with pytest.raises(OperationRejectedError) as excinfo:
+    with pytest.raises(ModelRejectedError) as excinfo:
         validate_object_query(root, query, model)
     assert excinfo.value.rule == then["rejectedRule"]
 
@@ -520,7 +520,7 @@ def test_the_position_is_measured_against_the_entity_a_reference_names(op: Predi
     # declared on Animal, so measuring the declaring entity would accept `Dog.name`
     # at the root position and, worse, accept `Cat.name` inside a narrow to Dog,
     # where the reference addresses no row the position contains. Pinned by
-    # m-op-algebra-049.
+    # m-predicate-049.
     exc = _rejects(op, _ANIMAL, "Animal")
     assert exc.rule == "subtype-attribute-outside-narrow-scope"
 

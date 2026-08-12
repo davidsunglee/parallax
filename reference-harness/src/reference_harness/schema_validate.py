@@ -33,12 +33,12 @@ from .execution_validate import validate_execution
 from .inheritance import Family, resolve_effective_definition, validate_family_defs
 from .keyed_write_validate import undeclared_row_members, validate_keyed_write
 from .metamodel import validate_index_identities
-from .operation_references import collect_query_reference_classes
 from .predicate_write_validate import (
     PredicateWriteValidationError,
     validate_predicate_write,
     validate_predicate_write_materialization,
 )
+from .query_references import collect_query_reference_classes
 from .schemas import build_registry, load_schemas
 from .storage_layout import validate_storage_layout
 from .temporal_selection_validate import validate_temporal_selections
@@ -123,8 +123,8 @@ def _check_query_target(
     """Assert every queried-entity reference class is family-consistent with ``target``."""
     if not isinstance(query, dict):
         return  # a malformed query is already a schema error
-    target_entity = query.get("target")
-    if not isinstance(target_entity, str):
+    target = query.get("target")
+    if not isinstance(target, str):
         return
     classes: set[str] = set()
     collect_query_reference_classes(query, classes)
@@ -132,11 +132,11 @@ def _check_query_target(
     def effective(name: str) -> set[str]:
         return set(family.effective_concrete_set(name)) if family is not None else {name}
 
-    target_set = effective(target_entity)
+    target_set = effective(target)
     inconsistent = sorted(cls for cls in classes if not (effective(cls) <= target_set))
     if inconsistent:
         errors.append(
-            f"{label}: objectQuery target {target_entity!r} is inconsistent with the "
+            f"{label}: objectQuery target {target!r} is inconsistent with the "
             f"queried-entity reference class(es) {inconsistent}"
         )
 

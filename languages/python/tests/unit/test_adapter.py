@@ -20,7 +20,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import DbPort, Row
 
 _SCHEMA = adapter_schema()
-_READ_CASE = case_format.default_cases_dir() / "m-op-algebra-002-eq.yaml"
+_READ_CASE = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
 _VO_READ_CASE = case_format.default_cases_dir() / "m-value-object-001-nested-eq.yaml"
 _SCALAR_READ_CASE = case_format.default_cases_dir() / "m-core-001-scalar-types-roundtrip.yaml"
 _RUN_ONLY_CASE = (
@@ -53,8 +53,8 @@ def _case(
     tags: tuple[str, ...] = ("m-predicate", "slice-snapshot-1"),
 ) -> case_format.Case:
     return case_format.Case(
-        path=Path("m-op-algebra-001-x.yaml"),
-        case_id="m-op-algebra-001",
+        path=Path("m-predicate-001-x.yaml"),
+        case_id="m-predicate-001",
         shape=shape,
         tags=tags,
         model="models/orders.yaml",
@@ -438,8 +438,8 @@ def test_scenario_lane_without_expect_error_is_still_dispatched_out() -> None:
 def test_scenario_actions_all_mutate_guards_malformed_and_action_free_documents() -> None:
     def scenario_case(document: dict[str, object]) -> case_format.Case:
         return case_format.Case(
-            path=Path("m-op-algebra-001-x.yaml"),
-            case_id="m-op-algebra-001",
+            path=Path("m-predicate-001-x.yaml"),
+            case_id="m-predicate-001",
             shape="scenario",
             tags=("m-predicate", "slice-snapshot-1"),
             model="models/orders.yaml",

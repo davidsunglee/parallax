@@ -1,7 +1,7 @@
 # Negative (m-predicate bound-ordering MUST): a `between` whose bounds are INVERTED
 # is refused pre-SQL.
 #
-# The bounds reverse the ones m-op-algebra-008 authors over the same column, so the
+# The bounds reverse the ones m-predicate-008 authors over the same column, so the
 # range is empty by construction. The node is schema-valid — both bounds are
 # polymorphic `literal`s — and it lowers to a perfectly legal
 # `t0.price between ? and ?` that simply returns no rows, so only a resolver

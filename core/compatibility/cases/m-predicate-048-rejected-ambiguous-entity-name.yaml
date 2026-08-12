@@ -6,7 +6,7 @@
 # and the predicate reaches `archive.SharedVariant` through
 # the `variant` hop, which re-roots the inner position at that Entity. The
 # reference `SharedVariant.archiveLabel` is spelled BARE — a choice, not a
-# constraint, since `attributeRef` admits the canonical spelling m-op-algebra-051
+# constraint, since `attributeRef` admits the canonical spelling m-predicate-051
 # uses over this same model and this same hop — and the model declares
 # `SharedVariant` in BOTH `archive` and `catalog`, so the bare spelling names two
 # Entities and therefore none.
@@ -19,7 +19,7 @@
 # catches it: the positional rules presuppose a reference that RESOLVED.
 #
 # This is the distinction against `attribute-outside-active-position`
-# (m-op-algebra-045/047): that rule fires when a reference resolves to an Entity
+# (m-predicate-045/047): that rule fires when a reference resolves to an Entity
 # OUTSIDE the position, this one when it resolves to more than one and therefore to
 # none. It is a rule about the reference SITE, not about the declarations: both
 # Entities stay declarable, materializable under their exact qualified identities,

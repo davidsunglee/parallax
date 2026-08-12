@@ -1,6 +1,6 @@
 # startsWith + wildcard escape — affix escaping (m-predicate §Wildcard/escape rule).
 #
-# m-op-algebra-015 escapes only the `contains` form; the affix forms wrap the escaped literal
+# m-predicate-015 escapes only the `contains` form; the affix forms wrap the escaped literal
 # differently. `startsWith 'C_'` appends a trailing `%` but MUST first escape the
 # literal `_` (a single-char wildcard) so it matches a real underscore:
 # `like 'C\_%' escape '\'`. A fat-fingered escape would let `_` match any char

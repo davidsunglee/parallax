@@ -34,14 +34,14 @@ from parallax.core.object_query._nodes import (
     TemporalDimension,
     TemporalSelection,
 )
-from parallax.core.predicate import OperationError, canonical_subtype_selection
+from parallax.core.predicate import CanonicalDocumentError, canonical_subtype_selection
 from parallax.core.predicate import deserialize as deserialize_predicate
 from parallax.core.predicate import serialize as serialize_predicate
 
 __all__ = ["ObjectQueryError", "deserialize", "serialize"]
 
 
-class ObjectQueryError(OperationError):
+class ObjectQueryError(CanonicalDocumentError):
     """An Object Query document is not a well-formed canonical query.
 
     A subclass of the Predicate serde's own malformed-document error, because a

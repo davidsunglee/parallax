@@ -15,8 +15,8 @@ from typing import Any
 
 from .case import Entity
 from .inheritance import inheritance_of
-from .op_validate import validate_predicate
-from .operation_references import collect_reference_classes
+from .object_query_validate import validate_predicate
+from .query_references import collect_reference_classes
 from .serde import canonical
 from .value_object_resolve import RejectionError, literal_matches_type
 

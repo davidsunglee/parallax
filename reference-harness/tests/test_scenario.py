@@ -363,7 +363,7 @@ def test_relationship_path_target_walks_each_hop() -> None:
     assert _relationship_path_target(case, order, "items.statuses").name == "OrderStatus"
 
 
-def test_scenario_find_step_read_entity_is_its_target_entity() -> None:
+def test_scenario_find_step_read_entity_is_its_own_query_target() -> None:
     # A read step decodes with its query's own `target`, not the scenario root.
     case = _scenario_by_id("m-deep-fetch-015")
     entity = _scenario_step_read_entity(case, case.scenario[0], [])

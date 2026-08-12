@@ -559,7 +559,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     validator validates the predicate ... and checks its entity scope, [then]
     rejects ... unassignable assignments"):
 
-    - the WHOLE ``validate_operation`` vocabulary from its own resolved root —
+    - the WHOLE ``validate_predicate`` vocabulary from its own resolved root —
       an attribute reference outside the active position, an ambiguous Entity
       spelling, an inverted ``between`` window, a literal disagreeing with its
       member's declared type. There is no separate rule refusing a query-wide
@@ -644,7 +644,7 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
                 )
     else:
         entity = _entity(model, instruction.target.entity)
-        predicate_algebra.validate_operation(entity, instruction.target.predicate, model)
+        predicate_algebra.validate_predicate(entity, instruction.target.predicate, model)
         inheritance.reject_predicate_write(entity)
         members = _declared_members(model, entity)
         seen: set[str] = set()

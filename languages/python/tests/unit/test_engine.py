@@ -316,8 +316,8 @@ def _synthetic(document: dict[str, object]) -> case_format.Case:
     from pathlib import Path
 
     return case_format.Case(
-        path=Path("m-op-algebra-999-synthetic.yaml"),
-        case_id="m-op-algebra-999",
+        path=Path("m-predicate-999-synthetic.yaml"),
+        case_id="m-predicate-999",
         shape="read",
         tags=("m-predicate", "slice-snapshot-1"),
         model="models/orders.yaml",
@@ -3286,7 +3286,9 @@ def test_run_materializing_pair_rejects_a_mismatched_preceding_find_target() -> 
 
 
 def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_differs() -> None:
-    # (`m-case-format.md:715`/`:719`): the preceding find must share
+    # (`m-case-format.md`, "Predicate-selected write instruction": "model-aware
+    # validation MUST require that prior read to use the same concrete query
+    # `target` and canonical predicate"): the preceding find must share
     # the write's own target predicate, not merely its entity — unlike the
     # entity-mismatch guard above, this IS reachable through the public
     # `run_scenario_case` entry point: the look-ahead pairing decision
@@ -4137,8 +4139,8 @@ def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
     from pathlib import Path
 
     return case_format.Case(
-        path=Path("m-op-algebra-998-synthetic-rejected.yaml"),
-        case_id="m-op-algebra-998",
+        path=Path("m-predicate-998-synthetic-rejected.yaml"),
+        case_id="m-predicate-998",
         shape="rejected",
         tags=("m-predicate", "rejected", "slice-snapshot-1"),
         model="models/animal.yaml",
@@ -4358,11 +4360,11 @@ def test_run_rejected_case_raises_when_write_unexpectedly_accepted() -> None:
 
 
 def test_run_rejected_case_raises_for_a_malformed_query() -> None:
-    malformed_operation: dict[str, object] = {
+    malformed_query: dict[str, object] = {
         "objectQuery": {"target": "Animal", "predicate": {"eq": {}}}
     }
     with pytest.raises(engine.EngineError, match="missing required key"):
-        engine.run_rejected_case(_synthetic_rejected(malformed_operation))
+        engine.run_rejected_case(_synthetic_rejected(malformed_query))
 
 
 def test_run_rejected_case_raises_for_a_malformed_inline_model() -> None:

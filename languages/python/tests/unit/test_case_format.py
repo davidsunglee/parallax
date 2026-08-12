@@ -15,7 +15,7 @@ from parallax.core.base import FLOAT32, FLOAT64, AuthoredNumber, decode_neutral_
 
 def _case(
     *,
-    case_id: str = "m-op-algebra-001",
+    case_id: str = "m-predicate-001",
     shape: str = "read",
     tags: tuple[str, ...] = ("m-predicate", "slice-snapshot-1"),
 ) -> Case:
@@ -37,7 +37,7 @@ def _write(tmp_path: Path, name: str, body: str) -> Path:
 
 def test_is_module_tag_grammar() -> None:
     assert case_format.is_module_tag("m-predicate")
-    assert case_format.is_module_tag("m-op-algebra-002")  # a case ID also matches
+    assert case_format.is_module_tag("m-predicate-002")  # a case ID also matches
     assert not case_format.is_module_tag("slice-snapshot-1")
     assert not case_format.is_module_tag("eq")
 
@@ -55,9 +55,9 @@ def test_primary_module_raises_without_a_module_tag() -> None:
 
 
 def test_load_case_parses_a_real_corpus_case() -> None:
-    path = case_format.default_cases_dir() / "m-op-algebra-002-eq.yaml"
+    path = case_format.default_cases_dir() / "m-predicate-002-eq.yaml"
     case = case_format.load_case(path)
-    assert case.case_id == "m-op-algebra-002"
+    assert case.case_id == "m-predicate-002"
     assert case.shape == "read"
     assert case.model == "models/orders.yaml"
     assert "slice-snapshot-1" in case.tags
@@ -162,12 +162,12 @@ def test_is_selected_implemented_modules_gate() -> None:
 
 def test_select_preserves_order_and_filters() -> None:
     cases = [
-        _case(case_id="m-op-algebra-001"),
-        _case(case_id="m-op-algebra-002", shape="conflict"),
-        _case(case_id="m-op-algebra-003"),
+        _case(case_id="m-predicate-001"),
+        _case(case_id="m-predicate-002", shape="conflict"),
+        _case(case_id="m-predicate-003"),
     ]
     selected = case_format.select(cases, _FILTER, milestone_tags=["m-predicate"])
-    assert [case.case_id for case in selected] == ["m-op-algebra-001", "m-op-algebra-003"]
+    assert [case.case_id for case in selected] == ["m-predicate-001", "m-predicate-003"]
 
 
 # `m-case-format` fixes the corpus's YAML schema at YAML 1.2 core, so a plain

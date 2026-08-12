@@ -19,7 +19,7 @@
 # through the child level's own IN list, which gathers only Rex's owner id 10, where an
 # `asc` key would gather Bob's 11. `1 + L` = 2 statements.
 model: models/animal.yaml
-tags: [m-predicate, m-object-query, m-deep-fetch, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, m-deep-fetch, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only

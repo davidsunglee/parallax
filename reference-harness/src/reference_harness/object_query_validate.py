@@ -61,7 +61,7 @@ from __future__ import annotations
 from typing import Any
 
 from .case import Entity
-from .operation_references import ATTRIBUTE_REFERENCE_TAGS
+from .query_references import ATTRIBUTE_REFERENCE_TAGS
 from .value_object_resolve import (
     BETWEEN_BOUNDS_INVERTED,
     DEEP_FETCH_VALUE_OBJECT_SEGMENT,

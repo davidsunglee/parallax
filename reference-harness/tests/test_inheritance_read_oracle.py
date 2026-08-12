@@ -300,7 +300,7 @@ def test_a_position_is_measured_against_the_entity_a_reference_names() -> None:
     # declared on Animal, so at the root position it is out of scope and a narrow to
     # Dog is the remedy. Substituting the declaring entity would accept it, and would
     # equally accept a DISJOINT sibling's spelling (`Cat.name` inside a narrow to
-    # Dog), which addresses no row the position contains. Pinned by m-op-algebra-049.
+    # Dog), which addresses no row the position contains. Pinned by m-predicate-049.
     defs = _animal_defs()
     for reference in ("Dog.name", "Cat.name", "Pet.licenseId"):
         with pytest.raises(RejectionError) as exc:
@@ -346,7 +346,7 @@ def test_a_standalone_entitys_attribute_is_outside_an_unrelated_standalone_posit
     # family anywhere in the descriptor, a standalone entity's effective concrete set
     # is itself, so the same subset test rejects `OrderItem.sku` at `Order`. Both
     # entities declare a `sku`, so an unchecked reference reads the orders table for
-    # a question about items. Pinned by m-op-algebra-047.
+    # a question about items. Pinned by m-predicate-047.
     defs = load_model(_COMPATIBILITY_ROOT, "models/orders.yaml").entity_defs
     with pytest.raises(RejectionError) as exc:
         _judge(defs, "Order", predicate={"eq": {"attr": "OrderItem.sku", "value": "SKU-1"}})

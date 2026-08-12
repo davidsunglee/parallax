@@ -1,13 +1,13 @@
 # orderBy with MULTIPLE keys + mixed directions (m-object-query orderBy, m-sql clause order).
 #
-# m-op-algebra-026/m-op-algebra-027 order by a single key; this pins the composite, comma-separated
+# m-object-query-001/m-object-query-002 order by a single key; this pins the composite, comma-separated
 # `order by t0.active desc, t0.qty asc` render and the tie-break it encodes:
 # active rows first (desc on a boolean ⇒ true before false), then ascending qty
 # within each group. Capping at 2 rows makes the multi-key ordering OBSERVABLE
 # through membership — the first two rows are the active orders with the lowest
 # qty (ids 1 and 2), not any active order.
 model: models/orders.yaml
-tags: [m-predicate, m-object-query, orderBy, limit, directive, multi-key, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, orderBy, limit, directive, multi-key, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   objectQuery:

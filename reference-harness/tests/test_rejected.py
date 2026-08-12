@@ -8,7 +8,7 @@ normative rule in `then.rejectedRule`. These tests exercise, without a database:
   the pre-SQL refusal needs no dialect / provisioning / execution — and its named
   rule is the one the validator raises. This module is their sole runner, and the
   partition against the dialect-parametrized collection is pinned here;
-* the model-aware validators (:mod:`op_validate` / :mod:`write_validate`) ACCEPT
+* the model-aware validators (:mod:`object_query_validate` / :mod:`write_validate`) ACCEPT
   valid queries / documents and RAISE the exact rule for each misuse;
 * the runner FAILS loudly when a valid input is (mis)authored as rejected or the
   wrong rule is named; and
@@ -56,7 +56,7 @@ from reference_harness.metamodel import (
 from reference_harness.metamodel import (
     MODEL_REJECTED_RULES as METAMODEL_MODEL_REJECTED_RULES,
 )
-from reference_harness.op_validate import validate_object_query, validate_predicate
+from reference_harness.object_query_validate import validate_object_query, validate_predicate
 from reference_harness.schemas import build_registry, load_schemas
 from reference_harness.storage_layout import (
     MODEL_REJECTED_RULES as STORAGE_LAYOUT_MODEL_REJECTED_RULES,

@@ -466,7 +466,7 @@ Placement is observable only on a **nullable** key. A non-nullable key lowers to
 plain `t0.c [asc|desc]` term in both dialects under either placement, because there
 are no `NULL`s to place. The compatibility suite proves the compensating and native
 forms yield the identical observable order (case `m-deep-fetch-012` for the
-`asc`/`last` default; `m-op-algebra-035` through `-038` (tagged `m-object-query`) for all four combinations on
+`asc`/`last` default; `m-object-query-004` through `-007` for all four combinations on
 an Object Query Sort Key, and `m-deep-fetch-021` through `-023` for the three a canonical
 relationship declaration spells distinctly — canonical descriptor form omits a `nulls`
 equal to the default, so an explicit `asc`/`last` on a declaration canonicalizes to the

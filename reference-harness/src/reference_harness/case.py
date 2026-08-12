@@ -208,7 +208,7 @@ class FrozenDict(dict[str, Any]):
 
     A *subclass* of ``dict`` rather than a ``MappingProxyType`` on purpose. The
     harness runs ~140 ``isinstance(x, dict)`` / ``isinstance(x, list)`` shape
-    tests over parsed corpus documents (``schema_validate``, ``op_validate``,
+    tests over parsed corpus documents (``schema_validate``, ``object_query_validate``,
     ``sql_lint``, ``inheritance``, ``case_runner``, …); a proxy would fail every
     one of them *silently*, turning a freeze into a behavior change. A subclass
     keeps ``isinstance``, equality against plain ``dict`` literals, and C-speed

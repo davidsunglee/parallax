@@ -3,7 +3,7 @@
 # The explicit `group` node wraps the `or`, forcing the disjunction to bind
 # before the `and`. This is the half of the group-precedence pair that pins
 # parenthesization: the golden SQL parenthesizes the OR, and the result {1, 42}
-# differs from the UNGROUPED sibling case (m-op-algebra-025), where `and` binds tighter and
+# differs from the UNGROUPED sibling case (m-predicate-025), where `and` binds tighter and
 # the result is {1, 5, 42}. The `group` node is what makes that difference
 # unambiguous through the canonical serde.
 # Two surface re-expressions of the SAME grouped intent that an implementation's

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from .corpus_yaml import read_corpus_yaml
-from .operation_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
+from .query_references import ATTRIBUTE_REFERENCE_TAGS, PATH_REFERENCE_TAGS
 from .references import split_reference
 
 __all__ = ["check", "main"]

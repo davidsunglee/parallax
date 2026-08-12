@@ -1,7 +1,7 @@
 """Model-aware value-object resolution + the pre-SQL rejection vocabulary.
 
 Shared primitives for the two negative-validation validators
-(:mod:`op_validate` for queries, :mod:`write_validate` for writes) that back
+(:mod:`object_query_validate` for queries, :mod:`write_validate` for writes) that back
 the ``rejected`` case shape (m-case-format, resolved Q7). A ``rejected`` case
 asserts a model-aware validator refuses an input **before any SQL is emitted**,
 naming the violated normative rule in ``then.rejectedRule``.

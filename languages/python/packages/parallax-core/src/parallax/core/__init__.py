@@ -69,7 +69,7 @@ from parallax.core.entity import (
     rel,
 )
 from parallax.core.object_query import LATEST, TX_TIME, VALID_TIME
-from parallax.core.predicate import OperationRejectedError, QueryDefinitionError
+from parallax.core.predicate import ModelRejectedError, QueryDefinitionError
 from parallax.core.temporal_read import Edge, Pin, TemporalReadError, UndeclaredAxisError
 
 __all__ = [
@@ -101,8 +101,8 @@ __all__ = [
     "Int32",
     "MetamodelDefinitionError",
     "MetamodelLookupError",
+    "ModelRejectedError",
     "ObjectQuery",
-    "OperationRejectedError",
     "Pin",
     "Predicate",
     "QueryDefinitionError",

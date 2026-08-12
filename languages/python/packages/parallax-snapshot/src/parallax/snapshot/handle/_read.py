@@ -700,7 +700,7 @@ def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
 
     A bare spelling two namespaces share names no single Entity and is the
     normative `reference-ambiguous-entity-name` refusal, carried by
-    ``predicate``'s own :class:`~parallax.core.predicate.OperationRejectedError`
+    ``predicate``'s own :class:`~parallax.core.predicate.ModelRejectedError`
     so one rule and one class answer it whether preflight or this executor
     resolves the reference. Any other miss names no declared Entity at all and is
     the same `query-target-not-in-model` refusal the read preflight answers with:
@@ -714,7 +714,7 @@ def _metadata(meta: Metamodel, name: str) -> EntityMetadata:
         return metadata
     shared = ambiguous_entity_spellings(meta, name)
     if shared:
-        raise predicate_algebra.OperationRejectedError(
+        raise predicate_algebra.ModelRejectedError(
             "reference-ambiguous-entity-name",
             f"{name!r}: the bare Entity spelling is shared by {list(shared)}, so it names no "
             "single Entity in this model and the read resolves nowhere (m-predicate reference "

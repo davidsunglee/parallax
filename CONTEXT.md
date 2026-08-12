@@ -474,9 +474,21 @@ _Avoid_: payload column, entity JSON column, document root column, JSON blob
 
 ### Expressions And Reads
 
+**Object Query**:
+The complete read request for full objects: a queried Entity and a Predicate,
+plus the optional sibling clauses that shape the result — result narrowing, a
+Temporal Selection per declared dimension, Sort Keys, a row cap, and Includes.
+It is flat, so clause authoring order carries no meaning and no clause nests
+inside another; it carries no result form, no distinct, and no pagination.
+_Avoid_: operation, operation tree, find query, query wrapper, statement
+
 **Predicate**:
-A typed recursive expression that describes which rows or objects a read or a predicate-selected write targets.
-_Avoid_: where object, filter object
+The recursive selection grammar alone — which rows or objects a read or a
+predicate-selected write targets. Boolean composition, comparison, range,
+membership, null, string, navigation, and predicate-scoped narrowing recurse
+within it; ordering, the cap, temporal pins, result narrowing, and Includes are
+Object Query clauses that never appear inside it.
+_Avoid_: operation, operation algebra, where object, filter object
 
 **Assignment**:
 A typed authored expression that describes a value change for one assignable
@@ -484,8 +496,17 @@ mapped scalar attribute or whole Value Object occurrence in a set-based update.
 _Avoid_: setter call, update object
 
 **Sort Key**:
-A typed expression that describes attribute-based ordering for a query result.
-_Avoid_: comparator callback, order callback
+One ordering term of an Object Query: an attribute reference, a direction, and a
+Null Placement. The clause's list order is key precedence, and sorting is exactly
+as authored — no primary-key or temporal-edge tiebreaker is injected.
+_Avoid_: comparator callback, order callback, orderBy wrapper
+
+**Null Placement**:
+Where NULLs sort on one Sort Key — first or last, independent of direction and
+defaulting to last. It is a property of the key rather than of the dialect: the
+two dialects' native placement diverges, so each lowers the authored placement to
+whatever makes the observable order identical.
+_Avoid_: nulls option, dialect null order
 
 **Result Collection**:
 A query-backed result collection returned by `find`; it may resolve to zero, one, or many objects.
@@ -496,16 +517,36 @@ A typed plain value graph returned by a snapshot read: identity-resolved within 
 _Avoid_: domain snapshot, JSON output, serialization form, lazy collection
 
 **Includes**:
-The query option that requests eager relationship loading for a `find`.
-_Avoid_: deepFetch, populate
+The Object Query clause naming the graph shape a read asks for: an
+order-insensitive set of Include Paths whose canonical form sorts, deduplicates,
+and retains only maximal nonredundant paths. It is the request, never the
+behavior that satisfies it.
+_Avoid_: deep fetch clause, deepFetch tag, populate
+
+**Deep Fetch**:
+The execution behavior that realizes Includes — one SQL statement per
+relationship level, where a level is identified by the relationship, whether a
+narrowing was authored, and the effective concrete set it resolves to. Paths
+sharing a level fetch it once.
+_Avoid_: eager loading option, include planner, query tag
 
 **Include Path**:
-A relationship path listed in `includes`; longer paths imply any intermediate relationship paths needed to load them.
-_Avoid_: include tree, populate path
+One path of Includes: an ordered non-empty chain of segments read from the
+queried position, plus an optional Subtype Selection guarding which source
+objects the path starts from. It requests the complete relationship view and
+carries no predicate, ordering, cap, pagination, or nested query; longer paths
+materialize every intermediate level.
+_Avoid_: include tree, populate path, dotted include string
 
-**Subtype Narrowing**:
-A query or include constraint that limits a polymorphic entity position to an effective concrete subtype set, authored with abstract subtype and/or concrete subtype names while preserving the surrounding predicate or query shape.
-_Avoid_: manual tag filter, type cast
+**Subtype Selection**:
+The one shared value naming an effective concrete subtype set, written with
+abstract-subtype and/or concrete-subtype names and preserved as authored. It
+occupies four positions — an Object Query's result narrowing, a Predicate-scoped
+narrowing, an Include Path's source applicability, and an include segment's
+target narrowing — and never restates the position it narrows from. Its
+alternatives are order-insensitive, serialize in canonical Entity Identity order,
+reject exact duplicates at construction, and must resolve pairwise-disjoint.
+_Avoid_: manual tag filter, type cast, per-position narrow shape
 
 **Nested Value-Object Path**:
 A typed path that starts at an entity-owned value object and addresses a nested member inside that value.
@@ -981,6 +1022,15 @@ dimension itself is the axis identity. A `transaction-time` profile derives
 Transaction Time; a `bitemporal` profile derives both Valid Time and
 Transaction Time.
 _Avoid_: temporal column, date dimension
+
+**Temporal Selection**:
+What one Object Query asks of one declared Temporal Dimension: pin it at a
+coordinate, scan a finite half-open range, or scan its whole milestone set. A
+canonical query names one for every dimension the queried entity declares, and
+the dimensions compose independently. An omitted Transaction Time normalizes to
+the Latest pin on the authoring surface; an omitted Valid Time on a bitemporal
+query is invalid and never normalizes silently.
+_Avoid_: temporal wrapper, as-of clause, temporal mode
 
 **Milestone**:
 One temporal row covering a half-open `[from, to)` interval on an as-of axis; a write chains a new milestone and closes the prior one rather than mutating a value in place, preserving an audit trail.

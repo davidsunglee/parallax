@@ -128,8 +128,8 @@ class QueryDefinitionError(ValueError):
     substring.
 
     This is the query-authoring family, disjoint by the question it answers from
-    the two wire-and-model families beside it: ``OperationError`` says a
-    serialized document is malformed, and ``OperationRejectedError`` says a
+    the two wire-and-model families beside it: ``CanonicalDocumentError`` says a
+    serialized document is malformed, and ``ModelRejectedError`` says a
     well-formed one is illegal against a model.
     """
 

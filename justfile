@@ -127,6 +127,7 @@ core-check-contract-tools:
     cd {{harness}} && uv run python -m reference_harness.slice_inspect --check-all ../core/spec ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.case_format_vocab_check ../core/spec
     cd {{harness}} && uv run python -m reference_harness.neutral_type_vocab_check ../core/spec
+    cd {{harness}} && uv run python -m reference_harness.object_query_vocab_check ../core/spec
     cd {{harness}} && uv run python -m reference_harness.descriptor_contract_check ../core/compatibility
     cd {{harness}} && uv run python -m reference_harness.retired_vocab_check ..
     cd {{harness}} && uv run python -m reference_harness.case_comment_check ../core/compatibility

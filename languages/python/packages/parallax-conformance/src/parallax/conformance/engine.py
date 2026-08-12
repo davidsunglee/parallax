@@ -72,8 +72,8 @@ from parallax.core.model_formation import MetamodelValidationError
 from parallax.core.object_query import EntityQuery, ObjectQueryNode, validate_object_query
 from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import (
-    OperationError,
-    OperationRejectedError,
+    CanonicalDocumentError,
+    ModelRejectedError,
 )
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, SqlGenError, compile_read
 from parallax.core.temporal_read import Pin, TemporalReadError, query_pin
@@ -153,8 +153,8 @@ class EngineError(ValueError):
 
 
 _READ_ERRORS = (
-    OperationError,
-    OperationRejectedError,
+    CanonicalDocumentError,
+    ModelRejectedError,
     SqlGenError,
     TemporalReadError,
     handle.QueryTargetError,
@@ -783,7 +783,7 @@ _LOWERING_ERRORS: Final[tuple[type[Exception], ...]] = (
     opt_lock.CallerAuthoredVersionError,
     temporal_state.AmbiguousObservationError,
     temporal_state.MilestoneEdgeError,
-    OperationError,
+    CanonicalDocumentError,
     SqlGenError,
     TemporalReadError,
     KeyError,
@@ -2991,8 +2991,8 @@ def _run_materializing_pair(
     write_step = steps[index + 1]
     instruction = _is_materializing_write_step(write_step, model)
     assert instruction is not None  # the caller already established this via the same check
-    find_query = _step_query(find_step)
-    target = find_query.target.canonical
+    find = _step_query(find_step)
+    target = find.target.canonical
     if target != instruction.target.entity:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
@@ -3008,11 +3008,11 @@ def _run_materializing_pair(
     # write target remains the bare predicate, so the two predicates compare
     # directly; `_canonicalize_read` would additionally inject interval
     # predicates and is therefore still not the apples-to-apples form.
-    if find_query.predicate != instruction.target.predicate:
+    if find.predicate != instruction.target.predicate:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
             "a resolving find over the SAME canonical predicate as the write's own target "
-            f"predicate (find {find_query.predicate!r}, write {instruction.target.predicate!r} "
+            f"predicate (find {find.predicate!r}, write {instruction.target.predicate!r} "
             "— m-case-format 'Materializing cases' requires the prior find to use the same "
             "concrete target and canonical predicate)"
         )
@@ -4399,7 +4399,7 @@ def _first_declared_entity(case: case_format.Case) -> str:
     entity". That is the DOCUMENT's order: the accepted model enumerates its
     Entities canonically, so the authored order survives nowhere else. Of the
     cases that reach this convention, one resolves to a different Entity under
-    each reading — ``m-op-algebra-048`` over ``shared-local-name`` — and it is
+    each reading — ``m-predicate-048`` over ``shared-local-name`` — and it is
     refused by the same rule either way, so no case grades the difference.
 
     The ORDER is the document's; the SPELLING is canonical
@@ -5249,12 +5249,12 @@ def run_rejected_case(case: case_format.Case) -> str:
     if kind == "objectQuery":
         try:
             query = deserialize_query(when["objectQuery"])
-        except OperationError as exc:
+        except CanonicalDocumentError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         root = case_entity(model, query.target.canonical)
         try:
             validate_object_query(root, query, model)
-        except OperationRejectedError as exc:
+        except ModelRejectedError as exc:
             return exc.rule
         raise EngineError(
             f"{case.path.name}: the model-aware validator accepted an Object Query the case "

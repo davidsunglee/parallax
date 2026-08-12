@@ -4,7 +4,7 @@ shipped surface, never serialization-only.
 
 Every entry is ONE case-driven idiomatic read example: a pure ``build()``
 returning the SAME idiomatic ``ObjectQuery`` expression
-``tests/api/test_operation_no_drift.py``'s ``BUILDERS`` proves
+``tests/api/test_object_query_no_drift.py``'s ``BUILDERS`` proves
 no-drift against the corpus's own ``when.objectQuery`` (the query-shape half),
 plus the ``case_id`` / ``title`` / ``model`` it mirrors. Execution is
 GENERIC, unlike the write/graph stories: a single runner
@@ -76,7 +76,7 @@ __all__ = ["READ_STORIES", "ReadStory", "read_story_snippet"]
 class ReadStory:
     """One case-driven idiomatic read example: build the statement, mirror one
     corpus ``read``-shape case whose oracle is ``then.rows``/``then.roundTrips``.
-    ``snippet`` is the bare ``op = ...`` reading every entry authors (a plain
+    ``snippet`` is the bare ``query = ...`` reading every entry authors (a plain
     assignment, matching every other example's presentation) — kept alongside
     ``build`` rather than derived via ``inspect.getsource`` (a lambda's own
     source line would render the dict-literal/comma noise around it).
@@ -109,9 +109,9 @@ class ReadStory:
 
 def read_story_snippet(story: ReadStory) -> str:
     """The story's rendered Usage Guide source: ``story.snippet``'s bare
-    ``op = ...`` reading, PLUS — for a story whose own ``concurrency`` opts
+    ``query = ...`` reading, PLUS — for a story whose own ``concurrency`` opts
     into the transactional read half — the SAME
-    ``db.transact(lambda tx: tx.find(op), concurrency=...).value`` wrapper
+    ``db.transact(lambda tx: tx.find(query), concurrency=...).value`` wrapper
     `test_story_run.py`'s generic runner actually executes, rendered from
     that SAME field rather than a second, independently-typed copy of the
     mode (a `m-read-lock-002` vs. `-005`-style
@@ -120,7 +120,7 @@ def read_story_snippet(story: ReadStory) -> str:
     if story.concurrency is None:
         return story.snippet
     return (
-        f"{story.snippet}\ndb.transact(lambda tx: tx.find(op), "
+        f"{story.snippet}\ndb.transact(lambda tx: tx.find(query), "
         f'concurrency="{story.concurrency}").value'
     )
 
@@ -128,74 +128,74 @@ def read_story_snippet(story: ReadStory) -> str:
 READ_STORIES: Final[tuple[ReadStory, ...]] = (
     # -- m-predicate spellings + m-object-query orderBy, models/orders.yaml -- #
     ReadStory(
-        "m-op-algebra-002",
+        "m-predicate-002",
         "Equality on the primary key",
         "orders",
         lambda: Order.where(Order.id == 42),
-        "op = Order.where(Order.id == 42)",
+        "query = Order.where(Order.id == 42)",
     ),
     ReadStory(
-        "m-op-algebra-009",
+        "m-predicate-009",
         "Is-null predicate",
         "orders",
         lambda: Order.where(Order.sku.is_null()),
-        "op = Order.where(Order.sku.is_null())",
+        "query = Order.where(Order.sku.is_null())",
     ),
     ReadStory(
-        "m-op-algebra-011",
+        "m-predicate-011",
         "SQL-pattern LIKE",
         "orders",
         lambda: Order.where(Order.sku.like("A-%")),
-        'op = Order.where(Order.sku.like("A-%"))',
+        'query = Order.where(Order.sku.like("A-%"))',
     ),
     ReadStory(
-        "m-op-algebra-013",
+        "m-predicate-013",
         "Literal starts-with (wildcards escaped)",
         "orders",
         lambda: Order.where(Order.sku.starts_with("A-")),
-        'op = Order.where(Order.sku.starts_with("A-"))',
+        'query = Order.where(Order.sku.starts_with("A-"))',
     ),
     ReadStory(
-        "m-op-algebra-018",
+        "m-predicate-018",
         "Membership (IN)",
         "orders",
         lambda: Order.where(Order.id.in_([1, 2, 42])),
-        "op = Order.where(Order.id.in_([1, 2, 42]))",
+        "query = Order.where(Order.id.in_([1, 2, 42]))",
     ),
     ReadStory(
-        "m-op-algebra-020",
+        "m-predicate-020",
         "Conjoined filters (big-AND)",
         "orders",
         lambda: Order.where(Order.active.is_(True), Order.qty > 10),
-        "op = Order.where(Order.active.is_(True), Order.qty > 10)",
+        "query = Order.where(Order.active.is_(True), Order.qty > 10)",
     ),
     ReadStory(
-        "m-op-algebra-021",
+        "m-predicate-021",
         "Disjunction with parentheses",
         "orders",
         lambda: Order.where((Order.qty < 10) | (Order.qty > 25)),
-        "op = Order.where((Order.qty < 10) | (Order.qty > 25))",
+        "query = Order.where((Order.qty < 10) | (Order.qty > 25))",
     ),
     ReadStory(
-        "m-op-algebra-024",
+        "m-predicate-024",
         "Grouped precedence — an OR under an AND",
         "orders",
         lambda: Order.where((Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True)),
-        "op = Order.where((Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True))",
+        "query = Order.where((Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True))",
     ),
     ReadStory(
-        "m-op-algebra-025",
+        "m-predicate-025",
         "Natural precedence — an AND under an OR (no group)",
         "orders",
         lambda: Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True))),
-        "op = Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True)))",
+        "query = Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True)))",
     ),
     ReadStory(
-        "m-op-algebra-032",
+        "m-object-query-003",
         "Ordering and limiting",
         "orders",
         lambda: Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2),
-        "op = Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2)",
+        "query = Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2)",
     ),
     # -- m-temporal-read, models/balance.yaml -------------------------------- #
     ReadStory(
@@ -203,7 +203,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "As-of read at a past instant",
         "balance",
         lambda: _Balance.where(_Balance.all).as_of(tx_time=dt.datetime(2024, 4, 1, tzinfo=dt.UTC)),
-        "op = Balance.where(Balance.all).as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))",
+        "query = Balance.where(Balance.all).as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))",
     ),
     # -- m-navigate (relationship existence), models/orders.yaml ------------- #
     ReadStory(
@@ -211,28 +211,28 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "Relationship existence (bare `.exists()`)",
         "orders",
         lambda: Order.where(Order.items.exists()),
-        "op = Order.where(Order.items.exists())",
+        "query = Order.where(Order.items.exists())",
     ),
     ReadStory(
         "m-navigate-003",
         "Relationship absence (bare `.not_exists()`)",
         "orders",
         lambda: Order.where(Order.items.not_exists()),
-        "op = Order.where(Order.items.not_exists())",
+        "query = Order.where(Order.items.not_exists())",
     ),
     ReadStory(
         "m-navigate-004",
         "Relationship existence with a predicate",
         "orders",
         lambda: Order.where(Order.items.exists(OrderItem.quantity >= 4)),
-        "op = Order.where(Order.items.exists(OrderItem.quantity >= 4))",
+        "query = Order.where(Order.items.exists(OrderItem.quantity >= 4))",
     ),
     ReadStory(
         "m-navigate-006",
         "A navigation filter composed with a scalar predicate",
         "orders",
         lambda: Order.where(Order.items.not_exists(), Order.active.is_(True)),
-        "op = Order.where(Order.items.not_exists(), Order.active.is_(True))",
+        "query = Order.where(Order.items.not_exists(), Order.active.is_(True))",
     ),
     ReadStory(
         "m-navigate-008",
@@ -241,7 +241,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         lambda: Order.where(
             Order.items.exists(OrderItem.statuses.exists(OrderStatus.code == "PACKED"))
         ),
-        "op = Order.where(Order.items.exists("
+        "query = Order.where(Order.items.exists("
         'OrderItem.statuses.exists(OrderStatus.code == "PACKED")))',
     ),
     ReadStory(
@@ -249,14 +249,14 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "Existence over a to-one (nullable) relationship",
         "orders",
         lambda: OrderStatus.where(OrderStatus.order_item.exists()),
-        "op = OrderStatus.where(OrderStatus.order_item.exists())",
+        "query = OrderStatus.where(OrderStatus.order_item.exists())",
     ),
     ReadStory(
         "m-navigate-010",
         "Negated multi-hop relationship existence",
         "orders",
         lambda: Order.where(Order.items.not_exists(OrderItem.statuses.exists())),
-        "op = Order.where(Order.items.not_exists(OrderItem.statuses.exists()))",
+        "query = Order.where(Order.items.not_exists(OrderItem.statuses.exists()))",
     ),
     # -- m-navigate x m-temporal-read (per-hop as-of), models/policy.yaml ---- #
     ReadStory(
@@ -266,7 +266,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         lambda: Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
             tx_time=LATEST, valid_time=LATEST
         ),
-        "op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(\n"
+        "query = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(\n"
         "    tx_time=LATEST, valid_time=LATEST\n"
         ")",
     ),
@@ -278,7 +278,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
             valid_time=LATEST
         ),
         (
-            "op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00))"
+            "query = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00))"
             ".as_of(valid_time=LATEST)"
         ),
     ),
@@ -288,7 +288,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "Table-per-hierarchy concrete-target read",
         "payment",
         lambda: CardPayment.where(CardPayment.all),
-        "op = CardPayment.where(CardPayment.all)",
+        "query = CardPayment.where(CardPayment.all)",
     ),
     # `m-inheritance-003` (Payment abstract-root, familyVariant),
     # `m-inheritance-013`/`-015` (Animal narrowed to Pet / an OR of Dog+Cat
@@ -309,28 +309,28 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "Table-per-concrete-subtype concrete read",
         "document",
         lambda: Invoice.where(Invoice.all),
-        "op = Invoice.where(Invoice.all)",
+        "query = Invoice.where(Invoice.all)",
     ),
     ReadStory(
         "m-inheritance-012",
         "A result narrowed to one concrete subtype, filtered by its own attribute",
         "animal",
         lambda: Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3)),
-        "op = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))",
+        "query = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))",
     ),
     ReadStory(
         "m-inheritance-070",
         "Polymorphic navigation over table-per-concrete-subtype (grouped OR)",
         "document",
         lambda: Folder.where(Folder.documents.exists()),
-        "op = Folder.where(Folder.documents.exists())",
+        "query = Folder.where(Folder.documents.exists())",
     ),
     ReadStory(
         "m-inheritance-071",
         "The same polymorphic navigation, narrowed to one abstract subtype",
         "document",
         lambda: Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument))),
-        "op = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument)))",
+        "query = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument)))",
     ),
     ReadStory(
         "m-inheritance-100",
@@ -339,7 +339,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         lambda: DepositRate.where(DepositRate.all).as_of(
             valid_time=LATEST, tx_time=dt.datetime(2024, 1, 15, tzinfo=dt.UTC)
         ),
-        "op = DepositRate.where(DepositRate.all).as_of(\n"
+        "query = DepositRate.where(DepositRate.all).as_of(\n"
         "    valid_time=LATEST, tx_time=datetime(2024, 1, 15, tzinfo=UTC)\n"
         ")",
     ),
@@ -357,7 +357,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "A locking-mode object find carries the shared read lock",
         "account",
         lambda: Account.where(Account.id == 2),
-        "op = Account.where(Account.id == 2)",
+        "query = Account.where(Account.id == 2)",
         concurrency="locking",
     ),
     ReadStory(
@@ -365,7 +365,7 @@ READ_STORIES: Final[tuple[ReadStory, ...]] = (
         "An optimistic-mode object find omits the shared read lock",
         "account",
         lambda: Account.where(Account.id == 2),
-        "op = Account.where(Account.id == 2)",
+        "query = Account.where(Account.id == 2)",
         concurrency="optimistic",
     ),
 )

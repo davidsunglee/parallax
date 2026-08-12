@@ -4,7 +4,7 @@
 # The read is positioned at `Order` (the model's first entity, the default a rejected
 # case takes) and the predicate references `OrderItem.sku` — a separate row-owning
 # entity reached only by navigating `Order.items`. The distinction this pins against
-# m-op-algebra-045 is that the rule is NOT an inheritance rule wearing a second name:
+# m-predicate-045 is that the rule is NOT an inheritance rule wearing a second name:
 # 045 rejects a foreign reference inside a model whose queried position happens to be
 # a family root, so a validator that runs the positional check only for descriptors
 # declaring an inheritance family still passes it. Here there is no family to enter,
