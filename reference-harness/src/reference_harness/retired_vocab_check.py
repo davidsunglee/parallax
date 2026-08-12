@@ -406,10 +406,13 @@ _REPOSITORY_HOST = "parallax.dev"
 # A URL some other system issued, masked before matching: no edit in this
 # repository can change the vocabulary its text spells. It ends where prose
 # closes it — a Markdown link's `)`, a quote, a backtick, an angle bracket — so
-# what a document writes AROUND a link is still repository vocabulary.
+# what a document writes AROUND a link is still repository vocabulary. A host is
+# case-insensitive, so the repository's own host is recognized however it is
+# written; the guard after it keeps a look-alike neighbour (`parallax.devil.io`)
+# foreign.
 _URL = re.compile(
     rf"\b[a-z][a-z0-9+.-]*://"
-    rf"(?!(?:[a-z0-9-]+\.)*{re.escape(_REPOSITORY_HOST)}(?![a-z0-9.-]))"
+    rf"(?!(?i:(?:[a-z0-9-]+\.)*{re.escape(_REPOSITORY_HOST)})(?![A-Za-z0-9.-]))"
     rf"[^\s<>()\[\]\"'`]+"
 )
 
@@ -417,9 +420,16 @@ _URL = re.compile(
 # live: the `m-op-list` module's Python scope `parallax.core.op_list`, the
 # command graph's own operation vocabulary in `gate_graph`, and the .NET
 # exception name that session research cites. Masked the way a URL is.
-_LIVE_SPELLING_WORDS = ("op_list", "OPERATION_TOKENS", "InvalidOperationException")
+#
+# Each entry is one identifier with one spelling, so the mask is case-sensitive
+# and carries the same identifier boundary on BOTH sides. A longer name that
+# merely ENDS with one of these is a different name, and blanking its tail would
+# erase whatever the characters before it spell — `query_op_list` and
+# `operation_op_list` name a query an operation whatever suffix follows.
+_LIVE_SPELLING_WORDS = ("op_list", "_OPERATION_TOKENS", "InvalidOperationException")
+_LIVE_SPELLING_EDGE = r"[A-Za-z0-9_-]"
 _LIVE_SPELLINGS = re.compile(
-    rf"{_LEFT}(?:{'|'.join(_LIVE_SPELLING_WORDS)})(?![A-Za-z0-9_-])", re.IGNORECASE
+    rf"(?<!{_LIVE_SPELLING_EDGE})(?:{'|'.join(_LIVE_SPELLING_WORDS)})(?!{_LIVE_SPELLING_EDGE})"
 )
 
 # The masking character. It is not alphanumeric, so it bounds a phrase the same
