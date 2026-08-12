@@ -88,7 +88,7 @@ class ValueObject(BaseModel, metaclass=ValueObjectMeta, _mint=FRAMEWORK_MINT):
         """This value as its canonical nested document.
 
         Named for the capability rather than exported as a protocol import, so
-        the operation-node layer can render a member without importing this
+        the predicate-node layer can render a member without importing this
         frontend.
         """
         return _document(self)

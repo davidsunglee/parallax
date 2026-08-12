@@ -41,7 +41,7 @@
 # indistinguishable), `Depot.address` is a DIFFERENT declared STRUCTURE — a FLAT
 # `{ line, postcode }` in the same `address` column. Decoding a Depot row with the
 # root Customer descriptor therefore yields observably wrong keys, so the deferred
-# `action: load` and operation-list first-`access` witnesses over `depots`
+# `action: load` and query-backed-list first-`access` witnesses over `depots`
 # (m-deep-fetch-020, m-op-list-004) go RED if a runner materializes them with the
 # scenario root instead of the navigated child entity. `Depot` and its relationship
 # likewise leave Customer's / Location's Attribute and Value Object declarations

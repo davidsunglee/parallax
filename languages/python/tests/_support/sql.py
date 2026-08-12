@@ -13,7 +13,7 @@ from parallax.core.sql_gen import compile_read as compile_entity_query
 
 
 def compile_read(
-    operation: PredicateNode,
+    predicate: PredicateNode,
     model: Metamodel,
     dialect: Dialect,
     target: EntityMetadata,
@@ -25,10 +25,10 @@ def compile_read(
     lock: LockMode | None = None,
     include_value_objects: bool | frozenset[str] = False,
 ) -> CompiledRead:
-    """Compile ``operation`` as the predicate of ``target``'s Entity Query."""
+    """Compile ``predicate`` as the predicate of ``target``'s Entity Query."""
     query = EntityQuery(
         target=target.identity,
-        predicate=operation,
+        predicate=predicate,
         narrow_to=narrow_to,
         order_by=order_by,
         limit=limit,

@@ -1071,7 +1071,7 @@ def _build_entity(
     cls = _pydantic_class(mcs, cls_name, bases, ns)
     # Every reference this class hands out is seeded with the Entity's EXACT
     # canonical spelling, so everything downstream that re-emits it — a
-    # serialized operation, a durable write document — carries an identity two
+    # serialized query, a durable write document — carries an identity two
     # namespaces sharing a local name cannot confuse. Nothing downstream builds
     # a spelling of its own; they all re-emit this one.
     for py_name, canonical in py_to_name.items():

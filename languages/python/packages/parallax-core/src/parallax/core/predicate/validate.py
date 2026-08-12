@@ -193,9 +193,9 @@ def _collect_entities(op: PredicateNode, names: set[str]) -> None:
 
 
 class OperationRejectedError(ValueError):
-    """A schema-valid operation violates a model-aware rule and MUST be refused
-    pre-SQL (`m-case-format` `rejected` cases). ``rule`` is the exact
-    `then.rejectedRule` classification the closed vocabulary names.
+    """A schema-valid predicate or Object Query violates a model-aware rule and
+    MUST be refused pre-SQL (`m-case-format` `rejected` cases). ``rule`` is the
+    exact `then.rejectedRule` classification the closed vocabulary names.
     """
 
     def __init__(self, rule: str, message: str) -> None:
@@ -343,7 +343,7 @@ def _check_bound_ordering(subject: str, lower: Scalar, upper: Scalar) -> None:
 # --------------------------------------------------------------------------- #
 def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
     """The accepted Metadata a bare-or-canonical Entity spelling names, or
-    absence, over the authored `Class` prefix of an operation reference —
+    absence, over the authored `Class` prefix of a predicate reference —
     :func:`~parallax.core.metamodel.entity_by_name`'s ambiguity-rejecting rule,
     so an ambiguous bare name is a miss rather than a silent first match."""
     return entity_by_name(model, name)
@@ -701,7 +701,7 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
 
 
 def _literal_matches_type(value: Scalar, neutral_type: NeutralType) -> bool:
-    """Whether a polymorphic operation literal matches a leaf's declared neutral type.
+    """Whether a polymorphic predicate literal matches a leaf's declared neutral type.
 
     `m-predicate`: "each type MUST match the leaf attribute's declared neutral
     type; a resolver MUST reject a type-mismatched literal." The algebra's

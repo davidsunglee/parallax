@@ -204,7 +204,7 @@ whether `Document` slots are selected:
 
 - **Instance-form** (the **object lane**) — the result materializes into instances: a
   snapshot-graph read, an eager fetch (its root and every child level), a deferred
-  relationship **`load`** or an operation-list **first `access`** (`m-op-list`), or any
+  relationship **`load`** or a query-backed list's **first `access`** (`m-op-list`), or any
   other find whose rows become objects. It projects Document slots, so a value-object-bearing
   entity's whole document rides the owner's single statement (the one-round-trip
   materialization contract, `m-value-object`). Deep-fetch and snapshot **child levels
@@ -228,8 +228,8 @@ consumption lane. `m-case-format` fixes the selector — a **top-level** read ca
 form is declared by **which result member it asserts** (`then.rows` = row-form;
 `then.graph` / `then.graphs` = instance-form), and a scenario / coherence / concurrency
 **step** read (asserted with `expectRows` / `observeRows`) is fixed by the step's read
-semantics: a managed-object find or refresh, a relationship `load`, an operation-list
-first `access`, and a full-scalar shared concurrency read are **instance-form**; the
+semantics: a managed-object find or refresh, a relationship `load`, a query-backed
+list's first `access`, and a full-scalar shared concurrency read are **instance-form**; the
 internal materialized-predicate-write resolving read is **row-form**.
 
 Everything already specified composes with this rule unchanged: a version

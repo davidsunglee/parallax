@@ -1,7 +1,7 @@
 """The structured Neutral Type algebra and its value spaces (m-core).
 
 Every typed model fact draws its type from this closed algebra: Attribute and
-Value Object Attribute metadata, operation literals and assignments, and
+Value Object Attribute metadata, predicate literals and assignments, and
 neutral row cells. A structured value carries no serialized spelling — parsing
 and formatting the ``decimal(p,s)`` family and its siblings belongs to the
 interchange seams that transport them.

@@ -7,7 +7,7 @@ the per-row `familyVariant` (`tagValue` -> concrete subtype name). These tests
 exercise that derivation with no database:
 
 * the narrow four-step validation ACCEPTS a valid / redundant narrow and RAISES the
-  exact operation rule for a broadening narrow, an empty effective set, and a
+  exact predicate rule for a broadening narrow, an empty effective set, and a
   concrete-subtype attribute used outside a compatible narrowing scope;
 * the family-variant map and the concrete superset are derived from the ancestry;
 * `_materialize_family_variant` replaces the raw tag column with the derived

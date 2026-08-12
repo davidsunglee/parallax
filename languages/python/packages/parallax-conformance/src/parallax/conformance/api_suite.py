@@ -539,7 +539,7 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "against (`tests/_support/mirrored_models.py`'s own UNMIRRORED reason). Its physical "
         "Column and Table mapping rejects are model-declaration invariants the Rule "
         "Set classifies at model construction (a `MetamodelValidationError` issue), not "
-        "an operation or write the Usage Guide's statement- and verb-level examples "
+        "a query or write the Usage Guide's statement- and verb-level examples "
         "could spell"
     ),
     "m-batch-write": (
@@ -900,7 +900,7 @@ _INHERITANCE_SET_BASED_UNSUPPORTED_UNREACHABLE_REASON: Final[str] = (
 # `when.model` descriptor-shape rejects (m-inheritance-020..032, plus the
 # root-ownership witnesses 098/099/129, plus the optimistic-
 # locking root-ownership witnesses 102/103): a DIFFERENT validation surface
-# than the operation-level rejected lane.
+# than the Object Query rejected lane.
 # `parallax.descriptor.validate_inheritance_families` classifies these exact rules for a raw
 # descriptor, and the class grammar reaches most of them through a different
 # surface: hierarchy-derived `parent`/`role` makes most of these shapes
@@ -1041,7 +1041,7 @@ _VO_DEEPFETCH_SEGMENT_REASON: Final[str] = (
     "deep-fetch-through-a-value-object shape"
 )
 _VO_NAVIGATE_TARGET_REASON: Final[str] = (
-    "`Customer.address.exists()` builds successfully, but to a DIFFERENT, valid operation "
+    "`Customer.address.exists()` builds successfully, but to a DIFFERENT, valid predicate "
     "(`nestedExists`, the to-many VO presence quantifier m-value-object-015/016 already "
     "exercise) — not the corpus's invalid `navigate` node targeting a value object; the "
     "idiomatic surface has no spelling that produces THAT exact shape, only a "

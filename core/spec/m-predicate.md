@@ -49,7 +49,7 @@ pluggable writers); the format set is consistent with metamodel serde
 Every implementation **MUST** provide Predicate serialization/deserialization
 behavior, with **round-trip** tests:
 `serialize(deserialize(op)) == op`. The reference harness asserts this per case,
-in both JSON and YAML. This behavior does not execute operations; its source
+in both JSON and YAML. This behavior executes no predicate; its source
 ownership, enforcement scope, and deployable-artifact placement are
 language-owned under the topology rules in [`modules.md`](modules.md). Idiomatic
 per-language re-expressions of a query (fluent builders, etc.) are **illustrative

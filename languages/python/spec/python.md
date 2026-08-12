@@ -116,7 +116,7 @@ Dimension using these same names. The former business/processing vocabulary is
 not accepted as aliases in declarations, metadata, queries, Pin/Edge values,
 mutations, exceptions, or exports.
 
-### Query and operation API
+### Query and predicate API
 
 - **Every composed query value names the Entity it addresses.** The exported
   authoring vocabulary is parameterized: `AttributeExpr[E, T]`, `Predicate[E]`,
@@ -645,9 +645,9 @@ mutations, exceptions, or exports.
   A nested `between(lower, upper)` validates both bounds against the leaf's
   declared neutral type, exactly as every other nested literal is validated.
   Top-level and nested `between` alike then compare the two bounds where every
-  other operation rule is stated — `validate_operation`, reached at execution
-  preflight for a read and at the write boundary for a predicate-selected
-  write: a `lower` strictly greater than its
+  other model-aware predicate rule is stated — `validate_operation`, reached at
+  execution preflight for a read and at the write boundary for a
+  predicate-selected write: a `lower` strictly greater than its
   `upper` names an empty range and raises
   `OperationRejectedError(between-bounds-inverted)` rather than compiling to a
   `BETWEEN` that silently matches nothing. The comparison is by literal kind —

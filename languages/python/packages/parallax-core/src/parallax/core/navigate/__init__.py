@@ -114,7 +114,7 @@ def canonicalize(
 
 
 # --------------------------------------------------------------------------- #
-# Fast pre-check (identity for navigation-free operations).                   #
+# Fast pre-check (identity for navigation-free predicates).                   #
 # --------------------------------------------------------------------------- #
 def _contains_navigation(op: PredicateNode) -> bool:
     match op:
@@ -189,7 +189,7 @@ def _hop_inner(
 
 def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     entity = model.entity(identity)
-    if entity is None:  # pragma: no cover - guards an unvalidated operation
+    if entity is None:  # pragma: no cover - guards an unvalidated predicate
         raise ValueError(f"{identity.canonical!r} names no declared entity")
     return entity
 
@@ -199,7 +199,7 @@ def resolve_relationship(
 ) -> RelationshipMetadata:
     """Resolve a ``Class.relationship`` reference to the direction it navigates.
 
-    The reference's class name is an operation reference, so it resolves model-wide
+    The reference's class name is a predicate reference, so it resolves model-wide
     by :func:`~parallax.core.metamodel.entity_by_name`'s rule and never adopts a
     namespace of its own — an accepted reference therefore always resolves here,
     which the owner-relative DECLARATION rule could not promise. ``owner`` is the
@@ -215,7 +215,7 @@ def resolve_relationship(
     canonicalization uses, rather than re-deriving it.
     """
     class_name, dot, member_name = rel_ref.rpartition(".")
-    if not dot:  # pragma: no cover - guards an unvalidated operation
+    if not dot:  # pragma: no cover - guards an unvalidated predicate
         raise ValueError(f"relationship reference {rel_ref!r} needs Class.relationship")
     declaring = entity_by_name(model, class_name)
     direction = (

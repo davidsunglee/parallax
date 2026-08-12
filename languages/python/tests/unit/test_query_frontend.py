@@ -353,9 +353,9 @@ def test_the_canonical_node_is_the_querys_own_value() -> None:
 
 # --------------------------------------------------------------------------- #
 # Axis-keyed temporal-read clauses (m-temporal-read) over two locally declared #
-# framework-base entities — proving the wrapper-node construction (Valid-Time  #
-# outer / Transaction-Time inner, LATEST -> latest, single-shot) with no whole #
-# model behind it, since authoring reaches none.                               #
+# framework-base entities — proving the flat Temporal Selection map (one entry #
+# per declared axis, LATEST -> latest, single-shot per dimension) with no      #
+# whole model behind it, since authoring reaches none.                         #
 # --------------------------------------------------------------------------- #
 class Balance(TxTemporal, table="balance", namespace=_NS):
     """A Transaction-Time-Only entity: the one axis a temporal clause may pin."""
@@ -364,7 +364,7 @@ class Balance(TxTemporal, table="balance", namespace=_NS):
 
 
 class Position(Bitemporal, table="position", namespace=_NS):
-    """A Bitemporal entity: both axes, nested Valid-Time outside Transaction-Time."""
+    """A Bitemporal entity: both axes, each selected independently."""
 
     id: Attr[int] = attr(primary_key=True)
 

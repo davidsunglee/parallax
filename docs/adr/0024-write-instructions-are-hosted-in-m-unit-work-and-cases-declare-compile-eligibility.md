@@ -1,6 +1,6 @@
 # Write instructions are hosted in m-unit-work, and cases declare compile eligibility
 
-Reads have a canonical, language-neutral intermediate representation — the operation
+Reads have a canonical, language-neutral intermediate representation — the Predicate
 algebra, pinned by `predicate.schema.json` and hosted by `m-predicate`. Writes did not:
 the keyed `writeSequence` shape and the predicate-selected write shape lived only inside
 `compatibility-case.schema.json`, their instant surface overloaded (`at` meant the

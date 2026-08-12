@@ -2,7 +2,7 @@
 m-value-object).
 
 Each rejected rule is pinned with the exact identifier `validate_operation`
-raises, alongside the representative VALID operations that must NOT be
+raises, alongside the representative VALID predicates that must NOT be
 rejected — including the corpus boundary case (an equivalent-spelling narrow
 that is NOT outside the active position). The 21 in-slice rejected corpus
 cases are additionally round-tripped through the real validator here (not
@@ -459,7 +459,7 @@ def test_narrow_empty_effective_set_rejects() -> None:
     # An abstract subtype with NO concrete descendants: `to` resolves to the empty
     # concrete-subtype set. The childless subtype must sit in a family that DOES
     # compose a concrete elsewhere — a family composing none of them never forms
-    # (`inheritance-missing-concrete-subtype`), so the operation rule is reached
+    # (`inheritance-missing-concrete-subtype`), so the predicate rule is reached
     # only through this shape.
     op = Narrow(to=("Ghost",), operand=All())
     exc = _rejects(op, _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, "Animal")

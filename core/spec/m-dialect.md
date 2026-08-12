@@ -326,8 +326,8 @@ scope; a case exercising one of the forms above carries a Postgres golden only.
 *admits* these forms — the scoped `nested*` family and the flat `many`-crossing
 family are schema-valid at every operator — a MariaDB implementation MUST NOT emit
 wrong SQL for one it cannot lower. It **MUST reject it with a clear capability
-diagnostic** (an unsupported-operation rejection naming the containment-golden
-scope), exactly as it rejects any other unsupported operation, rather than silently
+diagnostic** (an unsupported-predicate rejection naming the containment-golden
+scope), exactly as it rejects any other unsupported predicate, rather than silently
 producing a `json_contains` that does not mean what the predicate says. This is the
 MariaDB-lowering boundary: lower the equality shapes above to the
 containment golden, reject every non-equality to-many element predicate until a
@@ -544,7 +544,7 @@ placement-free spelling `m-deep-fetch-012` already witnesses).
   behavior for any other read shape. Prior art: Reladomo keeps aggregated-data
   selection never-locking beside object-find `getSelect(isInTransaction)`.
 
-  This divergence is surfaced here and **only** here — the operation, the result,
+  This divergence is surfaced here and **only** here — the query, the result,
   and the independent oracle are identical; just the lock spelling differs. Each
   object-find form is the canonical fixed point of the `m-sql` normalizer for its
   own dialect (fully lowercase per rule 2; the normalizer renders the MariaDB lock
