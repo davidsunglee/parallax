@@ -79,8 +79,8 @@ def test_conflict_cases_are_discovered_and_self_describe() -> None:
     cases = _conflict_cases()
     assert cases, "no conflict (m-opt-lock) cases discovered"
     for case in cases:
-        # A conflict case carries then.affectedRows and no operation/scenario.
-        assert "operation" not in case.when
+        # A conflict case carries then.affectedRows and no query/scenario.
+        assert "objectQuery" not in case.when
         assert not case.is_scenario
         assert not case.is_write_sequence
         if case.attempts:

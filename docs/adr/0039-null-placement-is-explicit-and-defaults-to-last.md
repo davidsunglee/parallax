@@ -28,10 +28,10 @@ Keeping one normalized value pair prevents query ordering and relationship
 collection ordering from drifting while allowing callers to request either
 portable placement without introducing raw SQL or dialect branches.
 
-The two terms keep their own member spellings — `attr` on an operation Sort Key
+The two terms keep their own member spellings — `attr` on an Object Query Sort Key
 and `attribute` on a declaration — because the spelling tracks a scoping
 difference the placement field does not change. They also normalize differently,
-and deliberately: an operation Sort Key preserves omitted-versus-explicit `last`
+and deliberately: an Object Query Sort Key preserves omitted-versus-explicit `last`
 through canonical round-trip, while the Metamodel term normalizes omission to
 Nulls Last at the accepted boundary and canonical descriptor form omits a `nulls`
 equal to the default again on export. A declaration may therefore spell `last`
@@ -39,7 +39,7 @@ explicitly, in the schema and through the language frontends alike; what canonic
 descriptor form cannot preserve is the distinction between that spelling and
 omission.
 
-The contract change lands atomically across the Metamodel and operation
+The contract change lands atomically across the Metamodel and query
 schemas, specifications, compatibility cases, dialect renderers, and claiming
 language frontends — no intermediate state exists in which a schema admits a
 placement that a frontend does not author or a dialect does not lower, and no

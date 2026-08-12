@@ -1,12 +1,12 @@
 """Immutable Predicate nodes built from class-level member access.
 
 Class-level attribute access yields an :class:`AttributeExpr` (the SQLAlchemy
-``Mapped[T]`` pattern): the seed of an operation predicate, strict-Pyright-clean
+``Mapped[T]`` pattern): the seed of a Predicate, strict-Pyright-clean
 without a plugin. Its comparison / string / membership / null operators build
 frozen ``m-predicate`` nodes wrapped in a :class:`Predicate`, which composes with
 ``&`` / ``|`` / ``~`` and native parentheses into the canonical boolean tree —
 inserting a ``group`` node exactly where an ``or`` binds looser than its enclosing
-``and`` so an idiomatic operation can never drift from canonical grouping.
+``and`` so an idiomatic predicate can never drift from canonical grouping.
 Expressions reject ``__bool__`` (catching accidental ``and`` / ``or`` / ``not``
 and chained comparisons), pointing at ``&`` / ``|`` / ``~`` and ``.between()``.
 
@@ -324,7 +324,7 @@ class AllPredicate[E]:
 
 @dataclass(frozen=True, slots=True)
 class Predicate[E]:
-    """A built operation predicate over the Entity position ``E``; composes with
+    """A built Predicate over the Entity position ``E``; composes with
     ``&`` / ``|`` / ``~``.
 
     Contravariant in ``E``: a predicate rooted at an ancestor addresses any

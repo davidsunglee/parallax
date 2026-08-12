@@ -360,7 +360,7 @@ state. Ownerless behavioral operations consume resolved Entity Identity.
 Relationship Order is a sequence of
 `RelationshipOrder(attribute: AttributeIdentity, direction: SortDirection)`.
 Sort Direction is the closed `Ascending | Descending` algebra and is shared by
-operation Sort Keys through the existing `m-predicate -> m-metamodel`
+Object Query Sort Keys through the `m-object-query -> m-metamodel`
 dependency. Each relationship-order attribute belongs to the join target, and
 ordering is legal only when target Multiplicity is Many. Omitted direction on
 an authored term normalizes to Ascending. An omitted or empty order sequence
@@ -370,7 +370,7 @@ which would still require a database sort once a term exists.
 The same rule applies to scalar types and values. `m-core` owns the closed
 Neutral Type algebra—Boolean, Int32, Int64, Float32, Float64, String, Bytes,
 Date, Time, Timestamp, Uuid, Json, and Decimal with precision and scale—and the
-corresponding Neutral Value vocabulary. Metadata, operation literals,
+corresponding Neutral Value vocabulary. Metadata, predicate literals,
 assignments, and neutral rows reuse those dependency-free values. Accepted
 Attribute Metadata exposes Neutral Type, not descriptor text or an untyped
 object.

@@ -264,7 +264,7 @@ def test_scenario_read_golden_sql_must_be_canonical() -> None:
 #
 # `_reuse_prior_rows` must fail LOUDLY when a zero-round-trip step names a source
 # that does not resolve (an empty reuse would let its identity / expectRows
-# assertion pass vacuously), while still permitting the operation-backed list
+# assertion pass vacuously), while still permitting the query-backed list
 # CONSTRUCTION that has not resolved yet (m-op-list-001 step 0 — no named source,
 # no non-empty assertion).
 

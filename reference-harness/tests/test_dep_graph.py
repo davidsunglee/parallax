@@ -418,7 +418,7 @@ def _clean_read_case(tags: list[str]) -> dict:
         "model": "models/orders.yaml",
         "tags": tags,
         "shape": "read",
-        "when": {"operation": {"all": {}}},
+        "when": {"objectQuery": {"target": "Order", "predicate": {"all": {}}}},
         "then": {
             "statements": [{"sql": {"postgres": "select t0.id from orders t0"}}],
             "rows": [{"id": 1}],

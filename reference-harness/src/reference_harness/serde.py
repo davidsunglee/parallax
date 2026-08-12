@@ -1,4 +1,4 @@
-"""Canonical, format-agnostic serde for operations AND the metamodel.
+"""Canonical, format-agnostic serde for queries AND the metamodel.
 
 The canonical model is plain JSON-compatible data (dicts / lists / scalars) — the
 same in-memory shape an implementation's Object Query, Predicate algebra, and

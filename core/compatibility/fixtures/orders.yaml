@@ -7,7 +7,7 @@
 # The Order dataset is deliberately small but varied — distinct qty/price bands, a
 # NULL sku, mixed case names, and `%`/`_` literals in a sku — so each Phase 2
 # operator (range, null, string incl. wildcard-escape and case-insensitive,
-# membership, boolean/group, directives) has unambiguous expected rows. These
+# membership, boolean/group, ordering and cap clauses) has unambiguous expected rows. These
 # Order rows are UNCHANGED from Phase 2 so every Phase 1/2 case keeps passing.
 #
 # Phase 3 adds OrderItem and OrderStatus rows so relationship navigation and deep

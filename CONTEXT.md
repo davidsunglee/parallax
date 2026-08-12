@@ -488,7 +488,7 @@ A typed expression that describes attribute-based ordering for a query result.
 _Avoid_: comparator callback, order callback
 
 **Result Collection**:
-An operation-backed result collection returned by `find`; it may resolve to zero, one, or many objects.
+A query-backed result collection returned by `find`; it may resolve to zero, one, or many objects.
 _Avoid_: array, result array
 
 **Snapshot Graph**:

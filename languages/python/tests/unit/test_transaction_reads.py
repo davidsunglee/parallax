@@ -207,7 +207,7 @@ def test_optimistic_mode_suppresses_the_read_lock_suffix() -> None:
 
 
 def test_db_find_pins_an_explicit_as_of_statement() -> None:
-    # `statement_pin` reads the statement's OWN temporal wrapper: an explicit
+    # `statement_pin` reads the query's OWN Temporal Selection: an explicit
     # `.as_of(tx_time=LATEST)` pin comes back on the returned `Snapshot`.
     from parallax.core import LATEST
 
@@ -441,8 +441,9 @@ def test_db_find_returns_one_snapshot_root_per_milestone_for_a_history_statement
 
     port = RecordingPort(rows=_balance_history_rows())
     db = Database.connect(port, BALANCE, clock=FixedClock(FIXED))
-    # `.limit(...)` after `.history()` also exercises the directive peel behind
-    # `scans_an_axis` (a result-shaping wrapper around the scan).
+    # `.limit(...)` after `.history()` also pins that a cap is a SIBLING clause:
+    # `scans_an_axis` reads the Temporal Selection map, so no other clause can
+    # stand between the scan and its classification.
     query = mm.Balance.where(mm.Balance.id == 1).history(TX_TIME).limit(5)
     snapshot = db.find(query)
     assert len(snapshot.results()) == 2

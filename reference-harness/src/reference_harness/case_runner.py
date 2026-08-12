@@ -1345,7 +1345,7 @@ def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
     ``m-inheritance-093`` while its query filters on nothing but Temporal Selections.
     It derives each branch's temporal predicates in Valid-Time-first order; ``history``
     contributes none. Canonical SQL/bind goldens, compile sweeps, execution checks, and
-    focused compatibility cases own complete predicate, projection, and result-directive
+    focused compatibility cases own complete predicate, projection, and result-clause
     bind vectors. A no-op for every case outside that temporal-only boundary.
     """
     if not case.path.stem.startswith("m-inheritance-093-") or not _is_temporal_only_read(
@@ -5862,7 +5862,7 @@ def _reuse_prior_rows(
       (``0 <= source < index``); a forward / self / out-of-range index is an
       authoring error, NOT an empty set (which would let a ``sameObjectAs`` /
       ``expectRows`` assertion pass against nothing).
-    - **An operation-backed list construction that has not resolved yet**
+    - **A query-backed list construction that has not resolved yet**
       (``m-op-list-001`` step 0: a ``find`` built with ``roundTrips: 0``, no
       golden SQL, and no named source). It carries no rows until first access, so
       it legitimately reuses the empty set — the ONE intentionally-empty case. It
@@ -5885,7 +5885,7 @@ def _reuse_prior_rows(
         raise CaseFailure(
             f"{case.path.name}: scenario[{index}] declares roundTrips 0 with no golden "
             f"SQL and names no reuse source, but asserts non-empty expectRows. Only an "
-            f"operation-backed list CONSTRUCTION that has not resolved yet may reuse the "
+            f"query-backed list CONSTRUCTION that has not resolved yet may reuse the "
             f"empty set, and it resolves no rows until first access."
         )
     return []

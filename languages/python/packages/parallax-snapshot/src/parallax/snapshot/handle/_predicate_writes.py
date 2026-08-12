@@ -419,7 +419,7 @@ def _materialize_predicate_write(
     ``optimistic`` ⇒ none) — the SAME rule a real ``Transaction.find``
     applies.
 
-    A TEMPORAL target's raw predicate carries no as-of wrapper (a
+    A TEMPORAL target's raw predicate carries no as-of term (a
     mutation-compatible Object Query carries no temporal clause, python.md §5),
     so this internal authoring boundary adds one explicit Latest selection per
     declared dimension before routing the resolve through the SAME

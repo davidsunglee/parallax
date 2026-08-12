@@ -6,7 +6,7 @@ spelling matches, a bare name matches only when a single Entity carries it, and 
 bare name two namespaces share is a miss rather than a silent first match. The
 ``predicate.validate``, snapshot materialize, unit-of-work, and write-lowering
 seams resolve through the same ``entity_by_name`` helper, and so — the second
-suite below — do the three lowering seams an accepted operation reaches next:
+suite below — do the three lowering seams an accepted query reaches next:
 ``m-sql``'s family reads and hops, ``m-deep-fetch``'s levels, and
 ``m-navigate``'s hop canonicalization. One rule across validation and lowering is
 what makes "preflight accepted this reference" imply "lowering resolves it".
@@ -95,7 +95,7 @@ def test_predicate_resolver_rejects_an_ambiguous_bare_name() -> None:
 def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule() -> None:
     # The write side of the same thesis: a deserialized instruction's target
     # resolves through the SAME helper, and its miss is classified with the SAME
-    # normative rule name the operation resolver uses — a different package and
+    # normative rule name the predicate resolver uses — a different package and
     # a different exception class, one rule.
     model = _model()
     keyed = instructions.deserialize(
@@ -196,7 +196,7 @@ def test_sql_lowering_reaches_the_table_the_canonical_spelling_names() -> None:
 # its own concrete subtypes may sit in different namespaces — and a reference   #
 # position spells them all bare. Resolving such a spelling into the REFERRING   #
 # Entity's namespace (the declaration rule) answers a different Entity than     #
-# `validate_operation` resolved it to, so the operation preflight accepted      #
+# `validate_operation` resolved it to, so the read preflight accepted           #
 # failed to lower. Nothing in the shipped corpus exhibits it: every corpus      #
 # family restates one namespace on every member.                                #
 # --------------------------------------------------------------------------- #
@@ -205,7 +205,7 @@ def _cross_namespace_model() -> Metamodel:
     peer each sit in a DIFFERENT namespace, every local name unique model-wide.
 
     ``zoo.Beast`` is the table-per-hierarchy root over the ownerless ``Wolf`` and
-    ``Bear``; ``den.Den`` owns them through ``denId``. Every operation reference
+    ``Bear``; ``den.Den`` owns them through ``denId``. Every query reference
     below therefore names an Entity outside the namespace of the position it is
     written against, which is exactly the case the two resolution rules answer
     differently.
@@ -269,7 +269,7 @@ def _named(model: Metamodel, name: str) -> EntityMetadata:
 def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
     # The top-level narrow and the mid-predicate branch narrow both resolve `Wolf`
     # against the model, not against `zoo.Beast`'s namespace, so each lowers to the
-    # tag guard the accepted operation asked for.
+    # tag guard the accepted query asked for.
     model = _cross_namespace_model()
     root = _named(model, "zoo.Beast")
 
@@ -288,7 +288,7 @@ def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
 
 
 def test_sql_lowering_resolves_a_hop_and_its_narrow_across_namespaces() -> None:
-    # Two references in one operation: the hop's own `Den.beasts` (resolved from a
+    # Two references in one query: the hop's own `Den.beasts` (resolved from a
     # position in the `den` namespace to a relationship whose target is in `zoo`)
     # and the narrow inside it (`Wolf`, resolved from `zoo.Beast`).
     model = _cross_namespace_model()
@@ -341,7 +341,7 @@ def test_navigation_canonicalization_resolves_a_hop_from_another_namespace() -> 
     # The hop's `Class` prefix names the family ROOT while the queried position is
     # the ownerless concrete subtype, so the owner-relative rule looked for a
     # `Beast` that does not exist. There is no as-of term to inject on this model,
-    # so canonicalization returning the operation unchanged is the whole proof that
+    # so canonicalization returning the query unchanged is the whole proof that
     # the reference resolved.
     model = _cross_namespace_model()
     wolf = _named(model, "Wolf")

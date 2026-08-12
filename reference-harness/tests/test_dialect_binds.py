@@ -62,7 +62,7 @@ def _make_case(statements: list[dict[str, Any]], reference_sql: Any = None) -> C
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
         "shape": "read",
-        "when": {"operation": {"all": {}}},
+        "when": {"objectQuery": {"target": "Customer", "predicate": {"all": {}}}},
         "then": then,
     }
     model = Model(

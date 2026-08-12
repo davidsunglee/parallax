@@ -979,8 +979,8 @@ def test_unknown_relationship_that_is_not_a_value_object_raises_plain_error() ->
 
 
 # --------------------------------------------------------------------------- #
-# Result-shaping / boolean / temporal wrappers propagate the active scope     #
-# unchanged (structural pass-through, no position change of their own).       #
+# Boolean, negation, grouping, and mid-predicate `narrow` propagate the       #
+# active scope unchanged (structural pass-through, no position of their own). #
 # --------------------------------------------------------------------------- #
 def test_boolean_combinators_walk_every_operand() -> None:
     valid = And(

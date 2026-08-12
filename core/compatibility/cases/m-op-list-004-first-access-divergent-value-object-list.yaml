@@ -1,4 +1,4 @@
-# Operation-backed list x DIVERGENT value object: the first-access materialization
+# Query-backed list x DIVERGENT value object: the first-access materialization
 # witness (m-op-list + m-value-object) — the operation-list analogue of
 # m-deep-fetch-020, resolving the VO-bearing child via a FIRST `action: access`
 # instead of a relationship load (the other instance-form step read m-sql "Read
@@ -28,7 +28,7 @@ when:
         predicate:
           all: {}
       roundTrips: 0
-      note: construction -> an operation-backed list, no DB work
+      note: construction -> a query-backed list, no DB work
     - action: access
       "on": 0
       roundTrips: 1

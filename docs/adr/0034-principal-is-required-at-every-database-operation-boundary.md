@@ -40,6 +40,6 @@ provider-shaped Principal implementations and proves resolution count,
 invalid-result, ownership, mismatch, and application-exception behavior around
 the same Subject Identity cases.
 
-A lazy read boundary captures and validates its Principal context when the read API creates the operation-backed view, not when later access first resolves it. The view retains the opaque Principal and captured Subject Identity until resolution or scope end, and first access never reevaluates identity. Existing lifecycle errors still govern access after the owning scope closes.
+A lazy read boundary captures and validates its Principal context when the read API creates the query-backed view, not when later access first resolves it. The view retains the opaque Principal and captured Subject Identity until resolution or scope end, and first access never reevaluates identity. Existing lifecycle errors still govern access after the owning scope closes.
 
 Authored Find Queries, predicates, includes, canonical serialization, and query equality remain Principal-free. A future entitlement module receives the immutable query, retained Principal context, and accepted Metamodel at execution and enriches a new internal operation before deep-fetch and SQL planning. That seam can constrain the root, inject relationship-navigation predicates, and constrain included relationship operations without mutating or identity-keying the authored query. Future plan and result caches must partition entitlement-sensitive state by the policy context they define.

@@ -116,7 +116,7 @@ self-contained without a system `libpq`.
   remaining reachable cases are reasoned-skipped in the sweep (no silent gaps, zero
   D-11) with forward reasons — ledger D-12 (17 inheritance-family reads and 8
   to-many value-object array-traversal reads, both landing later in Phase 7;
-  the read-side pre-SQL rejected-operation validation landed in Phase 7
+  the read-side pre-SQL rejected-query validation landed in Phase 7
   increment 1) and the write-path shapes (Phase 6/8). The operation no-drift
   guard exercises 10 idiomatic Predicate read spellings.
 - **Phase 6: transactions + temporal backbone — milestones 1–4 COMPLETE (backbone review closed).**
@@ -129,8 +129,8 @@ self-contained without a system `libpq`.
     two-connection `40P01` via `peer`).
   - **M2 — `m-temporal-read` (`ca64903`):** as-of predicate templates,
     default-latest injection on omitted axes, the milestone edge-pin, and the
-    `Pin` / `Edge` value model, expressed as a rewrite of the temporal wrapper
-    nodes into plain `m-predicate` predicates (the DAG forbids
+    `Pin` / `Edge` value model, expressed as a rewrite of each dimension's
+    Temporal Selection into plain `m-predicate` predicates (the DAG forbids
     `m-sql -> m-temporal-read`, so the SQL composition happens one layer up).
   - **M3 — `m-unit-work` core:** the `UnitOfWork` shell (frame join,
     rollback-only, abort-and-withhold, write buffer, observations, and the

@@ -9,7 +9,7 @@ has a caller-supplied unique alias and one function from `sum`, `avg`, `count`,
 `min`, `max`, `stdDevSample`, `stdDevPop`, `varianceSample`, or
 `variancePop`; every function except row `count` names one Attribute.
 `having` may reference group keys and aggregate aliases, but it does not admit
-Object Query result directives or relationship navigation.
+Object Query result clauses or relationship navigation.
 
 The result is row-form. Each row contains the group keys followed by aggregate
 values in envelope order, keyed by their declared names and aliases. It never

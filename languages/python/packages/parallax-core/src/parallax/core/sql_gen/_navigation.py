@@ -18,7 +18,7 @@ with its defining peer here. That is the whole of what a semi-join needs: a
 direction's cardinality decides nothing about an `EXISTS`.
 
 **This module returns PLANS and never lowers anything.** A plan carries the
-hop's un-lowered interior operation and, for a table-per-hierarchy hop, the tag
+hop's un-lowered interior predicate and, for a table-per-hierarchy hop, the tag
 guard's INPUTS as an `_inheritance.TagPredicate` — never a rendered fragment,
 since the fragment needs a child alias no plan has yet. :func:`open_branch`
 renders it to a fragment plus bind VALUES once the branch takes its alias;
@@ -163,7 +163,7 @@ class OpenBranch:
 # --------------------------------------------------------------------------- #
 def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     entity = model.entity(identity)
-    if entity is None:  # pragma: no cover - guards an unvalidated operation
+    if entity is None:  # pragma: no cover - guards an unvalidated query
         raise SqlGenError(f"{identity.canonical!r} names no declared entity")
     return entity
 
@@ -178,13 +178,13 @@ def _resolve_join(rel_ref: str, scope: _PlanScope) -> RelationshipJoin:
     join is the whole of what a semi-join needs: an `EXISTS` is insensitive to
     the direction's cardinality.
 
-    The reference's class name is an operation reference, so it resolves model-wide
+    The reference's class name is a predicate reference, so it resolves model-wide
     by `entity_by_name`'s rule — never into the active target's own namespace,
     which is the DECLARATION rule and would miss an Entity `validate_operation`
     resolved this very spelling to.
     """
     class_name, dot, member_name = rel_ref.rpartition(".")
-    if not dot:  # pragma: no cover - guards an unvalidated operation
+    if not dot:  # pragma: no cover - guards an unvalidated query
         raise SqlGenError(f"relationship reference {rel_ref!r} needs Class.relationship")
     declaring = entity_by_name(scope.meta, class_name)
     direction = (

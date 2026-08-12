@@ -88,8 +88,8 @@ most `1 + L` statements** for `L` distinct relationship hops, one statement per
 non-empty level, empty parent-key levels issuing no child SQL. Constructing the
 query is side-effect-free; the single explicit execution is the only moment the
 database is touched. (For the managed-object surface this round-trip
-observability rides the lazy operation-backed list, `m-op-list`; a snapshot
-read is **not** an operation-backed list — the count is pinned here instead,
+observability rides the lazy query-backed list, `m-op-list`; a snapshot
+read is **not** a query-backed list — the count is pinned here instead,
 on the same golden statements.)
 
 A snapshot result carries the **Read Trace** (`m-execution-log`) of the calls it

@@ -450,10 +450,12 @@ def _shared_local_name_defs() -> list[dict[str, Any]]:
     return load_model(_COMPATIBILITY_ROOT, "models/shared-local-name.yaml").entity_defs
 
 
-# Every position that names an entity, spelled the only way the operation grammars
-# allow — bare — against the model declaring `SharedVariant` in two namespaces. The
-# rule is about the spelling failing to resolve, so it fires wherever a position is
-# named, not only where an attribute is referenced.
+# Every position that names an entity, spelled BARE — the spelling the rule is
+# about — against the model declaring `SharedVariant` in two namespaces. The
+# canonical `<namespace>.<Entity>` spelling stays legal in each of these positions
+# and resolves (`test_two_namespaces_sharing_a_local_name_stay_distinct_positions`);
+# what fails to resolve is the bare name, so the refusal fires wherever a position
+# is named, not only where an attribute is referenced.
 _AMBIGUOUS_BY_POSITION: dict[str, dict[str, Any]] = {
     "attr": {"predicate": {"eq": {"attr": "SharedVariant.archiveLabel", "value": "A-1"}}},
     "orderBy.attr": {"orderBy": [{"attr": "SharedVariant.archiveLabel"}]},

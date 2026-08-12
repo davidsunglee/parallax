@@ -22,7 +22,7 @@ on the three members this module needs (``concrete_subtypes``,
 narrowed and un-narrowed lanes share one planner.
 
 **This module returns PLANS and never lowers a predicate.** Every plan below
-carries its read's own operation as an un-lowered node, and the tag guard as its
+carries its read's own predicate as an un-lowered node, and the tag guard as its
 INPUTS (:class:`TagPredicate`) rather than as anything bound. `_compile`
 constructs the statement's :class:`~parallax.core.sql_gen._context.Ctx` and
 assembles the family reads; `_predicate` owns every descent, including the
@@ -388,7 +388,7 @@ def transform_structured_column(transform: RowTransform) -> str | None:
 def _referenced_entities(
     model: Metamodel, names: Sequence[str]
 ) -> tuple[EntityIdentity, ...] | None:
-    """The Identities ``names`` denote as operation references
+    """The Identities ``names`` denote as query references
     (:func:`~parallax.core.metamodel.entity_by_name`), or ``None`` when any of
     them denotes no single Entity."""
     resolved: list[EntityIdentity] = []

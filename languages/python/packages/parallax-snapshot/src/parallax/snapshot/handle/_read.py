@@ -266,7 +266,7 @@ def find(
     Every level is the same three steps — compile, execute, convert — with
     `familyVariant` materialization and each row's resolved concrete Entity coming
     from that level's OWN `~parallax.core.sql_gen.CompiledRead`, never re-derived
-    here from the operation a second time.
+    here from the query a second time.
 
     Keys are gathered and fanned back by MEMBER identity
     (`FetchLevel.owner` / `related`), which is what lets each
@@ -339,8 +339,8 @@ class NeutralReadRequest:
     ``form`` selects the projection lane `m-sql` fixes at compile time:
     :meth:`rows` is the values lane (scalars only, one statement, no graph), and
     :meth:`graph` is the object lane (value-object documents projected too, one
-    query per non-empty relationship level). A ``graph`` request whose operation
-    SCANS an as-of axis answers the milestone-set form instead, exactly as
+    query per non-empty relationship level). A ``graph`` request whose Temporal
+    Selection SCANS an axis answers the milestone-set form instead, exactly as
     ``db.find`` does.
 
     The form is part of what the read gate validates, so a ``rows`` request whose
@@ -379,7 +379,7 @@ def find_rows(
     the transformed ROW is already the representation — so this returns the
     neutral result directly rather than a graph input a materializer converts.
     What it shares with :func:`find` is everything that decides behavior: the
-    same canonical root operation (`deep_fetch.plan` injects the as-of predicate
+    same canonical root query (`deep_fetch.plan` injects the as-of predicate
     and canonicalizes navigation for both lanes), the same
     :func:`~parallax.core.sql_gen.compile_read` with the lane selected by
     ``result_form``, and the same recorded Database Call.

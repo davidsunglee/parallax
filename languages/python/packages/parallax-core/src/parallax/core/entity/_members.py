@@ -155,10 +155,10 @@ class OrderTerm:
 
     This term declares part of a model, not part of a query, so a rejected
     placement composition raises a plain :class:`ValueError` and stays outside the
-    query-definition error family. An operation Sort Key
-    (``predicate.OrderKey``) carries the same single-shot rule and does belong to
-    that family, so it raises ``QueryDefinitionError`` instead; the two spellings
-    differ because the surfaces do, not by accident.
+    query-definition error family. An Object Query Sort Key
+    (``object_query.OrderKey``) carries the same single-shot rule and does belong
+    to that family, so it raises ``QueryDefinitionError`` instead; the two
+    spellings differ because the surfaces do, not by accident.
     """
 
     member: str

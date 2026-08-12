@@ -36,7 +36,7 @@ consistently across languages:
   objects, and closed inheritance families mapped with
   table-per-hierarchy or table-per-concrete-subtype strategies.
 - **Portable proof:** schemas and compatibility cases pin the neutral model and
-  operation forms, emitted SQL, returned rows and graphs, final table state,
+  query forms, emitted SQL, returned rows and graphs, final table state,
   errors, and concurrency observations. Implementations are graded against the
   same evidence rather than against another implementation's internals.
 
@@ -81,7 +81,7 @@ Parallax has three layers of authority:
    their legal dependency graph, and the deployable seams implementations must
    preserve.
 2. **Schemas and the compatibility corpus** encode canonical descriptors,
-   fixtures, operations, writes, optimized SQL, independent reference SQL, and
+   fixtures, queries, writes, optimized SQL, independent reference SQL, and
    expected observations.
 3. **A completed language spec** chooses the idiomatic public API, lifecycle,
    source layout, artifacts, database integration, and quality toolchain for
@@ -104,7 +104,7 @@ the spec, schemas, corpus, and conformance-adapter contract.
 | Path | Purpose |
 | --- | --- |
 | [`core/spec/`](core/spec/) | Behavioral modules, dependency graph, slice catalog, and language-spec template |
-| [`core/schemas/`](core/schemas/) | JSON Schemas for models, operations, cases, writes, and conformance envelopes |
+| [`core/schemas/`](core/schemas/) | JSON Schemas for models, queries, cases, writes, and conformance envelopes |
 | [`core/compatibility/`](core/compatibility/) | Canonical models, fixtures, cases, and benchmark workloads |
 | [`languages/python/`](languages/python/) | Primary worked implementation: the Postgres Snapshot slice |
 | [`reference-harness/`](reference-harness/) | Non-normative oracle that validates and executes the core corpus |

@@ -3,7 +3,7 @@
 The end-to-end two-node observation (node B re-fetches node A's committed write)
 runs against a real database in the compatibility suite (``-k coherence``). These
 tests cover the dialect-agnostic seam logic that needs no database: the case shape
-is recognized, its per-step golden SQL is canonical, its read-step operations
+is recognized, its per-step golden SQL is canonical, its read-step queries
 survive the serde round-trip, and a missing assertion is rejected.
 """
 
@@ -101,8 +101,8 @@ def test_coherence_golden_is_canonical_per_dialect(case: Case) -> None:
 
 
 @pytest.mark.parametrize("case", COHERENCE_CASES, ids=lambda c: c.path.stem)
-def test_coherence_read_operations_roundtrip(case: Case) -> None:
-    # Layer 4: every read step's operation (and the descriptor) survives serde.
+def test_coherence_read_queries_roundtrip(case: Case) -> None:
+    # Layer 4: every read step's query (and the descriptor) survives serde.
     _assert_serde(case)
 
 

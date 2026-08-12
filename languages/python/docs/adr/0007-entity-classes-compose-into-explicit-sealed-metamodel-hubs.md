@@ -408,7 +408,7 @@ identity reuse, closed-world loaded/unloaded relationships, narrowed views,
 whole-graph pins, and milestone edges belong to the Snapshot slice. The common
 Entity cluster therefore has no generic `_graph_state` module. A future
 managed-object slice owns its distinct transaction-scoped Identity Map,
-operation-backed relationship resolution, mutation, deletion, and detachment
+query-backed relationship resolution, mutation, deletion, and detachment
 state instead of extending Snapshot state. The two surfaces share only the
 lower-level deep-fetch behavior, Relationship Identities, narrowed-view keys,
 and temporal coordinates defined by their core semantic owners.

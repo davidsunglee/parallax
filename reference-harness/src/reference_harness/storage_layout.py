@@ -1081,7 +1081,7 @@ class StorageLayout:
         return self._entities.get(entity)
 
     def position(self, concrete_entities: Sequence[str]) -> PositionLayoutView | None:
-        """Build an operation-scoped view for one canonical effective concrete set."""
+        """Build a query-scoped view for one canonical effective concrete set."""
         selected = tuple(concrete_entities)
         if not selected:
             return PositionLayoutView((), (), (), ())

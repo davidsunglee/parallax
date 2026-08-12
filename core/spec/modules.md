@@ -114,7 +114,7 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-navigate` | Relationship navigation & semi-join (incl. polymorphic targets) | active | cases |
 | `m-deep-fetch` | Deep fetch (N+1 elimination) & narrowed relationship views | active | cases |
 | `m-snapshot-read` | Snapshot graph materialization (plain value graphs) | active | cases |
-| `m-op-list` | Operation-backed list results | active | cases |
+| `m-op-list` | Query-backed list results | active | cases |
 | `m-batch-write` | Set-based / batched writes | active | cases |
 | `m-cascade-delete` | Cascade delete | active | cases |
 | `m-unit-work` | Transactions & unit of work | active | cases |
@@ -205,7 +205,7 @@ m-execution-log --> m-auto-retry
 m-identity-map --> m-unit-work
 m-identity-map --> m-temporal-read
 m-process-cache --> m-unit-work
-m-op-list --> m-predicate
+m-op-list --> m-object-query
 m-op-list --> m-unit-work
 m-batch-write --> m-unit-work
 m-cascade-delete --> m-op-list
@@ -336,7 +336,7 @@ construction it may reference any behavioral module it harnesses.
   declaration with its defining peer and exchanging the sides itself.
 - **`m-op-list --> m-deep-fetch`.** A navigation filter is a *predicate*
   (semi-join) and yields no list; deep fetch is a pure per-level fetch
-  algorithm. The lifecycle result surfaces — operation-backed lists for the
+  algorithm. The lifecycle result surfaces — query-backed lists for the
   managed lifecycle, snapshot graphs for the plain-value lifecycle — sit
   *above* it and are populated by it, mirroring the documented
   `m-snapshot-read --> m-deep-fetch` bullet below: the two are peers, and

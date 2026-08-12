@@ -11,7 +11,7 @@ set-based forms) is produced by
 `m-sql` and run through the `m-db-port` execution seam at the composition root,
 so `m-unit-work` takes no direct edge to SQL generation. (`m-op-list` and
 `m-navigate` in turn depend on `m-unit-work`, because a list is an
-operation-backed view resolved within a unit of work.)
+query-backed view resolved within a unit of work.)
 
 Layered on the unit of work are four modules: the automatic shared read lock
 (`m-read-lock`), bounded automatic retry (`m-auto-retry`), the transaction-scoped

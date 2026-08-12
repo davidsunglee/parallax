@@ -1162,7 +1162,7 @@ _VO_SCENARIO_COMBO_REASON: Final[str] = (
 )
 _VO_VERSIONED_RESOLVE_SCENARIO_REASON: Final[str] = (
     "the versioned counterpart of that scenario: a managed (instance-form) find and a "
-    "MATERIALIZING predicate-write resolving read over the SAME operation, where the "
+    "MATERIALIZING predicate-write resolving read over the SAME predicate, where the "
     "resolve keeps the row-form default (pk + version only, the VO document omitted) "
     "because a Version Observation retains no predecessor row, followed by a "
     "version-gated per-row delete. The same materializing predicate-write machinery is "
@@ -1172,7 +1172,7 @@ _VO_VERSIONED_RESOLVE_SCENARIO_REASON: Final[str] = (
 
 _METAMODEL_MODEL_REJECT_UNREACHABLE_REASON: Final[str] = (
     "a `when.model` foundational Metamodel invariant the fixed resolver classifies at "
-    "model construction (a `MetamodelValidationError` issue), not an operation or write "
+    "model construction (a `MetamodelValidationError` issue), not a query or write "
     "the Usage Guide's statement- and verb-level examples could spell. The class "
     "frontend reaches the SAME issue — it derives the primary-key Index and hands it to "
     "the same resolver, so an `indices=` entry claiming the derived name is refused "

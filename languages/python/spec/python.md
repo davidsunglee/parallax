@@ -21,7 +21,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 29 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public query-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
 ```json
@@ -973,18 +973,20 @@ A local Entity name may be declared in more than one namespace of one model:
 the Entity Identity is what must be unique, and the qualified identities differ.
 Such an Entity remains declarable, materializable, and queryable through its
 family root — the constraint is at the **reference site**, not on the
-declaration. Every position that names an Entity in a canonical query
-spells it bare, so a bare name two namespaces of the connected model share
-resolves to no Entity and the query is refused as
+declaration. A position that names an Entity spells it either canonically as
+`<namespace>.<Entity>` or bare, and the bare spelling is legal exactly where it
+resolves to one declared Entity — so a bare name two namespaces of the connected
+model share resolves to no Entity and the query is refused as
 `OperationRejectedError(reference-ambiguous-entity-name)`, naming the canonical
 spellings that would resolve. The rule governs every such position — an
-attribute or nested-path reference, a relationship reference, an order-by key,
-a `narrow`'s position and each of its alternatives, and a deep-fetch hop with
-its narrows — and is distinct from `attribute-outside-active-position`, which
-fires when a reference *does* resolve and resolves outside the active position.
-A serialized write instruction's ambiguous `entity` is the write family's own
-`WriteInstructionError` rather than this rule, because that name is the
-instruction's target rather than a reference within an operation.
+attribute or nested-path reference, a relationship reference, a Sort Key, the
+query's own `narrowTo` and each alternative of a predicate `narrow`, and an
+Include Segment with its narrowing — and is distinct from
+`attribute-outside-active-position`, which fires when a reference *does* resolve
+and resolves outside the active position. A serialized write instruction's
+ambiguous `entity` is the write family's own `WriteInstructionError` rather than
+this rule, because that name is the instruction's target rather than a reference
+inside a query.
 
 Every Entity Class declares exactly one Parallax base: a framework root
 (`Entity`, `TxTemporal`, `Bitemporal`) or exactly one domain Entity
@@ -2641,7 +2643,7 @@ or descriptor authoring form and performs no audit stamping.
   real built-in `list[T]` the caller owns (fresh copy per call — the container
   accessor is unaffected by node immutability). Included to-many
   relationships are `tuple` fields on frozen nodes (§3). Nothing is an
-  `m-op-list` operation-backed lazy list; iteration, indexing, and bulk
+  `m-op-list` query-backed lazy list; iteration, indexing, and bulk
   operations are ordinary Python on ordinary lists and tuples.
 - **Result-shape appearances.** Root-empty: `results() == []`, `result()`
   raises `NoResultFound`, `result_or_none()` is `None`. Relationship-empty:

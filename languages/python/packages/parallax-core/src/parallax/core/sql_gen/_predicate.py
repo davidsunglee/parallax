@@ -3,7 +3,7 @@
 Every descent into an `m-predicate` predicate happens here. `_navigation` and
 `_inheritance` return immutable PLANS and never lower anything; `_compile`
 assembles statements around the fragment this module returns. So this file holds
-the package's only RECURSIVE dispatch over the operation union, and its only
+the package's only RECURSIVE dispatch over the Predicate union, and its only
 recursion — which is what makes "where does this node get lowered?" a question
 with one answer. (`_compile_inheritance_read` carries the package's only other
 `match`, selecting a plan type rather than a Predicate node.)
@@ -16,7 +16,7 @@ declared). One dispatcher serves both — the boolean combinators and the flat
 `nested*` family are legal in either, and everything else is entity-scope
 vocabulary that an element scope refuses. There is deliberately no second
 element dispatcher: a scoped `nestedExists` `where` builds an element scope and
-hands its own operation back to :func:`lower_predicate`.
+hands its own predicate back to :func:`lower_predicate`.
 
 **Both mutual-recursion cycles close here rather than through a sibling.**
 
