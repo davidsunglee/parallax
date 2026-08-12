@@ -516,6 +516,31 @@ _Avoid_: array, result array
 A typed plain value graph returned by a snapshot read: identity-resolved within the graph (one node per row), connected by hard pointers, pinned whole-graph at one set of as-of coordinates, and closed-world — it never issues further database work.
 _Avoid_: domain snapshot, JSON output, serialization form, lazy collection
 
+**Wire Snapshot**:
+A plain-value tree returned by a Wire read, keyed by declared model member names,
+encoded with canonical Wire Values, and unwound only along the finite requested
+Include Paths. It exposes no graph identity or framework metadata.
+_Avoid_: Domain Snapshot, Neutral Graph, serialized Snapshot Graph, physical row
+
+**StoredDataIssue**:
+A structured diagnosis that persisted state violates the accepted model,
+carrying stable Entity and member identity plus an Issue Code but no raw stored
+value.
+_Avoid_: validation issue, decoding exception, raw bad value, repair instruction
+
+**InvalidData**:
+The root-level read result classification for one or more StoredDataIssues. It
+carries the hydrated root exactly when a value can be produced without
+invention; otherwise it carries the root's decodable identity or ordinal
+position alone.
+_Avoid_: invalid node, skipped row, validation error, repaired value
+
+**Checked Result View**:
+The read-result view that returns conforming roots and InvalidData in one
+ordered union instead of raising for stored-data violations. It changes
+data-error handling only, never result arity or ordering.
+_Avoid_: lenient mode, ignore-invalid option, invalid side channel
+
 **Includes**:
 The Object Query clause naming the graph shape a read asks for: an
 order-insensitive set of Include Paths whose canonical form sorts, deduplicates,
@@ -731,12 +756,20 @@ One object's structured Entity Identity plus its ordered primary-key values,
 used to address that object during write coalescing and observation lookup.
 _Avoid_: object ID, row key, primary-key mapping, entity spelling
 
+**Source Hint**:
+The opaque, non-authoritative provenance associated with a Wire Entity value,
+identifying its exact Entity and observed milestone so a transaction can select
+and validate its own retained evidence. It neither contains nor grants a Write
+Observation and is absent from serialized Wire data.
+_Avoid_: Observation Hint, Observation Key, capability token, metadata field
+
 **Observation Key**:
-The production-issued address of one Write Observation: an Object Key plus the
+The internal Unit Work address of one Write Observation: an Object Key plus the
 observed milestone's Edge, with no Edge for a versioned Non-Temporal row. It
-names evidence in one active Unit Work and is neither the evidence nor a read
-pin.
-_Avoid_: reconstructed observation address, object key alone, snapshot pin, write observation
+names evidence in one active Unit Work and is neither caller-facing, the
+evidence itself, nor a read pin.
+_Avoid_: public provenance, Source Hint, reconstructed observation address,
+object key alone, snapshot pin, write observation
 
 **Write Observation**:
 The database evidence retained for a surviving write against existing state: an
@@ -1069,13 +1102,11 @@ _Avoid_: per-hop as-of, manual temporal join
 
 ### Serialization And Input
 
-**Domain Snapshot**:
-A plain JSON-serializable representation of a domain object graph, detached from Parallax relationship references and runtime state. It is a serialization output produced through a Serialization Shape, not a query result.
-_Avoid_: POJO, DTO, snapshot graph, read result
-
-**Serialization Shape**:
-The declared JSON form used to convert managed domain objects into domain snapshots, expressed in terms of selected attributes and relationships.
-_Avoid_: JSON mapper, object dump
+**Wire Value**:
+The canonical representation of one Neutral Value at storage and transport
+serde seams. Each Neutral Type has one output spelling; changing that spelling
+is a storage-format change wherever Structured Columns persist it.
+_Avoid_: display value, fixture spelling, language-native value
 
 **Create Payload**:
 A plain input object accepted by a create operation to construct and persist a new managed domain object.

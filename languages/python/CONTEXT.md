@@ -156,53 +156,30 @@ Definition Error nor a database-provider failure.
 _Avoid_: unsupported capability, invalid query, adapter limitation
 
 **Snapshot**:
-The fully materialized container returned by `find`, reifying one core
-Snapshot Graph: arity accessors over plain frozen nodes, plus the graph's pin
-and Read Trace. No method touches the database.
+The fully materialized generic container returned by a Typed or Wire `find`,
+with arity accessors plus the result's Pin and Read Trace. Its element is an
+Entity Class instance on the Typed interface and a Wire Entity Mapping on the
+Wire interface; no method touches the database.
 _Avoid_: result set, lazy list, query result proxy, domain snapshot
 
-**Neutral Read Request**:
-The immutable advanced read input carrying one canonical Object Query and
-selecting either row or graph materialization, without requiring an Entity Class.
-_Avoid_: Object Query, descriptor document, SQL request, neutral query plan
+**Wire Interface**:
+The class-independent read-and-write interface reached through `db.wire` or
+`tx.wire`. It shares the underlying handle and, within a transaction, the same
+Unit Work and observations as the Typed interface; it is not a format option or
+transaction mode.
+_Avoid_: Neutral API, Wire transaction, format selector, descriptor mode
 
-**Neutral Read Result**:
-The immutable advanced read result pairing one Neutral Rows, Neutral Graph, or
-Neutral Graphs output with the exact production Read Trace that formed it.
-_Avoid_: Snapshot, wire response, result builder, execution event stream
+**Wire Entity Mapping**:
+The mapping-shaped Python representation of one Entity node in a Wire Snapshot,
+keyed by declared member names and carrying no serialized framework metadata.
+It may retain a core Source Hint privately without changing its mapping value.
+_Avoid_: Neutral Node, metadata dictionary, physical row, DTO
 
-**Neutral Row**:
-One immutable, production-transformed, pre-wire physical result mapping,
-including derived family-variant and decoded document values but no raw driver
-columns.
-_Avoid_: driver row, wire row, Entity instance, attribute wrapper
-
-**Neutral Rows**:
-The immutable ordered row-form output of a Neutral Read Result.
-_Avoid_: raw result set, mutable row list, Neutral Graph
-
-**Neutral Graph**:
-The class-free reification of one core Snapshot Graph as an ordered root
-sequence of Neutral Node Views plus the graph's Pin.
-_Avoid_: serialized tree, Domain Snapshot, managed object graph, Neutral Rows
-
-**Neutral Graphs**:
-The immutable ordered milestone-set output of a history or range read, carrying
-one separately pinned Neutral Graph per returned milestone.
-_Avoid_: streaming graph iterator, cross-milestone identity map, root list
-
-**Neutral Node**:
-The shared identity anchor for one logical object in a descriptor-backed
-snapshot result, carrying its resolved Entity Identity, immutable object
-identity, and any production-issued Observation Key but no fields or
-relationships.
-_Avoid_: descriptor object, row wrapper, projection, managed object
-
-**Neutral Node View**:
-One immutable traversal view over a Neutral Node, carrying the fields, Value
-Objects, and loaded relationships selected for that occurrence. Distinct views
-may share one Neutral Node; a back-reference reuses the node's primary view.
-_Avoid_: Neutral Projection View, duplicate node, entity instance, serialized tree
+**InvalidData**:
+The checked Snapshot element carrying StoredDataIssues and either the hydrated
+Typed or Wire root or `None` when hydration would require invention. Ordinary
+Snapshot access raises instead of returning this value.
+_Avoid_: failed Entity, skipped result, validation error, error side list
 
 **Pin**:
 A frozen point-coordinate value with one entry per actually pinned temporal
