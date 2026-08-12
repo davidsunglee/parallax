@@ -20,10 +20,15 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      # The Lob detector matches `test_` followed by 35 word characters, which is
+      # the shape of an ordinary Python test function name — 46 already in this
+      # repository, none of them a credential. Excluding it costs nothing here:
+      # no part of this project integrates with Lob, so a real Lob key would be
+      # unexplainable rather than merely leaked. Every other detector stays on.
       - name: Scan for leaked secrets
         uses: trufflesecurity/trufflehog@v3.96.0
         with:
-          extra_args: --results=verified,unknown
+          extra_args: --results=verified,unknown --exclude-detectors=lob
 
   # The root justfile against the language testing contract: the command
   # grammar, the execution/aggregate roles, the scheduling partition and its
