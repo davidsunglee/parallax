@@ -80,7 +80,7 @@ separately from the DAG in [`modules.md`](modules.md).
   Valid-Time / Transaction-Time dimension names, the omitted Transaction-Time
   Latest default, explicit Valid-Time requirement, finite coordinates, timestamp
   type and precision, and rejection of invalid combinations.
-- **(decide and record — When claimed: `m-agg`)** Aggregation result and operation
+- **(decide and record — When claimed: `m-agg`)** Aggregation result and query
   spelling for `groupBy`, aggregate functions, and `having`. Also record SQL
   lowering only when `m-sql-agg` is claimed.
 

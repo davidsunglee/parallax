@@ -1,7 +1,7 @@
 # m-perf-bench — Performance & Benchmark Harness
 
 `m-perf-bench` is the **shared cross-language performance methodology**: a
-normative set of **benchmark fixtures** (datasets, operation mixes, deep-fetch
+normative set of **benchmark fixtures** (datasets, query mixes, deep-fetch
 shapes, milestone workloads) plus a **measurement protocol** (what to measure, how
 to report it), so implementations are **comparable**, not just individually fast.
 Per the dependency graph, `m-perf-bench` depends on `m-conformance-adapter` (it
@@ -22,7 +22,7 @@ without forcing non-idiomatic structures.
 
 | Concern | Status |
 |---|---|
-| benchmark fixtures (datasets, op mixes, deep-fetch shapes, milestone workloads) | **shared** (normative, this module) |
+| benchmark fixtures (datasets, query mixes, deep-fetch shapes, milestone workloads) | **shared** (normative, this module) |
 | measurement protocol (what metrics, how aggregated) | **shared** (normative, this module) |
 | numeric targets (the actual latency / memory ceilings) | **per-language** (placeholders here; set in each language spec) |
 | optional optimized data structures (`UnifiedMap` / `UnifiedSet` / `HashingStrategy` analogues) | **per-language**, optional technique |
@@ -42,7 +42,7 @@ out:
 
 | Workload family | Exercises | Example fixture |
 |---|---|---|
-| **operation mix** (point + range reads) | `m-predicate` / `m-sql` predicate evaluation, query-cache hit/miss (`m-process-cache`) | `read-mix.yaml` |
+| **query mix** (point + range reads) | `m-predicate` / `m-sql` predicate evaluation, query-cache hit/miss (`m-process-cache`) | `read-mix.yaml` |
 | **deep-fetch shapes** (to-one, to-many, multi-hop) | `m-deep-fetch` N+1 elimination — round-trips must stay `1 + levels` regardless of fan-out | `deep-fetch.yaml` |
 | **milestone workloads** (insert / update / terminate chains) | `m-txtime-write` milestone-chaining write cost | `milestone-write.yaml` |
 | **aggregation** (group-by / having) | `m-agg` aggregate path | folded into `read-mix.yaml` |
@@ -57,7 +57,7 @@ benchmark doubles as a *round-trip regression check* (a deep-fetch workload that
 silently regressed to N+1 would blow its declared round-trip count). A workload
 **MAY** instead declare **`kind: cache-hit`** — a repeated find an implementation
 serves from its query cache at **zero** round trips (`expectRoundTrips: 0`),
-listing no `statements` — so the operation-mix fixture measures the query-cache
+listing no `statements` — so the query-mix fixture measures the query-cache
 hit/miss distinction, not only the miss.
 
 ### Dataset scale

@@ -11,7 +11,7 @@ generation exists anywhere.
 
 Drift between the two frontends is prevented by the API Conformance Suite's
 descriptor-equality guard (idiomatic class exports must structurally equal the
-corpus descriptor) and the operation no-drift guard, not by a generator.
+corpus descriptor) and the query no-drift guard, not by a generator.
 Canonical identifiers stay camelCase per the core schema; Python fields are
 snake_case with a deterministic snake-to-camel export conversion, a
 class-definition-time collision check, and an explicit `Field(name=...)`

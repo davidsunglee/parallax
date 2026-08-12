@@ -33,7 +33,7 @@ _REGISTRY = build_registry(_SCHEMAS)
 _IDENTITY = _SCHEMAS["identity.schema.json"]
 _METAMODEL = _SCHEMAS["metamodel.schema.json"]
 _IDENTITY_URL = _IDENTITY["$id"]
-_OPERATION_URL = _SCHEMAS["predicate.schema.json"]["$id"]
+_PREDICATE_URL = _SCHEMAS["predicate.schema.json"]["$id"]
 _SUBTYPE_SELECTION_URL = _SCHEMAS["subtype-selection.schema.json"]["$id"]
 _WRITE_URL = _SCHEMAS["write-instruction.schema.json"]["$id"]
 _CASE_URL = _SCHEMAS["compatibility-case.schema.json"]["$id"]
@@ -134,11 +134,11 @@ _VECTORS: dict[str, list[tuple[str, bool]]] = {
 
 # Where each grammar is reached through a consuming schema's cross-file `$ref`.
 _CONSUMERS: dict[str, list[tuple[str, str]]] = {
-    "attributeRef": [(_OPERATION_URL, "attributeRef"), (_WRITE_URL, "writeAssignment")],
-    "relationshipRef": [(_OPERATION_URL, "relationshipRef")],
-    "nestedRef": [(_OPERATION_URL, "nestedRef")],
-    "valueObjectRef": [(_OPERATION_URL, "valueObjectRef")],
-    "elementRef": [(_OPERATION_URL, "elementRef")],
+    "attributeRef": [(_PREDICATE_URL, "attributeRef"), (_WRITE_URL, "writeAssignment")],
+    "relationshipRef": [(_PREDICATE_URL, "relationshipRef")],
+    "nestedRef": [(_PREDICATE_URL, "nestedRef")],
+    "valueObjectRef": [(_PREDICATE_URL, "valueObjectRef")],
+    "elementRef": [(_PREDICATE_URL, "elementRef")],
     "entityName": [
         (_SUBTYPE_SELECTION_URL, "subtypeSelection"),
         (_WRITE_URL, "entityName"),

@@ -4148,12 +4148,12 @@ def _synthetic_rejected(when: dict[str, object]) -> case_format.Case:
     )
 
 
-def test_run_rejected_case_operation_dispatch_classifies_the_rule() -> None:
+def test_run_rejected_case_query_dispatch_classifies_the_rule() -> None:
     case = _rejected_case("m-inheritance-040")
     assert engine.run_rejected_case(case) == "narrow-outside-position"
 
 
-def test_run_rejected_case_operation_dispatch_over_a_value_object_model() -> None:
+def test_run_rejected_case_query_dispatch_over_a_value_object_model() -> None:
     case = _rejected_case("m-value-object-034")
     assert engine.run_rejected_case(case) == "nested-path-first-segment-not-value-object"
 

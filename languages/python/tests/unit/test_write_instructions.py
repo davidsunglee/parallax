@@ -419,7 +419,7 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
         wi.deserialize(doc)
 
 
-def test_predicate_rejects_a_malformed_embedded_operation() -> None:
+def test_predicate_rejects_a_malformed_embedded_predicate() -> None:
     with pytest.raises(predicate_algebra.CanonicalDocumentError):
         wi.deserialize(
             {
@@ -940,7 +940,7 @@ def test_a_query_clause_is_no_more_spellable_inside_a_predicate(
     ],
     ids=["exists", "not-exists"],
 )
-def test_a_bare_navigation_filter_carrying_no_inner_operation_is_accepted(
+def test_a_bare_navigation_filter_carrying_no_inner_predicate_is_accepted(
     position: str, predicate: dict[str, Any]
 ) -> None:
     # The optional inner `op` is absent — the recursion has nothing to descend

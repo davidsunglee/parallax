@@ -705,7 +705,7 @@ def test_plan_rejects_an_unknown_result_narrowing_target() -> None:
 # injected term names its DECLARING Entity by exact identity, so it stays     #
 # addressed at one Entity in a model two namespaces could share a name in.    #
 # --------------------------------------------------------------------------- #
-def test_concrete_target_root_operation_injects_explicit_latest_on_every_axis() -> None:
+def test_concrete_target_root_query_injects_explicit_latest_on_every_axis() -> None:
     plan = _plan(RATE, "DepositRate", (), _BITEMPORAL_LATEST)
     # Valid-Time-first (m-temporal-read), both explicitly select the current
     # milestone: `thru_z = infinity`, `out_z = infinity`.
@@ -717,7 +717,7 @@ def test_concrete_target_root_operation_injects_explicit_latest_on_every_axis() 
     )
 
 
-def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:
+def test_concrete_target_root_query_injects_a_pinned_axis() -> None:
     pinned: dict[TemporalDimension, TemporalSelection] = {
         "transaction-time": AsOf("2024-01-15T00:00:00+00:00"),
         "valid-time": AsOf("latest"),

@@ -156,7 +156,7 @@ SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES = "subtype-selection-overlapping-alte
 # declare names no single entity, so the reference resolves nowhere.
 REFERENCE_AMBIGUOUS_ENTITY_NAME = "reference-ambiguous-entity-name"
 
-OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
+PREDICATE_REJECTED_RULES: frozenset[str] = frozenset(
     {
         NARROW_OUTSIDE_POSITION,
         NARROW_EMPTY_EFFECTIVE_SET,
