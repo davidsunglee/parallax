@@ -590,7 +590,7 @@ def test_narrow_within_relationship_target_accepts() -> None:
     _validate("Person", op, _ANIMAL)  # no raise
 
 
-def test_navigate_with_no_inner_operation_accepts() -> None:
+def test_navigate_with_no_inner_predicate_accepts() -> None:
     _validate("Person", Navigate(rel="Person.pets"), _ANIMAL)
 
 

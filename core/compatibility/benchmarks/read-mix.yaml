@@ -1,4 +1,4 @@
-# Benchmark fixture (m-perf-bench): the read operation-mix workload.
+# Benchmark fixture (m-perf-bench): the read query-mix workload.
 #
 # Loads a GENERATED dataset — 1,000 `Account` rows from the `accounts-sequential`
 # recipe — then runs four read workloads, each declaring its per-dialect SQL, binds,
@@ -8,7 +8,7 @@
 #   - range-read (100):         a bounded balance range scan  — expectRoundTrips 1
 #   - aggregate-group-by (100): a count/sum over the dataset  — (no round-trip bound)
 #   - point-read-cached (200):  the same point-read, cache HIT — expectRoundTrips 0
-tags: [m-perf-bench, operation-mix]
+tags: [m-perf-bench, query-mix]
 model: models/account.yaml
 dataset:
   generate:

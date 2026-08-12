@@ -49,7 +49,7 @@ from .ddl_builder import (
 from .document_codec import decode_leaf, decode_stored, encode_document, encode_leaf, is_document
 from .inheritance import (
     MODEL_REJECTED_RULES,
-    OPERATION_REJECTED_RULES,
+    PREDICATE_REJECTED_RULES,
     STRATEGY_TPCS,
     STRATEGY_TPH,
     WRITE_REJECTED_RULES,
@@ -165,7 +165,7 @@ ALL_REJECTED_RULES = (
     | METAMODEL_MODEL_REJECTED_RULES
     | MODEL_REJECTED_RULES
     | STORAGE_LAYOUT_MODEL_REJECTED_RULES
-    | OPERATION_REJECTED_RULES
+    | PREDICATE_REJECTED_RULES
     | WRITE_REJECTED_RULES
     | KEYED_WRITE_REJECTED_RULES
     | {"predicate-write-readless-document-many-unsupported"}

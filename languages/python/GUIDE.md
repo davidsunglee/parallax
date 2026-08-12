@@ -103,7 +103,7 @@ self-contained without a system `libpq`.
   `order_by`/`limit`/`distinct`), the concrete psycopg adapter, and the
   conformance `compile`/`run` commands with self-managed Testcontainers
   provisioning. The compile sweep and `pg-full` run lane exercise the reachable
-  read intersection; the operation no-drift guard is live.
+  read intersection; the query no-drift guard is live.
 - **Reachable intersection this phase:** 122 corpus cases (75 read, 18
   writeSequence, 29 rejected). After the Phase-5b read-projection amendment closed
   ledger D-11, **50 reads compile-match** the corpus and **48 run end-to-end**
@@ -117,7 +117,7 @@ self-contained without a system `libpq`.
   D-11) with forward reasons — ledger D-12 (17 inheritance-family reads and 8
   to-many value-object array-traversal reads, both landing later in Phase 7;
   the read-side pre-SQL rejected-query validation landed in Phase 7
-  increment 1) and the write-path shapes (Phase 6/8). The operation no-drift
+  increment 1) and the write-path shapes (Phase 6/8). The query no-drift
   guard exercises 10 idiomatic Predicate read spellings.
 - **Phase 6: transactions + temporal backbone — milestones 1–4 COMPLETE (backbone review closed).**
   - **M1 — `m-db-error`:** the neutral category set + call-site predicates
@@ -171,7 +171,7 @@ self-contained without a system `libpq`.
     boundary withheld-value case, and the first temporal as-of read), proven
     by the new write no-drift guard (commit spellings emit the golden DML
     through the public surface; abort spellings prove the discard contract)
-    and the operation no-drift guard; the **D-7 temporal class spelling**
+    and the query no-drift guard; the **D-7 temporal class spelling**
     (`EntityConfig.as_of` declares axes in the descriptor's own
     `AsOfAttribute` vocabulary — the `Balance` mirror joins the descriptor
     no-drift guard); the coverage partition flipped (the `m-unit-work` skip

@@ -1356,14 +1356,14 @@ def test_resolve_hop_outside_relationship_target_is_rejected() -> None:
     assert exc.value.rule == NARROW_OUTSIDE_RELATIONSHIP_TARGET
 
 
-def test_operation_narrow_in_navigation_filter_accepts_valid() -> None:
+def test_predicate_narrow_in_navigation_filter_accepts_valid() -> None:
     defs = _animal_defs()
     # narrow the pets target (Pet) to [Cat] — valid; animals (Animal) to [Pet] — valid.
     _judge(defs, "Person", predicate=_person_op("Person.pets", ["Cat"]))
     _judge(defs, "Person", predicate=_person_op("Person.animals", ["Pet"]))
 
 
-def test_operation_narrow_in_navigation_filter_rejects_outside_target() -> None:
+def test_predicate_narrow_in_navigation_filter_rejects_outside_target() -> None:
     defs = _animal_defs()
     with pytest.raises(RejectionError) as exc:
         _judge(defs, "Person", predicate=_person_op("Person.pets", ["WildBoar"]))

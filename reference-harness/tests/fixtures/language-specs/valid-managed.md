@@ -118,7 +118,7 @@ The capability is recorded as deferred in section 1, and formation refuses every
 | Supported language/runtime versions | Python 3.11-3.13 | ci/runtime.yml | `tox` | `ci runtime-matrix` | All supported versions block; EOL versions are removed deliberately. |
 | Dependency and supply-chain audit | pip-audit 2.x | requirements.lock | `pip-audit` | `ci audit` | High severity blocks; owned exceptions expire in 30 days. |
 | Compatibility Conformance Suite | pytest 9.x | tests/compatibility | `pytest tests/compatibility` | `ci conformance` | Selects active slice and capability tags; validates envelopes. |
-| API Conformance Suite and Usage Guide | pytest 9.x | tests/api | `pytest tests/api` | `ci api` | Coverage partition, operation no-drift, real adapter, and guide drift block. |
+| API Conformance Suite and Usage Guide | pytest 9.x | tests/api | `pytest tests/api` | `ci api` | Coverage partition, query no-drift, real adapter, and guide drift block. |
 | Database-backed verification | pytest 9.x | pyproject.toml | `pytest -m db` | `ci database` | Required profiles run; every skipped check is reported with its reason. |
 
 - **Scheduling classes.** `dbfree` and `db`, decided per item by whether the

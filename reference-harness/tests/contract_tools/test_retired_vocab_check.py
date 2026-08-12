@@ -9,14 +9,16 @@ historical / prior-art / rejection-fixture text keeps its original spellings.
 
 Each family's deny-list is a compound rule over an ordinary English stem, so
 both directions matter: the retired compound is caught, and the ordinary use of
-the same stem stays legal.
+the same stem stays legal. A compound counts wherever it is written — prose,
+camelCase, SCREAMING_SNAKE, a wrapped line, a path component — which is what
+makes the deny-list an enumerator rather than a sample.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from reference_harness.retired_vocab_check import check_text, main, scanned_files
+from reference_harness.retired_vocab_check import check_path, check_text, main, scanned_files
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -199,6 +201,79 @@ def test_retired_query_identifier_spellings_are_detected() -> None:
         assert check_text("f.py", line), line
 
 
+def test_retired_query_compounds_are_detected_in_every_casing_and_number() -> None:
+    flagged = [
+        "class OperationsTree: ...",
+        "class OperationsSchema: ...",
+        "OPERATION_SCHEMA_URL = _load()",
+        "_OPERATION_URL = _SCHEMAS['predicate.schema.json']['$id']",
+        "operation_url = url",
+        "OPERATION_REJECTED_RULES: frozenset[str] = frozenset()",
+        "rejected_operation = _classify(case)",
+        "_REJECTED_OPERATION_CASE = cases / 'x.yaml'",
+        "class OperationRejected(ValueError): ...",
+        "class RejectedOperations: ...",
+        "def test_run_rejected_case_operation_dispatch_classifies_the_rule() -> None:",
+        "def test_operation_narrow_in_navigation_filter_accepts_valid() -> None:",
+        "def test_concrete_target_root_operation_injects_a_pinned_axis() -> None:",
+        "def test_navigate_with_no_inner_operation_accepts() -> None:",
+        "def test_predicate_rejects_a_malformed_embedded_operation() -> None:",
+        "the query no-drift guard was the operation no-drift guard",
+        "operation-to-result query caching",
+        "tags: [m-perf-bench, operation-mix]",
+        "benchmark fixtures (datasets, op mixes, deep-fetch shapes)",
+        "repeated equal operations need not be query-cache hits",
+        "Aggregation result and operation spelling for `groupBy`",
+        "the operation plan is built once per root",
+        "served from the operation cache at zero round trips",
+    ]
+    for line in flagged:
+        assert check_text("f.py", line), line
+
+
+def test_a_compound_wrapped_across_a_line_is_still_one_phrase() -> None:
+    violations = check_text(
+        "core/spec/x.md", "the aggregation result and operation\nspelling rule\n"
+    )
+    assert violations == ["core/spec/x.md:1: retired query vocabulary 'operation spelling'"]
+    assert check_text("f.md", "peel the operation\ntree before compiling\n")
+    assert check_text("f.md", "pinned to a business\ndate\n")
+
+
+def test_words_in_different_paragraphs_are_not_one_phrase() -> None:
+    assert check_text("f.md", "closes the operation\n\nTree walking comes next.\n") == []
+    assert check_text("f.md", "the unit of work is business\n\nDate handling follows.\n") == []
+
+
+def test_a_list_bullet_opening_the_next_line_is_not_a_joiner() -> None:
+    assert check_text("f.md", "each buffered write operation\n- trees are built per hop\n") == []
+
+
+def test_the_navigation_filters_inner_operand_stays_legal() -> None:
+    # `op` on the wire is the inner OPERAND of a navigation filter, mirrored by
+    # `Navigate.op` / `Exists.op`. A position word joined to it names that
+    # operand, not a query.
+    legal = [
+        "def test_exists_with_no_inner_op_is_a_pure_correlation_check() -> None:",
+        "def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:",
+        "canonical = oa.Exists(rel='Order.items', op=inner_op)",
+        "root_op = query.predicate.op",
+    ]
+    for line in legal:
+        assert check_text("f.py", line) == [], line
+
+
+def test_position_words_stay_legal_in_their_spaced_sense() -> None:
+    legal = [
+        "application code reasons in transactions and operation results",
+        "the write operation rejected the row",
+        "the root operation of the buffered write tree",
+        "the operation embedded in an outer transaction",
+    ]
+    for line in legal:
+        assert check_text("f.md", line) == [], line
+
+
 def test_ordinary_operation_uses_stay_legal() -> None:
     # The stem is ordinary English and names real, live concepts: a database
     # write, the command grammar's own operation vocabulary, and `m-op-list`.
@@ -231,15 +306,59 @@ def test_query_violation_names_its_own_family() -> None:
     assert violations == ["docs/x.md:2: retired query vocabulary 'operation tree'"]
 
 
-def test_a_urls_own_path_is_not_repository_vocabulary() -> None:
-    # An issue slug is fixed by the system that issued it: no edit here can
-    # change it, so it must not fail a gate over this repository's own prose.
+def test_a_urls_own_text_is_not_repository_vocabulary() -> None:
+    # A URL's text is fixed by whatever system issued it, so no edit in this
+    # repository can change the vocabulary it spells.
     line = (
         "closed by [COR-89](https://linear.app/x/issue/COR-89/let-an-operation-reference-name-it)."
     )
     assert check_text("docs/x.md", line) == []
     # The same retired compound OUTSIDE a URL on the same line still fails.
     assert check_text("docs/x.md", f"the operation reference — {line}")
+
+
+def test_a_retired_spelling_in_the_path_itself_is_a_violation() -> None:
+    flagged = [
+        "core/compatibility/cases/m-op-algebra-001-equality.yaml",
+        "reference-harness/src/reference_harness/operation_references.py",
+        "reference-harness/src/reference_harness/op_validate.py",
+        "languages/python/tests/api/test_operation_no_drift.py",
+        "core/schemas/operation.schema.json",
+        "languages/python/packages/parallax-core/src/parallax/core/op_algebra/__init__.py",
+        "docs/business-date-semantics.md",
+    ]
+    for path in flagged:
+        assert check_path(path), path
+
+
+def test_a_retired_spelling_in_a_directory_component_is_a_violation() -> None:
+    assert check_path("languages/python/.../core/op_algebra/nodes.py")
+    assert check_path("core/spec/operation-schema/index.md")
+
+
+def test_live_paths_stay_legal() -> None:
+    legal = [
+        "core/compatibility/cases/m-op-list-001-lazy-list-is-not-materialized.yaml",
+        "core/compatibility/cases/m-predicate-001-equality.yaml",
+        "core/compatibility/cases/m-object-query-001-order-by.yaml",
+        "core/schemas/predicate.schema.json",
+        "languages/python/tests/api/test_object_query_no_drift.py",
+        "core/spec/m-document-codec.md",
+        "reference-harness/src/reference_harness/query_references.py",
+    ]
+    for path in legal:
+        assert check_path(path) == [], path
+
+
+def test_a_clean_file_under_a_retired_filename_fails_the_whole_tree_scan(tmp_path: Path) -> None:
+    cases = tmp_path / "core" / "compatibility" / "cases"
+    cases.mkdir(parents=True)
+    clean = "tags: [m-predicate]\n"
+    (cases / "m-predicate-001-equality.yaml").write_text(clean)
+    assert main([str(tmp_path)]) == 0
+
+    (cases / "m-op-algebra-001-equality.yaml").write_text(clean)
+    assert main([str(tmp_path)]) == 1
 
 
 def test_historical_and_fixture_trees_are_pruned(tmp_path: Path) -> None:
@@ -256,6 +375,30 @@ def test_historical_and_fixture_trees_are_pruned(tmp_path: Path) -> None:
 
     (tmp_path / "core" / "spec" / "dirty.md").write_text(retired)
     assert main([str(tmp_path)]) == 1
+
+
+def test_a_decision_record_is_exempt_only_from_the_temporal_family() -> None:
+    temporal = "the business date this decision fixed\n"
+    query = "prevented by the operation no-drift guard\n"
+    assert check_text("docs/adr/0009-x.md", temporal) == []
+    assert check_text("docs/adr/0009-x.md", query)
+    assert check_text("core/spec/m-x.md", temporal)
+
+
+def test_a_decision_records_retirement_table_names_the_spellings_it_retires() -> None:
+    text = (
+        "The retirements, one for one:\n"
+        "\n"
+        "| Retired | What answers now |\n"
+        "|---|---|\n"
+        "| `FindQuery[T]` | `ObjectQuery[E, S]` |\n"
+        "| the operation tree | the Predicate |\n"
+        "\n"
+        "The operation tree outside the table still fails.\n"
+    )
+    violations = check_text("docs/adr/0007-x.md", text)
+    assert len(violations) == 1
+    assert "docs/adr/0007-x.md:8" in violations[0]
 
 
 def test_non_reladomo_research_docs_are_not_exempt(tmp_path: Path) -> None:

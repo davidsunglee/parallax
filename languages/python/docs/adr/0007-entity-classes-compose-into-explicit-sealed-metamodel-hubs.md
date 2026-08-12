@@ -555,7 +555,7 @@ bound may not itself be generic.
 `QueryDefinitionError` represents only what the frontend itself judges. A query
 executed through a Database whose connected model declares no Entity for its
 target raises `QueryTargetError(code="query-target-not-in-model")`, retaining
-neither the query, the model, nor the Database, before operation validation,
+neither the query, the model, nor the Database, before predicate validation,
 deferred-feature classification, or any I/O — a resolution failure rather than
 an ownership one. After the target resolves and the query validates,
 Snapshot compares

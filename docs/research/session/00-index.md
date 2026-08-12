@@ -66,7 +66,7 @@ For Parallax, this argues for a narrow session-cache guarantee:
 - primary-key lookup may be served from the session identity map;
 - SQL-producing reads may still execute and then reuse existing session objects
   for returned primary keys;
-- repeated equal operations need not be query-cache hits;
+- repeated equal queries need not be query-cache hits;
 - no process-wide query-result cache or invalidation protocol is implied.
 
 ### Transaction Scope And Session Scope Are Related But Not Identical
@@ -207,7 +207,7 @@ is not a free feature and can be a data-integrity hazard.
 This slice should explicitly exclude:
 
 - process-wide identity interning;
-- operation-to-result query caching;
+- query-to-result caching;
 - query-cache invalidation tokens;
 - second-level cache regions;
 - distributed cache backends;

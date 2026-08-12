@@ -587,7 +587,7 @@ def test_boundary_case_names_the_api_conformance_lane() -> None:
 # --------------------------------------------------------------------------- #
 # Rejected — the pre-SQL model-aware validation lane.                         #
 # --------------------------------------------------------------------------- #
-_REJECTED_OPERATION_CASE = (
+_REJECTED_QUERY_CASE = (
     case_format.default_cases_dir() / "m-inheritance-040-rejected-narrow-outside-position.yaml"
 )
 _REJECTED_MODEL_CASE = (
@@ -616,16 +616,16 @@ def test_compile_case_rejected_shape_is_shape_intrinsic_run_only() -> None:
     # A rejected case carries no `compileEligibility` declaration (its
     # run-only status is shape-intrinsic, not authored per-case) yet still
     # answers the defined run-only envelope.
-    envelope = adapter.compile_case(_REJECTED_OPERATION_CASE, "postgres")
+    envelope = adapter.compile_case(_REJECTED_QUERY_CASE, "postgres")
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "run-only"
     assert envelope["caseShape"] == "rejected"
     assert envelope["diagnostics"][0]["code"] == "compile-run-only"
-    assert engine.eligibility(case_format.load_case(_REJECTED_OPERATION_CASE)) is None
+    assert engine.eligibility(case_format.load_case(_REJECTED_QUERY_CASE)) is None
 
 
-def test_run_case_rejected_operation_reports_the_classified_rule() -> None:
-    envelope = adapter.run_case(_REJECTED_OPERATION_CASE, "postgres", _NeverCalledPort())
+def test_run_case_rejected_query_reports_the_classified_rule() -> None:
+    envelope = adapter.run_case(_REJECTED_QUERY_CASE, "postgres", _NeverCalledPort())
     jsonschema.validate(envelope, _SCHEMA)
     assert envelope["status"] == "ok"
     assert envelope["emissions"] == []

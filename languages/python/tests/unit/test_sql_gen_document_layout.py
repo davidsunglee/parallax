@@ -181,7 +181,7 @@ def test_the_raw_document_is_never_a_result_field() -> None:
 
 
 @pytest.mark.parametrize(
-    ("operation", "expected", "binds"),
+    ("predicate", "expected", "binds"),
     [
         (
             oa.Comparison(op="eq", attr="Person.displayName", value="Ada"),
@@ -221,13 +221,13 @@ def test_the_raw_document_is_never_a_result_field() -> None:
     ],
 )
 def test_a_document_path_predicate_lowers_through_the_extraction_and_cast_seams(
-    operation: oa.PredicateNode, expected: str, binds: tuple[object, ...]
+    predicate: oa.PredicateNode, expected: str, binds: tuple[object, ...]
 ) -> None:
     # The path comes from the compiled Member Placement, so a top-level Attribute
     # is a ONE-segment path bind; whether the extraction casts is fixed by the
     # declared type, and the path segments always bind ahead of the compared
     # value because the emitted text puts their holes first.
-    compiled = compile_read(operation, DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
+    compiled = compile_read(predicate, DOCUMENT, POSTGRES, entity(DOCUMENT, "Person"))
     assert _where(compiled.statement.sql) == expected
     assert compiled.statement.binds == binds
 
