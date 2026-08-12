@@ -1,4 +1,4 @@
-"""Immutable Predicate nodes built from class-level member access.
+"""Immutable query and write values built from class-level member access.
 
 Class-level attribute access yields an :class:`AttributeExpr` (the SQLAlchemy
 ``Mapped[T]`` pattern): the seed of a Predicate, strict-Pyright-clean

@@ -189,7 +189,7 @@ def _hop_inner(
 
 def _entity(model: Metamodel, identity: EntityIdentity) -> EntityMetadata:
     entity = model.entity(identity)
-    if entity is None:  # pragma: no cover - guards an unvalidated predicate
+    if entity is None:  # pragma: no cover - guards an unvalidated query
         raise ValueError(f"{identity.canonical!r} names no declared entity")
     return entity
 
@@ -199,23 +199,23 @@ def resolve_relationship(
 ) -> RelationshipMetadata:
     """Resolve a ``Class.relationship`` reference to the direction it navigates.
 
-    The reference's class name is a predicate reference, so it resolves model-wide
-    by :func:`~parallax.core.metamodel.entity_by_name`'s rule and never adopts a
-    namespace of its own — an accepted reference therefore always resolves here,
-    which the owner-relative DECLARATION rule could not promise. ``owner`` is the
-    Entity the reference is written against and locates an unresolvable one. The
-    Identity that resolution produces then selects the direction from the
-    Relationship Facet, the one place a reverse direction's inverted cardinality
-    and swapped join exist — so a caller reads a compiled direction rather than
-    re-pairing declarations.
+    The reference's class name sits in a reference position, so it resolves
+    model-wide by :func:`~parallax.core.metamodel.entity_by_name`'s rule and never
+    adopts a namespace of its own — an accepted reference therefore always
+    resolves here, which the owner-relative DECLARATION rule could not promise.
+    ``owner`` is the Entity the reference is written against and locates an
+    unresolvable one. The Identity that resolution produces then selects the
+    direction from the Relationship Facet, the one place a reverse direction's
+    inverted cardinality and swapped join exist — so a caller reads a compiled
+    direction rather than re-pairing declarations.
 
     Exported so `parallax.core.deep_fetch` (the sole downstream `m-navigate`
-    dependent) resolves each deep-fetch path
-    segment's relationship through the SAME lookup this module's own hop
-    canonicalization uses, rather than re-deriving it.
+    dependent) resolves each Include Path segment's relationship through the SAME
+    lookup this module's own hop canonicalization uses, rather than re-deriving
+    it.
     """
     class_name, dot, member_name = rel_ref.rpartition(".")
-    if not dot:  # pragma: no cover - guards an unvalidated predicate
+    if not dot:  # pragma: no cover - guards an unvalidated query
         raise ValueError(f"relationship reference {rel_ref!r} needs Class.relationship")
     declaring = entity_by_name(model, class_name)
     direction = (
