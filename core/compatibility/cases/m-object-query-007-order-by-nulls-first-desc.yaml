@@ -10,9 +10,9 @@
 # makes the placement observable through row MEMBERSHIP, since top-level row
 # comparison is order-insensitive: order 4 (no sku) takes the slot the canonical
 # nulls-last default would have given to the second-largest sku, which is how this
-# case separates from m-op-algebra-036.
+# case separates from m-object-query-005.
 model: models/orders.yaml
-tags: [m-predicate, m-object-query, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   objectQuery:

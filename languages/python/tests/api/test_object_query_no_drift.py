@@ -78,8 +78,8 @@ from parallax.conformance.vo_models import (
 from parallax.core import (
     DomainModel,
     Entity,
+    ModelRejectedError,
     ObjectQuery,
-    OperationRejectedError,
     Predicate,
     QueryDefinitionError,
 )
@@ -221,7 +221,7 @@ def test_expression_rejects_bool_misuse() -> None:
 # at the shared read gate rather than at `Entity.where`, because authoring     #
 # reaches no model. No-drift here is two proofs: the idiomatic query builds    #
 # the case's own `when.objectQuery`, and executing it raises                   #
-# `OperationRejectedError` naming the EXACT `then.rejectedRule`.               #
+# `ModelRejectedError` naming the EXACT `then.rejectedRule`.               #
 # --------------------------------------------------------------------------- #
 # Each entry builds the whole rejected query, naming the same queried target the
 # case does — a rejected case now carries its own `target` rather than falling
@@ -234,23 +234,23 @@ def test_expression_rejects_bool_misuse() -> None:
 # is that no static parameter can decide it — the model is what says whether
 # `Dog` is a subtype of the queried position at all.
 REJECTED_BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
-    "m-op-algebra-039": lambda: Order.where(Order.price.between(50.75, 20.00)),
-    "m-op-algebra-040": lambda: vm.Customer.where(vm.Customer.address.geo.elevation.between(12, 5)),
-    "m-op-algebra-041": lambda: vm.Customer.where(
+    "m-predicate-039": lambda: Order.where(Order.price.between(50.75, 20.00)),
+    "m-predicate-040": lambda: vm.Customer.where(vm.Customer.address.geo.elevation.between(12, 5)),
+    "m-predicate-041": lambda: vm.Customer.where(
         vm.Customer.address.phones.exists(vm.Phone.number.between(42, 7))
     ),
-    "m-op-algebra-042": lambda: vm.Customer.where(
+    "m-predicate-042": lambda: vm.Customer.where(
         vm.Customer.address.geo.elevation.starts_with("1")
     ),
-    "m-op-algebra-043": lambda: Contact.where(Contact.address.phones.expires.starts_with("2024")),
-    "m-op-algebra-044": lambda: Contact.where(
+    "m-predicate-043": lambda: Contact.where(Contact.address.phones.expires.starts_with("2024")),
+    "m-predicate-044": lambda: Contact.where(
         Contact.address.phones.exists(ContactPhone.expires.ends_with("-01"))
     ),
     "m-value-object-038": lambda: vm.Customer.where(vm.Customer.address.city == 42),
     # The animal-owner mirror composes `Person` alongside the family, so a
     # predicate over the owner is CONSTRUCTIBLE at the family position and is
     # refused for naming an entity outside it rather than for naming nothing.
-    "m-op-algebra-045": lambda: _out_of_position(AnimalRoot, AnimalOwnerPerson.name == "Ada"),
+    "m-predicate-045": lambda: _out_of_position(AnimalRoot, AnimalOwnerPerson.name == "Ada"),
     "m-inheritance-040": lambda: AnimalRoot.where(AnimalRoot.narrow(AnimalOwnerPerson)),
     "m-inheritance-041": lambda: _out_of_position(sm.Animal, sm.Dog.bark_volume > 5),
     "m-inheritance-042": lambda: sm.Animal.where(
@@ -282,14 +282,14 @@ def test_the_rejected_query_builds_the_corpus_object_query(case_id: str) -> None
 # Authoring reaches no model, so the rule fires at the shared read gate rather
 # than at `Entity.where`; the model each target belongs to is what states it.
 REJECTED_MODELS: dict[str, DomainModel] = {
-    "m-op-algebra-039": ORDERS_MODEL,
-    "m-op-algebra-040": vm.CUSTOMER_MODEL,
-    "m-op-algebra-041": vm.CUSTOMER_MODEL,
-    "m-op-algebra-042": vm.CUSTOMER_MODEL,
-    "m-op-algebra-043": CONTACT_MODEL,
-    "m-op-algebra-044": CONTACT_MODEL,
+    "m-predicate-039": ORDERS_MODEL,
+    "m-predicate-040": vm.CUSTOMER_MODEL,
+    "m-predicate-041": vm.CUSTOMER_MODEL,
+    "m-predicate-042": vm.CUSTOMER_MODEL,
+    "m-predicate-043": CONTACT_MODEL,
+    "m-predicate-044": CONTACT_MODEL,
     "m-value-object-038": vm.CUSTOMER_MODEL,
-    "m-op-algebra-045": ANIMAL_OWNER_MODEL,
+    "m-predicate-045": ANIMAL_OWNER_MODEL,
     "m-inheritance-040": ANIMAL_OWNER_MODEL,
     "m-inheritance-041": sm.ANIMAL_MODEL,
     "m-inheritance-064": ANIMAL_OWNER_MODEL,
@@ -302,7 +302,7 @@ REJECTED_MODELS: dict[str, DomainModel] = {
 def test_the_idiomatic_query_rejects_the_corpus_rule_at_the_read_gate(case_id: str) -> None:
     expected_rule = case_document(_CASES[case_id])["then"]["rejectedRule"]
     query = REJECTED_BUILDERS[case_id]()
-    with pytest.raises(OperationRejectedError) as exc_info:
+    with pytest.raises(ModelRejectedError) as exc_info:
         preflight(object_query_node(query), model=model_of(REJECTED_MODELS[case_id]), form="graph")
     assert exc_info.value.rule == expected_rule
 

@@ -191,7 +191,7 @@ def buffer_predicate(
     5. **Build + validate the canonical instruction** (the SAME
        deserialize/`validate_instruction` round trip a keyed write buys in
        ``Transaction._buffer``). ``validate_instruction`` measures the selecting
-       predicate with the whole ``validate_operation`` vocabulary, then rejects
+       predicate with the whole ``validate_predicate`` vocabulary, then rejects
        an inheritance-family target, then the assignments — so an inverted
        ``between`` window, an attribute outside the active position, or a
        set-based family write is refused here, at build, before every buffer and
@@ -314,7 +314,7 @@ def buffer_predicate_instruction(
     :meth:`~parallax.snapshot.handle.Transaction.write_neutral` at its own
     ingress for everyone else, the conformance engine included. EVERY
     model-aware rule is stated there, in the
-    order `m-case-format` fixes: the whole ``validate_operation`` vocabulary
+    order `m-case-format` fixes: the whole ``validate_predicate`` vocabulary
     over the selecting predicate, the
     inheritance-family rejection, member-name honesty and assignability, then
     the one target-profile quadrant that validator enforces — a milestone verb

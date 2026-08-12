@@ -232,7 +232,7 @@ mutations, exceptions, or exports.
   consequently no translation seam: a rule that needs a whole model is stated
   once at execution preflight and once at the predicate-selected write
   boundary, and surfaces there as its owner module's own error carrying its own
-  rule code — `OperationRejectedError` for an `m-predicate`, inheritance,
+  rule code — `ModelRejectedError` for an `m-predicate`, inheritance,
   relationship-navigation, or deep-fetch rejection, `TemporalReadError` for a
   temporal-read one — neither rewrapped nor reclassified, so the typed and the
   serialized ingress report one rejection under one name. Deferred Execution
@@ -406,7 +406,7 @@ mutations, exceptions, or exports.
   path parameter is covariant in its source, so a source outside the target's
   own subtree is a type error where the call is written, and a source the
   connected model puts outside the effective position is refused at execution
-  preflight as `OperationRejectedError`. Thus
+  preflight as `ModelRejectedError`. Thus
   `Animal.where(Animal.all).include(Dog.doghouse, Cat.ball_of_yarn)` is valid
   and loads `doghouse` only on Dogs and `ball_of_yarn` only on Cats, while
   `Pet.where(Pet.all).include(WildBoar.owner)` raises: the query's position is
@@ -617,9 +617,9 @@ mutations, exceptions, or exports.
   statically typed via the `Attr[...]` descriptor overloads; deeper hops
   resolve dynamically and are validated against the declared value-object
   structure at execution preflight, where the model is — an undeclared segment
-  raises `OperationRejectedError(nested-path-unknown-member)` and a literal
+  raises `ModelRejectedError(nested-path-unknown-member)` and a literal
   mismatching the leaf's declared neutral type
-  `OperationRejectedError(nested-literal-type-mismatch)`, never at
+  `ModelRejectedError(nested-literal-type-mismatch)`, never at
   the database. A flat predicate whose path crosses a `multiplicity: many`
   member keeps the flat node and therefore core's **any-element** semantics:
   each such predicate matches independently, so two ANDed flat predicates may
@@ -645,11 +645,11 @@ mutations, exceptions, or exports.
   A nested `between(lower, upper)` validates both bounds against the leaf's
   declared neutral type, exactly as every other nested literal is validated.
   Top-level and nested `between` alike then compare the two bounds where every
-  other model-aware predicate rule is stated — `validate_operation`, reached at
+  other model-aware predicate rule is stated — `validate_predicate`, reached at
   execution preflight for a read and at the write boundary for a
   predicate-selected write: a `lower` strictly greater than its
   `upper` names an empty range and raises
-  `OperationRejectedError(between-bounds-inverted)` rather than compiling to a
+  `ModelRejectedError(between-bounds-inverted)` rather than compiling to a
   `BETWEEN` that silently matches nothing. The comparison is by literal kind —
   two numbers or two strings, skipped for a mixed-kind or null pair — and equal
   bounds stay legal, so only a pair no row could satisfy is refused. Semantic
@@ -661,7 +661,7 @@ mutations, exceptions, or exports.
   literal, so a pattern against one would otherwise satisfy the typed-literal
   check and lower text matching against a value that is not text; the member's own
   declared type is checked first, and a mismatch raises
-  `OperationRejectedError(nested-string-predicate-non-string-member)` at
+  `ModelRejectedError(nested-string-predicate-non-string-member)` at
   execution preflight.
 
   ```python
@@ -758,7 +758,7 @@ mutations, exceptions, or exports.
   compatible narrow scope is a static error where the term is written — the
   `where=` parameter is measured against the named subtypes — and is refused
   again at execution preflight, against the connected model, as
-  `OperationRejectedError(subtype-attribute-outside-narrow-scope)`. Predicate
+  `ModelRejectedError(subtype-attribute-outside-narrow-scope)`. Predicate
   construction itself judges neither: authoring reaches no model, so a built
   Predicate carries the reference and the position settles it. A narrow
   expression is an
@@ -777,7 +777,7 @@ mutations, exceptions, or exports.
   `Person.pets.exists(Animal.narrow(Cat))` therefore lower identically: the
   receiver class grants Python predicate scope while the wire retains only the
   selection. A selection escaping the target is refused at execution preflight
-  as `OperationRejectedError(narrow-outside-relationship-target)`. The
+  as `ModelRejectedError(narrow-outside-relationship-target)`. The
   Object Query clause
   `Animal.where(...).narrow(Dog, ...)` is the whole-query form: it fills the
   query's own `narrowTo` clause and is single-shot like `as_of`. It is a
@@ -812,7 +812,7 @@ mutations, exceptions, or exports.
   type — so a nested same-position narrow can only constrain the position
   further, and one that broadens back out (a `Cat` narrow inside a `Dog`
   scope) builds and is refused at execution preflight as
-  `OperationRejectedError(narrow-outside-position)`, the corpus's
+  `ModelRejectedError(narrow-outside-position)`, the corpus's
   threaded-position rule. Which concrete subtypes a class resolves to is a
   per-model fact, so the threading is the connected model's to do.
 - **What a narrowing signature does not judge.** `Entity.narrow(*subtypes,
@@ -977,7 +977,7 @@ declaration. A position that names an Entity spells it either canonically as
 `<namespace>.<Entity>` or bare, and the bare spelling is legal exactly where it
 resolves to one declared Entity — so a bare name two namespaces of the connected
 model share resolves to no Entity and the query is refused as
-`OperationRejectedError(reference-ambiguous-entity-name)`, naming the canonical
+`ModelRejectedError(reference-ambiguous-entity-name)`, naming the canonical
 spellings that would resolve. The rule governs every such position — an
 attribute or nested-path reference, a relationship reference, a Sort Key, the
 query's own `narrowTo` and each alternative of a predicate `narrow`, and an

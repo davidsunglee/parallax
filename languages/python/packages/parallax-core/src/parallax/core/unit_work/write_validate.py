@@ -6,7 +6,7 @@ ROW calls: the conformance engine's rejected run lane, and both transaction
 ingresses through the one keyed judgment they share
 (``Transaction._validate_keyed``, reached from the developer verbs' ``_buffer``
 and from the model-neutral ``write_neutral``) -- the "one validator, many
-callers" pattern ``validate_operation`` established
+callers" pattern ``validate_predicate`` established
 (`parallax.core.predicate.validate`): the SAME rule classification and check
 order runs on every path, so they cannot drift.
 

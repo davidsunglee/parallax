@@ -180,7 +180,7 @@ def _resolve_join(rel_ref: str, scope: _PlanScope) -> RelationshipJoin:
 
     The reference's class name is a predicate reference, so it resolves model-wide
     by `entity_by_name`'s rule — never into the active target's own namespace,
-    which is the DECLARATION rule and would miss an Entity `validate_operation`
+    which is the DECLARATION rule and would miss an Entity `validate_predicate`
     resolved this very spelling to.
     """
     class_name, dot, member_name = rel_ref.rpartition(".")

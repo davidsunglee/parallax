@@ -47,7 +47,7 @@ from parallax.core.metamodel import (
 )
 from parallax.core.object_query._nodes import IncludePath, ObjectQueryNode
 from parallax.core.predicate import (
-    OperationRejectedError,
+    ModelRejectedError,
     PositionScope,
     check_attribute_reference,
     effective_set,
@@ -56,14 +56,14 @@ from parallax.core.predicate import (
     resolve_subtype_selection,
     root_position,
     validate_narrow,
-    validate_operation,
+    validate_predicate,
 )
 
 __all__ = ["query_entities", "validate_object_query"]
 
 
 def validate_object_query(root: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> None:
-    """Validate ``query`` against ``model``, raising :class:`OperationRejectedError`.
+    """Validate ``query`` against ``model``, raising :class:`ModelRejectedError`.
 
     ``root`` is the queried position, already resolved to accepted Metadata by
     the caller from the query's own ``target``. The clause rules run in the order
@@ -74,7 +74,7 @@ def validate_object_query(root: EntityMetadata, query: ObjectQueryNode, model: M
     _validate_temporal_selections(root, query, model)
     queried = root_position(model, root)
     result = _narrowed_position(query, queried, model)
-    validate_operation(root, query.predicate, model, position=result)
+    validate_predicate(root, query.predicate, model, position=result)
     for key in query.order_by:
         check_attribute_reference(key.attr, model, result)
     for path in query.includes:
@@ -123,13 +123,13 @@ def _validate_include_path(path: IncludePath, model: Metamodel, queried: Positio
             target_effective = effective_set(model, target)
             resolved = resolve_subtype_selection(segment.narrow_to, model)
             if not resolved:
-                raise OperationRejectedError(
+                raise ModelRejectedError(
                     "narrow-empty-effective-set",
                     f"include segment narrowTo {list(segment.narrow_to)} resolves to the empty "
                     "concrete-subtype set",
                 )
             if not resolved <= target_effective:
-                raise OperationRejectedError(
+                raise ModelRejectedError(
                     "narrow-outside-relationship-target",
                     f"include segment narrowTo {list(segment.narrow_to)} resolves to "
                     f"{sorted(resolved)}, which is not a subset of "
@@ -161,7 +161,7 @@ def _validate_temporal_selections(
             )
             if detail
         )
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "temporal-read-dimension-selection-cardinality",
             f"{root.identity.canonical}: temporal read selections are invalid ({details}); "
             "a canonical Object Query names exactly one selection per declared dimension",

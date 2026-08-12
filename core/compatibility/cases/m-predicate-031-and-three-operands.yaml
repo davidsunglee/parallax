@@ -1,6 +1,6 @@
 # and — n-ary conjunction of THREE operands (m-predicate §Boolean combinators).
 #
-# m-op-algebra-020 proves the two-operand junction; this pins the n-ary (>= 3) form: the
+# m-predicate-020 proves the two-operand junction; this pins the n-ary (>= 3) form: the
 # operands serialize in order and the binds follow left-to-right appearance, so
 # the conjunction renders as `a = ? and b > ? and c < ?` with binds in that
 # order. active=true AND qty>5 AND qty<30 keeps orders 2 (qty 10) and 4 (qty 20);

@@ -9,8 +9,8 @@
 # reference is applicable only where the active position's effective set is a subset
 # of the referenced Entity's". A validator that substituted the DECLARING entity would
 # accept this, lower it to the shared table's `t0.name = ?`, and answer a question
-# spelled about dogs with cats and boars — the same mis-answer m-op-algebra-045 and
-# m-op-algebra-047 pin for a foreign entity, reached here through a spelling inside
+# spelled about dogs with cats and boars — the same mis-answer m-predicate-045 and
+# m-predicate-047 pin for a foreign entity, reached here through a spelling inside
 # the family. The same substitution also accepts a DISJOINT sibling's spelling
 # (`Cat.name` under a narrow to Dog), which addresses no row the position contains.
 #

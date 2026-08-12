@@ -23,7 +23,7 @@ from parallax.conformance import case_format
 from parallax.core import predicate
 from parallax.core.predicate import (
     QUERY_DEFINITION_CODES,
-    OperationError,
+    CanonicalDocumentError,
     QueryDefinitionError,
 )
 
@@ -117,7 +117,7 @@ def test_the_serde_accepts_exactly_what_the_shared_grammar_accepts(
     document = _REFERENCE_POSITIONS[definition](spelling)
     try:
         predicate.deserialize(document)
-    except OperationError:
+    except CanonicalDocumentError:
         accepted = False
     else:
         accepted = True
@@ -353,6 +353,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             ({"eq": {"attr": 1, "value": 2}}, "must be a string"),
             ({"in": {"attr": "Order.id", "values": []}}, "non-empty list"),
             ({"and": {"operands": [{"all": {}}]}}, "at least two"),
+            ({"and": {"operands": "nope"}}, "at least two"),
             ({"narrow": {"to": [], "operand": {"all": {}}}}, "non-empty list"),
             ({"not": {}}, "missing required key"),
             # Closed-shape / required-property / type enforcement (m-predicate
@@ -464,10 +465,10 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
     ),
 )
 def test_deserialize_rejects_malformed(doc: object, message: str) -> None:
-    with pytest.raises(OperationError, match=message):
+    with pytest.raises(CanonicalDocumentError, match=message):
         predicate.deserialize(doc)
 
 
 def test_deserialize_rejects_non_scalar_value() -> None:
-    with pytest.raises(OperationError, match="scalar literal"):
+    with pytest.raises(CanonicalDocumentError, match="scalar literal"):
         predicate.deserialize({"eq": {"attr": "Order.id", "value": {"nested": 1}}})

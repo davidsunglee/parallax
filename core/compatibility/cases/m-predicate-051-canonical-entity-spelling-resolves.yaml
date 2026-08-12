@@ -2,7 +2,7 @@
 # Entity CANONICALLY, so a local name two namespaces of the model declare names
 # exactly one Entity and the read lowers to SQL against that Entity's table.
 #
-# This is m-op-algebra-048's counterpart, and deliberately differs from it in one
+# This is m-predicate-048's counterpart, and deliberately differs from it in one
 # thing only. Same model, same queried position, same `variant` hop re-rooting the
 # inner position at `archive.SharedVariant`, same member `archiveLabel` — the
 # reference is spelled `archive.SharedVariant.archiveLabel` instead of
@@ -21,7 +21,7 @@
 #
 # The hop is what makes the witness load-bearing rather than incidental:
 # `archiveLabel` is declared on exactly one twin, so this reference is the one
-# m-op-algebra-048's header warns a first-match resolver would accept silently.
+# m-predicate-048's header warns a first-match resolver would accept silently.
 # Naming the twin exactly is what removes the guess.
 model: models/shared-local-name.yaml
 tags: [m-predicate, exists, relationship, to-one, slice-snapshot-1, slice-managed-1]

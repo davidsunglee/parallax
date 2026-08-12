@@ -481,7 +481,7 @@ def test_every_write_story_mirrors_an_active_case_exactly_once() -> None:
 # --------------------------------------------------------------------------- #
 # Rejected-case build/buffer-time proofs (m-inheritance/m-value-object): the   #
 # write-side counterpart of                                                   #
-# `test_operation_no_drift.test_idiomatic_statement_build_rejects_the_corpus_rule` #
+# `test_object_query_no_drift.test_idiomatic_statement_build_rejects_the_corpus_rule` #
 # — `tx.insert` refuses the SAME invalid write the corpus's own rejected      #
 # lane grades (`engine.run_rejected_case`), through the SAME model-aware      #
 # `validate_write` (`Transaction._buffer`), naming the SAME classified rule.  #

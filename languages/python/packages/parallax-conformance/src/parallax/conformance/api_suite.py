@@ -246,43 +246,43 @@ EXAMPLES: Final[list[Example]] = [
     # Rejected-case build-time proofs (m-predicate/m-navigate/m-value-object):
     # the idiomatic surface refuses the SAME invalid input the corpus's own
     # rejected lane grades, through the SAME model-aware validator
-    # (`validate_operation`), naming the SAME classified rule — proven by
+    # (`validate_predicate`), naming the SAME classified rule — proven by
     # `test_idiomatic_statement_build_rejects_the_corpus_rule`.
     Example(
         "m-value-object-038",
         "A nested comparison whose literal type mismatches the declared attribute",
         "Customer.where(Customer.address.city == 42)\n"
-        '# raises OperationRejectedError(rule="nested-literal-type-mismatch")',
+        '# raises ModelRejectedError(rule="nested-literal-type-mismatch")',
     ),
     Example(
         "m-inheritance-040",
         "A narrow that broadens beyond its position",
         "Animal.where(Animal.narrow(Person))\n"
-        '# raises OperationRejectedError(rule="narrow-outside-position")',
+        '# raises ModelRejectedError(rule="narrow-outside-position")',
     ),
     Example(
         "m-inheritance-041",
         "A concrete-subtype attribute referenced outside a narrow scope",
         "Animal.where(Dog.bark_volume > 5)\n"
-        '# raises OperationRejectedError(rule="subtype-attribute-outside-narrow-scope")',
+        '# raises ModelRejectedError(rule="subtype-attribute-outside-narrow-scope")',
     ),
     Example(
         "m-inheritance-042",
         "A nested narrow that broadens back out of the enclosing position",
         "Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))\n"
-        '# raises OperationRejectedError(rule="narrow-outside-position")',
+        '# raises ModelRejectedError(rule="narrow-outside-position")',
     ),
     Example(
         "m-inheritance-064",
         "A relationship-scope narrow past its target's reachable set",
         "Person.pets.exists(Pet.narrow(WildBoar))\n"
-        '# raises OperationRejectedError(rule="narrow-outside-relationship-target")',
+        '# raises ModelRejectedError(rule="narrow-outside-relationship-target")',
     ),
     Example(
         "m-inheritance-132",
         "A Subtype Selection with overlapping alternatives",
         "Animal.where(Animal.narrow(Dog, Pet))\n"
-        '# raises OperationRejectedError(rule="subtype-selection-overlapping-alternatives")',
+        '# raises ModelRejectedError(rule="subtype-selection-overlapping-alternatives")',
     ),
     Example(
         "m-inheritance-133",
@@ -426,10 +426,18 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "against both engines"
     ),
     "m-predicate": (
-        "representative predicate and grouping spellings — together with the "
-        "m-object-query orderBy spellings these predicate-tagged cases also carry — are "
-        "exercised as idiomatic examples; the remaining cases in this bucket are graded "
-        "through the compile/run lanes"
+        "representative predicate and grouping spellings are exercised as idiomatic "
+        "examples; the remaining cases in this bucket are graded through the "
+        "compile/run lanes"
+    ),
+    "m-object-query": (
+        "the ordering-and-cap spelling is exercised as an idiomatic example "
+        "(`m-object-query-003`); the remaining clause witnesses — the single-key "
+        "orderings, all four Null Placement combinations, the rejected Sort Key "
+        "position, and the ordered narrowed include root — vary the query VALUE a "
+        "developer builds rather than the call that builds it, which is one "
+        "`order_by(...).limit(...)` story restated per clause value, so they are "
+        "graded byte-exact through the compile/run lanes instead"
     ),
     "m-temporal-read": (
         "the representative as-of spelling is exercised as an idiomatic example; the "
@@ -1026,7 +1034,7 @@ _VO_PREDICATE_SIBLING_REASON: Final[str] = (
 
 # Value-object STRUCTURE rejects: each empirically confirmed (a REPL probe
 # against the shipped surface) to have NO idiomatic spelling that reaches
-# `validate_operation` with the corpus's own invalid shape — four DISTINCT
+# `validate_predicate` with the corpus's own invalid shape — four DISTINCT
 # failure modes, not one generic gap.
 _VO_UNKNOWN_NESTED_FIELD_REASON: Final[str] = (
     "`Customer.contact` (the invalid path's first segment) is not a declared "

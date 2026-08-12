@@ -1,21 +1,35 @@
-"""Deny-list gate: no retired temporal vocabulary in active sources::
+"""Deny-list gate: no retired vocabulary in active sources::
 
     uv run python -m reference_harness.retired_vocab_check <repo-root>
 
-The root glossary's `_Avoid_` registry retires the Reladomo-derived temporal
-spellings — business time/date, processing time/date, effective date, system
-date, and the business/processing dimension family — in favor of Valid Time /
-Transaction Time, and retires the camelCase dimension spellings `validTime` /
-`transactionTime` in favor of the kebab-case enumerated values `valid-time` /
-`transaction-time`. Prose, comments, docstrings, identifiers, and test names
-all adopted the accepted vocabulary; this gate keeps a retired spelling from
-reappearing on any active surface.
+Two vocabularies have been retired repository-wide, and each is a class of
+defect that sampling review cannot close: a retired spelling survives wherever
+nobody happened to look, so the deny-list enumerates the class mechanically
+instead.
 
-The business/processing deny-list matches whole retired PHRASES (a
-business/processing word joined to a temporal noun, plus `effective date` /
-`system date`), never the bare words "business" or "processing": non-temporal
-uses such as "business key", "business/developer name", or "operation
-processing" are legitimate and stay.
+**Temporal.** The root glossary's `_Avoid_` registry retires the
+Reladomo-derived temporal spellings — business time/date, processing time/date,
+effective date, system date, and the business/processing dimension family — in
+favor of Valid Time / Transaction Time, and retires the camelCase dimension
+spellings `validTime` / `transactionTime` in favor of the kebab-case enumerated
+values `valid-time` / `transaction-time`.
+
+**Query.** The recursive Operation wrapper tree was replaced by a Predicate (the
+selection grammar) and an Object Query (the flat query value carrying it), so
+every spelling that names a query, its grammar, or its wire form an *operation*
+is retired: the module `m-op-algebra`, the package `op_algebra`, the schema
+`operation.schema.json`, the read envelope's sibling `targetEntity` field, and
+the Python `FindQuery` / `LoweredFindQuery` pair. Predicate, Object Query,
+Includes, Deep Fetch, Subtype Selection, Temporal Selection, and Sort Key are
+the accepted names.
+
+Both deny-lists match whole retired PHRASES rather than bare words, because both
+retired stems are ordinary English. A business/processing word counts only when
+joined to a temporal noun, so "business key", "business/developer name", and
+"operation processing" stay; "operation" counts only when joined to a
+query-surface noun, so "write operation", "database operation boundary", and
+`m-op-list` stay while "operation tree", "operation schema", and `op_algebra`
+do not.
 
 Allow-list (explicitly labeled historical / prior-art / rejection text):
 
@@ -121,7 +135,86 @@ _RETIRED_DIMENSION_SPELLINGS = ("validTime", "transactionTime")
 # IS a boundary (`businessFromValue` still carries the retired compound).
 _CAMEL_RIGHT = r"(?![a-z0-9])"
 
-_RETIRED_PATTERNS = (
+# Nouns that make an `operation` / `op` compound a retired QUERY phrase. Each
+# names the query, its grammar, or the machinery that reads one, so the compound
+# credits the retired wrapper tree; the bare stem stays legal, which is what
+# keeps "write operation", "database operation boundary", and `m-op-list` out of
+# the deny-list.
+_QUERY_SURFACE_WORDS = (
+    "algebra",
+    "algebras",
+    "tree",
+    "trees",
+    "wrapper",
+    "wrappers",
+    "node",
+    "nodes",
+    "spine",
+    "spines",
+    "union",
+    "unions",
+    "grammar",
+    "grammars",
+    "envelope",
+    "envelopes",
+    "document",
+    "documents",
+    "schema",
+    "schemas",
+    "serde",
+    "clause",
+    "clauses",
+    "directive",
+    "directives",
+    "field",
+    "fields",
+    "builder",
+    "builders",
+    "lowering",
+    "validate",
+    "validation",
+    "validator",
+    "reference",
+    "references",
+    "query",
+    "queries",
+    "predicate",
+    "predicates",
+    "backed",
+    "error",
+    "errors",
+)
+_QUERY_SURFACE = "|".join(_QUERY_SURFACE_WORDS)
+
+# Words retired only in the CAMEL compound: the spaced form is ordinary English
+# ("the write operation rejected the row"), while the camel hump can only ever be
+# a retired type name.
+_QUERY_CAMEL_ONLY_WORDS = ("Rejected",)
+
+# The retired stems themselves. `op` is included because the retired module,
+# package, and schema all abbreviate it, and the same joined-word rule keeps
+# `m-op-list` (a live module) legal.
+_QUERY_STEMS = "op|operation|operations"
+
+# Words that make the REVERSE order a retired query phrase — a query, or the act
+# of judging one, named as an operation. This list is deliberately narrower than
+# the surface-noun list above, because most words preceding "operation" qualify a
+# genuine one: `blocking_operations`, "database operation boundary", "document
+# operations", and the gate grammar's own `non-canonical-operation` all stay.
+_QUERY_SUBJECT_WORDS = ("query", "find", "validate", "validation", "validator", "malformed")
+_QUERY_SUBJECTS = "|".join(_QUERY_SUBJECT_WORDS)
+
+_QUERY_CAMEL_STEMS = "|".join(
+    f"[{stem[0]}{stem[0].upper()}]{stem[1:]}" for stem in ("op", "operation")
+)
+_QUERY_CAMEL_SURFACE = "|".join(
+    [word.capitalize() for word in _QUERY_SURFACE_WORDS] + list(_QUERY_CAMEL_ONLY_WORDS)
+)
+_QUERY_CAMEL_SUBJECTS = "|".join(
+    f"[{word[0]}{word[0].upper()}]{word[1:]}" for word in _QUERY_SUBJECT_WORDS
+)
+
+_RETIRED_TEMPORAL_PATTERNS = (
     re.compile(
         rf"{_LEFT}(?:business|processing)[\s/_-]+(?:{_TEMPORAL_NOUNS}){_RIGHT}", re.IGNORECASE
     ),
@@ -132,6 +225,38 @@ _RETIRED_PATTERNS = (
     re.compile(rf"{_LEFT}system[\s/_-]+date{_RIGHT}", re.IGNORECASE),
     re.compile(rf"{_LEFT}(?:{'|'.join(_RETIRED_DIMENSION_SPELLINGS)}){_RIGHT}"),
 )
+
+_RETIRED_QUERY_PATTERNS = (
+    re.compile(rf"{_LEFT}(?:{_QUERY_STEMS})[\s/_-]+(?:{_QUERY_SURFACE}){_RIGHT}", re.IGNORECASE),
+    re.compile(rf"{_LEFT}(?:{_QUERY_SUBJECTS})[\s/_-]+(?:{_QUERY_STEMS}){_RIGHT}", re.IGNORECASE),
+    re.compile(rf"{_LEFT}(?:{_QUERY_CAMEL_STEMS})(?:{_QUERY_CAMEL_SURFACE}){_CAMEL_RIGHT}"),
+    re.compile(rf"{_LEFT}(?:{_QUERY_CAMEL_SUBJECTS})(?:Op|Operations?){_CAMEL_RIGHT}"),
+    # The retired schema filename, whose `.` joiner is deliberately not in the
+    # general compound pattern: an ordinary sentence break before a capitalized
+    # "Schema" would otherwise match.
+    re.compile(rf"{_LEFT}operation\.schema\.json", re.IGNORECASE),
+    # The retired read envelope's sibling entity field. Only the identifier
+    # spellings are retired — the prose phrase "target entity" describes a
+    # relationship's far side and stays.
+    re.compile(rf"{_LEFT}[tT]arget(?:Entity|_entity){_RIGHT}"),
+    # The retired fluent query type, in its identifier spellings only: the
+    # spaced form is ordinary English ("the trailing find queries the open
+    # set"), so only the joined and camel spellings are denied. The camel
+    # pattern carries no left boundary, which is what catches
+    # `LoweredFindQuery` as well as the bare name.
+    re.compile(rf"{_LEFT}find[_-]quer(?:y|ies){_RIGHT}", re.IGNORECASE),
+    re.compile(rf"FindQuer(?:y|ies){_CAMEL_RIGHT}"),
+)
+
+_RETIRED_FAMILIES = (
+    ("temporal", _RETIRED_TEMPORAL_PATTERNS),
+    ("query", _RETIRED_QUERY_PATTERNS),
+)
+
+# A URL, masked before matching: an issue slug or a vendor documentation anchor
+# carries whatever vocabulary its issuing system fixed, and no edit here can
+# change it.
+_URL = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+")
 
 # Only text-bearing source kinds participate; everything else (images, locks,
 # build outputs) is not vocabulary surface.
@@ -199,7 +324,9 @@ def check_text(relative_path: str, text: str) -> list[str]:
     """Every retired-vocabulary violation in *text* (empty ⇒ clean).
 
     Line-based: a ``_Avoid_`` line and every line of a paragraph opening
-    ``Prior art:`` are exempt — both exist to NAME the retired spellings.
+    ``Prior art:`` are exempt — both exist to NAME the retired spellings. A URL
+    is masked before matching: its path is an external identifier fixed by
+    whatever system issued it, not vocabulary this repository chooses.
     """
     violations: list[str] = []
     block_start: str | None = None
@@ -212,22 +339,24 @@ def check_text(relative_path: str, text: str) -> list[str]:
             block_start = stripped
         if stripped.startswith("_Avoid_") or block_start.startswith("Prior art:"):
             continue
-        for pattern in _RETIRED_PATTERNS:
-            for match in pattern.finditer(line):
-                violations.append(
-                    f"{relative_path}:{lineno}: retired temporal vocabulary {match.group(0)!r}"
-                )
+        scanned = _URL.sub(lambda match: " " * len(match.group(0)), line)
+        for family, patterns in _RETIRED_FAMILIES:
+            for pattern in patterns:
+                for match in pattern.finditer(scanned):
+                    violations.append(
+                        f"{relative_path}:{lineno}: retired {family} vocabulary {match.group(0)!r}"
+                    )
     return violations
 
 
 def main(argv: list[str]) -> int:
     """CLI entry point: scan every active-source file under the repo root
     *argv[0]*, reporting each violation on stderr as
-    ``path:line: retired temporal vocabulary '<match>'``.
+    ``path:line: retired <family> vocabulary '<match>'``.
 
-    Exit codes: 0 — no retired temporal vocabulary on any scanned surface;
-    1 — at least one violation; 2 — usage error (argument count, or *argv[0]*
-    is not a directory).
+    Exit codes: 0 — no retired temporal or query vocabulary on any scanned
+    surface; 1 — at least one violation; 2 — usage error (argument count, or
+    *argv[0]* is not a directory).
     """
     if len(argv) != 1:
         print(
@@ -254,7 +383,7 @@ def main(argv: list[str]) -> int:
             print(f"  - {violation}", file=sys.stderr)
         return 1
 
-    print("retired-vocabulary check OK: no retired temporal vocabulary in active sources")
+    print("retired-vocabulary check OK: no retired temporal or query vocabulary in active sources")
     return 0
 
 

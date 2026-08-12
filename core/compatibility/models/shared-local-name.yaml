@@ -8,9 +8,9 @@
 # together — models/materialization-key-compatibility.yaml already does, and
 # m-inheritance-120 requires it. A reference position spells such a pair either
 # way, and the two spellings answer differently: the canonical
-# `archive.SharedVariant` names exactly one of the twins (m-op-algebra-051),
+# `archive.SharedVariant` names exactly one of the twins (m-predicate-051),
 # while the bare `SharedVariant` names both and therefore neither
-# (m-op-algebra-048).
+# (m-predicate-048).
 #
 #   Register              (parallax.compatibility) — the queried position; owns the
 #                          `variant` relationship into archive.SharedVariant
@@ -29,7 +29,7 @@
 # archive_shared for a reference that names two tables' worth of Entities.
 #
 # fixtures/shared-local-name.yaml provisions all three tables, because the positive
-# half of the pair executes: m-op-algebra-051 reads through the same hop with the
+# half of the pair executes: m-predicate-051 reads through the same hop with the
 # canonical spelling and its golden SQL must be observed to reach archive_shared
 # rather than catalog_shared.
 entities:

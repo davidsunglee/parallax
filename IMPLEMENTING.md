@@ -118,13 +118,8 @@ when it is absent from the selected claim. Implement it behind the source
 boundary and verify its internal or contract obligations, but do not advertise
 its cases or developer surface unless the canonical claim includes it.
 
-Two prerequisites are especially easy to mistake for claimed behavior:
+One prerequisite is especially easy to mistake for claimed behavior:
 
-- `slice-snapshot-1` needs `m-op-list` transitively because `m-navigate` and
-  `m-deep-fetch` depend on it. The snapshot extension uses the required internal
-  operation/list mechanics but returns eager plain-value graphs; it must not
-  expose the managed query-backed list surface or add `m-op-list` to the
-  claim.
 - Both lifecycle claims need `m-db-port` through `m-unit-work` and `m-db-error`.
   It is contract-covered rather than case-covered, so it is proved through the
   database-provider contract and is not added to the tagged-case coverage
@@ -164,17 +159,15 @@ reachable, then close the whole claim in the final row.
 Use this branch only when the completed language spec retains the snapshot
 lifecycle:
 
-1. Implement the internal `m-op-list` prerequisite without exposing a managed
-   lazy-list result.
-2. Implement `m-navigate`, then `m-deep-fetch`.
-3. Implement `m-snapshot-read` materialization over that graph stack, including
+1. Implement `m-navigate`, then `m-deep-fetch`.
+2. Implement `m-snapshot-read` materialization over that graph stack, including
    graph-local identity, whole-graph temporal pinning, closed-world loaded state,
    eager includes, and explicit-write separation.
-4. Verify the snapshot-tagged intersections and materialization failures. Do not
-   implement or claim `m-identity-map` or `m-detach`.
+3. Verify the snapshot-tagged intersections and materialization failures. Do not
+   implement or claim `m-identity-map`, `m-detach`, or `m-op-list`.
 
 This reaches every module in the canonical `slice-snapshot-1` coverage union;
-`m-op-list` and `m-db-port` remain unclaimed prerequisites. No process cache,
+`m-db-port` remains its one unclaimed prerequisite. No process cache,
 aggregation, Valid-Time-Only temporal behavior, additional dialect, benchmark, or
 managed-lifecycle behavior is required to close the claim.
 
@@ -185,8 +178,9 @@ lifecycle:
 
 1. Implement `m-identity-map` after `m-unit-work` and `m-temporal-read`, including
    family-normalized keys and lowered as-of coordinates.
-2. Implement `m-op-list`, then `m-navigate`, then `m-deep-fetch`, materializing
-   through the transaction-scoped identity map.
+2. Implement `m-navigate`, then `m-deep-fetch`, then `m-op-list`, materializing
+   through the transaction-scoped identity map. The list result surface sits
+   above the shared fetch algorithm rather than underneath it, so it comes last.
 3. Implement `m-detach` after the identity map, including scope-end detach,
    abort restoration, deliberate detach, and merge-back.
 4. Verify the managed-tagged intersections, identity behavior, relationship
@@ -203,7 +197,7 @@ Make the first database-backed milestone deliberately small. It is a tracer case
 or walking skeleton, never a Conformance Slice. A useful tracer is:
 
 1. Parse `account.yaml`.
-2. Parse `m-op-algebra-002-eq.yaml`.
+2. Parse `m-predicate-002-eq.yaml`.
 3. Build the Object Query.
 4. Emit canonical Postgres SQL and binds.
 5. Execute through the abstract port and selected adapter.

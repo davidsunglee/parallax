@@ -31,7 +31,7 @@ from parallax.core.object_query import (
     ObjectQueryNode,
     validate_object_query,
 )
-from parallax.core.predicate import All, Narrow, OperationRejectedError, validate_operation
+from parallax.core.predicate import All, ModelRejectedError, Narrow, validate_predicate
 from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records
 from parallax.descriptor._adapter import unresolved_metamodel
@@ -87,8 +87,8 @@ def test_predicate_resolver_rejects_an_ambiguous_bare_name() -> None:
     # otherwise collapse into: a narrow rule would invite narrowing differently,
     # while the spelling itself is what names no position.
     op = Narrow(to=("Person",), operand=All())
-    with pytest.raises(OperationRejectedError) as excinfo:
-        validate_operation(root, op, model)
+    with pytest.raises(ModelRejectedError) as excinfo:
+        validate_predicate(root, op, model)
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 
@@ -138,7 +138,7 @@ def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() 
     # same helper, and reports the same rule through `predicate`'s own rejected
     # carrier — so one rule and one class answer an ambiguous spelling whether
     # preflight or lowering resolves it.
-    with pytest.raises(OperationRejectedError) as excinfo:
+    with pytest.raises(ModelRejectedError) as excinfo:
         handle.find(_query("Person"), _model(), POSTGRES, cast("DbPort", _RefusingPort()))
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
@@ -162,15 +162,15 @@ def test_a_canonical_spelling_names_one_of_two_twins_at_every_reference_position
     root = _named(model, "a.Person")
 
     narrow = Narrow(to=("a.Person",), operand=All())
-    validate_operation(root, narrow, model)
+    validate_predicate(root, narrow, model)
 
     predicate = oa.Comparison(op="eq", attr="a.Person.id", value=1)
-    validate_operation(root, predicate, model)
+    validate_predicate(root, predicate, model)
 
     # The other twin is a different Entity, so its attribute is outside this
     # position rather than merely ambiguous.
-    with pytest.raises(OperationRejectedError) as excinfo:
-        validate_operation(root, oa.Comparison(op="eq", attr="b.Person.id", value=1), model)
+    with pytest.raises(ModelRejectedError) as excinfo:
+        validate_predicate(root, oa.Comparison(op="eq", attr="b.Person.id", value=1), model)
     assert excinfo.value.rule == "attribute-outside-active-position"
 
 
@@ -182,7 +182,7 @@ def test_sql_lowering_reaches_the_table_the_canonical_spelling_names() -> None:
     for namespace in ("a", "b"):
         root = _named(model, f"{namespace}.Person")
         op = oa.Comparison(op="eq", attr=f"{namespace}.Person.id", value=1)
-        validate_operation(root, op, model)
+        validate_predicate(root, op, model)
         compiled = compile_read(op, model, POSTGRES, root)
         assert compiled.statement.sql == (
             f"select t0.id from {namespace}_person t0 where t0.id = ?"
@@ -196,7 +196,7 @@ def test_sql_lowering_reaches_the_table_the_canonical_spelling_names() -> None:
 # its own concrete subtypes may sit in different namespaces — and a reference   #
 # position spells them all bare. Resolving such a spelling into the REFERRING   #
 # Entity's namespace (the declaration rule) answers a different Entity than     #
-# `validate_operation` resolved it to, so the read preflight accepted           #
+# `validate_predicate` resolved it to, so the read preflight accepted           #
 # failed to lower. Nothing in the shipped corpus exhibits it: every corpus      #
 # family restates one namespace on every member.                                #
 # --------------------------------------------------------------------------- #
@@ -274,7 +274,7 @@ def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
     root = _named(model, "zoo.Beast")
 
     top_level = Narrow(to=("Wolf",), operand=All())
-    validate_operation(root, top_level, model)
+    validate_predicate(root, top_level, model)
     assert compile_read(top_level, model, POSTGRES, root).statement.binds == ("wolf",)
 
     branches = oa.Or(
@@ -283,7 +283,7 @@ def test_sql_lowering_resolves_a_narrow_across_namespaces() -> None:
             Narrow(to=("Bear",), operand=All()),
         )
     )
-    validate_operation(root, branches, model)
+    validate_predicate(root, branches, model)
     assert compile_read(branches, model, POSTGRES, root).statement.binds == ("wolf", "bear")
 
 
@@ -295,7 +295,7 @@ def test_sql_lowering_resolves_a_hop_and_its_narrow_across_namespaces() -> None:
     den = _named(model, "den.Den")
 
     op = oa.Exists(rel="Den.beasts", op=Narrow(to=("Wolf",), operand=All()))
-    validate_operation(den, op, model)
+    validate_predicate(den, op, model)
     compiled = compile_read(op, model, POSTGRES, den)
     assert compiled.statement.sql == (
         "select t0.id from den t0 where exists (select 1 from beast t1 "
@@ -347,7 +347,7 @@ def test_navigation_canonicalization_resolves_a_hop_from_another_namespace() -> 
     wolf = _named(model, "Wolf")
 
     op = oa.Exists(rel="Beast.den")
-    validate_operation(wolf, op, model)
+    validate_predicate(wolf, op, model)
     assert navigate.canonicalize(op, model, wolf) == op
 
 
@@ -363,7 +363,7 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
     wolf = _named(model, "Wolf")
 
     hop = oa.Exists(rel="den.Den.beasts", op=Narrow(to=("Wolf",), operand=All()))
-    validate_operation(den, hop, model)
+    validate_predicate(den, hop, model)
     compiled = compile_read(hop, model, POSTGRES, den)
     assert compiled.statement.sql == (
         "select t0.id from den t0 where exists (select 1 from beast t1 "
@@ -380,5 +380,5 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
     assert [level.source_position for level in guarded] == [(wolf.identity,)]
 
     navigation = oa.Exists(rel="zoo.Beast.den")
-    validate_operation(wolf, navigation, model)
+    validate_predicate(wolf, navigation, model)
     assert navigate.canonicalize(navigation, model, wolf) == navigation

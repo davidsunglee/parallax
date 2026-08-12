@@ -56,7 +56,7 @@ _PAYMENT = _MODELS["payment"]
 _BALANCE = _MODELS["balance"]
 _POSITION = _MODELS["position"]
 # Two Entities sharing one local name across namespaces — the corpus model the
-# ambiguity rule is authored against (`m-op-algebra-048` / `-051`).
+# ambiguity rule is authored against (`m-predicate-048` / `-051`).
 _SHARED_LOCAL_NAME = _MODELS["shared-local-name"]
 
 _B1 = "2024-01-01T00:00:00+00:00"
@@ -246,7 +246,7 @@ def test_keyed_rows_are_frozen_views() -> None:
         cast("dict[str, object]", instruction.rows[0])["id"] = 10
 
 
-def test_predicate_carries_a_canonical_operation_node() -> None:
+def test_predicate_carries_a_canonical_predicate_node() -> None:
     instruction = wi.deserialize(
         {"mutation": "delete", "target": {"entity": "Account", "predicate": {"all": {}}}}
     )
@@ -420,7 +420,7 @@ def test_predicate_structural_rejections(doc: dict[str, Any], match: str) -> Non
 
 
 def test_predicate_rejects_a_malformed_embedded_operation() -> None:
-    with pytest.raises(predicate_algebra.OperationError):
+    with pytest.raises(predicate_algebra.CanonicalDocumentError):
         wi.deserialize(
             {
                 "mutation": "delete",
@@ -803,7 +803,7 @@ def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none(
 
 
 # --------------------------------------------------------------------------- #
-# The selecting predicate is measured with the WHOLE `validate_operation`      #
+# The selecting predicate is measured with the WHOLE `validate_predicate`      #
 # vocabulary, not just the rules the instruction schema states — and here,     #
 # because this is the ONE model-aware gate every predicate-write ingress runs  #
 # (`m-case-format` "The model-aware validator validates the predicate ... and  #
@@ -820,7 +820,7 @@ def test_a_predicate_writes_inverted_between_window_is_rejected() -> None:
             },
         }
     )
-    with pytest.raises(predicate_algebra.OperationRejectedError) as caught:
+    with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
         wi.validate_instruction(predicate, _ACCOUNT)
     assert caught.value.rule == "between-bounds-inverted"
 
@@ -836,7 +836,7 @@ def test_a_predicate_writes_out_of_position_attribute_reference_is_rejected() ->
             },
         }
     )
-    with pytest.raises(predicate_algebra.OperationRejectedError) as caught:
+    with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
         wi.validate_instruction(predicate, orders)
     assert caught.value.rule == "attribute-outside-active-position"
 
@@ -856,7 +856,7 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
             "assignments": [{"attr": "Account.id", "value": 2}],
         }
     )
-    with pytest.raises(predicate_algebra.OperationRejectedError) as caught:
+    with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
         wi.validate_instruction(predicate, _ACCOUNT)
     assert caught.value.rule == "between-bounds-inverted"
 
@@ -896,7 +896,7 @@ _BARE_INNER: dict[str, Any] = {"lessThan": {"attr": "Account.balance", "value": 
 )
 def test_a_query_clause_is_not_a_predicate_at_all(clause: str, predicate: dict[str, Any]) -> None:
     with pytest.raises(
-        predicate_algebra.OperationError, match=f"unknown predicate node '{clause}'"
+        predicate_algebra.CanonicalDocumentError, match=f"unknown predicate node '{clause}'"
     ):
         wi.deserialize(
             {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
@@ -924,7 +924,9 @@ def test_a_query_clause_is_no_more_spellable_inside_a_predicate(
     # Recursion belongs to the selection grammar alone, so a clause is
     # unspellable at every depth rather than refused at each one.
     assert position in predicate
-    with pytest.raises(predicate_algebra.OperationError, match="unknown predicate node 'limit'"):
+    with pytest.raises(
+        predicate_algebra.CanonicalDocumentError, match="unknown predicate node 'limit'"
+    ):
         wi.deserialize(
             {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
         )
@@ -1039,7 +1041,7 @@ def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
     instruction = wi.deserialize(
         {"mutation": "delete", "target": {"entity": "Person", "predicate": predicate}}
     )
-    predicate_algebra.validate_operation(
+    predicate_algebra.validate_predicate(
         next(e for e in _ANIMAL.entities if e.identity.name == "Person"),
         cast("wi.PredicateWrite", instruction).target.predicate,
         _ANIMAL,
@@ -1082,7 +1084,7 @@ def test_an_invalid_predicate_outranks_the_inheritance_family_rejection() -> Non
             },
         }
     )
-    with pytest.raises(predicate_algebra.OperationRejectedError) as caught:
+    with pytest.raises(predicate_algebra.ModelRejectedError) as caught:
         wi.validate_instruction(instruction, _PAYMENT)
     assert caught.value.rule == "between-bounds-inverted"
 

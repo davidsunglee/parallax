@@ -9,9 +9,9 @@
 # row MEMBERSHIP, since top-level row comparison is order-insensitive: order 4 (no
 # sku) sorts first and takes a slot the canonical default would have given to the
 # second-smallest sku, which is exactly how this case separates from
-# m-op-algebra-035.
+# m-object-query-004.
 model: models/orders.yaml
-tags: [m-predicate, m-object-query, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   objectQuery:

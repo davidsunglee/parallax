@@ -1,6 +1,6 @@
 # group (precedence) — UNGROUPED form: `qty >= 25 OR qty <= 5 AND active = true`.
 #
-# The sibling of m-op-algebra-024 with NO group node: `and` binds tighter than `or`, so this
+# The sibling of m-predicate-024 with NO group node: `and` binds tighter than `or`, so this
 # parses as `qty >= 25 OR (qty <= 5 AND active = true)` and the golden SQL needs
 # no parentheses. The result {1, 5, 42} differs from the grouped {1, 42} — the
 # pair together proves the canonical `group` node faithfully carries precedence.

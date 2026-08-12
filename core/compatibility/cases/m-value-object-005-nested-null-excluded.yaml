@@ -10,7 +10,7 @@
 # NULL, not true. The present, non-Boston cities survive: Oslo (1, 2) and Berlin
 # (6); Boston (3) fails the inequality; the not-present rows (4, 5, 7) are excluded
 # by the absence collapse. This is the structured-column parity of the scalar NULL
-# exclusion (m-op-algebra-029/m-op-algebra-030), proven identically on both
+# exclusion (m-predicate-029/m-predicate-030), proven identically on both
 # dialects (MariaDB json_value collapses the JSON-`null` leaf like Postgres).
 model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, "null", three-valued-logic, slice-snapshot-1, slice-managed-1]

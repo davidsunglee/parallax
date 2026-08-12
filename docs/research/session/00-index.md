@@ -166,7 +166,7 @@ A compact, ORM-aligned session-cache floor could be:
 - query materialization reuses an existing managed object for returned primary
   keys;
 - independent sessions make no same-instance promise;
-- no repeated-operation query-cache hit is required;
+- no repeated-query cache hit is required;
 - no cross-session or cross-process freshness is promised.
 
 This floor is compatible with SQLAlchemy, Hibernate, EF Core tracking queries,

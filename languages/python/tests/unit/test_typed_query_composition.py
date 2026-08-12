@@ -107,8 +107,8 @@ from parallax.core import (
     Entity,
     EntityDefinitionError,
     Int32,
+    ModelRejectedError,
     ObjectQuery,
-    OperationRejectedError,
     Predicate,
     QueryDefinitionError,
     Rel,
@@ -232,7 +232,7 @@ def test_a_subtype_predicate_never_addresses_an_ancestor_position() -> None:
     # `Predicate[Dog]` in an `Animal` position: the concrete subtype's member is
     # not available to every concrete the position resolves to, and narrowing is
     # the remedy the runtime rule names (see the narrow case below).
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(Animal.where(Dog.bark_volume > 3))  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
@@ -241,7 +241,7 @@ def test_an_unrelated_entitys_predicate_never_addresses_the_queried_position() -
     # `Predicate[AnimalOwner]` in an `Animal` position. The two Entities share
     # one model and no inheritance family, so no narrow could rescue it — which
     # is exactly the distinction between this rule and the one above.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(Animal.where(AnimalOwner.name == "Ada"))  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "attribute-outside-active-position"
 
@@ -249,7 +249,7 @@ def test_an_unrelated_entitys_predicate_never_addresses_the_queried_position() -
 def test_an_unrelated_entitys_predicate_is_refused_from_the_other_side_too() -> None:
     # The same rule with the positions swapped, so neither direction is accepted
     # by an accident of which Entity happens to declare the member.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(AnimalOwner.where(Animal.name == "Ada"))  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "attribute-outside-active-position"
 
@@ -345,7 +345,7 @@ def test_a_mixed_conjunction_never_launders_the_descendants_term_upward() -> Non
     # combinator admits: the ancestor's term is on the LEFT, so reading the
     # combination as the left operand's position would let a `Dog` member into
     # an `Animal` query with no diagnostic at all.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(
             Animal.where(
                 (Animal.name == "Ada") & (Dog.bark_volume > 3)  # pyright: ignore[reportArgumentType]
@@ -358,7 +358,7 @@ def test_the_same_laundering_is_refused_in_the_other_operand_order_too() -> None
     # Its commuted twin, refused identically — the property that makes the
     # rejection a rule about the terms rather than about which one was typed
     # first.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(
             Animal.where(
                 (Dog.bark_volume > 3) & (Animal.name == "Ada")  # pyright: ignore[reportArgumentType]
@@ -398,7 +398,7 @@ def test_a_disjunction_addresses_the_meet_in_either_operand_order() -> None:
 def test_a_disjunction_launders_no_more_than_a_conjunction_does() -> None:
     # And the rejection half for `|`, on the operand order a left-biased
     # combinator would have admitted.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(
             Animal.where(
                 (Animal.name == "Ada") | (Dog.bark_volume > 3)  # pyright: ignore[reportArgumentType]
@@ -413,7 +413,7 @@ def test_the_disjunctions_laundering_is_refused_in_the_other_operand_order_too()
     # other cell in the table stayed green: the forward operator alone solves the
     # meet in THIS order, so this is the case that would survive losing the
     # reflected twin.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(
             Animal.where(
                 (Dog.bark_volume > 3) | (Animal.name == "Ada")  # pyright: ignore[reportArgumentType]
@@ -426,7 +426,7 @@ def test_a_conjunction_of_one_positions_terms_keeps_that_position() -> None:
     # The composition does not launder a subtype's terms into an ancestor
     # position: two `Dog` terms combine to a `Dog` predicate, which the `Animal`
     # query refuses statically and the validator refuses again.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(
             Animal.where(
                 (Dog.bark_volume > 3) & (Dog.bark_volume < 9)  # pyright: ignore[reportArgumentType]
@@ -522,7 +522,7 @@ def test_an_equality_literal_is_judged_by_the_model_rather_than_by_the_signature
     assert predicate_document(preflighted(SnapOrder.where(SnapOrder.price == "abc"), _ORDERS)) == {
         "eq": {"attr": "parallax.compatibility.SnapOrder.price", "value": "abc"}
     }
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(SnapOrderStatus.where(SnapOrderStatus.primary_tag.label == 42), _ORDERS)
     assert caught.value.rule == "nested-literal-type-mismatch"
 
@@ -567,7 +567,7 @@ def test_a_subtype_sort_key_never_orders_an_ancestor_result() -> None:
     # un-narrowed `Animal` result. The runtime twin is the same rule an order
     # key's attribute reference draws against the ordered rows' position.
     key: SortKey[Animal] = Dog.bark_volume.desc()  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(Animal.where(Animal.all).order_by(key))
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
@@ -575,7 +575,7 @@ def test_a_subtype_sort_key_never_orders_an_ancestor_result() -> None:
 def test_an_unrelated_entitys_sort_key_never_orders_the_queried_result() -> None:
     # The non-family half of the same rule, which no narrow could rescue.
     key: SortKey[SnapOrder] = SnapOrderStatus.code.asc()  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(SnapOrder.where(SnapOrder.all).order_by(key), _ORDERS)
     assert caught.value.rule == "attribute-outside-active-position"
 
@@ -602,7 +602,7 @@ def test_a_subtype_sort_key_never_orders_a_union_narrowed_result() -> None:
     # a `Dog` member does not apply to every concrete still in the position —
     # exactly what the validator says of the same query.
     key: SortKey[Cat | Dog] = Dog.bark_volume.asc()  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(Animal.where(Animal.all).narrow(Cat, Dog).order_by(key))
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
@@ -650,7 +650,7 @@ def test_narrowing_to_one_subtype_answers_that_subtype() -> None:
     # A sibling's key is refused by the answered parameter and by the gate: the
     # ordered rows are Dogs, and `Cat.indoor` applies to none of them.
     refused = Animal.where(Animal.all).narrow(Dog).order_by(Cat.indoor.asc())  # pyright: ignore[reportArgumentType]
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(refused)
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
@@ -669,7 +669,7 @@ def test_narrowing_to_two_subtypes_answers_their_union() -> None:
     # every concrete the narrow left in the position — the union is what the
     # parameter answers, not the common base.
     refused = Animal.where(Animal.all).narrow(Cat, Dog).order_by(Dog.bark_volume.asc())  # pyright: ignore[reportArgumentType]
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(refused)
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
@@ -832,7 +832,7 @@ def test_an_ancestors_path_is_not_an_include_source_of_a_descendants_query() -> 
     # refuses: the path would start from queried objects the position does not
     # contain.
     source: RelationshipPath[Hound, Any] = Beast.keeper  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(Hound.where(Hound.all).include(source), _BESTIARY)
     assert caught.value.rule == "narrow-outside-position"
 
@@ -841,7 +841,7 @@ def test_an_unrelated_entitys_path_is_never_an_include_source() -> None:
     # A sibling outside the position, refused by the same guard — the include
     # half of `Order.where(...).include(Customer.notes)`.
     source: RelationshipPath[Beast, Any] = Keeper.beasts  # pyright: ignore[reportAssignmentType]
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(Beast.where(Beast.all).include(source), _BESTIARY)
     assert caught.value.rule == "narrow-outside-position"
 
@@ -872,7 +872,7 @@ def test_a_hop_narrows_only_to_subtypes_of_what_it_points_at() -> None:
     # The static half of `narrow-outside-relationship-target`, carried by the
     # receiver's own target rather than by a type-parameter bound, which may not
     # itself be generic.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(
             Keeper.where(Keeper.all).include(Keeper.beasts.narrow(Badge)),  # pyright: ignore[reportArgumentType]
             _BESTIARY,
@@ -887,7 +887,7 @@ def test_a_quantifiers_interior_term_is_measured_against_the_hops_target() -> No
     # again at the gate. Only the ANCESTOR direction escapes — contravariance
     # obliges the parameter to admit it — and the no-suppression case in the last
     # section is where that is pinned.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(
             Keeper.where(Keeper.badge.exists(Beast.narrow(Hound))),  # pyright: ignore[reportArgumentType]
             _BESTIARY,
@@ -958,7 +958,7 @@ def test_a_value_object_member_past_the_occurrence_erases() -> None:
     # The Value-Object twin of the hop erasure: the Entity survives the hop, so a
     # foreign-Entity nested predicate is still refused statically, while the
     # member's own existence is a model question the gate answers.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(
             SnapOrderStatus.where(SnapOrderStatus.primary_tag.no_such_member == "x"), _ORDERS
         )
@@ -987,7 +987,7 @@ def test_a_narrow_to_a_class_the_position_excludes_is_refused_at_the_gate() -> N
     # `Entity.narrow`'s subtype list keeps only its runtime rejection: a type
     # parameter's bound may not itself be generic, so the narrowed subtypes
     # cannot be bounded by the narrowing position.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(Animal.where(Animal.narrow(AnimalOwner)))
     assert caught.value.rule == "narrow-outside-position"
 
@@ -1003,6 +1003,6 @@ def test_the_narrow_clause_erases_relatedness_for_the_same_reason() -> None:
     # refuses an unrelated class but cannot name the result, and one naming the
     # result carries it and accepts anything. A hop narrow escapes the trade
     # only because its bound sits on the RECEIVER (see the hop case above).
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(Animal.where(Animal.all).narrow(AnimalOwner))
     assert caught.value.rule == "narrow-outside-position"

@@ -53,7 +53,7 @@ from parallax.core.object_query import (
     IncludeSegment,
 )
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
-from parallax.core.predicate import All, Exists, Narrow, NotExists, OperationRejectedError, Or
+from parallax.core.predicate import All, Exists, ModelRejectedError, Narrow, NotExists, Or
 from parallax.snapshot import DeferredFeatureError
 from parallax.snapshot.handle import preflight
 
@@ -320,7 +320,7 @@ def test_a_root_guard_outside_the_queried_position_is_rejected_at_the_gate() -> 
     # `include`'s own parameter states — a Relationship Path is covariant in
     # its source, so a sibling's path never reaches this query's position, and an
     # ignore that goes idle fails `just python-typecheck`.
-    with pytest.raises(OperationRejectedError) as exc:
+    with pytest.raises(ModelRejectedError) as exc:
         preflighted(Pet.where(Pet.all).include(WildBoar.owner))  # pyright: ignore[reportArgumentType]
     assert exc.value.rule == "narrow-outside-position"
 
@@ -407,7 +407,7 @@ def test_narrow_constructor_requires_at_least_one_subtype() -> None:
         lambda: im.Document.where(im.Document.all).narrow(im.Invoice, im.Invoice),
         lambda: im.Folder.documents.narrow(im.Invoice, im.Invoice),
     ],
-    ids=["predicate", "find-query", "relationship-path"],
+    ids=["predicate", "object-query", "relationship-path"],
 )
 def test_python_narrowing_rejects_an_exact_duplicate_at_construction(build: Any) -> None:
     with pytest.raises(QueryDefinitionError) as caught:
@@ -417,7 +417,7 @@ def test_python_narrowing_rejects_an_exact_duplicate_at_construction(build: Any)
 
 def test_model_aware_narrowing_rejects_overlapping_alternatives() -> None:
     query = im.Document.where(im.Document.narrow(im.FinancialDocument, im.Invoice))
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(query, _DOCUMENTS)
     assert caught.value.rule == "subtype-selection-overlapping-alternatives"
 
@@ -441,7 +441,7 @@ def test_narrow_or_composition_of_two_branches_validates_at_where_build() -> Non
 def test_narrow_broadening_outside_the_threaded_position_is_rejected() -> None:
     # FinancialDocument's effective set is {Invoice, Receipt}; nesting a
     # same-position narrow to Memo (outside it) must be rejected.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(im.FinancialDocument.where(im.FinancialDocument.narrow(im.Memo)), _DOCUMENTS)
     assert caught.value.rule == "narrow-outside-position"
 
@@ -498,7 +498,7 @@ def test_subtype_attribute_outside_narrow_scope_is_rejected_at_the_gate() -> Non
     # is the static half: `Predicate` is contravariant, so a subtype's predicate
     # never reaches an ancestor's position, and an ignore that goes idle fails
     # `just python-typecheck`.
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         preflighted(im.Document.where(im.Invoice.amount_due > 3), _DOCUMENTS)  # pyright: ignore[reportArgumentType]
     assert caught.value.rule == "subtype-attribute-outside-narrow-scope"
 
@@ -592,7 +592,7 @@ def test_as_of_range_with_includes_builds_in_either_order(query: ObjectQuery[Any
 def test_a_deferred_combination_is_a_valid_query_the_gate_refuses_by_name() -> None:
     # The gate validates before it classifies, so reaching the deferral at all
     # proves the query is legal against the model: an invalid one would have
-    # drawn `OperationRejectedError` one step earlier.
+    # drawn `ModelRejectedError` one step earlier.
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)
     )

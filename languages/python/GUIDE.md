@@ -108,7 +108,7 @@ self-contained without a system `libpq`.
   writeSequence, 29 rejected). After the Phase-5b read-projection amendment closed
   ledger D-11, **50 reads compile-match** the corpus and **48 run end-to-end**
   against real Postgres: the 33 orders `m-predicate` reads (incl. the tracer
-  `m-op-algebra-002-eq`), the 13 value-object nested-predicate reads,
+  `m-predicate-002-eq`), the 13 value-object nested-predicate reads,
   `m-descriptor-001` (quoted identifier), and `m-core-001` (scalar round-trip); the
   2 value-object materialization reads (`m-value-object-023/024`) compile-match via
   the instance-form slot-4 document projection but are run-deferred to the snapshot
@@ -190,7 +190,7 @@ self-contained without a system `libpq`.
   `m-navigate --> m-predicate`, `m-op-list --> m-deep-fetch` mirroring
   `m-snapshot-read --> m-deep-fetch`; DQ3/DQ8: the rejected-case run answer —
   `observations.rejectedRule`, `roundTrips: 0`, no provisioning — added to the
-  adapter envelope + schema) and the Python rejected lane: `validate_operation`
+  adapter envelope + schema) and the Python rejected lane: `validate_predicate`
   in `parallax.core.predicate` (narrow / subtype-attribute position tracking,
   value-object path grammar + typed-literal checks, including the scoped
   `nestedExists`/`nestedNotExists` `where`), the engine's `run_rejected_case`
@@ -200,7 +200,7 @@ self-contained without a system `libpq`.
   sweep 21 passed + 10 skipped (the `when.write` cases, reasoned-skipped to
   Phase 8). Deferred: 4 rejected cases tagged `m-navigate`/`m-deep-fetch` stay
   unreachable until increments 3/5 land (their owning modules aren't in
-  `IMPLEMENTED_MODULES` yet, though `validate_operation` already classifies
+  `IMPLEMENTED_MODULES` yet, though `validate_predicate` already classifies
   them correctly).
 - **Phase 7 increment 2 COMPLETE — inheritance read lowering (`8a0b506`).**
   Table-per-hierarchy tag-predicate/abstract-root reads and table-per-

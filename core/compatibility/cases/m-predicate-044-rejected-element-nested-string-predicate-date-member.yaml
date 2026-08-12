@@ -5,7 +5,7 @@
 # implemented only on the path-scoped dispatcher would leave `nestedEndsWith` over a
 # `date` element member accepted here while rejected one line away. The path resolves
 # element-relatively against `Contact.address.phones` (no leading `Class.valueObject`),
-# and `expires` is the same `date` member m-op-algebra-043 aims at path-scoped — so
+# and `expires` is the same `date` member m-predicate-043 aims at path-scoped — so
 # the pair differs in nothing but scope, which is exactly the asymmetry it pins.
 model: models/contact.yaml
 tags: [m-predicate, m-value-object, rejected, negative, nested, string, scoped, slice-snapshot-1, slice-managed-1]

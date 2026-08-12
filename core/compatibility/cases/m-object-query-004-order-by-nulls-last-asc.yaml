@@ -8,10 +8,10 @@
 # differently (Postgres trails NULLs on `asc` natively; MariaDB has no NULLS LAST
 # syntax and forces the order with a leading `sku is null` rank term) yet both return
 # the two smallest skus and never the NULL row. The paired contrast is
-# m-op-algebra-037, whose `nulls: first` over the same key and the same limit returns
+# m-object-query-006, whose `nulls: first` over the same key and the same limit returns
 # the NULL row instead of the second-smallest sku.
 model: models/orders.yaml
-tags: [m-predicate, m-object-query, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   objectQuery:

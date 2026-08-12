@@ -68,7 +68,7 @@ def preflight(query: ObjectQueryNode, *, model: Metamodel, form: Literal["rows",
     implies "planning resolves it". Raises
     :class:`~parallax.snapshot.handle._errors.QueryTargetError` when ``model``
     declares no Entity for it,
-    :class:`~parallax.core.predicate.OperationRejectedError` when a clause is not
+    :class:`~parallax.core.predicate.ModelRejectedError` when a clause is not
     applicable from that resolved root, and
     :class:`~parallax.snapshot.handle._features.DeferredFeatureError` when the
     query is applicable but requires a Feature this implementation has not built

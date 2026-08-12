@@ -120,7 +120,7 @@ from parallax.core.predicate._nodes import (
 )
 
 __all__ = [
-    "OperationRejectedError",
+    "ModelRejectedError",
     "PositionScope",
     "check_attribute_reference",
     "effective_set",
@@ -129,7 +129,7 @@ __all__ = [
     "resolve_subtype_selection",
     "root_position",
     "validate_narrow",
-    "validate_operation",
+    "validate_predicate",
 ]
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
@@ -192,7 +192,7 @@ def _collect_entities(op: PredicateNode, names: set[str]) -> None:
                 _collect_entities(inner, names)
 
 
-class OperationRejectedError(ValueError):
+class ModelRejectedError(ValueError):
     """A schema-valid predicate or Object Query violates a model-aware rule and
     MUST be refused pre-SQL (`m-case-format` `rejected` cases). ``rule`` is the
     exact `then.rejectedRule` classification the closed vocabulary names.
@@ -220,14 +220,14 @@ class PositionScope:
     relationship_target: str | None = None
 
 
-def validate_operation(
+def validate_predicate(
     root: EntityMetadata,
     op: PredicateNode,
     model: Metamodel,
     *,
     position: PositionScope | None = None,
 ) -> None:
-    """Validate ``op`` against ``model``, raising :class:`OperationRejectedError`.
+    """Validate ``op`` against ``model``, raising :class:`ModelRejectedError`.
 
     ``root`` is the queried root position, already resolved to accepted Metadata
     by the caller — the ``target`` an Object Query names. It seeds the initial
@@ -331,7 +331,7 @@ def _bounds_inverted(lower: Scalar, upper: Scalar) -> bool:
 def _check_bound_ordering(subject: str, lower: Scalar, upper: Scalar) -> None:
     """Reject a range predicate over ``subject`` whose two bounds are inverted."""
     if _bounds_inverted(lower, upper):
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "between-bounds-inverted",
             f"{subject!r}: lower bound {lower!r} is greater than upper bound {upper!r}, "
             "so the range is empty and no row can satisfy it (m-predicate bound ordering)",
@@ -351,7 +351,7 @@ def _lookup_entity(model: Metamodel, name: str) -> EntityMetadata | None:
 
 def _ambiguous_reference(
     model: Metamodel, reference: str, class_name: str
-) -> OperationRejectedError | None:
+) -> ModelRejectedError | None:
     """The `reference-ambiguous-entity-name` rejection ``reference`` earns when
     ``class_name`` is a bare local spelling two namespaces of ``model`` share, or
     absence when it names at most one Entity.
@@ -367,7 +367,7 @@ def _ambiguous_reference(
     canonical = ambiguous_entity_spellings(model, class_name)
     if not canonical:
         return None
-    return OperationRejectedError(
+    return ModelRejectedError(
         "reference-ambiguous-entity-name",
         f"{reference!r}: the bare Entity spelling {class_name!r} is shared by {list(canonical)}, "
         "so it names no single Entity in this model and the reference resolves nowhere "
@@ -453,7 +453,7 @@ def resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[
     seen_identities: set[str] = set()
     for name, identity, _effective in resolved_alternatives:
         if identity in seen_identities:
-            raise OperationRejectedError(
+            raise ModelRejectedError(
                 "subtype-selection-duplicate-alternative",
                 f"Subtype Selection repeats alternative {name!r}",
             )
@@ -465,7 +465,7 @@ def resolve_subtype_selection(to: Sequence[str], model: Metamodel) -> frozenset[
         for previous_name, previous_effective in alternatives:
             overlap = effective & previous_effective
             if overlap:
-                raise OperationRejectedError(
+                raise ModelRejectedError(
                     "subtype-selection-overlapping-alternatives",
                     f"Subtype Selection alternatives {previous_name!r} and {name!r} "
                     f"overlap at {sorted(overlap)}",
@@ -489,13 +489,13 @@ def validate_narrow(to: tuple[str, ...], scope: PositionScope, model: Metamodel)
     """
     resolved = resolve_subtype_selection(to, model)
     if not resolved:
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "narrow-empty-effective-set",
             f"narrow.to {list(to)} resolves to the empty concrete-subtype set",
         )
     if scope.relationship_target is not None:
         if not resolved <= scope.effective:
-            raise OperationRejectedError(
+            raise ModelRejectedError(
                 "narrow-outside-relationship-target",
                 f"narrow.to {list(to)} resolves to {sorted(resolved)}, which is not a "
                 f"subset of the relationship target's effective concrete set "
@@ -504,7 +504,7 @@ def validate_narrow(to: tuple[str, ...], scope: PositionScope, model: Metamodel)
         return PositionScope(effective=resolved)
 
     if not resolved <= scope.effective:
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "narrow-outside-position",
             f"narrow.to {sorted(resolved)} is not a subset of the active position "
             f"{sorted(scope.effective)} threaded into this node",
@@ -523,7 +523,7 @@ def check_attribute_reference(attr_ref: str, model: Metamodel, scope: PositionSc
     entity = _lookup_entity(model, class_name)
     if entity is None:
         if _is_value_object_name_anywhere(model, class_name):
-            raise OperationRejectedError(
+            raise ModelRejectedError(
                 "find-root-value-object",
                 f"{attr_ref!r} is rooted at the value object {class_name!r}, not a "
                 "queryable entity; a value object has no identity or table and is "
@@ -548,12 +548,12 @@ def _check_attribute_position(
     if scope.effective <= own_effective:
         return
     if scope.effective <= _family_set(model, entity):
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "subtype-attribute-outside-narrow-scope",
             f"{entity.identity.canonical} is not available to every concrete in the active "
             f"position {sorted(scope.effective)}; narrow to {sorted(own_effective)} first",
         )
-    raise OperationRejectedError(
+    raise ModelRejectedError(
         "attribute-outside-active-position",
         f"{entity.identity.canonical} shares no inheritance family with the active position "
         f"{sorted(scope.effective)}, so no narrow makes its attributes addressable here",
@@ -584,7 +584,7 @@ def relationship_target(rel_ref: str, model: Metamodel, *, wrong_kind_rule: str)
             raise ValueError(f"{rel_ref!r} names a relationship whose target is undeclared")
         return target
     if entity.value_object(member_name) is not None:
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             wrong_kind_rule,
             f"{rel_ref!r} names the value object {member_name!r}, not a relationship; a "
             "value object has no identity to correlate and materializes with its owner, "
@@ -615,19 +615,19 @@ def _resolve_leaf(
         attribute = scope.attribute(segment)
         if attribute is not None:
             if not is_last:
-                raise OperationRejectedError(
+                raise ModelRejectedError(
                     "nested-path-unknown-member",
                     f"{path!r}: {segment!r} is a scalar attribute but the path continues",
                 )
             return attribute
         nested = scope.value_object(segment)
         if nested is None:
-            raise OperationRejectedError(
+            raise ModelRejectedError(
                 "nested-path-unknown-member",
                 f"{path!r}: {segment!r} names no declared member",
             )
         if is_last:
-            raise OperationRejectedError(
+            raise ModelRejectedError(
                 "nested-path-unknown-member",
                 f"{path!r} ends on the nested value object {segment!r}, not a scalar leaf",
             )
@@ -639,7 +639,7 @@ def _resolve_nested_leaf(path: str, model: Metamodel) -> ValueObjectAttributeMet
     """Resolve an `<Entity>.valueObject(.valueObject)*.attribute` path to its leaf."""
     class_name, members = split_reference(path)
     if class_name is None or len(members) < 2:
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "nested-path-unknown-member",
             f"{path!r} needs at least Class.valueObject.attribute",
         )
@@ -649,7 +649,7 @@ def _resolve_nested_leaf(path: str, model: Metamodel) -> ValueObjectAttributeMet
         raise _unresolved_reference(model, path, class_name)
     vo = entity.value_object(vo_name)
     if vo is None:
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "nested-path-first-segment-not-value-object",
             f"{class_name}.{vo_name} is not a declared value object on {class_name} "
             "(m-predicate nested-predicate resolver MUST)",
@@ -675,7 +675,7 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
     """
     class_name, members = split_reference(path)
     if class_name is None or not members:
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "nested-path-unknown-member", f"{path!r} needs at least Class.valueObject"
         )
     vo_name, *segments = members
@@ -684,7 +684,7 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
         raise _unresolved_reference(model, path, class_name)
     vo = entity.value_object(vo_name)
     if vo is None:
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "nested-path-first-segment-not-value-object",
             f"{class_name}.{vo_name} is not a declared value object on {class_name}",
         )
@@ -692,7 +692,7 @@ def _check_nested_vo_terminated(path: str, model: Metamodel) -> _VoContainer:
     for segment in segments:
         member = container.value_object(segment)
         if member is None:
-            raise OperationRejectedError(
+            raise ModelRejectedError(
                 "nested-path-unknown-member",
                 f"{path!r}: {segment!r} does not name a nested value object",
             )
@@ -734,7 +734,7 @@ def _check_typed_literal(path: str, value: Scalar, leaf: ValueObjectAttributeMet
     `nested-literal-type-mismatch` check, only the leaf's resolution differs.
     """
     if not _literal_matches_type(value, leaf.type):
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "nested-literal-type-mismatch",
             f"{path!r}: literal {value!r} does not match the leaf's declared "
             f"type {leaf.type!r} (m-predicate typed literals)",
@@ -778,7 +778,7 @@ def _check_string_member(path: str, leaf: ValueObjectAttributeMetadata) -> None:
     would accept a string predicate against exactly the members this one rejects.
     """
     if not isinstance(leaf.type, String):
-        raise OperationRejectedError(
+        raise ModelRejectedError(
             "nested-string-predicate-non-string-member",
             f"{path!r}: a string predicate reads text, but the member's declared type is "
             f"{leaf.type!r} (m-predicate non-string-member rule)",

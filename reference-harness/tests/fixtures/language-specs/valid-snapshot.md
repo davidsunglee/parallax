@@ -25,7 +25,7 @@ The implementation selects `slice-snapshot-1` and the snapshot lifecycle.
 }
 ```
 
-The unclaimed implementation prerequisites are `m-db-port` and `m-op-list`.
+The one unclaimed implementation prerequisite is `m-db-port`.
 Deferred behavior is recorded separately. Verification selects the active slice
 tag intersected with the relevant capability tags.
 
@@ -69,7 +69,6 @@ shared-node states remain distinct without issuing later SQL.
 | `m-navigate` | src/navigate | navigate | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |
 | `m-object-query` | src/object-query | object-query | `m-predicate`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-predicate` | src/predicate | predicate | `m-metamodel`, `m-inheritance` | depcheck.toml |
-| `m-op-list` | src/lists | lists | `m-object-query`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
 | `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |
 | `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |

@@ -2,7 +2,7 @@
 Suite and Usage Guide" — the fourth no-drift guard).
 
 The other guards prove: an idiomatic query's serialization equals the
-corpus Object Query (`test_operation_no_drift.py`); an idiomatic class descriptor
+corpus Object Query (`test_object_query_no_drift.py`); an idiomatic class descriptor
 equals its corpus model (`test_descriptor_no_drift.py`); a registered write
 story's wire DML equals its corpus golden byte-exact
 (`test_write_no_drift.py`). None of them isolates the ONE seam every keyed

@@ -59,7 +59,7 @@ from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.execution_log import DatabaseCallFailed, ExecutionLog
-from parallax.core.predicate import OperationRejectedError
+from parallax.core.predicate import ModelRejectedError
 from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
@@ -1233,7 +1233,7 @@ def test_update_where_refuses_an_inverted_between_window_before_any_sql() -> Non
     def fn(tx: Transaction) -> None:
         tx.update_where(mm.Person.where(mm.Person.id.between(10, 1)), mm.Person.name.set("Ada"))
 
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "between-bounds-inverted"
 
@@ -1244,7 +1244,7 @@ def test_delete_where_refuses_an_attribute_outside_the_written_position() -> Non
     def fn(tx: Transaction) -> None:
         tx.delete_where(mm.Person.where(mm.Passport.number == "X"))  # pyright: ignore[reportArgumentType]
 
-    with pytest.raises(OperationRejectedError) as caught:
+    with pytest.raises(ModelRejectedError) as caught:
         Database.connect(NoIoPort(), PERSON, clock=FixedClock(FIXED)).transact(fn)
     assert caught.value.rule == "attribute-outside-active-position"
 
@@ -1279,13 +1279,13 @@ _NON_UTC_UNTIL = dt.datetime(2024, 9, 1, 2, tzinfo=dt.timezone(dt.timedelta(hour
     ("valid_from", "until", "expected", "rule"),
     [
         (_NAIVE, None, InstantError, None),
-        (_AWARE, None, OperationRejectedError, "between-bounds-inverted"),
+        (_AWARE, None, ModelRejectedError, "between-bounds-inverted"),
         (_EXTREME_OFFSET, None, OverflowError, None),
         (_AWARE, _NAIVE, InstantError, None),
         (
             _AWARE,
             dt.datetime(2024, 9, 1, tzinfo=dt.UTC),
-            OperationRejectedError,
+            ModelRejectedError,
             "between-bounds-inverted",
         ),
         (_AWARE, _EXTREME_OFFSET, OverflowError, None),
@@ -1311,7 +1311,7 @@ def test_a_temporal_bound_is_judged_before_an_invalid_predicate(
     with pytest.raises(expected) as caught:
         Database.connect(NoIoPort(), WHERE_POSITION_META, clock=FixedClock(FIXED)).transact(fn)
     if rule is not None:
-        assert cast("OperationRejectedError", caught.value).rule == rule
+        assert cast("ModelRejectedError", caught.value).rule == rule
 
 
 @pytest.mark.parametrize(
@@ -1679,7 +1679,7 @@ def test_where_verb_rejection_precedes_a_pending_writes_force_flush() -> None:
 
     def fn(tx: Transaction) -> None:
         tx.insert(WherePosition(id=9, acct_num="A", value=Decimal("1.00")), valid_from=valid_from)
-        with pytest.raises(OperationRejectedError):
+        with pytest.raises(ModelRejectedError):
             tx.update_where(
                 WherePosition.where(WherePosition.id.between(10, 1)),
                 WherePosition.value.set(Decimal("300.00")),

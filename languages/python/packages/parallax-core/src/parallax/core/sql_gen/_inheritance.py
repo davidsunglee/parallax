@@ -410,7 +410,7 @@ def narrow_position(
     the facet resolves the members' union to the position's canonical effective
     concrete-subtype set and its projection supersets.
 
-    `validate_operation` runs upstream and guarantees the resolved set is
+    `validate_predicate` runs upstream and guarantees the resolved set is
     non-empty and a subset of the active position (`m-predicate` "the four-step
     validation rule") before this compiler ever sees the node, so this need
     only resolve — never re-validate.

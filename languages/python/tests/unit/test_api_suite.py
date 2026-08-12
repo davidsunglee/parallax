@@ -72,9 +72,9 @@ def test_partition_report_is_a_clean_full_partition() -> None:
 
 
 def test_build_skips_uses_the_reviewed_registry_reason() -> None:
-    active = [_case("m-op-algebra-900", "m-predicate")]
+    active = [_case("m-predicate-900", "m-predicate")]
     skips = api_suite.build_skips(active, [], {"m-predicate": "reviewed reason"})
-    assert skips == [Skip("m-op-algebra-900", "reviewed reason")]
+    assert skips == [Skip("m-predicate-900", "reviewed reason")]
 
 
 def test_unclassified_active_case_is_not_silently_skipped() -> None:
@@ -90,15 +90,15 @@ def test_unclassified_active_case_is_not_silently_skipped() -> None:
 
 
 def test_stale_registry_entry_absent_from_slice_is_flagged() -> None:
-    active = [_case("m-op-algebra-900", "m-predicate")]
+    active = [_case("m-predicate-900", "m-predicate")]
     stale = api_suite.stale_skip_reasons(active, [], {"m-predicate": "r", "m-gone": "r2"})
     assert any("m-gone" in error for error in stale)
     assert not any("m-predicate" in error for error in stale)
 
 
 def test_fully_exercised_module_makes_its_registry_entry_stale() -> None:
-    active = [_case("m-op-algebra-900", "m-predicate")]
-    examples = [Example("m-op-algebra-900", "t", "s")]
+    active = [_case("m-predicate-900", "m-predicate")]
+    examples = [Example("m-predicate-900", "t", "s")]
     stale = api_suite.stale_skip_reasons(active, examples, {"m-predicate": "r"})
     assert any("m-predicate" in error for error in stale)
 
@@ -214,10 +214,10 @@ def test_render_usage_guide_empty() -> None:
 
 def test_render_usage_guide_with_examples() -> None:
     text = api_suite.render_usage_guide(
-        [Example("m-op-algebra-002", "Point read", "Order.where(Order.all)")]
+        [Example("m-predicate-002", "Point read", "Order.where(Order.all)")]
     )
     assert "## Point read" in text
-    assert "`m-op-algebra-002`" in text
+    assert "`m-predicate-002`" in text
     assert "Order.where(Order.all)" in text
 
 
@@ -226,7 +226,7 @@ def test_render_usage_guide_with_examples() -> None:
     [
         pytest.param([], id="empty"),
         pytest.param(
-            [Example("m-op-algebra-002", "Point read", "Order.where(Order.all)")], id="populated"
+            [Example("m-predicate-002", "Point read", "Order.where(Order.all)")], id="populated"
         ),
     ],
 )
@@ -271,7 +271,7 @@ def test_read_story_snippet_single_sources_the_concurrency_mode() -> None:
     assert "db.transact(" in locking_snippet
     # A story with no declared concurrency renders its bare `snippet` only —
     # no transactional wrapper appears for the non-participating majority.
-    plain = by_id["m-op-algebra-002"]
+    plain = by_id["m-predicate-002"]
     assert plain.concurrency is None
     assert read_story_snippet(plain) == plain.snippet
     assert "db.transact(" not in read_story_snippet(plain)

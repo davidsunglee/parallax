@@ -29,7 +29,7 @@ explicitly excluded, partially acknowledged, or still missing.
 | 14 | Streaming cursor / large-result handling | Not clearly present in current slug catalog | Important for memory behavior and production reads, but less central than query correctness. |
 | 15 | DB-native bulk load | Missing | Performance/dialect feature, especially vendor-specific bulk loaders. Not core for parity MVP. |
 | 16 | Query / SQL introspection and telemetry hooks | Missing | Valuable for debugging and performance contracts: explain/analyze surfaces, stats listener, SQL snooping. |
-| 17 | Adhoc / queryable in-memory lists | Missing | Useful, but less essential than operation-backed persistent lists. |
+| 17 | Adhoc / queryable in-memory lists | Missing | Useful, but less essential than query-backed persistent lists. |
 | 18 | Pure in-memory objects | Missing; previously a might-do item in the numbered-module scope model | Separate from adhoc lists; likely not central to Parallax's ORM thesis. |
 | 19 | Serialization framework and GraphQL tooling | Not core; descriptor serde exists | Useful ecosystem layer, but should probably stay optional or per-language unless Parallax wants a tooling contract. |
 | 20 | Object-graph extraction and DB-to-model reverse engineering | Missing | Good for tests, migration, and tooling, but not core runtime behavior. |

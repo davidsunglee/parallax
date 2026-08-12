@@ -58,7 +58,7 @@ from parallax.core.predicate._nodes import (
     canonical_subtype_selection,
 )
 
-__all__ = ["OperationError", "deserialize", "serialize"]
+__all__ = ["CanonicalDocumentError", "deserialize", "serialize"]
 
 _COMPARISONS: frozenset[str] = frozenset(
     {"eq", "notEq", "greaterThan", "greaterThanEquals", "lessThan", "lessThanEquals"}
@@ -112,7 +112,7 @@ _ELEMENT_TAGS: frozenset[str] = (
 )
 
 
-class OperationError(ValueError):
+class CanonicalDocumentError(ValueError):
     """A serialized document is not a well-formed canonical node."""
 
 
@@ -166,10 +166,10 @@ def _check_shape(tag: str, shape: _Shape, body: Mapping[str, object]) -> None:
     required, optional = shape
     extra = sorted(set(body) - required - optional)
     if extra:
-        raise OperationError(f"{tag}: unexpected key(s) {extra}")
+        raise CanonicalDocumentError(f"{tag}: unexpected key(s) {extra}")
     missing = sorted(required - body.keys())
     if missing:
-        raise OperationError(f"{tag}: missing required key(s) {missing}")
+        raise CanonicalDocumentError(f"{tag}: missing required key(s) {missing}")
 
 
 # --------------------------------------------------------------------------- #
@@ -177,21 +177,23 @@ def _check_shape(tag: str, shape: _Shape, body: Mapping[str, object]) -> None:
 # --------------------------------------------------------------------------- #
 def _single_key(doc: object) -> tuple[str, Mapping[str, object]]:
     if not isinstance(doc, Mapping):
-        raise OperationError(f"predicate node must be a mapping, got {type(doc).__name__}")
+        raise CanonicalDocumentError(f"predicate node must be a mapping, got {type(doc).__name__}")
     node = cast("Mapping[str, object]", doc)
     if len(node) != 1:
-        raise OperationError(f"predicate node must have exactly one key, got {sorted(node)}")
+        raise CanonicalDocumentError(
+            f"predicate node must have exactly one key, got {sorted(node)}"
+        )
     (tag,) = node
     body = node[tag]
     if not isinstance(body, Mapping):
-        raise OperationError(f"predicate {tag!r} body must be a mapping")
+        raise CanonicalDocumentError(f"predicate {tag!r} body must be a mapping")
     return tag, cast("Mapping[str, object]", body)
 
 
 def _str(body: Mapping[str, object], key: str, tag: str) -> str:
     value = body.get(key)
     if not isinstance(value, str):
-        raise OperationError(f"{tag}: `{key}` must be a string")
+        raise CanonicalDocumentError(f"{tag}: `{key}` must be a string")
     return value
 
 
@@ -201,7 +203,7 @@ def _ref(
     """Read a reference string and enforce the schema pattern for its position."""
     value = _str(body, key, tag)
     if pattern.match(value) is None:
-        raise OperationError(f"{tag}: `{key}` {value!r} is not a valid {kind}")
+        raise CanonicalDocumentError(f"{tag}: `{key}` {value!r} is not a valid {kind}")
     return value
 
 
@@ -212,20 +214,22 @@ def _case_insensitive(body: Mapping[str, object], tag: str) -> bool | None:
         return None
     raw = body["caseInsensitive"]
     if not isinstance(raw, bool):
-        raise OperationError(f"{tag}: `caseInsensitive` must be a boolean")
+        raise CanonicalDocumentError(f"{tag}: `caseInsensitive` must be a boolean")
     return raw
 
 
 def _scalar(value: object, tag: str) -> Scalar:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
-    raise OperationError(f"{tag}: value must be a scalar literal, got {type(value).__name__}")
+    raise CanonicalDocumentError(
+        f"{tag}: value must be a scalar literal, got {type(value).__name__}"
+    )
 
 
 def _values(body: Mapping[str, object], tag: str) -> tuple[Scalar, ...]:
     raw = body.get("values")
     if not isinstance(raw, list) or not raw:
-        raise OperationError(f"{tag}: `values` must be a non-empty list")
+        raise CanonicalDocumentError(f"{tag}: `values` must be a non-empty list")
     return tuple(_scalar(item, tag) for item in cast("list[object]", raw))
 
 
@@ -242,24 +246,24 @@ def _operands(
 ) -> tuple[PredicateNode, ...]:
     raw = body.get("operands")
     if not isinstance(raw, list):
-        raise OperationError(f"{tag}: `operands` must have at least two entries")
+        raise CanonicalDocumentError(f"{tag}: `operands` must have at least two entries")
     items = cast("list[object]", raw)
     if len(items) < 2:
-        raise OperationError(f"{tag}: `operands` must have at least two entries")
+        raise CanonicalDocumentError(f"{tag}: `operands` must have at least two entries")
     return tuple(_deserialize(item, element_scope=element_scope) for item in items)
 
 
 def _to_list(body: Mapping[str, object], tag: str) -> tuple[str, ...]:
     raw = body.get("to")
     if not isinstance(raw, list) or not raw:
-        raise OperationError(f"{tag}: `to` must be a non-empty list")
+        raise CanonicalDocumentError(f"{tag}: `to` must be a non-empty list")
     items = cast("list[object]", raw)
     out: list[str] = []
     for item in items:
         if not isinstance(item, str):
-            raise OperationError(f"{tag}: `to` entries must be strings")
+            raise CanonicalDocumentError(f"{tag}: `to` entries must be strings")
         if _ENTITY_NAME.match(item) is None:
-            raise OperationError(f"{tag}: `to` entry {item!r} is not a valid entity name")
+            raise CanonicalDocumentError(f"{tag}: `to` entry {item!r} is not a valid entity name")
         out.append(item)
     return tuple(out)
 
@@ -285,7 +289,9 @@ def _deserialize(doc: object, *, element_scope: bool) -> PredicateNode:
     schema fixes inside a nestedExists/nestedNotExists ``where``."""
     tag, body = _single_key(doc)
     if element_scope and tag not in _ELEMENT_TAGS:
-        raise OperationError(f"{tag}: not a legal element predicate inside a nestedExists `where`")
+        raise CanonicalDocumentError(
+            f"{tag}: not a legal element predicate inside a nestedExists `where`"
+        )
     shape = _SHAPES.get(tag)
     if shape is not None:
         _check_shape(tag, shape, body)
@@ -393,7 +399,7 @@ def _deserialize(doc: object, *, element_scope: bool) -> PredicateNode:
         return NotExists(
             rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
         )
-    raise OperationError(f"unknown predicate node {tag!r}")
+    raise CanonicalDocumentError(f"unknown predicate node {tag!r}")
 
 
 def _nav_op(body: Mapping[str, object]) -> PredicateNode | None:

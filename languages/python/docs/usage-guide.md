@@ -197,7 +197,7 @@ def a_joined_unit_of_work_appends_to_the_outer_live_log(db: Database) -> JoinedL
 Corpus case: `m-inheritance-001`
 
 ```python
-op = CardPayment.where(CardPayment.all)
+query = CardPayment.where(CardPayment.all)
 ```
 
 ## Table-per-concrete-subtype concrete read
@@ -205,7 +205,7 @@ op = CardPayment.where(CardPayment.all)
 Corpus case: `m-inheritance-005`
 
 ```python
-op = Invoice.where(Invoice.all)
+query = Invoice.where(Invoice.all)
 ```
 
 ## A result narrowed to one concrete subtype, filtered by its own attribute
@@ -213,7 +213,7 @@ op = Invoice.where(Invoice.all)
 Corpus case: `m-inheritance-012`
 
 ```python
-op = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))
+query = Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))
 ```
 
 ## A narrow that broadens beyond its position
@@ -222,7 +222,7 @@ Corpus case: `m-inheritance-040`
 
 ```python
 Animal.where(Animal.narrow(Person))
-# raises OperationRejectedError(rule="narrow-outside-position")
+# raises ModelRejectedError(rule="narrow-outside-position")
 ```
 
 ## A concrete-subtype attribute referenced outside a narrow scope
@@ -231,7 +231,7 @@ Corpus case: `m-inheritance-041`
 
 ```python
 Animal.where(Dog.bark_volume > 5)
-# raises OperationRejectedError(rule="subtype-attribute-outside-narrow-scope")
+# raises ModelRejectedError(rule="subtype-attribute-outside-narrow-scope")
 ```
 
 ## A nested narrow that broadens back out of the enclosing position
@@ -240,7 +240,7 @@ Corpus case: `m-inheritance-042`
 
 ```python
 Animal.where(Pet.narrow(Dog, where=Animal.narrow(Cat)))
-# raises OperationRejectedError(rule="narrow-outside-position")
+# raises ModelRejectedError(rule="narrow-outside-position")
 ```
 
 ## A relationship-scope narrow past its target's reachable set
@@ -249,7 +249,7 @@ Corpus case: `m-inheritance-064`
 
 ```python
 Person.pets.exists(Pet.narrow(WildBoar))
-# raises OperationRejectedError(rule="narrow-outside-relationship-target")
+# raises ModelRejectedError(rule="narrow-outside-relationship-target")
 ```
 
 ## A single narrowed subtype view over a table-per-hierarchy family
@@ -323,7 +323,7 @@ def a_redundant_narrow_populates_a_view_beside_the_broad_one(db: Database) -> Sn
 Corpus case: `m-inheritance-070`
 
 ```python
-op = Folder.where(Folder.documents.exists())
+query = Folder.where(Folder.documents.exists())
 ```
 
 ## The same polymorphic navigation, narrowed to one abstract subtype
@@ -331,7 +331,7 @@ op = Folder.where(Folder.documents.exists())
 Corpus case: `m-inheritance-071`
 
 ```python
-op = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument)))
+query = Folder.where(Folder.documents.exists(Document.narrow(FinancialDocument)))
 ```
 
 ## Disjoint path-root guards fetch one relationship into one view
@@ -404,7 +404,7 @@ db.transact(lambda tx: tx.insert(Payment(id=10, amount=Decimal("200.00"))))
 Corpus case: `m-inheritance-100`
 
 ```python
-op = DepositRate.where(DepositRate.all).as_of(
+query = DepositRate.where(DepositRate.all).as_of(
     valid_time=LATEST, tx_time=datetime(2024, 1, 15, tzinfo=UTC)
 )
 ```
@@ -475,7 +475,7 @@ Corpus case: `m-inheritance-132`
 
 ```python
 Animal.where(Animal.narrow(Dog, Pet))
-# raises OperationRejectedError(rule="subtype-selection-overlapping-alternatives")
+# raises ModelRejectedError(rule="subtype-selection-overlapping-alternatives")
 ```
 
 ## A Subtype Selection with an exact duplicate
@@ -492,7 +492,7 @@ Animal.narrow(Dog, Dog)
 Corpus case: `m-navigate-002`
 
 ```python
-op = Order.where(Order.items.exists())
+query = Order.where(Order.items.exists())
 ```
 
 ## Relationship absence (bare `.not_exists()`)
@@ -500,7 +500,7 @@ op = Order.where(Order.items.exists())
 Corpus case: `m-navigate-003`
 
 ```python
-op = Order.where(Order.items.not_exists())
+query = Order.where(Order.items.not_exists())
 ```
 
 ## Relationship existence with a predicate
@@ -508,7 +508,7 @@ op = Order.where(Order.items.not_exists())
 Corpus case: `m-navigate-004`
 
 ```python
-op = Order.where(Order.items.exists(OrderItem.quantity >= 4))
+query = Order.where(Order.items.exists(OrderItem.quantity >= 4))
 ```
 
 ## A navigation filter composed with a scalar predicate
@@ -516,7 +516,7 @@ op = Order.where(Order.items.exists(OrderItem.quantity >= 4))
 Corpus case: `m-navigate-006`
 
 ```python
-op = Order.where(Order.items.not_exists(), Order.active.is_(True))
+query = Order.where(Order.items.not_exists(), Order.active.is_(True))
 ```
 
 ## Multi-hop relationship existence
@@ -524,7 +524,7 @@ op = Order.where(Order.items.not_exists(), Order.active.is_(True))
 Corpus case: `m-navigate-008`
 
 ```python
-op = Order.where(Order.items.exists(OrderItem.statuses.exists(OrderStatus.code == "PACKED")))
+query = Order.where(Order.items.exists(OrderItem.statuses.exists(OrderStatus.code == "PACKED")))
 ```
 
 ## Existence over a to-one (nullable) relationship
@@ -532,7 +532,7 @@ op = Order.where(Order.items.exists(OrderItem.statuses.exists(OrderStatus.code =
 Corpus case: `m-navigate-009`
 
 ```python
-op = OrderStatus.where(OrderStatus.order_item.exists())
+query = OrderStatus.where(OrderStatus.order_item.exists())
 ```
 
 ## Negated multi-hop relationship existence
@@ -540,7 +540,7 @@ op = OrderStatus.where(OrderStatus.order_item.exists())
 Corpus case: `m-navigate-010`
 
 ```python
-op = Order.where(Order.items.not_exists(OrderItem.statuses.exists()))
+query = Order.where(Order.items.not_exists(OrderItem.statuses.exists()))
 ```
 
 ## A deep fetch pinned to a past Valid-Time instant materializes the superseded milestone
@@ -561,7 +561,7 @@ def pinned_graph_at_a_past_valid_time_instant(db: Database) -> Snapshot[Any]:
 Corpus case: `m-navigate-018`
 
 ```python
-op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
+query = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
     tx_time=LATEST, valid_time=LATEST
 )
 ```
@@ -571,87 +571,15 @@ op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(
 Corpus case: `m-navigate-023`
 
 ```python
-op = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(valid_time=LATEST)
-```
-
-## Equality on the primary key
-
-Corpus case: `m-op-algebra-002`
-
-```python
-op = Order.where(Order.id == 42)
-```
-
-## Is-null predicate
-
-Corpus case: `m-op-algebra-009`
-
-```python
-op = Order.where(Order.sku.is_null())
-```
-
-## SQL-pattern LIKE
-
-Corpus case: `m-op-algebra-011`
-
-```python
-op = Order.where(Order.sku.like("A-%"))
-```
-
-## Literal starts-with (wildcards escaped)
-
-Corpus case: `m-op-algebra-013`
-
-```python
-op = Order.where(Order.sku.starts_with("A-"))
-```
-
-## Membership (IN)
-
-Corpus case: `m-op-algebra-018`
-
-```python
-op = Order.where(Order.id.in_([1, 2, 42]))
-```
-
-## Conjoined filters (big-AND)
-
-Corpus case: `m-op-algebra-020`
-
-```python
-op = Order.where(Order.active.is_(True), Order.qty > 10)
-```
-
-## Disjunction with parentheses
-
-Corpus case: `m-op-algebra-021`
-
-```python
-op = Order.where((Order.qty < 10) | (Order.qty > 25))
-```
-
-## Grouped precedence — an OR under an AND
-
-Corpus case: `m-op-algebra-024`
-
-```python
-op = Order.where((Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True))
-```
-
-## Natural precedence — an AND under an OR (no group)
-
-Corpus case: `m-op-algebra-025`
-
-```python
-op = Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True)))
+query = Policy.where(Policy.coverages.exists(Coverage.amount >= 600.00)).as_of(valid_time=LATEST)
 ```
 
 ## Ordering and limiting
 
-Corpus case: `m-op-algebra-032`
+Corpus case: `m-object-query-003`
 
 ```python
-op = Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2)
+query = Order.where(Order.all).order_by(Order.active.desc(), Order.qty.asc()).limit(2)
 ```
 
 ## Versioned update advances the version ungated in locking mode
@@ -672,13 +600,85 @@ def versioned_update_advances_the_version_ungated_in_locking_mode(db: Database) 
     db.transact(fn)
 ```
 
+## Equality on the primary key
+
+Corpus case: `m-predicate-002`
+
+```python
+query = Order.where(Order.id == 42)
+```
+
+## Is-null predicate
+
+Corpus case: `m-predicate-009`
+
+```python
+query = Order.where(Order.sku.is_null())
+```
+
+## SQL-pattern LIKE
+
+Corpus case: `m-predicate-011`
+
+```python
+query = Order.where(Order.sku.like("A-%"))
+```
+
+## Literal starts-with (wildcards escaped)
+
+Corpus case: `m-predicate-013`
+
+```python
+query = Order.where(Order.sku.starts_with("A-"))
+```
+
+## Membership (IN)
+
+Corpus case: `m-predicate-018`
+
+```python
+query = Order.where(Order.id.in_([1, 2, 42]))
+```
+
+## Conjoined filters (big-AND)
+
+Corpus case: `m-predicate-020`
+
+```python
+query = Order.where(Order.active.is_(True), Order.qty > 10)
+```
+
+## Disjunction with parentheses
+
+Corpus case: `m-predicate-021`
+
+```python
+query = Order.where((Order.qty < 10) | (Order.qty > 25))
+```
+
+## Grouped precedence — an OR under an AND
+
+Corpus case: `m-predicate-024`
+
+```python
+query = Order.where((Order.qty >= 25) | (Order.qty <= 5), Order.active.is_(True))
+```
+
+## Natural precedence — an AND under an OR (no group)
+
+Corpus case: `m-predicate-025`
+
+```python
+query = Order.where((Order.qty >= 25) | ((Order.qty <= 5) & Order.active.is_(True)))
+```
+
 ## A locking-mode object find carries the shared read lock
 
 Corpus case: `m-read-lock-002`
 
 ```python
-op = Account.where(Account.id == 2)
-db.transact(lambda tx: tx.find(op), concurrency="locking").value
+query = Account.where(Account.id == 2)
+db.transact(lambda tx: tx.find(query), concurrency="locking").value
 ```
 
 ## An optimistic-mode object find omits the shared read lock
@@ -686,8 +686,8 @@ db.transact(lambda tx: tx.find(op), concurrency="locking").value
 Corpus case: `m-read-lock-005`
 
 ```python
-op = Account.where(Account.id == 2)
-db.transact(lambda tx: tx.find(op), concurrency="optimistic").value
+query = Account.where(Account.id == 2)
+db.transact(lambda tx: tx.find(query), concurrency="optimistic").value
 ```
 
 ## Diamond identity: two include paths reaching the same rows share one node
@@ -793,7 +793,7 @@ def an_edited_copy_keeps_its_source_nodes_views(db: Database) -> tuple[Snapshot[
 Corpus case: `m-temporal-read-003`
 
 ```python
-op = Balance.where(Balance.all).as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))
+query = Balance.where(Balance.all).as_of(tx_time=datetime(2024, 4, 1, tzinfo=UTC))
 ```
 
 ## Transaction-Time-Only insert opens a current milestone
@@ -1454,7 +1454,7 @@ Corpus case: `m-value-object-038`
 
 ```python
 Customer.where(Customer.address.city == 42)
-# raises OperationRejectedError(rule="nested-literal-type-mismatch")
+# raises ModelRejectedError(rule="nested-literal-type-mismatch")
 ```
 
 ## A write missing a required value-object attribute at depth 1

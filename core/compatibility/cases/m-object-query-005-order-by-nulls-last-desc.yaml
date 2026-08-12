@@ -7,10 +7,10 @@
 # MariaDB treats it as smallest and already trails NULLs on `desc`, emitting nothing.
 # `limit 2` makes the placement observable through row MEMBERSHIP (the two LARGEST
 # skus, never the NULL row), since top-level row comparison is order-insensitive. The
-# paired contrast is m-op-algebra-038, whose `nulls: first` over the same key and the
+# paired contrast is m-object-query-007, whose `nulls: first` over the same key and the
 # same limit returns the NULL row instead of the second-largest sku.
 model: models/orders.yaml
-tags: [m-predicate, m-object-query, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-object-query, m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
   objectQuery:

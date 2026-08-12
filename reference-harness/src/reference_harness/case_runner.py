@@ -75,7 +75,7 @@ from .metamodel import (
 from .metamodel import (
     validate_index_identities,
 )
-from .op_validate import validate_object_query
+from .object_query_validate import validate_object_query
 from .predicate_write_validate import (
     requires_predicate_write_materialization,
     validate_predicate_write,

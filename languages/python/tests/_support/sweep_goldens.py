@@ -34,10 +34,16 @@ _VALUE_OBJECT_PREDICATE_READS: Final[frozenset[str]] = frozenset(
 _VALUE_OBJECT_TO_MANY_READS: Final[frozenset[str]] = frozenset(
     f"m-value-object-{n:03d}" for n in (*range(15, 23), *range(50, 54), *range(56, 66), 68)
 )
-# Orders Predicate reads use the full declared scalar projection emitted by
-# the default find projection. Case 028 is intentionally absent from the corpus.
-_ORDERS_OP_ALGEBRA_READS: Final[frozenset[str]] = frozenset(
-    f"m-op-algebra-{n:03d}" for n in (*range(1, 28), *range(29, 39))
+# Orders reads over the two query modules use the full declared scalar projection
+# emitted by the default find projection. `m-predicate` case 028 is intentionally
+# absent from the corpus, which is why its numbering skips one.
+_ORDERS_PREDICATE_READS: Final[frozenset[str]] = frozenset(
+    f"m-predicate-{n:03d}" for n in (*range(1, 26), 29, 30, 31, 33, 34)
+)
+# The Orders reads whose claim is a query-wide clause — `orderBy` with a cap,
+# multi-key precedence, and all four Null Placement combinations.
+_ORDERS_OBJECT_QUERY_READS: Final[frozenset[str]] = frozenset(
+    f"m-object-query-{n:03d}" for n in range(1, 8)
 )
 # Value-object instance-form materialization reads (the object lane): the slot-4
 # document splice projects the `address` column (m-sql *Read projection*). Their graph
@@ -220,10 +226,10 @@ _DOCUMENT_LAYOUT_READS: Final[frozenset[str]] = frozenset(
 # The canonical-Entity-spelling read (`m-predicate`): a predicate reference names
 # one of two twins sharing a local name across namespaces, so the golden proves
 # WHICH Entity a canonical spelling reached — it selects from `archive_shared` and
-# never `catalog_shared`. Its `rejected` counterpart (`m-op-algebra-048`) spells the
+# never `catalog_shared`. Its `rejected` counterpart (`m-predicate-048`) spells the
 # same reference bare over the same model and is refused, so only this half has a
 # golden to grade.
-_CANONICAL_ENTITY_SPELLING_READS: Final[frozenset[str]] = frozenset({"m-op-algebra-051"})
+_CANONICAL_ENTITY_SPELLING_READS: Final[frozenset[str]] = frozenset({"m-predicate-051"})
 # The execution-provenance standalone read (`m-execution-log-001`): an ordinary
 # single-statement row-form read whose golden this lane grades exactly as it
 # grades every other, plus the Read Trace the run lane grades on top of it.
@@ -233,7 +239,8 @@ COMPILE_EXERCISED: Final[frozenset[str]] = (
     | _DOCUMENT_CODEC_READS
     | _VALUE_OBJECT_PREDICATE_READS
     | _VALUE_OBJECT_TO_MANY_READS
-    | _ORDERS_OP_ALGEBRA_READS
+    | _ORDERS_PREDICATE_READS
+    | _ORDERS_OBJECT_QUERY_READS
     | _VALUE_OBJECT_MATERIALIZATION_READS
     | _TEMPORAL_READ_ROW_FORM
     | _TEMPORAL_VALUE_OBJECT_READS

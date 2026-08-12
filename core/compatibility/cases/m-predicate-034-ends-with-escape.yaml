@@ -4,7 +4,7 @@
 # '50%'` escapes the trailing literal `%` so it does NOT act as a wildcard:
 # `like '%50\%' escape '\'`. Only `C_50%` ends with a literal `50%`. The
 # independent `right(sku, 3)` oracle would catch an unescaped `%` (which would
-# match any suffix). Companion to m-op-algebra-033 (startsWith) and m-op-algebra-015 (contains).
+# match any suffix). Companion to m-predicate-033 (startsWith) and m-predicate-015 (contains).
 model: models/orders.yaml
 tags: [m-predicate, endsWith, string, escape, slice-snapshot-1, slice-managed-1]
 shape: read
