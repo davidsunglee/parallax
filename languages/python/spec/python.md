@@ -517,11 +517,11 @@ mutations, exceptions, or exports.
   explicit unfiltered spelling. An Object Query has no further `.where()` method.
 
   ```python
-  op = Order.where(
+  query = Order.where(
       Order.order_id == 42,
       Order.items.exists(OrderItem.sku.in_(["A", "B"])),
   )
-  snapshot = db.find(op)
+  snapshot = db.find(query)
   ```
 
   Canonical `m-object-query` serialization of that Object Query:
@@ -1892,7 +1892,7 @@ or descriptor authoring form and performs no audit stamping.
 
 ### Snapshot lifecycle
 
-- **Public result and node types.** `db.find(op)` executes exactly once,
+- **Public result and node types.** `db.find(query)` executes exactly once,
   materializes fully, and returns `Snapshot[T]` — the Python reification of a
   core Snapshot Graph. Nodes are **frozen instances of the user's own entity
   classes** — plain values, shareable and serializable. Pydantic
@@ -2638,7 +2638,7 @@ or descriptor authoring form and performs no audit stamping.
 ### Snapshot results
 
 - **Eager materialized collections.** Query construction is side-effect-free;
-  execution happens exactly at `db.find(op)` and returns a value. Roots are
+  execution happens exactly at `db.find(query)` and returns a value. Roots are
   reached only through `Snapshot[T]`'s three accessors; `results()` returns a
   real built-in `list[T]` the caller owns (fresh copy per call — the container
   accessor is unaffected by node immutability). Included to-many
@@ -2669,7 +2669,7 @@ or descriptor authoring form and performs no audit stamping.
   `concurrency="locking"`, `retry_optimistic_conflicts=False` — and inherit
   the active transaction's settings when this call joins one*. The closure
   receives the Parallax Transaction (`def fn(tx): ...`),
-  `tx.find(op)` reads inside the transaction (participating per the selected
+  `tx.find(query)` reads inside the transaction (participating per the selected
   mode), and the call returns a `TransactionResult[T]` carrying that callback's
   `.value` **only after a durable commit** — on rollback, or on commit failure,
   the call raises instead of returning the value as though durable. A `with`-block demarcation is
@@ -3244,13 +3244,13 @@ or descriptor authoring form and performs no audit stamping.
   flavor — there is no matching set to select):
 
   ```python
-  tx.update_where(op, Account.balance.set(Decimal("0.00")))  # non-temporal
-  tx.delete_where(op)  # non-temporal
-  tx.terminate_where(op)  # Transaction-Time-Only
-  tx.update_where(op, Position.px.set(x), valid_from=v)  # Bitemporal plain
-  tx.terminate_where(op, valid_from=v)
-  tx.update_until_where(op, Position.px.set(x), valid_from=v, until=u)
-  tx.terminate_until_where(op, valid_from=v, until=u)
+  tx.update_where(query, Account.balance.set(Decimal("0.00")))  # non-temporal
+  tx.delete_where(query)  # non-temporal
+  tx.terminate_where(query)  # Transaction-Time-Only
+  tx.update_where(query, Position.px.set(x), valid_from=v)  # Bitemporal plain
+  tx.terminate_where(query, valid_from=v)
+  tx.update_until_where(query, Position.px.set(x), valid_from=v, until=u)
+  tx.terminate_until_where(query, valid_from=v, until=u)
   ```
 
   Assignments belong to the **assignment-bearing** verbs alone —

@@ -4,8 +4,8 @@
 # through row membership (the top two by qty are ids 42 and 5), so the
 # order-insensitive result comparison still proves the directive. `order by ...
 # limit ?` is identical SQL on Postgres and MariaDB, so both dialects share one
-# `then.statements` entry — the pagination-parity witness and the row-limit decision
-# point of the m-dialect seam.
+# `then.statements` entry — the row-cap parity witness and the row-limit
+# decision point of the m-dialect seam.
 model: models/orders.yaml
 tags: [m-object-query, m-predicate, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
