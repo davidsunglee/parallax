@@ -105,8 +105,8 @@ observes the original, pre-transaction rows.
 ## Write instruction vocabulary
 
 Every write a unit of work buffers — from any frontend, keyed or predicate-selected
-— is a neutral **write instruction**, the write-side analogue of the Predicate
-algebra. The canonical, language-neutral shapes are hosted in
+— is a neutral **write instruction**, the write-side analogue of the Object
+Query. The canonical, language-neutral shapes are hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json), mirroring
 how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
 `m-conformance-adapter` reference that shape rather than redefining it. There are two:

@@ -308,13 +308,13 @@ def entity_by_name(model: Metamodel, name: str) -> EntityMetadata | None:
     never a protocol method: the accepted ``Metamodel`` seam itself stays
     Identity-keyed and accepts no name string.
 
-    This is the rule for an Entity spelling in a PREDICATE OR QUERY REFERENCE
-    position, and the only one: validation and lowering both resolve such a
-    spelling here, which is what makes "preflight accepted this reference" imply
-    "lowering resolves it".
+    This is the rule for an Entity spelling in a REFERENCE position — a
+    predicate's, a query's, or a write instruction's — and the only one:
+    validation and lowering both resolve such a spelling here, which is what
+    makes "preflight accepted this reference" imply "lowering resolves it".
     :func:`~parallax.core.metamodel.resolve_entity_reference` is the DECLARATION
     rule and answers a different question — what a reference means where it was
-    declared — so it never adjudicates a reference a predicate or query carries.
+    declared — so it never adjudicates a reference position.
     """
     bare: EntityMetadata | None = None
     bare_matches = 0

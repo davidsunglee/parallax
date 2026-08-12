@@ -1,8 +1,9 @@
 # Write instructions are hosted in m-unit-work, and cases declare compile eligibility
 
-Reads have a canonical, language-neutral intermediate representation — the Predicate
-algebra, pinned by `predicate.schema.json` and hosted by `m-predicate`. Writes did not:
-the keyed `writeSequence` shape and the predicate-selected write shape lived only inside
+Reads have a canonical, language-neutral intermediate representation — the Object
+Query, pinned by `object-query.schema.json` and hosted by `m-object-query`, carrying a
+`m-predicate` node as its selection clause. Writes did not: the keyed `writeSequence`
+shape and the predicate-selected write shape lived only inside
 `compatibility-case.schema.json`, their instant surface overloaded (`at` meant the
 processing instant on an audit-only step but the business-from on a bitemporal
 `insertUntil`, and the business axis was spelled both `businessAt` and `businessFrom`).
@@ -15,8 +16,8 @@ Two coupled decisions resolve these gaps.
 
 First, the write side gets a canonical IR **hosted, not moduled**. The instruction
 vocabulary is extracted into [`core/schemas/write-instruction.schema.json`](../../core/schemas/write-instruction.schema.json)
-— the write-side analogue of `predicate.schema.json` — and its normative prose lands as
-a section of `m-unit-work`, whose defining job is buffering exactly these instructions
+— the write-side analogue of `object-query.schema.json` — and its normative prose lands
+as a section of `m-unit-work`, whose defining job is buffering exactly these instructions
 and which already depends on `m-predicate` (making an embedded predicate legal
 vocabulary). This adds no DAG node, no case re-tagging, and no canonical-claim churn,
 mirroring how `m-predicate` hosts the predicate schema. The canonical schema makes the

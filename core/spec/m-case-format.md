@@ -1009,7 +1009,7 @@ expected lowering, never the source from which an adapter deduces the write.
 The canonical write-instruction vocabulary — this predicate-selected shape and
 the keyed `writeSequence` shape — is **hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json)**
-(`m-unit-work`, the write-side analogue of `predicate.schema.json`); this document
+(`m-unit-work`, the write-side analogue of `object-query.schema.json`); this document
 references that canonical shape rather than redefining it. `validFrom` is the
 Valid-Time lower bound and `until` the bounded operation's exclusive Valid-Time
 upper bound. `at` is harness/Clock-supplied Transaction-Time context, never an
