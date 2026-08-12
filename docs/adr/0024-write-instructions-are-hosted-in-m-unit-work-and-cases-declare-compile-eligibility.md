@@ -19,7 +19,7 @@ vocabulary is extracted into [`core/schemas/write-instruction.schema.json`](../.
 a section of `m-unit-work`, whose defining job is buffering exactly these instructions
 and which already depends on `m-predicate` (making an embedded predicate legal
 vocabulary). This adds no DAG node, no case re-tagging, and no canonical-claim churn,
-mirroring how `m-predicate` hosts the operation schema. The canonical schema makes the
+mirroring how `m-predicate` hosts the predicate schema. The canonical schema makes the
 instant surface **axis-explicit** — business bounds named uniformly `businessFrom` /
 `businessTo`, and the processing instant defined as harness / Clock-supplied context
 rather than an instruction field — and defines a serde round-trip contract. The corpus's

@@ -9,7 +9,7 @@
 # Two surface re-expressions of the SAME grouped intent that an implementation's
 # serde might emit — a "prefix" and a "fluent" spelling. They differ only in
 # object-key authoring order (operand order is identity-significant and kept the
-# same); canonicalization sorts keys, so both MUST collapse to `operation` above.
+# same); canonicalization sorts keys, so both MUST collapse to the `objectQuery` above.
 # The harness asserts this dialect-agnostically (layer 4c), so the prefix-vs-
 # fluent precedence-fidelity contract lives in this fixture instead of bespoke
 # test code.

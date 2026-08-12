@@ -293,7 +293,8 @@ def _conformance_private_reaches() -> dict[tuple[str, str], set[str]]:
 
     A module counts as private when any dotted segment after the distribution's
     top package starts with an underscore, so both
-    ``parallax.core.entity._query`` and a future ``parallax.core._x.y`` are seen.
+    ``parallax.core.object_query._fluent`` and a future ``parallax.core._x.y``
+    are seen.
     """
     reached: dict[tuple[str, str], set[str]] = {}
     for imported in _declared_imports(_sources(_CONFORMANCE_SRC)):

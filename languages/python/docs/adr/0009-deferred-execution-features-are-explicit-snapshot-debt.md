@@ -8,8 +8,8 @@ debt: a Feature already claimed by the active slice but missing in code is a
 defect and cannot be listed. This state belongs neither to the database
 provider, Dialect, connected model, nor leased Database Port because it describes
 Snapshot execution completeness rather than provider variability. Snapshot
-classifies its privately lowered canonical operation against this set; the
-lifecycle-neutral Object Query carries no Snapshot feature tags. The set is one
+classifies the canonical Object Query it receives against this set; the
+lifecycle-neutral query itself carries no Snapshot feature tags. The set is one
 package-owned constant shared by every Database, with no application,
 environment, provider, or adapter customization. An entry is added only with
 the defining core behavior and Feature tag, explicit slice deferral, Python

@@ -18,7 +18,7 @@ A language target is credible when it can show all of the following:
 - A completed language spec with one lifecycle profile, an exact canonical
   Conformance Slice claim, complete source and artifact topology maps, and no
   unresolved markers.
-- Canonical metamodel and operation serde in JSON and YAML.
+- Canonical metamodel and Object Query serde in JSON and YAML.
 - Runtime metamodel introspection over the same descriptor shape used by the
   corpus.
 - SQL generation that emits the expected per-dialect golden
@@ -204,12 +204,12 @@ or walking skeleton, never a Conformance Slice. A useful tracer is:
 
 1. Parse `account.yaml`.
 2. Parse `m-op-algebra-002-eq.yaml`.
-3. Build the operation tree.
+3. Build the Object Query.
 4. Emit canonical Postgres SQL and binds.
 5. Execute through the abstract port and selected adapter.
 6. Compare the observed rows.
 
-The tracer proves that descriptor loading, operation serde, SQL compilation,
+The tracer proves that descriptor loading, query serde, SQL compilation,
 adapter composition, reset, fixture load, and result normalization connect
 end-to-end. It does not weaken or rename the canonical claim.
 
@@ -246,7 +246,7 @@ partition with the scaffold. At each milestone:
    adapter against a real database.
 3. Update the coverage partition so exercised cases plus reasoned skips equal
    the active slice, with no stale case IDs or empty reasons.
-4. Keep the no-drift guard between idiomatic operations and corpus operations
+4. Keep the no-drift guard between idiomatic queries and corpus queries
    green.
 5. Regenerate the Usage Guide from suite source and run its drift check.
 

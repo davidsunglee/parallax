@@ -159,7 +159,7 @@ def a_finite_transaction_time_pinned_view_is_read_only(db: Database) -> None:
     as they do the supplemental history proof below.
 
     What it proves that the wire lane cannot: the mutate step's refusal graded on
-    the scenario lane is derived from the STEP's own find operation, over
+    the scenario lane is derived from the STEP's own find query, over
     class-free neutral nodes that carry no lifecycle state at all — a path that
     never reaches ``edit``. Here the pin travels on the value, so the refusal is
     the one an ordinary developer receives, and it is the finite-Transaction-Time

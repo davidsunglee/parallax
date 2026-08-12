@@ -34,7 +34,7 @@ rather than contingent.
 
 Two rules make it checkable by reading this file alone. **Nothing here lowers a
 predicate**: the module imports no predicate lowering, and contains no `match`
-over the node union — the one operation node it inspects is a TOP-LEVEL `narrow`,
+over the node union — the one Predicate node it inspects is a TOP-LEVEL `narrow`,
 and only to resolve the read's position, never to descend into it. **Nothing here
 binds**, and that is now checked rather than asserted: lowering state reaches
 this module through exactly one signature, :func:`tag_guard`, and it arrives as a
@@ -405,14 +405,14 @@ def narrow_position(
 ) -> InheritancePositionView:
     """The projection a `narrow`'s authored ``to`` list denotes.
 
-    Each authored name is an operation reference and resolves model-wide by
+    Each authored name is a query reference and resolves model-wide by
     `entity_by_name`'s rule, never into the queried Entity's own namespace, and
     the facet resolves the members' union to the position's canonical effective
     concrete-subtype set and its projection supersets.
 
     `validate_operation` runs upstream and guarantees the resolved set is
     non-empty and a subset of the active position (`m-predicate` "the four-step
-    validation rule") before this compiler ever sees the operation, so this need
+    validation rule") before this compiler ever sees the node, so this need
     only resolve — never re-validate.
     """
     members = _referenced_entities(model, to)

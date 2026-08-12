@@ -6,7 +6,7 @@ assembles statements around the fragment this module returns. So this file holds
 the package's only RECURSIVE dispatch over the operation union, and its only
 recursion — which is what makes "where does this node get lowered?" a question
 with one answer. (`_compile_inheritance_read` carries the package's only other
-`match`, selecting a plan type rather than an operation node.)
+`match`, selecting a plan type rather than a Predicate node.)
 
 **The resolution scope is the dispatch argument.** :data:`ResolutionScope` is
 either an :class:`EntityScope` (an active entity, its alias, and whether this

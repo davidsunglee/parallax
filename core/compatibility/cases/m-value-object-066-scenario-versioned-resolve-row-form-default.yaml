@@ -1,7 +1,7 @@
 # Scenario-step ROW-FORM DEFAULT over a value-object-bearing VERSIONED entity
 # (m-value-object + m-opt-lock + m-unit-work + m-sql "Read result form"): the internal
 # materialized-predicate-write resolving read OMITS the owner's `address` Document
-# slot, while the managed find one step earlier — the SAME operation over the SAME
+# slot, while the managed find one step earlier — the SAME query over the SAME
 # row — projects it. Postgres AND MariaDB.
 #
 # The deliberate counterpart of m-value-object-047, which pins the one WIDENING of
@@ -20,7 +20,7 @@
 # The predicate is `all` deliberately. Subscriber's only members are its key, the
 # framework-owned version, and the document, so there is no domain scalar to filter on
 # and an unfiltered set delete is the honest set-based shape here — and it leaves steps
-# 0 and 1 issuing the IDENTICAL operation, so their goldens differ in exactly one token,
+# 0 and 1 issuing the IDENTICAL query, so their goldens differ in exactly one token,
 # `, t0.address`. That one token is the whole observable content of the row-form
 # default: nothing else about the two reads varies. Subscriber's fixture holds a single
 # row (the model's own optimistic-conflict case, m-value-object-046, owns it), so the
@@ -29,7 +29,7 @@
 #      so its projection carries the whole `address` document last (id, version,
 #      address), which the harness decodes into its declared composite on both
 #      dialects.
-#   1  find (the SAME operation) : the materialized-predicate-write RESOLVING read —
+#   1  find (the SAME query) : the materialized-predicate-write RESOLVING read —
 #      ROW-FORM. It observes each matched row's pk + version to plan the per-row delete
 #      (ADR 0014) and constructs no instance, so it projects (id, version) and OMITS
 #      `address`, even though Subscriber owns a value object — the point of the
@@ -43,7 +43,7 @@
 #      columns, so the write is planned ENTIRELY from that narrow read — had planning
 #      needed the document, these binds could not have been produced from it. That is
 #      what makes the narrow projection load-bearing rather than merely permitted.
-#   3  find (the SAME operation) : verify — INSTANCE-FORM again, the same form and the
+#   3  find (the SAME query) : verify — INSTANCE-FORM again, the same form and the
 #      same golden as step 0. The row is gone, so it returns nothing: an empty read
 #      that asserts the gated delete landed (a gate matching no row would leave the
 #      subscriber behind and fail here).

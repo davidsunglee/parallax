@@ -5,7 +5,7 @@
 #
 # Targeting the CONCRETE subtype DepositRate directly (never the abstract root Rate)
 # is an ordinary single-table read of `deposit_rate` — no union, no tag, no
-# familyVariant (m-inheritance "Physical mapping"). The operation pins `dimension:
+# familyVariant (m-inheritance "Physical mapping"). The query pins `dimension:
 # DepositRate.transaction-time` — DepositRate's OWN class-name prefix over an axis it
 # never locally declares (Rate, the root, does) — proving the inherited spelling
 # resolves. Pinning transaction-time to 2024-01-15 (inside the strengthened

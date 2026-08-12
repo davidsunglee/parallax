@@ -191,8 +191,8 @@ class WriteAssignment:
 
 @dataclass(frozen=True, slots=True)
 class PredicateSelection:
-    """The entity a predicate-selected write begins from plus its bare
-    ``m-predicate`` predicate (a canonical operation node).
+    """The entity a predicate-selected write begins from plus its
+    ``m-predicate`` selection (a canonical Predicate node).
 
     This is the instruction-level carrier a buffered :class:`PredicateWrite`
     authors, distinct from the finalized :class:`~parallax.core.unit_work.
@@ -554,16 +554,18 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     """Validate an instruction against the metamodel: its selecting predicate,
     then its member names.
 
-    A predicate-selected instruction's ``target.predicate`` is measured twice,
-    in the order `m-case-format` states ("The model-aware validator validates
-    the predicate ..., checks entity scope and bare-predicate rules, [then]
-    rejects ... unassignable assignments"), and BEFORE the assignments for that
-    reason:
+    A predicate-selected instruction's ``target.predicate`` is measured BEFORE
+    the assignments, in the order `m-case-format` states ("The model-aware
+    validator validates the predicate ... and checks its entity scope, [then]
+    rejects ... unassignable assignments"):
 
     - the WHOLE ``validate_operation`` vocabulary from its own resolved root —
       an attribute reference outside the active position, an ambiguous Entity
       spelling, an inverted ``between`` window, a literal disagreeing with its
-      member's declared type;
+      member's declared type. There is no separate rule refusing a query-wide
+      clause: ``target.predicate`` is a :class:`PredicateNode`, and ordering, the
+      cap, Temporal Selections, result narrowing, and Includes have no spelling
+      in that type or in the schema it deserializes from;
     An inheritance-family target is then rejected
     (``subtype-write-set-based-unsupported``, `m-inheritance` "Per-object
     writes are keyed; set-based inheritance writes are out of scope") — after

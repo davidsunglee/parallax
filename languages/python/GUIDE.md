@@ -194,7 +194,7 @@ self-contained without a system `libpq`.
   in `parallax.core.predicate` (narrow / subtype-attribute position tracking,
   value-object path grammar + typed-literal checks, including the scoped
   `nestedExists`/`nestedNotExists` `where`), the engine's `run_rejected_case`
-  three-way `when.operation`/`when.model`/`when.write` dispatch (an
+  three-way `when.objectQuery`/`when.model`/`when.write` dispatch (an
   exactly-one guard over the recognized `when` keys), and a Docker-free
   rejected sweep. Current counts: unit lane 1219, compile sweep 110, rejected
   sweep 21 passed + 10 skipped (the `when.write` cases, reasoned-skipped to
@@ -552,7 +552,7 @@ self-contained without a system `libpq`.
   (version) target is rejected, and a scalar value must conform to its
   declared neutral type, identically on both the typed and engine/serialized
   paths. The conformance engine's materializing-pair check now compares the
-  preceding find's canonical operation against the write's own target
+  preceding find's canonical predicate against the write's own target
   predicate, not just the entity. Stale prose (a "predicate writes await
   increment 5" framing, and the now-removed `handle.predicate_write_refusal`
   name) was freshened in `GUIDE.md` itself, `conformance/sweep.py`, and

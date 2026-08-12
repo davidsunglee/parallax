@@ -77,12 +77,13 @@ their ordinary English meaning and impose no requirement.
 ## How to read a compatibility case
 
 A compatibility case is a YAML file under `core/compatibility/cases/`. It binds
-a model descriptor, a canonical **operation** (an instance of the `m-predicate`
-algebra), and the expected outcome. It carries **three independent things** the
-harness cross-checks against a freshly-provisioned real database:
+a model descriptor, a canonical **Object Query** (an `m-object-query` document,
+carrying its selection as an `m-predicate` node), and the expected outcome. It
+carries **three independent things** the harness cross-checks against a
+freshly-provisioned real database:
 
 - **`then.statements`** — the *optimized* golden SQL an implementation is
-  **expected to emit** for the operation, as an ordered list of `{sql, binds}`
+  **expected to emit** for the query, as an ordered list of `{sql, binds}`
   statement entries. This is the normative SQL contract a real ORM is graded
   against; each entry's `sql` is **keyed by dialect** (`postgres:`, with more
   behind the `m-dialect` seam over time) and its `binds` are authored inline.
@@ -98,7 +99,7 @@ harness cross-checks against a freshly-provisioned real database:
 The harness asserts, per case:
 `rows(then.statements[].sql[dialect]) == rows(then.referenceSql) == then.rows`,
 that the golden SQL is already in canonical normalized form, and that both the
-operation and the model descriptor survive a serde round-trip. See
+query and the model descriptor survive a serde round-trip. See
 [`m-case-format.md`](m-case-format.md) for the full
 contract and the case-envelope schema.
 

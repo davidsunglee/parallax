@@ -3292,7 +3292,7 @@ def test_run_scenario_case_rejects_a_materializing_pair_whose_find_predicate_dif
     # `run_scenario_case` entry point: the look-ahead pairing decision
     # (`run_scenario_case`) checks only the query's `target`, so a same-entity,
     # DIFFERENT-predicate pair still routes into `_run_materializing_pair`,
-    # whose own canonical-operation comparison is what catches it.
+    # whose own canonical-predicate comparison is what catches it.
     case = _synthetic_write(
         "scenario",
         {
@@ -4908,7 +4908,7 @@ def test_grade_mutate_step_rejects_an_on_index_naming_no_earlier_find() -> None:
 
 # --------------------------------------------------------------------------- #
 # Docker-free error paths (m-conformance-adapter's lane-honest ``EngineError``  #
-# wrapping): a compiled/found operation that fails inside `m-sql` / `m-navigate`#
+# wrapping): a compiled/found query that fails inside `m-sql` / `m-navigate`  #
 # / `m-temporal-read` is caught and re-raised as one `EngineError`, never a     #
 # leaked lower-layer exception type.                                           #
 # --------------------------------------------------------------------------- #

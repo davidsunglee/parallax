@@ -36,9 +36,10 @@ __all__ = ["check", "main"]
 
 _AMBIGUOUS_REFERENCE_RULE = "reference-ambiguous-entity-name"
 
-# The result-shaping and temporal wrappers plus the boolean combinators, each
-# named with the member carrying the operation(s) it wraps. A wrapper adds no
-# reference of its own, so one table serves every one of them.
+# Every member carrying a nested predicate: a boolean combinator's or a
+# Predicate-scoped narrow's `operand`, a navigation's `op`, and an element
+# scope's `where`. A carrier adds no reference of its own, so one table serves
+# all of them.
 _OPERAND_MEMBERS = ("operand", "op", "where")
 
 
@@ -167,7 +168,7 @@ class _Report:
 # --------------------------------------------------------------------------- #
 # The predicate / query walks: every reference position, with its path.        #
 # --------------------------------------------------------------------------- #
-def _walk_operation(node: Any, where: str, report: _Report, declarations: _Declarations) -> None:
+def _walk_predicate(node: Any, where: str, report: _Report, declarations: _Declarations) -> None:
     if not isinstance(node, Mapping) or len(node) != 1:
         return
     tag, body = next(iter(node.items()))
@@ -182,12 +183,12 @@ def _walk_operation(node: Any, where: str, report: _Report, declarations: _Decla
         report.member(body.get("rel"), f"{at}.rel", declarations)
     elif tag in ("and", "or"):
         for index, operand in enumerate(_items(body.get("operands"))):
-            _walk_operation(operand, f"{at}.operands[{index}]", report, declarations)
+            _walk_predicate(operand, f"{at}.operands[{index}]", report, declarations)
     elif tag == "narrow":
         _walk_selection(body.get("to"), f"{at}.to", report, declarations)
     for member in _OPERAND_MEMBERS:
         if member in body:
-            _walk_operation(body[member], f"{at}.{member}", report, declarations)
+            _walk_predicate(body[member], f"{at}.{member}", report, declarations)
 
 
 def _walk_selection(selection: Any, at: str, report: _Report, declarations: _Declarations) -> None:
@@ -200,7 +201,7 @@ def _walk_query(node: Any, where: str, report: _Report, declarations: _Declarati
     if not isinstance(node, Mapping):
         return
     report.entity(node.get("target"), f"{where}.target", declarations)
-    _walk_operation(node.get("predicate"), f"{where}.predicate", report, declarations)
+    _walk_predicate(node.get("predicate"), f"{where}.predicate", report, declarations)
     _walk_selection(node.get("narrowTo"), f"{where}.narrowTo", report, declarations)
     for index, key in enumerate(_items(node.get("orderBy"))):
         if isinstance(key, Mapping):
@@ -225,7 +226,7 @@ def _items(node: Any) -> Iterator[Any]:
 
 
 # --------------------------------------------------------------------------- #
-# The case walk (m-case-format): routing, operations, and write instructions.  #
+# The case walk (m-case-format): routing, queries, and write instructions.    #
 # --------------------------------------------------------------------------- #
 def _walk_case(document: Any, report: _Report, declarations: _Declarations) -> None:
     if not isinstance(document, Mapping):
@@ -283,7 +284,7 @@ def _walk_write(node: Any, at: str, report: _Report, declarations: _Declarations
     target = node.get("target")
     if isinstance(target, Mapping):
         report.entity(target.get("entity"), f"{at}.target.entity", declarations)
-        _walk_operation(target.get("predicate"), f"{at}.target.predicate", report, declarations)
+        _walk_predicate(target.get("predicate"), f"{at}.target.predicate", report, declarations)
     for index, assignment in enumerate(_items(node.get("assignments"))):
         if isinstance(assignment, Mapping):
             report.member(assignment.get("attr"), f"{at}.assignments[{index}].attr", declarations)

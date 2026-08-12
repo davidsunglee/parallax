@@ -69,7 +69,7 @@ _IDENTITY_DEFS = cast(
 )["$defs"]
 
 
-# One operation node per reference grammar, each carrying the reference under test
+# One predicate node per reference grammar, each carrying the reference under test
 # at the position that grammar governs and nothing else that could fail. The
 # element-relative slot is a scoped `where`'s own path, so its node fixes a valid
 # outer `nestedExists` path and varies only the inner one.
@@ -348,7 +348,7 @@ def test_a_code_outside_the_closed_query_set_cannot_be_raised() -> None:
             (["not-a-mapping"], "must be a mapping"),
             ({"eq": {}, "notEq": {}}, "exactly one key"),
             ({"eq": "not-a-mapping"}, "body must be a mapping"),
-            ({"mystery": {}}, "unknown operation node"),
+            ({"mystery": {}}, "unknown predicate node"),
             ({"eq": {"attr": 1, "value": 2}}, "must be a string"),
             ({"in": {"attr": "Order.id", "values": []}}, "non-empty list"),
             ({"and": {"operands": [{"all": {}}]}}, "at least two"),

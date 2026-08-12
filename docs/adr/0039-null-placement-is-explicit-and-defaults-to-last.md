@@ -5,8 +5,8 @@ Direction is Ascending or Descending; Null Placement is Nulls First or Nulls
 Last. Omitted direction means Ascending, and omitted placement means Nulls Last
 for either direction.
 
-The values are shared across canonical operation Sort Keys and declared
-relationship ordering. The operation `orderBy` key and the Metamodel
+The values are shared across canonical Object Query Sort Keys and declared
+relationship ordering. The query's `orderBy` key and the Metamodel
 relationship-order term both admit an optional `nulls: first | last` field.
 Omission retains the default while an explicitly requested placement is what
 the query observes. Language frontends may provide idiomatic builders, but they

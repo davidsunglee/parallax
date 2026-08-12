@@ -129,8 +129,8 @@ class QueryDefinitionError(ValueError):
 
     This is the query-authoring family, disjoint by the question it answers from
     the two wire-and-model families beside it: ``OperationError`` says a
-    serialized operation is malformed, and ``OperationRejectedError`` says a
-    well-formed operation is illegal against a model.
+    serialized document is malformed, and ``OperationRejectedError`` says a
+    well-formed one is illegal against a model.
     """
 
     def __init__(self, *, code: str, message: str) -> None:

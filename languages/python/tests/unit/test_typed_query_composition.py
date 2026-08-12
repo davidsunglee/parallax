@@ -9,10 +9,10 @@ rejection in ONE test — static and runtime agreement proved by construction
 rather than in two processes that never meet.
 
 Some suppression families here have no runtime twin, and each is deliberate for
-one reason: the composition the parameter refuses lowers to a VALID canonical
-operation, so the wire carries no record of the mistake and no preflight rule
+one reason: the composition the parameter refuses builds a VALID canonical
+query, so the wire carries no record of the mistake and no preflight rule
 could restate it. Which ones those are is settled by a test rather than by a
-count — lower the refused spelling and the accepted one, and they are one
+count — canonicalize the refused spelling and the accepted one, and they are one
 document — and `python.md` §2 states that test, names the same families as
 examples, and says plainly that the list is open. A case belongs here when it
 fails that test; adding one is the obligation, not keeping a tally.
@@ -35,7 +35,7 @@ no position on the wire, so nothing downstream can tell `Dog.all` from
 the wrong position is refused. Another is clause order — a `where` argument or a
 sort key written before the `narrow` that scopes it — because an Object Query
 retains clauses rather than wrapping them, so the refused spelling and the
-sanctioned one lower to one operation. Another is `ObjectQuery.narrow`'s
+sanctioned one lower to one query. Another is `ObjectQuery.narrow`'s
 conservative variadic overload, which leaves the result parameter where it was
 for any subtype list the fixed one-through-three overloads cannot read, while the
 narrow it authors lowers exactly as the readable spelling's does — so a later
@@ -56,7 +56,7 @@ model-aware validator states these rules, and it is what covers the wire path
 and any untyped caller identically.
 
 The mechanism under test is variance. `Predicate[E]` holds only a canonical
-operation node, so `E` appears in no field and inference would read it as
+Predicate node, so `E` appears in no field and inference would read it as
 bivariant; the checker-only phantom in `entity._expressions` puts `E` in an input
 position and makes it contravariant. Contravariance IS the inheritance rule: an
 ancestor's member addresses every descendant position, a descendant's member
@@ -695,9 +695,9 @@ def test_the_variadic_narrow_tail_leaves_the_result_where_it_was() -> None:
 
 
 def test_ordering_before_narrowing_is_refused_statically_and_only_statically() -> None:
-    # The sort-key twin of the narrow clause's own no-retroactive-scope rule: a
+    # The sort-key twin of the narrow clause's own no-retroactive-scope rule: an
     # Object Query retains clauses rather than wrapping them, so ordering-then-
-    # narrowing and narrowing-then-ordering lower to ONE canonical operation and
+    # narrowing and narrowing-then-ordering lower to ONE canonical query and
     # no model-aware rule can refuse one while accepting the other. What refuses
     # the wrong order is the result parameter the receiver carries when the call
     # is written, which is why the suppression below has no runtime twin.

@@ -1,10 +1,12 @@
 """Model-aware validation for predicate-selected write instructions.
 
-The case schema proves the instruction's structural shape.  This module resolves
-that neutral shape against a descriptor before any SQL is emitted: the predicate
-must be a bare predicate over the named target, assignments must name assignable
-domain attributes exactly once, and temporal coordinates must fit the target's
-profile.
+The case schema proves the instruction's structural shape — including that the
+selection is exactly an `m-predicate` node, since a set-based write shapes no
+result and the Object Query clauses have no spelling in that position.  This
+module resolves the neutral shape against a descriptor before any SQL is emitted:
+the predicate must resolve over the named target, assignments must name
+assignable domain attributes exactly once, and temporal coordinates must fit the
+target's profile.
 """
 
 from __future__ import annotations

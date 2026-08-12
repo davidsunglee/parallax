@@ -216,7 +216,7 @@ class Partition:
 
 
 # Registered idiomatic examples mirror corpus cases and are checked by the
-# operation no-drift guard, which serializes each statement to its case operation.
+# query no-drift guard, which serializes each example to its case's Object Query.
 EXAMPLES: Final[list[Example]] = [
     # The Predicate / temporal-read / navigate / single-concrete-inheritance
     # read examples: each is an executable read story
@@ -1030,7 +1030,7 @@ _VO_PREDICATE_SIBLING_REASON: Final[str] = (
 _VO_UNKNOWN_NESTED_FIELD_REASON: Final[str] = (
     "`Customer.contact` (the invalid path's first segment) is not a declared "
     "attribute at all: `vm.Customer.contact.city == ...` raises a plain Python "
-    "`AttributeError` at attribute-access time — before any operation tree exists to "
+    "`AttributeError` at attribute-access time — before any predicate exists to "
     "validate, so the corpus's own invalid shape (a schema-valid but model-unknown "
     "nested path) has no idiomatic spelling to build"
 )

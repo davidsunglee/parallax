@@ -27,7 +27,7 @@ Within one **open** unit of work:
 - A repeated lookup for an already-managed key returns the managed object.
 - **Query materialization coalesces through the map**: a SQL-producing read
   still executes its statement (this module makes **no round-trip-elimination
-  claim** — an operation-to-result cache is `m-process-cache`, deferred), but
+  claim** — a query-to-result cache is `m-process-cache`, deferred), but
   each returned row resolves through the identity map, reusing the managed
   object where the key is already interned.
 
@@ -127,5 +127,5 @@ unit of work on the idiomatic surface.
 
 | Case | What it proves |
 |---|---|
-| same-transaction identity | two *different* operations resolving one row (a PK find, a unique-attribute find) denote the same logical object (`sameObjectAs`), at one round trip each — identity without any query-cache claim |
+| same-transaction identity | two *different* queries resolving one row (a PK find, a unique-attribute find) denote the same logical object (`sameObjectAs`), at one round trip each — identity without any query-cache claim |
 | coordinate coexistence | a latest-pinned read and a finite past pin of the same primary key coexist as distinct pinned views (each milestone's own rows); a repeat of the latest pin resolves the same logical object as the first |

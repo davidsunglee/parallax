@@ -2,7 +2,7 @@
 
 **Status: deferred.** `m-process-cache` is the in-process cache layer: the
 **identity cache** (one interned object per primary key) and the **query cache**
-(an operation mapped to its result list, so a repeated equal find costs no round
+(a query mapped to its result list, so a repeated equal find costs no round
 trip), plus their **invalidation** on write. These are process-level semantics
 layered on the unit of work, not unit-of-work semantics themselves. The
 **transaction-scoped floor** of the identity guarantee — one managed object per

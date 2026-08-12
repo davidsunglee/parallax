@@ -1,4 +1,4 @@
-"""Immutable operation nodes built from class-level member access.
+"""Immutable Predicate nodes built from class-level member access.
 
 Class-level attribute access yields an :class:`AttributeExpr` (the SQLAlchemy
 ``Mapped[T]`` pattern): the seed of an operation predicate, strict-Pyright-clean

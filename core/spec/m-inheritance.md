@@ -331,22 +331,23 @@ polymorphic position. It runs before SQL and applies these steps:
    them in canonical concrete-subtype order. Two distinct alternatives whose
    sets intersect are `subtype-selection-overlapping-alternatives`.
 4. Require the union to be non-empty and a subset of the active position. An
-   empty union is `narrow-empty-effective-set`. An escaping operation or path-root
-   selection is `narrow-outside-position`; an escaping navigation or path-segment
-   selection is `narrow-outside-relationship-target`.
+   empty union is `narrow-empty-effective-set`. An escaping result, predicate, or
+   path-guard selection is `narrow-outside-position`; an escaping navigation or
+   path-segment selection is `narrow-outside-relationship-target`.
 
 The pairwise rule is scoped to one selection. Separate sibling selections are
 independent: two deep-fetch root guards may overlap, including sharing one
 concrete subtype, and remain legal. A redundant selection whose union equals the
 active position is also legal.
 
-The three consumers add only their own surrounding behavior:
+The four consumers add only their own surrounding behavior:
 
 | Position | Shape | Active position supplied by | Produces |
 |---|---|---|---|
-| operation | `{ to, operand }` | the current operation position | the position `operand` evaluates over |
-| deep-fetch path root | `{ to }` | the queried root position | a source guard, with no view key |
-| deep-fetch path segment | `{ to }` | the hop's relationship target | a distinct narrowed view key |
+| query result (`narrowTo`) | the bare selection | the query's `target` | the result position, which the predicate and Sort Keys resolve over |
+| predicate (`narrow`) | `{ to, operand }` | the current predicate position | the position `operand` evaluates over |
+| Include Path guard (`appliesTo`) | the bare selection | the queried root position | a source guard, with no view key |
+| Include Path segment (`narrowTo`) | the bare selection | the hop's relationship target | a distinct narrowed view key |
 
 ## Abstract-position reads
 

@@ -477,7 +477,7 @@ def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None
     # MUST, and the bound-ordering MUST). `find-root-value-object` is deliberately
     # absent: a value-object occurrence name is lowercase-initial and an Entity's
     # local name capitalized, so no serialized document can spell a reference rooted
-    # at a value object, and the negative is the operation schema's (see the
+    # at a value object, and the negative is the Predicate schema's (see the
     # regex-level section below). The rule itself stays live for an operation built
     # natively.
     assert {
@@ -1584,7 +1584,7 @@ def test_schema_accepts_a_well_formed_nested_path() -> None:
 
 def test_schema_rejects_empty_path_after_value_object_name() -> None:
     # `Customer.address` has NO field segment after the value-object name — the
-    # `nestedRef` grammar requires at least one, so the operation schema rejects it.
+    # `nestedRef` grammar requires at least one, so the Predicate schema rejects it.
     assert not _op_valid({"nestedEq": {"path": "Customer.address", "value": "x"}})
 
 

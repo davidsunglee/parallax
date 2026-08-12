@@ -23,7 +23,7 @@ a member declares at most a Column Override, never a path — and no escape by
 which one ordinary member opts out of its layout. Temporal axes and optional
 Audit Metadata designate Attributes already declared in the Metamodel; they do
 not introduce storage declarations. Relationships, narrowed relationship views,
-SQL aliases, and `familyVariant` are result or operation concerns and never
+SQL aliases, and `familyVariant` are result or query concerns and never
 become physical slots.
 
 ## Storage Layout selection
@@ -613,7 +613,7 @@ view without adding an answer the branch's Table Layout does not already give.
 Facet and view indexes are immutable and bounded by the accepted model. A
 compiler may intern repeated applicability sets and store slot selections as
 ordinals, but public values preserve structural equality and immutable access.
-Arbitrary position views are operation-scoped and must not create an unbounded
+Arbitrary position views are statement-scoped and must not create an unbounded
 model-lifetime cache.
 
 ## Layout, table-mapping, and physical-column Rule Set

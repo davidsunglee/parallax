@@ -1,7 +1,7 @@
 # Table-per-hierarchy ABSTRACT-ROOT read, INSTANCE-FORM sibling: the developer-surface
 # per-variant node shape (m-inheritance, m-case-format, m-sql).
 #
-# Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
+# Same model, same query, and BYTE-IDENTICAL golden SQL as the row-form original
 # (`m-inheritance-003`) — Payment declares no value objects, so the instance-form
 # Document-slot delta is empty (m-sql *Read projection*). The two lanes diverge only in what
 # `then.graph` asserts: each node carries ONLY its own branch's members (inherited +

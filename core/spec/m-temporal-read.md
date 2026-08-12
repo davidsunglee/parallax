@@ -1,10 +1,10 @@
 # m-temporal-read — As-Of Temporal Reads
 
 `m-temporal-read` owns temporal coordinates and automatically injected as-of
-predicates over half-open intervals. The operation nodes belong to
-`m-predicate`, SQL emission belongs to `m-sql`, infinity representation belongs
-to `m-core`/`m-dialect`, and temporal writes belong to `m-txtime-write` and
-`m-bitemp-write`.
+predicates over half-open intervals. The Temporal Selection clause and its
+canonical encoding belong to `m-object-query`, SQL emission belongs to `m-sql`,
+infinity representation belongs to `m-core`/`m-dialect`, and temporal writes
+belong to `m-txtime-write` and `m-bitemp-write`.
 
 The supported temporal Entity shapes are **Transaction-Time-Only** and
 **Bitemporal**. Valid-Time-Only is not supported. The module's Model Compiler
@@ -15,7 +15,7 @@ Attribute Metadata.
 ## Canonical terminology
 
 The following mapping is exhaustive and normative across core metadata,
-descriptor serde, operations, relationship propagation, language bindings,
+descriptor serde, queries, relationship propagation, language bindings,
 writes, and physical storage:
 
 | Surface | Valid Time | Transaction Time |
@@ -24,7 +24,7 @@ writes, and physical storage:
 | Core dimension | `ValidTime` | `TransactionTime` |
 | Core shape variant | declared by `Bitemporal` | declared by `TransactionTimeOnly` and `Bitemporal` |
 | Descriptor `temporality` deriving it | `bitemporal` | `transaction-time` and `bitemporal` |
-| Predicate `dimension` | `valid-time` | `transaction-time` |
+| Temporal Selection key | `valid-time` | `transaction-time` |
 | Derived start Attribute | `validStart` | `txStart` |
 | Derived end Attribute | `validEnd` | `txEnd` |
 | Framework-fixed start column | `from_z` | `in_z` |
@@ -97,13 +97,14 @@ returns the same values as its root.
 
 Every canonical temporal read names exactly one selection for every dimension
 the queried Entity declares. A selection is an `asOf`, `asOfRange`, or `history`
-node. This completeness rule is model-aware: the operation schema admits the
-individual nodes, while validation against the queried Entity verifies that its
-declared dimensions are covered exactly once.
+value in the query's Temporal Selection clause, keyed by dimension. At most one
+selection per dimension is structural — the clause is a map — while completeness
+is model-aware: validation against the queried Entity verifies that its declared
+dimensions are covered exactly once.
 
 **Latest** is the authoring default for an omitted Transaction-Time selection.
 The authoring surface normalizes that omission to an explicit
-`asOf(transaction-time, Latest)` node before producing the canonical operation.
+`transaction-time: asOf(Latest)` selection before producing the canonical query.
 Latest is the infinity sentinel and lowers to the single current-row predicate
 `end = infinity`.
 
@@ -113,10 +114,10 @@ timeline rather than merely selecting the database's current knowledge. This
 asymmetry follows Parallax's own contract; Reladomo's temporal defaults are
 prior art rather than a second normative surface.
 
-There is no **Now** coordinate or operation variant. A caller may pass a finite
+There is no **Now** coordinate or selection variant. A caller may pass a finite
 instant obtained from its current clock, and that ordinary finite coordinate
 lowers to interval containment, `start <= d and end > d`. It is not synonymous
-with Latest, and canonical descriptor/operation serde never uses `now` as a
+with Latest, and canonical descriptor or query serde never uses `now` as a
 coordinate spelling.
 
 For a dimension pinned to coordinate `d`:
@@ -129,24 +130,25 @@ For a dimension pinned to coordinate `d`:
 The injected temporal terms follow the user predicate in canonical bind order.
 For Bitemporal reads, Valid-Time terms precede Transaction-Time terms.
 
-## Operations
+## Selections
 
 ```text
-asOf(operand, dimension, Latest | finite instant)
-asOfRange(operand, dimension, start, end)
-history(operand, dimension)
+valid-time | transaction-time  ->  asOf(Latest | finite instant)
+                                 | asOfRange(start, end)
+                                 | history
 ```
 
-- `asOf` pins one dimension. Every declared dimension has its own explicit
-  selection in the canonical operation.
+- `asOf` pins one dimension. Every declared dimension carries its own explicit
+  selection in the canonical query.
 - `asOfRange` scans every milestone whose interval overlaps `[start, end)`.
 - `history` removes the injected predicate for its selected dimension and
   returns the full milestone chain.
 
 For a Bitemporal Entity, a query selects both dimensions independently. The
 authoring surface may omit Transaction Time, which normalizes to explicit
-Latest, but it MUST select Valid Time. The canonical nested operation order is
-Valid Time outside Transaction Time, which produces Valid-Time binds first.
+Latest, but it MUST select Valid Time. No selection encloses another — each is
+its dimension's own entry — so ordering comes from the declared axis rank, Valid
+Time before Transaction Time, which produces Valid-Time binds first.
 
 | Valid-Time coordinate | Transaction-Time coordinate | Physical predicate |
 |---|---|---|
@@ -193,7 +195,7 @@ coordinate combinations, propagate pins across relationships, expose finite
 milestone Edges, and verify Transaction-Time-Only and Bitemporal writes without
 changing physical columns or canonical SQL shape.
 
-The temporal specification, descriptor/operation schemas, compatibility cases,
+The temporal specification, descriptor and query schemas, compatibility cases,
 generated artifacts, glossaries, and language specs switch to this vocabulary
 and pass their contract gates before runtime temporal behavior is changed.
 There is no temporary translation that a later dependency-inversion step must

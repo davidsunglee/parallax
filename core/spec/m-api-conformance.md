@@ -19,7 +19,7 @@ substitute for it, and it never touches the grader**. The official conformance
 grade stays contract-driven over the conformance adapter, comparing wire values to
 the corpus oracles. The suite exists because a wire grade deliberately ignores
 developer-facing guarantees — that a returned row is a managed object, that the
-idiomatic query canonicalizes to the corpus operation — and those guarantees need
+idiomatic query canonicalizes to the corpus Object Query — and those guarantees need
 their own proof.
 
 ## Two proof paths
@@ -88,8 +88,8 @@ satisfies each is language-local.
    error, is **graded, not narrated** — including on `harness`-lane cases whose
    reference-identity half the wire grade only skips.
 5. **No-drift guard.** For cases whose behavior is a query, the suite MUST assert
-   that the operation the idiomatic API builds canonically equals the corpus
-   operation for that case. This ties the developer-facing snippet to the graded
+   that the query the idiomatic API builds canonically equals the corpus
+   Object Query for that case. This ties the developer-facing snippet to the graded
    behavior: a snippet that stops matching its case fails the build rather than
    silently drifting into a different query that happens to return the same rows.
 6. **Golden SQL text is out of scope.** The suite MUST NOT assert emitted SQL

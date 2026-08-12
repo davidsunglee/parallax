@@ -4,7 +4,7 @@
 # single aliased table with no predicate. This trivial single-table read omits
 # `then.referenceSql` (its `then.rows` are verifiable by eye) yet exercises the full
 # m-case-format contract end-to-end — schema conformance, golden-SQL equivalence,
-# normalization, and the operation/metamodel serde round-trip — hence the
+# normalization, and the query/metamodel serde round-trip — hence the
 # `m-case-format` tag.
 model: models/orders.yaml
 tags: [m-predicate, m-conformance-adapter, m-case-format, all, slice-snapshot-1, slice-managed-1]

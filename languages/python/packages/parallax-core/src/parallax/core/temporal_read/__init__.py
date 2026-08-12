@@ -14,8 +14,8 @@ boundary passes the query's predicate and Temporal Selections to
 consumed by ``compile_read``.
 
 Every entry point here takes accepted Entity Metadata, and each resolves an
-axis through the same declared lookup, so the wire dimension spelling an
-operation node carries meets the model's own Temporal Dimension in exactly one
+axis through the same declared lookup, so the wire dimension spelling a Temporal
+Selection is keyed by meets the model's own Temporal Dimension in exactly one
 place.
 
 This scope also owns the Temporal Facet: the immutable per-formation view that

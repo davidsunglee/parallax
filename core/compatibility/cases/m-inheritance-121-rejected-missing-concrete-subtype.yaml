@@ -8,7 +8,7 @@
 # `concrete-without-abstract-root` is vacuously satisfied. That is exactly why this
 # needs a rule of its own: only concrete subtypes own rows, so every position in this
 # family resolves over the EMPTY effective concrete set — no read can select a row, no
-# narrow has anything to narrow to, and no write can name a target. The operation-level
+# narrow has anything to narrow to, and no write can name a target. The query-level
 # `narrow-empty-effective-set` names the same emptiness reached by narrowing; this
 # names it reached by composition, and a model-aware validator MUST reject it at
 # formation, before any SQL.

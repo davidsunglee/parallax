@@ -315,8 +315,8 @@ def test_a_guarded_path_keeps_its_root_guard_through_deeper_and_narrowed_hops() 
 
 def test_a_root_guard_outside_the_queried_position_is_rejected_at_the_gate() -> None:
     # A read already narrowed to the Pet branch cannot guard a path to the sibling
-    # WildBoar: the guard is clamped to the active position exactly as an
-    # operation-position narrow is. The suppression is the static half, which
+    # WildBoar: the guard is clamped to the active position exactly as a
+    # predicate-position narrow is. The suppression is the static half, which
     # `include`'s own parameter states — a Relationship Path is covariant in
     # its source, so a sibling's path never reaches this query's position, and an
     # ignore that goes idle fails `just python-typecheck`.
@@ -506,7 +506,7 @@ def test_subtype_attribute_outside_narrow_scope_is_rejected_at_the_gate() -> Non
 def test_a_query_states_no_model_rule_until_it_reaches_a_model() -> None:
     # Authoring reaches no model, so a query carries the very predicate the
     # gated `Document.where(...)` above refuses. That is what lets the
-    # operation-shaping clauses be exercised with no whole model behind them, and
+    # result-shaping clauses be exercised with no whole model behind them, and
     # it is why the rule is stated where the model is certain.
     out_of_scope = im.Invoice.amount_due > 3
     query = build_object_query(EntityIdentity(_DOC_NS, "Document"), (out_of_scope,))
@@ -538,7 +538,7 @@ def test_narrowing_last_is_refused_statically_and_only_statically() -> None:
 # .history() / .as_of_range() + .include(...): the snapshot-history-includes  #
 # Feature is DEFERRED, not invalid (m-snapshot-read forbids any case mandating #
 # its refusal), so the combination builds an ordinary Object Query in either     #
-# call order and lowers to the canonical operation the wire already defines.   #
+# call order and lowers to the canonical document the wire already defines.   #
 # Its refusal is Snapshot's, at execution, and is pinned there                 #
 # (test_snapshot_find.py / test_transaction_reads.py).                         #
 # --------------------------------------------------------------------------- #
@@ -589,9 +589,9 @@ def test_as_of_range_with_includes_builds_in_either_order(query: ObjectQuery[Any
     assert node.includes == _COVERAGES
 
 
-def test_a_deferred_combination_is_a_valid_operation_the_gate_refuses_by_name() -> None:
+def test_a_deferred_combination_is_a_valid_query_the_gate_refuses_by_name() -> None:
     # The gate validates before it classifies, so reaching the deferral at all
-    # proves the operation is legal against the model: an invalid one would have
+    # proves the query is legal against the model: an invalid one would have
     # drawn `OperationRejectedError` one step earlier.
     query = (
         Policy.where(Policy.all).history(TX_TIME).as_of(valid_time=LATEST).include(Policy.coverages)

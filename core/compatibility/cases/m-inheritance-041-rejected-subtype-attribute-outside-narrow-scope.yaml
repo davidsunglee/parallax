@@ -1,11 +1,11 @@
 # Negative (m-inheritance, m-predicate): a concrete-subtype attribute used OUTSIDE a
 # compatible narrowing scope.
 #
-# The operation filters on `Dog.barkVolume` — an attribute declared only on the
+# The query filters on `Dog.barkVolume` — an attribute declared only on the
 # concrete subtype Dog — at the abstract-root position (the whole family {Dog, Cat,
 # WildBoar}), with NO narrow to Dog. Because the effective set is not a subset of the
 # concretes that possess barkVolume ({Dog}), the attribute is not available to every
-# concrete in scope, so a model-aware validator MUST reject the operation pre-SQL
+# concrete in scope, so a model-aware validator MUST reject the query pre-SQL
 # (subtype-attribute-outside-narrow-scope). Wrapping the predicate in a narrow to
 # [Dog] (m-inheritance-012) makes it valid.
 model: models/animal.yaml

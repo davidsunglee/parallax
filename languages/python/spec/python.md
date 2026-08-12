@@ -136,14 +136,14 @@ mutations, exceptions, or exports.
   position exactly is not statable through one, which is where the quantifier's
   interior narrow lands (below). Such a static rejection is restated at run
   time — which is what covers the serialized ingress and any untyped caller —
-  whenever the composition it refuses either reaches the wire as an operation a
+  whenever the composition it refuses either reaches the wire as a query a
   model-aware validator can refuse at execution preflight, or is one the
-  frontend itself refuses with no model at all. Where that composition lowers to
-  a **valid** canonical operation instead, the parameter is the only place the
+  frontend itself refuses with no model at all. Where that composition builds
+  a **valid** canonical query instead, the parameter is the only place the
   mistake is visible and no preflight rule could restate it, because the wire
   carries no record of what was refused. Whether a given rejection is one of
-  those is settled by a **test**, not by membership in a list: lower the refused
-  spelling and the accepted one and compare the canonical operations. Where the
+  those is settled by a **test**, not by membership in a list: canonicalize the
+  refused spelling and the accepted one and compare the resulting queries. Where the
   two are one document, no model-aware rule can refuse either without refusing
   both, and the parameter is the whole of the rule. A rejection lands there
   because lowering discards what the parameter read — the wire records a
@@ -209,8 +209,8 @@ mutations, exceptions, or exports.
   legitimately carry one Identity. A member both declare then lowers to one
   attribute reference at one target from either class, while the parameters hold
   the two classes nominally incompatible — so `TwinLeft.where(TwinRight.id == 1)`
-  is a static error whose operation is the one `TwinLeft.where(TwinLeft.id == 1)`
-  produces. The remedy is the same one: spell every term through the class the
+  is a static error whose canonical query is the one
+  `TwinLeft.where(TwinLeft.id == 1)` produces. The remedy is the same one: spell every term through the class the
   query is rooted at. A comparison's value
   parameter is deliberately not
   narrowed to the member's declared Python type: a predicate's value is a wire
@@ -468,7 +468,7 @@ mutations, exceptions, or exports.
   `where(...)`.
   `Entity.all` is the
   non-callable, target-bound Predicate spelling an explicitly
-  unfiltered query and lowers to the canonical `all` operation:
+  unfiltered query and lowers to the canonical `all` predicate:
   `Animal.where(Animal.all)`. It is legal only as the sole `where(...)`
   argument. Combining it with another Predicate, whether variadically or
   through Boolean operators, raises
@@ -480,7 +480,7 @@ mutations, exceptions, or exports.
   error, and it is one of the static rejections with no model-aware twin,
   because an `all` node names no position — `Dog.all` and `Animal.all` lower to
   the byte-identical `{"all": {}}` at the same target, which is a valid
-  operation there is nothing for preflight to refuse.
+  query there is nothing for preflight to refuse.
   `as_of(...)`, `history(...)`, and `as_of_range(...)` form one axis-keyed
   temporal-clause family. Each declared dimension is single-shot: a second
   selection for one dimension raises
@@ -598,7 +598,7 @@ mutations, exceptions, or exports.
   where an operand's combinator binds looser than its parent (an `or` directly
   under an `and`), and flattens same-combinator nesting (order-preserving) to
   the n-ary canonical form. Redundant `group` nodes are unrepresentable, so an
-  idiomatic operation can never drift from canonical form over grouping. The
+  idiomatic predicate can never drift from canonical form over grouping. The
   internal group node type exists for serde/tooling and is not public API.
 - **Value-object predicates.** Nested value-object paths reuse chained
   class-level attribute access: `Customer.address.city == "Berlin"` builds the
@@ -699,7 +699,7 @@ mutations, exceptions, or exports.
   `sales.SalesOrder.customer -> crm.Customer` followed by
   `crm.Customer.notes`: Python
   `SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes)` and the
-  equivalent corpus-authored operation document must accept and execute the
+  equivalent corpus-authored query document must accept and execute the
   same structured path. Separate paths express subtype branches. A broad
   relationship view and a target-narrowed view remain distinct observable
   views and separate fetch hops; the planner does not reuse the broad view for
@@ -716,7 +716,7 @@ mutations, exceptions, or exports.
   multi-hop relationship quantifier is unauthorable, so `exists(...)` /
   `not_exists(...)` are single-hop on this surface however deep the canonical
   nesting may go; and the deepest include path a Python caller can author is
-  shallower than the deepest a canonical operation document may carry. Lifting
+  shallower than the deepest a canonical query document may carry. Lifting
   the limit needs a way for a composed segment to name its owner without
   reaching a model at authoring time; no correct one exists today, and deferring
   the owner to preflight is not admissible — the canonical relationship
@@ -973,9 +973,9 @@ A local Entity name may be declared in more than one namespace of one model:
 the Entity Identity is what must be unique, and the qualified identities differ.
 Such an Entity remains declarable, materializable, and queryable through its
 family root — the constraint is at the **reference site**, not on the
-declaration. Every position that names an Entity in a canonical operation
+declaration. Every position that names an Entity in a canonical query
 spells it bare, so a bare name two namespaces of the connected model share
-resolves to no Entity and the operation is refused as
+resolves to no Entity and the query is refused as
 `OperationRejectedError(reference-ambiguous-entity-name)`, naming the canonical
 spellings that would resolve. The rule governs every such position — an
 attribute or nested-path reference, a relationship reference, an order-by key,
@@ -1522,7 +1522,7 @@ Class, are both rejected before `adapter` is inspected, with the same exported
 `snapshot-class-backed-model-required`. The error exposes neither an Entity
 Runtime nor a class index. It is not
 `DeferredFeatureError(execution-feature-deferred)`, which is reserved for a
-valid operation whose execution feature is explicitly deferred.
+valid query whose execution feature is explicitly deferred.
 
 After class-backed validation, Snapshot constructs one private `_ConnectedModel`
 owned by the Database. It contains the accepted Metamodel and the class index
@@ -1538,7 +1538,7 @@ both entry points before target resolution, and on the participating one before
 the unit of work's force-flush, so a refused read flushes no pending write.
 
 Snapshot owns `_DEFERRED_EXECUTION_FEATURES: frozenset[str]`, the private
-immutable set of canonical Feature tags whose operation shapes are valid but
+immutable set of canonical Feature tags whose query shapes are valid but
 whose execution is explicitly deferred by this implementation. Its initial
 entry is `snapshot-history-includes`. It is one package-owned module constant
 shared by every Database in the installed implementation; no constructor
@@ -1879,8 +1879,8 @@ or descriptor authoring form and performs no audit stamping.
   strict-Pyright-clean class-level expressions via the annotation aliases.
 - **Drift prevention without codegen.** The API Conformance Suite's
   descriptor-equality guard (idiomatic class exports ≡ corpus descriptor) and
-  the operation no-drift guard (idiomatic Object Query serialization ≡ corpus
-  operation) are the drift gates; both run in CI.
+  the query no-drift guard (idiomatic Object Query serialization ≡ the corpus
+  document) are the drift gates; both run in CI.
 - **Derivable typed artifacts.** None are generated. The spec deliberately
   promises no generated surface; everything typed is derived at runtime from
   the class declarations, which carry no information absent from the
@@ -2706,8 +2706,8 @@ or descriptor authoring form and performs no audit stamping.
   WriteObservation | None = None)` is the neutral WRITE ingress —
   it validates and buffers one write instruction for the same Write Planner the
   typed verbs feed, and reaches no read executor. A `NeutralReadRequest`
-  states the two facts lowering an Object Query would have produced — the resolved
-  target and the canonical operation — and selects the row or graph form;
+  carries one canonical Object Query — which names its own target — and selects
+  the row or graph form;
   everything after it is the typed path's own: the same read gate, the same
   canonicalization and compilation, the same Database Call, the same deep-fetch
   loop wherever the form runs one, and, on `tx.read_neutral`, the same
@@ -3364,7 +3364,7 @@ or descriptor authoring form and performs no audit stamping.
   it. It also carries this ingress's assignment refusals, which reach the same
   judgement the typed `.set(...)` path does and render the same message under
   this family's name rather than the copy family's. Once the document is well
-  formed, the model-aware operation rules it is subject to are exactly the ones
+  formed, the model-aware query rules it is subject to are exactly the ones
   the typed verbs reach and raise their owner families unchanged, so the two
   ingresses classify one input one way.
 
@@ -3493,7 +3493,7 @@ remains observable rather than making Python its own oracle.
   `exercised ∪ reasoned-skipped == active slice` from corpus data at runtime,
   failing on stale case IDs or empty skip reasons. Four no-drift guards
   close the loop. Two run per example: the idiomatic Object Query's
-  serialization equals the corpus operation, and idiomatic class descriptors
+  serialization equals the corpus document, and idiomatic class descriptors
   equal corpus descriptors. A third, scoped to every registered write story,
   drives it against a recording fake port and asserts its wire DML equals its
   corpus golden byte-exact (a commit story the golden DML, an abort story
@@ -3895,7 +3895,7 @@ parallax.postgres --> parallax.core.dialect
   disjoint dependencies able to share a zero-grant module is their **own** rows:
   each forbids everything its grants do not reach, so a dependency added to the
   shared module breaks the row of whichever consumer is not already granted it.
-  `parallax.core.entity._query` is the **grantable**
+  `parallax.core.entity._graph_input` is the **grantable**
   case: a child scope may also be named as another scope's grant,
   which is how a consumer takes a narrow part of a package without taking what
   the rest of that package reaches. `parallax.core.entity._expressions` is the
@@ -3928,21 +3928,24 @@ parallax.postgres --> parallax.core.dialect
   granted narrowly enough that the boundary falls **outside** its closure; there
   is no exception mechanism that puts a reachable target back into a row.
   `parallax.snapshot.handle._preflight` is the case in point: the seam resolves
-  a target and validates an operation before any I/O, so it must reach no
+  a target and validates a query before any I/O, so it must reach no
   Database Port, and the `parallax.core.entity` package reaches one through
   `parallax.core._formation_profile` → `m-opt-lock` → `m-unit-work` →
-  `m-db-port`. Its grant is therefore the child scope
-  `parallax.core.entity._query`, whose own closure is `m-core`,
-  `m-metamodel`, `m-predicate`, `m-temporal-read` and — reached through the
-  last two — `m-inheritance` and `m-model-formation`, and the ordinary
-  generated row forbids `m-db-port` — along with `m-opt-lock`, `m-unit-work` and
-  `parallax.core._formation_profile` — with indirect chains reported.
-  Granting a child scope omits that child's ancestors from the row, because a
-  forbidden entry naming the ancestor package would also forbid the granted
-  child inside it. Only the ancestor's **name** is given up: what the rest of
-  that package reaches stays forbidden and is reported as an indirect chain, so
-  `_preflight` naming `parallax.core.entity._model` still breaks the gate on
+  `m-db-port`. Its grants are therefore `m-metamodel`, `m-predicate` and
+  `m-object-query` — the canonical query value plus what resolves and validates
+  it — none of which reaches the Entity frontend, and the ordinary generated row
+  forbids `parallax.core.entity` outright along with `m-db-port`, `m-opt-lock`,
+  `m-unit-work` and `parallax.core._formation_profile`, with indirect chains
+  reported. `_preflight` naming `parallax.core.entity._model` therefore breaks
+  the gate twice over: on the frontend package it may not name at all, and on
   `_model`'s own edge to `parallax.core._formation_profile`.
+  Granting a child scope instead omits that child's ancestors from the row,
+  because a forbidden entry naming the ancestor package would also forbid the
+  granted child inside it. Only the ancestor's **name** is given up: what the
+  rest of that package reaches stays forbidden and is reported as an indirect
+  chain, which is why `parallax.snapshot.materialize`, granted
+  `parallax.core.entity._graph_input`, still has `parallax.core._formation_profile`
+  in its own row.
 - **Filesystem ownership.** `languages/python/tools/check_scope_ownership.py`
   walks every `packages/*/src/**/*.py` file in the production distributions and
   proves it resolves to exactly one **most-specific** enforcement scope of this
@@ -4089,7 +4092,7 @@ rows receive the transaction's shared lock.
 | Supported language/runtime versions | CPython; `requires-python >= 3.12` | each distribution's `pyproject.toml` | (local dev on any supported minor) | CI matrix 3.12 / 3.13 / 3.14 | support current + two prior minors; drop on upstream EOL; floor raises are reviewed spec changes |
 | Dependency and supply-chain audit | committed `uv.lock` + `uv lock --check` + pip-audit + scheduled `uv lock --upgrade` refresh | `languages/python/uv.lock` | `uv lock --check && uv run pip-audit` | `python-check-dbfree` job on every PR, plus a monthly scheduled CI job opening a `uv lock --upgrade` refresh PR | high-severity findings block; exceptions carry owner + expiry inline; lockfile drift fails; freshness: the monthly upgrade PR is human-reviewed like any change and may not be merged red |
 | Compatibility Conformance Suite | pytest conformance runner + jsonschema envelope validation | `languages/python/tests/compatibility/` | `uv run pytest -m compile_sweep` (Docker-free) and `uv run pytest tests/compatibility/test_run_sweep.py` (`pg-full`) | `python-check-dbfree` (compile sweep) + `python-check-db` (run sweep) | selection = active slice ∩ capability tags; every envelope validates against `conformance-adapter.schema.json` |
-| API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api/`; `languages/python/docs/usage-guide.md` | `uv run pytest tests/api && uv run gen-usage-guide --check` | `python-check-dbfree` (partition, no-drift guards, guide drift) + `python-check-db` (story and boundary runs) | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); operation, descriptor, and database-free copy-to-row no-drift guards green; guide drift fails |
+| API Conformance Suite and Usage Guide | pytest + guide generator | `languages/python/tests/api/`; `languages/python/docs/usage-guide.md` | `uv run pytest tests/api && uv run gen-usage-guide --check` | `python-check-dbfree` (partition, no-drift guards, guide drift) + `python-check-db` (story and boundary runs) | coverage partition exact (exercised ∪ reasoned-skips = slice; no stale IDs, no empty reasons); query, descriptor, and database-free copy-to-row no-drift guards green; guide drift fails |
 | Database-backed verification | testcontainers Postgres profiles | §6 profile definitions | `uv run pytest -m db` | `python-check-db` job | required profiles `pg-full`, provider contract, adapter smoke; every skipped check is reported with a reason in the session summary; silent skips are forbidden and any CI skip fails |
 
 - **Storage Layout contract verification.** Before the target advertises the

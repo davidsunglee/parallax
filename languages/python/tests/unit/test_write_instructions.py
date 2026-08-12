@@ -806,10 +806,9 @@ def test_member_name_honesty_accepts_a_nullable_value_object_assignment_of_none(
 # The selecting predicate is measured with the WHOLE `validate_operation`      #
 # vocabulary, not just the rules the instruction schema states — and here,     #
 # because this is the ONE model-aware gate every predicate-write ingress runs  #
-# (`m-case-format` "The model-aware validator validates the predicate ...,     #
-# checks entity scope and bare-predicate rules"). The two cases below come     #
-# from different rule families so the pin covers the vocabulary rather than    #
-# one rule.                                                                    #
+# (`m-case-format` "The model-aware validator validates the predicate ... and  #
+# checks its entity scope"). The two cases below come from different rule      #
+# families so the pin covers the vocabulary rather than one rule.              #
 # --------------------------------------------------------------------------- #
 def test_a_predicate_writes_inverted_between_window_is_rejected() -> None:
     predicate = wi.deserialize(
@@ -897,7 +896,7 @@ _BARE_INNER: dict[str, Any] = {"lessThan": {"attr": "Account.balance", "value": 
 )
 def test_a_query_clause_is_not_a_predicate_at_all(clause: str, predicate: dict[str, Any]) -> None:
     with pytest.raises(
-        predicate_algebra.OperationError, match=f"unknown operation node '{clause}'"
+        predicate_algebra.OperationError, match=f"unknown predicate node '{clause}'"
     ):
         wi.deserialize(
             {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
@@ -925,7 +924,7 @@ def test_a_query_clause_is_no_more_spellable_inside_a_predicate(
     # Recursion belongs to the selection grammar alone, so a clause is
     # unspellable at every depth rather than refused at each one.
     assert position in predicate
-    with pytest.raises(predicate_algebra.OperationError, match="unknown operation node 'limit'"):
+    with pytest.raises(predicate_algebra.OperationError, match="unknown predicate node 'limit'"):
         wi.deserialize(
             {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
         )

@@ -24,7 +24,7 @@ since the fragment needs a child alias no plan has yet. :func:`open_branch`
 renders it to a fragment plus bind VALUES once the branch takes its alias;
 `_predicate` — the package's one recursive owner — lowers the interior and only
 then pushes those values. It also contains no `match` over the predicate node
-union: the two operation nodes it inspects are the hop node itself (to read
+union: the two Predicate nodes it inspects are the hop node itself (to read
 `rel` / `op` / negation) and a TOP-LEVEL `narrow` inside the hop's `op` (to
 resolve the hop's position, `m-navigate` "Polymorphic navigation"), never a
 descent into either.

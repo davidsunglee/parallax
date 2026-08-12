@@ -5,7 +5,7 @@ shipped surface, never serialization-only.
 Every entry is ONE case-driven idiomatic read example: a pure ``build()``
 returning the SAME idiomatic ``ObjectQuery`` expression
 ``tests/api/test_operation_no_drift.py``'s ``BUILDERS`` proves
-no-drift against the corpus's own ``when.operation`` (the query-shape half),
+no-drift against the corpus's own ``when.objectQuery`` (the query-shape half),
 plus the ``case_id`` / ``title`` / ``model`` it mirrors. Execution is
 GENERIC, unlike the write/graph stories: a single runner
 (``tests/api/test_story_run.py``) drives EVERY entry through the

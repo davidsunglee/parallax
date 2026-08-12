@@ -1,7 +1,7 @@
-"""PredicateNode no-drift guard (m-api-conformance).
+"""Object Query no-drift guard (m-api-conformance).
 
-Each idiomatic public-API query the suite authors must LOWER to the exact
-``m-predicate`` operation the mirrored corpus case authors — the developer
+Each idiomatic public-API query the suite authors must CANONICALIZE to the exact
+``m-object-query`` document the mirrored corpus case authors — the developer
 surface cannot drift from the graded protocol. The builders here are the source of
 truth for the ``api_suite.EXAMPLES`` snippets; the guard compares each query's
 canonical lowering to the case's ``when.objectQuery``.
@@ -11,7 +11,7 @@ Two case shapes carry no single top-level ``when.objectQuery`` to compare a buil
 entry: a ``rejected`` case (the invalid input is authored under ``when.objectQuery``,
 but building it through the idiomatic surface never returns a ``ObjectQuery`` at all
 — the model-aware validator raises immediately, exactly as it does for the corpus's
-own operation-input path) proves no-drift by comparing
+own query-input path) proves no-drift by comparing
 the RAW built predicate's own serialization to the case's ``when.objectQuery`` and
 separately asserting the SAME build raises the classified ``then.rejectedRule``;
 a ``scenario`` case's per-step ``find`` bodies are graded by the executable graph
@@ -88,7 +88,7 @@ from parallax.core.object_query import LATEST
 from parallax.core.object_query._fluent import object_query_node
 from parallax.snapshot.handle import preflight
 
-# case id -> the idiomatic query that must lower to the case's operation.
+# case id -> the idiomatic query that must canonicalize to the case's own document.
 BUILDERS: dict[str, Callable[[], ObjectQuery[Any, Any]]] = {
     # The Predicate / temporal-read / navigate / single-concrete-inheritance
     # read examples: derived from the SAME `build()` the real-database runner
