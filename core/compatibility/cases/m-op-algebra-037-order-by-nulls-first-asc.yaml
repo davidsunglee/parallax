@@ -1,6 +1,6 @@
 # orderBy ASCENDING with `nulls: first` over a NULLABLE key — the placement that has
-# no default anywhere, proven on BOTH dialects (m-predicate orderBy + m-dialect NULL
-# ordering).
+# no default anywhere, proven on BOTH dialects (m-object-query orderBy + m-dialect
+# NULL ordering).
 #
 # Nulls First is the mirror of the canonical nulls-last default, so the dialect that
 # compensates flips: Postgres treats NULL as largest and must spell an explicit

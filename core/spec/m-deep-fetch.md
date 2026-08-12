@@ -1,9 +1,10 @@
 # m-deep-fetch — Deep Fetch
 
 `m-deep-fetch` specifies how **deep fetch** eagerly populates an object graph
-while **eliminating N+1** round trips. Per the dependency graph, `m-deep-fetch`
-depends on `m-navigate` alone (deep fetch traverses relationships). The
-**Includes** clause is `m-object-query`; the **SQL emission** is `m-sql`.
+while **eliminating N+1** round trips. It depends on `m-object-query` (the
+**Includes** clause it realizes), `m-relationship` (the compiled directions a
+path traverses), `m-navigate` (per-hop as-of propagation), and `m-inheritance`
+(the Subtype Selections a path resolves). The **SQL emission** is `m-sql`.
 This module ties them to observable behavior. The two lifecycle result surfaces
 — query-backed lists (`m-op-list`) for the managed lifecycle, snapshot
 graphs (`m-snapshot-read`) for the plain-value lifecycle — sit **above** deep
@@ -19,7 +20,7 @@ own read (`m-value-object`, "Materialization and navigation contract").
 ## Deep fetch: one query per non-empty relationship level
 
 A query's `includes` clause resolves the root query first, then eagerly
-fetches the canonical include-path set owned by `m-predicate`. That module owns
+fetches the canonical include-path set owned by `m-object-query`. That module owns
 the path and segment grammar, canonical ordering, duplicate collapse, maximal-
 path rule, and the distinction between broad and narrowed paths. This module
 consumes that canonical set and owns its level planning. The normative guarantee:
@@ -124,10 +125,10 @@ the non-`NULL` values in the declared direction.
 
 A deep-fetch hop whose relationship target is a **polymorphic position**
 (`m-inheritance` — an abstract root or abstract subtype) eagerly fetches concrete
-instances across the family. `m-predicate` owns the segment's optional `narrow`
-grammar; this planner resolves that shared Subtype Selection and fetches only the
-resolved subset of the relationship target. A selection escaping that target is
-`narrow-outside-relationship-target` (`m-navigate`).
+instances across the family. `m-object-query` owns the segment's optional
+`narrowTo` grammar; this planner resolves that shared Subtype Selection and
+fetches only the resolved subset of the relationship target. A selection escaping
+that target is `narrow-outside-relationship-target` (`m-inheritance`).
 
 **A narrowed hop populates a distinct narrowed relationship view**, keyed by a
 **derived** name rather than the ordinary relationship name:
@@ -160,8 +161,8 @@ makes the equivalent spellings `[Pet]` and `[Cat, Dog]` converge. Two hops
 narrowed to **different** sets (`pets[Dog]` and `pets[Cat]`) stay **distinct**.
 
 A **broad** hop and **any** authored narrow over the same relationship are
-**distinct** hops — including a **redundant** narrow, one whose `to` resolves to
-the relationship target's entire effective concrete set. A redundant narrow
+**distinct** hops — including a **redundant** narrow, one whose `narrowTo`
+resolves to the relationship target's entire effective concrete set. A redundant narrow
 returns exactly the rows the broad hop returns, yet the two populate **different**
 views (`pets` and `pets[Cat,Dog]`), because a segment's view key is derived from
 whether a narrow was **authored**, independent of what that narrow resolves to.
@@ -173,11 +174,11 @@ counting as distinct.
 
 ### Path-root guards
 
-The optional path-root `narrow` owned by `m-predicate` **guards which queried
-objects the path starts from**. It is the deliberate opposite of a segment
-narrow, and the contrast is the whole of its planning semantics:
+The optional path-root `appliesTo` owned by `m-object-query` **guards which
+queried objects the path starts from**. It is the deliberate opposite of a
+segment `narrowTo`, and the contrast is the whole of its planning semantics:
 
-| | root `narrow` | segment `narrow` |
+| | root `appliesTo` | segment `narrowTo` |
 |---|---|---|
 | Narrows | the hop's **source** objects | the hop's **target** subtypes |
 | View key | **none** — the path fills the view its unguarded spelling would | a **distinct** `<rel>[<Concrete>,<Concrete>]` view |
@@ -196,10 +197,10 @@ distinctness rule *falls out* rather than being asserted separately:
 
 | Relation between two guards | Example | Hops |
 |---|---|---|
-| equal / equivalent | `to: [Pet]` and `to: [Cat, Dog]` over the same family | **1** — they deduplicate |
-| disjoint | `to: [Dog]` and `to: [Cat]` | 2 — neither fills anything the other does |
-| overlapping | `to: [Dog, WildBoar]` and `to: [Cat, Dog]` | 2 — the shared roots' view is filled twice, identically |
-| containment (including broad) | no guard, and `to: [Dog]` | 2 — the guarded hop fetches nothing new |
+| equal / equivalent | `appliesTo: [Pet]` and `appliesTo: [Cat, Dog]` over the same family | **1** — they deduplicate |
+| disjoint | `appliesTo: [Dog]` and `appliesTo: [Cat]` | 2 — neither fills anything the other does |
+| overlapping | `appliesTo: [Dog, WildBoar]` and `appliesTo: [Cat, Dog]` | 2 — the shared roots' view is filled twice, identically |
+| containment (including broad) | no guard, and `appliesTo: [Dog]` | 2 — the guarded hop fetches nothing new |
 
 Every **proper** guard resolves to a strict subset of the queried position, so
 its key differs from the broad path's automatically; only a guard admitting

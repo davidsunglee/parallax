@@ -435,10 +435,10 @@ A **deep-fetch `then.graph`** keys each eager-fetched related set under the
 `m-inheritance`), under the **derived narrowed view key** `<rel>[<Concrete>,
 <Concrete>]` (the local relationship name, the effective concrete-subtype set in
 canonical alphabetical order by entity name, no spaces). Equivalent authored
-narrowings (`to: [Pet]` vs `[Cat, Dog]`) key the same view; a broad and a narrowed hop over one relationship
+narrowings (`narrowTo: [Pet]` vs `[Cat, Dog]`) key the same view; a broad and a narrowed hop over one relationship
 key **different** views. A polymorphic narrowed view's child objects carry
 `familyVariant` just as a flat abstract read's rows do (a single-concrete narrowed
-view carries none). A `narrow` escaping the relationship target's effective set is a
+view carries none). A segment `narrowTo` escaping the relationship target's effective set is a
 `rejected` case (`narrow-outside-relationship-target`).
 
 Graph comparison distinguishes collection kinds. Root result sets and
@@ -677,7 +677,7 @@ cases `then.statements` is an **ordered list** of statement entries (root plus
 the child levels that execute) rather than a single entry, and `then.graph`
 replaces (or accompanies) `then.rows`.
 
-A **path-root guard** (`m-predicate`'s `{ to }` beside a path's
+A **path-root guard** (`m-object-query`'s `appliesTo` beside a path's
 `segments`) participates in this layer twice, and both are declared rather than
 inferred. Its level's authored `IN` binds must equal the keys gathered from the
 **guarded** root objects alone, so a guard that a case declares but an
@@ -1512,13 +1512,17 @@ rules:
   Subtype Selection resolve to effective concrete-subtype sets with a non-empty
   intersection; alternatives must be pairwise disjoint (`m-inheritance`). The rule
   does not compare sibling selections.
-- `narrow-outside-position` — a `narrow` node's resolved effective concrete-subtype
-  set is not a **subset** of the **active** polymorphic position supplied by
-  context: the query's own `target` (as narrowed by its `narrowTo` clause), or the
-  enclosing `narrow`'s resolved set, so a nested `narrow` cannot broaden back out
+- `narrow-outside-position` — a result, predicate, or path-guard Subtype
+  Selection's resolved effective concrete-subtype set is not a **subset** of the
+  **active** polymorphic position supplied by context: the query's own `target`
+  for its `narrowTo` and for an Include Path's `appliesTo`, and for a `narrow`
+  node the target as narrowed by `narrowTo` or the enclosing `narrow`'s resolved
+  set, so a nested `narrow` cannot broaden back out
   (`m-object-query` × `m-predicate` × `m-inheritance`).
-- `narrow-empty-effective-set` — a `narrow`'s authored `to` list resolves to the
-  **empty** concrete-subtype set (`m-predicate` × `m-inheritance`).
+- `narrow-empty-effective-set` — an authored Subtype Selection — a `narrow`'s `to`
+  list, the query's `narrowTo`, or an Include Path's `appliesTo` / a segment's
+  `narrowTo` — resolves to the **empty** concrete-subtype set (`m-inheritance` ×
+  `m-object-query` × `m-predicate`).
 - `subtype-attribute-outside-narrow-scope` — a predicate or order key references a
   concrete-subtype-declared attribute at a polymorphic position that is not
   `narrow`ed to that subtype, so the attribute is not available to every concrete
@@ -1529,7 +1533,7 @@ rules:
   attribute of an Entity that shares **no** inheritance family with the active
   position, so the reference is applicable nowhere in the read and no `narrow`
   can make it so (`m-predicate` positional rule). An order key is asked of the
-  position its ordered rows occupy, which a top-level `narrow` moves.
+  position its ordered rows occupy, which the query's `narrowTo` moves.
 - `reference-ambiguous-entity-name` — a reference position names an Entity by a
   **bare local name** that two namespaces of the model declare, so it resolves to
   no single Entity and the reference resolves nowhere (`m-predicate` reference
@@ -1540,7 +1544,7 @@ rules:
   declarations — each Entity stays declarable, materializable under its exact
   qualified identity, and readable through a position naming it unambiguously.
 - `narrow-outside-relationship-target` — a `narrow` in a navigation filter's `op`,
-  or a deep-fetch path segment's `narrow`, whose Subtype Selection resolves to a
+  or a deep-fetch path segment's `narrowTo`, whose Subtype Selection resolves to a
   concrete-subtype set that is **not a subset** of the relationship target's
   effective concrete set — narrowing a
   polymorphic relationship to a concrete outside its reachable set, even a **sibling**

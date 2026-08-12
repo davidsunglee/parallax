@@ -1,9 +1,10 @@
 # m-sql — SQL Generation & Equivalence Contract
 
-`m-sql` is the contract that turns one `m-predicate` `EntityQuery` into
+`m-sql` is the contract that turns one `m-object-query` `EntityQuery` into
 per-dialect SQL, and the rules that make "equivalent SQL per database"
-**testable**. `m-sql` depends on `m-predicate` (the query value and predicate
-algebra it lowers) and `m-dialect` (the dialect that decides the concrete SQL).
+**testable**. `m-sql` depends on `m-object-query` (the query value it lowers),
+`m-predicate` (the selection algebra that value carries), and `m-dialect` (the
+dialect that decides the concrete SQL).
 It reads canonical model identities from `m-metamodel`, family and
 discriminator semantics from `m-inheritance`, physical Tables and slots from
 `m-storage-layout`, and compiled relationship directions from `m-relationship`.
@@ -139,12 +140,12 @@ form — never of the predicate**. Exactly one read takes a fourth input: the in
 materialized-predicate-write resolving read derives its `Document` slots from the
 **declared needs of the write it serves** — that write's target designation and its
 declared assignments — and from nothing else, its own predicate included (the
-`Document` slot rule and *Result form*, below). Predicate deliberately
-carries **no projection node** (`m-predicate`): no Object Query read may project
+`Document` slot rule and *Result form*, below). The Object Query deliberately
+carries **no projection clause** (`m-object-query`): no read may project
 a proper subset of the derived list. The `orderBy` and `limit` clauses never
 change the list.
 
-Inheritance first resolves the target and every `narrow` to one canonical
+Inheritance first resolves the target and every narrowing to one canonical
 effective concrete-Entity sequence. `StorageLayoutFacet.position(...)` then
 supplies one logical contributor sequence and one slot-or-absence mapping per
 physical Table. A concrete or standalone read may use the corresponding Entity
@@ -470,7 +471,7 @@ the child's own key when it is itself a parent of a deeper level).
 The temp-table variant for very large parent key sets is a **fast-follow**
 (`m-deep-fetch`); round 1 uses the simplified `IN` form only.
 
-A **path-root guard** (`m-predicate`'s `{ to }` beside `segments`) emits
+A **path-root guard** (`m-object-query`'s `appliesTo` beside `segments`) emits
 **no statement and no clause of its own**. It restricts which already-fetched root
 rows a path's first level gathers its keys from, so it is observable only in that
 level's `IN` list — which carries the guarded roots' keys alone — and, through it,
@@ -490,8 +491,9 @@ objectQuery(Animal, all, includes = [ { appliesTo: [Dog],
                     -- the DOG rows' distinct owner_id values, never the Cat's or the WildBoar's
 ```
 
-A **polymorphic** hop (relationship target abstract, optionally narrowed by a path
-`narrow`, `m-predicate` / `m-deep-fetch`) stays **one statement per level**. Under
+A **polymorphic** hop (relationship target abstract, optionally narrowed by a
+segment's `narrowTo`, `m-object-query` / `m-deep-fetch`) stays **one statement
+per level**. Under
 `table-per-hierarchy` the child level is the shared-table `IN` read with the
 effective set's tag predicate appended after the `IN` list (`… where t0.owner_id in
 (?, …) and t0.kind in (?, …)`); a polymorphic view projects the raw tag column so
@@ -834,8 +836,8 @@ SQL only where the lowering puts it, never because a user named it.
 
 #### Tag-predicate selection
 
-A read's queried position (the query's `target`, optionally further constrained by a
-`narrow`, `m-predicate`) resolves to an **effective concrete-subtype set**. The
+A read's queried position (the query's `target`, optionally further constrained by
+its `narrowTo`, `m-object-query`) resolves to an **effective concrete-subtype set**. The
 lowering injects a tag predicate over the root alias `t0` from that set, composed
 with any user predicate via `and` (appended **after** it, so binds read
 user-first then tag):
@@ -931,7 +933,7 @@ the applicable slots from its Entity Layout view, and it carries **no
 #### Abstract read — `union all` over the effective concrete tables
 
 A read whose queried position resolves to **two or more** concrete subtypes — an
-abstract root, an abstract subtype, or a `narrow` (`m-predicate`) to multiple
+abstract root, an abstract subtype, or a `narrowTo` (`m-object-query`) to multiple
 concretes — lowers to canonical **`union all`**, one branch per concrete subtype in
 that effective set, in the family's canonical **alphabetical order** (by entity name,
 `m-inheritance`). Each branch is an ordinary single-table read of that concrete's
@@ -999,10 +1001,10 @@ literal directly:
     mariadb: select t0.id, t0.family_variant parallax_attr_1, t0.parallax_attr_0 parallax_attr_2, cast(null as char(64)) parallax_attr_3, 'archive.SharedVariant' family_variant from archive_shared t0 union all select t0.id, t0.family_variant parallax_attr_1, cast(null as char(64)) parallax_attr_2, t0.parallax_attr_0 parallax_attr_3, 'catalog.SharedVariant' family_variant from catalog_shared t0
 ```
 
-The equivalent authored spellings of a narrow collapse to the same lowering: a
-`narrow` to an abstract subtype and a `narrow` to that subtype's explicit concrete
+The equivalent authored spellings of a narrowing collapse to the same lowering: a
+`narrowTo` naming an abstract subtype and one naming that subtype's explicit concrete
 list produce the same effective set and therefore the same branches, in canonical
-alphabetical order, regardless of the authored `to` order. `familyVariant` appears only in the
+alphabetical order, regardless of the authored order. `familyVariant` appears only in the
 compatibility rows/graphs (`m-case-format`); the projected `family_variant` literal
 is the on-the-wire carrier the harness renames to `familyVariant`.
 
@@ -1630,7 +1632,8 @@ other's wrong answer are not a portable contract, which is why the guard is a
 statement-shape rule rather than an expression-shape rule.
 
 This reuses machinery that already exists. A subtype-declared member can never be
-referenced without a compatible `narrow` (`m-predicate`), so every legal
+referenced without a compatible narrowing scope (the query's `narrowTo`,
+`m-object-query`, or a Predicate-scoped `narrow`, `m-predicate`), so every legal
 subtype-specific predicate already carries a resolved variant position and a tag
 fragment; table-per-concrete-subtype reads are already a per-branch `union all`
 with a fresh context per branch. Partitioning applies that same fan-out at a

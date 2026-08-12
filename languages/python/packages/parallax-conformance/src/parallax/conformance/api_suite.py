@@ -426,9 +426,10 @@ SKIP_REASONS: Final[dict[str, str]] = {
         "against both engines"
     ),
     "m-predicate": (
-        "representative predicate/grouping/ordering spellings are exercised as idiomatic "
-        "examples; the remaining Predicate cases are graded through the compile/run "
-        "lanes"
+        "representative predicate and grouping spellings — together with the "
+        "m-object-query orderBy spellings these predicate-tagged cases also carry — are "
+        "exercised as idiomatic examples; the remaining cases in this bucket are graded "
+        "through the compile/run lanes"
     ),
     "m-temporal-read": (
         "the representative as-of spelling is exercised as an idiomatic example; the "

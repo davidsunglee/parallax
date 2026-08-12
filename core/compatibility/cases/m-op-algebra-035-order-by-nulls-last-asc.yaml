@@ -1,5 +1,5 @@
 # orderBy ASCENDING with an explicit `nulls: last` placement over a NULLABLE key,
-# proven on BOTH dialects (m-predicate orderBy + m-dialect NULL ordering).
+# proven on BOTH dialects (m-object-query orderBy + m-dialect NULL ordering).
 #
 # `Order.sku` is nullable (order 4 has none), so the placement is OBSERVABLE; the
 # `limit 2` makes it observable through row MEMBERSHIP, since top-level row

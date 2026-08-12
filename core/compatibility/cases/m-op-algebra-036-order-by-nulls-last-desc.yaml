@@ -1,5 +1,5 @@
 # orderBy DESCENDING with an explicit `nulls: last` placement over a NULLABLE key,
-# proven on BOTH dialects (m-predicate orderBy + m-dialect NULL ordering).
+# proven on BOTH dialects (m-object-query orderBy + m-dialect NULL ordering).
 #
 # The corpus's first witness for `desc` over a nullable column, and so the first for
 # Postgres's `desc nulls last` suffix. The dialects compensate in opposite directions:
