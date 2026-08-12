@@ -4,8 +4,8 @@ Status: provisional and non-normative.
 
 This note preserves the possible future design for mapping Entity instances
 into a document collection. It informs future specification work but does not
-add the capability to the current Metamodel, operation runtime, or provider
-adapter seams. Parallax specifications remain authoritative.
+add the capability to the current Metamodel, execution, or provider adapter
+seams. Parallax specifications remain authoritative.
 
 ## Scope
 

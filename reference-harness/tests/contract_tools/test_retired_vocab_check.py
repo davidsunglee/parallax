@@ -10,17 +10,25 @@ historical / prior-art / rejection-fixture text keeps its original spellings.
 Each family's deny-list is a compound rule over an ordinary English stem, so
 both directions matter: the retired compound is caught, and the ordinary use of
 the same stem stays legal. A compound counts wherever it is written — prose,
-camelCase, SCREAMING_SNAKE, a wrapped line, a path component — which is what
-makes the deny-list an enumerator rather than a sample.
+camelCase, SCREAMING_SNAKE, a wrapped line, a path component — over every source
+git knows about, which is what makes the deny-list an enumerator rather than a
+sample.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from reference_harness.retired_vocab_check import check_path, check_text, main, scanned_files
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _working_tree(root: Path) -> Path:
+    """*root* as the git working tree the gate reads its active sources from."""
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+    return root
 
 
 def test_real_tree_is_clean() -> None:
@@ -231,6 +239,68 @@ def test_retired_query_compounds_are_detected_in_every_casing_and_number() -> No
         assert check_text("f.py", line), line
 
 
+def test_a_camel_compound_counts_wherever_its_hump_sits() -> None:
+    flagged = [
+        "myOperationTree = _peel(root)",
+        "def buildOperationsSchema() -> None:",
+        "parseOperationDocument(payload)",
+        "class OperationRuntime: ...",
+        "OperationURL = _SCHEMAS['x']['$id']",
+        "class OperationAST: ...",
+        "class OperationIR: ...",
+        "self.opTree = None",
+        "def buildOpTree() -> None:",
+        "case['caseTargetEntity'] = 'sales.Order'",
+        "lowered = _asLoweredFindQuery(root)",
+        "entityBusinessDate = clock()",
+    ]
+    for line in flagged:
+        assert check_text("f.py", line), line
+
+
+def test_an_identifier_the_stem_opens_needs_no_surface_noun() -> None:
+    flagged = [
+        "operation_model = _load()",
+        "OPERATION_MODEL = _load()",
+        "op_root = _peel(node)",
+        "op_rejected = _classify(case)",
+        "operations_shape: dict[str, object] = {}",
+        "from .op_ir import lower",
+        "core/op/nodes.py",
+    ]
+    for line in flagged:
+        assert check_text("f.py", line), line
+
+
+def test_the_stem_deeper_in_a_name_keeps_the_surface_noun_rule() -> None:
+    # snake_case and kebab-case carry no signal for which word opens a compound,
+    # so an occurrence one joiner deep is read as a continuation of the name
+    # around it — which is what keeps these live spellings legal.
+    legal = [
+        "def test_names_decompose_into_scope_operation_and_qualifier() -> None:",
+        "writes → operation-buffered mutation → flush-time dirty checking",
+        "start/end Attributes are selected for their operation-specific roles",
+        "the closed vocabulary in [§2](#2-operation-vocabulary)",
+        "a mixed_op_flush coalesces both instructions",
+        "_OPERATION_TOKENS: tuple[tuple[str, ...], ...] = ()",
+        "raise InvalidOperationException()",
+        "reserved a `parallax.core.op_list` scope",
+        "matching Reladomo's operation-based list setters",
+    ]
+    for line in legal:
+        assert check_text("f.md", line) == [], line
+
+
+def test_a_repository_owned_url_is_repository_vocabulary() -> None:
+    owned = '"$id": "https://parallax.dev/schemas/{name}.schema.json"'
+    assert check_text("core/schemas/x.json", owned.format(name="operation"))
+    assert check_text("core/schemas/x.json", owned.format(name="object-query")) == []
+
+
+def test_prose_pressed_against_a_foreign_url_is_still_scanned() -> None:
+    assert check_text("docs/x.md", "[external](https://linear.app/x)operation tree")
+
+
 def test_a_compound_wrapped_across_a_line_is_still_one_phrase() -> None:
     violations = check_text(
         "core/spec/x.md", "the aggregation result and operation\nspelling rule\n"
@@ -251,13 +321,14 @@ def test_a_list_bullet_opening_the_next_line_is_not_a_joiner() -> None:
 
 def test_the_navigation_filters_inner_operand_stays_legal() -> None:
     # `op` on the wire is the inner OPERAND of a navigation filter, mirrored by
-    # `Navigate.op` / `Exists.op`. A position word joined to it names that
-    # operand, not a query.
+    # `Navigate.op` / `Exists.op`. A word before it names that operand, not a
+    # query, so only the abbreviation OPENING an identifier is retired.
     legal = [
         "def test_exists_with_no_inner_op_is_a_pure_correlation_check() -> None:",
         "def test_bare_hop_with_no_inner_op_gets_only_the_as_of_term() -> None:",
         "canonical = oa.Exists(rel='Order.items', op=inner_op)",
         "root_op = query.predicate.op",
+        "rejected_op = _refused(hop)",
     ]
     for line in legal:
         assert check_text("f.py", line) == [], line
@@ -351,6 +422,7 @@ def test_live_paths_stay_legal() -> None:
 
 
 def test_a_clean_file_under_a_retired_filename_fails_the_whole_tree_scan(tmp_path: Path) -> None:
+    _working_tree(tmp_path)
     cases = tmp_path / "core" / "compatibility" / "cases"
     cases.mkdir(parents=True)
     clean = "tags: [m-predicate]\n"
@@ -362,6 +434,7 @@ def test_a_clean_file_under_a_retired_filename_fails_the_whole_tree_scan(tmp_pat
 
 
 def test_historical_and_fixture_trees_are_pruned(tmp_path: Path) -> None:
+    _working_tree(tmp_path)
     (tmp_path / "docs" / "research" / "reladomo").mkdir(parents=True)
     (tmp_path / "docs" / "adr").mkdir(parents=True)
     (tmp_path / "core" / "compatibility" / "descriptor-errors").mkdir(parents=True)
@@ -402,6 +475,7 @@ def test_a_decision_records_retirement_table_names_the_spellings_it_retires() ->
 
 
 def test_non_reladomo_research_docs_are_not_exempt(tmp_path: Path) -> None:
+    _working_tree(tmp_path)
     reladomo = tmp_path / "docs" / "research" / "reladomo"
     session = tmp_path / "docs" / "research" / "session"
     reladomo.mkdir(parents=True)
@@ -414,10 +488,38 @@ def test_non_reladomo_research_docs_are_not_exempt(tmp_path: Path) -> None:
     assert main([str(tmp_path)]) == 1
 
 
-def test_only_text_source_kinds_are_scanned(tmp_path: Path) -> None:
+def test_a_source_git_knows_is_scanned_whatever_its_directory_or_suffix(tmp_path: Path) -> None:
+    _working_tree(tmp_path)
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text("# rebuilds the operation tree\n")
+    (tmp_path / "commitlint.config.js").write_text("// keyed to the operation schema\n")
+    (tmp_path / "typings.pyi").write_text("class OperationNode: ...\n")
+    (tmp_path / "lint.jsonc").write_text('{ "ignore": "op_algebra" }\n')
+    scanned = {path.relative_to(tmp_path).as_posix() for path in scanned_files(tmp_path)}
+    assert scanned == {
+        ".github/workflows/ci.yml",
+        "commitlint.config.js",
+        "lint.jsonc",
+        "typings.pyi",
+    }
+    assert main([str(tmp_path)]) == 1
+
+
+def test_what_git_ignores_is_not_an_active_source(tmp_path: Path) -> None:
+    _working_tree(tmp_path)
+    (tmp_path / ".gitignore").write_text(".venv/\nreport.json\n")
+    (tmp_path / ".venv").mkdir()
+    (tmp_path / ".venv" / "vendored.py").write_text("class OperationNode: ...\n")
+    (tmp_path / "report.json").write_text('{"phrase": "the operation tree"}\n')
+    assert main([str(tmp_path)]) == 0
+
+
+def test_an_image_and_a_lockfile_are_not_vocabulary_surface(tmp_path: Path) -> None:
+    _working_tree(tmp_path)
     (tmp_path / "notes.md").write_text("clean\n")
     (tmp_path / "image.png").write_bytes(b"business date")
-    (tmp_path / ".hidden.md").write_text("business date\n")
+    (tmp_path / "uv.lock").write_text('name = "operation-tree"\n')
     scanned = {path.name for path in scanned_files(tmp_path)}
     assert scanned == {"notes.md"}
 
@@ -426,3 +528,7 @@ def test_main_rejects_bad_usage(tmp_path: Path) -> None:
     assert main([]) == 2
     assert main(["a", "b"]) == 2
     assert main([str(tmp_path / "missing")]) == 2
+
+
+def test_a_root_outside_a_git_working_tree_is_a_usage_error(tmp_path: Path) -> None:
+    assert main([str(tmp_path)]) == 2
