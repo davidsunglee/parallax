@@ -25,10 +25,13 @@ from reference_harness.retired_vocab_check import check_path, check_text, main, 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _working_tree(root: Path) -> Path:
-    """*root* as the git working tree the gate reads its active sources from."""
+def _initialize_working_tree(root: Path) -> None:
+    """Make *root* a git working tree, which is the surface the gate scans.
+
+    The gate asks git for its active sources, so a temporary directory is
+    invisible to it until it is initialized.
+    """
     subprocess.run(["git", "init", "--quiet", str(root)], check=True)
-    return root
 
 
 def test_real_tree_is_clean() -> None:
@@ -282,19 +285,45 @@ def test_the_stem_deeper_in_a_name_keeps_the_surface_noun_rule() -> None:
         "start/end Attributes are selected for their operation-specific roles",
         "the closed vocabulary in [§2](#2-operation-vocabulary)",
         "a mixed_op_flush coalesces both instructions",
-        "_OPERATION_TOKENS: tuple[tuple[str, ...], ...] = ()",
-        "raise InvalidOperationException()",
-        "reserved a `parallax.core.op_list` scope",
         "matching Reladomo's operation-based list setters",
     ]
     for line in legal:
         assert check_text("f.md", line) == [], line
 
 
+def test_a_live_spelling_is_masked_only_as_a_whole_identifier() -> None:
+    # Each masked spelling is one live name with one casing: the command graph's
+    # own operation vocabulary, the exception name session research cites, and
+    # the `m-op-list` module's Python scope.
+    legal = [
+        "_OPERATION_TOKENS: tuple[tuple[str, ...], ...] = tuple(",
+        "    for candidate in _OPERATION_TOKENS:",
+        "an `InvalidOperationException` thrown by EF Core is unrecoverable",
+        "reserved a `parallax.core.op_list` scope",
+        "drops its `op_list` prerequisite and scope",
+    ]
+    for line in legal:
+        assert check_text("f.md", line) == [], line
+    # A longer name merely ENDING with one is a different name, and the mask must
+    # not blank what the characters before it spell.
+    flagged = [
+        "query_op_list = _load()",
+        "find_op_list = _load()",
+        "operation_op_list = _load()",
+        "_QUERY_OPERATION_TOKENS: tuple[str, ...] = ()",
+        "raise query_InvalidOperationException()",
+    ]
+    for line in flagged:
+        assert check_text("f.py", line), line
+
+
 def test_a_repository_owned_url_is_repository_vocabulary() -> None:
-    owned = '"$id": "https://parallax.dev/schemas/{name}.schema.json"'
-    assert check_text("core/schemas/x.json", owned.format(name="operation"))
-    assert check_text("core/schemas/x.json", owned.format(name="object-query")) == []
+    owned = '"$id": "https://{host}/schemas/{name}.schema.json"'
+    assert check_text("core/schemas/x.json", owned.format(host="parallax.dev", name="operation"))
+    assert check_text("core/schemas/x.json", owned.format(host="PARALLAX.DEV", name="operation"))
+    assert check_text("core/schemas/x.json", owned.format(host="Parallax.Dev", name="operation"))
+    clean = owned.format(host="parallax.dev", name="object-query")
+    assert check_text("core/schemas/x.json", clean) == []
 
 
 def test_prose_pressed_against_a_foreign_url_is_still_scanned() -> None:
@@ -384,6 +413,8 @@ def test_a_urls_own_text_is_not_repository_vocabulary() -> None:
         "closed by [COR-89](https://linear.app/x/issue/COR-89/let-an-operation-reference-name-it)."
     )
     assert check_text("docs/x.md", line) == []
+    # A host that merely opens with the repository's own is somebody else's.
+    assert check_text("docs/x.md", "see [x](https://parallax.devil.example/operation-tree)") == []
     # The same retired compound OUTSIDE a URL on the same line still fails.
     assert check_text("docs/x.md", f"the operation reference — {line}")
 
@@ -422,7 +453,7 @@ def test_live_paths_stay_legal() -> None:
 
 
 def test_a_clean_file_under_a_retired_filename_fails_the_whole_tree_scan(tmp_path: Path) -> None:
-    _working_tree(tmp_path)
+    _initialize_working_tree(tmp_path)
     cases = tmp_path / "core" / "compatibility" / "cases"
     cases.mkdir(parents=True)
     clean = "tags: [m-predicate]\n"
@@ -434,7 +465,7 @@ def test_a_clean_file_under_a_retired_filename_fails_the_whole_tree_scan(tmp_pat
 
 
 def test_historical_and_fixture_trees_are_pruned(tmp_path: Path) -> None:
-    _working_tree(tmp_path)
+    _initialize_working_tree(tmp_path)
     (tmp_path / "docs" / "research" / "reladomo").mkdir(parents=True)
     (tmp_path / "docs" / "adr").mkdir(parents=True)
     (tmp_path / "core" / "compatibility" / "descriptor-errors").mkdir(parents=True)
@@ -475,7 +506,7 @@ def test_a_decision_records_retirement_table_names_the_spellings_it_retires() ->
 
 
 def test_non_reladomo_research_docs_are_not_exempt(tmp_path: Path) -> None:
-    _working_tree(tmp_path)
+    _initialize_working_tree(tmp_path)
     reladomo = tmp_path / "docs" / "research" / "reladomo"
     session = tmp_path / "docs" / "research" / "session"
     reladomo.mkdir(parents=True)
@@ -489,7 +520,7 @@ def test_non_reladomo_research_docs_are_not_exempt(tmp_path: Path) -> None:
 
 
 def test_a_source_git_knows_is_scanned_whatever_its_directory_or_suffix(tmp_path: Path) -> None:
-    _working_tree(tmp_path)
+    _initialize_working_tree(tmp_path)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("# rebuilds the operation tree\n")
@@ -507,7 +538,7 @@ def test_a_source_git_knows_is_scanned_whatever_its_directory_or_suffix(tmp_path
 
 
 def test_what_git_ignores_is_not_an_active_source(tmp_path: Path) -> None:
-    _working_tree(tmp_path)
+    _initialize_working_tree(tmp_path)
     (tmp_path / ".gitignore").write_text(".venv/\nreport.json\n")
     (tmp_path / ".venv").mkdir()
     (tmp_path / ".venv" / "vendored.py").write_text("class OperationNode: ...\n")
@@ -516,7 +547,7 @@ def test_what_git_ignores_is_not_an_active_source(tmp_path: Path) -> None:
 
 
 def test_an_image_and_a_lockfile_are_not_vocabulary_surface(tmp_path: Path) -> None:
-    _working_tree(tmp_path)
+    _initialize_working_tree(tmp_path)
     (tmp_path / "notes.md").write_text("clean\n")
     (tmp_path / "image.png").write_bytes(b"business date")
     (tmp_path / "uv.lock").write_text('name = "operation-tree"\n')
