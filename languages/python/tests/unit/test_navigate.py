@@ -51,7 +51,7 @@ def _where(op: oa.PredicateNode, model: Metamodel, name: str) -> tuple[str, tupl
 
 
 # --------------------------------------------------------------------------- #
-# Strict identity for navigation-free operations.                             #
+# Strict identity for navigation-free predicates.                             #
 # --------------------------------------------------------------------------- #
 def test_canonicalize_is_identity_without_any_navigation_node() -> None:
     op = oa.Or(

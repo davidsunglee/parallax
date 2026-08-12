@@ -1023,7 +1023,7 @@ def test_scoped_where_undeclared_member_rejected() -> None:
     assert exc.value.rule == NESTED_PATH_UNKNOWN_MEMBER
 
 
-# --- value-object rules fire at ANY depth in the queried entity's op tree -----
+# --- value-object rules fire at ANY depth in the queried entity's predicate --
 #
 # `validate_predicate` descends through the SAME-entity boolean combinators
 # (and/or/not/group), so a nested-predicate violation buried inside a combinator is
@@ -1577,30 +1577,30 @@ def _predicate_validator() -> Draft202012Validator:
     )
 
 
-def _op_valid(predicate: dict[str, Any]) -> bool:
+def _predicate_valid(predicate: dict[str, Any]) -> bool:
     return next(_predicate_validator().iter_errors(predicate), None) is None
 
 
 def test_schema_accepts_a_well_formed_nested_path() -> None:
-    assert _op_valid({"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}})
-    assert _op_valid({"nestedEq": {"path": "Customer.address.geo.country", "value": "NO"}})
+    assert _predicate_valid({"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}})
+    assert _predicate_valid({"nestedEq": {"path": "Customer.address.geo.country", "value": "NO"}})
 
 
 def test_schema_rejects_empty_path_after_value_object_name() -> None:
     # `Customer.address` has NO field segment after the value-object name — the
     # `nestedRef` grammar requires at least one, so the Predicate schema rejects it.
-    assert not _op_valid({"nestedEq": {"path": "Customer.address", "value": "x"}})
+    assert not _predicate_valid({"nestedEq": {"path": "Customer.address", "value": "x"}})
 
 
 def test_schema_rejects_trailing_dot_path() -> None:
-    assert not _op_valid({"nestedEq": {"path": "Customer.address.", "value": "x"}})
+    assert not _predicate_valid({"nestedEq": {"path": "Customer.address.", "value": "x"}})
 
 
 def test_schema_rejects_bad_segment_casing() -> None:
     # An uppercase value-object segment and an uppercase field segment both violate
     # the lowercase-initial segment grammar.
-    assert not _op_valid({"nestedEq": {"path": "Customer.Address.city", "value": "x"}})
-    assert not _op_valid({"nestedEq": {"path": "Customer.address.City", "value": "x"}})
+    assert not _predicate_valid({"nestedEq": {"path": "Customer.Address.city", "value": "x"}})
+    assert not _predicate_valid({"nestedEq": {"path": "Customer.address.City", "value": "x"}})
 
 
 def test_schema_rejects_a_reference_rooted_at_a_value_object() -> None:
@@ -1611,16 +1611,16 @@ def test_schema_rejects_a_reference_rooted_at_a_value_object() -> None:
     # `address` can never occupy the Entity segment of a reference. `address.city`
     # therefore matches no attribute reference at all — the same grammar that lets a
     # canonical `parallax.compatibility.Customer.address` be spelled unambiguously.
-    assert not _op_valid({"isNotNull": {"attr": "address.city"}})
-    assert not _op_valid({"between": {"attr": "address.city", "lower": "a", "upper": "b"}})
+    assert not _predicate_valid({"isNotNull": {"attr": "address.city"}})
+    assert not _predicate_valid({"between": {"attr": "address.city", "lower": "a", "upper": "b"}})
 
 
 def test_schema_rejects_a_value_object_in_an_entity_position() -> None:
     # The same grammar closes each Subtype Selection alternative.
-    assert not _op_valid({"narrow": {"to": ["address"], "operand": {"all": {}}}})
+    assert not _predicate_valid({"narrow": {"to": ["address"], "operand": {"all": {}}}})
 
 
 def test_schema_rejects_the_retired_narrow_entity_field() -> None:
-    assert not _op_valid(
+    assert not _predicate_valid(
         {"narrow": {"entity": "Customer", "to": ["Customer"], "operand": {"all": {}}}}
     )

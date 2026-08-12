@@ -64,7 +64,7 @@ separately from the DAG in [`modules.md`](modules.md).
 
 ## 2. Shared developer API and model surface
 
-### Query and operation API
+### Query and predicate API
 
 - **(decide and record — All slices)** The finder/query entry point. Show the
   idiomatic spelling of `Order where orderId == 42 and items.sku in ['A','B']`
@@ -129,7 +129,7 @@ Retain exactly one of the following subsections in the completed language spec.
   including latest defaults, per-hop axis propagation, and the graph-per-edge-pin
   representation of `history` and `asOfRange`. If
   `snapshot-history-includes` is deferred, say so without rejecting it as an
-  invalid operation.
+  invalid query.
 - **(decide and record — Snapshot lifecycle)** The closed-world relationship
   representation: how included to-one and to-many relationships are populated,
   how an unloaded relationship is distinguished from loaded-empty or loaded-null,
@@ -153,7 +153,7 @@ Retain exactly one of the following subsections in the completed language spec.
   interning timing for read/application/generated identities, and coexistence of
   distinct pinned views.
 - **(decide and record — Managed-object lifecycle)** The query-backed list
-  type and its operation binding, lazy first resolution, stable re-access,
+  type and its Object Query binding, lazy first resolution, stable re-access,
   iteration/index/size/bulk ergonomics, and coalescing through the identity map
   without claiming query-cache round-trip elimination.
 - **(decide and record — Managed-object lifecycle)** Eager and deferred

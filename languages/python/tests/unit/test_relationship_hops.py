@@ -153,7 +153,7 @@ def test_a_deeper_hop_validates_as_an_include_path() -> None:
 def test_a_deeper_hop_across_namespaces_names_the_target_it_was_composed_from() -> None:
     # The hop is spelled from the path's own target, exactly, so a second
     # namespace declaring the local name `Customer` does not reach it: the same
-    # operation validates against both models and addresses `sales.Customer`
+    # query validates against both models and addresses `sales.Customer`
     # either way. A bare owner would have named two Entities and therefore none.
     query = canonical_query(SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes))
     validate_object_query(

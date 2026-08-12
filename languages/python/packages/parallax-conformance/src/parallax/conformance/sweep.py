@@ -4,7 +4,7 @@ Selection is derived at runtime from the active slice and
 :data:`IMPLEMENTED_MODULES`; a case is reachable only when every module tag it
 declares is implemented. This keeps sweep coverage aligned with the module DAG
 without hard-coded case counts. The selected modules cover descriptor and
-operation processing, SQL and database execution, inheritance and graph
+query processing, SQL and database execution, inheritance and graph
 materialization, writes, temporal behavior, locking, retries, and concurrency.
 Cases that need run-only state or multi-session choreography remain reachable
 and are routed to their specialized runners by case shape.

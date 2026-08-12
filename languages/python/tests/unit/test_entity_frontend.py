@@ -545,8 +545,8 @@ def test_only_an_explicit_direction_term_can_choose_a_null_placement() -> None:
 
 def test_a_null_placement_is_single_shot_on_an_ordering_term() -> None:
     # A declaration term is not a query construct, so its rejection stays a plain
-    # ValueError rather than joining the query-definition family an operation Sort
-    # Key's identical single-shot rule raises.
+    # ValueError rather than joining the query-definition family an Object Query
+    # Sort Key's identical single-shot rule raises.
     with pytest.raises(ValueError, match="single-shot") as caught:
         desc("id").nulls_first().nulls_last()
     assert type(caught.value) is ValueError

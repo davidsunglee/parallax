@@ -6,8 +6,8 @@
 # metamodel schema forbids extra top-level keys). Row data for a model lives in
 # the sibling core/compatibility/fixtures/<model-stem>.yaml file.
 #
-# Order carries string / decimal / nullable / boolean columns so the operation
-# algebra's range, null, string, and membership predicates have attributes to
+# Order carries string / decimal / nullable / boolean columns so the Predicate
+# algebra's range, null, string, and membership comparisons have attributes to
 # exercise, and the other four give relationships, navigate / exists predicates,
 # and deep fetch something to traverse:
 #   - Order        — the root entity.

@@ -249,7 +249,7 @@ def test_a_finite_transaction_time_pinned_view_is_read_only(provisioner: Any) ->
     # `m-identity-map-010` is graded here rather than through a `GraphStory`
     # because it sits outside the claimed active slice (see the story's own
     # docstring). What the corpus lane's own mutate-step grading cannot reach:
-    # that refusal is derived from the step's find query, never from the
+    # that refusal is derived from the step's Object Query, never from the
     # value the derivation produced, so it holds whether or not an edited copy
     # carries its source node's pin. This runs the ordinary developer sequence —
     # pinned find, edit, keyed verb — and the pin is carried on the value.

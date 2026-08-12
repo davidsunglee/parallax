@@ -149,8 +149,8 @@ vocabulary a consumer uses to denote a member without caring where that member
 is stored, and it is what ``m-storage-layout`` accepts when it answers where a
 member lives. It is the successor to dotted-string member addressing — every
 authored ``Entity.occurrence.field`` string denotes exactly one member identity —
-without changing any serialized form, since no descriptor or operation position
-accepts one as a value.
+without changing any serialized form, since no descriptor, predicate, or query
+position accepts one as a value.
 """
 
 

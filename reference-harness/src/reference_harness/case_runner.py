@@ -5827,7 +5827,7 @@ def _scenario_step_read_entity(
     m-case-format *Read result form*). A read step names its queried position
     inside its own ``objectQuery.target``. A ``load`` / ``access`` action
     navigates from an earlier object (``on``, required for the read verbs): with a
-    ``path`` its rows are the path's TERMINAL entity; a path-less operation-list
+    ``path`` its rows are the path's TERMINAL entity; a path-less query-backed-list
     ``access`` resolves the constructed list's own (source) entity. Every other step
     (a write, a boundary / in-memory action) observes no rows, so it decodes nothing
     (``None``).
@@ -5840,7 +5840,7 @@ def _scenario_step_read_entity(
         start = step_entities[source]
         path = step.get("path")
         if path is None or start is None:
-            # A path-less operation-list `access` resolves the list's own (source)
+            # A path-less query-backed-list `access` resolves the list's own (source)
             # entity; a source that observed no rows (should not occur for a read
             # verb, whose `on` names a row-producing step) decodes nothing.
             return start

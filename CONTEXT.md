@@ -64,9 +64,9 @@ _Avoid_: strategy string, descendant strategy, table-per-leaf
 
 **Attribute Identity**:
 The language-neutral `(Entity Identity, attribute name)` pair that identifies
-one declared scalar attribute. It is shared by metadata and resolved operation
-values. The full `Identity` name distinguishes it from an attribute value or
-primary-key ID.
+one declared scalar attribute. It is shared by metadata and resolved predicate
+and query values. The full `Identity` name distinguishes it from an attribute
+value or primary-key ID.
 _Avoid_: Attribute ID, column name, dotted string, Python descriptor
 
 **Index Identity**:
@@ -99,7 +99,7 @@ _Avoid_: attribute record, reflected field, effective attribute
 
 **Neutral Type**:
 The `m-core` structured language-neutral scalar type used by metadata,
-operations, rows, and behavioral contracts. Fixed types are closed variants
+predicates, rows, and behavioral contracts. Fixed types are closed variants
 such as Int64 and Timestamp; Decimal additionally carries validated precision
 and scale. Textual spellings such as `decimal(18,2)` exist only at interchange
 boundaries.
@@ -475,7 +475,7 @@ _Avoid_: payload column, entity JSON column, document root column, JSON blob
 ### Expressions And Reads
 
 **Predicate**:
-A typed expression that describes which rows or objects an entity operation targets.
+A typed recursive expression that describes which rows or objects a read or a predicate-selected write targets.
 _Avoid_: where object, filter object
 
 **Assignment**:
@@ -504,7 +504,7 @@ A relationship path listed in `includes`; longer paths imply any intermediate re
 _Avoid_: include tree, populate path
 
 **Subtype Narrowing**:
-A query or include constraint that limits a polymorphic entity position to an effective concrete subtype set, authored with abstract subtype and/or concrete subtype names while preserving the surrounding operation shape.
+A query or include constraint that limits a polymorphic entity position to an effective concrete subtype set, authored with abstract subtype and/or concrete subtype names while preserving the surrounding predicate or query shape.
 _Avoid_: manual tag filter, type cast
 
 **Nested Value-Object Path**:
@@ -1042,7 +1042,7 @@ A declared, case-granular subset of the compatibility corpus that an implementat
 _Avoid_: module tier, partial pass list, ad hoc skip list
 
 **API Conformance Suite**:
-A test suite that proves an implementation's idiomatic public developer API reproduces the claimed Conformance Slice — running the code a developer writes through the shipped adapter against a real database, partitioning the slice with reasoned skips, asserting the corpus's expected results, and guarding that the idiomatic query builds the corpus operation. Additive proof beside the conformance-adapter grade, never a substitute.
+A test suite that proves an implementation's idiomatic public developer API reproduces the claimed Conformance Slice — running the code a developer writes through the shipped adapter against a real database, partitioning the slice with reasoned skips, asserting the corpus's expected results, and guarding that the idiomatic query builds the corpus Object Query. Additive proof beside the conformance-adapter grade, never a substitute.
 _Avoid_: showcase, demo, examples suite, idiomatic suite
 
 **Usage Guide**:

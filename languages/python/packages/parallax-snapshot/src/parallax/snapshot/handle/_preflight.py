@@ -63,7 +63,7 @@ __all__ = ["fetches_relationships", "preflight"]
 def preflight(query: ObjectQueryNode, *, model: Metamodel, form: Literal["rows", "graph"]) -> None:
     """Resolve and validate ``query`` against ``model``, and do no I/O.
 
-    Target resolution follows the operation-reference rule every validator and
+    Target resolution follows the reference-position rule every validator and
     lowering site resolves a spelling by, so "preflight accepted this target"
     implies "planning resolves it". Raises
     :class:`~parallax.snapshot.handle._errors.QueryTargetError` when ``model``

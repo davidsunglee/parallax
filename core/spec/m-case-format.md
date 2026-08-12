@@ -480,7 +480,7 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
   - A relationship **`action: load` step** and the **first `action: access` step** of a
     relationship or query-backed list (`m-op-list`) — the SQL-producing read that
     first **materializes** the loaded / accessed related objects (a deferred deep fetch,
-    or an operation-list first resolution) — is likewise **instance-form** (object lane):
+    or a query-backed list's first resolution) — is likewise **instance-form** (object lane):
     it projects the read entity's own instance-form list (its scalars plus any
     value-object document column it declares), exactly as a deep-fetch / snapshot **child
     level** does (`m-sql`, *Read result form*). A **subsequent** `action: access` of an

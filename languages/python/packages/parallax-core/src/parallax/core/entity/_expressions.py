@@ -49,7 +49,7 @@ Recommended style, not a rule the parameters enforce: START EVERY TERM FROM THE
 QUERIED ENTITY. Prefer ``Dog.where((Dog.name == n) & (Dog.bark_volume > v))``
 over spelling an inherited member through the class that declares it. It costs
 nothing on the wire — ``Dog.name`` and ``Animal.name`` emit the identical
-operation, because the expression is built from the declaring class either way —
+predicate, because the expression is built from the declaring class either way —
 and it leaves every composition in one position, which is trivially well-typed.
 
 What the parameters do NOT catch is recorded where it is decided rather than
@@ -145,7 +145,7 @@ __all__ = [
 def snake_to_camel(name: str) -> str:
     """The canonical member name a snake_case Python spelling denotes.
 
-    An operation reference names members canonically, so this is the rule that
+    A predicate or query reference names members canonically, so this is the rule that
     turns an authored member spelling into the one the wire carries. It lives
     beside the references it builds because a relationship hop past the first
     reaches no declaration and has only the spelling to go on.

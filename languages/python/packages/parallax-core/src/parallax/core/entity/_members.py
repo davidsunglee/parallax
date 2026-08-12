@@ -7,7 +7,7 @@ factory rejects an intrinsically invalid argument at the call itself, so a
 malformed option never reaches class creation.
 
 The same two names double as the installed descriptors: class access yields an
-operation-node seed and instance access yields the member value. This is the
+predicate-node seed and instance access yields the member value. This is the
 only module in the Entity cluster whose runtime behavior touches owner classes.
 """
 

@@ -43,7 +43,7 @@ from parallax.core.storage_layout import StorageLayoutFacet, TableLayout
 
 
 class SqlGenError(ValueError):
-    """An operation cannot be lowered to SQL (unsupported node or unbound reference)."""
+    """A query cannot be lowered to SQL (unsupported node or unbound reference)."""
 
 
 def table_layout(

@@ -349,7 +349,7 @@ def test_assert_action_on_rejects_more_groups_than_sources() -> None:
 #
 # `_assert_scenario` decodes each step's rows with the entity that step actually
 # read — a find's own query `target`, a load / access path's terminal entity, a
-# path-less operation-list access's source entity — so a value-object-bearing child
+# path-less query-backed-list access's source entity — so a value-object-bearing child
 # materializes with its OWN composite schema, never the scenario root's. These pin
 # the resolver on the real corpus scenarios that exercise each shape.
 
