@@ -42,7 +42,7 @@ to the bitemporal rectangle split.
 - **`slice-snapshot-1`** — the **plain-value** surface: reads materialize
   snapshot graphs (`m-snapshot-read`); writes are explicit only. No managed
   lifecycle: the slice claims neither `m-identity-map` nor `m-detach`, and not
-  `m-op-list` (a snapshot read is not an operation-backed lazy list; its
+  `m-op-list` (a snapshot read is not a query-backed lazy list; its
   round-trip observability is pinned by `m-snapshot-read`). It is also the only
   slice claiming `m-execution-log`: transaction execution provenance is
   lifecycle-neutral, but its dedicated case spine is authored over the
@@ -51,7 +51,7 @@ to the bitemporal rectangle split.
   managed objects interned in the transaction-scoped identity map
   (`m-identity-map`), mutation buffers through the unit of work, objects detach
   at their owning scope's end and merge back (`m-detach`), and relationship
-  access resolves through operation-backed lists (`m-op-list`).
+  access resolves through query-backed lists (`m-op-list`).
 
 Neither slice claims the deferred process caches (`m-process-cache`,
 `m-coherence`), aggregation (`m-agg`, `m-sql-agg`), the deferred Valid-Time-Only

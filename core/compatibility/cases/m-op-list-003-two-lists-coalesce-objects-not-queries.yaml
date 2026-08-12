@@ -1,9 +1,9 @@
-# Two operation-backed lists coalesce OBJECTS, not queries (m-op-list,
+# Two query-backed lists coalesce OBJECTS, not queries (m-op-list,
 # m-identity-map): two different finders that both resolve the same primary key
 # each execute their own query, but yield the SAME identity-mapped object.
 #
 # Step 0 resolves order 2 by id; step 1 resolves the same row by name ("Linus").
-# The two finders build two different operation-backed lists, so BOTH execute a
+# The two finders build two different query-backed lists, so BOTH execute a
 # query (two round trips — there is no query-cache coalescing here). But the row
 # they share, order 2, coalesces through the identity map to one managed object
 # (sameObjectAs): objects coalesce, queries do not.

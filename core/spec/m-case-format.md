@@ -478,7 +478,7 @@ ways, keyed on **where** the read is asserted — never on a bare member name al
     the object (`m-read-lock`) — is **instance-form** (object lane), exactly like a
     `then.graph` read.
   - A relationship **`action: load` step** and the **first `action: access` step** of a
-    relationship or operation-backed list (`m-op-list`) — the SQL-producing read that
+    relationship or query-backed list (`m-op-list`) — the SQL-producing read that
     first **materializes** the loaded / accessed related objects (a deferred deep fetch,
     or an operation-list first resolution) — is likewise **instance-form** (object lane):
     it projects the read entity's own instance-form list (its scalars plus any
@@ -1160,7 +1160,7 @@ prior step's result (so `on` is REQUIRED) or on the unit of work as a whole (so
 | `mutate` | assign the attributes in `set` in memory (no SQL for a snapshot / detached object) | prior object (`on` required) | `m-snapshot-read` / `m-detach` |
 | `detachCopy` | take a detached deep copy of the target | prior object (`on` required) | `m-detach` |
 | `load` | explicitly trigger a deferred relationship load (the portable, mandatory load trigger) | prior object(s) (`on` required) | `m-deep-fetch` |
-| `access` | read an already-loaded relationship / operation-backed list (no SQL when already populated) | prior object (`on` required) | `m-op-list` |
+| `access` | read an already-loaded relationship / query-backed list (no SQL when already populated) | prior object (`on` required) | `m-op-list` |
 | `flush` | emit the unit of work's buffered DML | unit of work (`on` optional) | `m-unit-work` |
 | `mergeBack` | reconcile a detached copy with the store | prior object (`on` required) | `m-detach` |
 | `commit` / `abort` | end the unit of work, committing or discarding it | unit of work (`on` optional) | `m-unit-work` / `m-detach` |

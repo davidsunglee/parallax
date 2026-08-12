@@ -7,12 +7,12 @@ read stack as a dependency of both navigation and deep fetch. The DAG-closure
 rule that every language target's claimed-module set must include — `required_modules
 = claimed ∪ transitive_prerequisites` — then forced any target claiming
 `m-navigate` or `m-deep-fetch` to also carry `m-op-list` in its closure, even a
-plain-value target that will never emit an operation-backed list. The Python
+plain-value target that will never emit a query-backed list. The Python
 snapshot-lifecycle spec had accordingly reserved a `parallax.core.op_list` scope
 for no reason but to satisfy that closure rule, despite `m-op-list.md` itself
-stating that "a plain-value read is **not** an operation-backed list."
+stating that "a plain-value read is **not** a query-backed list."
 
-The decision is that the two lifecycle result surfaces — operation-backed lists
+The decision is that the two lifecycle result surfaces — query-backed lists
 for the managed lifecycle, snapshot graphs for the plain-value lifecycle — are
 **peers above the shared fetch algorithm**, neither living underneath it nor
 underneath one another. Three edges change:
@@ -23,7 +23,7 @@ underneath one another. Three edges change:
   `m-navigate` only transitively, through the edge being removed.
 - `m-deep-fetch --> m-op-list` is **deleted**. Deep fetch is a pure per-level
   fetch algorithm; nothing about it is a list, and a navigation filter used as a
-  predicate inside an operation yields no list either — it is a semi-join.
+  predicate yields no list either — it is a semi-join.
 - `m-op-list --> m-deep-fetch` is **added**: a lazy list is *populated by* deep
   fetch, the exact mirror of the existing, documented `m-snapshot-read -->
   m-deep-fetch` edge. Acyclicity holds against the full graph: nothing reaches

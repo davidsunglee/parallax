@@ -69,7 +69,7 @@ shared-node states remain distinct without issuing later SQL.
 | `m-navigate` | src/navigate | navigate | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |
 | `m-object-query` | src/object-query | object-query | `m-predicate`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-predicate` | src/predicate | predicate | `m-metamodel`, `m-inheritance` | depcheck.toml |
-| `m-op-list` | src/lists | lists | `m-predicate`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
+| `m-op-list` | src/lists | lists | `m-object-query`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
 | `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |
 | `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |

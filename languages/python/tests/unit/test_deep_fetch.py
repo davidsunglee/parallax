@@ -225,7 +225,7 @@ def test_narrow_and_broad_both_count_toward_l() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Child-operation shape: IN membership + propagated as-of + declared orderBy. #
+# Child-query shape: IN membership + propagated as-of + declared orderBy.     #
 # --------------------------------------------------------------------------- #
 def test_child_query_is_a_plain_in_membership() -> None:
     plan = _plan(ORDERS, "Order", (_path(_seg("Order.statuses")),))
@@ -664,7 +664,7 @@ def test_a_path_cannot_continue_past_a_back_reference_level() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The planner is pure: no paths means no levels; the root operation is        #
+# The planner is pure: no paths means no levels; the root query is           #
 # canonicalized (as-of injected, navigation composed) but nothing executes.   #
 # --------------------------------------------------------------------------- #
 def test_zero_paths_plans_zero_levels() -> None:

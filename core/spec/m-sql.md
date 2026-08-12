@@ -141,7 +141,7 @@ materialized-predicate-write resolving read derives its `Document` slots from th
 declared assignments — and from nothing else, its own predicate included (the
 `Document` slot rule and *Result form*, below). Predicate deliberately
 carries **no projection node** (`m-predicate`): no Object Query read may project
-a proper subset of the derived list. The directives `orderBy` and `limit` never
+a proper subset of the derived list. The `orderBy` and `limit` clauses never
 change the list.
 
 Inheritance first resolves the target and every `narrow` to one canonical

@@ -39,9 +39,9 @@ def test_subtype_selection_schema_is_registered_under_its_own_id() -> None:
     assert subtype_selection["$id"].endswith("/subtype-selection.schema.json")
 
 
-def test_operation_schema_resolves_the_shared_subtype_selection_reference() -> None:
-    operation = load_schemas(_SCHEMA_PATH.parents[1])["predicate.schema.json"]
-    validator = Draft202012Validator(operation, registry=_REGISTRY)
+def test_predicate_schema_resolves_the_shared_subtype_selection_reference() -> None:
+    predicate = load_schemas(_SCHEMA_PATH.parents[1])["predicate.schema.json"]
+    validator = Draft202012Validator(predicate, registry=_REGISTRY)
     assert validator.is_valid({"narrow": {"to": ["Animal"], "operand": {"all": {}}}})
 
 
@@ -879,17 +879,18 @@ def _rejected_with_golden_statements() -> dict[str, Any]:
 
 
 def _rejected_cross_shape_when_member() -> dict[str, Any]:
-    """A rejected case carrying a stray `when.boundary` (its `when` allows only operation/write)."""
+    """A rejected case carrying a stray `when.boundary` (its `when` allows only
+    objectQuery/write)."""
     doc = _rejected_query_case()
     doc["when"]["boundary"] = [{"action": "read"}]
     return doc
 
 
-def _rejected_both_operation_and_write() -> dict[str, Any]:
-    """A rejected case carrying BOTH `operation` and `write`.
+def _rejected_both_query_and_write() -> dict[str, Any]:
+    """A rejected case carrying BOTH `objectQuery` and `write`.
 
     A rejected case pins a SINGLE invalid input, so its `when` MUST carry EXACTLY ONE
-    of operation/write. The schema `oneOf` (each alternative requiring one member)
+    of objectQuery/write. The schema `oneOf` (each alternative requiring one member)
     matches BOTH alternatives when both are present, so `oneOf` fails — closing the
     gap the earlier `anyOf` (>= 1, not exactly 1) left open.
     """
@@ -898,8 +899,8 @@ def _rejected_both_operation_and_write() -> dict[str, Any]:
     return doc
 
 
-def _rejected_neither_operation_nor_write() -> dict[str, Any]:
-    """A rejected case carrying NEITHER `operation` nor `write`.
+def _rejected_neither_query_nor_write() -> dict[str, Any]:
+    """A rejected case carrying NEITHER `objectQuery` nor `write`.
 
     An empty `when` matches no `oneOf` alternative, so the rejected branch fails and
     no other top-level branch matches (the `shape` const gates them) — the document
@@ -1262,8 +1263,8 @@ REJECTED_CASES = {
     "rejected-unknown-rule": _rejected_unknown_rule,
     "rejected-with-golden-statements": _rejected_with_golden_statements,
     "rejected-cross-shape-when-member": _rejected_cross_shape_when_member,
-    "rejected-both-operation-and-write": _rejected_both_operation_and_write,
-    "rejected-neither-operation-nor-write": _rejected_neither_operation_nor_write,
+    "rejected-both-query-and-write": _rejected_both_query_and_write,
+    "rejected-neither-query-nor-write": _rejected_neither_query_nor_write,
     "conflict-keyed-write": _conflict_keyed_write,
     "keyed-write-stray-member": _keyed_write_with_a_stray_member,
     "rejected-write-multi-key-array": _rejected_write_multi_key_array,

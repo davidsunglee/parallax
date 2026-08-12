@@ -10,10 +10,10 @@ check rather than a rewrite — the language target never depends on the referen
 sqlglot normalizer (non-normative). The ``m-deep-fetch`` planning boundary reads
 the Object Query's clauses directly, injects temporal terms through
 ``m-temporal-read``, and canonicalizes navigation before producing the flat
-``EntityQuery`` this module consumes. Deep fetch (`DeepFetch`) is planned there
-into one read per relationship level and is never a predicate, so reaching this
-compiler as one raises a clear :class:`SqlGenError` and a mis-routed case fails
-loudly, never silently.
+``EntityQuery`` this module consumes. An ``includes`` clause is planned there into
+one ``EntityQuery`` per relationship level, so every query arriving here reads a
+SINGLE level and this compiler has no include path to lower and no relationship
+level to discover.
 
 Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
 superset projection, table-per-concrete-subtype union-all) are ASSEMBLED here
@@ -321,16 +321,16 @@ def compile_read(
     lock: LockMode | None = None,
     include_value_objects: bool | frozenset[str] = False,
 ) -> CompiledRead:
-    """Compile a read operation to one self-contained :class:`CompiledRead`.
+    """Compile one Entity Query to a self-contained :class:`CompiledRead`.
 
     ``query.target`` is an exact accepted Entity Identity. The compiler resolves
-    it against ``model`` and consumes the predicate, narrowing, ordering, and cap
-    directly; no query-wide wrapper reaches this boundary.
+    it against ``model`` and reads the predicate, narrowing, ordering, and cap
+    off sibling fields; there is no clause to peel before lowering starts.
 
     The result carries everything the caller needs to consume the read's rows —
     the canonical ``LoweredStatement`` for ``dialect``, the root ``narrow_to`` to
     materialize under, and :meth:`CompiledRead.transform_row` — so no caller
-    re-derives `familyVariant` or narrowing from the operation a second time.
+    re-derives `familyVariant` or narrowing from the query a second time.
 
     ``result_form`` selects the projection lane (m-sql *Read projection*): a
     **row-form** read (the values lane — the corpus predicate `read` cases and the

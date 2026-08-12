@@ -1,25 +1,27 @@
-# Deep fetch with a DIRECTIVE-WRAPPED temporal root: the top-1 Policy (ordered by
-# id, `limit 1`) as of Valid Time PAST 2024-03-01 / Transaction Time LATEST, eager-loading
-# its coverages as of the SAME instant. The root operand is
-# `limit(orderBy(asOf(asOf(all))))` — the result directives wrap the temporal
-# wrappers. A conforming compiler peels `orderBy`/`limit` BEFORE the
-# temporal wrappers on the root (so the root query injects the Valid-Time-past
-# predicate) AND collects the same as-of pins to PROPAGATE into the child level.
+# Deep fetch from a root that ALSO orders and caps: the top-1 Policy (ordered by
+# id, `limit 1`) as of Valid Time PAST 2024-03-01 / Transaction Time LATEST,
+# eager-loading its coverages as of the SAME instant. Every clause is a SIBLING of
+# the query's `temporal` map, so `orderBy` / `limit` / `includes` sit beside the
+# Temporal Selection rather than around it: the root injects the Valid-Time-past
+# predicate and collects the same as-of pins to PROPAGATE into the child level
+# whatever other clauses the query carries.
 #
-# This catches a propagation-pin collector that only walks the OUTERMOST `asOf`
-# nodes: with the directives wrapping them it would see no pins and the child
-# Coverage level would wrongly default to Latest, returning coverage 10's CURRENT
-# value 700 (C-R3) instead of the Valid-Time 2024-03-01 HEAD 600 (C-R2). The propagated
-# child suffix is the ordered `[valid, valid, transaction]` binds `[B, B,
-# infinity]`, appended after the IN list. Mirrors m-navigate-013 (Valid-Time-past deep fetch) but
-# proves propagation survives the directive peel; `limit 1` keeps only Policy 1.
+# This catches a propagation-pin collector that derives the child pin from the
+# root's ordering and cap rather than from the query's own Temporal Selection:
+# such a collector finds no pin here and the child Coverage level wrongly defaults
+# to Latest, returning coverage 10's CURRENT value 700 (C-R3) instead of the
+# Valid-Time 2024-03-01 HEAD 600 (C-R2). The propagated child suffix is the
+# ordered `[valid, valid, transaction]` binds `[B, B, infinity]`, appended after
+# the IN list. Mirrors m-navigate-013 (Valid-Time-past deep fetch) but proves
+# propagation is insensitive to the ordering and cap clauses; `limit 1` keeps only
+# Policy 1.
 model: models/policy.yaml
 tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, bitemporal, orderBy, limit, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
-  note: "deep-fetch child level - the Policy.coverages IN-list binds are the distinct policy ids gathered from the (directive-wrapped, top-1) root query result, so the child emissions depend on a query result"
+  note: "deep-fetch child level - the Policy.coverages IN-list binds are the distinct policy ids gathered from the ordered, top-1 root query result, so the child emissions depend on a query result"
 when:
   objectQuery:
     target: parallax.compatibility.Policy

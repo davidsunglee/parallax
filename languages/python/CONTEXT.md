@@ -266,7 +266,7 @@ changes the accepted target type for later segments and populates a distinct
 Narrowed View. Broad and target-narrowed views remain separate fetches. The path
 also authors cardinality-neutral relationship predicates through variadic
 `exists(...)` and `not_exists(...)`; multi-hop paths lower to nested existence
-operations, and multiple predicates must match one terminal related object.
+predicates, and multiple predicates must match one terminal related object.
 A Python-authored path stops at two hops: the segment past the first is composed
 from the path's own target rather than resolved against a model, so a third hop
 has no honest owner to name and raises instead.
@@ -276,7 +276,7 @@ _Avoid_: dotted relationship string, lazy traversal
 The uniform `exists(*predicates)` / `not_exists(*predicates)` quantifier on a
 Relationship Path or Value Object occurrence path. Multiple predicates must
 match the same terminal related Entity or embedded occurrence; storage-specific
-lowering chooses relational or nested canonical operations. `~exists(...)`
+lowering chooses relational or nested canonical predicates. `~exists(...)`
 canonicalizes to `not_exists(...)` and the inverse does the reverse. Python
 exposes no `any()` / `none()` aliases.
 _Avoid_: collection any, collection none, SQL-only existence

@@ -152,7 +152,7 @@ Retain exactly one of the following subsections in the completed language spec.
   key. Record inheritance-family normalization, latest lowering, finite pins,
   interning timing for read/application/generated identities, and coexistence of
   distinct pinned views.
-- **(decide and record — Managed-object lifecycle)** The operation-backed list
+- **(decide and record — Managed-object lifecycle)** The query-backed list
   type and its operation binding, lazy first resolution, stable re-access,
   iteration/index/size/bulk ergonomics, and coalescing through the identity map
   without claiming query-cache round-trip elimination.
@@ -186,14 +186,14 @@ Retain the branch matching the lifecycle profile; do not answer both.
 - **(decide and record — Snapshot lifecycle)** The eager materialized collection
   types and iteration/indexing/bulk ergonomics. Query construction is
   side-effect-free, but explicit execution returns a value; it is not an
-  `m-op-list` operation-backed lazy list.
+  `m-op-list` query-backed lazy list.
 - **(decide and record — Snapshot lifecycle)** How root-empty, relationship-empty,
   relationship-null, unloaded, ordered children, shared prefixes, and graph-local
   shared identity appear in the public result.
 
 ### Managed-object results
 
-- **(decide and record — Managed-object lifecycle)** The lazy operation-backed
+- **(decide and record — Managed-object lifecycle)** The lazy query-backed
   collection surface and the access points that trigger resolution. Record the
   type returned by relationship navigation and how already-populated
   relationships avoid re-querying.

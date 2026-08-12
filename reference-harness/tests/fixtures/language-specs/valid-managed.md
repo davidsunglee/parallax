@@ -40,7 +40,7 @@ lists, mutation buffering, commit/abort, detach, and merge-back are explicit.
 
 ### Managed-object results
 
-Operation-backed collections resolve lazily and coalesce through the identity
+Query-backed collections resolve lazily and coalesce through the identity
 map while preserving empty, null, unloaded, ordered, and shared states.
 
 ## 7. Source-enforcement topology
@@ -70,7 +70,7 @@ map while preserving empty, null, unloaded, ordered, and shared states.
 | `m-navigate` | src/navigate | navigate | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | depcheck.toml |
 | `m-object-query` | src/object-query | object-query | `m-predicate`, `m-metamodel`, `m-inheritance` | depcheck.toml |
 | `m-predicate` | src/predicate | predicate | `m-metamodel`, `m-inheritance` | depcheck.toml |
-| `m-op-list` | src/lists | lists | `m-predicate`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
+| `m-op-list` | src/lists | lists | `m-object-query`, `m-unit-work`, `m-deep-fetch` | depcheck.toml |
 | `m-opt-lock` | src/opt-lock | opt-lock | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | depcheck.toml |
 | `m-pk-gen` | src/pk-gen | pk-gen | `m-metamodel` | depcheck.toml |
 | `m-read-lock` | src/read-lock | read-lock | `m-unit-work`, `m-dialect` | depcheck.toml |

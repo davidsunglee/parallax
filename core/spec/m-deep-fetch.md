@@ -5,7 +5,7 @@ while **eliminating N+1** round trips. Per the dependency graph, `m-deep-fetch`
 depends on `m-navigate` alone (deep fetch traverses relationships). The
 **Includes** clause is `m-object-query`; the **SQL emission** is `m-sql`.
 This module ties them to observable behavior. The two lifecycle result surfaces
-— operation-backed lists (`m-op-list`) for the managed lifecycle, snapshot
+— query-backed lists (`m-op-list`) for the managed lifecycle, snapshot
 graphs (`m-snapshot-read`) for the plain-value lifecycle — sit **above** deep
 fetch and are populated by it; deep fetch itself is a pure per-level fetch
 algorithm and reifies neither.

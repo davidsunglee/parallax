@@ -3,7 +3,7 @@
 Relationship-navigation **canonicalization** over the flat predicate produced at
 the read-planning boundary.
 Its single job is **per-hop as-of propagation**: for every ``navigate`` / ``exists`` /
-``notExists`` hop reached anywhere in an already root-injected operation, resolve the
+``notExists`` hop reached anywhere in an already root-injected predicate, resolve the
 relationship's target entity and, when that entity (or its inheritance family) is
 temporal, inject the propagated as-of predicate into the hop's own interior as
 **plain** ``m-predicate`` predicate nodes — composed from the identical templates

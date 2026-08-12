@@ -59,10 +59,10 @@ def test_write_sequence_cases_are_discovered_and_self_describe() -> None:
     write_cases = [c for c in cases.values() if c.is_write_sequence]
     assert write_cases, "no write-sequence cases discovered"
     for case in write_cases:
-        # Each declares a writeSequence + a then.tableState, no operation.
+        # Each declares a writeSequence + a then.tableState, no query.
         assert case.write_sequence
         assert case.expected_table_state
-        assert "operation" not in case.when
+        assert "objectQuery" not in case.when
 
 
 def test_write_step_count_consistency_holds_for_authored_cases() -> None:

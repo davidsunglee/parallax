@@ -96,7 +96,7 @@ decisions into the operational guide.
   [core/spec/modules.md](core/spec/modules.md), using the completed language
   spec's enforcement scopes.
 - Keep language-facing APIs idiomatic, but serialize to the canonical metamodel
-  and operation forms.
+  and query forms.
 - Prefer compatibility cases over duplicated language-only behavioral tests.
   Use unit tests for internal seams, diagnostics, and failure modes.
 - Use the conformance interface in
@@ -123,7 +123,7 @@ Two prerequisites are especially easy to mistake for claimed behavior:
 - `slice-snapshot-1` needs `m-op-list` transitively because `m-navigate` and
   `m-deep-fetch` depend on it. The snapshot extension uses the required internal
   operation/list mechanics but returns eager plain-value graphs; it must not
-  expose the managed operation-backed list surface or add `m-op-list` to the
+  expose the managed query-backed list surface or add `m-op-list` to the
   claim.
 - Both lifecycle claims need `m-db-port` through `m-unit-work` and `m-db-error`.
   It is contract-covered rather than case-covered, so it is proved through the
@@ -328,7 +328,7 @@ implementation is wired through its own adapter or test runner.
 
 Classify a failure before editing code:
 
-- **Serde failure:** a descriptor, operation, case, or adapter envelope cannot
+- **Serde failure:** a descriptor, query, case, or adapter envelope cannot
   round-trip or validate. Fix the owning contract implementation before SQL.
 - **Compile failure:** emitted SQL or binds differ from the selected golden
   statement. Fix `m-sql` or the pure dialect seam.

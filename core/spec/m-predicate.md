@@ -124,8 +124,8 @@ The refusal is a property of the **reference site**, not of the model. Both
 Entities remain declarable, remain materializable under their exact qualified
 identities, and remain readable through any position that names them
 unambiguously — the canonical spelling, a family root, or a relationship target a
-hop resolves through a declaration rather than through the operation's own
-spelling. A position carried **beside** an operation rather than inside it — the
+hop resolves through a declaration rather than through the predicate's own
+spelling. A position carried **beside** a predicate rather than inside it — the
 queried position a read names, or the target entity of a predicate-selected
 write — admits the same two spellings and resolves by the same rule; the surface
 owning that position names the refusal in its own vocabulary rather than in this

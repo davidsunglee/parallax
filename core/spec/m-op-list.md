@@ -1,23 +1,23 @@
-# m-op-list — Operation-Backed List Results
+# m-op-list — Query-Backed List Results
 
-`m-op-list` specifies **operation-backed list results** — the collection an
+`m-op-list` specifies **query-backed list results** — the collection an
 implementation returns from a set-based query. Per the dependency graph,
-`m-op-list` depends on `m-predicate` (a list is backed by an operation),
+`m-op-list` depends on `m-object-query` (a list is backed by an Object Query),
 `m-unit-work` (it resolves within a unit of work), and `m-deep-fetch` (a lazy
 list is *populated by* deep fetch — the same relationship `m-snapshot-read`
 has with deep fetch). Lists sit *above* the shared fetch algorithm, not
-underneath it: a navigation node used as a predicate inside an operation is a
-semi-join and yields no list, so `m-navigate` carries no edge to `m-op-list` at
-all; deep fetch populates the list instead, and this module's contract is what
-makes that population's round-trip guarantees observable.
+underneath it: a navigation node used as a predicate is a semi-join and yields
+no list, so `m-navigate` carries no edge to `m-op-list` at all; deep fetch
+populates the list instead, and this module's contract is what makes that
+population's round-trip guarantees observable.
 
-## Operation-backed lazy list results (`findMany`)
+## Query-backed lazy list results (`findMany`)
 
-A set-based query returns a **list bound to an operation**, not an eagerly
-materialized array. The canonical entry point is `findMany(operation)`:
+A set-based query returns a **list bound to an Object Query**, not an eagerly
+materialized array. The canonical entry point is `findMany(query)`:
 
-- The result is an **operation-backed view**. Constructing it performs **no**
-  database work; it carries the `m-predicate` operation it will resolve.
+- The result is a **query-backed view**. Constructing it performs **no**
+  database work; it carries the `m-object-query` query it will resolve.
 - It resolves **lazily on first access** (iteration, indexing, size) within the
   unit of work. Resolution issues the query and materializes the result.
 - Resolution is **idempotent and stable**: re-accessing an already-resolved list
@@ -26,7 +26,7 @@ materialized array. The canonical entry point is `findMany(operation)`:
 Where the **transaction-scoped identity map** (`m-identity-map`) is present, two
 lists resolving the same identity key within one unit of work yield the **same**
 logical object — the rows still round-trip; only the materialized objects
-coalesce. Repeated-equal-operation round-trip *elimination* (a query cache) is
+coalesce. Repeated-equal-query round-trip *elimination* (a query cache) is
 `m-process-cache` (deferred). The list-core contract above holds independently
 of both.
 
@@ -34,7 +34,7 @@ This laziness is what makes the deep-fetch round-trip guarantees (`m-deep-fetch`
 observable: because a list defers resolution and a deep fetch issues one statement
 per relationship level, the harness can count statements and prove that populating
 an already-fetched relationship does not fan out. (A plain-value read is **not**
-an operation-backed list — for snapshot graphs the same round-trip observability
+a query-backed list — for snapshot graphs the same round-trip observability
 is pinned by `m-snapshot-read` on its own materialization.)
 
 ### Observable contract

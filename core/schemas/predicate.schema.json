@@ -274,7 +274,7 @@
       "properties": { "not": { "$ref": "#/$defs/unary" } }
     },
     "group": {
-      "description": "An explicit precedence-nesting node. It wraps a single inner operation so that a fluent or prefix surface that intends to group a sub-expression serializes to one unambiguous canonical form.",
+      "description": "An explicit precedence-nesting node. It wraps a single inner predicate so that a fluent or prefix surface that intends to group a sub-expression serializes to one unambiguous canonical form.",
       "type": "object",
       "additionalProperties": false,
       "required": ["group"],

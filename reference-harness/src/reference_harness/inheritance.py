@@ -137,7 +137,7 @@ MODEL_REJECTED_RULES: frozenset[str] = frozenset(
     }
 )
 
-# Predicate-level rules (m-predicate x m-inheritance): a SCHEMA-VALID operation a
+# Predicate-level rules (m-predicate x m-inheritance): a SCHEMA-VALID query a
 # model-aware validator MUST refuse pre-SQL because it narrows or references
 # subtypes incompatibly with the polymorphic position it queries.
 NARROW_OUTSIDE_POSITION = "narrow-outside-position"
@@ -152,8 +152,8 @@ NARROW_OUTSIDE_RELATIONSHIP_TARGET = "narrow-outside-relationship-target"
 SUBTYPE_SELECTION_DUPLICATE_ALTERNATIVE = "subtype-selection-duplicate-alternative"
 SUBTYPE_SELECTION_OVERLAPPING_ALTERNATIVES = "subtype-selection-overlapping-alternatives"
 # The resolution half of the positional rules: a reference position spells its
-# entity BARE, so a local name two namespaces of the model declare names no single
-# entity and the reference resolves nowhere.
+# entity canonically or BARE, and a bare local name two namespaces of the model
+# declare names no single entity, so the reference resolves nowhere.
 REFERENCE_AMBIGUOUS_ENTITY_NAME = "reference-ambiguous-entity-name"
 
 OPERATION_REJECTED_RULES: frozenset[str] = frozenset(
@@ -979,11 +979,12 @@ def resolve_hop_effective_set(
 def _check_reference_entity_name(family: Family, reference: Any, name: Any) -> None:
     """Reject a reference position whose entity spelling names more than one entity.
 
-    Every reference position spells its entity BARE — the operation grammars admit
-    no namespace segment — so a local name two namespaces of the model declare names
-    no single entity there and the reference resolves nowhere. Refusing it is a
-    REFERENCE-site rule: both entities stay declarable, and each stays reachable
-    through a position that names it unambiguously.
+    A reference position spells its entity canonically (`<namespace>.<Entity>`) or
+    BARE, and the bare spelling is legal exactly where it resolves to one declared
+    entity — so a local name two namespaces of the model declare names no single
+    entity there and the reference resolves nowhere. Refusing it is a REFERENCE-site
+    rule: both entities stay declarable, and each stays reachable through the
+    canonical spelling, which names one of them.
     """
     if not isinstance(name, str):
         return

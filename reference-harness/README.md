@@ -2,7 +2,7 @@
 
 The canonical **compatibility runner** for parallax (the `m-case-format` harness) — Python + uv + sqlglot.
 
-It is **tooling, not an ORM**. It **never compiles operations to SQL** (that is
+It is **tooling, not an ORM**. It **never compiles queries to SQL** (that is
 precisely what a real implementation must do and prove against the golden SQL).
 It only proves the compatibility suite is internally consistent and that the
 golden SQL is correct for the fixture data, across every database behind the
@@ -18,9 +18,9 @@ conformance-adapter contract.
 ```text
 src/reference_harness/
 ├── case.py            # the in-memory Case + Model dataclasses + loader
-├── schema_validate.py # validate descriptors / operations / cases vs JSON Schema (+ meta-schema)
+├── schema_validate.py # validate descriptors / queries / cases vs JSON Schema (+ meta-schema)
 ├── sql_lint.py        # sqlglot-parse every golden / reference SQL string
-├── serde.py           # canonical (de)serialize for operations AND the metamodel (JSON + YAML)
+├── serde.py           # canonical (de)serialize for queries AND the metamodel (JSON + YAML)
 ├── sql_normalize.py   # sqlglot implementation of the m-sql normalization rules
 ├── ddl_builder.py     # descriptor -> CREATE TABLE DDL (dialect-aware via the provider)
 ├── data_loader.py     # load fixture rows

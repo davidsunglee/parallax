@@ -8,7 +8,7 @@ list of :class:`FetchLevel` entries,
 each knowing how to build its own child query from its parent level's distinct
 gathered keys. It never compiles a statement (``m-sql``), never executes
 anything (``m-db-port``), and reifies no list — the two lifecycle result
-surfaces (operation-backed lists, snapshot graphs) are built **on top of** this
+surfaces (query-backed lists, snapshot graphs) are built **on top of** this
 plan by their own modules (``m-op-list --> m-deep-fetch``,
 ``m-snapshot-read --> m-deep-fetch``).
 
@@ -527,7 +527,7 @@ def _narrowed_position(
     """The canonical effective concrete set an authored ``to`` list denotes, or
     ``None`` when a name denotes no single Entity or the members span two families.
 
-    Each name is an operation reference and resolves model-wide by
+    Each name is a query reference and resolves model-wide by
     :func:`~parallax.core.metamodel.entity_by_name`'s rule, never into the
     referring Entity's own namespace — the caller classifies the miss in its own
     vocabulary, as `m-predicate`'s validator does for the same spellings.

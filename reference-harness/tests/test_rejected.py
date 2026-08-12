@@ -87,7 +87,7 @@ from reference_harness.write_validate import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _COMPATIBILITY_ROOT = _REPO_ROOT / "core" / "compatibility"
-_OPERATION_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "predicate.schema.json"
+_PREDICATE_SCHEMA_PATH = _REPO_ROOT / "core" / "schemas" / "predicate.schema.json"
 _REGISTRY = build_registry(load_schemas(_REPO_ROOT / "core"))
 
 
@@ -471,14 +471,14 @@ def test_resolve_effective_definition_inherits_temporality_from_the_root_only() 
     ]
 
 
-def test_the_authored_corpus_covers_both_operation_and_write_negatives() -> None:
+def test_the_authored_corpus_covers_both_query_and_write_negatives() -> None:
     used = {c.rejected_rule for c in _rejected_cases()}
     # PredicateNode negatives (three of the four contract clauses, the typed-literal
     # MUST, and the bound-ordering MUST). `find-root-value-object` is deliberately
     # absent: a value-object occurrence name is lowercase-initial and an Entity's
     # local name capitalized, so no serialized document can spell a reference rooted
     # at a value object, and the negative is the Predicate schema's (see the
-    # regex-level section below). The rule itself stays live for an operation built
+    # regex-level section below). The rule itself stays live for a predicate built
     # natively.
     assert {
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
@@ -919,7 +919,7 @@ def test_nested_string_predicate_on_a_date_member_rejected_in_both_scopes(
 # --- range bound ordering (m-predicate) -------------------------------------
 #
 # The bounds are compared by LITERAL KIND, so the rule fires on two numbers or two
-# strings and stands aside for every other pairing. It is the one operation rule that
+# strings and stands aside for every other pairing. It is the one predicate rule that
 # consults no declared structure: both operands are authored on the node itself.
 
 
@@ -1034,7 +1034,7 @@ def test_scoped_where_undeclared_member_rejected() -> None:
 
 def test_nested_path_violation_buried_inside_and_is_rejected() -> None:
     entity = _customer_entity()
-    operation = {
+    predicate = {
         "and": {
             "operands": [
                 {"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}},  # valid
@@ -1043,7 +1043,7 @@ def test_nested_path_violation_buried_inside_and_is_rejected() -> None:
         }
     }
     with pytest.raises(RejectionError) as exc:
-        validate_predicate(entity, operation)
+        validate_predicate(entity, predicate)
     assert exc.value.rule == NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT
 
 
@@ -1052,7 +1052,7 @@ def test_nested_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -
     # group is still caught with the literal-type rule, proving every combinator is
     # traversed and resolution stays against the SAME root entity throughout.
     entity = _customer_entity()
-    operation = {
+    predicate = {
         "or": {
             "operands": [
                 {"eq": {"attr": "Customer.name", "value": "Ada"}},
@@ -1074,7 +1074,7 @@ def test_nested_literal_type_mismatch_buried_inside_or_not_group_is_rejected() -
         }
     }
     with pytest.raises(RejectionError) as exc:
-        validate_predicate(entity, operation)
+        validate_predicate(entity, predicate)
     assert exc.value.rule == NESTED_LITERAL_TYPE_MISMATCH
 
 
@@ -1376,14 +1376,14 @@ def test_the_case_format_leaf_encoding_witness_authors_decodable_spellings() -> 
 # --- the runner FAILS on a mis-authored rejected case -----------------------
 
 
-def _rejected_doc(operation: dict[str, Any], rule: str) -> Case:
+def _rejected_doc(predicate: dict[str, Any], rule: str) -> Case:
     from reference_harness.case import Model
 
     raw = {
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
         "shape": "rejected",
-        "when": {"operation": operation},
+        "when": {"objectQuery": {"target": "Customer", "predicate": predicate}},
         "then": {"rejectedRule": rule},
     }
     model = load_model(_COMPATIBILITY_ROOT, "models/customer.yaml")
@@ -1391,29 +1391,33 @@ def _rejected_doc(operation: dict[str, Any], rule: str) -> Case:
     return Case(path=Path("m-value-object-999-x.yaml"), raw=raw, model=model)
 
 
-def test_runner_fails_when_a_valid_operation_is_authored_as_rejected() -> None:
+def test_runner_fails_when_a_valid_query_is_authored_as_rejected() -> None:
     # A perfectly valid nested predicate authored as `rejected` must FAIL — the
-    # validator accepts it, so the expected pre-SQL rejection never happens.
+    # validator accepts it, so the expected pre-SQL rejection never happens. The
+    # match is what proves the failure came from model-aware validation rather
+    # than from the structural guard an ill-formed `when` would trip first.
     case = _rejected_doc(
         {"nestedEq": {"path": "Customer.address.city", "value": "Oslo"}},
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
     )
-    with pytest.raises(CaseFailure):
+    with pytest.raises(CaseFailure, match="validation ACCEPTED the input"):
         run_case(case, None)  # type: ignore[arg-type]
 
 
 def test_runner_fails_when_the_named_rule_is_wrong() -> None:
-    # The input IS rejected, but with a DIFFERENT rule than the case names.
+    # The input IS rejected, but with a DIFFERENT rule than the case names, so
+    # the failure names BOTH rules — the one raised and the one authored.
     case = _rejected_doc(
         {"nestedEq": {"path": "Customer.contact.city", "value": "x"}},
         NESTED_LITERAL_TYPE_MISMATCH,  # actual rule: first-segment-not-value-object
     )
-    with pytest.raises(CaseFailure):
+    with pytest.raises(CaseFailure, match="but the case expects then.rejectedRule") as exc:
         run_case(case, None)  # type: ignore[arg-type]
+    assert NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT in str(exc.value)
 
 
 def test_runner_fails_a_handleless_input_against_a_multi_family_model() -> None:
-    # A bare row and an operation both name no target, so both resolve the model's
+    # A bare row and a query both name no target, so both resolve the model's
     # DEFAULT write root. A model declaring several families names no single root, so
     # there is no default: the case must carry its own handle. Resolving it to
     # whichever entity is declared first would grade a rule against an entity the
@@ -1494,7 +1498,7 @@ def test_the_subtype_protocol_classifies_the_family_names_member_honesty_would_c
     run_case(case, None)  # type: ignore[arg-type]
 
 
-# --- the _assert_schema XOR guard: EXACTLY ONE of operation/write ------------
+# --- the _assert_schema XOR guard: EXACTLY ONE of objectQuery/write ----------
 #
 # A defense-in-depth mirror of the schema `oneOf`: even a case that reaches the
 # runner without schema validation MUST carry EXACTLY ONE invalid input, so
@@ -1564,17 +1568,17 @@ def test_rejected_write_refuses_the_conflict_multi_key_array(write: list[Any]) -
         _assert_rejected(case)
 
 
-# --- regex-level negatives stay OPERATION-SCHEMA unit tests (resolved Q7) ----
+# --- regex-level negatives stay PREDICATE-SCHEMA unit tests (resolved Q7) ----
 
 
-def _operation_validator() -> Draft202012Validator:
+def _predicate_validator() -> Draft202012Validator:
     return Draft202012Validator(
-        json.loads(_OPERATION_SCHEMA_PATH.read_text(encoding="utf-8")), registry=_REGISTRY
+        json.loads(_PREDICATE_SCHEMA_PATH.read_text(encoding="utf-8")), registry=_REGISTRY
     )
 
 
-def _op_valid(operation: dict[str, Any]) -> bool:
-    return next(_operation_validator().iter_errors(operation), None) is None
+def _op_valid(predicate: dict[str, Any]) -> bool:
+    return next(_predicate_validator().iter_errors(predicate), None) is None
 
 
 def test_schema_accepts_a_well_formed_nested_path() -> None:
@@ -1601,7 +1605,7 @@ def test_schema_rejects_bad_segment_casing() -> None:
 
 def test_schema_rejects_a_reference_rooted_at_a_value_object() -> None:
     # `find()` MUST NOT be rooted at a value object (m-value-object "Materialization
-    # and navigation contract" 5). In a SERIALIZED operation that refusal is
+    # and navigation contract" 5). In a SERIALIZED predicate that refusal is
     # grammar-level and needs no model: a value-object occurrence name is a
     # lowercase-initial `identifier`, an Entity's local name is capitalized, so
     # `address` can never occupy the Entity segment of a reference. `address.city`

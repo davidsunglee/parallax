@@ -1,6 +1,6 @@
 """Navigation lowering (m-sql "Joins by navigation" / "Polymorphic navigation").
 
-These feed already-canonicalized operations directly (the per-hop as-of rewrite
+These feed already-canonicalized queries directly (the per-hop as-of rewrite
 is `parallax.core.navigate`'s job, tested in `test_navigate.py`) — this module
 only lowers whatever Predicate tree it receives.
 

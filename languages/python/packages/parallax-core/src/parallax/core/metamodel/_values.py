@@ -101,7 +101,7 @@ class Multiplicity(enum.Enum):
 
 
 class SortDirection(enum.Enum):
-    """The ordering direction shared by relationship order and operation sort keys."""
+    """The ordering direction shared by relationship order and Object Query Sort Keys."""
 
     ASCENDING = enum.auto()
     DESCENDING = enum.auto()
