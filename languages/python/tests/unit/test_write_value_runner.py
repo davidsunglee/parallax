@@ -130,7 +130,7 @@ def test_a_case_mixing_a_keyed_write_step_with_another_step_is_loud() -> None:
     # the executor that is the case's only one.
     steps: list[dict[str, Any]] = [
         {"action": "update", "value": "unmanaged", "roundTrips": 0},
-        {"find": {}, "targetEntity": "parallax.compatibility.Account", "roundTrips": 1},
+        {"objectQuery": {"target": "parallax.compatibility.Account"}, "roundTrips": 1},
     ]
     mixed = case_format.Case(
         path=Path("m-unit-work-999-mixed.yaml"),

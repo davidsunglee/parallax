@@ -6,18 +6,18 @@
 # tie between `gift` and `urgent` broken by `label asc`. The second key is
 # load-bearing, so this proves multi-key ordering, not just a single clause.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, orderBy, ordering, multi-key, relationship, slice-managed-1]
+tags: [m-deep-fetch, m-object-query, m-op-list, orderBy, ordering, multi-key, relationship, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand:
-        eq:
-          attr: parallax.compatibility.Order.id
-          value: 1
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.tags }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      eq:
+        attr: parallax.compatibility.Order.id
+        value: 1
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.tags
 then:
   statements:
     - sql:

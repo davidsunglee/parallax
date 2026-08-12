@@ -45,11 +45,11 @@ from parallax.core.entity import (
     AttributeAssignment,
     EntityGraphConstruction,
     EntityRowCodec,
-    FindQuery,
 )
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.execution_log import AttemptRecorder, ExecutionLog
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.temporal_read import scans_an_axis
 from parallax.core.unit_work import (
     KeyedMutation,
@@ -75,7 +75,7 @@ from parallax.snapshot.handle._predicate_writes import (
     buffer_predicate,
     buffer_predicate_instruction,
 )
-from parallax.snapshot.handle._preflight import preflight_find, preflight_neutral
+from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
     NeutralReadRequest,
     NeutralReadResult,
@@ -117,7 +117,7 @@ class Transaction:
     ``_where`` verb family (`python.md` §5) —
     :meth:`update_where`, :meth:`delete_where`, :meth:`terminate_where`,
     :meth:`update_until_where`, :meth:`terminate_until_where` — mirrors the
-    keyed surface over a mutation-compatible Find Query: readless for an
+    keyed surface over a mutation-compatible Object Query: readless for an
     unversioned,
     non-temporal target, materializing to per-row keyed writes otherwise
     (:mod:`parallax.snapshot.handle._predicate_writes`, ADR 0014, which those
@@ -558,13 +558,13 @@ class Transaction:
         opt_lock.require_observed_milestone(record.identity.name, observation)
         return observation
 
-    def find[S](self, query: FindQuery[Any, S]) -> Snapshot[S]:
+    def find[S](self, query: ObjectQuery[Any, S]) -> Snapshot[S]:
         """Run a participating read for ``query`` and return ``Snapshot[S]``:
         force-flushes pending writes first (read-your-own-writes), and
         the transaction's participation mode renders the read-lock suffix
         (``locking`` takes the dialect's shared row lock; ``optimistic`` takes
         none). Otherwise identical to :meth:`Database.find` — the SAME
-        :func:`~parallax.snapshot.handle._preflight.preflight_find` gate, which
+        :func:`~parallax.snapshot.handle._preflight.preflight` gate, which
         runs BEFORE the force-flush so a refused read flushes nothing, the SAME
         shared find executor, the SAME frozen-node wrapping, and the SAME
         parameter answer: the Snapshot carries the query's RESULT Entity.
@@ -585,18 +585,18 @@ class Transaction:
         # Both refusals precede `uow.read` deliberately: that read force-flushes
         # pending buffered writes, so a refused read must be refused before it.
         construction = _materializing(self._construction)
-        lowered = preflight_find(query, model=self._meta)
-        target, op = lowered.target.canonical, lowered.operation
+        node = object_query_node(query)
+        preflight(node, model=self._meta, form="graph")
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         # The Read Trace bracket opens BEFORE the force-flush, so a batch that
         # flush produces is appended first and the trace this read closes lands
         # immediately after it — the read-dependency causality the Execution Log
         # states positionally (`m-execution-log`).
-        if scans_an_axis(op):
+        if scans_an_axis(node):
             with self._attempt.read_trace() as recorder:
                 history_result = self._uow.read(
                     lambda: find_history(
-                        op, self._meta, self._dialect, target, self._conn, recorder=recorder
+                        node, self._meta, self._dialect, self._conn, recorder=recorder
                     )
                 )
             return snapshot_from_history_result(history_result, self._meta, construction)
@@ -604,10 +604,9 @@ class Transaction:
         with self._attempt.read_trace() as recorder:
             find_result = self._uow.read(
                 lambda: find(
-                    op,
+                    node,
                     self._meta,
                     self._dialect,
-                    target,
                     self._conn,
                     lock=lock,
                     observations=observations,
@@ -639,7 +638,7 @@ class Transaction:
         # The gate precedes `uow.read` deliberately, exactly as `find`'s does:
         # that read force-flushes pending buffered writes, so a refused read must
         # be refused before it or a refusal turns into a write.
-        preflight_neutral(request.target, request.operation, model=self._meta, form=request.form)
+        preflight(request.query, model=self._meta, form=request.form)
         lock = read_lock.mode_for(self._uow.settings.concurrency)
         observations = ReadObservations()
         # The bracket opens BEFORE the force-flush, exactly as `find`'s does, so
@@ -831,7 +830,7 @@ class Transaction:
     # --- set-based write verbs (python.md §5) ----------------------------- #
     def update_where(
         self,
-        query: FindQuery[Any, Any],
+        query: ObjectQuery[Any, Any],
         *assignments: AttributeAssignment[Any],
         valid_from: dt.datetime | None = None,
     ) -> None:
@@ -855,7 +854,7 @@ class Transaction:
             attempt=self._attempt,
         )
 
-    def delete_where(self, query: FindQuery[Any, Any]) -> None:
+    def delete_where(self, query: ObjectQuery[Any, Any]) -> None:
         """A predicate-selected ``delete`` over a NON-temporal target
         (`python.md` §5): readless for an unversioned target; a versioned one
         MATERIALIZES to one observation-backed per-row delete per resolved row
@@ -875,7 +874,7 @@ class Transaction:
         )
 
     def terminate_where(
-        self, query: FindQuery[Any, Any], *, valid_from: dt.datetime | None = None
+        self, query: ObjectQuery[Any, Any], *, valid_from: dt.datetime | None = None
     ) -> None:
         """A predicate-selected ``terminate`` over a TEMPORAL target
         (`python.md` §5): Transaction-Time-Only takes no ``valid_from``;
@@ -895,7 +894,7 @@ class Transaction:
 
     def update_until_where(
         self,
-        query: FindQuery[Any, Any],
+        query: ObjectQuery[Any, Any],
         *assignments: AttributeAssignment[Any],
         valid_from: dt.datetime,
         until: dt.datetime,
@@ -917,7 +916,7 @@ class Transaction:
         )
 
     def terminate_until_where(
-        self, query: FindQuery[Any, Any], *, valid_from: dt.datetime, until: dt.datetime
+        self, query: ObjectQuery[Any, Any], *, valid_from: dt.datetime, until: dt.datetime
     ) -> None:
         """A predicate-selected, Valid-Time-bounded ``terminateUntil`` over
         a Bitemporal target (`python.md` §5): always materializes to a close

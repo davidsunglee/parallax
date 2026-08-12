@@ -8,15 +8,22 @@ model: models/orders.yaml
 tags: [m-predicate, group, boolean, precedence, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    or:
-      operands:
-        - greaterThanEquals: { attr: parallax.compatibility.Order.qty, value: 25 }
-        - and:
-            operands:
-              - lessThanEquals: { attr: parallax.compatibility.Order.qty, value: 5 }
-              - eq: { attr: parallax.compatibility.Order.active, value: true }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      or:
+        operands:
+          - greaterThanEquals:
+              attr: parallax.compatibility.Order.qty
+              value: 25
+          - and:
+              operands:
+                - lessThanEquals:
+                    attr: parallax.compatibility.Order.qty
+                    value: 5
+                - eq:
+                    attr: parallax.compatibility.Order.active
+                    value: true
 then:
   statements:
     - sql:

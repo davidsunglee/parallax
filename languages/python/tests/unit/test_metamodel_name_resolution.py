@@ -24,7 +24,13 @@ from parallax.core import predicate as oa
 from parallax.core._formation_profile import form_metamodel
 from parallax.core.db_port import DbPort
 from parallax.core.dialect import POSTGRES
-from parallax.core.metamodel import EntityMetadata, Metamodel, entity_by_name
+from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel, entity_by_name
+from parallax.core.object_query import (
+    IncludePath,
+    IncludeSegment,
+    ObjectQueryNode,
+    validate_object_query,
+)
 from parallax.core.predicate import All, Narrow, OperationRejectedError, validate_operation
 from parallax.core.unit_work import instructions
 from parallax.descriptor import _records as records
@@ -105,6 +111,14 @@ def test_the_write_boundary_classifies_an_ambiguous_bare_name_by_the_same_rule()
     instructions.validate_instruction(canonical, model)
 
 
+def _query(target: str, includes: tuple[IncludePath, ...] = ()) -> ObjectQueryNode:
+    """A find-all Object Query against the authored spelling ``target``."""
+    namespace, _, name = target.rpartition(".")
+    return ObjectQueryNode(
+        target=EntityIdentity(namespace or None, name), predicate=All(), includes=includes
+    )
+
+
 class _RefusingPort:
     """Every adapter call is a failure — a read refused for its spelling reaches
     none of them."""
@@ -125,7 +139,7 @@ def test_the_read_executor_classifies_an_ambiguous_bare_name_by_the_same_rule() 
     # carrier — so one rule and one class answer an ambiguous spelling whether
     # preflight or lowering resolves it.
     with pytest.raises(OperationRejectedError) as excinfo:
-        handle.find(All(), _model(), POSTGRES, "Person", cast("DbPort", _RefusingPort()))
+        handle.find(_query("Person"), _model(), POSTGRES, cast("DbPort", _RefusingPort()))
     assert excinfo.value.rule == "reference-ambiguous-entity-name"
 
 
@@ -135,7 +149,7 @@ def test_the_read_executor_refuses_a_target_the_model_does_not_declare() -> None
     # this seam and earns the same `query-target-not-in-model` refusal the read
     # preflight answers with — never a bare `KeyError` from a lookup miss.
     with pytest.raises(QueryTargetError) as excinfo:
-        handle.find(All(), _model(), POSTGRES, "Nope", cast("DbPort", _RefusingPort()))
+        handle.find(_query("Nope"), _model(), POSTGRES, cast("DbPort", _RefusingPort()))
     assert excinfo.value.code == "query-target-not-in-model"
 
 
@@ -299,32 +313,25 @@ def test_deep_fetch_planning_resolves_every_reference_across_namespaces() -> Non
     beast = _named(model, "zoo.Beast")
     wolf = _named(model, "Wolf")
 
-    segment_narrow = oa.DeepFetch(
-        operand=All(),
-        paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Den.beasts", narrow=("Wolf",)),)),),
+    segment_narrow = _query(
+        "den.Den",
+        includes=(IncludePath(segments=(IncludeSegment(rel="Den.beasts", narrow_to=("Wolf",)),)),),
     )
-    validate_operation(den, segment_narrow, model)
+    validate_object_query(den, segment_narrow, model)
     assert [level.attach_key for level in deep_fetch.plan(den, segment_narrow, model).levels] == [
         "beasts[Wolf]"
     ]
 
-    root_guard = oa.DeepFetch(
-        operand=All(),
-        paths=(
-            oa.NavigationPath(
-                narrow=("Wolf",),
-                segments=(oa.PathSegment(rel="Beast.den"),),
-            ),
-        ),
+    root_guard = _query(
+        "zoo.Beast",
+        includes=(IncludePath(applies_to=("Wolf",), segments=(IncludeSegment(rel="Beast.den"),)),),
     )
-    validate_operation(beast, root_guard, model)
+    validate_object_query(beast, root_guard, model)
     guarded = deep_fetch.plan(beast, root_guard, model).levels
     assert [level.source_position for level in guarded] == [(wolf.identity,)]
 
-    from_subtype = oa.DeepFetch(
-        operand=All(), paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Beast.den"),)),)
-    )
-    validate_operation(wolf, from_subtype, model)
+    from_subtype = _query("Wolf", (IncludePath(segments=(IncludeSegment(rel="Beast.den"),)),))
+    validate_object_query(wolf, from_subtype, model)
     assert [level.attach_key for level in deep_fetch.plan(wolf, from_subtype, model).levels] == [
         "den"
     ]
@@ -364,16 +371,11 @@ def test_every_lowering_seam_resolves_a_canonically_spelled_reference() -> None:
     )
     assert compiled.statement.binds == ("wolf",)
 
-    root_guard = oa.DeepFetch(
-        operand=All(),
-        paths=(
-            oa.NavigationPath(
-                narrow=("Wolf",),
-                segments=(oa.PathSegment(rel="zoo.Beast.den"),),
-            ),
-        ),
+    root_guard = _query(
+        "zoo.Beast",
+        (IncludePath(applies_to=("Wolf",), segments=(IncludeSegment(rel="zoo.Beast.den"),)),),
     )
-    validate_operation(beast, root_guard, model)
+    validate_object_query(beast, root_guard, model)
     guarded = deep_fetch.plan(beast, root_guard, model).levels
     assert [level.source_position for level in guarded] == [(wolf.identity,)]
 

@@ -31,9 +31,10 @@ from parallax.conformance.story_models import Order
 from parallax.core import TX_TIME
 from parallax.core.db_port import Row
 from parallax.core.entity._model import model_of
-from parallax.core.entity._query import lower_find_query
 from parallax.core.metamodel import EntityIdentity, entity_by_name
-from parallax.core.predicate import PredicateNode, deserialize
+from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.object_query._fluent import object_query_node
 from parallax.core.unit_work import (
     EscapedTransactionError,
     ObjectKey,
@@ -67,27 +68,24 @@ def _account() -> EntityIdentity:
 
 
 def _rows_request() -> NeutralReadRequest:
-    return NeutralReadRequest.rows(target=_account(), operation=_by_id())
+    return NeutralReadRequest.rows(_account_query())
 
 
 def _graph_request() -> NeutralReadRequest:
-    return NeutralReadRequest.graph(target=_account(), operation=_by_id())
+    return NeutralReadRequest.graph(_account_query())
 
 
-def _by_id() -> PredicateNode:
-    return deserialize({"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}})
-
-
-def _select_latest(operation: dict[str, object], *dimensions: str) -> dict[str, object]:
-    for dimension in dimensions:
-        operation = {
-            "asOf": {
-                "operand": operation,
-                "dimension": dimension,
-                "coordinate": "latest",
-            }
+def _account_query(target: str = "parallax.compatibility.Account") -> ObjectQueryNode:
+    return deserialize_query(
+        {
+            "target": target,
+            "predicate": {"eq": {"attr": "parallax.compatibility.Account.id", "value": 3}},
         }
-    return operation
+    )
+
+
+def _latest(*dimensions: str) -> dict[str, object]:
+    return {dimension: {"asOf": "latest"} for dimension in dimensions}
 
 
 def _account_slot() -> ObservationKey:
@@ -298,9 +296,7 @@ def test_a_predicate_instruction_buffers_through_the_shared_predicate_seam() -> 
 
 
 def test_the_neutral_read_is_refused_for_an_undeclared_target() -> None:
-    request = NeutralReadRequest.rows(
-        target=EntityIdentity("parallax.compatibility", "NoSuchEntity"), operation=_by_id()
-    )
+    request = NeutralReadRequest.rows(_account_query("parallax.compatibility.NoSuchEntity"))
     with pytest.raises(QueryTargetError):
         account_db(RecordingPort()).read_neutral(request)
 
@@ -310,9 +306,7 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
     # the pending buffer on the way to a read that was going to be refused —
     # turning a refusal into a write. `tx.find` is held to the same ordering.
     port = RecordingPort()
-    request = NeutralReadRequest.rows(
-        target=EntityIdentity("parallax.compatibility", "NoSuchEntity"), operation=_by_id()
-    )
+    request = NeutralReadRequest.rows(_account_query("parallax.compatibility.NoSuchEntity"))
 
     def fn(tx: Transaction) -> None:
         tx.write_neutral(_update(11), observation=VersionObservation(observed_version=1))
@@ -325,40 +319,62 @@ def test_a_refused_participating_read_flushes_nothing() -> None:
 
 def test_the_neutral_read_reports_a_deferred_feature_by_name() -> None:
     request = NeutralReadRequest.graph(
-        target=_policy(),
-        operation=deserialize(
+        deserialize_query(
             {
-                "deepFetch": {
-                    "operand": _select_latest(
-                        {
-                            "history": {
-                                "operand": {"all": {}},
-                                "dimension": "transaction-time",
-                            }
-                        },
-                        "valid-time",
-                    ),
-                    "paths": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
-                }
+                "target": "parallax.compatibility.Policy",
+                "predicate": {"all": {}},
+                "temporal": {
+                    "valid-time": {"asOf": "latest"},
+                    "transaction-time": {"history": {}},
+                },
+                "includes": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
             }
-        ),
+        )
     )
     with pytest.raises(DeferredFeatureError) as raised:
         _policy_db(RecordingPort()).read_neutral(request)
     assert raised.value.features == ("snapshot-history-includes",)
 
 
+def test_a_deferred_participating_read_flushes_nothing() -> None:
+    # The classification runs BEFORE `uow.read`, whose force-flush would
+    # otherwise execute the pending buffer on the way to a read that was going
+    # to be refused — turning a deferral into a write.
+    port = RecordingPort()
+    request = NeutralReadRequest.graph(
+        deserialize_query(
+            {
+                "target": "parallax.compatibility.Policy",
+                "predicate": {"all": {}},
+                "temporal": {
+                    "valid-time": {"asOf": "latest"},
+                    "transaction-time": {"history": {}},
+                },
+                "includes": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
+            }
+        )
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.write_neutral(_policy_insert())
+        tx.read_neutral(request)
+
+    with pytest.raises(DeferredFeatureError) as raised:
+        _policy_db(port).transact(fn)
+    assert raised.value.features == ("snapshot-history-includes",)
+    assert [op[0] for op in port.ops] == ["begin", "rollback"]
+
+
 def test_a_row_form_request_refuses_the_relationship_levels_it_cannot_materialize() -> None:
     request = NeutralReadRequest.rows(
-        target=_policy(),
-        operation=deserialize(
+        deserialize_query(
             {
-                "deepFetch": {
-                    "operand": _select_latest({"all": {}}, "transaction-time", "valid-time"),
-                    "paths": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
-                }
+                "target": "parallax.compatibility.Policy",
+                "predicate": {"all": {}},
+                "temporal": _latest("transaction-time", "valid-time"),
+                "includes": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
             }
-        ),
+        )
     )
     with pytest.raises(ValueError, match="row-form read materializes no relationships"):
         _policy_db(RecordingPort(rows=[])).read_neutral(request)
@@ -371,15 +387,13 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
     # transaction rolls back having executed no DML.
     port = RecordingPort(rows=[_ORDER_ROW])
     request = NeutralReadRequest.rows(
-        target=_order(),
-        operation=deserialize(
+        deserialize_query(
             {
-                "deepFetch": {
-                    "operand": {"all": {}},
-                    "paths": [{"segments": [{"rel": "parallax.compatibility.Order.items"}]}],
-                }
+                "target": "parallax.compatibility.Order",
+                "predicate": {"all": {}},
+                "includes": [{"segments": [{"rel": "parallax.compatibility.Order.items"}]}],
             }
-        ),
+        )
     )
 
     def fn(tx: Transaction) -> None:
@@ -391,228 +405,22 @@ def test_a_refused_row_form_participating_read_flushes_nothing() -> None:
     assert [op[0] for op in port.ops] == ["begin", "rollback"]
 
 
-def test_a_wrapper_carried_deep_fetch_is_refused_by_the_same_gate() -> None:
-    # `deepFetch` composes under every wrapper that returns its operand's own
-    # rows, so the levels a row-form request carries need not sit at the outer
-    # node. The gate reads the whole wrapper spine rather than the one node the
-    # deep-fetch planner reads: were it to read only the outer `limit`, the
-    # request would pass, force-flush the buffered write on the way into
-    # `uow.read`, and fail inside SQL generation with the DML already executed.
+def test_an_ordered_capped_query_carrying_no_includes_still_answers() -> None:
+    # The refusal is about a relationship level, not about how many clauses a
+    # query fills: ordering and a cap add none.
     port = RecordingPort(rows=[_ORDER_ROW])
     request = NeutralReadRequest.rows(
-        target=_order(),
-        operation=deserialize(
+        deserialize_query(
             {
-                "limit": {
-                    "operand": {
-                        "deepFetch": {
-                            "operand": {"all": {}},
-                            "paths": [
-                                {"segments": [{"rel": "parallax.compatibility.Order.items"}]}
-                            ],
-                        }
-                    },
-                    "count": 1,
-                }
+                "target": "parallax.compatibility.Order",
+                "predicate": {"all": {}},
+                "orderBy": [{"attr": "parallax.compatibility.Order.id"}],
+                "limit": 1,
             }
-        ),
-    )
-
-    def fn(tx: Transaction) -> None:
-        tx.write_neutral(_order_update())
-        tx.read_neutral(request)
-
-    with pytest.raises(ValueError, match="row-form read materializes no relationships"):
-        _run_on(db_for(MODELS["orders"], port), fn)
-    assert [op[0] for op in port.ops] == ["begin", "rollback"]
-
-
-def test_a_wrapper_carried_deep_fetch_over_a_scan_is_deferred_by_name() -> None:
-    # The same spine, one step earlier in the gate. A milestone set combined
-    # with includes is the `snapshot-history-includes` Feature wherever the deep
-    # fetch sits, so classifying the outer node alone would let the deferral
-    # evade its own refusal: the request would pass, force-flush the buffered
-    # insert on the way into `uow.read`, and fail inside SQL generation with the
-    # DML already executed.
-    port = RecordingPort()
-    request = NeutralReadRequest.graph(
-        target=_policy(),
-        operation=deserialize(
-            {
-                "limit": {
-                    "operand": {
-                        "deepFetch": {
-                            "operand": _select_latest(
-                                {
-                                    "history": {
-                                        "operand": {"all": {}},
-                                        "dimension": "transaction-time",
-                                    }
-                                },
-                                "valid-time",
-                            ),
-                            "paths": [
-                                {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
-                            ],
-                        }
-                    },
-                    "count": 5,
-                }
-            }
-        ),
-    )
-
-    def fn(tx: Transaction) -> None:
-        tx.write_neutral(_policy_insert())
-        tx.read_neutral(request)
-
-    with pytest.raises(DeferredFeatureError) as raised:
-        _policy_db(port).transact(fn)
-    assert raised.value.features == ("snapshot-history-includes",)
-    assert [op[0] for op in port.ops] == ["begin", "rollback"]
-
-
-def test_a_scan_wrapping_a_deep_fetch_is_the_same_deferred_feature() -> None:
-    # A scan above the deep fetch is the same milestone set as a scan below it:
-    # both answer one graph per milestone with a relationship level to fill, so
-    # the walk counts a scanning wrapper it crosses on the way down as well as
-    # the operand it finally asks.
-    request = NeutralReadRequest.graph(
-        target=_policy(),
-        operation=deserialize(
-            _select_latest(
-                {
-                    "history": {
-                        "operand": {
-                            "deepFetch": {
-                                "operand": {"all": {}},
-                                "paths": [
-                                    {
-                                        "segments": [
-                                            {"rel": "parallax.compatibility.Policy.coverages"}
-                                        ]
-                                    }
-                                ],
-                            }
-                        },
-                        "dimension": "transaction-time",
-                    }
-                },
-                "valid-time",
-            )
-        ),
-    )
-    with pytest.raises(DeferredFeatureError) as raised:
-        _policy_db(RecordingPort()).read_neutral(request)
-    assert raised.value.features == ("snapshot-history-includes",)
-
-
-def test_a_deep_fetch_nested_under_another_over_a_scan_is_deferred_by_name() -> None:
-    # `deepFetch` is itself an own-row node, so one deep fetch nests legally under
-    # another and the scan can sit below both. Stopping the walk at the first deep
-    # fetch and asking only the operand under it would classify this shape as
-    # executable: the request would pass the gate, force-flush the buffered insert
-    # on the way into `uow.read`, and fail inside SQL generation with the DML
-    # already executed.
-    port = RecordingPort()
-    request = NeutralReadRequest.graph(
-        target=_policy(),
-        operation=deserialize(
-            {
-                "deepFetch": {
-                    "operand": {
-                        "deepFetch": {
-                            "operand": _select_latest(
-                                {
-                                    "history": {
-                                        "operand": {"all": {}},
-                                        "dimension": "transaction-time",
-                                    }
-                                },
-                                "valid-time",
-                            ),
-                            "paths": [
-                                {"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}
-                            ],
-                        }
-                    },
-                    "paths": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
-                }
-            }
-        ),
-    )
-
-    def fn(tx: Transaction) -> None:
-        tx.write_neutral(_policy_insert())
-        tx.read_neutral(request)
-
-    with pytest.raises(DeferredFeatureError) as raised:
-        _policy_db(port).transact(fn)
-    assert raised.value.features == ("snapshot-history-includes",)
-    assert [op[0] for op in port.ops] == ["begin", "rollback"]
-
-
-def test_a_narrow_between_the_deep_fetch_and_the_scan_is_the_same_deferred_feature() -> None:
-    # A `narrow` selects a subset of its operand's rows and attaches nothing, so
-    # a scan below one is the same milestone set the includes above it combine
-    # with. The walk descends it like any other own-row wrapper.
-    request = NeutralReadRequest.graph(
-        target=_policy(),
-        operation=deserialize(
-            {
-                "deepFetch": {
-                    "operand": {
-                        "narrow": {
-                            "operand": _select_latest(
-                                {
-                                    "history": {
-                                        "operand": {"all": {}},
-                                        "dimension": "transaction-time",
-                                    }
-                                },
-                                "valid-time",
-                            ),
-                            "to": ["parallax.compatibility.Policy"],
-                        }
-                    },
-                    "paths": [{"segments": [{"rel": "parallax.compatibility.Policy.coverages"}]}],
-                }
-            }
-        ),
-    )
-    with pytest.raises(DeferredFeatureError) as raised:
-        _policy_db(RecordingPort()).read_neutral(request)
-    assert raised.value.features == ("snapshot-history-includes",)
-
-
-def test_a_wrapper_spine_carrying_no_deep_fetch_still_answers() -> None:
-    # The refusal is about a relationship level, not about depth: walking the
-    # spine must not turn the wrappers themselves into a refusal.
-    port = RecordingPort(rows=[_ORDER_ROW])
-    request = NeutralReadRequest.rows(
-        target=_order(),
-        operation=deserialize(
-            {
-                "limit": {
-                    "operand": {
-                        "orderBy": {
-                            "operand": {"all": {}},
-                            "keys": [{"attr": "parallax.compatibility.Order.id"}],
-                        }
-                    },
-                    "count": 1,
-                }
-            }
-        ),
+        )
     )
     result = db_for(MODELS["orders"], port).read_neutral(request)
     assert isinstance(result.output, NeutralRows)
-
-
-def _order() -> EntityIdentity:
-    entity = entity_by_name(model_of(MODELS["orders"]), "parallax.compatibility.Order")
-    assert entity is not None
-    return entity.identity
 
 
 def _order_update() -> WriteInstruction:
@@ -623,12 +431,6 @@ def _order_update() -> WriteInstruction:
             "rows": [{"id": 1, "qty": 7}],
         }
     )
-
-
-def _policy() -> EntityIdentity:
-    entity = entity_by_name(model_of(MODELS["policy"]), "parallax.compatibility.Policy")
-    assert entity is not None
-    return entity.identity
 
 
 def _policy_db(port: RecordingPort) -> Database:
@@ -648,8 +450,9 @@ def _policy_insert() -> WriteInstruction:
 
 def test_a_milestone_set_read_answers_one_pinned_graph_per_milestone() -> None:
     port = RecordingPort(rows=_balance_history_rows())
-    lowered = lower_find_query(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME))
-    request = NeutralReadRequest.graph(target=lowered.target, operation=lowered.operation)
+    request = NeutralReadRequest.graph(
+        object_query_node(mm.Balance.where(mm.Balance.id == 1).history(TX_TIME))
+    )
 
     def fn(tx: Transaction) -> object:
         return tx.read_neutral(request).output
@@ -667,8 +470,7 @@ def test_a_milestone_set_read_answers_one_pinned_graph_per_milestone() -> None:
 
 def test_a_temporal_node_publishes_the_slot_its_own_milestone_qualifies() -> None:
     port = RecordingPort(rows=[_balance_history_rows()[1]])
-    lowered = lower_find_query(mm.Balance.where(mm.Balance.id == 1))
-    request = NeutralReadRequest.graph(target=lowered.target, operation=lowered.operation)
+    request = NeutralReadRequest.graph(object_query_node(mm.Balance.where(mm.Balance.id == 1)))
 
     def fn(tx: Transaction) -> object:
         graph = tx.read_neutral(request).output
@@ -688,8 +490,7 @@ def test_a_temporal_node_publishes_the_slot_its_own_milestone_qualifies() -> Non
 
 def test_an_unversioned_non_temporal_node_carries_no_observation_slot() -> None:
     port = RecordingPort(rows=[_ORDER_ROW])
-    lowered = lower_find_query(Order.where(Order.id == 1))
-    request = NeutralReadRequest.graph(target=lowered.target, operation=lowered.operation)
+    request = NeutralReadRequest.graph(object_query_node(Order.where(Order.id == 1)))
 
     def fn(tx: Transaction) -> object:
         return tx.read_neutral(request).output

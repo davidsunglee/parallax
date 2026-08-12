@@ -48,8 +48,9 @@ from parallax.core.db_port import JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect
 from parallax.core.metamodel import EntityIdentity, EntityMetadata, TemporalDimension
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
+from parallax.core.object_query import LATEST
 from parallax.core.sql_gen import LoweredStatement
-from parallax.core.temporal_read import LATEST, Edge
+from parallax.core.temporal_read import Edge
 from parallax.core.unit_work import (
     INFINITY,
     OPTIMISTIC_CONFLICT,

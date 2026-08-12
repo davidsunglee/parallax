@@ -3,18 +3,18 @@
 # combine with `and`; the injected temporal term is appended after the user term.
 # As-of now, account A's current balance is the 150.00 milestone (id 1).
 model: models/balance.yaml
-tags: [m-temporal-read, m-sql, as-of, audit-only, composed, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, as-of, audit-only, composed, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Balance
-  operation:
-    asOf:
-      operand:
-        eq:
-          attr: parallax.compatibility.Balance.acctNum
-          value: A
-      dimension: transaction-time
-      coordinate: latest
+  objectQuery:
+    target: parallax.compatibility.Balance
+    predicate:
+      eq:
+        attr: parallax.compatibility.Balance.acctNum
+        value: A
+    temporal:
+      transaction-time:
+        asOf: latest
 then:
   statements:
     - sql:

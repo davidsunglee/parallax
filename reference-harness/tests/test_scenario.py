@@ -48,16 +48,16 @@ def test_scenario_cases_are_discovered_and_self_describe() -> None:
     cases = _scenario_cases()
     assert cases, "no scenario cases discovered"
     for case in cases:
-        # Each carries a scenario (ordered steps) and no top-level operation.
+        # Each carries a scenario (ordered steps) and no top-level query.
         assert case.scenario
-        assert "operation" not in case.when
+        assert "objectQuery" not in case.when
         for step in case.scenario:
             assert "roundTrips" in step
-            # A step is EXACTLY ONE of a read step (carries `find`), a write step
-            # (carries `write`), or a lifecycle-action step (carries `action`,
+            # A step is EXACTLY ONE of a read step (carries `objectQuery`), a write
+            # step (carries `write`), or a lifecycle-action step (carries `action`,
             # m-case-format).
-            kinds = ("find" in step) + ("write" in step) + ("action" in step)
-            assert kinds == 1, "a scenario step is exactly one of find / write / action"
+            kinds = ("objectQuery" in step) + ("write" in step) + ("action" in step)
+            assert kinds == 1, "a scenario step is exactly one of objectQuery / write / action"
             if "write" in step:
                 # A committed / rolled-back write lists golden DML; a NO-OP write
                 # (a versioned UPDATE that changes no attribute, m-opt-lock) issues no DML,
@@ -138,7 +138,7 @@ def test_read_your_own_writes_update_scenario_flushes_before_dependent_find() ->
     assert instruction["rows"] == [{"id": 1, "balance": 175.00}]
     update_sql = write["statements"][0]["sql"]["postgres"]
     assert update_sql.startswith("update account set")
-    assert "find" in find
+    assert "objectQuery" in find
     # The dependent find asserts the flushed new balance/version (the RYOW observable).
     assert find["expectRows"] == [{"id": 1, "owner": "Ada", "balance": 175.00, "version": 2}]
     _assert_scenario_count_consistency(case, "postgres")
@@ -277,7 +277,10 @@ def _any_case():
 def test_reuse_prior_rows_permits_unresolved_construction() -> None:
     # A construction step (m-op-list-001 step 0): roundTrips 0, no golden SQL, no
     # named source, and asserts nothing — it reuses the empty set until first access.
-    construction = {"find": {"all": {}}, "targetEntity": "Order", "roundTrips": 0}
+    construction = {
+        "objectQuery": {"target": "Order", "predicate": {"all": {}}},
+        "roundTrips": 0,
+    }
     assert _reuse_prior_rows(_any_case(), construction, 0, []) == []
 
 
@@ -301,8 +304,7 @@ def test_reuse_prior_rows_rejects_construction_asserting_rows() -> None:
     # A no-source zero-round-trip step that asserts NON-EMPTY rows is not a valid
     # construction — a construction resolves no rows yet, so this fails loudly.
     step = {
-        "find": {"all": {}},
-        "targetEntity": "Order",
+        "objectQuery": {"target": "Order", "predicate": {"all": {}}},
         "roundTrips": 0,
         "expectRows": [{"id": 1}],
     }
@@ -346,7 +348,7 @@ def test_assert_action_on_rejects_more_groups_than_sources() -> None:
 # --- per-step read-entity resolution (value-object decode uses the RIGHT entity) ---
 #
 # `_assert_scenario` decodes each step's rows with the entity that step actually
-# read — a find's `targetEntity`, a load / access path's terminal entity, a
+# read — a find's own query `target`, a load / access path's terminal entity, a
 # path-less operation-list access's source entity — so a value-object-bearing child
 # materializes with its OWN composite schema, never the scenario root's. These pin
 # the resolver on the real corpus scenarios that exercise each shape.
@@ -362,7 +364,7 @@ def test_relationship_path_target_walks_each_hop() -> None:
 
 
 def test_scenario_find_step_read_entity_is_its_target_entity() -> None:
-    # A read step decodes with its declared `targetEntity`, not the scenario root.
+    # A read step decodes with its query's own `target`, not the scenario root.
     case = _scenario_by_id("m-deep-fetch-015")
     entity = _scenario_step_read_entity(case, case.scenario[0], [])
     assert entity is not None and entity.name == "Order"
@@ -600,8 +602,10 @@ def _interleaved_synthetic_case() -> Case:
     def find_step(uow: str, value: int) -> dict[str, Any]:
         return {
             "uow": uow,
-            "targetEntity": "Account",
-            "find": {"eq": {"attr": "Account.id", "value": value}},
+            "objectQuery": {
+                "target": "Account",
+                "predicate": {"eq": {"attr": "Account.id", "value": value}},
+            },
             "roundTrips": 1,
             "statements": [{"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [value]}],
         }
@@ -631,8 +635,10 @@ def _interleaved_synthetic_case() -> Case:
                 write_step("b"),
                 write_step("a", rollback=True),
                 {
-                    "targetEntity": "Account",
-                    "find": {"eq": {"attr": "Account.id", "value": 9}},
+                    "objectQuery": {
+                        "target": "Account",
+                        "predicate": {"eq": {"attr": "Account.id", "value": 9}},
+                    },
                     "roundTrips": 1,
                     "statements": [
                         {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [9]}
@@ -697,8 +703,10 @@ def _uncommitted_write_then_reference_sql_synthetic_case() -> Case:
                 },
                 {
                     "uow": "g",
-                    "targetEntity": "Account",
-                    "find": {"eq": {"attr": "Account.id", "value": 2}},
+                    "objectQuery": {
+                        "target": "Account",
+                        "predicate": {"eq": {"attr": "Account.id", "value": 2}},
+                    },
                     "roundTrips": 1,
                     "statements": [
                         {"sql": {"postgres": "select ... where t0.id = ?"}, "binds": [2]}
@@ -891,8 +899,10 @@ def _transaction_time_only_settled_case(*, on: int) -> Case:
 def _balance_find(pk: int, tx_start: str, tx_end: Any, value: float) -> dict[str, Any]:
     return {
         "uow": "observe-then-close",
-        "targetEntity": "Balance",
-        "find": {"eq": {"attr": "Balance.id", "value": pk}},
+        "objectQuery": {
+            "target": "Balance",
+            "predicate": {"eq": {"attr": "Balance.id", "value": pk}},
+        },
         "roundTrips": 1,
         "statements": [{"sql": {"postgres": "select ... where t0.bal_id = ?"}, "binds": [pk]}],
         "expectRows": [

@@ -17,11 +17,12 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 2
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
       roundTrips: 1
       note: find by primary key
       statements:
@@ -30,11 +31,12 @@ when:
           binds: [2]
       expectRows:
         - { id: 2, owner: Linus, balance: 250.00, version: 1 }
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.owner
-          value: Linus
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.owner
+            value: Linus
       roundTrips: 1
       sameObjectAs: 0
       identityAttr: id

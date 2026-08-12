@@ -8,20 +8,20 @@
 # statuses gather the distinct non-null item ids {11, 12, 421} and fetch those
 # parents in ONE child statement. 1 (root) + 1 (orderItem) = 2 round trips.
 model: models/orders.yaml
-tags: [m-snapshot-read, m-deep-fetch, to-one, nullable, relationship, graph, materialization, slice-snapshot-1]
+tags: [m-snapshot-read, m-object-query, m-deep-fetch, to-one, nullable, relationship, graph, materialization, slice-snapshot-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the OrderStatus.orderItem IN-list binds are the distinct non-null order-item ids gathered from the root query result, so the child emissions (including whether the level executes at all) depend on a query result"
 when:
-  targetEntity: parallax.compatibility.OrderStatus
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.OrderStatus.orderItem }] }
+  objectQuery:
+    target: parallax.compatibility.OrderStatus
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.OrderStatus.orderItem
 then:
   statements:
     - sql:

@@ -21,15 +21,16 @@
 # the same current rows on both dialects (native infinity and the max-sentinel are
 # both far above the year-9000 floor, while every finite milestone is below it).
 model: models/balance.yaml
-tags: [m-temporal-read, m-dialect, m-sql, as-of, audit-only, infinity-fallback]
+tags: [m-temporal-read, m-object-query, m-dialect, m-sql, as-of, audit-only, infinity-fallback]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Balance
-  operation:
-    asOf:
-      operand: { all: {} }
-      dimension: transaction-time
-      coordinate: latest
+  objectQuery:
+    target: parallax.compatibility.Balance
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
 then:
   statements:
     - sql:

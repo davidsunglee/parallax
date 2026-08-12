@@ -225,29 +225,6 @@ _ASSIGNMENT_REF = re.compile(
     r"^([a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*\.)?[A-Z][A-Za-z0-9]*\.[a-z][A-Za-z0-9_]*$"
 )
 
-# The result modifiers a write target's predicate may never carry, by canonical
-# wire tag (`m-case-format` `target.predicate`: "it is a bare write predicate,
-# never a result modifier"; `python.md` §5: "`order_by`, `limit`, `include`,
-# `as_of`, `history` / `as_of_range`, and `narrow` are all rejected on any write
-# target"). A READ composes every one of them legally, which is why this is a
-# rule of the write instruction and carries its own refusal rather than joining
-# `validate_operation`'s vocabulary.
-#
-# `narrow` is the one entry of that enumeration NOT listed here, because it is
-# the one whose meaning depends on its position rather than on its tag
-# (`_reject_non_bare_predicate`). Every wrapper here means the same thing
-# wherever it appears.
-_NON_BARE_PREDICATES: Final[Mapping[type[object], str]] = MappingProxyType(
-    {
-        predicate_algebra.OrderBy: "orderBy",
-        predicate_algebra.Limit: "limit",
-        predicate_algebra.DeepFetch: "deepFetch",
-        predicate_algebra.AsOf: "asOf",
-        predicate_algebra.AsOfRange: "asOfRange",
-        predicate_algebra.History: "history",
-    }
-)
-
 
 # --------------------------------------------------------------------------- #
 # Deserialize (canonical write-instruction document -> frozen instruction).    #
@@ -587,10 +564,6 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
       an attribute reference outside the active position, an ambiguous Entity
       spelling, an inverted ``between`` window, a literal disagreeing with its
       member's declared type;
-    - the BARE-PREDICATE rule (:func:`_reject_non_bare_predicate`), which
-      ``validate_operation`` cannot carry because it is shared with the read
-      path, where a result modifier is legal and must stay legal.
-
     An inheritance-family target is then rejected
     (``subtype-write-set-based-unsupported``, `m-inheritance` "Per-object
     writes are keyed; set-based inheritance writes are out of scope") — after
@@ -670,7 +643,6 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
     else:
         entity = _entity(model, instruction.target.entity)
         predicate_algebra.validate_operation(entity, instruction.target.predicate, model)
-        _reject_non_bare_predicate(entity.identity.name, instruction.target.predicate)
         inheritance.reject_predicate_write(entity)
         members = _declared_members(model, entity)
         seen: set[str] = set()
@@ -703,77 +675,6 @@ def validate_instruction(instruction: WriteInstruction, model: AcceptedMetamodel
         refusal = non_temporal_milestone_refusal(entity.identity.name, instruction.mutation)
         if refusal is not None:
             raise WriteInstructionError(refusal)
-
-
-def _reject_non_bare_predicate(entity_name: str, predicate: PredicateNode) -> None:
-    """Refuse a write target's predicate that is not BARE (`m-case-format`
-    `target.predicate`, `python.md` §5) — a result modifier, a temporal
-    wrapper, or a deep fetch anywhere in it, and whole-result narrowing at the
-    result position.
-
-    ``narrow`` is the one member of that enumeration whose meaning is
-    POSITIONAL, and `m-predicate` draws the line: a top-level ``narrow`` is
-    "the node a whole-result narrowing produces", while "a `narrow` appearing
-    as a predicate term inside a boolean combinator is a filter" over the
-    unchanged position. The same distinction admits a ``narrow`` inside a
-    navigation filter's ``op``, where it narrows the relationship target the
-    hop reaches rather than the written rows. So a whole-result narrow is
-    refused — it is `python.md` §5's ``.narrow()`` CLAUSE on the write target —
-    and a predicate-scoped one is a filter the write's own selection is made
-    of, exactly like the ``exists`` that carries it.
-
-    The result position is the ROOT here, and only the root. `m-predicate`
-    fixes the closed set of wrappers that may carry a whole-result narrow up to
-    it — ``orderBy`` / ``limit`` / ``deepFetch`` / ``asOf`` /
-    ``asOfRange`` / ``history``, the same set
-    :func:`~parallax.core.predicate.validate._ordered_scope` resolves an order
-    key's position through — and every one of them is itself refused above, at
-    any position. Nothing else passes the position through, so no other node
-    can hold a whole-result narrow.
-
-    Everything else is checked at every position rather than only at the root
-    because the algebra admits a directive as a boolean operand
-    (``and(limit(...), eq(...))`` round-trips), and a nested one reaches
-    exactly the same lowering the root one does.
-    """
-    if isinstance(predicate, predicate_algebra.Narrow):
-        raise WriteInstructionError(
-            f"{entity_name}: a `narrow` wrapping the whole write predicate is whole-result "
-            "narrowing, not a bare write predicate — a predicate-selected write target "
-            "carries nothing but a predicate (a `narrow` used as a predicate term, inside "
-            "a boolean combinator or a navigation filter, is a filter and is accepted)"
-        )
-    _reject_result_modifier(entity_name, predicate)
-
-
-def _reject_result_modifier(entity_name: str, predicate: PredicateNode) -> None:
-    """Refuse a result modifier, temporal wrapper, or deep fetch at ANY position
-    within a write target's predicate (:func:`_reject_non_bare_predicate`)."""
-    wrapper = _NON_BARE_PREDICATES.get(type(predicate))
-    if wrapper is not None:
-        raise WriteInstructionError(
-            f"{entity_name}: `{wrapper}` is a result modifier, not a bare write predicate — "
-            "a predicate-selected write target carries nothing but a predicate"
-        )
-    match predicate:
-        case predicate_algebra.And(operands=operands) | predicate_algebra.Or(operands=operands):
-            for operand in operands:
-                _reject_result_modifier(entity_name, operand)
-        case (
-            predicate_algebra.Not(operand=operand)
-            | predicate_algebra.Group(operand=operand)
-            | predicate_algebra.Narrow(operand=operand)
-        ):
-            _reject_result_modifier(entity_name, operand)
-        case (
-            predicate_algebra.Navigate(op=nested)
-            | predicate_algebra.Exists(op=nested)
-            | predicate_algebra.NotExists(op=nested)
-        ):
-            if nested is not None:
-                _reject_result_modifier(entity_name, nested)
-        case _:
-            return
 
 
 def _entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:

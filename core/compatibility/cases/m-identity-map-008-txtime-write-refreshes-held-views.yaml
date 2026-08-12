@@ -22,15 +22,15 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            eq:
-              attr: parallax.compatibility.Balance.id
-              value: 2
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       note: hold the LATEST view of id 2 (the current milestone, 200.00)
       statements:
@@ -39,15 +39,15 @@ when:
           binds: [2, infinity]
       expectRows:
         - { bal_id: 2, acct_num: B, val: 200.00, in_z: "2024-02-01T00:00:00+00:00", out_z: infinity }
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            eq:
-              attr: parallax.compatibility.Balance.id
-              value: 2
-          dimension: transaction-time
-          coordinate: "2024-04-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: '2024-04-01T00:00:00+00:00'
       roundTrips: 1
       note: hold a PAST view pinned at 2024-04-01 (the same milestone right now, 200.00)
       statements:
@@ -66,15 +66,15 @@ when:
         - sql:
             postgres: insert into balance(bal_id, acct_num, val, in_z, out_z) values (?, ?, ?, ?, ?)
           binds: [2, B, 250.00, "2024-07-01T00:00:00+00:00", infinity]
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            eq:
-              attr: parallax.compatibility.Balance.id
-              value: 2
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       sameObjectAs: 0
       identityAttr: bal_id
@@ -85,15 +85,15 @@ when:
           binds: [2, infinity]
       expectRows:
         - { bal_id: 2, acct_num: B, val: 250.00, in_z: "2024-07-01T00:00:00+00:00", out_z: infinity }
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            eq:
-              attr: parallax.compatibility.Balance.id
-              value: 2
-          dimension: transaction-time
-          coordinate: "2024-04-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          eq:
+            attr: parallax.compatibility.Balance.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: '2024-04-01T00:00:00+00:00'
       roundTrips: 1
       sameObjectAs: 1
       identityAttr: bal_id

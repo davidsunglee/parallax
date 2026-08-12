@@ -24,14 +24,13 @@ from parallax.core import (
     DomainModel,
     EditError,
     Entity,
-    FindQuery,
+    ObjectQuery,
     QueryDefinitionError,
     TxTemporal,
     ValueObject,
     attr,
 )
 from parallax.core.entity import AttributeAssignment, AttributeExpr
-from parallax.core.entity._query import mutation_selection
 from parallax.core.metamodel import (
     AttributeIdentity,
     AttributeLocation,
@@ -41,8 +40,9 @@ from parallax.core.metamodel import (
     ValueObjectAttributeLocation,
     ValueObjectIdentity,
 )
+from parallax.core.object_query import LATEST, TX_TIME
+from parallax.core.object_query._fluent import mutation_selection
 from parallax.core.predicate import All
-from parallax.core.temporal_read import LATEST, TX_TIME
 
 _FIXED = dt.datetime(2024, 6, 1, tzinfo=dt.UTC)
 
@@ -297,7 +297,7 @@ def test_an_explicitly_unfiltered_query_is_mutation_compatible() -> None:
     assert mutation_selection(vom.Customer.where(vom.Customer.all)).predicate == All()
 
 
-def _refused(query: FindQuery[Any, Any], clause: str) -> None:
+def _refused(query: ObjectQuery[Any, Any], clause: str) -> None:
     with pytest.raises(QueryDefinitionError, match=clause) as caught:
         mutation_selection(query)
     assert caught.value.code == "query-not-mutation-compatible"

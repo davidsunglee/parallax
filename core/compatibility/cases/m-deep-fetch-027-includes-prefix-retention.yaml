@@ -2,21 +2,27 @@
 # exact one-hop prefix, while prefix materialization still plans items and statuses
 # as two child levels and therefore preserves the three-round-trip observation.
 model: models/orders.yaml
-tags: [m-deep-fetch, includes-prefix-retention]
+tags: [m-deep-fetch, m-object-query, includes-prefix-retention]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand: { all: {} }
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+          - rel: parallax.compatibility.OrderItem.statuses
   equivalentEncodings:
-    - deepFetch:
-        operand: { all: {} }
-        paths:
-          - { segments: [{ rel: parallax.compatibility.Order.items }] }
-          - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
+    - target: parallax.compatibility.Order
+      predicate:
+        all: {}
+      includes:
+        - segments:
+            - rel: parallax.compatibility.Order.items
+        - segments:
+            - rel: parallax.compatibility.Order.items
+            - rel: parallax.compatibility.OrderItem.statuses
 then:
   statements:
     - sql:

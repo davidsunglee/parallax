@@ -9,20 +9,22 @@
 # IN-list of gathered parent keys). One concrete, so the view carries no
 # `familyVariant` (the caller queried a known variant). `1 + L` = 2 statements.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the narrowed pets[Dog] view's shared animal-table IN-list binds are the distinct owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Person
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Dog] } }] }
+  objectQuery:
+    target: parallax.compatibility.Person
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Person.pets
+            narrowTo:
+              - parallax.compatibility.Dog
 then:
   statements:
     - sql:

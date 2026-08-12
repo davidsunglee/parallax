@@ -1,8 +1,8 @@
 # Table-per-concrete-subtype narrow to MULTIPLE concrete subtypes across branches
-# (m-inheritance, m-predicate, m-sql).
+# (m-inheritance, m-object-query, m-sql).
 #
-# targetEntity is the abstract root Document; the `narrow` node constrains it to the
-# explicit concrete list [Invoice, Memo] — two concretes from DIFFERENT branches of
+# The queried target is the abstract root Document; `narrowTo` constrains the result
+# to the explicit concrete list [Invoice, Memo] — two concretes from DIFFERENT branches of
 # the tree (Invoice under FinancialDocument, Memo directly under Document), skipping
 # Receipt. The read `union all`s over exactly the invoice + memo tables in alphabetical
 # order (Invoice, Memo). Invoice and Memo share only the root chain (id, title,
@@ -11,15 +11,16 @@
 # NULLs `body`, and Memo NULLs both `currency` (FinancialDocument's, which Memo does
 # not inherit) and `amount_due`, each with a dialect cast.
 model: models/document.yaml
-tags: [m-inheritance, m-predicate, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-concrete-subtype, union-all, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Document
-  operation:
-    narrow:
-      to: [parallax.compatibility.Invoice, parallax.compatibility.Memo]
-      operand:
-        all: {}
+  objectQuery:
+    target: parallax.compatibility.Document
+    predicate:
+      all: {}
+    narrowTo:
+      - parallax.compatibility.Invoice
+      - parallax.compatibility.Memo
 then:
   statements:
     - sql:

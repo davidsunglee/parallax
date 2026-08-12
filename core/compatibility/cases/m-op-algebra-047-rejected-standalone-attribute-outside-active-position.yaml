@@ -18,7 +18,11 @@ model: models/orders.yaml
 tags: [m-predicate, rejected, negative, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    eq: { attr: parallax.compatibility.OrderItem.sku, value: SKU-1 }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      eq:
+        attr: parallax.compatibility.OrderItem.sku
+        value: SKU-1
 then:
   rejectedRule: attribute-outside-active-position

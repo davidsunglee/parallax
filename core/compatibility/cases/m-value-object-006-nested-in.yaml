@@ -11,9 +11,14 @@ model: models/customer.yaml
 tags: [m-value-object, m-sql, nested, json, in, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedIn: { path: parallax.compatibility.Customer.address.city, values: [Oslo, Boston] }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedIn:
+        path: parallax.compatibility.Customer.address.city
+        values:
+          - Oslo
+          - Boston
 then:
   statements:
     - sql:

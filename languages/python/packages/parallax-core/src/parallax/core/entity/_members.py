@@ -45,7 +45,7 @@ from parallax.core.metamodel import (
     TablePerHierarchy,
     ValueObjectMetadata,
 )
-from parallax.core.predicate import PathSegment
+from parallax.core.object_query import IncludeSegment
 
 __all__ = [
     "DEFAULT_STRUCTURED_COLUMN",
@@ -544,10 +544,10 @@ class Rel[T]:
     through one (``Dog.owner`` where ``Animal`` declares ``owner``) reaches this
     same descriptor and keeps the one relationship identity ``Animal.owner``. What
     the accessing class adds is the path's SOURCE — the Entity it was reached
-    through — which a Find Query turns into a path-ROOT guard. The source is
+    through — which an Object Query turns into a path-ROOT guard. The source is
     recorded for every access, including one through the declaring class itself
     (``Dog.doghouse``, declared on ``Dog``), because whether it guards anything is a
-    question about the QUERIED position, which only the Find Query knows.
+    question about the QUERIED position, which only the Object Query knows.
     """
 
     __slots__ = ("_py_name", "_ref", "_target")
@@ -574,7 +574,7 @@ class Rel[T]:
     ) -> RelationshipPath[Any, Any] | T:
         if obj is None:
             return RelationshipPath(
-                segments=(PathSegment(rel=str(self._ref)),),
+                segments=(IncludeSegment(rel=str(self._ref)),),
                 target=self._target,
                 source=_access_source(_owner),
             )

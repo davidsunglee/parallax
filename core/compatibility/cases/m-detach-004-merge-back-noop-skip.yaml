@@ -24,11 +24,12 @@ tags: [m-detach, m-unit-work, no-op, scenario, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
       roundTrips: 1
       note: cache MISS — read account 1 (Ada, 100.00, version 1)
       statements:
@@ -40,11 +41,12 @@ when:
     - write: mergeBack
       roundTrips: 0
       note: merge back an UNMODIFIED detached copy (isModifiedSinceDetachment false) ⇒ NO DML
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 1
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 1
       roundTrips: 0
       sameObjectAs: 0
       note: cache HIT — the no-op merge did not invalidate the cache; the row is unchanged

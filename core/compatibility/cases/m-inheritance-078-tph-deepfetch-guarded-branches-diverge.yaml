@@ -13,24 +13,27 @@
 # for one branch and not the other, is exactly what the extra statement buys.
 # Whiskers, a Cat, is admitted by neither guard and so carries no `owner` key.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child levels - each guarded owner hop binds its person-table IN-list from its own guard's rows of the root query result, and the pets hop binds its animal-table IN-list from the Dog branch's owner ids, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { narrow: { to: [parallax.compatibility.WildBoar] }, segments: [{ rel: parallax.compatibility.Animal.owner }] }
-        - narrow: { to: [parallax.compatibility.Dog] }
-          segments:
-            - { rel: parallax.compatibility.Animal.owner }
-            - { rel: parallax.compatibility.Person.pets }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    includes:
+      - appliesTo:
+          - parallax.compatibility.WildBoar
+        segments:
+          - rel: parallax.compatibility.Animal.owner
+      - appliesTo:
+          - parallax.compatibility.Dog
+        segments:
+          - rel: parallax.compatibility.Animal.owner
+          - rel: parallax.compatibility.Person.pets
 then:
   statements:
     - sql:

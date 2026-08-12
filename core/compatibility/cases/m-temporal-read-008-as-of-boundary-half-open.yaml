@@ -4,16 +4,16 @@
 # `in_z <= ? and out_z > ?`. A pin exactly on 2024-06-01 excludes the row ending
 # at that instant and includes the row beginning there; id 1 appears once.
 model: models/ledger.yaml
-tags: [m-temporal-read, m-sql, m-descriptor, as-of, audit-only, boundary, half-open, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, m-descriptor, as-of, audit-only, boundary, half-open, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Ledger
-  operation:
-    asOf:
-      operand:
-        all: {}
-      dimension: transaction-time
-      coordinate: "2024-06-01T00:00:00+00:00"
+  objectQuery:
+    target: parallax.compatibility.Ledger
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: '2024-06-01T00:00:00+00:00'
 then:
   statements:
     - sql:

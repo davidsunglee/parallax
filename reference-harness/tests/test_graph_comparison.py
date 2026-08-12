@@ -8,6 +8,7 @@ coercion and then compared serialized strings, which could make distinct
 
 from __future__ import annotations
 
+import copy
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -443,11 +444,11 @@ def test_root_pins_reads_nested_asof_by_axis():
     }
 
 
-def test_root_pins_peels_result_directives_before_asof():
-    # m-navigate-024 wraps the temporal root in `limit(orderBy(asOf(asOf(all))))`. The pin
-    # collector MUST descend past the result directives first (exactly as the root
-    # compile peels orderBy/limit before the temporal wrappers); otherwise a
-    # directive-wrapped root seeds NO pins and the child wrongly defaults to Latest.
+def test_root_pins_are_independent_of_the_result_shaping_clauses():
+    # m-navigate-024 carries `orderBy` and `limit` beside its Temporal Selections.
+    # Each is a sibling clause of the query rather than a wrapper around it, so the
+    # pin collector reads the selections directly and a shaped read seeds exactly
+    # the pins an unshaped one does.
     case = load_case(
         COMPATIBILITY_ROOT,
         COMPATIBILITY_ROOT / "cases" / "m-navigate-024-deepfetch-temporal-ordered-root.yaml",
@@ -458,21 +459,18 @@ def test_root_pins_peels_result_directives_before_asof():
     }
 
 
-def test_root_pins_crosses_scan_wrappers_without_recording_them(monkeypatch):
+def test_root_pins_record_only_the_pinned_dimensions():
+    # A scanned dimension pins nothing to propagate: `history` and `asOfRange`
+    # select a milestone SET rather than a coordinate, so only the `asOf`
+    # selections seed the child suffix and the scanned dimension defaults there.
     case = load_case(
         COMPATIBILITY_ROOT,
         COMPATIBILITY_ROOT / "cases" / "m-navigate-015-deepfetch-temporal-both-past.yaml",
     )
-    root = case.operation["deepFetch"]["operand"]
-    monkeypatch.setattr(
-        case_runner,
-        "_deepfetch_root_operand",
-        lambda _case: {"history": {"dimension": "valid-time", "operand": root}},
-    )
-    assert case_runner._root_asof_pins(case) == {
-        "valid-time": "2024-03-01T00:00:00+00:00",
-        "transaction-time": "2024-02-01T00:00:00+00:00",
-    }
+    scanned = copy.deepcopy(case.raw)
+    scanned["when"]["objectQuery"]["temporal"]["valid-time"] = {"history": {}}
+    rebuilt = Case(path=case.path, raw=scanned, model=case.model)
+    assert case_runner._root_asof_pins(rebuilt) == {"transaction-time": "2024-02-01T00:00:00+00:00"}
 
 
 class _WrongAsofChildDb:
@@ -683,12 +681,10 @@ def _invoice_graphs_case(graphs: list[dict[str, Any]]) -> Case:
         "tags": ["m-snapshot-read"],
         "shape": "read",
         "when": {
-            "targetEntity": "InvoiceLine",
-            "operation": {
-                "history": {
-                    "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
-                    "dimension": "transaction-time",
-                }
+            "objectQuery": {
+                "target": "InvoiceLine",
+                "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+                "temporal": {"transaction-time": {"history": {}}},
             },
         },
         # SQL text is inert here: _InvoiceMilestonesDb returns the milestone set for

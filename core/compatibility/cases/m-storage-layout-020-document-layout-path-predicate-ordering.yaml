@@ -22,19 +22,20 @@
 # would give (m-predicate). MariaDB needs no `nulls last` spelling because DESC
 # already places NULLs last there (m-dialect *Null Placement*).
 model: models/document-layout.yaml
-tags: [m-storage-layout, m-sql, m-dialect, m-predicate, read, json, document-layout, cast, order-by, limit, slice-snapshot-1, slice-managed-1]
+tags: [m-storage-layout, m-sql, m-dialect, m-predicate, m-object-query, read, json, document-layout, cast, order-by, limit, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Traveler
-  operation:
-    limit:
-      count: 1
-      operand:
-        orderBy:
-          keys:
-            - { attr: parallax.compatibility.Traveler.score, direction: desc, nulls: last }
-          operand:
-            greaterThan: { attr: parallax.compatibility.Traveler.score, value: 5 }
+  objectQuery:
+    target: parallax.compatibility.Traveler
+    predicate:
+      greaterThan:
+        attr: parallax.compatibility.Traveler.score
+        value: 5
+    orderBy:
+      - attr: parallax.compatibility.Traveler.score
+        direction: desc
+        nulls: last
+    limit: 1
 then:
   statements:
     - sql:

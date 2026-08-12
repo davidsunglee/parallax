@@ -20,9 +20,11 @@ model: models/document-layout.yaml
 tags: [m-storage-layout, m-sql, m-predicate, m-document-codec, read, json, document-layout, null-handling, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Traveler
-  operation:
-    isNull: { attr: parallax.compatibility.Traveler.note }
+  objectQuery:
+    target: parallax.compatibility.Traveler
+    predicate:
+      isNull:
+        attr: parallax.compatibility.Traveler.note
 then:
   statements:
     - sql:

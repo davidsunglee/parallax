@@ -4,27 +4,25 @@
 # Valid Time 2024-03-01 with the current belief, coverage 10 is the HEAD -> 600
 # (C-R2); coverage 20 -> 300.
 model: models/policy.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, bitemporal, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the Policy.coverages IN-list binds are the distinct policy ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Policy
-  operation:
-    deepFetch:
-      operand:
-        asOf:
-          operand:
-            asOf:
-              operand: { all: {} }
-              dimension: transaction-time
-              coordinate: latest
-          dimension: valid-time
-          coordinate: "2024-03-01T00:00:00+00:00"
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Policy.coverages }] }
+  objectQuery:
+    target: parallax.compatibility.Policy
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
+      valid-time:
+        asOf: '2024-03-01T00:00:00+00:00'
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Policy.coverages
 then:
   statements:
     - sql:

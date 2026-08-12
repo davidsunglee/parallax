@@ -1,10 +1,10 @@
 """``parallax.snapshot.handle._features`` — Deferred Execution Features.
 
-The inventory of Conformance-Slice read Features whose operation shapes this
+The inventory of Conformance-Slice read Features whose query shapes this
 Snapshot implementation is expected to execute and has not implemented yet,
-together with the recognizer deciding whether one canonical operation requires
+together with the recognizer deciding whether one canonical Object Query requires
 any of them. The read-preflight seam consults it after target resolution and
-operation validation and before any I/O, so such a query is refused BY NAME
+query validation and before any I/O, so such a query is refused BY NAME
 rather than rejected as invalid: ``m-snapshot-read`` carries
 ``snapshot-history-includes`` on its own Feature tag and forbids any case
 mandating its refusal, so the query is valid, the implementation is behind, and
@@ -37,8 +37,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from parallax.core.predicate import AsOfRange, DeepFetch, History, PredicateNode
-from parallax.snapshot.handle._spine import own_row_spine
+from parallax.core.object_query import AsOfRange, History, ObjectQueryNode
 
 __all__ = ["DeferredFeatureError", "deferred_features"]
 
@@ -48,16 +47,16 @@ _DEFERRED_EXECUTION_FEATURES: Final[frozenset[str]] = frozenset({"snapshot-histo
 class DeferredFeatureError(RuntimeError):
     """A valid modeled read whose execution this implementation has deferred.
 
-    Nothing about the query is wrong: the operation is well formed and legal
-    against the connected model, and a later release executing the named
+    Nothing about the query is wrong: it is well formed and legal against the
+    connected model, and a later release executing the named
     Features runs it unchanged. That is why this is a ``RuntimeError`` rather
     than a definition or rejection error, and why it is disjoint from
     :class:`~parallax.snapshot.handle._errors.SnapshotConnectionError`, which
     refuses a connection that could never materialize any read.
 
     :data:`code` and :data:`features` are its whole public state; it retains
-    neither the query, the operation, the model, nor the Database. ``features``
-    is NONEMPTY and ascending, listing EVERY Feature the operation matched, so a
+    neither the query, the model, nor the Database. ``features``
+    is NONEMPTY and ascending, listing EVERY Feature the query matched, so a
     caller reads the complete reason rather than whichever match was found
     first. The constructor enforces the nonemptiness: an empty match set is the
     ordinary answer for a query this implementation executes, so raising it
@@ -85,58 +84,37 @@ class DeferredFeatureError(RuntimeError):
         self.features: tuple[str, ...] = ordered
 
 
-def deferred_features(operation: PredicateNode) -> frozenset[str]:
-    """Every Deferred Execution Feature ``operation`` requires.
+def deferred_features(query: ObjectQueryNode) -> frozenset[str]:
+    """Every Deferred Execution Feature ``query`` requires.
 
-    Empty for every operation this implementation executes, which is the
-    ordinary answer; a nonempty result is the refusal's whole content.
+    Empty for every query this implementation executes, which is the ordinary
+    answer; a nonempty result is the refusal's whole content.
     """
-    return _required_features(operation) & _DEFERRED_EXECUTION_FEATURES
+    return _required_features(query) & _DEFERRED_EXECUTION_FEATURES
 
 
-def _required_features(operation: PredicateNode) -> frozenset[str]:
-    """The Feature-tagged read capabilities ``operation`` requires.
+def _required_features(query: ObjectQueryNode) -> frozenset[str]:
+    """The Feature-tagged read capabilities ``query`` requires.
 
-    Only the capabilities the inventory could name are computed. An operation's
-    full Feature profile is a compatibility-corpus concern; what this module
-    needs is one side of an intersection.
+    Only the capabilities the inventory could name are computed. A query's full
+    Feature profile is a compatibility-corpus concern; what this module needs is
+    one side of an intersection.
     """
-    return frozenset({"snapshot-history-includes"} if _includes_over_a_scan(operation) else ())
+    return frozenset({"snapshot-history-includes"} if _includes_over_a_scan(query) else ())
 
 
-def _includes_over_a_scan(operation: PredicateNode) -> bool:
-    """Whether ``operation`` deep-fetches over a SCANNED temporal axis.
+def _includes_over_a_scan(query: ObjectQueryNode) -> bool:
+    """Whether ``query`` eager-fetches over a SCANNED temporal dimension.
 
     A milestone-set read answers one graph per milestone, and combining that
-    with includes is the ``snapshot-history-includes`` Feature. Neither half is
-    confined to a position: ``m-predicate`` composes both freely with every
-    node returning its operand's own rows, so the two halves are recognized
-    across the whole
-    :func:`~parallax.snapshot.handle._spine.own_row_spine` — an include ANYWHERE
-    on it over a scan ANYWHERE on it, in either order and however many wrappers
-    separate them. Stopping the walk at the first deep fetch would leave the
-    legal ``deepFetch(deepFetch(history(...), ...), ...)`` and a ``narrow``
-    between a deep fetch and the scan below it unrecognized, which is the
-    deferral evading its own refusal rather than a shape this implementation
-    runs.
+    with Includes is the ``snapshot-history-includes`` Feature. Both halves are
+    clauses of one flat query, so this is two field reads rather than a walk: an
+    Include Path names at least one relationship level by construction, and a
+    scan is an ``asOfRange`` or ``history`` selection on any dimension.
 
-    An include is a deep-fetch path naming at least one segment, read exactly as
-    :func:`~parallax.snapshot.handle._preflight.fetches_relationships` reads one:
-    a ``deepFetch`` adding no relationship level to the milestone set combines
-    nothing with it.
-
-    Reaching this answer costs no port — the spine walk sees the operation
-    algebra alone — so this module stays clear of the Database Port its own
-    read-preflight consumer must not touch.
+    Reaching this answer costs no port, so this module stays clear of the
+    Database Port its own read-preflight consumer must not touch.
     """
-    includes = False
-    scanned = False
-    for node in own_row_spine(operation):
-        match node:
-            case DeepFetch(paths=paths):
-                includes = includes or any(path.segments for path in paths)
-            case AsOfRange() | History():
-                scanned = True
-            case _:
-                continue
-    return includes and scanned
+    return bool(query.includes) and any(
+        isinstance(selection, (AsOfRange, History)) for selection in query.temporal.values()
+    )

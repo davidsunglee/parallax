@@ -91,8 +91,7 @@ def _materializing_find(
     entity: Entity, predicate: dict[str, object], rows: list[dict[str, object]]
 ) -> dict[str, object]:
     return {
-        "targetEntity": entity.name,
-        "find": predicate,
+        "objectQuery": {"target": entity.name, "predicate": predicate},
         "roundTrips": 1,
         "statements": [
             {
@@ -106,6 +105,18 @@ def _materializing_find(
 
 def test_schema_accepts_structured_predicate_update() -> None:
     assert next(_schema().iter_errors(_scenario_case(_update_instruction())), None) is None
+
+
+def test_schema_refuses_a_result_shaping_clause_in_a_write_selection() -> None:
+    # A set-based write selects rows and shapes no result, and its `predicate` is
+    # exactly the selection grammar — which carries no ordering, no cap, and no
+    # Includes at all. The refusal is therefore the SCHEMA's, with nothing left for
+    # a validator to restate.
+    instruction = _update_instruction()
+    target = instruction["target"]
+    assert isinstance(target, dict)
+    target["predicate"] = {"orderBy": [{"attr": "Account.balance"}]}
+    assert next(_schema().iter_errors(_scenario_case(instruction)), None) is not None
 
 
 @pytest.mark.parametrize(
@@ -190,7 +201,7 @@ def test_materialization_validator_rejects_unobservable_matching_find() -> None:
     with pytest.raises(PredicateWriteValidationError, match="real resolving read"):
         validate_predicate_write_materialization(
             entity,
-            [{"targetEntity": "Account", "find": predicate}],
+            [{"objectQuery": {"target": "Account", "predicate": predicate}}],
             instruction,
         )
 
@@ -676,22 +687,6 @@ def test_model_validator_rejects_non_document_value_object_assignment() -> None:
                 "assignments": [{"attr": "Account.balance", "value": 0.00}],
             },
             "inconsistent",
-        ),
-        (
-            {
-                "mutation": "update",
-                "target": {
-                    "entity": "Account",
-                    "predicate": {
-                        "orderBy": {
-                            "operand": {"all": {}},
-                            "keys": [{"attr": "Account.balance"}],
-                        }
-                    },
-                },
-                "assignments": [{"attr": "Account.balance", "value": 0.00}],
-            },
-            "read modifier",
         ),
         (
             {

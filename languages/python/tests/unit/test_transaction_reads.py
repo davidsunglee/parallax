@@ -46,7 +46,7 @@ from parallax.core.db_port import DbPort, JsonDocument, Row
 from parallax.core.dialect import POSTGRES, Dialect, LockMode
 from parallax.core.execution_log import TraceRecorder
 from parallax.core.metamodel import Metamodel
-from parallax.core.predicate import PredicateNode
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.unit_work import (
     Concurrency,
     FixedClock,
@@ -78,10 +78,9 @@ def _recording_find(
     real = handle_read.find
 
     def recording(
-        op: PredicateNode,
+        query: ObjectQueryNode,
         meta: Metamodel,
         dialect: Dialect,
-        target: str,
         port: DbPort,
         *,
         lock: LockMode | None = None,
@@ -90,10 +89,9 @@ def _recording_find(
     ) -> FindResult:
         calls.append(observations)
         return real(
-            op,
+            query,
             meta,
             dialect,
-            target,
             port,
             lock=lock,
             observations=observations,
@@ -610,7 +608,7 @@ def test_stale_web_edit_branch_submit_refuses_a_rectangle_superseded_before_the_
 
 
 # --------------------------------------------------------------------------- #
-# The shared read-preflight seam (`_preflight.preflight_find`), on the         #
+# The shared read-preflight seam (`_preflight.preflight`), on the         #
 # participating path: the ordering is what these pin. `uow.read` force-flushes #
 # pending writes, so a read the connected model cannot answer must be refused  #
 # BEFORE the unit of work is touched — otherwise an invalid read becomes a     #

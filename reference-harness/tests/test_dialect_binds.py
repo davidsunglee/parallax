@@ -80,7 +80,7 @@ def _read_case_doc() -> dict[str, Any]:
         "model": "models/customer.yaml",
         "tags": ["m-value-object"],
         "shape": "read",
-        "when": {"targetEntity": "Customer", "operation": {"all": {}}},
+        "when": {"objectQuery": {"target": "Customer", "predicate": {"all": {}}}},
         "then": {
             "statements": [
                 {

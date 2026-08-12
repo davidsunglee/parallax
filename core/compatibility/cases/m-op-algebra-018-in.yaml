@@ -7,11 +7,15 @@ model: models/orders.yaml
 tags: [m-predicate, in, membership, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    in:
-      attr: parallax.compatibility.Order.id
-      values: [1, 2, 42]
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      in:
+        attr: parallax.compatibility.Order.id
+        values:
+          - 1
+          - 2
+          - 42
 then:
   statements:
     - sql:

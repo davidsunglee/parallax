@@ -9,15 +9,15 @@
 # each node is a complete concrete instance of its own declared shape, never padded
 # with a sibling's null column. `m-inheritance-013` remains the values-lane witness.
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    narrow:
-      to: [parallax.compatibility.Pet]
-      operand:
-        all: {}
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    narrowTo:
+      - parallax.compatibility.Pet
 then:
   statements:
     - sql:

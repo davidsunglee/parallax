@@ -32,11 +32,16 @@ def _schema(name: str) -> dict[str, Any]:
 
 
 _SCHEMA = _schema("write-instruction.schema.json")
-# The write-instruction schema references the shared Entity-identity grammars
-# across files, so a validator needs an `$id`-keyed registry to reach them.
+# The write-instruction schema references the shared Entity-identity grammars and
+# the Predicate a set-based write selects with across files, so a validator needs
+# an `$id`-keyed registry to reach them.
 _REGISTRY: Registry[Any] = Registry[Any]().with_resources(
     (schema["$id"], Resource[Any].from_contents(schema))
-    for schema in (_SCHEMA, _schema("identity.schema.json"))
+    for schema in (
+        _SCHEMA,
+        _schema("identity.schema.json"),
+        _schema("predicate.schema.json"),
+    )
 )
 
 
@@ -858,45 +863,45 @@ def test_a_predicate_writes_scope_is_judged_before_its_assignments() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The bare-predicate rule (`m-case-format` `target.predicate`: "one schema-valid #
-# `m-predicate` operation; it is a bare write predicate, never a result         #
-# modifier"; `python.md` §5: "`order_by`, `limit`, `include`, `as_of`,           #
-# `history` / `as_of_range`, and `narrow` are all rejected on any write          #
-# target"). Every one of these is a VALID READ operation, so                     #
-# `validate_operation` — which the read path shares — cannot carry the rule;     #
-# it is a rule of the write instruction and has its own refusal.                 #
+# Every query-wide clause `python.md` §5 rejects on a write target — ordering,  #
+# the cap, Includes, Temporal Selection, result narrowing — is a clause of      #
+# `m-object-query` rather than a Predicate node, so a write target carrying one #
+# is a MALFORMED document rather than a rule a model-aware validator applies.   #
+# The refusal is the Predicate serde's, one layer earlier, and it is            #
+# structural: the shape has no spelling to reject.                              #
 # --------------------------------------------------------------------------- #
 _BARE_INNER: dict[str, Any] = {"lessThan": {"attr": "Account.balance", "value": 200.00}}
-_NON_BARE_PREDICATES: list[tuple[str, dict[str, Any]]] = [
-    ("orderBy", {"orderBy": {"operand": _BARE_INNER, "keys": [{"attr": "Account.balance"}]}}),
-    ("limit", {"limit": {"operand": _BARE_INNER, "count": 5}}),
-    ("asOf", {"asOf": {"operand": _BARE_INNER, "dimension": "valid-time", "coordinate": _B1}}),
-    (
-        "asOfRange",
-        {
-            "asOfRange": {
-                "operand": _BARE_INNER,
-                "dimension": "valid-time",
-                "start": _B1,
-                "end": _B2,
-            }
-        },
-    ),
-    ("history", {"history": {"operand": _BARE_INNER, "dimension": "valid-time"}}),
-]
 
 
 @pytest.mark.parametrize(
-    ("wrapper", "predicate"), _NON_BARE_PREDICATES, ids=[w for w, _p in _NON_BARE_PREDICATES]
+    ("clause", "predicate"),
+    [
+        ("orderBy", {"orderBy": {"operand": _BARE_INNER, "keys": [{"attr": "Account.balance"}]}}),
+        ("limit", {"limit": {"operand": _BARE_INNER, "count": 5}}),
+        (
+            "asOf",
+            {"asOf": {"operand": _BARE_INNER, "dimension": "valid-time", "coordinate": _B1}},
+        ),
+        ("history", {"history": {"operand": _BARE_INNER, "dimension": "valid-time"}}),
+        (
+            "deepFetch",
+            {
+                "deepFetch": {
+                    "operand": _BARE_INNER,
+                    "paths": [{"segments": [{"rel": "Account.entries"}]}],
+                }
+            },
+        ),
+    ],
+    ids=["orderBy", "limit", "asOf", "history", "deepFetch"],
 )
-def test_a_result_modifier_is_never_a_bare_write_predicate(
-    wrapper: str, predicate: dict[str, Any]
-) -> None:
-    instruction = wi.deserialize(
-        {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
-    )
-    with pytest.raises(wi.WriteInstructionError, match=f"`{wrapper}` is a result modifier"):
-        wi.validate_instruction(instruction, _ACCOUNT)
+def test_a_query_clause_is_not_a_predicate_at_all(clause: str, predicate: dict[str, Any]) -> None:
+    with pytest.raises(
+        predicate_algebra.OperationError, match=f"unknown operation node '{clause}'"
+    ):
+        wi.deserialize(
+            {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
+        )
 
 
 @pytest.mark.parametrize(
@@ -906,74 +911,24 @@ def test_a_result_modifier_is_never_a_bare_write_predicate(
             "and",
             {"and": {"operands": [{"limit": {"operand": _BARE_INNER, "count": 5}}, _BARE_INNER]}},
         ),
-        (
-            "or",
-            {"or": {"operands": [_BARE_INNER, {"limit": {"operand": _BARE_INNER, "count": 5}}]}},
-        ),
         ("not", {"not": {"operand": {"limit": {"operand": _BARE_INNER, "count": 5}}}}),
-        ("group", {"group": {"operand": {"limit": {"operand": _BARE_INNER, "count": 5}}}}),
-    ],
-    ids=["and", "or", "not", "group"],
-)
-def test_a_result_modifier_hidden_in_the_boolean_spine_is_rejected(
-    position: str, predicate: dict[str, Any]
-) -> None:
-    # `and(limit(...), ...)` round-trips through the algebra's serde, and a
-    # nested directive lowers exactly as a root one does, so the rule is checked
-    # at every position rather than only at the root.
-    assert position in predicate
-    instruction = wi.deserialize(
-        {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
-    )
-    with pytest.raises(wi.WriteInstructionError, match="`limit` is a result modifier"):
-        wi.validate_instruction(instruction, _ACCOUNT)
-
-
-@pytest.mark.parametrize(
-    ("position", "predicate"),
-    [
-        (
-            "navigate",
-            {
-                "navigate": {
-                    "rel": "Order.items",
-                    "op": {"limit": {"operand": {"eq": {"attr": "OrderItem.sku", "value": "X"}}}},
-                }
-            },
-        ),
         (
             "exists",
-            {
-                "exists": {
-                    "rel": "Order.items",
-                    "op": {"limit": {"operand": {"eq": {"attr": "OrderItem.sku", "value": "X"}}}},
-                }
-            },
-        ),
-        (
-            "notExists",
-            {
-                "notExists": {
-                    "rel": "Order.items",
-                    "op": {"limit": {"operand": {"eq": {"attr": "OrderItem.sku", "value": "X"}}}},
-                }
-            },
+            {"exists": {"rel": "Account.entries", "op": {"limit": {"operand": _BARE_INNER}}}},
         ),
     ],
-    ids=["navigate", "exists", "not-exists"],
+    ids=["and", "not", "exists"],
 )
-def test_a_result_modifier_inside_a_navigation_filter_is_rejected(
+def test_a_query_clause_is_no_more_spellable_inside_a_predicate(
     position: str, predicate: dict[str, Any]
 ) -> None:
+    # Recursion belongs to the selection grammar alone, so a clause is
+    # unspellable at every depth rather than refused at each one.
     assert position in predicate
-    orders = _MODELS["orders"]
-    body = cast("dict[str, Any]", predicate[position])
-    body["op"]["limit"]["count"] = 5
-    instruction = wi.deserialize(
-        {"mutation": "delete", "target": {"entity": "Order", "predicate": predicate}}
-    )
-    with pytest.raises(wi.WriteInstructionError, match="`limit` is a result modifier"):
-        wi.validate_instruction(instruction, orders)
+    with pytest.raises(predicate_algebra.OperationError, match="unknown operation node 'limit'"):
+        wi.deserialize(
+            {"mutation": "delete", "target": {"entity": "Account", "predicate": predicate}}
+        )
 
 
 @pytest.mark.parametrize(
@@ -997,17 +952,13 @@ def test_a_bare_navigation_filter_carrying_no_inner_operation_is_accepted(
     wi.validate_instruction(instruction, orders)  # must not raise
 
 
-# A `narrow` is the one entry of `python.md` §5's enumeration whose meaning is
-# POSITIONAL. `m-predicate` draws the line: a top-level narrow is "the node a
-# whole-result narrowing produces" — the `.narrow()` clause on the write target
-# — while "a `narrow` appearing as a predicate term inside a boolean combinator
-# is a filter" over the unchanged position, as is one inside a navigation
-# filter's `op`, where it narrows the relationship target the hop reaches. The
-# refused half first.
-def test_a_whole_result_narrow_is_never_a_bare_write_predicate() -> None:
-    # The narrow wraps the WHOLE predicate, which is the result position: it is
-    # refused BEFORE the inheritance-family rejection this target would also
-    # earn.
+def test_a_top_level_narrow_is_a_predicate_scoped_filter() -> None:
+    # `narrow` is the one entry of `python.md` §5's enumeration that survives in
+    # the Predicate grammar, and it is unambiguously a FILTER there: whole-result
+    # narrowing is `narrowTo` on the Object Query, which a write target has no
+    # clause for. A write predicate narrowing its own position is therefore an
+    # ordinary selection — this target earns the inheritance-family rejection
+    # instead, for being a family at all.
     instruction = wi.deserialize(
         {
             "mutation": "delete",
@@ -1022,8 +973,9 @@ def test_a_whole_result_narrow_is_never_a_bare_write_predicate() -> None:
             },
         }
     )
-    with pytest.raises(wi.WriteInstructionError, match="whole-result narrowing"):
+    with pytest.raises(inheritance.InheritanceError) as caught:
         wi.validate_instruction(instruction, _PAYMENT)
+    assert caught.value.rule == "subtype-write-set-based-unsupported"
 
 
 _ANIMAL = _MODELS["animal"]
@@ -1094,52 +1046,6 @@ def test_a_predicate_scoped_narrow_is_a_filter_and_is_accepted(
         _ANIMAL,
     )
     wi.validate_instruction(instruction, _ANIMAL)  # must not raise
-
-
-def test_a_result_modifier_inside_a_predicate_scoped_narrow_is_still_rejected() -> None:
-    # Admitting the narrow does not admit what it wraps: the recursion descends
-    # through a filter narrow's own operand exactly as it does a boolean one's.
-    instruction = wi.deserialize(
-        {
-            "mutation": "delete",
-            "target": {
-                "entity": "Person",
-                "predicate": {
-                    "exists": {
-                        "rel": "Person.animals",
-                        "op": {
-                            "narrow": {
-                                "to": ["Dog"],
-                                "operand": {"limit": {"operand": {"all": {}}, "count": 5}},
-                            }
-                        },
-                    }
-                },
-            },
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="`limit` is a result modifier"):
-        wi.validate_instruction(instruction, _ANIMAL)
-
-
-def test_a_deep_fetch_is_never_a_bare_write_predicate() -> None:
-    orders = _MODELS["orders"]
-    instruction = wi.deserialize(
-        {
-            "mutation": "delete",
-            "target": {
-                "entity": "Order",
-                "predicate": {
-                    "deepFetch": {
-                        "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                        "paths": [{"segments": [{"rel": "Order.items"}]}],
-                    }
-                },
-            },
-        }
-    )
-    with pytest.raises(wi.WriteInstructionError, match="`deepFetch` is a result modifier"):
-        wi.validate_instruction(instruction, orders)
 
 
 # --------------------------------------------------------------------------- #

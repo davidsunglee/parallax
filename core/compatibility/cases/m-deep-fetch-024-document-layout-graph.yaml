@@ -25,20 +25,20 @@
 # IN-list binds are the distinct parent keys gathered from the root query result,
 # so the emissions are not a pure function of `when` + `given`.
 model: models/document-layout.yaml
-tags: [m-deep-fetch, m-storage-layout, m-relationship, m-sql, m-value-object, read, json, to-many, relationship, document-layout, graph, materialization, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-object-query, m-storage-layout, m-relationship, m-sql, m-value-object, read, json, to-many, relationship, document-layout, graph, materialization, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the Traveler.trips IN-list binds are the distinct parent keys gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Traveler
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Traveler.trips }] }
+  objectQuery:
+    target: parallax.compatibility.Traveler
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Traveler.trips
 then:
   statements:
     - sql:

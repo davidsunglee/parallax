@@ -87,13 +87,13 @@
       ]
     },
     "writeTarget": {
-      "description": "The exact entity a predicate-selected write begins from plus its bare `m-predicate` predicate. The predicate is validated against `predicate.schema.json` and the descriptor-dependent scope / bare-predicate rules separately (it must be a bare write predicate, never a result modifier).",
+      "description": "The exact entity a predicate-selected write begins from plus its `m-predicate` predicate. A set-based write selects rows and shapes no result, so its selection is exactly the Predicate grammar — ordering, the cap, Temporal Selections, result narrowing, and Includes are Object Query clauses and have no spelling here at all. The descriptor-dependent scope rules are validated separately.",
       "type": "object",
       "additionalProperties": false,
       "required": ["entity", "predicate"],
       "properties": {
         "entity": { "$ref": "#/$defs/entityName" },
-        "predicate": { "type": "object" }
+        "predicate": { "$ref": "predicate.schema.json#/$defs/predicate" }
       }
     },
     "writeAssignment": {

@@ -5,27 +5,25 @@
 # pin fetches policies 1 and 2 (`id in (?, ?) and thru_z = ? and out_z = ?`),
 # attached as single objects.
 model: models/policy.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, bitemporal, to-one, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, bitemporal, to-one, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the Coverage.policy IN-list binds are the distinct policy ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Coverage
-  operation:
-    deepFetch:
-      operand:
-        asOf:
-          operand:
-            asOf:
-              operand: { all: {} }
-              dimension: transaction-time
-              coordinate: latest
-          dimension: valid-time
-          coordinate: latest
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Coverage.policy }] }
+  objectQuery:
+    target: parallax.compatibility.Coverage
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
+      valid-time:
+        asOf: latest
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Coverage.policy
 then:
   statements:
     - sql:

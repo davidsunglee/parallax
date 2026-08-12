@@ -352,7 +352,7 @@ class _ReadCapturePort:
 def _scenario_expect_rows(case: case_format.Case) -> list[list[dict[str, Any]] | None]:
     """Each FIND step's declared ``expectRows`` in step order (None asserts nothing)."""
     steps = cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"])
-    return [step.get("expectRows") for step in steps if "find" in step]
+    return [step.get("expectRows") for step in steps if "objectQuery" in step]
 
 
 def _scenario_find_row_transforms(
@@ -374,9 +374,9 @@ def _scenario_find_row_transforms(
     """
     transforms: list[Callable[[Row], Row]] = []
     for step in cast("list[dict[str, Any]]", case_document(case)["when"]["scenario"]):
-        if "find" not in step:
+        if "objectQuery" not in step:
             continue
-        entity = engine.case_entity(model, step["targetEntity"])
+        entity = engine.case_entity(model, step["objectQuery"]["target"])
         compiled = compile_read(
             predicate_algebra.All(), model, dialect_for("postgres"), entity, result_form="instance"
         )

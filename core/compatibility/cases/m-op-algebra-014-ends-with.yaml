@@ -5,11 +5,12 @@ model: models/orders.yaml
 tags: [m-predicate, endsWith, string, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    endsWith:
-      attr: parallax.compatibility.Order.sku
-      value: "00"
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      endsWith:
+        attr: parallax.compatibility.Order.sku
+        value: '00'
 then:
   statements:
     - sql:

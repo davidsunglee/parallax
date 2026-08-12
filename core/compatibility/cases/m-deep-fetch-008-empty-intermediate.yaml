@@ -10,18 +10,19 @@
 # its parent-key set is empty. The harness asserts the statuses statement is not
 # authored after an empty level.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, empty-intermediate, relationship, slice-managed-1]
+tags: [m-deep-fetch, m-object-query, m-op-list, empty-intermediate, relationship, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand:
-        eq:
-          attr: parallax.compatibility.Order.id
-          value: 4
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      eq:
+        attr: parallax.compatibility.Order.id
+        value: 4
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+          - rel: parallax.compatibility.OrderItem.statuses
 then:
   statements:
     - sql:

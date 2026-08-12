@@ -1,8 +1,9 @@
 """``parallax.core.deep_fetch`` enforcement scope (m-deep-fetch).
 
-The **pure** deep-fetch planner: it turns a (possibly ``DeepFetch``-wrapped)
-``m-predicate`` operation into an ordered :class:`ObjectQueryPlan` — one flat
-root :class:`~parallax.core.predicate.EntityQuery` plus a dependency-ordered
+The **pure** deep-fetch planner: it turns one canonical
+:class:`~parallax.core.object_query.ObjectQueryNode` into an ordered
+:class:`ObjectQueryPlan` — one flat root
+:class:`~parallax.core.object_query.EntityQuery` plus a dependency-ordered
 list of :class:`FetchLevel` entries,
 each knowing how to build its own child query from its parent level's distinct
 gathered keys. It never compiles a statement (``m-sql``), never executes
@@ -11,10 +12,10 @@ surfaces (operation-backed lists, snapshot graphs) are built **on top of** this
 plan by their own modules (``m-op-list --> m-deep-fetch``,
 ``m-snapshot-read --> m-deep-fetch``).
 
-Per the dependency graph, ``m-deep-fetch`` depends on ``m-navigate``
-alone — transitively reaching ``m-predicate``, ``m-temporal-read``,
-``m-inheritance``, and ``m-relationship``, all of which this module imports
-directly (the DAG permits any edge ``m-navigate`` itself reaches). A level's
+Per the dependency graph, ``m-deep-fetch`` depends on ``m-navigate``,
+``m-relationship``, ``m-object-query``, and ``m-inheritance`` — transitively
+reaching ``m-predicate`` and ``m-temporal-read``, both of which this module
+imports directly (the DAG permits any edge ``m-navigate`` itself reaches). A level's
 to-many decision and its correlation columns are read off the compiled
 direction ``m-navigate`` resolves, because a reverse declaration carries neither
 an inverted cardinality nor a swapped join of its own. This planning boundary owns
@@ -27,7 +28,7 @@ temporal propagation can never drift from a navigation filter's.
 
 ## Dedup identity and shared-prefix folding
 
-Levels form a **trie** over the declared paths: each ``PathSegment`` is looked
+Levels form a **trie** over the declared paths: each ``IncludeSegment`` is looked
 up (or inserted) as a child of its parent level (the root, or an earlier level)
 keyed by ``(the segment's relationship reference, whether a narrow was AUTHORED,
 the resolved effective concrete-subtype set)`` — the dedup identity
@@ -40,7 +41,7 @@ including a REDUNDANT narrow resolving to the target's entire effective set,
 which returns the same rows under a distinct bracketed view key. Each distinct
 key counts toward `L`.
 
-A path may additionally carry a **root guard** (``NavigationPath.narrow``), which
+A path may additionally carry a **source guard** (``IncludePath.appliesTo``), which
 restricts the queried objects the path starts from. It joins the key at the ROOT
 position only, and it keys on the **resolved source set** rather than on whether a
 guard was authored — the deliberate opposite of the segment rule above, because a
@@ -98,24 +99,14 @@ from parallax.core.metamodel import (
     TemporalDimension,
     entity_by_name,
 )
-from parallax.core.predicate import (
-    And,
-    AsOf,
-    AsOfRange,
-    DeepFetch,
+from parallax.core.object_query import (
     EntityQuery,
-    History,
-    Limit,
-    Membership,
-    Narrow,
-    NavigationPath,
-    OrderBy,
+    IncludePath,
+    IncludeSegment,
+    ObjectQueryNode,
     OrderKey,
-    PathSegment,
-    PredicateNode,
-    Scalar,
 )
-from parallax.core.predicate._builders import _canonical_includes
+from parallax.core.predicate import And, Membership, PredicateNode, Scalar
 from parallax.core.relationship import RelationshipMetadata
 from parallax.core.temporal_read import inject_as_of, resolve_pinned_instants
 
@@ -261,8 +252,8 @@ class FetchLevel:
 class ObjectQueryPlan:
     """A deep fetch's canonicalized root query plus its ordered levels.
 
-    ``root`` is ready for ``compile_read`` unchanged (query wrappers peeled,
-    as-of injected, navigation canonicalized). ``levels`` is dependency-ordered: a level's own
+    ``root`` is ready for ``compile_read`` unchanged (clauses resolved, as-of
+    injected, navigation canonicalized). ``levels`` is dependency-ordered: a level's own
     ``parent`` (root, or an earlier level) always precedes it, so a single
     left-to-right pass satisfies every level's data dependency.
     """
@@ -271,101 +262,40 @@ class ObjectQueryPlan:
     levels: tuple[FetchLevel, ...]
 
 
-def plan(entity: EntityMetadata, op: PredicateNode, model: Metamodel) -> ObjectQueryPlan:
-    """Plan a deep fetch against ``model`` after canonicalizing include paths.
+def plan(entity: EntityMetadata, query: ObjectQueryNode, model: Metamodel) -> ObjectQueryPlan:
+    """Plan ``query``'s Includes against ``model`` and canonicalize its root.
 
-    ``op`` is the read's raw (undeserialized-no-further, but not yet temporally
-    injected or navigation-canonicalized) operation: a ``DeepFetch`` node, or any
-    other read operation planned with zero levels (the degenerate "materialize
-    with no relationships" case a plain snapshot read, or a milestone-set
-    ``history`` / ``asOfRange`` read, needs — both funnel through the SAME root
-    canonicalization this function performs). ``entity`` is the read's queried
-    root Entity (``targetEntity``) — an inheritance participant (abstract root,
-    abstract subtype, or concrete subtype) declares no as-of axes of its own
-    when its family's axes live on the root (`m-inheritance`), so the root
-    query's as-of injection resolves through the Inheritance Facet's family root
-    rather than ``entity``'s own (possibly empty) declaration.
+    ``query`` is the read's canonical Object Query — clauses already flat, so
+    nothing here peels or rebuilds anything. A query carrying no Includes plans
+    with zero levels (the degenerate "materialize with no relationships" case a
+    plain snapshot read, or a milestone-set ``history`` / ``asOfRange`` read,
+    needs — both funnel through the SAME root canonicalization this function
+    performs). ``entity`` is the queried root Entity the caller resolved from
+    ``query.target`` — an inheritance participant (abstract root, abstract
+    subtype, or concrete subtype) declares no as-of axes of its own when its
+    family's axes live on the root (`m-inheritance`), so the root query's as-of
+    injection resolves through the Inheritance Facet's family root rather than
+    ``entity``'s own (possibly empty) declaration.
     """
     families = inheritance.view(model)
     temporal_entity = _entity(model, _entity_view(families, entity.identity).root)
-    parts = _peel_query(op)
-    root_pins = resolve_pinned_instants(parts.temporal, temporal_entity)
-    root_injected = inject_as_of(parts.predicate, parts.temporal, temporal_entity)
+    root_pins = resolve_pinned_instants(query.temporal, temporal_entity)
+    root_injected = inject_as_of(query.predicate, query.temporal, temporal_entity)
     predicate = navigate.canonicalize(root_injected, model, entity, root_pins)
-    narrow_to = _resolve_identities(model, parts.narrow_to) if parts.narrow_to is not None else None
+    narrow_to = _resolve_identities(model, query.narrow_to) if query.narrow_to is not None else None
     root = EntityQuery(
         target=entity.identity,
         predicate=predicate,
         narrow_to=narrow_to,
-        order_by=parts.order_by,
-        limit=parts.limit,
+        order_by=query.order_by,
+        limit=query.limit,
     )
 
     builder = _PlanBuilder(model=model, families=families, root_pins=root_pins)
     builder.seed_root(entity)
-    for path in parts.paths:
+    for path in query.includes:
         builder.add_path(path)
     return ObjectQueryPlan(root=root, levels=tuple(builder.levels))
-
-
-@dataclass(frozen=True, slots=True)
-class _QueryParts:
-    predicate: PredicateNode
-    temporal: tuple[AsOf | AsOfRange | History, ...]
-    narrow_to: tuple[str, ...] | None
-    order_by: tuple[OrderKey, ...]
-    limit: int | None
-    paths: tuple[NavigationPath, ...]
-
-
-def _peel_query(op: PredicateNode) -> _QueryParts:
-    """Remove the query-wide wrapper spine once, at the planning boundary."""
-    temporal: list[AsOf | AsOfRange | History] = []
-    narrows: list[Narrow] = []
-    order_by: tuple[OrderKey, ...] = ()
-    limit: int | None = None
-    paths: tuple[NavigationPath, ...] = ()
-    seen: set[str] = set()
-    current = op
-    while True:
-        if isinstance(current, DeepFetch):
-            _reject_repeated("deepFetch", seen)
-            paths = _canonical_includes(current.paths)
-            current = current.operand
-        elif isinstance(current, Limit):
-            _reject_repeated("limit", seen)
-            limit = current.count
-            current = current.operand
-        elif isinstance(current, OrderBy):
-            _reject_repeated("orderBy", seen)
-            order_by = current.keys
-            current = current.operand
-        elif isinstance(current, Narrow):
-            narrows.append(current)
-            current = current.operand
-        elif isinstance(current, (AsOf, AsOfRange, History)):
-            temporal.append(current)
-            current = current.operand
-        else:
-            break
-
-    predicate = current
-    for narrow in reversed(narrows[1:]):
-        predicate = Narrow(to=narrow.to, operand=predicate)
-    return _QueryParts(
-        predicate=predicate,
-        temporal=tuple(temporal),
-        narrow_to=narrows[0].to if narrows else None,
-        order_by=order_by,
-        limit=limit,
-        paths=paths,
-    )
-
-
-def _reject_repeated(kind: str, seen: set[str]) -> None:
-    if kind in seen:
-        raise DeepFetchError(f"stacked `{kind}` directives have no defined composition semantics")
-    seen.add(kind)
 
 
 def _resolve_identities(model: Metamodel, names: Sequence[str]) -> tuple[EntityIdentity, ...]:
@@ -441,16 +371,16 @@ class _PlanBuilder:
         self._owners[_ROOT_ID] = root_entity
         self._root_position = _resolve_root_source(self.model, self.families, root_entity, None)
 
-    def add_path(self, path: NavigationPath) -> None:
+    def add_path(self, path: IncludePath) -> None:
         source = _resolve_root_source(
-            self.model, self.families, self._owners[_ROOT_ID], path.narrow
+            self.model, self.families, self._owners[_ROOT_ID], path.applies_to
         )
         parent_id = _ROOT_ID
         for segment in path.segments:
             parent_id = self._add_segment(parent_id, segment, source)
 
     def _add_segment(
-        self, parent_id: int, segment: PathSegment, root_source: tuple[EntityIdentity, ...]
+        self, parent_id: int, segment: IncludeSegment, root_source: tuple[EntityIdentity, ...]
     ) -> int:
         if parent_id != _ROOT_ID and self.levels[parent_id].is_back_reference:
             raise DeepFetchError(
@@ -462,7 +392,7 @@ class _PlanBuilder:
         direction = navigate.resolve_relationship(segment.rel, owner.identity, self.model)
         related_entity = _entity(self.model, direction.join.target.entity)
         position = _resolve_position(self.model, self.families, related_entity, segment)
-        narrowed = bool(segment.narrow)
+        narrowed = bool(segment.narrow_to)
         source = root_source if parent_id == _ROOT_ID else None
         key = _TrieKey(
             parent=parent_id,
@@ -613,7 +543,7 @@ def _narrowed_position(
 
 
 def _resolve_position(
-    model: Metamodel, facet: InheritanceFacet, related: EntityMetadata, segment: PathSegment
+    model: Metamodel, facet: InheritanceFacet, related: EntityMetadata, segment: IncludeSegment
 ) -> tuple[EntityIdentity, ...]:
     """The hop's resolved effective concrete-subtype set (m-deep-fetch dedup
     identity's second component): the segment's own narrow when authored, else
@@ -627,11 +557,11 @@ def _resolve_position(
     """
     if related.inheritance is None:
         return (related.identity,)
-    if segment.narrow:
-        position = _narrowed_position(model, facet, segment.narrow)
+    if segment.narrow_to:
+        position = _narrowed_position(model, facet, segment.narrow_to)
         if position is None:
             raise DeepFetchError(
-                f"narrow to {list(segment.narrow)} names an entity the model does not "
+                f"narrow to {list(segment.narrow_to)} names an entity the model does not "
                 "declare, or spans more than one inheritance family"
             )
         return position
@@ -688,7 +618,7 @@ def _child_target(
     model: Metamodel,
     direction: RelationshipMetadata,
     position: tuple[EntityIdentity, ...],
-    segment: PathSegment,
+    segment: IncludeSegment,
 ) -> tuple[EntityIdentity, tuple[EntityIdentity, ...] | None]:
     """The level's own read target entity, and its ``Narrow.to`` (or
     ``None``) — the child-level analogue of `m-sql`'s abstract-read dispatch,
@@ -704,8 +634,8 @@ def _child_target(
     resolution already returns the same set from the bare target)."""
     if len(position) == 1:
         return position[0], None
-    if segment.narrow:
-        return direction.join.target.entity, _resolve_identities(model, segment.narrow)
+    if segment.narrow_to:
+        return direction.join.target.entity, _resolve_identities(model, segment.narrow_to)
     return direction.join.target.entity, None
 
 

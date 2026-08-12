@@ -18,22 +18,20 @@
 # Non-trivial (temporal) case => referenceSql is the independent oracle (inline
 # infinity / instant literals, a different formulation returning the same row).
 model: models/rate.yaml
-tags: [m-inheritance, m-temporal-read, m-sql, table-per-concrete-subtype, temporal, bitemporal, as-of, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-object-query, m-temporal-read, m-sql, table-per-concrete-subtype, temporal, bitemporal, as-of, slice-snapshot-1, slice-managed-1]
 shape: read
 given:
   fixtures: true
 when:
-  targetEntity: parallax.compatibility.DepositRate
-  operation:
-    asOf:
-      operand:
-        asOf:
-          operand:
-            all: {}
-          dimension: transaction-time
-          coordinate: "2024-01-15T00:00:00+00:00"
-      dimension: valid-time
-      coordinate: latest
+  objectQuery:
+    target: parallax.compatibility.DepositRate
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: '2024-01-15T00:00:00+00:00'
+      valid-time:
+        asOf: latest
 then:
   statements:
     - sql:

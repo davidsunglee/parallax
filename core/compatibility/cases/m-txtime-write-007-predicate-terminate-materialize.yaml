@@ -29,13 +29,15 @@ when:
   uow:
     concurrency: locking
   scenario:
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          lessThan:
+            attr: parallax.compatibility.Balance.value
+            value: 250.00
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       statements:
         - sql:
@@ -60,13 +62,15 @@ when:
         - sql:
             postgres: update balance set out_z = ? where bal_id = ? and out_z = ?
           binds: ["2024-10-01T00:00:00+00:00", 2, infinity]
-    - targetEntity: parallax.compatibility.Balance
-      find:
-        asOf:
-          operand:
-            lessThan: { attr: parallax.compatibility.Balance.value, value: 250.00 }
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Balance
+        predicate:
+          lessThan:
+            attr: parallax.compatibility.Balance.value
+            value: 250.00
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       statements:
         - sql:

@@ -11,9 +11,10 @@ model: models/payment.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Payment
-  operation:
-    all: {}
+  objectQuery:
+    target: parallax.compatibility.Payment
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

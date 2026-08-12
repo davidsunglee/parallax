@@ -10,20 +10,18 @@
 # thru_z is finite (2024-06-01), so valid-time=Latest excludes it. Only R3 is current
 # on both axes.
 model: models/position.yaml
-tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, defaulted, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, bitemporal, temporal, as-of, both-axes, defaulted, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Position
-  operation:
-    asOf:
-      operand:
-        asOf:
-          operand:
-            all: {}
-          dimension: transaction-time
-          coordinate: latest
-      dimension: valid-time
-      coordinate: latest
+  objectQuery:
+    target: parallax.compatibility.Position
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
+      valid-time:
+        asOf: latest
 then:
   statements:
     - sql:

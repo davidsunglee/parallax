@@ -86,6 +86,7 @@ from parallax.core.metamodel import (
     WriteAssignmentError,
     judge_assignment,
 )
+from parallax.core.object_query import IncludeSegment, OrderKey, subtype_spelling
 from parallax.core.predicate import (
     And,
     Between,
@@ -109,15 +110,13 @@ from parallax.core.predicate import (
     NotExists,
     NullCheck,
     Or,
-    OrderKey,
-    PathSegment,
     PredicateNode,
     QueryDefinitionError,
     Scalar,
     StringMatch,
     StringOp,
+    canonical_subtype_selection,
 )
-from parallax.core.predicate._nodes import canonical_subtype_selection
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -844,19 +843,6 @@ class ElementAttributeExpr[V, T]:
         return hash(self._path)
 
 
-def _subtype_name(subtype: type) -> str:
-    """A subtype class's canonical Entity spelling.
-
-    Read off the class's own declared identity when it carries one, so this
-    module resolves nothing and imports no frontend; a class that declares none
-    falls back to its Python name. A hop's narrow list is a reference position
-    like any other, so it names each subtype exactly rather than relying on the
-    hop target's namespace to disambiguate it.
-    """
-    canonical = getattr(getattr(subtype, "identity", None), "canonical", None)
-    return canonical if isinstance(canonical, str) else subtype.__name__
-
-
 @dataclass(frozen=True, slots=True)
 class RelationshipPath[E, R]:
     """A chained class-level relationship reference (``Order.items``,
@@ -877,7 +863,7 @@ class RelationshipPath[E, R]:
     measured only at execution preflight.
 
     ``segments`` is the traversal so far in ``m-deep-fetch``'s own
-    ``PathSegment`` shape, whose relationship references name their owner locally
+    ``IncludeSegment`` shape, whose relationship references name their owner locally
     as the wire does; ``target`` is the canonical Entity spelling the path
     currently points at, namespace included, so two namespaces sharing a local
     Entity name stay distinguishable.
@@ -892,14 +878,14 @@ class RelationshipPath[E, R]:
     THROUGH, kept separate from that hop's own relationship identity: ``Dog.owner``
     and ``Dog.doghouse`` both name the Entity ``Dog`` there, whether ``owner`` is
     inherited from ``Animal`` or ``doghouse`` is declared on ``Dog`` itself. It is
-    what a Find Query turns into the path-ROOT guard — qualifying which queried
+    what an Object Query turns into the path-ROOT guard — qualifying which queried
     objects the whole path starts from — so, unlike a hop's own narrow, it lives
     beside ``segments`` rather than inside one, and a deeper hop neither adds nor
     replaces it: a deeper hop is a member lookup on the current target and says
     nothing about where the path is rooted.
     """
 
-    segments: tuple[PathSegment, ...]
+    segments: tuple[IncludeSegment, ...]
     target: str | None
     source: str | None = None
 
@@ -959,7 +945,7 @@ class RelationshipPath[E, R]:
                 "is declared on and add it as its own `.include(...)` path"
             )
         return RelationshipPath(
-            segments=(*self.segments, PathSegment(rel=f"{self.target}.{snake_to_camel(name)}")),
+            segments=(*self.segments, IncludeSegment(rel=f"{self.target}.{snake_to_camel(name)}")),
             target=None,
             source=self.source,
         )
@@ -998,12 +984,12 @@ class RelationshipPath[E, R]:
         back on, because it lowers to no node of its own.
         """
         *head, last = self.segments
-        if last.narrow:
+        if last.narrow_to:
             raise QueryDefinitionError(
                 code="query-path-invalid",
                 message=(
                     f"{last.rel}: narrowing is single-shot per path segment and this hop is "
-                    f"already narrowed to {', '.join(last.narrow)}; derive the segment from "
+                    f"already narrowed to {', '.join(last.narrow_to)}; derive the segment from "
                     "the un-narrowed hop"
                 ),
             )
@@ -1012,14 +998,14 @@ class RelationshipPath[E, R]:
                 code="query-path-invalid",
                 message=f"{last.rel}: narrow requires at least one subtype",
             )
-        narrowed = tuple(_subtype_name(subtype) for subtype in subtypes)
+        narrowed = tuple(subtype_spelling(subtype) for subtype in subtypes)
         if len(set(narrowed)) != len(narrowed):
             raise QueryDefinitionError(
                 code="query-path-invalid",
                 message=f"{last.rel}: narrow alternatives must not repeat the same subtype",
             )
         narrowed = canonical_subtype_selection(narrowed)
-        new_last = PathSegment(rel=last.rel, narrow=narrowed)
+        new_last = IncludeSegment(rel=last.rel, narrow_to=narrowed)
         new_target = self.target
         if len(narrowed) == 1:  # a hop narrowed to one subtype points at that subtype
             new_target = narrowed[0]

@@ -321,7 +321,7 @@ Construction is model-independent:
 Model-aware validation then resolves one selection inside one active
 polymorphic position. It runs before SQL and applies these steps:
 
-1. Take the active position from context: a read's `targetEntity`, a navigation
+1. Take the active position from context: a query's `target`, a navigation
    or deep-fetch hop's relationship target, or an enclosing narrow's resolved
    position.
 2. Resolve every alternative to its effective concrete-subtype set: a concrete
@@ -400,7 +400,7 @@ hop identity and views.
 A create / update / delete of an inheritance participant is a **concrete-subtype
 write**: it targets exactly one concrete subtype, and the family behaves as a
 discriminated union at the write boundary just as it does at the read boundary. The
-write protocol is the write-side counterpart of `targetEntity` / `narrow` read
+write protocol is the write-side counterpart of the read side's `target` / narrowing
 targeting; a model-aware validator **MUST** enforce it **before any SQL**, and the
 compatibility corpus pins each violation as a portable `rejected` / `when.write`
 case with a `then.rejectedRule` (`m-case-format`). `m-sql` fixes the resulting DML.

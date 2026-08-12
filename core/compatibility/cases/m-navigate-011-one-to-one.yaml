@@ -8,12 +8,15 @@ model: models/person.yaml
 tags: [m-navigate, navigate, relationship, one-to-one, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Person
-  operation:
-    navigate:
-      rel: parallax.compatibility.Person.passport
-      op:
-        eq: { attr: parallax.compatibility.Passport.number, value: P-AAA }
+  objectQuery:
+    target: parallax.compatibility.Person
+    predicate:
+      navigate:
+        rel: parallax.compatibility.Person.passport
+        op:
+          eq:
+            attr: parallax.compatibility.Passport.number
+            value: P-AAA
 then:
   statements:
     - sql:

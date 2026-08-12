@@ -5,12 +5,13 @@ model: models/orders.yaml
 tags: [m-predicate, between, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    between:
-      attr: parallax.compatibility.Order.price
-      lower: 20.00
-      upper: 50.75
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      between:
+        attr: parallax.compatibility.Order.price
+        lower: 20.00
+        upper: 50.75
 then:
   statements:
     - sql:

@@ -4,7 +4,8 @@ The sole supported Python model-authoring surface: the frozen ``Entity`` and
 ``ValueObject`` bases and their temporal framework siblings, the ``Attr[T]`` /
 ``Rel[T]`` member annotations with the ``attr`` / ``rel`` / ``index`` / ``asc`` /
 ``desc`` factories, the core-algebra spellings those take, ``DomainModel`` and
-its closed error-code sets, and the Find Query surface. The underscored modules
+its closed error-code sets, and the Object Query surface it re-exports from
+``m-object-query``. The underscored modules
 behind these names are implementation detail rather than caller seams.
 
 It additionally exposes the **advanced Entity Graph Construction collaboration**
@@ -107,9 +108,9 @@ from parallax.core.entity._members import (
     rel,
 )
 from parallax.core.entity._model import DomainModel
-from parallax.core.entity._query import FindQuery
 from parallax.core.entity._row_codec import EntityRowCodec, row_codec_of
 from parallax.core.entity._value_object import ValueObject, to_document
+from parallax.core.object_query._fluent import ObjectQuery
 
 __all__ = [
     "EDIT_CODES",
@@ -153,7 +154,6 @@ __all__ = [
     "EntityRelationshipInput",
     "EntityRowCodec",
     "EntityRowError",
-    "FindQuery",
     "Float32",
     "GraphConstructionError",
     "IndexSpec",
@@ -164,6 +164,7 @@ __all__ = [
     "MetamodelDefinitionError",
     "MetamodelLookupError",
     "NodeHandle",
+    "ObjectQuery",
     "OrderTerm",
     "Predicate",
     "Rel",

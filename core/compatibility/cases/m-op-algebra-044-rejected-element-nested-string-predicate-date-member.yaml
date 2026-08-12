@@ -11,10 +11,14 @@ model: models/contact.yaml
 tags: [m-predicate, m-value-object, rejected, negative, nested, string, scoped, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    nestedExists:
-      path: parallax.compatibility.Contact.address.phones
-      where:
-        nestedEndsWith: { path: expires, value: '-01' }
+  objectQuery:
+    target: parallax.compatibility.Contact
+    predicate:
+      nestedExists:
+        path: parallax.compatibility.Contact.address.phones
+        where:
+          nestedEndsWith:
+            path: expires
+            value: '-01'
 then:
   rejectedRule: nested-string-predicate-non-string-member

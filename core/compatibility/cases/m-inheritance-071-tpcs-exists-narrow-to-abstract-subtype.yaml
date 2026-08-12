@@ -18,15 +18,17 @@ model: models/document.yaml
 tags: [m-navigate, m-predicate, m-inheritance, m-sql, table-per-concrete-subtype, polymorphic, narrow, exists, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Folder
-  operation:
-    exists:
-      rel: parallax.compatibility.Folder.documents
-      op:
-        narrow:
-          to: [parallax.compatibility.FinancialDocument]
-          operand:
-            all: {}
+  objectQuery:
+    target: parallax.compatibility.Folder
+    predicate:
+      exists:
+        rel: parallax.compatibility.Folder.documents
+        op:
+          narrow:
+            to:
+              - parallax.compatibility.FinancialDocument
+            operand:
+              all: {}
 then:
   statements:
     - sql:

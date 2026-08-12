@@ -201,8 +201,8 @@
 
 - name: missing-source-dependency
   base: valid-snapshot.md
-  old: "| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship` | depcheck.toml |"
-  new: "| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate` | depcheck.toml |"
+  old: "| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | depcheck.toml |"
+  new: "| `m-deep-fetch` | src/deep-fetch | deep-fetch | `m-navigate`, `m-object-query`, `m-inheritance` | depcheck.toml |"
   code: missing-source-dependency
   message: "omits the declared dependency m-deep-fetch --> m-relationship"
 

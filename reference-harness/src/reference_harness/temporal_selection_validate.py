@@ -1,8 +1,7 @@
-"""Model-aware checks and authoring normalization for temporal read selections."""
+"""Model-aware checks and authoring normalization for Temporal Selections."""
 
 from __future__ import annotations
 
-from collections import Counter
 from typing import Any
 
 from .inheritance import Family
@@ -10,105 +9,54 @@ from .temporality import temporal_axes
 
 __all__ = ["normalize_authored_temporal_selections", "validate_temporal_selections"]
 
-_RESULT_WRAPPER_TAGS = frozenset({"orderBy", "limit", "deepFetch"})
-_TEMPORAL_WRAPPER_TAGS = frozenset({"asOf", "asOfRange", "history"})
-_ROOT_WRAPPER_TAGS = _RESULT_WRAPPER_TAGS | _TEMPORAL_WRAPPER_TAGS | {"narrow"}
 
-
-def validate_temporal_selections(operation: Any, target: Any, family: Family | None) -> list[str]:
-    """Return exact per-dimension selection problems for one canonical read."""
+def _declared_dimensions(target: Any, family: Family | None) -> set[str] | None:
+    """The dimensions ``target``'s family root declares, or ``None`` when unknown."""
     if not isinstance(target, str) or family is None or target not in family.defs:
-        return []
+        return None
     root = family.root_of(target)
     if root is None:
+        return None
+    return {axis.dimension for axis in temporal_axes(family.defs[root])}
+
+
+def validate_temporal_selections(query: Any, family: Family | None) -> list[str]:
+    """Return exact per-dimension selection problems for one canonical query.
+
+    The Temporal Selection clause is keyed by dimension, so "exactly one
+    selection per dimension" reduces to a set comparison: the map's shape already
+    forbids a repeated dimension.
+    """
+    if not isinstance(query, dict):
         return []
-    declared = {axis.dimension for axis in temporal_axes(family.defs[root])}
-    selected = Counter(_root_temporal_dimensions(operation))
+    target = query.get("target")
+    declared = _declared_dimensions(target, family)
+    if declared is None:
+        return []
+    temporal = query.get("temporal")
+    selected = set(temporal) if isinstance(temporal, dict) else set()
     problems: list[str] = []
-    missing = sorted(dimension for dimension in declared if selected[dimension] == 0)
-    duplicate = sorted(dimension for dimension in declared if selected[dimension] > 1)
-    undeclared = sorted(dimension for dimension in selected if dimension not in declared)
+    missing = sorted(declared - selected)
+    undeclared = sorted(selected - declared)
     if missing:
         problems.append(f"temporal read of {target} is missing selections for {missing}")
-    if duplicate:
-        problems.append(f"temporal read of {target} repeats selections for {duplicate}")
     if undeclared:
         problems.append(f"temporal read of {target} selects undeclared dimensions {undeclared}")
     return [
-        f"{problem}; canonical operations name exactly one selection per declared dimension"
+        f"{problem}; a canonical Object Query names exactly one selection per declared dimension"
         for problem in problems
     ]
 
 
-def normalize_authored_temporal_selections(
-    operation: Any, target: Any, family: Family | None
-) -> Any:
+def normalize_authored_temporal_selections(query: Any, family: Family | None) -> Any:
     """Normalize an authored Transaction-Time omission to explicit Latest."""
-    if not isinstance(target, str) or family is None or target not in family.defs:
-        return operation
-    root = family.root_of(target)
-    if root is None:
-        return operation
-    declared = {axis.dimension for axis in temporal_axes(family.defs[root])}
-    selected = _root_temporal_dimensions(operation)
-    if "transaction-time" not in declared or "transaction-time" in selected:
-        return operation
-    return _insert_transaction_time_latest(operation)
-
-
-def _insert_transaction_time_latest(operation: Any) -> Any:
-    wrappers: list[tuple[str, dict[str, Any]]] = []
-    narrows: list[tuple[str, dict[str, Any]]] = []
-    node = operation
-    while isinstance(node, dict) and len(node) == 1:
-        tag = next(iter(node))
-        body = node[tag]
-        if tag not in _ROOT_WRAPPER_TAGS or not isinstance(body, dict):
-            break
-        operand = body.get("operand")
-        if not isinstance(operand, dict):
-            break
-        wrapper = (tag, body)
-        if tag == "narrow":
-            narrows.append(wrapper)
-        else:
-            wrappers.append(wrapper)
-        node = operand
-
-    last_temporal = max(
-        (index for index, (tag, _) in enumerate(wrappers) if tag in _TEMPORAL_WRAPPER_TAGS),
-        default=len(wrappers) - 1,
-    )
-    wrappers.insert(
-        last_temporal + 1,
-        (
-            "asOf",
-            {"dimension": "transaction-time", "coordinate": "latest"},
-        ),
-    )
-    wrappers.extend(narrows)
-
-    result = node
-    for tag, body in reversed(wrappers):
-        result = {tag: {**body, "operand": result}}
-    return result
-
-
-def _root_temporal_dimensions(operation: Any) -> list[str]:
-    selected: list[str] = []
-    node = operation
-    while isinstance(node, dict) and len(node) == 1:
-        tag = next(iter(node))
-        body = node[tag]
-        if tag in _TEMPORAL_WRAPPER_TAGS and isinstance(body, dict):
-            dimension = body.get("dimension")
-            if isinstance(dimension, str):
-                selected.append(dimension)
-            node = body.get("operand")
-            continue
-        if tag in _RESULT_WRAPPER_TAGS or tag == "narrow":
-            if isinstance(body, dict):
-                node = body.get("operand")
-                continue
-        break
-    return selected
+    if not isinstance(query, dict):
+        return query
+    declared = _declared_dimensions(query.get("target"), family)
+    if declared is None or "transaction-time" not in declared:
+        return query
+    temporal = query.get("temporal")
+    selected = temporal if isinstance(temporal, dict) else {}
+    if "transaction-time" in selected:
+        return query
+    return {**query, "temporal": {**selected, "transaction-time": {"asOf": "latest"}}}

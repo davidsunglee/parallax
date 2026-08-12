@@ -15,10 +15,11 @@ model: models/animal.yaml
 tags: [m-navigate, m-inheritance, m-sql, table-per-hierarchy, polymorphic, exists, tag, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Person
-  operation:
-    exists:
-      rel: parallax.compatibility.Person.pets
+  objectQuery:
+    target: parallax.compatibility.Person
+    predicate:
+      exists:
+        rel: parallax.compatibility.Person.pets
 then:
   statements:
     - sql:

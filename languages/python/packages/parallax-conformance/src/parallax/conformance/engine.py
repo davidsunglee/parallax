@@ -69,24 +69,14 @@ from parallax.core.metamodel import (
 )
 from parallax.core.metamodel import Metamodel as AcceptedMetamodel
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.object_query import EntityQuery, ObjectQueryNode, validate_object_query
+from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import (
-    AsOf,
-    AsOfRange,
-    EntityQuery,
-    History,
     OperationError,
     OperationRejectedError,
-    PredicateNode,
-    deserialize,
-    validate_read_operation,
 )
-from parallax.core.predicate import validate_operation as validate_predicate_operation
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, SqlGenError, compile_read
-from parallax.core.temporal_read import (
-    Pin,
-    TemporalReadError,
-    statement_pin,
-)
+from parallax.core.temporal_read import Pin, TemporalReadError, query_pin
 from parallax.core.unit_work import (
     INSERT_MUTATIONS,
     CardinalityCorruptionError,
@@ -167,6 +157,7 @@ _READ_ERRORS = (
     OperationRejectedError,
     SqlGenError,
     TemporalReadError,
+    handle.QueryTargetError,
     KeyError,
 )
 
@@ -270,17 +261,14 @@ def _declaring_metadata(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     return _family_declarer(model, case_entity(model, name))
 
 
-def _read_target_and_operation(case: case_format.Case) -> tuple[str, object]:
+def _read_query(case: case_format.Case) -> ObjectQueryNode:
     when = case.document.get("when")
     if not isinstance(when, Mapping):
         raise EngineError(f"{case.path.name}: read case has no `when`")
     body = cast("Mapping[str, object]", when)
-    target = body.get("targetEntity")
-    if not isinstance(target, str):
-        raise EngineError(f"{case.path.name}: read case has no `targetEntity`")
-    if "operation" not in body:
-        raise EngineError(f"{case.path.name}: read case has no `operation`")
-    return target, body["operation"]
+    if "objectQuery" not in body:
+        raise EngineError(f"{case.path.name}: read case has no `objectQuery`")
+    return deserialize_query(body["objectQuery"])
 
 
 def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
@@ -299,16 +287,22 @@ def _result_form(case: case_format.Case) -> Literal["row", "instance"]:
 
 
 def _canonicalize_read(
-    operation_doc: object, entity: EntityMetadata, model: AcceptedMetamodel
+    query: ObjectQueryNode,
+    entity: EntityMetadata,
+    model: AcceptedMetamodel,
+    *,
+    form: Literal["rows", "graph"] = "graph",
 ) -> EntityQuery:
-    """Deserialize, validate, and plan one flat root Entity Query.
+    """Preflight and plan one flat root Entity Query.
 
-    ``m-deep-fetch`` owns the single query-wide peel and composes temporal
-    injection plus navigation canonicalization before SQL sees the result.
+    The gate is production's own (`handle.preflight`), including Deferred
+    Execution Feature classification: an adapter whose compile lane accepted a
+    query its own executor would refuse would claim two different supported
+    surfaces. ``m-deep-fetch`` then composes temporal injection plus navigation
+    canonicalization before SQL sees the result.
     """
-    raw_op = deserialize(operation_doc)
-    validate_read_operation(entity, raw_op, model)
-    return deep_fetch.plan(entity, raw_op, model).root
+    handle.preflight(query, model=model, form=form)
+    return deep_fetch.plan(entity, query, model).root
 
 
 def _family_declarer(model: AcceptedMetamodel, entity: EntityMetadata) -> EntityMetadata:
@@ -366,13 +360,14 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
             f"{case.path.name}: only `read`-shape compile is implemented (a write/rejected/"
             f"scenario case compiles through its own dedicated lane; shape={case.shape})"
         )
-    target, operation_doc = _read_target_and_operation(case)
+    query = _read_query(case)
     model = load_case_metamodel(case)
     dialect = dialect_for(dialect_name)
     lock = read_lock.mode_for(_read_case_concurrency(case))
     try:
-        metadata = case_entity(model, target)
-        operation = _canonicalize_read(operation_doc, metadata, model)
+        metadata = case_entity(model, query.target.canonical)
+        form: Literal["rows", "graph"] = "graph" if _result_form(case) == "instance" else "rows"
+        operation = _canonicalize_read(query, metadata, model, form=form)
         return compile_read(
             operation,
             model,
@@ -387,7 +382,7 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
 def compile_read_case(case: case_format.Case, dialect_name: str) -> tuple[list[Emission], int]:
     """Compile a read case to its ordered emissions and round-trip count."""
     statement = _compile_statement(case, dialect_name).statement
-    emission = Emission("/operation", statement.sql, statement.binds)
+    emission = Emission("/objectQuery", statement.sql, statement.binds)
     return [emission], 1
 
 
@@ -425,15 +420,12 @@ def run_read_case(
     first would hand the wire that member's document spelling instead, making one
     logical value observably different under the two layouts.
     """
-    target, operation_doc = _read_target_and_operation(case)
+    query = _read_query(case)
     model = load_case_metamodel(case)
     db = handle.Database(port, model, dialect=dialect_for(dialect_name))
     concurrency = _read_case_concurrency(case)
     try:
-        entity = case_entity(model, target)
-        request = handle.NeutralReadRequest.rows(
-            target=entity.identity, operation=deserialize(operation_doc)
-        )
+        request = handle.NeutralReadRequest.rows(query)
         result = (
             db.read_neutral(request)
             if concurrency is None
@@ -445,7 +437,7 @@ def run_read_case(
     if not isinstance(rows, handle.NeutralRows):  # pragma: no cover - a rows request answers rows
         raise EngineError(f"{case.path.name}: a row-form read answered {type(rows).__name__}")
     emissions = [
-        Emission("/operation", call.statement.sql, call.statement.binds)
+        Emission("/objectQuery", call.statement.sql, call.statement.binds)
         for call in result.execution.calls
     ]
     return (
@@ -468,30 +460,22 @@ def _driver_binds(binds: Sequence[object]) -> list[object]:
 # --------------------------------------------------------------------------- #
 def _neutral_read(
     case: case_format.Case,
-    target: str,
-    operation_doc: object,
+    query: ObjectQueryNode,
     model: AcceptedMetamodel,
     port: DbPort,
     dialect_name: str,
 ) -> handle.NeutralReadResult:
-    """One graph-form neutral read of the case's own operation.
+    """One graph-form neutral read of the case's own Object Query.
 
-    The whole lane is ``db.read_neutral``: canonicalization, deep-fetch planning,
-    per-level compilation and execution, row conversion, projection merging, and
-    the round-trip count are production's, and a scanning read answers the
-    milestone-set form from the same call, exactly as ``db.find`` does.
-
-    The authored ``target`` spelling resolves against the accepted model itself,
-    under the same OPERATION REFERENCE rule every production validator and
-    lowering site resolves one by.
+    The whole lane is ``db.read_neutral``: target resolution, validation,
+    deep-fetch planning, per-level compilation and execution, row conversion,
+    projection merging, and the round-trip count are production's, and a scanning
+    read answers the milestone-set form from the same call, exactly as
+    ``db.find`` does.
     """
     db = handle.Database(port, model, dialect=dialect_for(dialect_name))
     try:
-        entity = case_entity(model, target)
-        request = handle.NeutralReadRequest.graph(
-            target=entity.identity, operation=deserialize(operation_doc)
-        )
-        return db.read_neutral(request)
+        return db.read_neutral(handle.NeutralReadRequest.graph(query))
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
 
@@ -505,16 +489,16 @@ def run_graph_case(
     declared reference-identity assertion over the MATERIALIZED (pre-truncation)
     graph.
     """
-    target, operation_doc = _read_target_and_operation(case)
+    query = _read_query(case)
     model = load_case_metamodel(case)
-    result = _neutral_read(case, target, operation_doc, model, port, dialect_name)
+    result = _neutral_read(case, query, model, port, dialect_name)
     graph = result.output
     if not isinstance(graph, handle.NeutralGraph):
         raise EngineError(
             f"{case.path.name}: a `then.graph` case read answered {type(graph).__name__} — "
             "a milestone-set read asserts `then.graphs`"
         )
-    root_key = _graph_root_key(target, model)
+    root_key = _graph_root_key(query.target.canonical, model)
     return (
         _read_emissions(result),
         _render_graph(root_key, graph.roots, model),
@@ -530,16 +514,16 @@ def run_graphs_case(
     production's ordered per-milestone graphs to the wire `then.graphs` shape:
     an array of `{pin, graph}` entries, each pin keyed by declared as-of
     dimension spelling."""
-    target, operation_doc = _read_target_and_operation(case)
+    query = _read_query(case)
     model = load_case_metamodel(case)
-    result = _neutral_read(case, target, operation_doc, model, port, dialect_name)
+    result = _neutral_read(case, query, model, port, dialect_name)
     graphs = result.output
     if not isinstance(graphs, handle.NeutralGraphs):
         raise EngineError(
             f"{case.path.name}: a `then.graphs` case read answered {type(graphs).__name__} — "
             "a single-instant read asserts `then.graph`"
         )
-    root_key = _graph_root_key(target, model)
+    root_key = _graph_root_key(query.target.canonical, model)
     graphs_wire: list[dict[str, object]] = [
         {
             "pin": _wire_pin(graph.pin),
@@ -553,7 +537,7 @@ def run_graphs_case(
 def _read_emissions(result: handle.NeutralReadResult) -> list[Emission]:
     """The read's own emissions: the statements production actually ran, in order."""
     return [
-        Emission("/operation", call.statement.sql, call.statement.binds)
+        Emission("/objectQuery", call.statement.sql, call.statement.binds)
         for call in result.execution.calls
     ]
 
@@ -581,7 +565,7 @@ def _wire_pin(pin: Pin) -> dict[str, object]:
 
 
 def _graph_root_key(target: str, model: AcceptedMetamodel) -> str:
-    """The `then.graph` root key the read's ``targetEntity`` denotes.
+    """The `then.graph` root key the query's own ``target`` denotes.
 
     Result vocabulary is LOCAL where an addressing reference is exact
     (`m-case-format`), so the authored spelling is resolved and the Entity's own
@@ -2243,7 +2227,7 @@ def _compile_find(
     `Transaction.find`'s own derivation — is IRREDUCIBLE adapter content, not
     a residual "mirrors production" gap to close. The case-driven engine has
     no typed Python entity classes at all (a scenario step is a raw,
-    case-authored dict naming `targetEntity` + a serialized operation), so
+    case-authored dict carrying a serialized Object Query), so
     there is no `LoweredStatement` to hand a production seam — `Transaction.find`
     itself REQUIRES one. Re-routing through a production API would mean
     inventing a new one solely to serve this untyped input, the opposite of
@@ -2251,12 +2235,9 @@ def _compile_find(
     "raw case step" to compiled read, composing production's `m-sql` /
     `m-read-lock` building blocks rather than duplicating their logic.
     """
-    target = step.get("targetEntity")
-    find_doc = step.get("find")
-    if not isinstance(target, str) or find_doc is None:
-        raise EngineError("scenario find step needs `targetEntity` and `find`")
-    metadata = case_entity(model, target)
-    operation = _canonicalize_read(find_doc, metadata, model)
+    query = _step_query(step)
+    metadata = case_entity(model, query.target.canonical)
+    operation = _canonicalize_read(query, metadata, model)
     lock = read_lock.mode_for(concurrency)
     return compile_read(
         operation,
@@ -2267,23 +2248,19 @@ def _compile_find(
     )
 
 
-def _find_request(
-    step: Mapping[str, object], model: AcceptedMetamodel
-) -> tuple[EntityMetadata, PredicateNode]:
-    """A scenario ``find`` step as the two facts a neutral read request states:
-    the resolved target and the operation to run from it.
+def _step_query(step: Mapping[str, object]) -> ObjectQueryNode:
+    """A scenario or coherence read step's own canonical Object Query.
 
-    The operation travels BARE. Root as-of injection and per-hop navigation
+    The query travels as authored. Root as-of injection and per-hop navigation
     canonicalization are `deep_fetch.plan`'s own first step on every production
-    read path, so canonicalizing here would apply them twice; the compile lane's
+    read path, so applying them here would apply them twice; the compile lane's
     :func:`_compile_find` composes them itself precisely because it reaches no
     executor.
     """
-    target = step.get("targetEntity")
-    find_doc = step.get("find")
-    if not isinstance(target, str) or find_doc is None:
-        raise EngineError("scenario find step needs `targetEntity` and `find`")
-    return case_entity(model, target), deserialize(find_doc)
+    query_doc = step.get("objectQuery")
+    if query_doc is None:
+        raise EngineError("a scenario read step needs `objectQuery`")
+    return deserialize_query(query_doc)
 
 
 def _trace_statements(result: handle.NeutralReadResult) -> tuple[LoweredStatement, ...]:
@@ -2308,8 +2285,7 @@ def _run_standalone_find(
     writes establishes no observation for a lock to protect
     (:func:`_scenario_needs_lock`), so its verification finds run standalone.
     """
-    entity, operation = _find_request(step, model)
-    request = handle.NeutralReadRequest.graph(target=entity.identity, operation=operation)
+    request = handle.NeutralReadRequest.graph(_step_query(step))
     db = handle.Database(port, model, dialect=dialect)
     if concurrency is None:
         return db.read_neutral(request)
@@ -2372,7 +2348,7 @@ def _lower_scenario_step(
     """
     if "write" not in step:
         statement = _compile_find(step, context.model, context.dialect, find_lock).statement
-        return _LoweredStep(f"/scenario/{index}/find", (statement,), False, False)
+        return _LoweredStep(f"/scenario/{index}/objectQuery", (statement,), False, False)
     raw_write = step["write"]
     rollback = step.get("rollback") is True
     if _is_predicate_write_step(raw_write):
@@ -2561,16 +2537,13 @@ def _compile_snapshot_scenario(
             if "action" in step:
                 _check_action_step(case, step)
                 continue
-            target = step.get("targetEntity")
-            find_doc = step.get("find")
-            if not isinstance(target, str) or find_doc is None:
-                raise EngineError(
-                    f"{case.path.name}: scenario find step needs `targetEntity` and `find`"
-                )
-            metadata = case_entity(model, target)
-            operation = _canonicalize_read(find_doc, metadata, model)
+            query = _step_query(step)
+            metadata = case_entity(model, query.target.canonical)
+            operation = _canonicalize_read(query, metadata, model)
             statement = compile_read(operation, model, dialect, result_form="instance").statement
-            emissions.append(Emission(f"/scenario/{index}/find", statement.sql, statement.binds))
+            emissions.append(
+                Emission(f"/scenario/{index}/objectQuery", statement.sql, statement.binds)
+            )
     except _READ_ERRORS as exc:
         raise EngineError(f"{case.path.name}: {exc}") from exc
     return emissions, len(emissions)
@@ -2635,27 +2608,19 @@ def _run_snapshot_scenario(
                 errors.append({"at": f"/scenario/{index}", "errorClass": error_class})
             results.append(_NO_SCENARIO_RESULT)
             continue
-        target = step.get("targetEntity")
-        find_doc = step.get("find")
-        if not isinstance(target, str) or find_doc is None:
-            raise EngineError(
-                f"{case.path.name}: scenario find step needs `targetEntity` and `find`"
-            )
+        query = _step_query(step)
         try:
-            raw_op = deserialize(find_doc)
             # The case document's own spelling is resolved HERE, where the
             # document is read, so no later step carries a spelling into a
             # production seam that takes an Entity Identity.
-            identity = case_entity(model, target).identity
-            result = db.read_neutral(
-                handle.NeutralReadRequest.graph(target=identity, operation=raw_op)
-            )
-            pin = _find_step_pin(model, target, raw_op)
+            identity = case_entity(model, query.target.canonical).identity
+            result = db.read_neutral(handle.NeutralReadRequest.graph(query))
+            pin = _find_step_pin(model, query)
         except _READ_ERRORS as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
         for call in result.execution.calls:
             emissions.append(
-                Emission(f"/scenario/{index}/find", call.statement.sql, call.statement.binds)
+                Emission(f"/scenario/{index}/objectQuery", call.statement.sql, call.statement.binds)
             )
         round_trips += result.execution.round_trips
         results.append(_ScenarioStepResult(_root_members(case, result), pin, identity))
@@ -2685,14 +2650,14 @@ def _root_members(
     )
 
 
-def _find_step_pin(model: AcceptedMetamodel, target: str, raw_op: PredicateNode) -> Pin:
-    """A scenario find step's own statement pin — the whole-graph as-of
-    coordinates the materialized view carries (`m-snapshot-read`), read from
-    the SAME raw operation the find executor consumes. This is the pin
+def _find_step_pin(model: AcceptedMetamodel, query: ObjectQueryNode) -> Pin:
+    """A scenario read step's own query pin — the whole-graph as-of coordinates
+    the materialized view carries (`m-snapshot-read`), read from the SAME
+    Object Query the find executor consumes. This is the pin
     :func:`_grade_mutate_step` hands the production write seam's finite-pin
     rule, resolved through the family-declaring entity exactly as the read
     path resolves it."""
-    return statement_pin(raw_op, _declaring_metadata(model, target))
+    return query_pin(query, _declaring_metadata(model, query.target.canonical))
 
 
 def _grade_mutate_step(
@@ -2981,14 +2946,6 @@ def _is_materializing_write_step(
     return None
 
 
-def _selection_predicate(operation: PredicateNode | None) -> PredicateNode | None:
-    """Strip a read's root per-dimension temporal selections to its predicate."""
-    current = operation
-    while isinstance(current, (AsOf, AsOfRange, History)):
-        current = current.operand
-    return current
-
-
 def _run_materializing_pair(
     port: DbPort,
     model: AcceptedMetamodel,
@@ -3034,7 +2991,8 @@ def _run_materializing_pair(
     write_step = steps[index + 1]
     instruction = _is_materializing_write_step(write_step, model)
     assert instruction is not None  # the caller already established this via the same check
-    target = find_step.get("targetEntity")
+    find_query = _step_query(find_step)
+    target = find_query.target.canonical
     if target != instruction.target.entity:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
@@ -3042,24 +3000,21 @@ def _run_materializing_pair(
             f"targets {instruction.target.entity!r} — m-case-format 'Materializing cases' "
             "requires the prior find to share the write's own target)"
         )
-    # `m-case-format.md:719`: "For every versioned or temporal target, model-
-    # aware validation MUST require that prior find to use the same concrete
-    # `targetEntity` AND CANONICAL OPERATION" — same entity alone is not
-    # enough (a resolving find over a DIFFERENT predicate would silently
-    # observe the wrong rows). The canonical read now carries one explicit
-    # temporal selection per declared dimension, while the write target remains
-    # the bare predicate. Remove only that root selection nest before comparing;
-    # `_canonicalize_read` would additionally inject interval predicates and is
-    # therefore still not the apples-to-apples form.
-    find_doc = find_step.get("find")
-    find_operation = deserialize(find_doc) if find_doc is not None else None
-    if _selection_predicate(find_operation) != instruction.target.predicate:
+    # `m-case-format` "Materializing cases": for every versioned or temporal
+    # target, model-aware validation MUST require that prior find to use the same
+    # concrete target AND canonical predicate — same entity alone is not enough
+    # (a resolving find over a DIFFERENT predicate would silently observe the
+    # wrong rows). The read's own Temporal Selection is a sibling clause and the
+    # write target remains the bare predicate, so the two predicates compare
+    # directly; `_canonicalize_read` would additionally inject interval
+    # predicates and is therefore still not the apples-to-apples form.
+    if find_query.predicate != instruction.target.predicate:
         raise EngineError(
             f"materializing predicate write at scenario step {index + 1} is not preceded by "
-            "a resolving find over the SAME canonical operation as the write's own target "
-            f"predicate (find {find_operation!r}, write {instruction.target.predicate!r} — "
-            "m-case-format 'Materializing cases' requires the prior find to use the same "
-            "concrete targetEntity and canonical operation)"
+            "a resolving find over the SAME canonical predicate as the write's own target "
+            f"predicate (find {find_query.predicate!r}, write {instruction.target.predicate!r} "
+            "— m-case-format 'Materializing cases' requires the prior find to use the same "
+            "concrete target and canonical predicate)"
         )
     tx_instant = _entry_instant(cast("Mapping[str, object]", write_step["write"]))
     instant = normalize_instant(dt.datetime.fromisoformat(tx_instant))
@@ -3088,7 +3043,7 @@ def _run_materializing_pair(
             "statements at all — even a zero-row resolve issues its own SELECT"
         )
     return [
-        _LoweredStep(f"/scenario/{index}/find", resolve, False, False),
+        _LoweredStep(f"/scenario/{index}/objectQuery", resolve, False, False),
         _LoweredStep(f"/scenario/{index + 1}/write", writes, True, rollback),
     ], log
 
@@ -3322,15 +3277,13 @@ def _run_group_step(
             ),
             None,
         )
-    entity, operation = _find_request(step, model)
-    read = tx.read_neutral(
-        handle.NeutralReadRequest.graph(target=entity.identity, operation=operation)
-    )
-    observed = _observed_nodes(model, entity.identity.canonical, read.output)
+    query = _step_query(step)
+    read = tx.read_neutral(handle.NeutralReadRequest.graph(query))
+    observed = _observed_nodes(model, query.target.canonical, read.output)
     state.finds[index] = observed
     state.observations.extend(observed)
     return _LoweredStep(
-        f"/scenario/{index}/find", _trace_statements(read), False, False
+        f"/scenario/{index}/objectQuery", _trace_statements(read), False, False
     ), read.output
 
 
@@ -4141,7 +4094,7 @@ def run_interleaved_scenario_case(
         rows_by_index[index] = _graph_rows(model, read.output)
         round_trips += read.execution.round_trips
         lowered[index] = _LoweredStep(
-            f"/scenario/{index}/find", _trace_statements(read), False, False
+            f"/scenario/{index}/objectQuery", _trace_statements(read), False, False
         )
 
     ordered = [lowered[index] for index in sorted(lowered)]
@@ -4224,7 +4177,10 @@ def run_scenario_case(
             if "write" not in step:
                 next_step = steps[index + 1] if index + 1 < len(steps) else None
                 pairing = _is_materializing_write_step(next_step, model)
-                if pairing is not None and step.get("targetEntity") == pairing.target.entity:
+                if (
+                    pairing is not None
+                    and _step_query(step).target.canonical == pairing.target.entity
+                ):
                     pair_lowered, pair_log = _run_materializing_pair(
                         port, model, dialect, concurrency, steps, index, shadow
                     )
@@ -4235,7 +4191,9 @@ def run_scenario_case(
                 read = _run_standalone_find(port, model, dialect, find_lock, step)
                 round_trips += read.execution.round_trips
                 lowered.append(
-                    _LoweredStep(f"/scenario/{index}/find", _trace_statements(read), False, False)
+                    _LoweredStep(
+                        f"/scenario/{index}/objectQuery", _trace_statements(read), False, False
+                    )
                 )
                 index += 1
                 continue
@@ -5192,17 +5150,12 @@ def run_error_case(
 def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
     """The queried/written root a `rejected` case's `when` omits.
 
-    A `rejected` case never authors `targetEntity` (m-case-format schema), and a
-    `when.write` input carries no explicit handle either: the model-aware
-    default `m-predicate` "the four-step validation rule" fixes is the
-    inheritance family root when the model declares one, else the model's own
-    first entity. For a `when.operation` case this seeds `validate_operation`'s
-    narrow / subtype-attribute position tracking only (the value-object
-    structural rules resolve their own entity from each node's own
-    `Class.member` reference and do not otherwise depend on it); for a
-    `when.write` case it is the entity `validate_write` checks the payload
-    against — the same "no explicit handle, so resolve the model's default
-    write/read root" convention, reused rather than restated.
+    A `rejected` case's `when.write` input carries no explicit handle: the
+    model-aware default `m-predicate` "the four-step validation rule" fixes is
+    the inheritance family root when the model declares one, else the model's own
+    first entity. It is the entity `validate_write` checks the payload against. A
+    `when.objectQuery` case names its own queried position and reaches none of
+    this.
 
     Reported by CANONICAL spelling: the root arrives here as accepted Metadata,
     so its Identity is already resolved, and spelling it bare would put a
@@ -5219,7 +5172,7 @@ def _rejected_target(case: case_format.Case, model: AcceptedMetamodel) -> str:
 
 # The `rejected` shape's schema `oneOf`: exactly one of these keys, never zero
 # or more than one (m-case-format).
-_REJECTED_WHEN_KINDS: Final[tuple[str, ...]] = ("operation", "model", "write")
+_REJECTED_WHEN_KINDS: Final[tuple[str, ...]] = ("objectQuery", "model", "write")
 
 
 def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> str:
@@ -5234,7 +5187,7 @@ def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> s
     if len(present) != 1:
         raise EngineError(
             f"{case.path.name}: a `rejected` case must carry EXACTLY ONE of "
-            f"`when.operation` / `when.model` / `when.write` (m-case-format schema "
+            f"`when.objectQuery` / `when.model` / `when.write` (m-case-format schema "
             f"`oneOf`); found {present!r}"
         )
     return present[0]
@@ -5294,18 +5247,18 @@ def run_rejected_case(case: case_format.Case) -> str:
     when = _when(case)
     kind = _rejected_when_kind(case, when)
     model = load_case_metamodel(case)
-    if kind == "operation":
+    if kind == "objectQuery":
         try:
-            operation = deserialize(when["operation"])
+            query = deserialize_query(when["objectQuery"])
         except OperationError as exc:
             raise EngineError(f"{case.path.name}: {exc}") from exc
-        root = case_entity(model, _rejected_target(case, model))
+        root = case_entity(model, query.target.canonical)
         try:
-            validate_predicate_operation(root, operation, model)
+            validate_object_query(root, query, model)
         except OperationRejectedError as exc:
             return exc.rule
         raise EngineError(
-            f"{case.path.name}: the model-aware validator accepted an operation the case "
+            f"{case.path.name}: the model-aware validator accepted an Object Query the case "
             "expects rejected pre-SQL"
         )
     if kind == "model":

@@ -17,22 +17,20 @@
 # Non-trivial (temporal + tag) case => referenceSql is the independent oracle (inline
 # infinity / instant literals, a different formulation returning the same row).
 model: models/instrument.yaml
-tags: [m-inheritance, m-temporal-read, m-sql, table-per-hierarchy, tag, temporal, bitemporal, as-of, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-object-query, m-temporal-read, m-sql, table-per-hierarchy, tag, temporal, bitemporal, as-of, slice-snapshot-1, slice-managed-1]
 shape: read
 given:
   fixtures: true
 when:
-  targetEntity: parallax.compatibility.Bond
-  operation:
-    asOf:
-      operand:
-        asOf:
-          operand:
-            all: {}
-          dimension: transaction-time
-          coordinate: latest
-      dimension: valid-time
-      coordinate: "2024-06-01T00:00:00+00:00"
+  objectQuery:
+    target: parallax.compatibility.Bond
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
+      valid-time:
+        asOf: '2024-06-01T00:00:00+00:00'
 then:
   statements:
     - sql:

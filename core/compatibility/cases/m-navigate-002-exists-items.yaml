@@ -5,10 +5,11 @@ model: models/orders.yaml
 tags: [m-navigate, exists, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    exists:
-      rel: parallax.compatibility.Order.items
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      exists:
+        rel: parallax.compatibility.Order.items
 then:
   statements:
     - sql:

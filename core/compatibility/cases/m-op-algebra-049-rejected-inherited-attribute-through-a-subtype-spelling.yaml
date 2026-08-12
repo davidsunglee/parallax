@@ -22,7 +22,11 @@ model: models/animal.yaml
 tags: [m-predicate, m-inheritance, rejected, negative, narrow, slice-snapshot-1, slice-managed-1]
 shape: rejected
 when:
-  operation:
-    eq: { attr: parallax.compatibility.Dog.name, value: Rex }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      eq:
+        attr: parallax.compatibility.Dog.name
+        value: Rex
 then:
   rejectedRule: subtype-attribute-outside-narrow-scope

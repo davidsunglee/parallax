@@ -4,23 +4,23 @@
 # `lease_id in (?)` with binds = parent keys only. Lease 10 -> notes signed,
 # renewed.
 model: models/lease.yaml
-tags: [m-navigate, m-temporal-read, temporal, relationship, propagation, mixed, slice-snapshot-1, slice-managed-1]
+tags: [m-navigate, m-object-query, m-temporal-read, temporal, relationship, propagation, mixed, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the Lease.notes IN-list binds are the distinct lease ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Lease
-  operation:
-    deepFetch:
-      operand:
-        asOf:
-          operand: { all: {} }
-          dimension: transaction-time
-          coordinate: latest
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Lease.notes }] }
+  objectQuery:
+    target: parallax.compatibility.Lease
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Lease.notes
 then:
   statements:
     - sql:

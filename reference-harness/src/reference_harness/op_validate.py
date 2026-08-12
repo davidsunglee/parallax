@@ -21,24 +21,24 @@ normative rule:
   (m-predicate non-string-member MUST) — checked ahead of the typed-literal rule at
   both nested scopes, because the portable literal carries a `date` / `uuid` /
   `timestamp` value as a `string` and the literal rule alone would accept it;
-* a **`deepFetch`** path segment or a **relationship navigation** (`navigate` /
+* an **Include Path** segment or a **relationship navigation** (`navigate` /
   `exists` / `notExists`) aimed at a value object — value objects are reached only
   by value through their owner, never navigated to (m-value-object contract 4,
   m-deep-fetch / m-navigate);
 * a **find() rooted at a value object** — a value object is not a queryable root
   entity (m-value-object contract 5), surfaced here as an attribute reference whose
   class segment names a declared value object rather than the entity, or as a
-  ``deepFetch`` path-root narrow whose `to` names one: the root position
-  a guard resolves at is the queried position itself.
+  Subtype Selection at the queried position naming one: the position a source
+  guard resolves at is the queried position itself.
 
 The reference harness (a non-normative oracle) runs this so the reference
 implementation actually rejects what the `rejected` cases pin — the same refusal
 each language implementation must make.
 
 Scope — value-object rules are enforced at ANY depth within the queried entity's
-own operation tree. :func:`validate_operation` descends through the SAME-entity
-boolean combinators (``and`` / ``or`` / ``not`` / ``group``) and the result-directive
-wrappers (``orderBy`` / ``limit`` / ``asOf`` …), so a nested-predicate
+own predicate. :func:`validate_object_query` checks every clause and descends
+through the SAME-entity boolean combinators (``and`` / ``or`` / ``not`` /
+``group``) and the Predicate-scoped ``narrow``, so a nested-predicate
 violation (an undeclared path segment, a mistyped literal, a value-object misuse) is
 rejected wherever the offending node appears — buried inside an ``and`` just as at
 the top level. The combinators do not change the root entity, so resolution stays
@@ -50,7 +50,7 @@ RELATED-entity sub-operation — a navigation's inner operation (``navigationFil
 against a DIFFERENT entity) — are NOT enforced here. That would require cross-entity
 model resolution (following the relationship to its target entity's declared
 structure); no corpus case exercises it, and value objects are never navigation
-targets (they have no identity to correlate), so :func:`validate_operation` refuses a
+targets (they have no identity to correlate), so :func:`validate_object_query` refuses a
 value-object-TARGETED navigation but does not recurse INTO a related entity's
 sub-operation. Enforcing nested value-object rules across a relationship boundary is
 a documented future extension.
@@ -94,21 +94,38 @@ _NESTED_STRING_TAGS = frozenset(
 )
 
 
-def validate_operation(entity: Entity, operation: Any) -> None:
-    """Reject *operation* pre-SQL if it misuses a value object; else return.
+def validate_object_query(entity: Entity, query: Any) -> None:
+    """Reject *query* pre-SQL if it misuses a value object; else return.
 
-    Raises :class:`RejectionError` (``.rule`` one of the operation rules) on the
-    first violation. An operation with no value-object misuse returns quietly — this
-    is used ONLY for ``rejected`` cases, so it need not fully validate every valid
-    operation, only reject the specific negative inputs the corpus pins.
+    Raises :class:`RejectionError` (``.rule`` one of the query rules) on the first
+    violation. A query with no value-object misuse returns quietly — this is used
+    ONLY for ``rejected`` cases, so it need not fully validate every valid query,
+    only reject the specific negative inputs the corpus pins.
 
-    The walk descends through the SAME-entity boolean combinators
-    (``and`` / ``or`` / ``not`` / ``group``) and the directive / temporal wrappers, so
-    a violation is caught at ANY depth in the queried entity's operation tree, not
-    only at the top level. It does NOT recurse into a related-entity sub-operation
-    (a navigation's inner op) — a tracked scope limitation (see the module docstring).
+    Every clause is checked: the predicate, each Sort Key's own root, each Include
+    Path's source guard and hops. The predicate walk descends through the
+    SAME-entity boolean combinators (``and`` / ``or`` / ``not`` / ``group``) and the
+    Predicate-scoped ``narrow``, so a violation is caught at ANY depth. It does NOT
+    recurse into a related-entity sub-predicate (a navigation's inner op) — a
+    tracked scope limitation (see the module docstring).
     """
-    _walk(entity, operation)
+    if not isinstance(query, dict):
+        return
+    validate_predicate(entity, query.get("predicate"))
+    _check_source_guard(entity, query.get("narrowTo"))
+    for key in query.get("orderBy", []) or []:
+        if isinstance(key, dict):
+            _check_find_root(entity, key.get("attr"))
+    _check_includes(entity, query.get("includes", []) or [])
+
+
+def validate_predicate(entity: Entity, predicate: Any) -> None:
+    """Reject *predicate* pre-SQL if it misuses a value object; else return.
+
+    The clause-free half of :func:`validate_object_query`, and what a
+    predicate-selected write's own bare predicate is judged by.
+    """
+    _walk(entity, predicate)
 
 
 def _walk(entity: Entity, node: Any) -> None:
@@ -137,24 +154,12 @@ def _walk(entity: Entity, node: Any) -> None:
         _check_between(entity, body)
     elif tag in ("navigate", "exists", "notExists"):
         _check_navigation(entity, body)
-    elif tag == "deepFetch":
-        _check_deep_fetch(entity, body)
-        _walk(entity, body.get("operand"))
     elif tag in ATTRIBUTE_REFERENCE_TAGS:
         _check_find_root(entity, body.get("attr"))
     elif tag in ("and", "or"):
         for operand in body.get("operands", []):
             _walk(entity, operand)
-    elif tag in ("not", "group"):
-        _walk(entity, body.get("operand"))
-    elif tag == "orderBy":
-        _walk(entity, body.get("operand"))
-        for key in body.get("keys", []):
-            if isinstance(key, dict):
-                _check_find_root(entity, key.get("attr"))
-    elif tag == "limit":
-        _walk(entity, body.get("operand"))
-    elif tag in ("asOf", "asOfRange", "history"):
+    elif tag in ("not", "group", "narrow"):
         _walk(entity, body.get("operand"))
 
 
@@ -304,43 +309,43 @@ def _check_navigation(entity: Entity, body: dict[str, Any]) -> None:
         )
 
 
-def _check_deep_fetch(entity: Entity, body: dict[str, Any]) -> None:
-    for path in body.get("paths", []):
-        _check_path_root_narrow(entity, path.get("narrow"))
+def _check_includes(entity: Entity, paths: Any) -> None:
+    for path in paths:
+        if not isinstance(path, dict):
+            continue
+        _check_source_guard(entity, path.get("appliesTo"))
         for segment in path.get("segments", []):
-            # A path segment is a closed object ``{rel, narrow?}`` (m-predicate);
-            # the value-object misuse rule is about the traversed relationship ref.
+            # An Include Segment is a closed object ``{rel, narrowTo?}``; the
+            # value-object misuse rule is about the traversed relationship ref.
             rel = segment["rel"] if isinstance(segment, dict) else segment
             cls, _, member = rel.rpartition(".")
             if _names(entity, cls) and find_top_value_object(entity, member) is not None:
                 raise RejectionError(
                     DEEP_FETCH_VALUE_OBJECT_SEGMENT,
-                    f"deepFetch path segment {rel!r} names value object {member!r} — "
-                    f"a value-object segment is invalid in a deep-fetch path",
+                    f"include segment {rel!r} names value object {member!r} — "
+                    f"a value-object segment is invalid in an Include Path",
                 )
 
 
-def _check_path_root_narrow(entity: Entity, narrow: Any) -> None:
-    """Reject a deep-fetch path-root guard aimed at a value object.
+def _check_source_guard(entity: Entity, selection: Any) -> None:
+    """Reject a Subtype Selection at the QUERIED position aimed at a value object.
 
-    A path-root ``{to}`` guard resolves at the QUERIED position, so every `to`
-    entry names an Entity alternative. The subtype-position rules themselves (the empty and
-    outside-position rejections) belong to the inheritance walk; what belongs here
-    is the value-object rule the queried root already carries — a value object has
-    no identity, no position, and no concrete subtypes, so it is no more guardable
-    than it is queryable.
+    Whole-result narrowing and an Include Path's source guard both resolve at the
+    queried position, so every alternative names an Entity. The subtype-position
+    rules themselves (the empty and outside-position rejections) belong to the
+    inheritance walk; what belongs here is the value-object rule the queried root
+    already carries — a value object has no identity, no position, and no concrete
+    subtypes, so it is no more selectable than it is queryable.
     """
-    if not isinstance(narrow, dict):
+    if not isinstance(selection, list):
         return
-    to = narrow.get("to")
-    names = to if isinstance(to, list) else []
-    for name in names:
+    for name in selection:
         if isinstance(name, str) and find_top_value_object(entity, name) is not None:
             raise RejectionError(
                 FIND_ROOT_VALUE_OBJECT,
-                f"deepFetch path-root narrow names value object {name!r} on "
+                f"Subtype Selection names value object {name!r} on "
                 f"{entity.name} — a value object is not a queryable root position and "
-                f"has no concrete subtypes to guard",
+                f"has no concrete subtypes to select",
             )
 
 

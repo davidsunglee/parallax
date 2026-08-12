@@ -20,22 +20,30 @@ import pytest
 from _corpus_model_support import formed, records
 
 from parallax.conformance import case_format
+from parallax.core.metamodel import EntityIdentity
+from parallax.core.object_query import (
+    AsOf,
+    History,
+    IncludePath,
+    IncludeSegment,
+    OrderKey,
+    TemporalDimension,
+    TemporalSelection,
+    object_query,
+    query_entities,
+    validate_object_query,
+)
+from parallax.core.object_query import deserialize as deserialize_query
 from parallax.core.predicate import (
     All,
     And,
-    AsOf,
-    AsOfRange,
     Between,
     Comparison,
-    DeepFetch,
     Exists,
     Group,
-    History,
-    Limit,
     Membership,
     Narrow,
     Navigate,
-    NavigationPath,
     NestedComparison,
     NestedExists,
     NestedMembership,
@@ -50,18 +58,11 @@ from parallax.core.predicate import (
     NullCheck,
     OperationRejectedError,
     Or,
-    OrderBy,
-    OrderKey,
-    PathSegment,
     PredicateNode,
     Scalar,
     StringMatch,
-    deserialize,
-    referenced_entities,
     validate_operation,
-    validate_read_operation,
 )
-from parallax.descriptor._family import family_of
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -72,56 +73,53 @@ from parallax.descriptor._records import (
 )
 
 
-def test_referenced_entities_collects_every_class_the_operation_names() -> None:
+def test_query_entities_collects_every_class_the_query_names() -> None:
     # The reachable-closure seed the Entity frontend forms its early-validation
-    # model from: the `Class` prefix of every attribute / nested-path /
-    # relationship reference, plus every Subtype Selection alternative and every
-    # order key, reached through every wrapper and combinator.
-    op = DeepFetch(
-        operand=OrderBy(
-            operand=AsOf(
-                operand=And(
-                    operands=(
-                        Not(
-                            operand=Group(
-                                operand=Or(
-                                    operands=(
-                                        Comparison(op="eq", attr="Animal.name", value="x"),
-                                        Between(attr="Dog.barkVolume", lower=1, upper=3),
-                                        NullCheck(op="isNull", attr="Cat.whisker"),
-                                        StringMatch(op="like", attr="Pet.tag", value="p"),
-                                        Membership(op="in", attr="WildBoar.id", values=(1,)),
-                                    )
-                                )
+    # model from: the queried target, the `Class` prefix of every attribute /
+    # nested-path / relationship reference, plus every Subtype Selection
+    # alternative and every Sort Key, over every clause and combinator.
+    query = object_query(
+        EntityIdentity(None, "Root"),
+        And(
+            operands=(
+                Not(
+                    operand=Group(
+                        operand=Or(
+                            operands=(
+                                Comparison(op="eq", attr="Animal.name", value="x"),
+                                Between(attr="Dog.barkVolume", lower=1, upper=3),
+                                NullCheck(op="isNull", attr="Cat.whisker"),
+                                StringMatch(op="like", attr="Pet.tag", value="p"),
+                                Membership(op="in", attr="WildBoar.id", values=(1,)),
                             )
-                        ),
-                        Narrow(to=("Dog", "Cat"), operand=All()),
-                        Navigate(
-                            rel="Person.pets",
-                            op=NestedComparison(op="nestedEq", path="Pet.spec.n", value="v"),
-                        ),
-                        Exists(rel="Owner.kennels", op=None),
-                        NotExists(rel="Kennel.owners", op=None),
-                        NestedMembership(op="nestedIn", path="Order.address.zip", values=("1",)),
-                        NestedNullCheck(op="nestedIsNull", path="Item.meta.flag"),
-                        NestedExists(path="Status.tags", where=None),
-                        NestedNotExists(path="Status.notes", where=None),
-                        NoneOp(),
+                        )
                     )
                 ),
-                dimension="valid-time",
-                coordinate="latest",
-            ),
-            keys=(OrderKey(attr="Sorted.rank"),),
+                Narrow(to=("Dog", "Cat"), operand=All()),
+                Navigate(
+                    rel="Person.pets",
+                    op=NestedComparison(op="nestedEq", path="Pet.spec.n", value="v"),
+                ),
+                Exists(rel="Owner.kennels", op=None),
+                NotExists(rel="Kennel.owners", op=None),
+                NestedMembership(op="nestedIn", path="Order.address.zip", values=("1",)),
+                NestedNullCheck(op="nestedIsNull", path="Item.meta.flag"),
+                NestedExists(path="Status.tags", where=None),
+                NestedNotExists(path="Status.notes", where=None),
+                NoneOp(),
+            )
         ),
-        paths=(
-            NavigationPath(
-                segments=(PathSegment(rel="Root.leaves", narrow=("Leaf",)),),
-                narrow=("Branch",),
+        narrow_to=("Narrowed",),
+        temporal={"valid-time": AsOf("latest")},
+        order_by=(OrderKey(attr="Sorted.rank"),),
+        includes=(
+            IncludePath(
+                segments=(IncludeSegment(rel="Root.leaves", narrow_to=("Leaf",)),),
+                applies_to=("Branch",),
             ),
         ),
     )
-    assert referenced_entities(op) == frozenset(
+    assert query_entities(query) == frozenset(
         {
             "Animal",
             "Dog",
@@ -138,6 +136,7 @@ def test_referenced_entities_collects_every_class_the_operation_names() -> None:
             "Leaf",
             "Branch",
             "Sorted",
+            "Narrowed",
         }
     )
 
@@ -175,12 +174,29 @@ def _validate(target: str, op: PredicateNode, meta: Metamodel) -> None:
     """Form ``meta`` into an accepted model, resolve ``target`` to its accepted
     root Metadata, and run the model-aware validator over ``op``."""
     model = formed(meta)
-    root = next(
+    validate_operation(_root(model, target), op, model)
+
+
+def _root(model: object, target: str) -> Any:
+    return next(
         entity
-        for entity in model.entities
+        for entity in cast("Any", model).entities
         if target in (entity.identity.name, entity.identity.canonical)
     )
-    validate_operation(root, op, model)
+
+
+def _validate_query(target: str, meta: Metamodel, **clauses: Any) -> None:
+    """Run the model-aware Object Query validator over one query's clauses."""
+    model = formed(meta)
+    root = _root(model, target)
+    predicate = clauses.pop("predicate", All())
+    validate_object_query(root, object_query(root.identity, predicate, **clauses), model)
+
+
+def _query_rejects(target: str, meta: Metamodel, **clauses: Any) -> OperationRejectedError:
+    with pytest.raises(OperationRejectedError) as excinfo:
+        _validate_query(target, meta, **clauses)
+    return excinfo.value
 
 
 def _rejects(op: PredicateNode, meta: Metamodel, target: str) -> OperationRejectedError:
@@ -193,57 +209,31 @@ def _rejects(op: PredicateNode, meta: Metamodel, target: str) -> OperationReject
 # temporal-read-dimension-selection-cardinality (m-temporal-read).            #
 # --------------------------------------------------------------------------- #
 def test_temporal_read_requires_one_selection_per_declared_dimension() -> None:
-    balance = formed(_BALANCE)
-    balance_root = next(entity for entity in balance.entities if entity.identity.name == "Balance")
-    with pytest.raises(OperationRejectedError) as balance_error:
-        validate_read_operation(balance_root, All(), balance)
-    assert balance_error.value.rule == "temporal-read-dimension-selection-cardinality"
-    only_valid = AsOf(operand=All(), dimension="valid-time", coordinate="latest")
-    position = formed(_POSITION)
-    position_root = next(
-        entity for entity in position.entities if entity.identity.name == "Position"
-    )
-    with pytest.raises(OperationRejectedError) as position_error:
-        validate_read_operation(position_root, only_valid, position)
-    assert position_error.value.rule == "temporal-read-dimension-selection-cardinality"
+    missing = _query_rejects("Balance", _BALANCE)
+    assert missing.rule == "temporal-read-dimension-selection-cardinality"
+    only_valid: dict[TemporalDimension, TemporalSelection] = {"valid-time": AsOf("latest")}
+    partial = _query_rejects("Position", _POSITION, temporal=only_valid)
+    assert partial.rule == "temporal-read-dimension-selection-cardinality"
 
 
 def test_temporal_read_accepts_complete_explicit_selections() -> None:
-    balance = formed(_BALANCE)
-    balance_root = next(entity for entity in balance.entities if entity.identity.name == "Balance")
-    validate_read_operation(
-        balance_root,
-        AsOf(operand=All(), dimension="transaction-time", coordinate="latest"),
-        balance,
-    )
-    both = AsOf(
-        operand=AsOf(operand=All(), dimension="transaction-time", coordinate="latest"),
-        dimension="valid-time",
-        coordinate="latest",
-    )
-    position = formed(_POSITION)
-    position_root = next(
-        entity for entity in position.entities if entity.identity.name == "Position"
-    )
-    validate_read_operation(position_root, both, position)
+    _validate_query("Balance", _BALANCE, temporal={"transaction-time": AsOf("latest")})
+    both: dict[TemporalDimension, TemporalSelection] = {
+        "transaction-time": AsOf("latest"),
+        "valid-time": AsOf("latest"),
+    }
+    _validate_query("Position", _POSITION, temporal=both)
 
 
-def test_temporal_read_rejects_duplicate_and_undeclared_selections() -> None:
-    balance = formed(_BALANCE)
-    balance_root = next(entity for entity in balance.entities if entity.identity.name == "Balance")
-    duplicate = AsOf(
-        operand=History(operand=All(), dimension="transaction-time"),
-        dimension="transaction-time",
-        coordinate="latest",
-    )
-    with pytest.raises(OperationRejectedError) as duplicate_error:
-        validate_read_operation(balance_root, duplicate, balance)
-    assert duplicate_error.value.rule == "temporal-read-dimension-selection-cardinality"
-
-    undeclared = AsOf(operand=All(), dimension="valid-time", coordinate="latest")
-    with pytest.raises(OperationRejectedError) as undeclared_error:
-        validate_read_operation(balance_root, undeclared, balance)
-    assert undeclared_error.value.rule == "temporal-read-dimension-selection-cardinality"
+def test_temporal_read_rejects_an_undeclared_dimension() -> None:
+    # A dimension is keyed once by construction, so the only cardinality defect a
+    # canonical query can still carry is naming one the target does not declare.
+    undeclared: dict[TemporalDimension, TemporalSelection] = {
+        "transaction-time": History(),
+        "valid-time": AsOf("latest"),
+    }
+    exc = _query_rejects("Balance", _BALANCE, temporal=undeclared)
+    assert exc.rule == "temporal-read-dimension-selection-cardinality"
 
 
 # --------------------------------------------------------------------------- #
@@ -274,11 +264,6 @@ _REJECTED_CASE_IDS = (
 )
 
 
-def _rejected_target(meta: Metamodel) -> str:
-    root = family_of(meta).root
-    return root.name if root is not None else meta.entities[0].name
-
-
 def _load_rejected_case(case_id: str) -> case_format.Case:
     (path,) = Path(case_format.default_cases_dir()).glob(f"{case_id}-*.yaml")
     return case_format.load_case(path)
@@ -290,10 +275,12 @@ def test_corpus_rejected_case_classifies_to_its_own_rejected_rule(case_id: str) 
     when = cast("Mapping[str, Any]", case.document["when"])
     then = cast("Mapping[str, Any]", case.document["then"])
     meta = _MODEL_BY_FILE[Path(case.model).name]
-    op = deserialize(cast("Mapping[str, object]", when["operation"]))
-    target = _rejected_target(meta)
-    exc = _rejects(op, meta, target)
-    assert exc.rule == then["rejectedRule"]
+    query = deserialize_query(cast("Mapping[str, object]", when["objectQuery"]))
+    model = formed(meta)
+    root = _root(model, query.target.canonical)
+    with pytest.raises(OperationRejectedError) as excinfo:
+        validate_object_query(root, query, model)
+    assert excinfo.value.rule == then["rejectedRule"]
 
 
 # --------------------------------------------------------------------------- #
@@ -519,14 +506,13 @@ def test_an_ancestors_attribute_is_addressable_from_a_descendant_position() -> N
     "op",
     [
         Comparison(op="eq", attr="Dog.name", value="Rex"),
-        OrderBy(operand=All(), keys=(OrderKey(attr="Dog.name"),)),
         Comparison(op="eq", attr="Pet.licenseId", value="L-1"),
         Narrow(
             to=("Dog",),
             operand=Comparison(op="eq", attr="Cat.name", value="Tom"),
         ),
     ],
-    ids=("predicate", "order-key", "abstract-subtype", "disjoint-sibling"),
+    ids=("predicate", "abstract-subtype", "disjoint-sibling"),
 )
 def test_the_position_is_measured_against_the_entity_a_reference_names(op: PredicateNode) -> None:
     # `m-predicate`: "the active position's effective set is a subset of the
@@ -614,76 +600,58 @@ def test_not_exists_relationship_target_scope_propagates() -> None:
     assert exc.rule == "narrow-outside-relationship-target"
 
 
-def test_deep_fetch_path_narrow_outside_relationship_target_rejects() -> None:
-    op = DeepFetch(
-        operand=All(),
-        paths=(NavigationPath(segments=(PathSegment(rel="Person.pets", narrow=("WildBoar",)),)),),
-    )
-    exc = _rejects(op, _ANIMAL, "Person")
+def _hop(narrow_to: tuple[str, ...] = ()) -> tuple[IncludePath, ...]:
+    return (IncludePath(segments=(IncludeSegment(rel="Person.pets", narrow_to=narrow_to),)),)
+
+
+def test_include_segment_narrow_outside_relationship_target_rejects() -> None:
+    exc = _query_rejects("Person", _ANIMAL, includes=_hop(("WildBoar",)))
     assert exc.rule == "narrow-outside-relationship-target"
 
 
-def test_deep_fetch_path_narrow_within_relationship_target_accepts() -> None:
-    op = DeepFetch(
-        operand=All(),
-        paths=(NavigationPath(segments=(PathSegment(rel="Person.pets", narrow=("Dog",)),)),),
-    )
-    _validate("Person", op, _ANIMAL)  # no raise
+def test_include_segment_narrow_within_relationship_target_accepts() -> None:
+    _validate_query("Person", _ANIMAL, includes=_hop(("Dog",)))  # no raise
 
 
-def test_empty_deep_fetch_path_narrow_keeps_the_shared_empty_rule() -> None:
-    op = DeepFetch(
-        operand=All(),
-        paths=(
-            NavigationPath(
-                segments=(PathSegment(rel="Person.pets", narrow=("Bogus",)),),
-            ),
-        ),
-    )
-    exc = _rejects(op, _ANIMAL, "Person")
+def test_empty_include_segment_narrow_keeps_the_shared_empty_rule() -> None:
+    exc = _query_rejects("Person", _ANIMAL, includes=_hop(("Bogus",)))
     assert exc.rule == "narrow-empty-effective-set"
 
 
-def _rooted(narrow: tuple[str, ...] | None) -> DeepFetch:
-    return DeepFetch(
-        operand=All(),
-        paths=(NavigationPath(segments=(PathSegment(rel="Animal.owner"),), narrow=narrow),),
+def _guarded(applies_to: tuple[str, ...] | None) -> tuple[IncludePath, ...]:
+    return (
+        IncludePath(
+            segments=(IncludeSegment(rel="Animal.owner"),),
+            applies_to=applies_to,
+        ),
     )
 
 
-def test_deep_fetch_path_root_narrow_within_the_queried_position_accepts() -> None:
-    # The ROOT guard is governed by the four-step same-position rule, not by the
+def test_include_source_guard_within_the_queried_position_accepts() -> None:
+    # The SOURCE guard is governed by the four-step same-position rule, not by the
     # relationship-target rule its segments follow: it names the queried position
     # and may resolve anywhere inside it, including redundantly to all of it.
-    _validate("Animal", _rooted(("Dog",)), _ANIMAL)
-    _validate("Animal", _rooted(("Pet",)), _ANIMAL)
-    _validate("Animal", _rooted(("Animal",)), _ANIMAL)
+    for guard in (("Dog",), ("Pet",), ("Animal",)):
+        _validate_query("Animal", _ANIMAL, includes=_guarded(guard))
 
 
-def test_deep_fetch_path_root_narrow_broadening_past_the_position_rejects() -> None:
-    # Read narrowed to Pet, guard reaching the sibling branch: the enclosing
-    # selection supplies the active position, so WildBoar is outside it.
-    op = _rooted(("WildBoar",))
-    exc = _rejects(op, _ANIMAL, "Pet")
+def test_include_source_guard_broadening_past_the_position_rejects() -> None:
+    # Read of the abstract subtype Pet, guard reaching the sibling branch: the
+    # queried position supplies the active position, so WildBoar is outside it.
+    exc = _query_rejects("Pet", _ANIMAL, includes=_guarded(("WildBoar",)))
     assert exc.rule == "narrow-outside-position"
 
 
-def test_deep_fetch_path_root_narrow_inherits_the_enclosing_narrow_position() -> None:
-    # The guard is checked against the position active where its `deepFetch` sits,
-    # so an enclosing narrow constrains it exactly as it constrains a nested narrow.
-    op = Narrow(
-        to=("Dog",),
-        operand=_rooted(("Cat",)),
-    )
-    exc = _rejects(op, _ANIMAL, "Animal")
-    assert exc.rule == "narrow-outside-position"
+def test_include_source_guard_reads_the_queried_position_not_the_narrowed_result() -> None:
+    # Result narrowing decides which objects come back, not which sources a path
+    # may start from, so a guard naming a sibling of the narrowed result is legal.
+    _validate_query("Animal", _ANIMAL, narrow_to=("Dog",), includes=_guarded(("Cat",)))
 
 
-def test_deep_fetch_path_root_narrow_empty_effective_set_rejects() -> None:
-    # A guard whose `to` names an abstract subtype with no concrete descendants
-    # resolves to nothing, which is the guard's own rejection, not a broadening.
-    op = _rooted(("Ghost",))
-    exc = _rejects(op, _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, "Animal")
+def test_include_source_guard_empty_effective_set_rejects() -> None:
+    # A guard naming an abstract subtype with no concrete descendants resolves to
+    # nothing, which is the guard's own rejection, not a broadening.
+    exc = _query_rejects("Animal", _ANIMAL_WITH_A_CHILDLESS_SUBTYPE, includes=_guarded(("Ghost",)))
     assert exc.rule == "narrow-empty-effective-set"
 
 
@@ -969,25 +937,20 @@ def test_corpus_scoped_where_cases_still_validate_unrejected(case_id: str) -> No
     # confirm they still classify as VALID now that `where` is actually checked.
     case = _load_rejected_case(case_id)
     when = cast("Mapping[str, Any]", case.document["when"])
-    op = deserialize(cast("Mapping[str, object]", when["operation"]))
-    _validate("Customer", op, _CUSTOMER)  # no raise
+    query = deserialize_query(cast("Mapping[str, object]", when["objectQuery"]))
+    model = formed(_CUSTOMER)
+    validate_object_query(_root(model, "Customer"), query, model)  # no raise
 
 
-def test_deep_fetch_value_object_segment_rejects() -> None:
-    op = DeepFetch(
-        operand=All(),
-        paths=(NavigationPath(segments=(PathSegment(rel="Customer.address"),)),),
-    )
-    exc = _rejects(op, _CUSTOMER, "Customer")
+def test_include_value_object_segment_rejects() -> None:
+    includes = (IncludePath(segments=(IncludeSegment(rel="Customer.address"),)),)
+    exc = _query_rejects("Customer", _CUSTOMER, includes=includes)
     assert exc.rule == "deep-fetch-value-object-segment"
 
 
-def test_deep_fetch_relationship_path_accepts() -> None:
-    op = DeepFetch(
-        operand=All(),
-        paths=(NavigationPath(segments=(PathSegment(rel="Customer.locations"),)),),
-    )
-    _validate("Customer", op, _CUSTOMER)  # no raise
+def test_include_relationship_path_accepts() -> None:
+    includes = (IncludePath(segments=(IncludeSegment(rel="Customer.locations"),)),)
+    _validate_query("Customer", _CUSTOMER, includes=includes)  # no raise
 
 
 def test_navigate_value_object_target_rejects() -> None:
@@ -1055,7 +1018,7 @@ def test_boolean_combinators_walk_every_operand() -> None:
     assert exc.rule == "find-root-value-object"
 
 
-def test_negation_and_grouping_and_result_shaping_wrappers_propagate() -> None:
+def test_negation_and_grouping_propagate() -> None:
     good = Comparison(op="eq", attr="Customer.name", value="Ada")
     bad = NullCheck(op="isNotNull", attr="address.city")
 
@@ -1067,32 +1030,8 @@ def test_negation_and_grouping_and_result_shaping_wrappers_propagate() -> None:
     exc = _rejects(Group(operand=bad), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
-    _validate("Customer", OrderBy(operand=good, keys=(OrderKey(attr="Customer.id"),)), _CUSTOMER)
-    exc = _rejects(
-        OrderBy(operand=bad, keys=(OrderKey(attr="Customer.id"),)), _CUSTOMER, "Customer"
-    )
-    assert exc.rule == "find-root-value-object"
-
-    _validate("Customer", Limit(operand=good, count=1), _CUSTOMER)
-    exc = _rejects(Limit(operand=bad, count=1), _CUSTOMER, "Customer")
-    assert exc.rule == "find-root-value-object"
-
-    _validate(
-        "Customer", AsOf(operand=good, dimension="valid-time", coordinate="latest"), _CUSTOMER
-    )
-    exc = _rejects(
-        AsOf(operand=bad, dimension="valid-time", coordinate="latest"), _CUSTOMER, "Customer"
-    )
-    assert exc.rule == "find-root-value-object"
-
-    _validate("Customer", History(operand=good, dimension="valid-time"), _CUSTOMER)
-    exc = _rejects(History(operand=bad, dimension="valid-time"), _CUSTOMER, "Customer")
-    assert exc.rule == "find-root-value-object"
-
-    range_op = AsOfRange(operand=good, dimension="valid-time", start="2024-01-01", end="2024-02-01")
-    _validate("Customer", range_op, _CUSTOMER)
-    bad_range = AsOfRange(operand=bad, dimension="valid-time", start="2024-01-01", end="2024-02-01")
-    exc = _rejects(bad_range, _CUSTOMER, "Customer")
+    _validate("Customer", Narrow(to=("Customer",), operand=good), _CUSTOMER)
+    exc = _rejects(Narrow(to=("Customer",), operand=bad), _CUSTOMER, "Customer")
     assert exc.rule == "find-root-value-object"
 
 
@@ -1102,99 +1041,57 @@ def test_none_and_all_are_no_ops() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Order keys carry attribute references, so they take the positional rule too. #
+# Sort Keys carry attribute references, so they take the positional rule too.  #
 # --------------------------------------------------------------------------- #
-def test_an_order_key_outside_the_active_position_rejects() -> None:
-    op = OrderBy(operand=All(), keys=(OrderKey(attr="OrderItem.sku"),))
-    exc = _rejects(op, _ORDERS, "Order")
+def test_a_sort_key_outside_the_active_position_rejects() -> None:
+    exc = _query_rejects("Order", _ORDERS, order_by=(OrderKey(attr="OrderItem.sku"),))
     assert exc.rule == "attribute-outside-active-position"
 
 
-def test_an_order_key_at_the_queried_position_accepts() -> None:
-    _validate("Order", OrderBy(operand=All(), keys=(OrderKey(attr="Order.sku"),)), _ORDERS)
+def test_a_sort_key_at_the_queried_position_accepts() -> None:
+    _validate_query("Order", _ORDERS, order_by=(OrderKey(attr="Order.sku"),))
 
 
-def test_every_order_key_is_checked_not_only_the_first() -> None:
-    op = OrderBy(
-        operand=All(),
-        keys=(OrderKey(attr="Order.sku"), OrderKey(attr="OrderItem.sku", direction="desc")),
-    )
-    exc = _rejects(op, _ORDERS, "Order")
+def test_every_sort_key_is_checked_not_only_the_first() -> None:
+    keys = (OrderKey(attr="Order.sku"), OrderKey(attr="OrderItem.sku", direction="desc"))
+    exc = _query_rejects("Order", _ORDERS, order_by=keys)
     assert exc.rule == "attribute-outside-active-position"
 
 
-def test_an_order_key_reads_the_position_a_top_level_narrow_moved_it_to() -> None:
-    # `orderBy` WRAPS the narrow, so the rows it orders are the narrowed ones: a
-    # concrete subtype's key is legal exactly when the result was narrowed to that
-    # subtype, and not before.
-    narrowed = OrderBy(
-        operand=Narrow(to=("Dog",), operand=All()),
-        keys=(OrderKey(attr="Dog.barkVolume"),),
+def test_a_sort_key_reads_the_position_result_narrowing_moved_it_to() -> None:
+    # `orderBy` and `narrowTo` are siblings, so the rows a Sort Key orders are the
+    # narrowed ones: a concrete subtype's key is legal exactly when the result was
+    # narrowed to that subtype, and not before.
+    _validate_query(
+        "Animal", _ANIMAL, narrow_to=("Dog",), order_by=(OrderKey(attr="Dog.barkVolume"),)
     )
-    _validate("Animal", narrowed, _ANIMAL)
-
-    unnarrowed = OrderBy(operand=All(), keys=(OrderKey(attr="Dog.barkVolume"),))
-    exc = _rejects(unnarrowed, _ANIMAL, "Animal")
+    exc = _query_rejects("Animal", _ANIMAL, order_by=(OrderKey(attr="Dog.barkVolume"),))
     assert exc.rule == "subtype-attribute-outside-narrow-scope"
 
 
-_NARROW_TO_DOG = Narrow(to=("Dog",), operand=All())
-_OWNER_PATH = NavigationPath(segments=(PathSegment(rel="Animal.owner"),))
+def test_a_narrow_inside_the_predicate_does_not_move_a_sort_keys_position() -> None:
+    # A narrow inside the predicate is a term over the same position, not the
+    # whole-result narrowing a Sort Key reads. Every clause that could carry one
+    # is a sibling of `orderBy`, so only `narrowTo` moves the ordered position.
+    narrow_to_dog = Narrow(to=("Dog",), operand=All())
+    for predicate in (
+        And(operands=(All(), narrow_to_dog)),
+        Or(operands=(NoneOp(), narrow_to_dog)),
+        Group(operand=narrow_to_dog),
+        Not(operand=narrow_to_dog),
+        narrow_to_dog,
+    ):
+        exc = _query_rejects(
+            "Animal",
+            _ANIMAL,
+            predicate=predicate,
+            order_by=(OrderKey(attr="Dog.barkVolume"),),
+        )
+        assert exc.rule == "subtype-attribute-outside-narrow-scope"
 
 
-@pytest.mark.parametrize(
-    "operand",
-    [
-        _NARROW_TO_DOG,
-        Limit(operand=_NARROW_TO_DOG, count=5),
-        DeepFetch(operand=_NARROW_TO_DOG, paths=(_OWNER_PATH,)),
-        AsOf(operand=_NARROW_TO_DOG, dimension="valid-time", coordinate="latest"),
-        AsOfRange(
-            operand=_NARROW_TO_DOG,
-            dimension="valid-time",
-            start="2024-01-01T00:00:00Z",
-            end="2024-02-01T00:00:00Z",
-        ),
-        History(operand=_NARROW_TO_DOG, dimension="valid-time"),
-        OrderBy(operand=_NARROW_TO_DOG, keys=(OrderKey(attr="Animal.name"),)),
-        Limit(operand=DeepFetch(operand=_NARROW_TO_DOG, paths=(_OWNER_PATH,)), count=5),
-    ],
-    ids=lambda operand: type(operand).__name__,
-)
-def test_an_order_keys_position_is_seen_through_every_wrapper_that_carries_the_narrow(
-    operand: PredicateNode,
-) -> None:
-    # A wrapper that returns its operand's own rows cannot move the position those
-    # rows occupy, so the ordered narrow is reached through all of them alike —
-    # `deepFetch` included, which attaches fetched levels rather than replacing the
-    # rows. Omitting one silently rejects an order key that IS in scope.
-    op = OrderBy(operand=operand, keys=(OrderKey(attr="Dog.barkVolume"),))
-    _validate("Animal", op, _ANIMAL)
-
-
-@pytest.mark.parametrize(
-    "operand",
-    [
-        And(operands=(All(), _NARROW_TO_DOG)),
-        Or(operands=(NoneOp(), _NARROW_TO_DOG)),
-        Group(operand=_NARROW_TO_DOG),
-        Not(operand=_NARROW_TO_DOG),
-    ],
-    ids=lambda operand: type(operand).__name__,
-)
-def test_a_narrow_inside_a_combinator_does_not_move_an_order_keys_position(
-    operand: PredicateNode,
-) -> None:
-    # A narrow under a boolean combinator is a predicate term over the same
-    # position, not the whole-result narrowing an order key reads.
-    op = OrderBy(operand=operand, keys=(OrderKey(attr="Dog.barkVolume"),))
-    exc = _rejects(op, _ANIMAL, "Animal")
-    assert exc.rule == "subtype-attribute-outside-narrow-scope"
-
-
-def test_an_order_key_rooted_at_a_value_object_names_the_root_misuse() -> None:
-    op = OrderBy(operand=All(), keys=(OrderKey(attr="address.city"),))
-    exc = _rejects(op, _CUSTOMER, "Customer")
+def test_a_sort_key_rooted_at_a_value_object_names_the_root_misuse() -> None:
+    exc = _query_rejects("Customer", _CUSTOMER, order_by=(OrderKey(attr="address.city"),))
     assert exc.rule == "find-root-value-object"
 
 
@@ -1247,39 +1144,18 @@ def test_a_bare_reference_two_namespaces_share_resolves_nowhere() -> None:
     assert "sales.Customer" in str(exc)
 
 
-# Every position that names an Entity, spelled the only way the operation grammars
-# allow — bare — against the corpus model declaring `SharedVariant` in two
-# namespaces. The rule is about the spelling failing to resolve, so it fires
-# wherever a position is named, not only where an attribute is referenced.
+# Every PREDICATE position that names an Entity, spelled the only way the grammar
+# allows it to be ambiguous — bare — against the corpus model declaring
+# `SharedVariant` in two namespaces. The rule is about the spelling failing to
+# resolve, so it fires wherever a position is named, not only where an attribute
+# is referenced. The query's own clause positions are covered below.
 _AMBIGUOUS_BY_POSITION: Mapping[str, PredicateNode] = {
     "attr": Comparison(op="eq", attr="SharedVariant.archiveLabel", value="A-1"),
     "between.attr": Between(attr="SharedVariant.archiveLabel", lower="a", upper="b"),
-    "orderBy.keys": OrderBy(operand=All(), keys=(OrderKey(attr="SharedVariant.archiveLabel"),)),
     "rel": Exists(rel="SharedVariant.register", op=All()),
     "nested path": NestedComparison(op="nestedEq", path="SharedVariant.spec.label", value="A-1"),
     "nestedExists path": NestedExists(path="SharedVariant.spec", where=None),
     "narrow.to": Narrow(to=("SharedVariant",), operand=All()),
-    "deepFetch.segment.rel": DeepFetch(
-        operand=All(),
-        paths=(NavigationPath(segments=(PathSegment(rel="SharedVariant.register"),)),),
-    ),
-    "deepFetch.segment.narrow": DeepFetch(
-        operand=All(),
-        paths=(
-            NavigationPath(
-                segments=(PathSegment(rel="Register.variant", narrow=("SharedVariant",)),)
-            ),
-        ),
-    ),
-    "deepFetch.path.narrow": DeepFetch(
-        operand=All(),
-        paths=(
-            NavigationPath(
-                segments=(PathSegment(rel="Register.variant"),),
-                narrow=("SharedVariant",),
-            ),
-        ),
-    ),
     "relationship-scope narrow.to": Exists(
         rel="Register.variant",
         op=Narrow(to=("SharedVariant",), operand=All()),
@@ -1290,6 +1166,38 @@ _AMBIGUOUS_BY_POSITION: Mapping[str, PredicateNode] = {
 @pytest.mark.parametrize("position", sorted(_AMBIGUOUS_BY_POSITION))
 def test_an_ambiguous_bare_name_is_rejected_in_every_reference_position(position: str) -> None:
     exc = _rejects(_AMBIGUOUS_BY_POSITION[position], _SHARED_LOCAL_NAME, "Register")
+    assert exc.rule == "reference-ambiguous-entity-name"
+    assert "archive.SharedVariant" in str(exc)
+    assert "catalog.SharedVariant" in str(exc)
+
+
+_AMBIGUOUS_BY_CLAUSE: Mapping[str, dict[str, Any]] = {
+    "orderBy.attr": {"order_by": (OrderKey(attr="SharedVariant.archiveLabel"),)},
+    "narrowTo": {"narrow_to": ("SharedVariant",)},
+    "includes.segment.rel": {
+        "includes": (IncludePath(segments=(IncludeSegment(rel="SharedVariant.register"),)),)
+    },
+    "includes.segment.narrowTo": {
+        "includes": (
+            IncludePath(
+                segments=(IncludeSegment(rel="Register.variant", narrow_to=("SharedVariant",)),)
+            ),
+        )
+    },
+    "includes.appliesTo": {
+        "includes": (
+            IncludePath(
+                segments=(IncludeSegment(rel="Register.variant"),),
+                applies_to=("SharedVariant",),
+            ),
+        )
+    },
+}
+
+
+@pytest.mark.parametrize("position", sorted(_AMBIGUOUS_BY_CLAUSE))
+def test_an_ambiguous_bare_name_is_rejected_in_every_query_clause(position: str) -> None:
+    exc = _query_rejects("Register", _SHARED_LOCAL_NAME, **_AMBIGUOUS_BY_CLAUSE[position])
     assert exc.rule == "reference-ambiguous-entity-name"
     assert "archive.SharedVariant" in str(exc)
     assert "catalog.SharedVariant" in str(exc)

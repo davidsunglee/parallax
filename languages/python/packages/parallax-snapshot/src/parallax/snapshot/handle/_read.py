@@ -74,12 +74,13 @@ from parallax.core.metamodel import (
     entity_by_name,
 )
 from parallax.core.metamodel._states import ambiguous_entity_spellings
+from parallax.core.object_query import ObjectQueryNode
 from parallax.core.sql_gen import CompiledRead, LoweredStatement, MaterializedReadRow, compile_read
-from parallax.core.temporal_read import Edge, Pin, milestone_edge, scans_an_axis, statement_pin
+from parallax.core.temporal_read import Edge, Pin, milestone_edge, query_pin, scans_an_axis
 from parallax.snapshot._read_result import FindResult, HistoryFindResult, NeutralReadResult
 from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMaterializationError
 from parallax.snapshot.handle._materializer import materialize_graph
-from parallax.snapshot.handle._preflight import preflight_neutral
+from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
     LevelContext,
     MergeScope,
@@ -236,10 +237,9 @@ class _Milestone:
 
 
 def find(
-    op: predicate_algebra.PredicateNode,
+    query: ObjectQueryNode,
     meta: Metamodel,
     dialect: Dialect,
-    target: str,
     port: DbPort,
     *,
     lock: LockMode | None = None,
@@ -249,11 +249,11 @@ def find(
     """The one per-level deep-fetch / snapshot-materialization loop (m-deep-fetch
     "one query per non-empty relationship level"; m-snapshot-read "round trips").
 
-    ``op`` is the read's raw operation: a `DeepFetch` node, or any other read
-    operation planned with zero levels (root-only instance-form materialization
-    — a plain snapshot read, or the source find behind a scenario `mutate`
-    action). Canonicalizes the root query (`m-temporal-read` + `m-navigate`,
-    composed here), compiles and executes it, then for each
+    ``query`` is the read's canonical Object Query: one carrying Include Paths,
+    or any other query planned with zero levels (root-only instance-form
+    materialization — a plain snapshot read, or the source find behind a
+    scenario `mutate` action). Canonicalizes the root query (`m-temporal-read` +
+    `m-navigate`, composed here), compiles and executes it, then for each
     planned level: restricts the parent nodes to the ones a path-root guard admits
     (`FetchLevel.source_position`, m-deep-fetch — an excluded parent contributes no
     key and receives no attachment, so its view stays unset); gathers the distinct
@@ -289,8 +289,8 @@ def find(
     """
     # ``meta`` is the accepted model the connected ``Database`` already holds, so
     # every level's own Entity resolves against it directly.
-    root_entity = _metadata(meta, target)
-    plan_ = deep_fetch.plan(root_entity, op, meta)
+    root_entity = _metadata(meta, query.target.canonical)
+    plan_ = deep_fetch.plan(root_entity, query, meta)
     calls = recorder if recorder is not None else TraceRecorder()
     scope = MergeScope(meta)
 
@@ -321,21 +321,20 @@ def find(
         _attach_children(scope, meta, level, parents, child_refs)
         level_refs.append(child_refs)
 
-    pin = deep_fetch_statement_pin(op, declaring_metadata(meta, root_entity.identity))
+    pin = query_pin(query, declaring_metadata(meta, root_entity.identity))
     return FindResult(graph=scope.build(root_refs, pin), execution=calls.read_trace())
 
 
 @dataclass(frozen=True, slots=True)
 class NeutralReadRequest:
-    """What a model-neutral read asks for: a resolved position and the canonical
-    operation to run from it, plus the result form to materialize into.
+    """What a model-neutral read asks for: one canonical Object Query, plus the
+    result form to materialize into.
 
-    The neutral analogue of a LOWERED Find Query rather than of a Find Query: a
-    caller with no Entity Class has no clause builder to lower, so it states the
-    two facts lowering would have produced. Everything downstream — canonical
-    root as-of injection, per-hop navigation canonicalization, deep-fetch
-    planning, compilation, execution, and conversion — is the same production
-    path a typed read takes.
+    A caller with no Entity Class builds the canonical node directly rather than
+    through the generic authoring surface, which is the whole reason the node is
+    a value of its own. Everything downstream — canonical root as-of injection,
+    per-hop navigation canonicalization, deep-fetch planning, compilation,
+    execution, and conversion — is the same production path a typed read takes.
 
     ``form`` selects the projection lane `m-sql` fixes at compile time:
     :meth:`rows` is the values lane (scalars only, one statement, no graph), and
@@ -345,36 +344,30 @@ class NeutralReadRequest:
     ``db.find`` does.
 
     The form is part of what the read gate validates, so a ``rows`` request whose
-    operation names deep-fetch paths — a level the values lane cannot materialize
-    — is refused before any I/O and before a participating read's force-flush,
-    like every other refusal a neutral read can meet.
+    query names Include Paths — a level the values lane cannot materialize — is
+    refused before any I/O and before a participating read's force-flush, like
+    every other refusal a neutral read can meet.
     """
 
-    target: EntityIdentity
-    operation: predicate_algebra.PredicateNode
+    query: ObjectQueryNode
     form: Literal["rows", "graph"]
 
     @classmethod
-    def rows(
-        cls, *, target: EntityIdentity, operation: predicate_algebra.PredicateNode
-    ) -> NeutralReadRequest:
+    def rows(cls, query: ObjectQueryNode) -> NeutralReadRequest:
         """A row-form request: production's transformed rows, in result order."""
-        return cls(target=target, operation=operation, form="rows")
+        return cls(query=query, form="rows")
 
     @classmethod
-    def graph(
-        cls, *, target: EntityIdentity, operation: predicate_algebra.PredicateNode
-    ) -> NeutralReadRequest:
+    def graph(cls, query: ObjectQueryNode) -> NeutralReadRequest:
         """A graph-form request: one neutral graph, or one per milestone for a
         scanning read."""
-        return cls(target=target, operation=operation, form="graph")
+        return cls(query=query, form="graph")
 
 
 def find_rows(
-    op: predicate_algebra.PredicateNode,
+    query: ObjectQueryNode,
     meta: Metamodel,
     dialect: Dialect,
-    target: str,
     port: DbPort,
     *,
     lock: LockMode | None = None,
@@ -392,13 +385,13 @@ def find_rows(
     ``result_form``, and the same recorded Database Call.
 
     A row-form read materializes no relationships, and the shared read gate
-    (:func:`~parallax.snapshot.handle._preflight.preflight_neutral`) refuses a
+    (:func:`~parallax.snapshot.handle._preflight.preflight`) refuses a
     request that asks this lane for one — before any I/O, and before a
     participating read's force-flush — so the plan reaching here carries no
     level to drop.
     """
-    root_entity = _metadata(meta, target)
-    plan_ = deep_fetch.plan(root_entity, op, meta)
+    root_entity = _metadata(meta, query.target.canonical)
+    plan_ = deep_fetch.plan(root_entity, query, meta)
     compiled = compile_read(plan_.root, meta, dialect, result_form="row", lock=lock)
     calls = recorder if recorder is not None else TraceRecorder()
     rows = execute_read(port, dialect, compiled.statement, calls)
@@ -409,10 +402,9 @@ def find_rows(
 
 
 def find_history(
-    op: predicate_algebra.PredicateNode,
+    query: ObjectQueryNode,
     meta: Metamodel,
     dialect: Dialect,
-    target: str,
     port: DbPort,
     *,
     recorder: TraceRecorder | None = None,
@@ -433,8 +425,8 @@ def find_history(
     database's unspecified natural row order, and rows within one milestone keep
     that natural order.
     """
-    metadata = _metadata(meta, target)
-    plan_ = deep_fetch.plan(metadata, op, meta)
+    metadata = _metadata(meta, query.target.canonical)
+    plan_ = deep_fetch.plan(metadata, query, meta)
     if plan_.levels:
         # m-case-format: a v1 milestone-set read carries no includes.
         raise ValueError("a milestone-set (history / asOfRange) read carries no deep-fetch levels")
@@ -781,24 +773,6 @@ def _edge_pin(edge: Edge) -> Pin:
     return Pin(tx_time=edge.tx_time_or_none, valid_time=edge.valid_time_or_none)
 
 
-def deep_fetch_statement_pin(op: predicate_algebra.PredicateNode, entity: EntityMetadata) -> Pin:
-    """``snapshot.pin`` for ``op`` (spec §3): identical to
-    ``~parallax.core.temporal_read.statement_pin``, except that an outer
-    ``DeepFetch`` directive (``.include(...)`` composed after ``.as_of(...)``)
-    is peeled first. ``m-temporal-read`` never imports ``m-deep-fetch`` (the
-    DAG forbids the reverse dependency direction), so `statement_pin`'s own
-    directive-peeling (`Limit`/`OrderBy` only) cannot see a
-    `DeepFetch` wrapper — this composition is the
-    handle's own job. A milestone-set read (`.history()`/`.as_of_range()`)
-    never reaches here carrying an outer `DeepFetch`: that combination builds as
-    an ordinary valid Find Query and the read preflight refuses it by name
-    (spec §3 ``snapshot-history-includes``) before any pin is derived, so this
-    peel is unconditionally safe.
-    """
-    pin_op = op.operand if isinstance(op, predicate_algebra.DeepFetch) else op
-    return statement_pin(pin_op, entity)
-
-
 def read_neutral(
     request: NeutralReadRequest,
     meta: Metamodel,
@@ -813,11 +787,11 @@ def read_neutral(
     """Preflight ``request`` and run it — the STANDALONE neutral read, whole.
 
     The neutral peer of ``db.find``'s own composition: the shared read gate
-    (:func:`~parallax.snapshot.handle._preflight.preflight_neutral`), then
+    (:func:`~parallax.snapshot.handle._preflight.preflight`), then
     :func:`execute_neutral`. A participating caller composes the same two itself,
     because it must gate BEFORE the force-flush that stands between them.
     """
-    preflight_neutral(request.target, request.operation, model=meta, form=request.form)
+    preflight(request.query, model=meta, form=request.form)
     return execute_neutral(
         request,
         meta,
@@ -861,15 +835,14 @@ def execute_neutral(
     observed milestone, and a read that answers a whole milestone SET observes
     none of them, so ``observed`` reaches the graph branch alone.
     """
-    target = request.target.canonical
-    op = request.operation
+    query = request.query
     if request.form == "rows":
-        return find_rows(op, meta, dialect, target, port, lock=lock, recorder=recorder)
-    if scans_an_axis(op):
-        history = find_history(op, meta, dialect, target, port, recorder=recorder)
+        return find_rows(query, meta, dialect, port, lock=lock, recorder=recorder)
+    if scans_an_axis(query):
+        history = find_history(query, meta, dialect, port, recorder=recorder)
         return neutral_from_history_result(history, meta)
     result = find(
-        op, meta, dialect, target, port, lock=lock, observations=observations, recorder=recorder
+        query, meta, dialect, port, lock=lock, observations=observations, recorder=recorder
     )
     return neutral_from_find_result(result, meta, observed=observed)
 

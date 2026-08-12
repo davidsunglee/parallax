@@ -115,10 +115,10 @@ def test_bitemporal_history_case_suppresses_both_axes() -> None:
     history_case = next(
         c for c in _phase8_cases() if c.path.stem == "m-temporal-read-016-bitemporal-history"
     )
-    valid_history = history_case.operation["history"]
-    tx_history = valid_history["operand"]["history"]
-    assert valid_history["dimension"] == "valid-time"
-    assert tx_history["dimension"] == "transaction-time"
+    assert history_case.object_query["temporal"] == {
+        "transaction-time": {"history": {}},
+        "valid-time": {"history": {}},
+    }
 
 
 def test_until_trio_write_step_counts_are_consistent() -> None:
@@ -128,6 +128,12 @@ def test_until_trio_write_step_counts_are_consistent() -> None:
         # Must not raise: per-step counts sum to the DML count and roundTrips,
         # including the 4-statement updateUntil and 3-statement terminateUntil.
         _assert_write_step_count(case, "postgres")
+
+
+def _selection_body(tag: str, fields: dict[str, str]) -> Any:
+    """One Temporal Selection's body: a coordinate for ``asOf``, the window object
+    for ``asOfRange``, and the empty object a scan carries."""
+    return fields.get("coordinate", fields) if tag == "asOf" else fields
 
 
 def _temporal_write_input_cases():
@@ -795,19 +801,9 @@ def test_tpcs_temporal_only_union_variants_compose(
     tx_binds: list[str],
 ) -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
-    tx_selection = {
-        tx_tag: {
-            "operand": {"all": {}},
-            "dimension": "transaction-time",
-            **tx_fields,
-        }
-    }
-    case.when["operation"] = {
-        valid_tag: {
-            "operand": tx_selection,
-            "dimension": "valid-time",
-            **valid_fields,
-        }
+    case.object_query["temporal"] = {
+        "transaction-time": {tx_tag: _selection_body(tx_tag, tx_fields)},
+        "valid-time": {valid_tag: _selection_body(valid_tag, valid_fields)},
     }
     per_branch = [*valid_binds, *tx_binds]
     case.then["statements"][0]["binds"] = [*per_branch, *per_branch]
@@ -818,7 +814,7 @@ def test_tpcs_temporal_only_union_variants_compose(
 
 def test_tpcs_temporal_union_oracle_does_not_derive_user_predicate_binds() -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
-    case.when["operation"]["asOf"]["operand"]["asOf"]["operand"] = {
+    case.object_query["predicate"] = {
         "eq": {"attr": "parallax.compatibility.Rate.amount", "value": 2.5}
     }
     case.then["statements"][0]["binds"] = []
@@ -826,9 +822,9 @@ def test_tpcs_temporal_union_oracle_does_not_derive_user_predicate_binds() -> No
     _assert_temporal_only_union_binds(case, "postgres")
 
 
-def test_tpcs_temporal_union_oracle_does_not_derive_result_directive_binds() -> None:
+def test_tpcs_temporal_union_oracle_does_not_derive_result_shaping_binds() -> None:
     case = copy.deepcopy(_inheritance_case("m-inheritance-093"))
-    case.when["operation"] = {"limit": {"operand": case.when["operation"], "count": 1}}
+    case.object_query["limit"] = 1
     case.then["statements"][0]["binds"] = []
 
     _assert_temporal_only_union_binds(case, "postgres")

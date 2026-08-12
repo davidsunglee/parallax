@@ -2,7 +2,7 @@
 
 The case schema proves the instruction's structural shape.  This module resolves
 that neutral shape against a descriptor before any SQL is emitted: the predicate
-must be a bare operation over the named target, assignments must name assignable
+must be a bare predicate over the named target, assignments must name assignable
 domain attributes exactly once, and temporal coordinates must fit the target's
 profile.
 """
@@ -13,7 +13,7 @@ from typing import Any
 
 from .case import Entity
 from .inheritance import inheritance_of
-from .op_validate import validate_operation
+from .op_validate import validate_predicate
 from .operation_references import collect_reference_classes
 from .serde import canonical
 from .value_object_resolve import RejectionError, literal_matches_type
@@ -21,19 +21,6 @@ from .value_object_resolve import RejectionError, literal_matches_type
 
 class PredicateWriteValidationError(ValueError):
     """Raised when a structurally-valid predicate write is model-invalid."""
-
-
-_READ_MODIFIERS = frozenset(
-    {
-        "orderBy",
-        "limit",
-        "deepFetch",
-        "asOf",
-        "asOfRange",
-        "history",
-        "narrow",
-    }
-)
 
 
 def validate_predicate_write(entity: Entity, instruction: dict[str, Any]) -> None:
@@ -61,12 +48,11 @@ def validate_predicate_write(entity: Entity, instruction: dict[str, Any]) -> Non
     predicate = target.get("predicate")
     if not isinstance(predicate, dict):  # pragma: no cover - structural schema guard
         raise PredicateWriteValidationError(
-            "predicate write target needs an operation-shaped predicate"
+            "predicate write target needs a predicate-shaped selection"
         )
-    _assert_bare_predicate(predicate)
     _assert_predicate_scope(predicate, entity)
     try:
-        validate_operation(entity, predicate)
+        validate_predicate(entity, predicate)
     except RejectionError as exc:
         raise PredicateWriteValidationError(str(exc)) from exc
 
@@ -125,13 +111,13 @@ def validate_predicate_write_materialization(
     target_finds = [
         (index, step)
         for index, step in enumerate(preceding_steps)
-        if step.get("targetEntity") in (entity.name, entity.canonical_name)
-        and isinstance(step.get("find"), dict)
+        if isinstance(step.get("objectQuery"), dict)
+        and step["objectQuery"].get("target") in (entity.name, entity.canonical_name)
     ]
     matching_finds = [
         (index, step)
         for index, step in target_finds
-        if canonical(_selection_predicate(step["find"])) == canonical(predicate)
+        if canonical(step["objectQuery"].get("predicate")) == canonical(predicate)
     ]
     if not matching_finds:
         if target_finds:
@@ -157,21 +143,6 @@ def validate_predicate_write_materialization(
         "roundTrips: 1, exactly one authored golden read statement, and expectRows "
         "exposing the resolved rows (or a genuine zero-match result)"
     )
-
-
-def _selection_predicate(operation: dict[str, Any]) -> dict[str, Any]:
-    """The predicate a complete temporal read selects before materialization."""
-    node = operation
-    while len(node) == 1:
-        tag = next(iter(node))
-        body = node[tag]
-        if tag not in ("asOf", "asOfRange", "history") or not isinstance(body, dict):
-            break
-        operand = body.get("operand")
-        if not isinstance(operand, dict):  # pragma: no cover - operation schema guard
-            break
-        node = operand
-    return node
 
 
 def requires_predicate_write_materialization(entity: Entity) -> bool:
@@ -312,35 +283,11 @@ def _temporal_payload_columns(entity: Entity, temporal_columns: set[str]) -> set
     return scalar_columns | value_object_columns
 
 
-def _assert_bare_predicate(node: Any) -> None:
-    if not isinstance(node, dict) or len(node) != 1:
-        return
-    tag, body = next(iter(node.items()))
-    if tag in _READ_MODIFIERS:
-        raise PredicateWriteValidationError(
-            f"predicate write target contains read modifier {tag!r}; "
-            "write targets are bare predicates"
-        )
-    if not isinstance(body, dict):
-        return
-    if tag in ("and", "or"):
-        for operand in body.get("operands", []):
-            _assert_bare_predicate(operand)
-    elif tag in ("not", "group"):
-        _assert_bare_predicate(body.get("operand"))
-    elif tag in ("navigate", "exists", "notExists"):
-        _assert_bare_predicate(body.get("op"))
-    elif tag in ("nestedExists", "nestedNotExists"):
-        _assert_bare_predicate(body.get("where"))
-
-
 def _assert_predicate_scope(node: Any, entity: Entity) -> None:
     classes: set[str] = set()
-    # A predicate write is a BARE predicate (asserted just above), so the walk
-    # stays in the predicate core and does not expect result modifiers.  A
-    # navigation's inner operation and a nestedExists `where` resolve in a
+    # A navigation's inner predicate and a nestedExists `where` resolve in a
     # different scope and are not descended (see collect_reference_classes).
-    collect_reference_classes(node, classes, descend_result_modifiers=False)
+    collect_reference_classes(node, classes)
     named = (entity.name, entity.canonical_name)
     mismatched = sorted(cls for cls in classes if cls not in named)
     if mismatched:

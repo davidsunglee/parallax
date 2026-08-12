@@ -13,11 +13,12 @@ model: models/grade.yaml
 tags: [m-descriptor, m-sql, m-dialect, identifier, quoting, reserved-word, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Grade
-  operation:
-    greaterThan:
-      attr: parallax.compatibility.Grade.ordinal
-      value: 1
+  objectQuery:
+    target: parallax.compatibility.Grade
+    predicate:
+      greaterThan:
+        attr: parallax.compatibility.Grade.ordinal
+        value: 1
 then:
   statements:
     - sql:

@@ -15,11 +15,12 @@ model: models/account.yaml
 tags: [m-read-lock, m-dialect]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Account
-  operation:
-    eq:
-      attr: parallax.compatibility.Account.id
-      value: 2
+  objectQuery:
+    target: parallax.compatibility.Account
+    predicate:
+      eq:
+        attr: parallax.compatibility.Account.id
+        value: 2
 then:
   statements:
     - sql:

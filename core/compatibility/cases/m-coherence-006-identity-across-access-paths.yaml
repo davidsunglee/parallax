@@ -22,11 +22,12 @@ when:
   coherence:
     - node: B
       kind: read
-      targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.owner
-          value: Linus
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.owner
+            value: Linus
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.owner = ?
@@ -45,11 +46,12 @@ when:
       note: node A commits an in-place update (version advances 1 -> 2) on a separate connection
     - node: B
       kind: read
-      targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 2
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 2
       statements:
         - sql:
             postgres: select t0.id, t0.owner, t0.balance, t0.version from account t0 where t0.id = ?

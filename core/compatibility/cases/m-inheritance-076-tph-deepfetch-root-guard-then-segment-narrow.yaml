@@ -15,23 +15,25 @@
 # marking the broad `pets` relationship loaded. Tusker, excluded at the root, carries
 # no `owner` key and therefore no branch of this path at all.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child levels - the guarded owner hop and the narrowed pets[Dog] hop each bind their IN-list from keys gathered from the previous level's result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - narrow: { to: [parallax.compatibility.Pet] }
-          segments:
-            - { rel: parallax.compatibility.Animal.owner }
-            - { rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Dog] } }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    includes:
+      - appliesTo:
+          - parallax.compatibility.Pet
+        segments:
+          - rel: parallax.compatibility.Animal.owner
+          - rel: parallax.compatibility.Person.pets
+            narrowTo:
+              - parallax.compatibility.Dog
 then:
   statements:
     - sql:

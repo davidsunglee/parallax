@@ -5,9 +5,10 @@ model: models/document-layout.yaml
 tags: [m-inheritance, m-storage-layout, m-sql, m-document-codec, table-per-concrete-subtype, document-layout, union-all, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Publication
-  operation:
-    all: {}
+  objectQuery:
+    target: parallax.compatibility.Publication
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

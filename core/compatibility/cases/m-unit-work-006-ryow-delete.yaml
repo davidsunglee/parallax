@@ -36,11 +36,12 @@ compileEligibility:
 when:
   scenario:
     - uow: observed-delete
-      targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 3
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 3
       roundTrips: 1
       note: observe account 3 (Grace, balance 10.00, version 1) before the delete, inside the SAME unit of work as the write below
       statements:
@@ -62,11 +63,12 @@ when:
             postgres: delete from account where id = ?
           binds: [3]
     - uow: observed-delete
-      targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 3
+      objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 3
       roundTrips: 1
       note: a dependent find MUST observe the deletion (read-your-own-writes) — zero rows; the group COMMITS after this, its last step
       statements:

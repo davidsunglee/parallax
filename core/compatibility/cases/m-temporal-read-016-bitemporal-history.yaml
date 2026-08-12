@@ -8,20 +8,20 @@
 # carries each rectangle's bounds, exercising native-infinity reads on BOTH axes
 # (the current rows read back thru_z = infinity and/or out_z = infinity).
 model: models/position.yaml
-tags: [m-temporal-read, m-sql, bitemporal, temporal, history, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, bitemporal, temporal, history, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Position
-  operation:
-    history:
-      operand:
-        history:
-          operand:
-            eq:
-              attr: parallax.compatibility.Position.id
-              value: 1
-          dimension: transaction-time
-      dimension: valid-time
+  objectQuery:
+    target: parallax.compatibility.Position
+    predicate:
+      eq:
+        attr: parallax.compatibility.Position.id
+        value: 1
+    temporal:
+      transaction-time:
+        history: {}
+      valid-time:
+        history: {}
 then:
   statements:
     - sql:

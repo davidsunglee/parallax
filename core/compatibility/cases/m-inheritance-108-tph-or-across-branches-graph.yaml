@@ -11,18 +11,25 @@ model: models/animal.yaml
 tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, graph, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    or:
-      operands:
-        - narrow:
-            to: [parallax.compatibility.Dog]
-            operand:
-              greaterThan: { attr: parallax.compatibility.Dog.barkVolume, value: 5 }
-        - narrow:
-            to: [parallax.compatibility.Cat]
-            operand:
-              eq: { attr: parallax.compatibility.Cat.indoor, value: true }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      or:
+        operands:
+          - narrow:
+              to:
+                - parallax.compatibility.Dog
+              operand:
+                greaterThan:
+                  attr: parallax.compatibility.Dog.barkVolume
+                  value: 5
+          - narrow:
+              to:
+                - parallax.compatibility.Cat
+              operand:
+                eq:
+                  attr: parallax.compatibility.Cat.indoor
+                  value: true
 then:
   statements:
     - sql:

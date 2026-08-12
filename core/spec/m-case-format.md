@@ -84,7 +84,7 @@ and routing (`model`, `tags`, `lane`) plus the explicit `shape` discriminator st
   and `fault` (an injected fault kind). Optional — a case that starts from the
   model's default fixtures and injects nothing omits `given` entirely.
 - **`when`** — the action under test and how the client performs it. Exactly one
-  **action** member per shape (`operation` | `writeSequence` | `scenario` |
+  **action** member per shape (`objectQuery` | `writeSequence` | `scenario` |
   `coherence` | `concurrency` | `boundary` | `attempts`, plus the single-attempt
   conflict's `write`); the **context** members (`uow`, `mutation`, `at`,
   `observedTxStart`, `observedValidStart`, `equivalentEncodings`) describe the
@@ -104,7 +104,7 @@ read by the coverage gate and the language gate; grouping them buys no readabili
 
 A case is one of **nine shapes**, named by the required top-level `shape`:
 
-- **`read`** — a queryable `when.operation` naming its `when.targetEntity`,
+- **`read`** — a queryable `when.objectQuery` naming its own `target`,
   asserting `then.rows` or a deep-fetch `then.graph`.
 - **`writeSequence`** — ordered DML under `when.writeSequence`, asserting the
   resulting `then.tableState` (the temporal writes `m-txtime-write` /
@@ -130,7 +130,7 @@ A case is one of **nine shapes**, named by the required top-level `shape`:
 - **`boundary`** — `when.boundary` ordered actions + `then.outcome`
   (`m-auto-retry` — an `api-conformance`-lane case the harness schema-validates but
   does not execute, carrying no golden SQL).
-- **`rejected`** — a schema-valid `when.operation`, a `when.write`, **or** an
+- **`rejected`** — a schema-valid `when.objectQuery`, a `when.write`, **or** an
   inline `when.model` a model-aware validator MUST refuse **before any SQL**,
   naming the violated normative rule in `then.rejectedRule` (`m-value-object` /
   `m-predicate` / `m-inheritance` / `m-storage-layout` / `m-unit-work` negative
@@ -282,11 +282,10 @@ keeps the assertion honest across engines.
 | `given.fixtures` | `given` | no | load the model's fixtures BEFORE the action (default `false`), so a sequence can mutate pre-existing persisted rows |
 | `given.apply` | `given` | no | an ordered list of out-of-band **naive statement entries** (`sql` a plain string) the harness applies verbatim after the case's own provisioning and before its lane's first golden statement or step; admitted on `conflict`, `writeSequence`, and `scenario` cases. What the entries stand for is the lane's: a concurrent transaction's stale-version mutation or row removal on a conflict case, and otherwise state no authored member of the model could produce |
 | `given.fault` | `given` | boundary | an injected portable fault kind (`serialization-failure` / `deadlock` / `lock-wait-timeout` / `optimistic-lock-conflict`) driving the retry loop |
-| `when.operation` | `when` | read | a canonical `m-predicate` node, validated against the operation schema (read cases) |
-| `when.targetEntity` | `when` | read | the entity the read TARGETS — the queried position `when.operation` starts from (see *Read targeting*, below); REQUIRED on every read case and every scenario / coherence read step |
+| `when.objectQuery` | `when` | read / rejected | a canonical `m-object-query` document, validated against the Object Query schema; it names its own queried `target` (see *Read targeting*, below) |
 | `when.writeSequence` | `when` | writeSequence | an ordered list of mutations a write case realizes: `insert` / `update` / `terminate` (Transaction-Time-Only and Bitemporal; the plain Bitemporal writes are unbounded Valid-Time rectangle splits), `delete`, `cascadeDelete`, plus `insertUntil` / `updateUntil` / `terminateUntil` for bounded Bitemporal rectangle splits |
-| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements`; a `uow`-grouped write step MAY additionally carry `on`, naming the find it settles against (see *Settling against a grouped find*, below) |
-| `when.coherence` | `when` | coherence | a two-node (A / B) operation sequence, each step carrying its node, kind, and per-step golden `statements` |
+| `when.scenario` | `when` | scenario | an ordered list of read / committed-write / lifecycle-**action** steps (`action` + `on`, plus `set` / `path` and the per-step lifecycle observables `expectState` / `expectError` / `differentObjectFrom`), each carrying its own per-step golden `statements`; a `uow`-grouped write step MAY additionally carry `on`, naming the read step it settles against (see *Settling against a grouped find*, below) |
+| `when.coherence` | `when` | coherence | a two-node (A / B) step sequence, each step carrying its node, kind, and per-step golden `statements` |
 | `when.concurrency` | `when` | error / concurrencySuccess | a two-connection, barrier-separated `rounds` choreography; each node step carries per-step golden `statements` |
 | `when.boundary` | `when` | boundary | an ordered list of portable unit-of-work actions (`read` / `create` / `update` / `terminate` / `delete`, plus `join` — open a joined unit of work that shares the current one, the actions after it running inside that joined boundary) |
 | `when.attempts` | `when` | conflict | an ordered retry sequence of optimistic-lock `UPDATE` attempts, each carrying its own `statements` + `affectedRows` + `write` |
@@ -296,7 +295,7 @@ keeps the assertion honest across engines.
 | `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
 | `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
-| `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `operation` or `find`; each MUST normalize and canonicalize to it |
+| `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
 | `then.statements` | `then` | yes* | the golden SQL an impl must emit — an ordered list of `{sql, binds}` statement entries (dialect-keyed map form), one per deep-fetch level or write-sequence DML step. *Absent for scenario / attempts cases, whose golden SQL lives per step; disallowed on a boundary case |
 | `then.referenceSql` | `then` | conditional | an independent naive oracle (see below) — a plain string, OR a dialect-keyed map where the naive spelling is dialect-specific; for a deep fetch it is the naive single-statement oracle for the **root** row set |
 | `then.rows` | `then` | read | the rows the query must return (single-statement / flat-result cases) |
@@ -315,8 +314,8 @@ keeps the assertion honest across engines.
 
 #### How a case spells an Entity
 
-Every case field that ROUTES by model identity — `when.targetEntity` and a
-scenario / coherence read step's `targetEntity`, a `writeSequence[].entity`, a
+Every case field that ROUTES by model identity — an `objectQuery`'s own
+`target`, a `writeSequence[].entity`, a
 keyed or conflict write's `entity`, and a predicate write's `target.entity` —
 carries an Entity spelling under `m-metamodel`'s identifier constraint and parse
 rule: an Entity's local name begins capitalized and every namespace segment is
@@ -330,50 +329,51 @@ case asserts — `then.graph` root keys, narrowed-view keys, and `familyVariant`
 which names what a read materialized rather than what it addressed, and keeps
 its own ambiguity-sensitive rule stated with each. The two are spelled
 differently on purpose, and a `then.graph` root key is where that is easiest to
-get wrong: it is the queried Entity's **local** name, derived by resolving
-`targetEntity` and taking the resolved Entity's local name, never the canonical
-spelling `targetEntity` itself now carries. `familyVariant` is what
+get wrong: it is the queried Entity's **local** name, derived by resolving the
+query's own `target` and taking the resolved Entity's local name, never the
+canonical spelling `target` itself now carries. `familyVariant` is what
 disambiguates inside a graph whose family shares a local name across namespaces.
 
-#### Read targeting (`targetEntity`)
+#### Read targeting (`objectQuery.target`)
 
-Every read names the entity it targets. A read case carries **`when.targetEntity`**
-(a metamodel entity name) alongside `when.operation`, and every **read step** of a
-scenario or coherence case carries a step-level `targetEntity` alongside its
-`find`. This is REQUIRED — the read side reaches the same explicit-entity standard
-the write side already meets with `writeSequence[].entity`, so an `all: {}` read no
-longer names its subject only in a comment or in the golden SQL.
+Every read names the entity it targets, **inside its own query**. A read case
+carries one `when.objectQuery`, and every **read step** of a scenario or coherence
+case carries one `objectQuery` of its own; each names its `target`. No envelope
+repeats it as a sibling field, so a read is ONE document and the pairing cannot be
+half-authored.
 
-`targetEntity` names the **queried position** the operation starts from. When an
+`target` names the **queried position** the query starts from. When an
 entity participates in an inheritance family (`m-inheritance`), that position may
 be abstract: an abstract **root** targets the whole family (its **effective
 concrete set**), an abstract **subtype** targets its concrete descendants, and a
 concrete subtype targets itself. A non-inheritance entity's effective concrete set
 is the entity itself.
 
-`targetEntity` is a first-class, machine-checkable field, not documentation: a
-model-aware harness cross-checks it against every queried-entity `Class.attribute`
-/ `Class.relationship` reference in the operation (the class part of each top-level
-predicate, order-by key, nested-value-object path, navigation relationship, and
-deep-fetch root hop MUST be **consistent** with `targetEntity`; a navigation's
-inner operation resolves against the *related* entity and is not cross-checked). The
+`target` is a first-class, machine-checkable field, not documentation: a
+model-aware harness cross-checks the query against ITSELF — every queried-entity
+`Class.attribute` / `Class.relationship` reference it carries (the class part of
+each top-level predicate, Sort Key, nested-value-object path, navigation
+relationship, and Include Path root hop) MUST be **consistent** with `target`; a
+navigation's inner predicate resolves against the *related* entity and is not
+cross-checked. The
 cross-check is **family-aware**: a reference class `C` is consistent with the
 target `T` when `C`'s effective concrete set is a **subset** of `T`'s — a subtype
 of an abstract target is consistent, a sibling or a broader position is not. For a
 non-inheritance entity the effective set is the entity itself, so "subset" reduces
 to the pre-inheritance "equal".
 
-This cross-check reads the case's declared `targetEntity` and is deliberately
-weaker than the operation rule it guards: `m-predicate`'s positional rule asks
-each reference of the **active position** — the queried position as re-narrowed by
-every enclosing `narrow`, and, for an order key, the position the ordered rows
+This cross-check reads the query's declared `target` and is deliberately
+weaker than the rule it guards: `m-predicate`'s positional rule asks
+each reference of the **active position** — the queried position as narrowed by
+the query's `narrowTo` clause and re-narrowed by every enclosing `narrow`, and,
+for a Sort Key, the position the ordered rows
 occupy — and classifies a violation as `subtype-attribute-outside-narrow-scope`
 or `attribute-outside-active-position` (below). A read case whose references pass
 this cross-check can still be refused by that rule, and MUST be authored so it is
 not: a `rejected` case is the shape that pins the refusal.
 
-An abstract-target read (an abstract `targetEntity`, or an abstract position
-`narrow`ed with `m-predicate`'s `narrow` node) materializes complete concrete
+An abstract-target read (an abstract `target`, or an abstract position constrained
+by the query's `narrowTo` clause) materializes complete concrete
 instances. Every leaf — a `then.rows` entry or a `then.graph` node — carries a
 **`familyVariant`** key — the concrete subtype's **family variant spelling**
 (`Dog`, `Cat`, …; the canonical qualified Entity spelling when duplicate local
@@ -383,9 +383,9 @@ resolved Q6) and the harness materializes `familyVariant` from the tag metadata
 map (`tagValue` -> subtype name) — an independent, metadata-derived
 recomputation like the as-of and PK-allocation oracles. A **concrete-target**
 read carries no `familyVariant` (the caller already knows the variant) and
-projects only that concrete instance's columns in either lane. A `narrow` node
-inside `when.operation` is validated pre-SQL against the family's effective
-concrete-subtype set (`m-predicate`); an invalid narrow is a `rejected` case
+projects only that concrete instance's columns in either lane. Every Subtype
+Selection a query carries is validated pre-SQL against the family's effective
+concrete-subtype set (`m-inheritance`); an invalid selection is a `rejected` case
 (see the narrow rules in *Rejected cases*).
 
 **A "complete concrete instance" means something different in each result
@@ -401,7 +401,7 @@ projection split that section otherwise fixes:
   fixed-superset `select` list exactly as it comes back (`m-sql` *Read
   projection*).
 - **Instance-form**, at a **top-level read case's own `then.graph` leaves**
-  (a `shape: read` case with no `deepFetch`), is the
+  (a `shape: read` case whose query names no Includes), is the
   **per-variant node shape**: each node carries **only its own branch's
   members** — its inherited chain plus its own declared attributes — and
   **omits every sibling branch's column entirely**, with **no null sibling
@@ -556,7 +556,7 @@ graph, so an overlapping or duplicated pin (two graphs claiming the same milesto
 is a loud failure, as is a milestone matched by no pin. (A v1
 milestone-set graph carries **no** deep-fetch includes — history-with-includes
 (`snapshot-history-includes`) is staged and claimed by neither object-lifecycle
-slice — so each graph is rooted at the read's `targetEntity`.)
+slice — so each graph is rooted at the read's own query `target`.)
 
 #### Back-reference cycles and `then.identityChecks`
 
@@ -635,8 +635,8 @@ Per case, against a freshly-provisioned database selected via the provider seam,
 the harness asserts:
 
 1. **Schema conformance** — the model descriptor validates against the metamodel
-   schema; the `operation` against the operation schema; the case against the
-   compatibility-case schema.
+   schema; the `objectQuery` against the Object Query schema, which reaches the
+   Predicate grammar through it; the case against the compatibility-case schema.
 2. **Triple equivalence** — load the database from the descriptor + fixture data,
    then assert `exec(then.statements[].sql[dialect]) == exec(then.referenceSql) ==
    then.rows` (the `then.referenceSql` term is included only when present). Row
@@ -652,10 +652,10 @@ the harness asserts:
    then.statements[].sql[dialect]` via sqlglot, per the `m-sql` rules (alias scheme `t0,t1,…`,
    sorted binds, whitespace-collapsed, deterministic clause order).
 4. **Serde round-trip** — `serialize(deserialize(x)) == x` for **both** the
-   `operation` encoding *and* the model descriptor (the descriptor **is** the
+   `objectQuery` encoding *and* the model descriptor (the descriptor **is** the
    serialized metamodel), in **both** JSON and YAML. When a case declares
    `equivalentEncodings`, each alternate authoring encoding MUST normalize and
-   canonicalize to the sibling `operation` or scenario-step `find` — a
+   canonicalize to the sibling `objectQuery` — a
    dialect-agnostic check that proves precedence / serialization fidelity and
    authoring defaults (including omitted Transaction Time becoming explicit
    Latest) in the fixture itself.
@@ -726,7 +726,7 @@ case's `then.roundTrips`. A step on a **temporal** entity carries **exactly one*
 neutral write input row (`m-unit-work`: each row closes its own milestone and
 chains its own successors, and a temporal entity never collapses into a set-based
 statement), so a chain per key is authored as a **step per key**. The model descriptor's serde round-trip (layer 4b) still
-runs; there is no `when.operation` to serde (layer 4a) and no normalization
+runs; there is no `when.objectQuery` to serde (layer 4a) and no normalization
 difference — the DML golden SQL is normalized to a fixed point exactly like read
 SQL (layer 3).
 
@@ -757,7 +757,7 @@ input is `when.write`), and asserts the affected-row count equals
 signal) and `1` for success. When `then.tableState` is authored it is asserted
 too, confirming a conflicting write did not apply. As with writeSequence cases,
 only the descriptor serde round-trip and the golden-SQL normalization layers
-apply (there is no `when.operation`).
+apply (there is no `when.objectQuery`).
 
 The written verb is **`when.mutation`** — `update` (the default) or `delete` —
 for a NON-temporal target; a temporal target's conflict write is always the
@@ -875,8 +875,8 @@ derivation, the half a conflict case cannot reach.
 ### Scenario cases (`m-unit-work`)
 
 A **scenario** case proves the unit-of-work / identity / query-cache contract as
-an ordered list of steps over one provisioned database. A **read step** issues a
-`find` (naming its `targetEntity`, as a read case does) with a declared round-trip
+an ordered list of steps over one provisioned database. A **read step** issues an
+`objectQuery` (naming its own `target`, as a read case does) with a declared round-trip
 count (a cache hit declares `0` and lists no golden SQL); a **write step**
 (`write`) **commits** golden DML between finds. The
 write step is what makes **read-your-own-writes** and **query-cache
@@ -1053,8 +1053,8 @@ Materializing cases make the observation explicit: a preceding scenario read
 resolves the same target predicate and exposes the matched rows or observed
 versions; the following write instruction independently states what the caller
 requested. For every versioned or temporal target, model-aware validation MUST
-require that prior find to use the same concrete `targetEntity` and canonical
-operation. It is a real resolving read, not a cache hit: it declares exactly one
+require that prior read to use the same concrete query `target` and canonical
+predicate. It is a real resolving read, not a cache hit: it declares exactly one
 round trip and one authored golden read statement, plus `expectRows`. An empty
 `expectRows` is valid only as that real zero-match resolution (`1 + 0`); a
 zero-round-trip/no-SQL step cannot materialize a predicate write. An unversioned,
@@ -1305,8 +1305,8 @@ observes another's committed write) by running a two-node operation sequence ove
 = the provider's own connection, with the model's fixtures loaded so the seed read
 sees a row), opens a second independent connection via the provider's **two-node
 seam** (`open_peer`, below), and runs each `coherence` step on its declared node:
-a `write` step **commits** DML on its node; a `read` step queries (naming its
-`targetEntity`, as a read case does). The final
+a `write` step **commits** DML on its node; a `read` step issues an `objectQuery`
+(naming its own `target`, as a read case does). The final
 node-B re-fetch carries **`observeRows`** — node A's committed **post-write**
 state, which node B **MUST** observe (never the stale pre-write rows). Each step's
 golden SQL is normalized (layer 3), and the read steps' operations and the
@@ -1439,8 +1439,8 @@ declares no family at all — its own first entity. A model declaring **several*
 families names no single root and therefore has no default; a bare row against one
 is a case-authoring failure, not a rule to grade, because resolving it to whichever
 entity happens to be declared first would grade a rule against an entity the case
-never named. The same default resolves a `when.operation`, which likewise names no
-target.
+never named. A `when.objectQuery` names its own queried position and reaches none
+of this.
 
 All three are **objects**, and a rejected `when.write` that is not one is
 **invalid**. The `when.write` vocabulary is shared with conflict cases, which also
@@ -1494,7 +1494,7 @@ rules:
   the typed-literal rule, so a `date` / `time` / `timestamp` / `uuid` / `bytes`
   member — which carries the portable `string` literal and so satisfies the
   typed-literal check — is named here rather than silently accepted.
-- `deep-fetch-value-object-segment` — a `deepFetch` path segment names a value
+- `deep-fetch-value-object-segment` — an Include Path segment names a value
   object (`m-value-object` contract 4, `m-deep-fetch`).
 - `navigate-value-object-target` — a `navigate` / `exists` / `notExists` targets a
   value object (`m-value-object` contract 4, `m-navigate`).
@@ -1509,8 +1509,9 @@ rules:
   does not compare sibling selections.
 - `narrow-outside-position` — a `narrow` node's resolved effective concrete-subtype
   set is not a **subset** of the **active** polymorphic position supplied by
-  context: the read's `targetEntity`, or the enclosing `narrow`'s resolved set, so
-  a nested `narrow` cannot broaden back out (`m-predicate` × `m-inheritance`).
+  context: the query's own `target` (as narrowed by its `narrowTo` clause), or the
+  enclosing `narrow`'s resolved set, so a nested `narrow` cannot broaden back out
+  (`m-object-query` × `m-predicate` × `m-inheritance`).
 - `narrow-empty-effective-set` — a `narrow`'s authored `to` list resolves to the
   **empty** concrete-subtype set (`m-predicate` × `m-inheritance`).
 - `subtype-attribute-outside-narrow-scope` — a predicate or order key references a

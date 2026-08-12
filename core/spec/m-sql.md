@@ -134,7 +134,7 @@ invariant while each dialect emits its own optimized SQL:
 
 The predicate fragments in this module fix a read's **`where` clause**; this section
 fixes its **`select` list**. A read's projected column list is a **pure function of
-the model and the read's target (`when.targetEntity`, `m-case-format`) plus its result
+the model and the read's target (`objectQuery.target`, `m-object-query`) plus its result
 form — never of the predicate**. Exactly one read takes a fourth input: the internal
 materialized-predicate-write resolving read derives its `Document` slots from the
 **declared needs of the write it serves** — that write's target designation and its
@@ -158,7 +158,7 @@ For each physical branch, SQL selects from the layout values as follows:
    slots; a designation changes the slot's tier, not whether the Attribute is
    readable.
 2. A table-per-hierarchy discriminator slot is projected **iff** the read's
-   `targetEntity` is abstract, regardless of whether a `narrow` reduces the
+   the queried `target` is abstract, regardless of whether result narrowing reduces the
    effective set to one concrete. A concrete target uses the same slot for its
    tag predicate but does not project it.
 3. Every applicable top-level Value Object `Document` slot is projected for an
@@ -203,7 +203,7 @@ A read is consumed in one of two lanes, and the projection differs only in
 whether `Document` slots are selected:
 
 - **Instance-form** (the **object lane**) — the result materializes into instances: a
-  snapshot-graph read, a `deepFetch` (its root and every child level), a deferred
+  snapshot-graph read, an eager fetch (its root and every child level), a deferred
   relationship **`load`** or an operation-list **first `access`** (`m-op-list`), or any
   other find whose rows become objects. It projects Document slots, so a value-object-bearing
   entity's whole document rides the owner's single statement (the one-round-trip
@@ -444,7 +444,7 @@ abstract root / abstract subtype, optionally narrowed by a `narrow` in the filte
 
 ## Deep fetch — one statement per relationship level
 
-`deepFetch` does **not** emit a single joined statement. It emits the **root
+Includes does **not** emit a single joined statement. It emits the **root
 query** followed by **one `IN`-keyed statement per distinct relationship hop**
 across the declared paths. Each child level selects the related rows whose
 foreign key is `in` the **distinct parent keys gathered from the previous
@@ -452,7 +452,7 @@ level** — so the round-trip count is `1 + (number of relationship levels)`,
 never one query per parent (N+1 elimination):
 
 ```text
-deepFetch(all(Order), paths = [ { segments: [{ rel: Order.items }] },
+objectQuery(Order, all, includes = [ { segments: [{ rel: Order.items }] },
                                 { segments: [{ rel: Order.items }, { rel: OrderItem.statuses }] } ])
   level 0 (root)  : select t0.id, t0.name, t0.sku, t0.qty, t0.price, t0.active, t0.ordered_on from orders t0
   level 1 (items) : select t0.id, t0.order_id, t0.sku, t0.quantity, t0.shipped_on from order_item t0
@@ -480,9 +480,9 @@ beneath a guarded one carries no guard term either: its parents are already the
 guarded branch's rows.
 
 ```text
-# targetEntity: Animal (Dog 1 -> owner 10, Dog 2 -> owner 11, Cat 3 -> owner 10,
+# target: Animal (Dog 1 -> owner 10, Dog 2 -> owner 11, Cat 3 -> owner 10,
 # WildBoar 4 -> owner 12), one path guarded to the Dogs:
-deepFetch(all(Animal), paths = [ { narrow: { to: [Dog] },
+objectQuery(Animal, all, includes = [ { appliesTo: [Dog],
                                    segments: [{ rel: Animal.owner }] } ])
   level 0 (root)  : select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id,
                     t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
@@ -834,7 +834,7 @@ SQL only where the lowering puts it, never because a user named it.
 
 #### Tag-predicate selection
 
-A read's queried position (`targetEntity`, optionally further constrained by a
+A read's queried position (the query's `target`, optionally further constrained by a
 `narrow`, `m-predicate`) resolves to an **effective concrete-subtype set**. The
 lowering injects a tag predicate over the root alias `t0` from that set, composed
 with any user predicate via `and` (appended **after** it, so binds read
@@ -863,7 +863,7 @@ read ORs across two concrete branches, each branch is a **grouped** `(branch-
 predicate AND tag)` and the branches are joined by `or`:
 
 ```text
-# targetEntity: Animal, or( narrow[Dog] & barkVolume>5, narrow[Cat] & indoor=true ):
+# target: Animal, or( narrow[Dog] & barkVolume>5, narrow[Cat] & indoor=true ):
   → select … from animal t0
     where (t0.bark_volume > ? and t0.kind = ?) or (t0.indoor = ? and t0.kind = ?)
     binds: [5, 'dog', true, 'cat']
@@ -884,7 +884,7 @@ not applicable to a returned row reads back `NULL`; SQL projects the discriminat
 because an abstract target must materialize each concrete variant:
 
 ```yaml
-# targetEntity: Animal (root over Cat / Dog / WildBoar) — the Identity slot, raw
+# target: Animal (root over Cat / Dog / WildBoar) — the Identity slot, raw
 # Discriminator slot, then Domain slots in stable declaration encounter order:
 - sql:
     postgres: select t0.id, t0.kind, t0.name, t0.owner_id, t0.license_id, t0.indoor, t0.bark_volume, t0.tusk_length from animal t0
@@ -923,7 +923,7 @@ the applicable slots from its Entity Layout view, and it carries **no
 `familyVariant`** (the caller queried a known variant):
 
 ```yaml
-# targetEntity: Invoice — ordinary single-table read of the concrete table:
+# target: Invoice — ordinary single-table read of the concrete table:
 - sql:
     postgres: select t0.id, t0.title, t0.currency, t0.amount_due from invoice t0
 ```
@@ -991,7 +991,7 @@ asymmetry with table-per-hierarchy: TPH projects the raw tag column and derives
 literal directly:
 
 ```yaml
-# targetEntity: Record (abstract root over two canonically qualified SharedVariant
+# target: Record (abstract root over two canonically qualified SharedVariant
 # entities) — case 120's reservation and collision-skipping witness. Physical
 # family_variant and parallax_attr_0 spellings are restored after alias remapping:
 - sql:
@@ -1149,7 +1149,7 @@ from the root, each branch's as-of fragment is identical, so the union's binds a
 the per-branch as-of binds repeated in **alphabetical branch order**:
 
 ```yaml
-# targetEntity: Rate (Bitemporal abstract root over DepositRate / LoanRate), Valid Time
+# target: Rate (Bitemporal abstract root over DepositRate / LoanRate), Valid Time
 # finite v, Transaction Time Latest — each branch injects `from_z <= ? and thru_z > ? and out_z = ?`
 # (Valid-Time-first) and the binds repeat per branch in alphabetical branch order:
 - sql:

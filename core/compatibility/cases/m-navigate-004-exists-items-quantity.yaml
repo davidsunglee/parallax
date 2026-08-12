@@ -6,12 +6,15 @@ model: models/orders.yaml
 tags: [m-navigate, exists, relationship, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    exists:
-      rel: parallax.compatibility.Order.items
-      op:
-        greaterThanEquals: { attr: parallax.compatibility.OrderItem.quantity, value: 4 }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      exists:
+        rel: parallax.compatibility.Order.items
+        op:
+          greaterThanEquals:
+            attr: parallax.compatibility.OrderItem.quantity
+            value: 4
 then:
   statements:
     - sql:

@@ -35,11 +35,12 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Account
-      find:
-        lessThan:
-          attr: parallax.compatibility.Account.balance
-          value: 200.00
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          lessThan:
+            attr: parallax.compatibility.Account.balance
+            value: 200.00
       roundTrips: 1
       note: the materialize read — resolve `balance < 200` to rows (ids 1 and 3, version 1); this optimistic resolving read omits the shared lock
       statements:
@@ -67,11 +68,12 @@ when:
         - sql:
             postgres: update account set balance = ?, version = ? where id = ? and version = ?
           binds: [0.00, 2, 3, 1]
-    - targetEntity: parallax.compatibility.Account
-      find:
-        lessThan:
-          attr: parallax.compatibility.Account.balance
-          value: 200.00
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          lessThan:
+            attr: parallax.compatibility.Account.balance
+            value: 200.00
       roundTrips: 1
       note: the SAME find re-resolves (cache MISS) and MUST observe both rows at balance 0.00, version 2
       statements:

@@ -9,7 +9,7 @@ defect and cannot be listed. This state belongs neither to the database
 provider, Dialect, connected model, nor leased Database Port because it describes
 Snapshot execution completeness rather than provider variability. Snapshot
 classifies its privately lowered canonical operation against this set; the
-lifecycle-neutral Find Query carries no Snapshot feature tags. The set is one
+lifecycle-neutral Object Query carries no Snapshot feature tags. The set is one
 package-owned constant shared by every Database, with no application,
 environment, provider, or adapter customization. An entry is added only with
 the defining core behavior and Feature tag, explicit slice deferral, Python
@@ -28,12 +28,13 @@ model declares no Entity for always raises
 result.
 
 The classifier belongs only to modeled Snapshot reads. Predicate-selected
-writes first enforce their ordinary mutation-compatible Find Query contract;
+writes first enforce their ordinary mutation-compatible Object Query contract;
 a read-shaped query therefore raises
 `QueryDefinitionError(query-not-mutation-compatible)` rather than a deferral
 error.
 
-Snapshot centralizes lowering, target resolution, and deferral classification
-in one private `preflight_find` seam returning the local `LoweredFindQuery`.
-Database, Transaction, and Session read boundaries reuse it before any new
+Snapshot centralizes target resolution, query validation, and deferral
+classification in one private `preflight` seam over the canonical Object Query.
+Database, Transaction, Session read boundaries, and both neutral entry points
+reuse it before any new
 connection acquisition or Database Port access.

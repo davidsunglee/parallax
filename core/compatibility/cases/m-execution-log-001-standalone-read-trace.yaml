@@ -20,11 +20,12 @@ model: models/account.yaml
 tags: [m-execution-log, m-snapshot-read, read-trace, slice-snapshot-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Account
-  operation:
-    eq:
-      attr: parallax.compatibility.Account.id
-      value: 3
+  objectQuery:
+    target: parallax.compatibility.Account
+    predicate:
+      eq:
+        attr: parallax.compatibility.Account.id
+        value: 3
 then:
   statements:
     - sql:

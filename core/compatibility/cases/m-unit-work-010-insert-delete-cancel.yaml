@@ -31,11 +31,12 @@ when:
             - { id: 9 }
       roundTrips: 0
       note: the buffered INSERT of new account 9 then the buffered DELETE of the same new object CANCEL — the flush emits no DML at all (Reladomo addDelete)
-    - targetEntity: parallax.compatibility.Account
-      find:
-        eq:
-          attr: parallax.compatibility.Account.id
-          value: 9
+    - objectQuery:
+        target: parallax.compatibility.Account
+        predicate:
+          eq:
+            attr: parallax.compatibility.Account.id
+            value: 9
       roundTrips: 1
       note: account 9 is absent — the cancelled insert never persisted
       statements:

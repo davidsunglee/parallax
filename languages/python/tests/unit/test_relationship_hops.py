@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from _support.query_probes import lowered_operation
+from _support.query_probes import canonical_query
 from parallax.core import (
     MANY_TO_ONE,
     ONE_TO_MANY,
@@ -37,7 +37,7 @@ from parallax.core import (
 )
 from parallax.core.entity import RelationshipPath, RelationshipRef
 from parallax.core.entity._model import model_of
-from parallax.core.predicate import DeepFetch, NavigationPath, PathSegment, validate_operation
+from parallax.core.object_query import IncludePath, IncludeSegment, validate_object_query
 
 
 class Leaf(Entity, table="leaf", namespace="orchard"):
@@ -117,12 +117,11 @@ PETS = DomainModel(Owner, Animal, Dog, Toy)
 
 def _preflight(
     models: DomainModel, root: type[Entity], path: RelationshipPath[Any, Any]
-) -> DeepFetch:
-    """Build the include operation ``path`` authors and validate it as a read does."""
-    operation = lowered_operation(root.where(root.all).include(path))
-    assert isinstance(operation, DeepFetch)
-    validate_operation(models.meta(root), operation, model_of(models))
-    return operation
+) -> tuple[IncludePath, ...]:
+    """Build the Includes clause ``path`` authors and validate it as a read does."""
+    query = canonical_query(root.where(root.all).include(path))
+    validate_object_query(models.meta(root), query, model_of(models))
+    return query.includes
 
 
 def test_a_deeper_hop_spells_its_owner_from_the_paths_target() -> None:
@@ -140,12 +139,12 @@ def test_a_deeper_hop_camel_cases_a_snake_case_member_spelling() -> None:
 
 
 def test_a_deeper_hop_validates_as_an_include_path() -> None:
-    operation = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
-    assert operation.paths == (
-        NavigationPath(
+    includes = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
+    assert includes == (
+        IncludePath(
             segments=(
-                PathSegment(rel="sales.Order.customer"),
-                PathSegment(rel="sales.Customer.notes"),
+                IncludeSegment(rel="sales.Order.customer"),
+                IncludeSegment(rel="sales.Customer.notes"),
             )
         ),
     )
@@ -156,9 +155,9 @@ def test_a_deeper_hop_across_namespaces_names_the_target_it_was_composed_from() 
     # namespace declaring the local name `Customer` does not reach it: the same
     # operation validates against both models and addresses `sales.Customer`
     # either way. A bare owner would have named two Entities and therefore none.
-    operation = _preflight(LEDGER, SalesOrder, SalesOrder.customer.notes)
-    validate_operation(
-        TWO_NAMESPACE_LEDGER.meta(SalesOrder), operation, model_of(TWO_NAMESPACE_LEDGER)
+    query = canonical_query(SalesOrder.where(SalesOrder.all).include(SalesOrder.customer.notes))
+    validate_object_query(
+        TWO_NAMESPACE_LEDGER.meta(SalesOrder), query, model_of(TWO_NAMESPACE_LEDGER)
     )
 
 
@@ -169,7 +168,7 @@ def test_a_renamed_deeper_member_erases_and_preflight_refuses_it() -> None:
     # through a path rooted at the Entity that declares it keeps the exact name.
     with pytest.raises(ValueError, match="names no declared relationship on Branch"):
         _preflight(ORCHARD, Root, Root.branches.leaves)
-    assert Branch.leaves.segments == (PathSegment(rel="orchard.Branch.canopy"),)
+    assert Branch.leaves.segments == (IncludeSegment(rel="orchard.Branch.canopy"),)
 
 
 def test_an_inherited_deeper_member_erases_and_preflight_refuses_it() -> None:
@@ -209,7 +208,7 @@ def test_a_hop_narrowed_to_one_class_targets_it_canonically() -> None:
     # A narrow list is a reference position like any other, so it names each
     # class exactly — the same spelling the path's own target takes.
     path = Root.branches.narrow(Branch)
-    assert path.segments[-1].narrow == ("orchard.Branch",)
+    assert path.segments[-1].narrow_to == ("orchard.Branch",)
     assert path.target == "orchard.Branch"
 
 
@@ -223,7 +222,7 @@ def test_a_hop_narrowed_to_a_class_declaring_no_identity_names_it_pythonically()
         pass
 
     path = Root.branches.narrow(Bare)  # pyright: ignore[reportArgumentType]
-    assert path.segments[-1].narrow == ("Bare",)
+    assert path.segments[-1].narrow_to == ("Bare",)
     assert path.target == "Bare"
 
 
@@ -256,7 +255,7 @@ def test_a_deeper_hop_narrows_independently_of_the_hop_it_continued() -> None:
     # relationship starts a fresh alternative list, and the hop it continued
     # keeps the one it was given.
     path = Root.branches.narrow(Branch).leaves.narrow(Leaf)
-    assert [(segment.rel, segment.narrow) for segment in path.segments] == [
+    assert [(segment.rel, segment.narrow_to) for segment in path.segments] == [
         ("orchard.Root.branches", ("orchard.Branch",)),
         ("orchard.Branch.leaves", ("orchard.Leaf",)),
     ]
@@ -273,7 +272,7 @@ def test_a_path_that_already_continued_cannot_continue_again() -> None:
 
 def test_a_directly_built_path_carries_no_target_and_cannot_continue() -> None:
     built: RelationshipPath[SalesOrder, Any] = RelationshipPath(
-        segments=(PathSegment(rel="sales.Order.customer"),), target=None
+        segments=(IncludeSegment(rel="sales.Order.customer"),), target=None
     )
     with pytest.raises(AttributeError, match="already continued past the hop"):
         _ = built.notes

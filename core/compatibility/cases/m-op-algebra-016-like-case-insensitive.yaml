@@ -12,12 +12,13 @@ model: models/orders.yaml
 tags: [m-predicate, like, string, caseInsensitive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    like:
-      attr: parallax.compatibility.Order.name
-      value: ada
-      caseInsensitive: true
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      like:
+        attr: parallax.compatibility.Order.name
+        value: ada
+        caseInsensitive: true
 then:
   statements:
     - sql:

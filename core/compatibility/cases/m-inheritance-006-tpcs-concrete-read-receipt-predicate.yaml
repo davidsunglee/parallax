@@ -12,9 +12,12 @@ model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Receipt
-  operation:
-    greaterThanEquals: { attr: parallax.compatibility.Receipt.paidAmount, value: 120.00 }
+  objectQuery:
+    target: parallax.compatibility.Receipt
+    predicate:
+      greaterThanEquals:
+        attr: parallax.compatibility.Receipt.paidAmount
+        value: 120.00
 then:
   statements:
     - sql:

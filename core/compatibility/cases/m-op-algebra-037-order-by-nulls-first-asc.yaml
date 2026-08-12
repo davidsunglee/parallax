@@ -11,19 +11,18 @@
 # second-smallest sku, which is exactly how this case separates from
 # m-op-algebra-035.
 model: models/orders.yaml
-tags: [m-predicate, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-object-query, m-dialect, orderBy, ordering, nulls, nullable, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    limit:
-      count: 2
-      operand:
-        orderBy:
-          keys:
-            - { attr: parallax.compatibility.Order.sku, direction: asc, nulls: first }
-          operand:
-            all: {}
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.Order.sku
+        direction: asc
+        nulls: first
+    limit: 2
 then:
   statements:
     - sql:

@@ -13,11 +13,13 @@ tags: [m-deep-fetch, relationship, deferred-load, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Order
-      find:
-        in:
-          attr: parallax.compatibility.Order.id
-          values: [999]
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          in:
+            attr: parallax.compatibility.Order.id
+            values:
+              - 999
       roundTrips: 1
       note: an empty source set (no such order)
       statements:
@@ -31,11 +33,13 @@ when:
       roundTrips: 0
       note: empty source -> NO child SQL
       expectRows: []
-    - targetEntity: parallax.compatibility.Order
-      find:
-        in:
-          attr: parallax.compatibility.Order.id
-          values: [3]
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          in:
+            attr: parallax.compatibility.Order.id
+            values:
+              - 3
       roundTrips: 1
       note: order 3 exists but has no line items
       statements:

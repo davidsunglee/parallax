@@ -40,9 +40,12 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Ledger
-      find:
-        greaterThan: { attr: parallax.compatibility.Ledger.id, value: 0 }
+    - objectQuery:
+        target: parallax.compatibility.Ledger
+        predicate:
+          greaterThan:
+            attr: parallax.compatibility.Ledger.id
+            value: 0
       roundTrips: 1
       note: the materialize read — both ledgers resolve, and `label` is decoded out of the Structured Column
       statements:
@@ -70,9 +73,12 @@ when:
           binds:
             postgres: ['{label}', 'null', 2, 100, 1]
             mariadb: ['$.label', 'null', 2, 100, 1]
-    - targetEntity: parallax.compatibility.Ledger
-      find:
-        greaterThan: { attr: parallax.compatibility.Ledger.id, value: 0 }
+    - objectQuery:
+        target: parallax.compatibility.Ledger
+        predicate:
+          greaterThan:
+            attr: parallax.compatibility.Ledger.id
+            value: 0
       roundTrips: 1
       note: an explicit JSON null on 100 and a missing key on 200 read back as one absence; only 100's version moved
       statements:

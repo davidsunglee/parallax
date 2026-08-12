@@ -21,7 +21,7 @@ never something an application developer hand-writes.
 | Exact `describe` claim | The complete canonical `describeOk` envelope below; structurally equal to the canonical claim after JSON parsing, except for the `adapter` identity. |
 | Claimed capability coverage | Copied verbatim from the canonical claim: the 29 `modules` below, `dialects: ["postgres"]`, the eight `caseShapes`, `caseTags.include: ["slice-snapshot-1"]`, `commands: ["describe", "compile", "run"]`, `provisioning: "self-managed"`. `modules` is the tagged-case union of the slice, **not** a dependency closure and not a packaging plan. |
 | Unclaimed implementation prerequisites | `m-db-port` — reached via `m-unit-work` and `m-db-error`; abstract port supplied by the `parallax.core.db_port` scope, concrete adapter by `parallax-postgres`; contract-covered, never case-advertised. |
-| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Find Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
+| Deferred capabilities | MariaDB (dialect); `benchmark` command and `m-perf-bench`; `m-agg` / `m-sql-agg`; Valid-Time-Only models; `m-process-cache` / `m-coherence`; `m-cascade-delete`; the `snapshot-history-includes` feature; the managed-object lifecycle (`m-identity-map`, `m-detach`, public operation-backed lists); an async developer surface; MAY-tier mutations (`insertWithIncrement`, `incrementUntil`, `purge`, `inactivateForArchiving`); template-database reset optimization; isolation-level configuration; handle-level default concurrency override; Object Query `where`-refinement chaining and `as_of` re-pinning; authored relationship chains past two hops, and with them multi-hop relationship quantifiers (§2, "a Python-authored relationship chain stops at two hops"); the class-header temporal-axis column-mapping override. Deferral is roadmap intent. The conformance adapter's `unsupported` result remains wire behavior for out-of-claim requests, while Snapshot's `DeferredFeatureError` is the separate runtime preflight for query Features listed in `_DEFERRED_EXECUTION_FEATURES`; neither is a database-provider capability. |
 | Supported dialects and commands | Postgres only; `describe`, `compile`, `run`. Exercised locally and in CI by `uv run pytest -m compile_sweep` (Docker-free compile of every compile-eligible claimed case) and `uv run pytest tests/compatibility/test_run_sweep.py` (the `pg-full` run profile, every claimed case), aggregated by `just python-check-dbfree` and `just python-check-db`. |
 
 ```json
@@ -29,7 +29,7 @@ never something an application developer hand-writes.
   "schemaVersion": "1", "command": "describe", "status": "ok",
   "adapter": { "language": "python", "name": "parallax-core", "version": "0.1.0" },
   "capabilities": {
-    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
+    "modules": ["m-api-conformance", "m-auto-retry", "m-batch-write", "m-bitemp-write", "m-case-format", "m-conformance-adapter", "m-core", "m-db-error", "m-deep-fetch", "m-descriptor", "m-dialect", "m-document-codec", "m-execution-log", "m-inheritance", "m-metamodel", "m-model-formation", "m-navigate", "m-object-query", "m-opt-lock", "m-pk-gen", "m-predicate", "m-read-lock", "m-relationship", "m-snapshot-read", "m-sql", "m-storage-layout", "m-temporal-read", "m-txtime-write", "m-unit-work", "m-value-object"],
     "dialects": ["postgres"],
     "caseShapes": ["read", "writeSequence", "scenario", "conflict", "boundary", "error", "concurrencySuccess", "rejected"],
     "caseTags": { "include": ["slice-snapshot-1"] },
@@ -121,7 +121,7 @@ mutations, exceptions, or exports.
 - **Every composed query value names the Entity it addresses.** The exported
   authoring vocabulary is parameterized: `AttributeExpr[E, T]`, `Predicate[E]`,
   `AllPredicate[E]`, `SortKey[E]`, `AttributeAssignment[E]`,
-  `RelationshipPath[E, R]`, and `FindQuery[E, S]`, where `E` is the position a
+  `RelationshipPath[E, R]`, and `ObjectQuery[E, S]`, where `E` is the position a
   value is rooted at, `R` the related Entity a hop reaches, `T` a declared
   Python value type, and `S` the Entity a query's result returns. `Predicate`,
   `AllPredicate`, `SortKey`, and `AttributeAssignment` are **contravariant** in
@@ -148,7 +148,7 @@ mutations, exceptions, or exports.
   both, and the parameter is the whole of the rule. A rejection lands there
   because lowering discards what the parameter read — the wire records a
   canonical Entity Identity and a declaring member, never the Python class a term
-  was spelled through, and a Find Query retains clauses rather than wrapping
+  was spelled through, and an Object Query retains clauses rather than wrapping
   them, so clause order reaches nothing — or because a signature deliberately
   answers wider than the narrowing it describes and refuses a composition that is
   in fact legal. The families that produces, **as examples and not as a closed
@@ -159,10 +159,10 @@ mutations, exceptions, or exports.
   carrying the same Entity Identity**, since the wire keeps the identity and not
   the class; the two clause-order rules below (a `where` argument or a sort key
   written before the `narrow` that scopes it), since the refused spelling and the
-  accepted one lower to one operation; and `FindQuery.narrow`'s **conservative
+  accepted one build one query; and `ObjectQuery.narrow`'s **conservative
   variadic overload**, which leaves the result parameter where it was for any
   subtype list a fixed overload set cannot read — one expanded from a sequence,
-  or one naming more than three alternatives — while the narrow itself reaches
+  or one naming more than three alternatives — while the narrowing itself reaches
   the wire and scopes exactly the sort keys preflight then accepts. Nothing here
   closes that list and no count of it is normative: another family arrives with
   any typing decision that lets a parameter read what lowering discards, and
@@ -218,7 +218,7 @@ mutations, exceptions, or exports.
   the JSON number `600.00`, which the declared type would refuse. `.set(value)`
   is the exception, because an Assignment's value genuinely is a member value.
 - **One query-definition error family.** Every Python Attribute Expression,
-  Relationship Path, Predicate, Assignment, Sort Key, or Find Query
+  Relationship Path, Predicate, Assignment, Sort Key, or Object Query
   construction, composition, and refinement the frontend refuses **by a
   query-definition rule of its own** raises `QueryDefinitionError(ValueError)`
   with a stable `query-*` code. A refusal that is not one of those rules keeps
@@ -247,14 +247,14 @@ mutations, exceptions, or exports.
   rejection; errors expose neither literal values nor internal model state.
   Invalid operators and literals use `query-expression-invalid`; invalid Value
   Object or relationship hops, quantifiers, and narrowing use
-  `query-path-invalid`; invalid, repeated, or conflicting Find Query clauses
+  `query-path-invalid`; invalid, repeated, or conflicting Object Query clauses
   use `query-clause-invalid`; an expression or Predicate rooted at an
   inapplicable Entity uses `query-target-mismatch`; and non-assignable members
   or values use `query-assignment-invalid`. The remaining two codes retain
   their Assignment-target and predicate-selected-write meanings.
 - **Separate execution target error.** Query authoring reaches no model, so a
-  Find Query carries no model identity and every model-aware rule is stated at
-  execution instead. A Find Query executed through a Database whose connected
+  Object Query carries no model identity and every model-aware rule is stated at
+  execution instead. An Object Query executed through a Database whose connected
   model declares no Entity for the query's target raises exported
   `QueryTargetError(RuntimeError)` with sole stable code
   `query-target-not-in-model`, before any I/O. It retains and exposes neither
@@ -286,61 +286,59 @@ mutations, exceptions, or exports.
   two names would have two chances to drift. Assignment-list validation remains separate:
   an assignment-bearing mutation checks nonemptiness, duplicates, and exact
   target compatibility when combining already-valid Assignments with its
-  Find Query.
+  Object Query.
   Under Relational Document Layout, assigning a `one` recursively patches only
   the declared members that rendered document names; omitted nullable members
   remain stored and explicit `None` stores JSON null. Assigning a `many` replaces
   its ordered array whole. This changes physical mutation granularity without
   making a nested member independently assignable.
-- **Opaque immutable Find Query.** `FindQuery[E, S]` — the Entity QUERIED and
+- **Opaque immutable Object Query.** `ObjectQuery[E, S]` — the Entity QUERIED and
   the Entity the result RETURNS, which `narrow` and only `narrow` moves — is
   exported for annotations
-  and fluent use, but direct `FindQuery(...)` construction is unsupported;
+  and fluent use, but direct `ObjectQuery(...)` construction is unsupported;
   `Entity.where(...)` is its sole public constructor. Every clause returns a
   new value and leaves its receiver unchanged. Target, Predicate, include, and
   temporal representation fields are not public attributes.
-  Find Queries define no structural equality or semantic hash: ordinary
+  Object Queries define no structural equality or semantic hash: ordinary
   object-identity equality and hashing apply, so independently authored queries
-  compare unequal even when they lower to identical operations. Conformance
-  code compares canonical lowered operations through its first-party seam.
+  compare unequal even when they carry identical canonical queries. Conformance
+  code compares canonical queries through its first-party seam.
   Truth-testing with `bool(query)` or `if query:` raises `TypeError` directing
-  the caller to execute the query and inspect its Snapshot; a Find Query has no
+  the caller to execute the query and inspect its Snapshot; an Object Query has no
   pre-execution empty/nonempty state.
-  Canonical operation extraction and serialization remain first-party
-  lowering/conformance seams: `operation()`, `serialize()`, `is_bare()`,
+  Canonical query extraction and serialization remain first-party
+  conformance seams: `object_query()`, `serialize()`, `is_bare()`,
   `is_milestone_set()`, and equivalent state-inspection helpers are not public
   methods.
-  The advanced first-party `lower_find_query(query) -> LoweredFindQuery` seam
+  The advanced first-party `object_query_node(query) -> ObjectQueryNode` seam
   completes the target-class-local temporal authoring contract: omitted
   Transaction Time becomes explicit Latest, while omitted Valid Time on a
   Bitemporal target raises `QueryDefinitionError(query-clause-invalid)`.
-  It introduces no connected-model semantic validation. `FindQuery` privately
-  retains independently authored, already
-  validated predicate, root-narrow, temporal, ordering, limit, and include
-  clauses plus its structured target Entity Identity. It retains no model.
-  Lowering places those clauses in the fixed canonical order and returns one
-  frozen slotted value containing exactly
-  `target: EntityIdentity` and
-  `operation: Predicate`. The result contains no model, Entity
+  It introduces no connected-model semantic validation. An `ObjectQuery` privately
+  holds the canonical `m-object-query` value its independently authored, already
+  validated clauses build — predicate, result narrowing, Temporal Selections,
+  ordering, limit, and Includes, each a sibling of every other, beside its
+  structured target Entity Identity. It retains no model, and there is no
+  lowering step: clause invocation order cannot reach the wire, because no clause
+  nests inside another. The answered value contains no model, Entity
   Class, class index, Snapshot feature tags, provider state, SQL, serialization
-  method, or public execution surface. `LoweredFindQuery` is not a
-  `CanonicalFindQuery`: only its Predicate is canonical, while its target is a
-  position the connected model resolves at execution. Neither `LoweredFindQuery` nor
-  `lower_find_query` is re-exported from top-level `parallax.core`. Each call
-  returns a fresh lowering. `FindQuery` stores no cached lowering, and no global
-  memoization retains one; one execution keeps its result locally through
-  preflight, planning, and execution.
-- **Complete fluent surface.** The Find Query interface consists exactly of
+  method, or public execution surface. `ObjectQueryNode`'s target is
+  a position the connected model resolves at execution, so an accepted node is
+  not yet a validated one. `object_query_node` is not re-exported from
+  top-level `parallax.core`. It answers the query's own immutable value and
+  memoizes nothing globally; one execution reads it once and keeps it locally
+  through preflight, planning, and execution.
+- **Complete fluent surface.** The Object Query interface consists exactly of
   the class-scoped match-all value `Entity.all`,
-  `Entity.where(*predicates)`, and the `FindQuery` methods
+  `Entity.where(*predicates)`, and the `ObjectQuery` methods
   `include(*relationship_paths)`, `order_by(*sort_keys)`, `limit(count)`,
   `narrow(*subtypes)`, `as_of(*, valid_time=..., tx_time=...)`,
   `history(dimension)`, and
   `as_of_range(*, valid_time=(start, end), tx_time=(start, end))`. There is no
-  Find Query `.where(...)` refinement in this slice and no `distinct`, offset,
+  Object Query `.where(...)` refinement in this slice and no `distinct`, offset,
   pagination, projection, count, aggregation, execution, or serialization
   method. The lower-level Predicate algebra likewise carries no distinct node:
-  a Find Query always returns complete root Entities, navigation lowers through
+  an Object Query always returns complete root Entities, navigation lowers through
   existence tests, and included graphs are fetched separately. Duplicate roots
   are therefore a lowering or identity-resolution defect, not a condition for
   callers to mask. Distinct projection semantics belong to the future
@@ -373,7 +371,7 @@ mutations, exceptions, or exports.
   raises `QueryDefinitionError(query-expression-invalid)`. This surface does not
   extend core `orderBy` beyond its Attribute Reference.
   `limit(count)` is
-  single-shot: calling it on a Find Query that already carries a limit raises
+  single-shot: calling it on an Object Query that already carries a limit raises
   `QueryDefinitionError(query-clause-invalid)` rather than replacing or
   tightening the original limit. Code that needs alternate limits derives each
   query from the same unbounded base. Its argument must be a positive built-in
@@ -383,7 +381,7 @@ mutations, exceptions, or exports.
   Sort Key. Without `order_by(...)`, both row order and which rows survive the
   cap are unspecified; deterministic selection requires caller-authored
   ordering.
-  A root `FindQuery.narrow(...)` establishes subtype scope for subsequently
+  The `ObjectQuery.narrow(...)` clause establishes subtype scope for subsequently
   added sort keys. A key is legal only when its Attribute is available on every
   concrete subtype in the query's effective set at the moment `order_by(...)`
   is called. Thus
@@ -395,9 +393,9 @@ mutations, exceptions, or exports.
   a subtype's Sort Key against an un-narrowed result is a type error in the
   editor. No model-aware rule restates it, and none could — clause order does
   not reach the wire, so ordering before narrowing and narrowing before ordering
-  lower to one canonical operation that no validator can accept in one spelling
+  build one canonical query that no validator can accept in one spelling
   and refuse in the other.
-  A first include hop may be authored through any descendant of the Find Query
+  A first include hop may be authored through any descendant of the Object Query
   target, whether that Entity declares the relationship or inherits it; the
   Entity it is authored through is the path's conditional source set. Legality
   is measured against the query's **effective position** — the target's own
@@ -413,7 +411,7 @@ mutations, exceptions, or exports.
   and loads `doghouse` only on Dogs and `ball_of_yarn` only on Cats, while
   `Pet.where(Pet.all).include(WildBoar.owner)` raises: the query's position is
   `{Dog, Cat}` and the sibling `WildBoar` lies outside it.
-  A root `FindQuery.narrow(...)` constrains the **result**, not which sources
+  The `ObjectQuery.narrow(...)` clause constrains the **result**, not which sources
   are legal. It narrows the queried objects a path can start from, so a source
   disjoint from it admits none of them and populates the view nowhere — the
   same observation as a source no result row happens to match, never an error.
@@ -428,14 +426,14 @@ mutations, exceptions, or exports.
   `Dog.owner` retains relationship identity `Animal.owner` while carrying Dog
   as its source guard and loads `owner` only on Dog-family roots;
   `Animal.owner` remains broad. `Dog.doghouse` follows the same rule regardless
-  of the relationship's declaring type. Canonical Deep Fetch `paths` are closed
+  of the relationship's declaring type. Canonical Include Paths are closed
   objects with a required nonempty `segments` list and an optional
-  path-root `narrow: {to}`. The latter reuses the shared Subtype Selection
-  contract without an operand: it narrows the path's initial Entity
-  position, not the Find Query result. Each relationship segment retains its
-  existing optional target `narrow: {to}`. A path is therefore an optional
-  root-position Narrow followed by alternating relationship segments and
-  target-position Narrows; each target position becomes the next segment's
+  `appliesTo`. The latter reuses the shared Subtype Selection
+  contract: it guards the path's initial Entity
+  position, not the Object Query result. Each relationship segment retains its
+  existing optional target `narrowTo`. A path is therefore an optional
+  source guard followed by alternating relationship segments and
+  target-position selections; each target position becomes the next segment's
   source. This expresses multi-level inheritance traversal without per-hop
   source metadata.
   Existing hop-target narrowing remains valid and distinct:
@@ -466,7 +464,7 @@ mutations, exceptions, or exports.
   raises `TypeError`. A dynamically expanded argument sequence is no different,
   because expansion precedes binding — `Entity.where(*predicates)` over an empty
   `predicates` binds no first argument and raises the same `TypeError`, never
-  reaching a Find Query. No `QueryDefinitionError` code answers an empty
+  reaching an Object Query. No `QueryDefinitionError` code answers an empty
   `where(...)`.
   `Entity.all` is the
   non-callable, target-bound Predicate spelling an explicitly
@@ -475,7 +473,7 @@ mutations, exceptions, or exports.
   argument. Combining it with another Predicate, whether variadically or
   through Boolean operators, raises
   `QueryDefinitionError(query-expression-invalid)` rather than silently
-  simplifying redundant input. There is no `Entity.all()` Find Query
+  simplifying redundant input. There is no `Entity.all()` Object Query
   constructor; `Entity.where(...)` remains the sole query constructor.
   `AllPredicate[E]`'s parameter is the **only** place an unfiltered query
   written at another position is refused: `Animal.where(Dog.all)` is a static
@@ -495,27 +493,28 @@ mutations, exceptions, or exports.
   `QueryDefinitionError(query-clause-invalid)`. A supplied range must be an
   exact built-in two-item `tuple`; lists, tuple subclasses, arbitrary
   iterables, and coercion are rejected with the same error.
-  Independent clause invocation order never changes canonical lowering. The
-  fixed inner-to-outer order is Predicate, optional root Narrow, optional
-  Temporal wrapper(s), optional Order By, optional Limit, then optional Deep
-  Fetch. Thus permuting otherwise valid `include`, `order_by`, `limit`, and
-  temporal calls produces the same canonical operation. This normalization
+  Independent clause invocation order never changes the canonical query, and
+  does so by construction rather than by normalization: every clause is a sibling
+  of every other, so there is no order for invocation to record. Thus permuting
+  otherwise valid `include`, `order_by`, `limit`, `narrow`, and
+  temporal calls produces the identical canonical query. That
   does not weaken the static scope rule: a subtype-specific sort
-  key still requires a preceding root narrow where `order_by(...)` is written.
+  key still requires a preceding result narrowing where `order_by(...)` is
+  written.
   `Entity.narrow(*subtypes, where=...)` remains the scoped Predicate
-  constructor; result-set `FindQuery.narrow(*subtypes)` accepts no `where=` and
-  is single-shot. Calling it on an already root-narrowed Find Query raises
+  constructor; result-set `ObjectQuery.narrow(*subtypes)` accepts no `where=` and
+  is single-shot. Calling it on an already narrowed Object Query raises
   `QueryDefinitionError(query-clause-invalid)`. Every Python narrowing form
   requires at least one subtype alternative. Repeating the same subtype identity
   raises `QueryDefinitionError(query-path-invalid)` during authoring. Whether
   distinct alternatives overlap after inheritance expansion is model-dependent
   and is rejected by model-aware preflight.
   Only `Database.find(query)` and `Transaction.find(query)` execute it.
-- **Finder/query entry point.** A free-standing, side-effect-free Find Query is
+- **Finder/query entry point.** A free-standing, side-effect-free Object Query is
   built from classmethods on the Entity Class and executed by the Parallax
   Handle. Nonempty variadic `where(*predicates)` conjoins its arguments (the
   natural big-AND of filter criteria), while `where(Entity.all)` is the
-  explicit unfiltered spelling. A Find Query has no further `.where()` method.
+  explicit unfiltered spelling. An Object Query has no further `.where()` method.
 
   ```python
   op = Order.where(
@@ -525,18 +524,19 @@ mutations, exceptions, or exports.
   snapshot = db.find(op)
   ```
 
-  Canonical `m-predicate` serialization of that Find Query:
+  Canonical `m-object-query` serialization of that Object Query:
 
   ```yaml
-  targetEntity: Order
-  operation:
-    and:
-      operands:
-        - eq: { attr: Order.orderId, value: 42 }
-        - exists:
-            rel: Order.items
-            op:
-              in: { attr: OrderItem.sku, values: [A, B] }
+  objectQuery:
+    target: Order
+    predicate:
+      and:
+        operands:
+          - eq: { attr: Order.orderId, value: 42 }
+          - exists:
+              rel: Order.items
+              op:
+                in: { attr: OrderItem.sku, values: [A, B] }
   ```
 
   Relationship predicate paths always carry an explicit cardinality-neutral
@@ -673,7 +673,7 @@ mutations, exceptions, or exports.
   )
   ```
 
-- **Deep-fetch/include spelling.** Chained attribute paths on the Find Query:
+- **Deep-fetch/include spelling.** Chained attribute paths on the Object Query:
   `Order.where(...).include(Order.items.statuses, Order.tags)`. One path
   grammar shared with predicates; longer paths imply their intermediates
   (glossary Relationship Path). The first hop is statically typed via descriptor
@@ -681,15 +681,15 @@ mutations, exceptions, or exports.
   target and the member's spelling, because authoring reaches no model, and
   every hop's legality — an undeclared or renamed relationship, a value-object
   segment, an illegal hop narrow — is validated against the connected model at
-  execution preflight, never at the database. An access class equal to the Find Query target authors
-  a broad path root. An access class naming a descendant authors the path-root
-  `narrow: {to}` and is legal whenever it resolves to a nonempty subset
-  of the query's effective position; a root `FindQuery.narrow(...)` constrains
+  execution preflight, never at the database. An access class equal to the Object Query target authors
+  a broad path root. An access class naming a descendant authors the path's
+  `appliesTo` guard and is legal whenever it resolves to a nonempty subset
+  of the query's effective position; the `ObjectQuery.narrow(...)` clause constrains
   the result rather than the legal sources, so it neither grants nor withholds
   that legality. The canonical Relationship Identity remains the
   declaration identity, so inherited `Dog.owner` is relationship
   `Animal.owner` guarded to Dog-family roots. Each relationship segment may
-  independently retain its existing target `narrow: {to}`, and that narrowed
+  independently retain its existing target `narrowTo`, and that narrowed
   target is the source position of the next segment. Every later segment
   resolves relative to that immediately preceding target position—after any
   target narrowing—never relative to the path root, the previous relationship's
@@ -778,24 +778,29 @@ mutations, exceptions, or exports.
   receiver class grants Python predicate scope while the wire retains only the
   selection. A selection escaping the target is refused at execution preflight
   as `OperationRejectedError(narrow-outside-relationship-target)`. The
-  Find Query clause
-  `Animal.where(...).narrow(Dog, ...)` is the whole-query form: it wraps
-  the Find Query's conjoined predicate as the single top-level `narrow` node's
-  operand (`Entity.all` ⇒ `all`) and is single-shot like `as_of`. It is a
-  **pure result-set narrowing** that grants no attribute scope to the
-  already-built `where` arguments, and it grants none **statically**: each
+  Object Query clause
+  `Animal.where(...).narrow(Dog, ...)` is the whole-query form: it fills the
+  query's own `narrowTo` clause and is single-shot like `as_of`. It is a
+  **pure result-set narrowing**, and the same narrowing is stated by passing
+  `Entity.narrow(...)` to `where(...)` as the WHOLE filter — a narrowing that is
+  the entire selection narrows the result, so it fills `narrowTo` and its own
+  scoped predicate becomes the query's predicate. Statically, each `where`
   argument is measured against the position the query is at where the call is
-  written, and a later clause never retroactively legalizes it, so
+  written and a later clause never retroactively legalizes it, so
   `Animal.where(Dog.bark_volume > 3).narrow(Dog)` is a static error at the
   `where` and the statically valid spelling is
-  `Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))`. Like the sort
+  `Animal.where(Animal.narrow(Dog, where=Dog.bark_volume > 3))`, which narrows
+  before the predicate is measured. Like the sort
   key's own clause-order rule above, **this one is stated statically and only
   statically**: the clause and the constructor converge on the identical
-  canonical node — `narrow([Dog], greaterThan(Dog.barkVolume, 3))` — so
+  canonical query — `narrowTo [Dog]` over the predicate
+  `greaterThan(Dog.barkVolume, 3)` — so
   neither spelling can drift, and no model-aware rule can accept one and refuse
-  the other. On an include path, `.narrow(*subtypes)` on a hop
+  the other. A narrowing reached through a Boolean combinator qualifies one term
+  of the selection and stays in the predicate. On an include path,
+  `.narrow(*subtypes)` on a hop
   (`Owner.pets.narrow(Dog)`, continuable to deeper hops) serializes to the
-  path segment's `narrow: { to: [...] }` and requests a distinct **narrowed
+  path segment's `narrowTo` and requests a distinct **narrowed
   view** (§3). Narrowing is single-shot per path segment:
   `Owner.pets.narrow(Cat, Dog).narrow(ServiceDog)` raises
   `QueryDefinitionError(query-path-invalid)` rather than intersecting or
@@ -811,7 +816,7 @@ mutations, exceptions, or exports.
   threaded-position rule. Which concrete subtypes a class resolves to is a
   per-model fact, so the threading is the connected model's to do.
 - **What a narrowing signature does not judge.** `Entity.narrow(*subtypes,
-  where=...)` and `FindQuery.narrow(*subtypes)` solve their parameter from the
+  where=...)` and `ObjectQuery.narrow(*subtypes)` solve their parameter from the
   named classes and spend it on what the narrowing produces: the first measures
   the scoped `where=` against them, and the second moves the result parameter to
   their union. The overload set that moves it is fixed at one, two, and three
@@ -837,22 +842,23 @@ mutations, exceptions, or exports.
   `history` takes its dimension as the module-level `VALID_TIME` / `TX_TIME`
   constants — `Final` singleton values exported from `parallax.core` in the
   `LATEST` sentinel's pattern; a string dimension argument is rejected at
-  Find Query construction.
+  Object Query construction.
   Timestamps are timezone-aware `datetime` values, normalized to UTC,
-  microsecond precision; naive datetimes are rejected at Find Query
+  microsecond precision; naive datetimes are rejected at Object Query
   construction. Every `as_of_range(...)` window is an exact built-in
   two-item `tuple` of finite such instants with `start < end`; lists, tuple
   subclasses, arbitrary iterables, coercion, and `LATEST` endpoints raise
   `QueryDefinitionError(query-clause-invalid)`. An omitted Transaction-Time
-  selection defaults to **latest** at the authoring lowering boundary; the
-  module-level `LATEST` sentinel spells the same pin explicitly and lowers to
-  the identical canonical wrapper and predicate. An omitted Valid-Time
+  selection defaults to **latest** where the canonical query is read; the
+  module-level `LATEST` sentinel spells the same pin explicitly and builds
+  the identical canonical selection. An omitted Valid-Time
   selection on a Bitemporal target raises
-  `QueryDefinitionError(query-clause-invalid)` during lowering because Latest
+  `QueryDefinitionError(query-clause-invalid)` there because Latest
   would make a substantive claim about the business timeline rather than merely
   selecting current database knowledge. Canonical serialization is
-  deterministic: every declared dimension serializes exactly one selection
-  wrapper, and Valid Time is outermost around Transaction Time. Latest always
+  deterministic: the Temporal Selection clause is a map keyed by dimension, so it
+  carries exactly one selection per declared dimension in canonical dimension
+  order. Latest always
   uses the canonical value and never `now`. There is no Now variant: a finite
   current-clock datetime is an ordinary finite coordinate and lowers to
   containment rather than Latest's `end = infinity`. `as_of()`
@@ -1537,9 +1543,9 @@ whose execution is explicitly deferred by this implementation. Its initial
 entry is `snapshot-history-includes`. It is one package-owned module constant
 shared by every Database in the installed implementation; no constructor
 argument, environment setting, provider, adapter, or application hook can add
-or remove entries. After privately lowering a Find Query,
-Snapshot classifies the canonical operation for its own execution features and
-compares those tags with the deferral set after target resolution and operation
+or remove entries. After reading a query's canonical value,
+Snapshot classifies it for its own execution features and
+compares those tags with the deferral set after target resolution and query
 validation and before SQL generation, Database Port access, or connection
 acquisition. An
 intersection raises exported `DeferredFeatureError(RuntimeError)` with stable code
@@ -1551,27 +1557,30 @@ active Conformance Slice but not implemented is a defect and cannot be made
 permissible by listing it here. This set belongs neither to the connected
 provider, `_ConnectedModel`, `Dialect`, nor a leased `DbPort`.
 
-Target resolution always precedes this classification. A Find Query whose
+Target resolution always precedes this classification. An Object Query whose
 target the connected model does not declare raises
 `QueryTargetError(query-target-not-in-model)` and exposes no deferral result
-even when its lowered operation would match one or more Deferred Execution
+even when its clauses would match one or more Deferred Execution
 Features; neither path reaches SQL, a Database Port, or connection
 acquisition.
 
 One private Snapshot seam centralizes the complete read preflight:
-`preflight_find(query, *, model) -> LoweredFindQuery`. It resolves the query's
-target in the connected model, validates the lowered canonical Predicate from
+`preflight(query: ObjectQueryNode, *, model, form) -> None`. It resolves the
+query's target in the connected model, validates the canonical Object Query from
 that resolved root, classifies it against `_DEFERRED_EXECUTION_FEATURES`, and
-returns the same local lowering when every step succeeds — in that order, which
-is the contract rather than an implementation detail. It performs no SQL, Database
+last refuses a row-form request that names Include Paths — in that order, which
+is the contract rather than an implementation detail. `form` is the one fact a
+query does not carry, because graph versus rows is a property of the call. It
+performs no SQL, Database
 Port access, connection acquisition, materialization, or transaction work.
-`Database.find`, `Transaction.find`, and the later Session read boundary call
+`Database.find`, `Transaction.find`, both neutral entry points, the conformance
+compile lane, and the later Session read boundary call
 this seam rather than reimplementing any step.
 
 Deferred Execution Features apply only to modeled read execution through
 `Database.find`, `Transaction.find`, and the later Session read boundary.
 Predicate-selected write methods never invoke this classifier. They first
-require a mutation-compatible Find Query, so a read-shaped query matching a
+require a mutation-compatible Object Query, so a read-shaped query matching a
 deferral still raises `QueryDefinitionError(query-not-mutation-compatible)`
 before Unit of Work mutation or I/O.
 
@@ -1870,7 +1879,7 @@ or descriptor authoring form and performs no audit stamping.
   strict-Pyright-clean class-level expressions via the annotation aliases.
 - **Drift prevention without codegen.** The API Conformance Suite's
   descriptor-equality guard (idiomatic class exports ≡ corpus descriptor) and
-  the operation no-drift guard (idiomatic Find Query serialization ≡ corpus
+  the operation no-drift guard (idiomatic Object Query serialization ≡ corpus
   operation) are the drift gates; both run in CI.
 - **Derivable typed artifacts.** None are generated. The spec deliberately
   promises no generated surface; everything typed is derived at runtime from
@@ -2221,7 +2230,7 @@ or descriptor authoring form and performs no audit stamping.
   membership. Factories then run in allocation order; the first factory
   exception propagates unchanged and stops later factories. State attachment
   and root publication occur last.
-- **Whole-graph temporal pinning.** The Find Query's per-dimension temporal
+- **Whole-graph temporal pinning.** The Object Query's per-dimension temporal
   selections pin the whole graph; omitted Transaction Time is normalized to an
   explicit Latest selection, while Valid Time is always selected explicitly.
   The pin propagates per hop,
@@ -2252,20 +2261,19 @@ or descriptor authoring form and performs no audit stamping.
   read edge (the stale-web-edit recipe below). The
   `snapshot-history-includes` feature
   is **deferred, not invalid**: combining `.history()` with `.include()`
-  builds an ordinary valid Find Query with no Snapshot feature metadata. After
-  target resolution and operation validation, Snapshot recognizes the privately lowered
-  `DeepFetch(History(...))` or `DeepFetch(AsOfRange(...))` operation as matching
+  builds an ordinary valid Object Query with no Snapshot feature metadata. After
+  target resolution and query validation, Snapshot recognizes a query carrying
+  Includes beside a scanning Temporal Selection as matching
   its Deferred Execution Feature and raises
   `DeferredFeatureError(execution-feature-deferred)` before SQL generation
-  or Database Port access. It never raises `QueryDefinitionError`. Whether an
-  operation **scans an axis** is one `m-temporal-read` question with one
+  or Database Port access. It never raises `QueryDefinitionError`. Whether a
+  query **scans an axis** is one `m-temporal-read` question with one
   answer, asked here and again by the executor dispatch that sends a scan to
-  the milestone-set read. The question is asked of the whole operation, not of
-  its outermost node: a result-shaping directive lowering between the deep
-  fetch and the temporal wrapper — `.history().order_by(...).limit(...)
-  .include(...)` — is peeled, and a bitemporal nest of one wrapper per
-  dimension is walked through, so one scanned dimension answers *scan* however
-  the other dimension is pinned. Neither a directive nor an enclosing pin can
+  the milestone-set read. It is a field read over the Temporal Selection clause:
+  every other clause is that clause's sibling, so no ordering, cap, or Include
+  can stand between the two facts, and one scanned dimension answers *scan*
+  however the other dimension is pinned. Neither another clause nor a pin on the
+  other dimension can
   hide the deferred Feature from this seam or divert a scan away from the
   milestone-set executor.
 - **Closed-world relationships.** An included to-one is the related node or
@@ -2698,7 +2706,7 @@ or descriptor authoring form and performs no audit stamping.
   WriteObservation | None = None)` is the neutral WRITE ingress —
   it validates and buffers one write instruction for the same Write Planner the
   typed verbs feed, and reaches no read executor. A `NeutralReadRequest`
-  states the two facts lowering a Find Query would have produced — the resolved
+  states the two facts lowering an Object Query would have produced — the resolved
   target and the canonical operation — and selects the row or graph form;
   everything after it is the typed path's own: the same read gate, the same
   canonicalization and compilation, the same Database Call, the same deep-fetch
@@ -3129,7 +3137,7 @@ or descriptor authoring form and performs no audit stamping.
   assignment-bearing verbs (`update_where` / `update_until_where`), each
   resolved row that survives the per-row no-op elimination below; for the
   delete and terminate verbs, every resolved row (`1 + N` round trips, a
-  mid-batch zero-row gate aborting like any conflict). A Find Query becomes
+  mid-batch zero-row gate aborting like any conflict). An Object Query becomes
   a write target only in its **mutation-compatible** form — one carrying
   nothing but its target and its predicate (the `where(...)` arguments);
   `order_by`, `limit`, `include`, `as_of`, `history` / `as_of_range`, and
@@ -3256,7 +3264,7 @@ or descriptor authoring form and performs no audit stamping.
   each field may be assigned at most once (a duplicate raises), and every
   assigned attribute or value-object member must be declared by the exact
   target entity — set-based writes already reject inheritance-family targets
-  (below), so ancestry resolution never arises. The target Find Query must be
+  (below), so ancestry resolution never arises. The target Object Query must be
   **mutation-compatible** (the single definition above), and one that is not
   raises `QueryDefinitionError(query-not-mutation-compatible)` before Unit of
   Work buffering, SQL, or adapter access;
@@ -3346,7 +3354,7 @@ or descriptor authoring form and performs no audit stamping.
 - **The serialized write instruction has its own ingress family.** Beside the
   typed developer surface, `parallax.core.unit_work` accepts a canonical
   `m-unit-work` write-instruction document — the form the conformance adapter
-  hands it, and the form a Find Query never becomes. A document that is not a
+  hands it, and the form an Object Query never becomes. A document that is not a
   well-formed canonical instruction raises `WriteInstructionError(ValueError)`:
   an unknown mutation, a missing or ill-typed `entity`, `rows`, or Valid-Time
   bound, an unexpected key, a forbidden framework-owned row key, an `entity`
@@ -3484,7 +3492,7 @@ remains observable rather than making Python its own oracle.
 - **Coverage partition and no-drift guards.** An assertion computes
   `exercised ∪ reasoned-skipped == active slice` from corpus data at runtime,
   failing on stale case IDs or empty skip reasons. Four no-drift guards
-  close the loop. Two run per example: the idiomatic Find Query's
+  close the loop. Two run per example: the idiomatic Object Query's
   serialization equals the corpus operation, and idiomatic class descriptors
   equal corpus descriptors. A third, scoped to every registered write story,
   drives it against a recording fake port and asserts its wire DML equals its
@@ -3553,10 +3561,20 @@ Metamodel and the class index from `parallax.core.entity._model` (`model_of`,
 never needs, so exporting the names to spell the reach publicly would widen the
 developer surface to serve one lifecycle package. None of the three modules
 takes a scope row of its own: they belong to `parallax.core.entity`, whose edge
-every importer above already declares, and `parallax.core.entity._query`,
-`._expressions`, and `._graph_input` carry rows below because each needs a
-NARROWER grant than its parent — not because they are the only children an
-importer may reach.
+every importer above already declares, and `parallax.core.entity._expressions`
+and `._graph_input` carry rows below because each needs a NARROWER grant than its
+parent — not because they are the only children an importer may reach.
+
+`parallax.core.object_query._fluent` is the one child scope declared for the
+opposite reason: it needs a WIDER grant than its parent. The typed Object Query is
+generic over Entity Classes, so it reaches the Entity frontend for the descriptor
+values a clause call is written with, while `m-object-query` itself must stay
+reachable by `m-temporal-read`, `m-deep-fetch`, `m-sql`, and the read-preflight
+seam — none of which may reach that frontend. The parent package's own interface
+therefore does not import this module: a consumer of the canonical query value
+never pulls the typed surface in, and one that wants the typed surface names this
+module. That is what keeps the widening contained rather than leaking through the
+package.
 
 A behavioral module maps to the scope that needs its WHOLE edge set, which for
 `m-snapshot-read` is not the materialization package: only the read result names
@@ -3589,7 +3607,9 @@ legalizes a forbidden edge.
 | `m-document-codec` | `parallax.core.document_codec` | `parallax.core.document_codec` | `m-core`, `m-metamodel` | generated forbidden contracts |
 | `m-relationship` | `parallax.core.relationship` | `parallax.core.relationship` | `m-metamodel`, `m-model-formation` | generated forbidden contracts |
 | `m-predicate` | `parallax.core.predicate` | `parallax.core.predicate` | `m-metamodel`, `m-inheritance` | generated forbidden contracts |
-| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-predicate`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | generated forbidden contracts |
+| `m-object-query` | `parallax.core.object_query` | `parallax.core.object_query` | `m-predicate`, `m-metamodel`, `m-inheritance` | generated forbidden contracts |
+| Typed Object Query surface (support, child of `parallax.core.object_query`) | `parallax.core.object_query._fluent` | `parallax.core.object_query._fluent` | `m-core`, `m-metamodel`, `m-predicate`, `parallax.core.entity` | generated forbidden contracts |
+| `m-sql` | `parallax.core.sql_gen` | `parallax.core.sql_gen` | `m-predicate`, `m-object-query`, `m-dialect`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-relationship`, `m-document-codec` | generated forbidden contracts |
 | `m-dialect` | `parallax.core.dialect` (incl. driver-free `dialect.postgres`) | `parallax.core.dialect` | `m-core` | generated forbidden contracts |
 | `m-db-port` | `parallax.core.db_port` (abstract) | `parallax.core.db_port` | `m-core` | generated forbidden contracts |
 | `m-db-error` | `parallax.core.db_error` | `parallax.core.db_error` | `m-db-port`, `m-dialect` | generated forbidden contracts |
@@ -3598,28 +3618,27 @@ legalizes a forbidden edge.
 | `m-auto-retry` | `parallax.core.auto_retry` | `parallax.core.auto_retry` | `m-unit-work`, `m-db-error` | generated forbidden contracts |
 | `m-execution-log` | `parallax.core.execution_log` | `parallax.core.execution_log` | `m-sql`, `m-db-port`, `m-db-error`, `m-unit-work`, `m-auto-retry` | generated forbidden contracts |
 | `m-opt-lock` | `parallax.core.opt_lock` | `parallax.core.opt_lock` | `m-unit-work`, `m-temporal-read`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
-| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-predicate`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
+| `m-temporal-read` | `parallax.core.temporal_read` | `parallax.core.temporal_read` | `m-predicate`, `m-object-query`, `m-metamodel`, `m-model-formation`, `m-inheritance` | generated forbidden contracts |
 | `m-txtime-write` | `parallax.core.txtime_write` | `parallax.core.txtime_write` | `m-temporal-read`, `m-unit-work` | generated forbidden contracts |
 | `m-bitemp-write` | `parallax.core.bitemp_write` | `parallax.core.bitemp_write` | `m-txtime-write` | generated forbidden contracts |
 | `m-batch-write` | `parallax.core.batch_write` | `parallax.core.batch_write` | `m-unit-work` | generated forbidden contracts |
 | `m-navigate` | `parallax.core.navigate` | `parallax.core.navigate` | `m-predicate`, `m-unit-work`, `m-temporal-read`, `m-inheritance`, `m-relationship` | generated forbidden contracts |
-| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship` | generated forbidden contracts |
+| `m-deep-fetch` | `parallax.core.deep_fetch` | `parallax.core.deep_fetch` | `m-navigate`, `m-relationship`, `m-object-query`, `m-inheritance` | generated forbidden contracts |
 | `m-snapshot-read` | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read`, `m-execution-log` | generated forbidden contracts + cross-package contract |
 | Snapshot handle and composition surface (support) | `parallax.snapshot.handle` | `parallax.snapshot.handle` | `parallax.snapshot.materialize`, `parallax.snapshot._read_result`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-core`, `m-metamodel`, `m-predicate`, `m-inheritance`, `m-storage-layout`, `m-temporal-read`, `m-deep-fetch`, `m-navigate`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-read-lock`, `m-auto-retry`, `m-execution-log`, `m-opt-lock`, `m-batch-write`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts + cross-package contract |
 | Snapshot node inspection (support) | `parallax.snapshot._inspection` | `parallax.snapshot._inspection` | `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot graph materialization (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._materializer` | `parallax.snapshot.handle._materializer` | `parallax.snapshot.materialize`, `parallax.snapshot._inspection`, `parallax.core.entity`, `m-metamodel`, `m-inheritance`, `m-temporal-read` | generated forbidden contracts |
 | Snapshot row-to-graph conversion and Graph Input carriers (support) | `parallax.snapshot.materialize` | `parallax.snapshot.materialize` | `parallax.core.entity._graph_input`, `m-deep-fetch`, `m-document-codec`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-temporal-read` | generated forbidden contracts + cross-package contract |
 | Snapshot read-result row-to-graph edge (support edge of the snapshot read-result scope) | `parallax.snapshot._read_result` | `parallax.snapshot._read_result` | `parallax.snapshot.materialize` | generated forbidden contracts |
-| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `parallax.core.entity._query`, `m-metamodel`, `m-predicate` | generated forbidden contracts |
+| Snapshot read preflight (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._preflight` | `parallax.snapshot.handle._preflight` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Snapshot handle refusals (support, child of `parallax.snapshot.handle`) | `parallax.snapshot.handle._errors` | `parallax.snapshot.handle._errors` | (none) | generated forbidden contracts |
 | Snapshot handle write lowering (support, child group of `parallax.snapshot.handle`) | `parallax.snapshot.handle._family`, `._write_types`, `._keyed_sql`, `._write_lowering`, `._step_lowering` | those five scopes, sharing one grant row | `m-core`, `m-metamodel`, `m-inheritance`, `m-storage-layout`, `m-document-codec`, `m-temporal-read`, `m-dialect`, `m-db-port`, `m-sql`, `m-unit-work`, `m-opt-lock`, `m-txtime-write`, `m-bitemp-write` | generated forbidden contracts |
 | `m-case-format` | `parallax.conformance.case_format` (dev-only) | `parallax.conformance.case_format` | `m-core` | generated forbidden contracts (dev tree) |
 | `m-conformance-adapter` | `parallax.conformance.cli` (dev-only) | `parallax.conformance.cli` | `m-case-format`, plus any claimed behavioral or support scope it harnesses — the core conformance-family exception | generated forbidden contracts (dev tree) |
 | `m-api-conformance` | `languages/python/tests/api` (dev-only) | `tests.api` | `m-case-format` (harnesses the public surface) | pytest collection boundary |
 | Descriptor Hub orchestration (support, child of `parallax.descriptor`) | `parallax.descriptor._hub` | `parallax.descriptor._hub` | `parallax.core.entity` (private Hub-construction seam only) | generated forbidden contracts + cross-package contract |
-| Entity and Find Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
-| Find Query surface (support, child of `parallax.core.entity`) | `parallax.core.entity._query` | `parallax.core.entity._query` | `m-core`, `m-metamodel`, `m-predicate`, `m-temporal-read` | generated forbidden contracts |
-| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-predicate` | generated forbidden contracts |
+| Entity and Object Query frontend (support) | `parallax.core.entity` | `parallax.core.entity` | `m-core`, `m-metamodel`, `m-inheritance`, `m-relationship`, `m-predicate`, `m-object-query`, `m-temporal-read`, `m-document-codec`, `parallax.core._formation_profile` | generated forbidden contracts |
+| Query expression values (support, child of `parallax.core.entity`) | `parallax.core.entity._expressions` | `parallax.core.entity._expressions` | `m-metamodel`, `m-predicate`, `m-object-query` | generated forbidden contracts |
 | Entity graph-input carriers (support, child of `parallax.core.entity`) | `parallax.core.entity._graph_input` | `parallax.core.entity._graph_input` | `m-metamodel` | generated forbidden contracts |
 | Concrete Postgres adapter (support) | `parallax.postgres.adapter` | `parallax.postgres` | `m-core`, `m-db-port`, `m-db-error`, `m-dialect`, psycopg | generated forbidden contracts + cross-package contract |
 | Composition root (support) | application/test code calling `parallax.snapshot.connect` | (application-owned) | `parallax.snapshot`, `parallax.postgres` | only the root imports a concrete adapter |
@@ -3663,15 +3682,17 @@ parallax.core.entity --> parallax.core.metamodel
 parallax.core.entity --> parallax.core.inheritance
 parallax.core.entity --> parallax.core.relationship
 parallax.core.entity --> parallax.core.predicate
+parallax.core.entity --> parallax.core.object_query
 parallax.core.entity --> parallax.core.temporal_read
 parallax.core.entity --> parallax.core.document_codec
 parallax.core.entity --> parallax.core._formation_profile
-parallax.core.entity._query --> parallax.core.base
-parallax.core.entity._query --> parallax.core.metamodel
-parallax.core.entity._query --> parallax.core.predicate
-parallax.core.entity._query --> parallax.core.temporal_read
 parallax.core.entity._expressions --> parallax.core.metamodel
 parallax.core.entity._expressions --> parallax.core.predicate
+parallax.core.entity._expressions --> parallax.core.object_query
+parallax.core.object_query._fluent --> parallax.core.base
+parallax.core.object_query._fluent --> parallax.core.metamodel
+parallax.core.object_query._fluent --> parallax.core.predicate
+parallax.core.object_query._fluent --> parallax.core.entity
 parallax.core.entity._graph_input --> parallax.core.metamodel
 parallax.snapshot._inspection --> parallax.core.entity
 parallax.snapshot._inspection --> parallax.core.metamodel
@@ -3715,9 +3736,9 @@ parallax.snapshot.handle._materializer --> parallax.core.entity
 parallax.snapshot.handle._materializer --> parallax.core.metamodel
 parallax.snapshot.handle._materializer --> parallax.core.inheritance
 parallax.snapshot.handle._materializer --> parallax.core.temporal_read
-parallax.snapshot.handle._preflight --> parallax.core.entity._query
 parallax.snapshot.handle._preflight --> parallax.core.metamodel
 parallax.snapshot.handle._preflight --> parallax.core.predicate
+parallax.snapshot.handle._preflight --> parallax.core.object_query
 parallax.snapshot.handle._errors --> (none)
 parallax.snapshot.handle._family --> parallax.core.base
 parallax.snapshot.handle._family --> parallax.core.metamodel
@@ -3830,8 +3851,9 @@ parallax.postgres --> parallax.core.dialect
   points, and the residue is an enumerated set rather than a habit: the
   `parallax.core.entity` seams the adapter composes descriptor-backed models
   through — `_model.model_of` in both its corpus-model loader and its
-  second-frontend fixture, and `_query.lower_find_query` in the latter. All
-  three are **rebutted rather than exempted**: `model_of` and `lower_find_query`
+  second-frontend fixture, and
+  `parallax.core.object_query._fluent.object_query_node` in the latter. All
+  three are **rebutted rather than exempted**: `model_of` and `object_query_node`
   are already accepted private seams of production's own composition root and
   read preflight, and `model_of` exists precisely so a separately distributed
   frontend can read the accepted model out of a Domain Model (*Canonical
@@ -3967,7 +3989,7 @@ hatchling.
 
 | Artifact/package | Production or development-only | Included source scopes | External runtime dependencies | Depends on artifacts | Public exports/entry points |
 |---|---|---|---|---|---|
-| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Find Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Find Query authoring vocabulary — `FindQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
+| `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
 | `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |

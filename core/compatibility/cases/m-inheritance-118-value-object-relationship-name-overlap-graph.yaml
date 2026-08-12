@@ -3,20 +3,20 @@
 # occurrence name `profile` while the independently deep-fetched `details` edge attaches
 # under its relationship name; the two values must coexist after two round trips.
 model: models/materialization-key-compatibility.yaml
-tags: [m-inheritance, m-deep-fetch, m-value-object, m-relationship, m-sql, m-api-conformance, graph, instance-form, materialization-key, positive, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-object-query, m-deep-fetch, m-value-object, m-relationship, m-sql, m-api-conformance, graph, instance-form, materialization-key, positive, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "the details child IN-list bind is gathered from the root query result"
 when:
-  targetEntity: compatibility.overlap.ProfileOwner
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: compatibility.overlap.ProfileOwner.details }] }
+  objectQuery:
+    target: compatibility.overlap.ProfileOwner
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: compatibility.overlap.ProfileOwner.details
 then:
   statements:
     - sql:

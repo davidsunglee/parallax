@@ -24,6 +24,7 @@ import pytest
 from _document_layout_support import columns_model, document_model, entity
 
 from _support.sql import compile_read
+from parallax.core import object_query as oq
 from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityMetadata
@@ -264,7 +265,7 @@ def test_an_ordering_key_over_a_document_member_lowers_through_the_same_seams() 
         DOCUMENT,
         POSTGRES,
         entity(DOCUMENT, "Person"),
-        order_by=(oa.OrderKey(attr="Person.score", direction="desc", nulls="last"),),
+        order_by=(oq.OrderKey(attr="Person.score", direction="desc", nulls="last"),),
     )
     assert compiled.statement.sql.endswith(
         "order by cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last"

@@ -12,9 +12,10 @@ tags: [m-op-list, lazy, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Order
-      find:
-        all: {}
+    - objectQuery:
+        target: parallax.compatibility.Order
+        predicate:
+          all: {}
       roundTrips: 0
       note: construction -> an operation-backed list, no DB work
     - action: access

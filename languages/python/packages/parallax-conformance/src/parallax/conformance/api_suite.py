@@ -994,7 +994,7 @@ _ORDERS_GRAPH_SIBLING_REASON: Final[str] = (
 # THEMSELVES: both are compile-exercised and run-exercised
 # (`sweep_goldens._SNAPSHOT_READ_MILESTONE_SET_READS`), materializing and
 # grading their own `then.graphs`. Neither case combines a scan with an include
-# — neither operation carries a `deepFetch` at all — so the deferred
+# — neither query carries Includes at all — so the deferred
 # `snapshot-history-includes` Feature says nothing about them.
 _MILESTONE_SET_GRAPH_SIBLING_REASON: Final[str] = (
     "a representative sibling of the executed milestone-set graph proof "

@@ -2,16 +2,16 @@
 # selection. It lowers to the current-row predicate (`out_z = infinity`) that an
 # omitted Transaction-Time selection normalizes to before canonical execution.
 model: models/balance.yaml
-tags: [m-temporal-read, m-sql, as-of, audit-only, explicit, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, as-of, audit-only, explicit, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Balance
-  operation:
-    asOf:
-      operand:
-        all: {}
-      dimension: transaction-time
-      coordinate: latest
+  objectQuery:
+    target: parallax.compatibility.Balance
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: latest
 then:
   statements:
     - sql:

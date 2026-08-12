@@ -1,6 +1,6 @@
 # Deep fetch paths narrow entity positions
 
-Deep Fetch paths may start from a subtype without changing the Find Query's
+Deep Fetch paths may start from a subtype without changing the Object Query's
 result set. Canonically, each path is a closed object with an optional
 root-position `narrow: {entity, to}` followed by relationship segments whose
 existing `narrow: {to}` values constrain their target positions. This

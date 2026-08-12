@@ -46,11 +46,8 @@ from parallax.core.metamodel import (
     Metamodel,
     ValueObjectMetadata,
 )
-from parallax.core.predicate import (
-    EntityQuery,
-    OrderKey,
-    PredicateNode,
-)
+from parallax.core.object_query import EntityQuery, OrderKey
+from parallax.core.predicate import PredicateNode
 from parallax.core.sql_gen._context import Ctx as _Ctx
 from parallax.core.sql_gen._context import SqlGenError
 from parallax.core.sql_gen._context import table_layout as _table_layout
@@ -806,7 +803,7 @@ def _compile_tpcs_single(
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
     no union, no `familyVariant` — attribute resolution still widens across the
-    family (the RESOLUTION SCOPE's entity stays the read's own `targetEntity`,
+    family (the RESOLUTION SCOPE's entity stays the read's own queried `target`,
     e.g. an abstract position narrowed down to this one concrete, so
     :meth:`_EntityScope._searchable_attributes` searches the whole family rather
     than only that entity's own declared attributes), matching the

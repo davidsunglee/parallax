@@ -26,9 +26,10 @@ model: models/document-layout.yaml
 tags: [m-storage-layout, m-sql, m-document-codec, m-descriptor, read, json, document-layout, instance-form, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Traveler
-  operation:
-    all: {}
+  objectQuery:
+    target: parallax.compatibility.Traveler
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

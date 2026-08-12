@@ -23,7 +23,7 @@
 # A SECOND, VO-bearing child entity `Location` and the to-many
 # `Customer.locations` relationship let the corpus witness the deep-fetch ×
 # value-object composition — a read
-# `deepFetch(all(Customer), paths=[{ segments: [{ rel: Customer.locations }] }])`
+# an Object Query over Customer whose `includes` names `[{ rel: Customer.locations }]`
 # whose root level projects Customer's instance-form list (`id, name, address`)
 # and whose child level projects Location's own instance-form list (`id,
 # customer_id, label, address`: `customer_id` is a Domain slot and `address` the

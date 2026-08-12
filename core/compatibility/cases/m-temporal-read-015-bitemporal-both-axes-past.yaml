@@ -13,20 +13,18 @@
 # Valid Time NOW (case m-temporal-read-014). The four binds read Valid-Time-first (outer
 # pin), then Transaction Time.
 model: models/position.yaml
-tags: [m-temporal-read, m-sql, bitemporal, temporal, as-of, both-axes, past, audit, slice-snapshot-1, slice-managed-1]
+tags: [m-temporal-read, m-object-query, m-sql, bitemporal, temporal, as-of, both-axes, past, audit, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Position
-  operation:
-    asOf:
-      operand:
-        asOf:
-          operand:
-            all: {}
-          dimension: transaction-time
-          coordinate: "2024-02-01T00:00:00+00:00"
-      dimension: valid-time
-      coordinate: "2024-03-01T00:00:00+00:00"
+  objectQuery:
+    target: parallax.compatibility.Position
+    predicate:
+      all: {}
+    temporal:
+      transaction-time:
+        asOf: '2024-02-01T00:00:00+00:00'
+      valid-time:
+        asOf: '2024-03-01T00:00:00+00:00'
 then:
   statements:
     - sql:

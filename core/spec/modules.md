@@ -103,7 +103,8 @@ is both `active` and `cases`-covered has at least one tagged fixture.
 | `m-value-object` | Embedded value objects (structured-document column) | active | cases |
 | `m-document-codec` | Portable document encoding, decoding, and patching | active | cases |
 | `m-relationship` | Relationship formation and symmetric relationship facet | active | cases |
-| `m-predicate` | Predicate algebra (transitionally including query-wide wrappers) | active | cases |
+| `m-predicate` | Predicate algebra (the recursive selection grammar) | active | cases |
+| `m-object-query` | Object Query (the flat query value for full objects) | active | cases |
 | `m-agg` | Aggregation algebra (group-by / having / functions) | deferred | contract |
 | `m-sql` | SQL generation & equivalence contract | active | cases |
 | `m-sql-agg` | SQL lowering for aggregation | deferred | contract |
@@ -171,8 +172,12 @@ m-relationship --> m-metamodel
 m-relationship --> m-model-formation
 m-predicate --> m-metamodel
 m-predicate --> m-inheritance
+m-object-query --> m-predicate
+m-object-query --> m-metamodel
+m-object-query --> m-inheritance
 m-agg --> m-predicate
 m-sql --> m-predicate
+m-sql --> m-object-query
 m-sql --> m-dialect
 m-sql --> m-metamodel
 m-sql --> m-inheritance
@@ -212,6 +217,8 @@ m-navigate --> m-inheritance
 m-navigate --> m-relationship
 m-deep-fetch --> m-navigate
 m-deep-fetch --> m-relationship
+m-deep-fetch --> m-object-query
+m-deep-fetch --> m-inheritance
 m-op-list --> m-deep-fetch
 m-snapshot-read --> m-deep-fetch
 m-snapshot-read --> m-document-codec
@@ -221,6 +228,7 @@ m-snapshot-read --> m-relationship
 m-snapshot-read --> m-temporal-read
 m-snapshot-read --> m-execution-log
 m-temporal-read --> m-predicate
+m-temporal-read --> m-object-query
 m-temporal-read --> m-metamodel
 m-temporal-read --> m-model-formation
 m-temporal-read --> m-inheritance
@@ -254,10 +262,24 @@ construction it may reference any behavioral module it harnesses.
 
 ### Notable directions (and why they may surprise)
 
-- **`m-predicate --> m-metamodel`.** Resolved operation nodes carry canonical
+- **`m-predicate --> m-metamodel`.** Resolved predicate nodes carry canonical
   model Identities, not descriptor records or authoring strings. Relationship
   execution remains owned by `m-navigate`, which consumes the compiled
   `m-relationship` facet; Predicate does not rebuild that facet.
+- **`m-object-query --> m-predicate`, `--> m-metamodel`, `--> m-inheritance`.** A
+  query CARRIES a predicate as one clause; it never extends the selection grammar.
+  Its own clauses name canonical model Identities (the queried target, a Sort Key's
+  attribute, an Include Path's relationships) and resolve their shared Subtype
+  Selection through the effective-concrete-set rules `m-inheritance` owns.
+- **`m-temporal-read --> m-object-query`, `m-deep-fetch --> m-object-query`,
+  `m-sql --> m-object-query`.** The three modules that REALIZE a clause depend on
+  the query that states it, never the reverse: **a clause's value belongs to the
+  query; the behavior realizing it belongs to its own module.** Temporal Selection
+  is a query clause while injection, `Pin`/`Edge`, and per-hop propagation are
+  `m-temporal-read`'s; Includes is a query clause while trie and level planning
+  are `m-deep-fetch`'s; ordering, the row cap, and the normalized per-Entity query
+  value are query-owned while their SQL is `m-sql`'s. Reversing any of these would
+  make the canonical wire contract depend on an execution module.
 - **`m-predicate --> m-inheritance`.** The `narrow` node constrains a
   polymorphic entity position to a subset of its subtypes, and its validity rule
   (the resolved `to` list must be a non-empty subset of the position's **effective
@@ -330,9 +352,11 @@ construction it may reference any behavioral module it harnesses.
   table-per-hierarchy, grouped-`OR` per-branch `EXISTS` under
   table-per-concrete-subtype), and a relationship-scope `narrow` must stay within
   it. Navigation therefore references the inheritance family model directly.
-  `m-deep-fetch` (which owns narrowed relationship views and their derived keys)
-  reaches `m-inheritance` **transitively** through `m-navigate`, so it needs no
-  separate `m-deep-fetch --> m-inheritance` declaration.
+- **`m-deep-fetch --> m-inheritance`.** Deep fetch owns narrowed relationship
+  views and their derived keys, so it resolves an Include Segment's Subtype
+  Selection to its effective concrete set and orders that set canonically —
+  directly, rather than leaving the reach to the transitive closure through
+  `m-navigate`.
 - **`m-deep-fetch --> m-relationship`.** Deep fetch resolves and lowers the
   relationship facet it fetches through (join shape, symmetric reverse) directly,
   rather than leaving that reach to the transitive closure through `m-navigate`.

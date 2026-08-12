@@ -95,35 +95,27 @@ _Avoid_: raw binding, sealed model pair, runtime registry, capability bag
 
 ### Queries And Results
 
-**Find Query**:
-A free-standing, side-effect-free, immutable opaque query value, `FindQuery[E,
+**Object Query**:
+A free-standing, side-effect-free, immutable opaque query value, `ObjectQuery[E,
 S]` — parameterized by the Entity it queries and the Entity its result returns,
 which `narrow` and only `narrow` moves. It retains no model. Only
-`Entity.where(...)` constructs one; its chainable clauses return new values, and
-first-party lowering converts it to one canonical operation for execution by a
-handle or transaction.
-_Avoid_: find statement, statement, query builder, queryset, cursor, lazy result
+`Entity.where(...)` constructs one; its chainable clauses return new values and
+fill sibling clauses of the one canonical query value it holds throughout, which
+a first-party seam reads for execution by a handle or transaction.
+_Avoid_: find query, find statement, statement, query builder, queryset, cursor
 
 **Predicate**:
-`Predicate[E]`, the immutable typed filter expression a Find Query is composed
-from, contravariant in the position it addresses so an ancestor's member is
-addressable from a descendant position and never the reverse. It composes with
+`Predicate[E]`, the immutable typed filter expression one clause of an Object
+Query is composed from, contravariant in the position it addresses so an
+ancestor's member is addressable from a descendant position and never the
+reverse. It composes with
 `&`, `|`, `~`, and native parentheses; it names no model and executes nothing.
 _Avoid_: where object, filter object, query, criteria
 
-**Lowered Find Query**:
-The immutable first-party collaboration value produced from one valid Find
-Query after its independently authored clauses are placed in canonical
-operation order. It carries exactly a structured target Entity Identity and one
-canonical Predicate; it is neither SQL nor a public query representation, and
-only its Predicate is canonical — its target is a position the connected model
-resolves at execution.
-_Avoid_: canonical Find Query, query plan, SQL AST, serialized query
-
 **Match-All Predicate**:
-The non-callable `Entity.all` value spelling an explicitly unfiltered Find
+The non-callable `Entity.all` value spelling an explicitly unfiltered Object
 Query as `Entity.where(Entity.all)`. It is bound to that Entity Class's target,
-lowers to the canonical All operation, and is valid only as the
+serializes as the canonical All node, and is valid only as the
 sole `where(...)` argument. Empty `where()` and an `all()` query constructor do
 not exist.
 _Avoid_: empty where, implicit find-all, all query method, global ALL
@@ -131,7 +123,7 @@ _Avoid_: empty where, implicit find-all, all query method, global ALL
 **Query Definition Error**:
 The public Python Entity-frontend error family for constructing, composing, or
 refining an expression, relationship path, predicate, assignment, sort key, or
-Find Query the frontend itself refuses. Its rules are the class-local ones,
+Object Query the frontend itself refuses. Its rules are the class-local ones,
 because authoring reaches no model; a rule needing a whole model is stated once
 at execution preflight and surfaces there as its owner module's own error,
 untranslated.
@@ -139,7 +131,7 @@ _Avoid_: statement error, query-scope error, leaked validator error, translation
 
 **Query Target Error**:
 The Snapshot execution-preflight error raised when the connected model declares
-no Entity for a Find Query's target. It retains and exposes neither the query,
+no Entity for an Object Query's target. It retains and exposes neither the query,
 the model, nor the Database, and it is not an ownership relation: one Entity
 Class participates in any number of Domain Models and one Domain Model serves
 any number of Databases.
@@ -149,7 +141,7 @@ _Avoid_: query ownership error, hub mismatch, structural model mismatch, provide
 A query rule the frontend's type parameters cannot state, left to the
 model-aware validator at execution preflight. The named cases are narrowing
 relatedness — a type parameter's bound may not itself be generic, so neither
-`Entity.narrow(...)` nor `FindQuery.narrow(...)` states that the classes it
+`Entity.narrow(...)` nor `ObjectQuery.narrow(...)` states that the classes it
 names are subtypes of the position it narrows, and `narrow-outside-position`
 alone refuses one that is not — and a relationship hop past the first, whose
 member the composed segment can name but not resolve. A hop narrow is the
@@ -157,7 +149,7 @@ exception that keeps its static half, because its bound rides on the receiver.
 _Avoid_: unchecked query, dynamic fallback, silent acceptance
 
 **Deferred Feature Error**:
-The Snapshot execution-preflight error raised when an ordinary valid Find Query
+The Snapshot execution-preflight error raised when an ordinary valid Object Query
 matches one of the installed implementation's Deferred Execution Features. It
 names every matching canonical Feature in sorted order and is neither a Query
 Definition Error nor a database-provider failure.
@@ -170,10 +162,9 @@ and Read Trace. No method touches the database.
 _Avoid_: result set, lazy list, query result proxy, domain snapshot
 
 **Neutral Read Request**:
-The immutable advanced read input that pairs an exact target Entity Identity
-with one canonical Predicate and selects either row or graph materialization,
-without requiring an Entity Class.
-_Avoid_: Find Query, descriptor document, SQL request, neutral query plan
+The immutable advanced read input carrying one canonical Object Query and
+selecting either row or graph materialization, without requiring an Entity Class.
+_Avoid_: Object Query, descriptor document, SQL request, neutral query plan
 
 **Neutral Read Result**:
 The immutable advanced read result pairing one Neutral Rows, Neutral Graph, or
@@ -237,7 +228,7 @@ _Avoid_: now, current timestamp, infinity literal
 **Temporal Dimension Constant**:
 One of the module-level values `VALID_TIME` and `TX_TIME` spelling a Temporal
 Dimension wherever the developer surface takes a dimension argument, such as
-`history(...)`; a string dimension spelling is rejected during Find Query
+`history(...)`; a string dimension spelling is rejected during Object Query
 construction.
 _Avoid_: dimension string literal, axis name argument
 
@@ -261,7 +252,7 @@ _Avoid_: filtered relationship, cast collection, subtype list
 An immutable sequence of relationship views used for includes
 and Snapshot inspection, `RelationshipPath[E, R]` — covariant in both its source
 and its target. Its authored root position normally validates against
-the Find Query target; a preceding root narrow may additionally authorize a
+the Object Query target; a preceding result narrowing may additionally authorize a
 subtype-rooted first hop. The path retains that authored source Entity Identity
 separately from the canonical Relationship Identity, so an inherited
 `Dog.owner` relationship may still guard loading to Dog-family roots while

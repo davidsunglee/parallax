@@ -27,12 +27,15 @@ model: models/shared-local-name.yaml
 tags: [m-predicate, exists, relationship, to-one, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Register
-  operation:
-    exists:
-      rel: parallax.compatibility.Register.variant
-      op:
-        eq: { attr: archive.SharedVariant.archiveLabel, value: A-1 }
+  objectQuery:
+    target: parallax.compatibility.Register
+    predicate:
+      exists:
+        rel: parallax.compatibility.Register.variant
+        op:
+          eq:
+            attr: archive.SharedVariant.archiveLabel
+            value: A-1
 then:
   statements:
     - sql:

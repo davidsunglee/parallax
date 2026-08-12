@@ -32,9 +32,12 @@ when:
         - sql:
             postgres: update wallet set owner = ?, balance = ? where balance < ?
           binds: [Updated, 150.00, 200.00]
-    - targetEntity: parallax.compatibility.Wallet
-      find:
-        eq: { attr: parallax.compatibility.Wallet.owner, value: Updated }
+    - objectQuery:
+        target: parallax.compatibility.Wallet
+        predicate:
+          eq:
+            attr: parallax.compatibility.Wallet.owner
+            value: Updated
       roundTrips: 1
       statements:
         - sql:

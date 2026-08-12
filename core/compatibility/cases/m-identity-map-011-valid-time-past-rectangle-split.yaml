@@ -33,19 +33,17 @@ when:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
           binds: [2, A, 100.00, "2024-01-01T00:00:00+00:00", infinity, "2024-01-01T00:00:00+00:00", infinity]
-    - targetEntity: parallax.compatibility.Position
-      find:
-        asOf:
-          operand:
-            asOf:
-              operand:
-                eq:
-                  attr: parallax.compatibility.Position.id
-                  value: 2
-              dimension: transaction-time
-              coordinate: latest
-          dimension: valid-time
-          coordinate: "2024-03-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: '2024-03-01T00:00:00+00:00'
       roundTrips: 1
       note: pin id 2 at the finite Valid-Time instant 2024-03-01 (Transaction Time latest) — a WRITABLE Valid-Time-past view (100)
       statements:
@@ -77,19 +75,17 @@ when:
         - sql:
             postgres: insert into position(pos_id, acct_num, val, from_z, thru_z, in_z, out_z) values (?, ?, ?, ?, ?, ?, ?)
           binds: [2, A, 100.00, "2024-09-01T00:00:00+00:00", infinity, "2024-02-15T00:00:00+00:00", infinity]
-    - targetEntity: parallax.compatibility.Position
-      find:
-        asOf:
-          operand:
-            asOf:
-              operand:
-                eq:
-                  attr: parallax.compatibility.Position.id
-                  value: 2
-              dimension: transaction-time
-              coordinate: latest
-          dimension: valid-time
-          coordinate: "2024-04-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 2
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: '2024-04-01T00:00:00+00:00'
       roundTrips: 1
       note: re-read inside the corrected window (Valid Time 2024-04-01, Transaction Time latest) -> the MIDDLE's new value 200
       statements:

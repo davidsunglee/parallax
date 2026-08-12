@@ -23,9 +23,10 @@ tags: [m-op-list, m-value-object, lazy, materialization, json, slice-managed-1]
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Depot
-      find:
-        all: {}
+    - objectQuery:
+        target: parallax.compatibility.Depot
+        predicate:
+          all: {}
       roundTrips: 0
       note: construction -> an operation-backed list, no DB work
     - action: access

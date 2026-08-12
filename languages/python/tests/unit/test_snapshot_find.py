@@ -27,11 +27,12 @@ from parallax.core import LATEST, TX_TIME
 from parallax.core.base import INFINITY
 from parallax.core.db_port import DbPort, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import FindQuery, GraphConstructionError
-from parallax.core.entity._query import LoweredFindQuery, lower_find_query
+from parallax.core.entity import GraphConstructionError
 from parallax.core.execution_log import DatabaseCall, ReadCompleted, ReadTrace
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
-from parallax.core.predicate import deserialize
+from parallax.core.object_query import ObjectQueryNode
+from parallax.core.object_query import deserialize as deserialize_query
+from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin, TemporalReadError
 from parallax.snapshot import (
@@ -40,7 +41,7 @@ from parallax.snapshot import (
     SnapshotMaterializationError,
     handle,
 )
-from parallax.snapshot.handle import _preflight
+from parallax.snapshot.handle import _database
 from parallax.snapshot.materialize import (
     SnapshotDecodingError,
     SnapshotGraphInput,
@@ -123,15 +124,14 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
             [{"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}],
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                "paths": [{"segments": [{"rel": "Order.items"}]}],
-            }
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [{"segments": [{"rel": "Order.items"}]}],
         }
     )
-    result = handle.find(op, ORDERS, POSTGRES, "Order", port)
+    result = handle.find(query, ORDERS, POSTGRES, port)
     assert result.execution.round_trips == 2
     items = _refs(_view(result.graph, _root(result), "items"))
     assert [_value(result.graph, ref, "OrderItem", "id") for ref in items] == [11]
@@ -139,15 +139,14 @@ def test_find_issues_one_statement_per_non_empty_level() -> None:
 
 def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
     port = QueuePort([[]])
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {"eq": {"attr": "Order.id", "value": 999}},
-                "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
-            }
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 999}},
+            "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
         }
     )
-    result = handle.find(op, ORDERS, POSTGRES, "Order", port)
+    result = handle.find(query, ORDERS, POSTGRES, port)
     assert result.execution.round_trips == 1
     assert result.graph.roots == ()
     assert len(port.executed) == 1
@@ -170,15 +169,14 @@ def test_find_empty_intermediate_level_suppresses_only_the_grandchild_statement(
             [],  # the items level executes and returns zero rows
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {"eq": {"attr": "Order.id", "value": 4}},
-                "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
-            }
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 4}},
+            "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.statuses"}]}],
         }
     )
-    result = handle.find(op, ORDERS, POSTGRES, "Order", port)
+    result = handle.find(query, ORDERS, POSTGRES, port)
     assert result.execution.round_trips == 2
     assert _view(result.graph, _root(result), "items") == ()
 
@@ -200,15 +198,14 @@ def test_find_back_reference_level_issues_no_additional_statement() -> None:
             [{"id": 11, "order_id": 1, "sku": "x", "quantity": 1, "shipped_on": None}],
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
-            }
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         }
     )
-    result = handle.find(op, ORDERS, POSTGRES, "Order", port)
+    result = handle.find(query, ORDERS, POSTGRES, port)
     assert result.execution.round_trips == 2  # the back-reference costs nothing
     (item,) = _refs(_view(result.graph, _root(result), "items"))
     back = _view(result.graph, result.graph.nodes[item.node_index], "order")
@@ -245,15 +242,14 @@ def test_find_carries_a_declared_null_placement_into_child_level_sql(
         }
     ]
     port = QueuePort([root, []])
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                "paths": [{"segments": [{"rel": f"Order.{relationship}"}]}],
-            }
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [{"segments": [{"rel": f"Order.{relationship}"}]}],
         }
     )
-    handle.find(op, ORDERS, POSTGRES, "Order", port)
+    handle.find(query, ORDERS, POSTGRES, port)
     child_sql, _binds = port.executed[1]
     assert child_sql.endswith(f" order by {term}")
 
@@ -276,15 +272,14 @@ def test_find_materializes_family_variant_on_child_level_rows() -> None:
             ],
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {"eq": {"attr": "Person.id", "value": 10}},
-                "paths": [{"segments": [{"rel": "Person.animals"}]}],
-            }
+            "target": "Person",
+            "predicate": {"eq": {"attr": "Person.id", "value": 10}},
+            "includes": [{"segments": [{"rel": "Person.animals"}]}],
         }
     )
-    result = handle.find(op, ANIMAL, POSTGRES, "Person", port)
+    result = handle.find(query, ANIMAL, POSTGRES, port)
     (animal,) = _refs(_view(result.graph, _root(result), "animals"))
     node = result.graph.nodes[animal.node_index]
     assert node.concrete_entity == EntityIdentity("parallax.compatibility", "Dog")
@@ -298,7 +293,7 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
     # single-table read (`m-sql`'s `_compile_tpcs_single`) — the row carries no
     # `familyVariant` at all. `CompiledRead.narrow_to` is what lets the converted
     # row still name the row's own concrete identity, rather than the abstract
-    # queried `targetEntity`.
+    # queried `target`.
     port = QueuePort(
         [
             [
@@ -312,8 +307,10 @@ def test_find_threads_a_root_narrow_to_a_single_tpcs_concrete() -> None:
             ]
         ]
     )
-    op = deserialize({"narrow": {"to": ["Invoice"], "operand": {"all": {}}}})
-    result = handle.find(op, DOCUMENT, POSTGRES, "Document", port)
+    query = deserialize_query(
+        {"target": "Document", "predicate": {"all": {}}, "narrowTo": ["Invoice"]}
+    )
+    result = handle.find(query, DOCUMENT, POSTGRES, port)
     assert _root(result).concrete_entity == EntityIdentity("parallax.compatibility", "Invoice")
 
 
@@ -338,15 +335,14 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
             ]
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "history": {
-                "operand": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
-                "dimension": "transaction-time",
-            }
+            "target": "InvoiceLine",
+            "predicate": {"eq": {"attr": "InvoiceLine.id", "value": 1000}},
+            "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    result = handle.find_history(op, INVOICE, POSTGRES, "InvoiceLine", port)
+    result = handle.find_history(query, INVOICE, POSTGRES, port)
     assert result.execution.round_trips == 1
     assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
@@ -383,15 +379,14 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
             ]
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "history": {
-                "operand": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
-                "dimension": "transaction-time",
-            }
+            "target": "InvoiceLine",
+            "predicate": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
+            "temporal": {"transaction-time": {"history": {}}},
         }
     )
-    result = handle.find_history(op, INVOICE, POSTGRES, "InvoiceLine", port)
+    result = handle.find_history(query, INVOICE, POSTGRES, port)
     assert len(result.graphs) == 1
     graph = result.graphs[0]
     assert [_value(graph, ref, "InvoiceLine", "id") for ref in graph.roots] == [1000, 2000]
@@ -426,21 +421,14 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
             ]
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "asOf": {
-                "operand": {
-                    "history": {
-                        "operand": {"eq": {"attr": "DepositRate.id", "value": 1}},
-                        "dimension": "transaction-time",
-                    }
-                },
-                "dimension": "valid-time",
-                "coordinate": "latest",
-            }
+            "target": "DepositRate",
+            "predicate": {"eq": {"attr": "DepositRate.id", "value": 1}},
+            "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
         }
     )
-    result = handle.find_history(op, RATE, POSTGRES, "DepositRate", port)
+    result = handle.find_history(query, RATE, POSTGRES, port)
     assert [g.pin.tx_time for g in result.graphs] == [
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
@@ -456,31 +444,20 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
 def test_find_history_refuses_a_plan_carrying_deep_fetch_levels() -> None:
     policy = _MODELS["policy"]
     port = QueuePort([[]])
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {
-                    "asOf": {
-                        "operand": {
-                            "history": {
-                                "operand": {"all": {}},
-                                "dimension": "transaction-time",
-                            }
-                        },
-                        "dimension": "valid-time",
-                        "coordinate": "latest",
-                    }
-                },
-                "paths": [{"segments": [{"rel": "Policy.coverages"}]}],
-            }
+            "target": "Policy",
+            "predicate": {"all": {}},
+            "temporal": {"transaction-time": {"history": {}}, "valid-time": {"asOf": "latest"}},
+            "includes": [{"segments": [{"rel": "Policy.coverages"}]}],
         }
     )
     with pytest.raises(ValueError, match="no deep-fetch levels"):
-        handle.find_history(op, policy, POSTGRES, "Policy", port)
+        handle.find_history(query, policy, POSTGRES, port)
 
 
 # --------------------------------------------------------------------------- #
-# The shared read-preflight seam (`_preflight.preflight_find`)                 #
+# The shared read-preflight seam (`_preflight.preflight`)                      #
 # --------------------------------------------------------------------------- #
 def test_db_find_refuses_a_target_the_connected_model_does_not_declare() -> None:
     # `Person` is a perfectly declared Entity — of another model. What makes the
@@ -523,10 +500,10 @@ def test_a_pinned_axis_with_includes_is_not_deferred() -> None:
     assert len(port.executed) == 1
 
 
-def test_result_shaping_wrappers_do_not_hide_a_deferred_feature() -> None:
-    # Ordering and a limit lower BETWEEN the deep fetch and the temporal
-    # wrapper, so recognizing the combination means peeling them: a deferral is
-    # a property of the read, never of how its rows are shaped afterwards.
+def test_result_shaping_clauses_do_not_hide_a_deferred_feature() -> None:
+    # Ordering and a cap are siblings of the two clauses the deferral is read
+    # off, so neither can stand between them: a deferral is a property of the
+    # read, never of how its rows are shaped afterwards.
     db = handle.Database.connect(NoIoPort(), POLICY_MODEL)
     query = (
         Policy.where(Policy.all)
@@ -574,26 +551,27 @@ def test_a_refusal_naming_no_feature_cannot_be_constructed() -> None:
         DeferredFeatureError(frozenset())
 
 
-def test_two_executions_of_one_query_lower_it_twice(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Lowering is memoized nowhere: a Find Query caches no lowering and the seam
-    # holds no global memo, so each execution builds its own value and keeps it
-    # locally. The two are equal — lowering is deterministic — and distinct, so
-    # no execution is ever handed a lowering another one still holds.
-    lowerings: list[LoweredFindQuery] = []
-    original = lower_find_query
+def test_every_execution_reads_the_querys_own_canonical_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The canonical node is the query's own immutable value rather than
+    # something an execution derives and caches: every execution reads it, and
+    # two executions of one query see the same frozen value. Nothing memoizes a
+    # DERIVED value, because there is none to derive.
+    nodes: list[ObjectQueryNode] = []
+    original = object_query_node
 
-    def recording(query: FindQuery[Any, Any]) -> LoweredFindQuery:
-        lowered = original(query)
-        lowerings.append(lowered)
-        return lowered
+    def recording(query: ObjectQuery[Any, Any]) -> ObjectQueryNode:
+        node = original(query)
+        nodes.append(node)
+        return node
 
-    monkeypatch.setattr(_preflight, "lower_find_query", recording)
+    monkeypatch.setattr(_database, "object_query_node", recording)
     query = mm.Person.where(mm.Person.id == 1)
     db = handle.Database.connect(QueuePort([[], []]), PERSON)
     db.find(query)
     db.find(query)
-    first, second = lowerings
-    assert first is not second
+    first, second = nodes
     assert first == second
 
 
@@ -723,15 +701,14 @@ def test_a_level_whose_gathered_key_set_is_empty_attaches_the_null_result() -> N
             ]
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {"eq": {"attr": "Animal.id", "value": 1}},
-                "paths": [{"segments": [{"rel": "Animal.owner"}]}],
-            }
+            "target": "Animal",
+            "predicate": {"eq": {"attr": "Animal.id", "value": 1}},
+            "includes": [{"segments": [{"rel": "Animal.owner"}]}],
         }
     )
-    result = handle.find(op, ANIMAL, POSTGRES, "Animal", port)
+    result = handle.find(query, ANIMAL, POSTGRES, port)
     assert result.execution.round_trips == 1
     assert _view(result.graph, _root(result), "owner") is None
 
@@ -755,15 +732,14 @@ def test_a_back_reference_over_a_null_correlation_key_attaches_none() -> None:
             [{"id": 11, "order_id": None, "sku": "x", "quantity": 1, "shipped_on": None}],
         ]
     )
-    op = deserialize(
+    query = deserialize_query(
         {
-            "deepFetch": {
-                "operand": {"eq": {"attr": "Order.id", "value": 1}},
-                "paths": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
-            }
+            "target": "Order",
+            "predicate": {"eq": {"attr": "Order.id", "value": 1}},
+            "includes": [{"segments": [{"rel": "Order.items"}, {"rel": "OrderItem.order"}]}],
         }
     )
-    result = handle.find(op, ORDERS, POSTGRES, "Order", port)
+    result = handle.find(query, ORDERS, POSTGRES, port)
     item = next(
         node
         for node in result.graph.nodes

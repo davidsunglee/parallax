@@ -9,11 +9,14 @@ model: models/orders.yaml
 tags: [m-predicate, notIn, membership, "null", three-valued-logic, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    notIn:
-      attr: parallax.compatibility.Order.sku
-      values: [A-100, B-200]
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      notIn:
+        attr: parallax.compatibility.Order.sku
+        values:
+          - A-100
+          - B-200
 then:
   statements:
     - sql:

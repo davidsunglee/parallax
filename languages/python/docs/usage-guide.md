@@ -208,7 +208,7 @@ Corpus case: `m-inheritance-005`
 op = Invoice.where(Invoice.all)
 ```
 
-## The `Entity.narrow(...)` constructor, narrowed to one concrete subtype
+## A result narrowed to one concrete subtype, filtered by its own attribute
 
 Corpus case: `m-inheritance-012`
 

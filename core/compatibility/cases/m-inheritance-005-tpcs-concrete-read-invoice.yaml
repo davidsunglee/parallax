@@ -16,9 +16,10 @@ model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Invoice
-  operation:
-    all: {}
+  objectQuery:
+    target: parallax.compatibility.Invoice
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

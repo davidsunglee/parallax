@@ -1,17 +1,17 @@
-# An ORDER KEY resolves at the position a top-level `narrow` moved the ordered rows to,
-# under a deep fetch (m-predicate positional rule, m-inheritance, m-deep-fetch).
+# An ORDER KEY resolves at the position `narrowTo` moved the returned rows to, beside
+# Includes (m-object-query positional rule, m-inheritance, m-deep-fetch).
 #
 # The read is positioned at the abstract root `Animal` (effective concrete set
-# {Cat, Dog, WildBoar}). The deep fetch's root operand narrows that position to [Dog] and
-# orders the narrowed result by `Dog.barkVolume` — an attribute the CONCRETE SUBTYPE
-# declares, referenceable only because the narrow moved the position the ordered rows
-# occupy. Asked of the unnarrowed root the identical key is
-# `subtype-attribute-outside-narrow-scope`, so the affirmative half of that rule is what
-# this case pins: an implementation that asked an order key of the read's `targetEntity`
-# rather than of the ordered position would refuse this operation, yet satisfies every
-# case whose `orderBy` carries no narrow — and no other case carries both.
+# {Cat, Dog, WildBoar}). `narrowTo` narrows the RESULT to [Dog] and the ordering is by
+# `Dog.barkVolume` — an attribute the CONCRETE SUBTYPE declares, referenceable only
+# because the narrowing moved the position the returned rows occupy. Asked of the
+# unnarrowed root the identical key is `subtype-attribute-outside-narrow-scope`, so the
+# affirmative half of that rule is what this case pins: an implementation that asked an
+# order key of the query's own `target` rather than of the narrowed result would refuse
+# this query, yet satisfies every case whose `orderBy` carries no narrowing — and no
+# other case carries both.
 #
-# The narrow lowers to the single-concrete tag guard `t0.kind = ?` over the shared table
+# The narrowing lowers to the single-concrete tag guard `t0.kind = ?` over the shared table
 # and reduces the projection to Dog's own inherited chain, so no sibling branch column is
 # selected and the node carries no `indoor` / `tusk_length`. `desc` over the nullable key
 # renders Postgres's `nulls last` placement. `limit 1` makes the ordering observable twice
@@ -19,30 +19,26 @@
 # through the child level's own IN list, which gathers only Rex's owner id 10, where an
 # `asc` key would gather Bob's 11. `1 + L` = 2 statements.
 model: models/animal.yaml
-tags: [m-predicate, m-deep-fetch, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-object-query, m-deep-fetch, m-inheritance, m-sql, table-per-hierarchy, narrow, orderBy, limit, directive, deep-fetch, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child level - the owner hop binds its person-table IN-list from the owner id gathered from the ordered, narrowed, top-1 root query result, so the child emission depends on a query result"
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    deepFetch:
-      operand:
-        limit:
-          count: 1
-          operand:
-            orderBy:
-              keys:
-                - { attr: parallax.compatibility.Dog.barkVolume, direction: desc }
-              operand:
-                narrow:
-                  to: [parallax.compatibility.Dog]
-                  operand:
-                    all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Animal.owner }] }
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    narrowTo:
+      - parallax.compatibility.Dog
+    orderBy:
+      - attr: parallax.compatibility.Dog.barkVolume
+        direction: desc
+    limit: 1
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Animal.owner
 then:
   statements:
     - sql:

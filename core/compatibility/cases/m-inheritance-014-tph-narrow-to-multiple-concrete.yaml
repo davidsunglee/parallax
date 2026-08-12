@@ -1,6 +1,7 @@
-# Table-per-hierarchy narrow to MULTIPLE concrete subtypes (m-inheritance, m-predicate, m-sql).
+# Table-per-hierarchy narrow to MULTIPLE concrete subtypes (m-inheritance,
+# m-object-query, m-sql).
 #
-# targetEntity Animal narrowed to the explicit Subtype Selection [Cat, Dog] resolves to
+# The Animal target narrowed to the explicit Subtype Selection [Cat, Dog] resolves to
 # the same effective set {Cat, Dog} as narrowing to the abstract subtype Pet
 # (m-inheritance-013) — two authored spellings, one effective set — and lowers to the
 # same `t0.kind in (?, ?)` (binds [cat, dog], alphabetical order). The selection and
@@ -10,15 +11,16 @@
 #
 # Non-trivial (tag) case => referenceSql is the independent oracle.
 model: models/animal.yaml
-tags: [m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
+tags: [m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    narrow:
-      to: [parallax.compatibility.Cat, parallax.compatibility.Dog]
-      operand:
-        all: {}
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
+    narrowTo:
+      - parallax.compatibility.Cat
+      - parallax.compatibility.Dog
 then:
   statements:
     - sql:

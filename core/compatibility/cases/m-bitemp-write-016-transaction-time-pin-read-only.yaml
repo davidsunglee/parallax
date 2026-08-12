@@ -23,19 +23,17 @@ tags: [m-bitemp-write, m-temporal-read, bitemporal, temporal, as-of, read-only, 
 shape: scenario
 when:
   scenario:
-    - targetEntity: parallax.compatibility.Position
-      find:
-        asOf:
-          operand:
-            asOf:
-              operand:
-                eq:
-                  attr: parallax.compatibility.Position.id
-                  value: 1
-              dimension: transaction-time
-              coordinate: "2024-02-01T00:00:00+00:00"
-          dimension: valid-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Position
+        predicate:
+          eq:
+            attr: parallax.compatibility.Position.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: '2024-02-01T00:00:00+00:00'
+          valid-time:
+            asOf: latest
       roundTrips: 1
       note: pin id 1 at the finite Transaction-Time instant 2024-02-01 with Valid-Time Latest — a READ-ONLY Transaction-Time-past view (the superseded belief, 90.00)
       statements:

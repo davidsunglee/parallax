@@ -7,19 +7,17 @@
 # `then.statements` entry — the pagination-parity witness and the row-limit decision
 # point of the m-dialect seam.
 model: models/orders.yaml
-tags: [m-predicate, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
+tags: [m-predicate, m-object-query, orderBy, limit, directive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    limit:
-      count: 2
-      operand:
-        orderBy:
-          keys:
-            - { attr: parallax.compatibility.Order.qty, direction: desc }
-          operand:
-            all: {}
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.Order.qty
+        direction: desc
+    limit: 2
 then:
   statements:
     - sql:

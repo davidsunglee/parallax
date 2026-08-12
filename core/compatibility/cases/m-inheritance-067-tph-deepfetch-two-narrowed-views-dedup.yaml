@@ -9,21 +9,26 @@
 # populate independently. Each is a single-concrete view (no `familyVariant`); the
 # child levels project each concrete's own superset and inject `t0.kind = ?`.
 model: models/animal.yaml
-tags: [m-deep-fetch, m-inheritance, m-predicate, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
+tags: [m-deep-fetch, m-inheritance, m-predicate, m-object-query, m-sql, table-per-hierarchy, narrow, deep-fetch, slice-snapshot-1, slice-managed-1]
 shape: read
 compileEligibility:
   mode: run-only
   reason: query-result-dependent
   note: "deep-fetch child levels - each narrowed pets[Dog]/pets[Cat] view's shared animal-table IN-list binds are the distinct owner ids gathered from the root query result, so the child emissions depend on a query result"
 when:
-  targetEntity: parallax.compatibility.Person
-  operation:
-    deepFetch:
-      operand:
-        all: {}
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Cat] } }] }
-        - { segments: [{ rel: parallax.compatibility.Person.pets, narrow: { to: [parallax.compatibility.Dog] } }] }
+  objectQuery:
+    target: parallax.compatibility.Person
+    predicate:
+      all: {}
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Person.pets
+            narrowTo:
+              - parallax.compatibility.Cat
+      - segments:
+          - rel: parallax.compatibility.Person.pets
+            narrowTo:
+              - parallax.compatibility.Dog
 then:
   statements:
     - sql:

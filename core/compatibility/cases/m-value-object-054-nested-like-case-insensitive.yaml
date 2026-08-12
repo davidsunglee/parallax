@@ -19,9 +19,13 @@ model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, string, like, caseInsensitive, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedLike: { path: parallax.compatibility.Customer.address.city, value: OSLO, caseInsensitive: true }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedLike:
+        path: parallax.compatibility.Customer.address.city
+        value: OSLO
+        caseInsensitive: true
 then:
   statements:
     - sql:

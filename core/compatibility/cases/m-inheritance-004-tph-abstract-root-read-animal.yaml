@@ -13,9 +13,10 @@ model: models/animal.yaml
 tags: [m-inheritance, m-sql, table-per-hierarchy, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Animal
-  operation:
-    all: {}
+  objectQuery:
+    target: parallax.compatibility.Animal
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

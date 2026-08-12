@@ -2,16 +2,19 @@
 # keys, the child levels are elided: no Order.items or OrderItem.statuses SQL is
 # authored or executed, and roundTrips is 1.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, empty-root, relationship, slice-managed-1]
+tags: [m-deep-fetch, m-object-query, m-op-list, empty-root, relationship, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand:
-        eq: { attr: parallax.compatibility.Order.id, value: 999 }
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.items }, { rel: parallax.compatibility.OrderItem.statuses }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      eq:
+        attr: parallax.compatibility.Order.id
+        value: 999
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.items
+          - rel: parallax.compatibility.OrderItem.statuses
 then:
   statements:
     - sql:

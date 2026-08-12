@@ -63,9 +63,10 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Subscriber
-      find:
-        all: {}
+    - objectQuery:
+        target: parallax.compatibility.Subscriber
+        predicate:
+          all: {}
       roundTrips: 1
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM
       statements:
@@ -81,9 +82,10 @@ when:
             city: Rome
             geo:
               country: IT
-    - targetEntity: parallax.compatibility.Subscriber
-      find:
-        all: {}
+    - objectQuery:
+        target: parallax.compatibility.Subscriber
+        predicate:
+          all: {}
       roundTrips: 1
       note: the predicate-write resolving read is ROW-FORM and projects pk + version only — a Version Observation retains no predecessor row, so the address Document slot stays out
       statements:
@@ -106,9 +108,10 @@ when:
             postgres: delete from subscriber where id = ? and version = ?
             mariadb: delete from subscriber where id = ? and version = ?
           binds: [1, 1]
-    - targetEntity: parallax.compatibility.Subscriber
-      find:
-        all: {}
+    - objectQuery:
+        target: parallax.compatibility.Subscriber
+        predicate:
+          all: {}
       roundTrips: 1
       note: verify (INSTANCE-FORM, the same golden as step 0) — the gated delete removed the row, so the read returns nothing
       statements:

@@ -80,6 +80,7 @@ SNAPSHOT_CLAIM: Final[Claim] = Claim(
         "m-metamodel",
         "m-model-formation",
         "m-navigate",
+        "m-object-query",
         "m-opt-lock",
         "m-pk-gen",
         "m-predicate",

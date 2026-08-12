@@ -191,7 +191,7 @@ def _standalone_read_case(execution: dict[str, Any], round_trips: int = 1) -> di
         "model": "models/account.yaml",
         "tags": ["m-execution-log"],
         "shape": "read",
-        "when": {"targetEntity": "Account", "operation": {"all": {}}},
+        "when": {"objectQuery": {"target": "Account", "predicate": {"all": {}}}},
         "then": {
             "statements": [{"sql": {"postgres": "select t0.id from account t0"}, "binds": []}],
             "rows": [{"id": 9}],

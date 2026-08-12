@@ -11,9 +11,11 @@ model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, nested, json, absence-collapse, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Customer
-  operation:
-    nestedIsNotNull: { path: parallax.compatibility.Customer.address.city }
+  objectQuery:
+    target: parallax.compatibility.Customer
+    predicate:
+      nestedIsNotNull:
+        path: parallax.compatibility.Customer.address.city
 then:
   statements:
     - sql:

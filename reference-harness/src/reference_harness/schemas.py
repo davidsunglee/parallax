@@ -2,9 +2,11 @@
 
 ``compatibility-case.schema.json`` references the canonical write-instruction
 ``$defs`` (``write-instruction.schema.json``) across files rather than redefining
-them (m-unit-work / m-case-format), and the operation, write-instruction, and
-case schemas all reference the Entity-identity grammars
-(``identity.schema.json``) rather than each keeping a literal copy. Every
+them (m-unit-work / m-case-format), reaches every read site's Object Query
+through one ``object-query.schema.json`` reference, and that query in turn
+references the Predicate and Subtype Selection grammars; all of them reference
+the Entity-identity grammars (``identity.schema.json``) rather than each keeping
+a literal copy. Every
 validator built from a schema that
 carries such a cross-file ``$ref`` MUST resolve it through a
 :class:`referencing.Registry` keyed by each schema's ``$id`` — a bare
@@ -30,6 +32,7 @@ SCHEMA_FILES = (
     "subtype-selection.schema.json",
     "metamodel.schema.json",
     "predicate.schema.json",
+    "object-query.schema.json",
     "compatibility-case.schema.json",
     "conformance-adapter.schema.json",
     "write-instruction.schema.json",

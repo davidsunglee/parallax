@@ -44,17 +44,17 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Mooring
-      find:
-        asOf:
-          operand:
-            asOf:
-              operand:
-                eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
-              dimension: transaction-time
-              coordinate: latest
-          dimension: valid-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Mooring
+        predicate:
+          eq:
+            attr: parallax.compatibility.Mooring.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: latest
       roundTrips: 1
       note: the materializing read — `t0.payload` is projected for the observation, not for any member
       statements:
@@ -100,17 +100,17 @@ when:
             - "2026-02-15T00:00:00+00:00"
             - infinity
             - berthCode: NB-118
-    - targetEntity: parallax.compatibility.Mooring
-      find:
-        asOf:
-          operand:
-            asOf:
-              operand:
-                eq: { attr: parallax.compatibility.Mooring.id, value: 1 }
-              dimension: transaction-time
-              coordinate: latest
-          dimension: valid-time
-          coordinate: "2026-05-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Mooring
+        predicate:
+          eq:
+            attr: parallax.compatibility.Mooring.id
+            value: 1
+        temporal:
+          transaction-time:
+            asOf: latest
+          valid-time:
+            asOf: '2026-05-01T00:00:00+00:00'
       roundTrips: 1
       note: no rectangle covers the excised window, and this read projects the Structured Column too
       statements:

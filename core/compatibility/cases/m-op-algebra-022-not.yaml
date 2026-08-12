@@ -3,11 +3,14 @@ model: models/orders.yaml
 tags: [m-predicate, not, boolean, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    not:
-      operand:
-        eq: { attr: parallax.compatibility.Order.active, value: true }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      not:
+        operand:
+          eq:
+            attr: parallax.compatibility.Order.active
+            value: true
 then:
   statements:
     - sql:

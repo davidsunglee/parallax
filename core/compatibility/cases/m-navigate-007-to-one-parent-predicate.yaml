@@ -5,12 +5,15 @@ model: models/orders.yaml
 tags: [m-navigate, navigate, relationship, to-one, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.OrderItem
-  operation:
-    navigate:
-      rel: parallax.compatibility.OrderItem.order
-      op:
-        eq: { attr: parallax.compatibility.Order.name, value: Ada }
+  objectQuery:
+    target: parallax.compatibility.OrderItem
+    predicate:
+      navigate:
+        rel: parallax.compatibility.OrderItem.order
+        op:
+          eq:
+            attr: parallax.compatibility.Order.name
+            value: Ada
 then:
   statements:
     - sql:

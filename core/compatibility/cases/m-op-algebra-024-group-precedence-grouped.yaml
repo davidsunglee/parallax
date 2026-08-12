@@ -19,36 +19,59 @@ model: models/orders.yaml
 tags: [m-predicate, group, boolean, precedence, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    and:
-      operands:
-        - group:
-            operand:
-              or:
-                operands:
-                  - greaterThanEquals: { attr: parallax.compatibility.Order.qty, value: 25 }
-                  - lessThanEquals: { attr: parallax.compatibility.Order.qty, value: 5 }
-        - eq: { attr: parallax.compatibility.Order.active, value: true }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      and:
+        operands:
+          - group:
+              operand:
+                or:
+                  operands:
+                    - greaterThanEquals:
+                        attr: parallax.compatibility.Order.qty
+                        value: 25
+                    - lessThanEquals:
+                        attr: parallax.compatibility.Order.qty
+                        value: 5
+          - eq:
+              attr: parallax.compatibility.Order.active
+              value: true
   equivalentEncodings:
-    - and:
-        operands:
-          - group:
-              operand:
-                or:
-                  operands:
-                    - greaterThanEquals: { attr: parallax.compatibility.Order.qty, value: 25 }
-                    - lessThanEquals: { attr: parallax.compatibility.Order.qty, value: 5 }
-          - eq: { value: true, attr: parallax.compatibility.Order.active }
-    - and:
-        operands:
-          - group:
-              operand:
-                or:
-                  operands:
-                    - greaterThanEquals: { value: 25, attr: parallax.compatibility.Order.qty }
-                    - lessThanEquals: { value: 5, attr: parallax.compatibility.Order.qty }
-          - eq: { attr: parallax.compatibility.Order.active, value: true }
+    - target: parallax.compatibility.Order
+      predicate:
+        and:
+          operands:
+            - group:
+                operand:
+                  or:
+                    operands:
+                      - greaterThanEquals:
+                          attr: parallax.compatibility.Order.qty
+                          value: 25
+                      - lessThanEquals:
+                          attr: parallax.compatibility.Order.qty
+                          value: 5
+            - eq:
+                value: true
+                attr: parallax.compatibility.Order.active
+    - target: parallax.compatibility.Order
+      predicate:
+        and:
+          operands:
+            - group:
+                operand:
+                  or:
+                    operands:
+                      - greaterThanEquals:
+                          value: 25
+                          attr: parallax.compatibility.Order.qty
+                      - lessThanEquals:
+                          value: 5
+                          attr: parallax.compatibility.Order.qty
+            - eq:
+                attr: parallax.compatibility.Order.active
+                value: true
 then:
   statements:
     - sql:

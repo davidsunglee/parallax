@@ -10,18 +10,20 @@
 # oracle derives the expected order (non-null asc, then NULLs) from the declared
 # key and checks both dialects' returned rows obey it.
 model: models/orders.yaml
-tags: [m-deep-fetch, m-op-list, m-dialect, orderBy, ordering, nullable, relationship, slice-managed-1]
+tags: [m-deep-fetch, m-object-query, m-op-list, m-dialect, orderBy, ordering, nullable, relationship, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    deepFetch:
-      operand:
-        in:
-          attr: parallax.compatibility.Order.id
-          values: [1, 42]
-      paths:
-        - { segments: [{ rel: parallax.compatibility.Order.itemsByShipDate }] }
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      in:
+        attr: parallax.compatibility.Order.id
+        values:
+          - 1
+          - 42
+    includes:
+      - segments:
+          - rel: parallax.compatibility.Order.itemsByShipDate
 then:
   statements:
     - sql:

@@ -11,11 +11,12 @@ model: models/orders.yaml
 tags: [m-predicate, m-conformance-adapter, eq, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    eq:
-      attr: parallax.compatibility.Order.id
-      value: 42
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      eq:
+        attr: parallax.compatibility.Order.id
+        value: 42
 then:
   statements:
     - sql:

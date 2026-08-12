@@ -71,13 +71,15 @@ when:
   uow:
     concurrency: optimistic
   scenario:
-    - targetEntity: parallax.compatibility.Supplier
-      find:
-        asOf:
-          operand:
-            eq: { attr: parallax.compatibility.Supplier.name, value: Baltic Traders }
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Supplier
+        predicate:
+          eq:
+            attr: parallax.compatibility.Supplier.name
+            value: Baltic Traders
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM
       statements:
@@ -96,13 +98,15 @@ when:
             geo:
               country: LV
             phones: []
-    - targetEntity: parallax.compatibility.Supplier
-      find:
-        asOf:
-          operand:
-            eq: { attr: parallax.compatibility.Supplier.name, value: Nordic Foods }
-          dimension: transaction-time
-          coordinate: latest
+    - objectQuery:
+        target: parallax.compatibility.Supplier
+        predicate:
+          eq:
+            attr: parallax.compatibility.Supplier.name
+            value: Nordic Foods
+        temporal:
+          transaction-time:
+            asOf: latest
       roundTrips: 1
       note: the predicate-write resolving read is ROW-FORM (no instance constructed) and still projects the address Document slot — the Temporal Observation it records is a complete Predecessor Row
       statements:
@@ -137,13 +141,15 @@ when:
             postgres: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
             mariadb: update supplier set out_z = ? where sup_id = ? and out_z = ? and in_z = ?
           binds: ["2024-10-01T00:00:00+00:00", 1, infinity, "2024-06-01T00:00:00+00:00"]
-    - targetEntity: parallax.compatibility.Supplier
-      find:
-        asOf:
-          operand:
-            eq: { attr: parallax.compatibility.Supplier.name, value: Nordic Foods }
-          dimension: transaction-time
-          coordinate: "2024-08-01T00:00:00+00:00"
+    - objectQuery:
+        target: parallax.compatibility.Supplier
+        predicate:
+          eq:
+            attr: parallax.compatibility.Supplier.name
+            value: Nordic Foods
+        temporal:
+          transaction-time:
+            asOf: '2024-08-01T00:00:00+00:00'
       roundTrips: 1
       note: >-
         verify (INSTANCE-FORM managed find, same form as step 0, address Document slot present) —

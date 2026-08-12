@@ -26,9 +26,10 @@ model: models/document.yaml
 tags: [m-inheritance, m-sql, table-per-concrete-subtype, union-all, root, familyVariant, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Document
-  operation:
-    all: {}
+  objectQuery:
+    target: parallax.compatibility.Document
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

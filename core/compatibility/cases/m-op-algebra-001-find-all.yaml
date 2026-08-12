@@ -10,9 +10,10 @@ model: models/orders.yaml
 tags: [m-predicate, m-conformance-adapter, m-case-format, all, slice-snapshot-1, slice-managed-1]
 shape: read
 when:
-  targetEntity: parallax.compatibility.Order
-  operation:
-    all: {}
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      all: {}
 then:
   statements:
     - sql:

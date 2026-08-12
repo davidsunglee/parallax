@@ -63,11 +63,8 @@ def test_canonicalize_is_identity_without_any_navigation_node() -> None:
     assert canonicalize(op, ORDERS, ORDER) is op
 
 
-def test_canonicalize_is_identity_for_a_deep_fetch_root_with_no_navigation() -> None:
-    op = oa.DeepFetch(
-        operand=oa.All(),
-        paths=(oa.NavigationPath(segments=(oa.PathSegment(rel="Order.items"),)),),
-    )
+def test_canonicalize_is_identity_for_an_unfiltered_predicate() -> None:
+    op = oa.All()
     assert canonicalize(op, ORDERS, ORDER) is op
 
 
@@ -101,25 +98,6 @@ def test_walk_recurses_through_predicate_combinators_only() -> None:
         canonical = canonicalize(op, ORDERS, ORDER)
         assert canonical is not op
         assert type(canonical) is type(op), op
-
-
-def test_canonicalize_never_descends_through_query_wide_wrappers() -> None:
-    hop = oa.Exists(rel="Order.items")
-    wrapped_ops: list[oa.PredicateNode] = [
-        oa.OrderBy(operand=hop, keys=(oa.OrderKey(attr="Order.id"),)),
-        oa.Limit(operand=hop, count=5),
-        oa.AsOf(operand=hop, dimension="transaction-time", coordinate="latest"),
-        oa.AsOfRange(
-            operand=hop,
-            dimension="transaction-time",
-            start="2024-01-01T00:00:00+00:00",
-            end="2024-02-01T00:00:00+00:00",
-        ),
-        oa.History(operand=hop, dimension="transaction-time"),
-        oa.DeepFetch(operand=hop, paths=()),
-    ]
-    for op in wrapped_ops:
-        assert canonicalize(op, ORDERS, ORDER) is op
 
 
 # --------------------------------------------------------------------------- #

@@ -86,9 +86,9 @@ def canonicalize(
 ) -> PredicateNode:
     """Rewrite every navigation hop in ``op`` to carry its own per-hop as-of term.
 
-    ``op`` is the flat predicate after the root's own temporal terms have already
-    been injected. Query-wide result, temporal, and include wrappers never enter
-    this function, so canonicalization does not peel or rebuild them. ``entity``
+    ``op`` is the query's predicate after the root's own temporal terms have
+    already been injected. Every other clause is that predicate's SIBLING and never
+    enters this function, so canonicalization has nothing to preserve. ``entity``
     is the read's queried Entity: the position a hop's
     ``Class.relationship`` reference is written against, which is ``entity`` at the
     top level and the enclosing hop's own target inside a hop's interior. That
@@ -96,7 +96,7 @@ def canonicalize(
     the spelling itself names one Entity model-wide or none. ``root_pins`` is the root
     read's resolved per-axis instant —
     :func:`~parallax.core.temporal_read.resolve_pinned_instants` computed from the
-    same peeled temporal selections that the planning boundary passes to
+    same Temporal Selection clause the planning boundary passes to
     :func:`~parallax.core.temporal_read.inject_as_of` alongside ``op`` — mapping an
     axis to the specific past instant the root pinned; an axis absent from the map
     (undeclared by the root, pinned/defaulted to latest, or scanned) independently

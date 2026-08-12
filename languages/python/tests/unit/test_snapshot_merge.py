@@ -40,7 +40,7 @@ from parallax.core import (
 from parallax.core.entity import GraphConstructionError, RelationshipPath
 from parallax.core.entity._model import model_of
 from parallax.core.metamodel import EntityIdentity, RelationshipIdentity
-from parallax.core.predicate import PathSegment
+from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
 from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.materialize import (
@@ -286,7 +286,9 @@ def test_every_authoring_route_to_one_narrowed_view_reaches_the_same_value() -> 
     (root,) = builder.materialize(owner)
     derived = sm.AnimalOwner.pets.narrow(sm.Dog)
     direct: RelationshipPath[sm.AnimalOwner, sm.Dog] = RelationshipPath(
-        segments=(PathSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow=("Dog",)),),
+        segments=(
+            IncludeSegment(rel="parallax.compatibility.AnimalOwner.pets", narrow_to=("Dog",)),
+        ),
         target="Dog",
     )
     for path in (derived, direct):

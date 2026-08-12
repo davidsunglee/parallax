@@ -282,7 +282,7 @@ Example:
   "caseShape": "read",
   "emissions": [
     {
-      "casePointer": "/operation",
+      "casePointer": "/objectQuery",
       "sql": "select t0.id, t0.name from account t0 where t0.id = ?",
       "binds": [1]
     }
@@ -293,11 +293,11 @@ Example:
 
 `casePointer` is a JSON Pointer into the compatibility case. Common values are:
 
-- `/operation`
+- `/objectQuery`
 - `/writeSequence/0`
-- `/scenario/0/find`
+- `/scenario/0/objectQuery`
 - `/scenario/1/write`
-- `/coherence/1/find`
+- `/coherence/1/objectQuery`
 
 For deep-fetch and write-sequence cases, `emissions` contains one item per
 statement in execution order.
@@ -359,7 +359,7 @@ Example:
   "caseShape": "read",
   "emissions": [
     {
-      "casePointer": "/operation",
+      "casePointer": "/objectQuery",
       "sql": "select t0.id, t0.name from account t0 where t0.id = ?",
       "binds": [1]
     }
@@ -475,7 +475,7 @@ is insufficient, because two finite coordinates in one milestone have identical 
 values yet are distinct pinned views (`m-identity-map`). An adapter grading a
 managed-slice case therefore compares object references, not sorted PK values.
 
-An **abstract-target read** — an abstract `targetEntity`, or an abstract position
+An **abstract-target read** — an abstract query `target`, or an abstract position
 `narrow`ed with `m-predicate`'s `narrow` node — materializes complete concrete
 instances, so each observed row (and each `graph` leaf) additionally carries a
 **`familyVariant`** key: the concrete subtype's family variant spelling (`Dog`,
