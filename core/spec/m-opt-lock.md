@@ -198,7 +198,7 @@ through.
 A **predicate-selected write** starts from one concrete entity and one **bare**
 `m-predicate` predicate. It is not a language method name and it is not inferred
 from golden SQL. Query clauses (`orderBy`, `limit`, `includes`, `temporal`,
-`asOfRange`, `history`, and `narrow`) are not write targets.
+`asOfRange`, `history`, and `narrowTo`) are not write targets.
 The canonical instruction and its assignment rules are `m-case-format`.
 
 A keyed write of one versioned row gates on (optimistic) and advances (both modes)

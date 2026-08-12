@@ -352,7 +352,7 @@ The four consumers add only their own surrounding behavior:
 ## Abstract-position reads
 
 A read targeting an abstract position (the root or an abstract subtype,
-optionally `narrow`ed) is a **discriminated-union read**: it returns every
+optionally narrowed by the query's `narrowTo`) is a **discriminated-union read**: it returns every
 concrete variant the position resolves to, each tagged by `familyVariant` (the
 concrete subtype's **variant spelling**, materialized from the tag metadata —
 never an authored column, `m-sql` / `m-case-format`). The variant spelling is the
@@ -380,8 +380,8 @@ semantics retained here and result projection retained by SQL.
 ### The path root as a resolvable position
 
 A deep-fetch path's **root** is a resolvable position of exactly the kind above:
-the read's own queried position, which the path's optional root `narrow`
-(`m-predicate`, `{ to }`) may guard. Its `to` is the shared Subtype Selection
+the read's own queried position, which the path's optional `appliesTo`
+(`m-object-query`) may guard. That guard is the shared Subtype Selection
 above, resolved inside the queried position. It reuses the existing rejections:
 a selection resolving to nothing is `narrow-empty-effective-set`, and one
 escaping the queried position is `narrow-outside-position`.
@@ -460,7 +460,8 @@ entity name. This order is a pure function of the Entity Identities and is
 **independent of the descriptor's declaration order and file layout**:
 reordering the subtype entries in a model file, or splitting them across files,
 never changes it. The **effective concrete-subtype set** of any polymorphic
-position (root, abstract subtype, concrete subtype, or a resolved `narrow`) is
+position (root, abstract subtype, concrete subtype, or a resolved Subtype
+Selection) is
 presented in this order.
 
 This canonical sibling-set order is the one every downstream module uses to

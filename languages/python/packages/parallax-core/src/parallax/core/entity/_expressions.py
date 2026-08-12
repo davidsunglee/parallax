@@ -285,7 +285,7 @@ class SortKey[E]:
             that makes ``E`` contravariant (see :class:`Predicate`)."""
 
     def nulls_first(self) -> SortKey[E]:
-        """This key with NULLs placed first. Single-shot (m-predicate)."""
+        """This key with NULLs placed first. Single-shot (m-object-query)."""
         return SortKey(self.key.nulls_first())
 
     def nulls_last(self) -> SortKey[E]:

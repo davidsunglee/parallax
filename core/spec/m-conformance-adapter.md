@@ -143,7 +143,7 @@ scenarios.
 Inheritance capability follows this same shape and needs **no**
 inheritance-specific adapter surface. An adapter claims it by listing
 `m-inheritance` in `modules` and, where a claim defers part of the module, by the
-ordinary `caseTags` filter; abstract-target reads, subtype `narrow`, polymorphic
+ordinary `caseTags` filter; abstract-target reads, subtype narrowing, polymorphic
 navigation, narrowed deep fetch, and concrete-subtype writes are all ordinary case
 commands under the existing `describe` / `compile` / `run` contract, with no new
 command, dialect, case shape, or observation field.
@@ -476,7 +476,7 @@ values yet are distinct pinned views (`m-identity-map`). An adapter grading a
 managed-slice case therefore compares object references, not sorted PK values.
 
 An **abstract-target read** — an abstract query `target`, or an abstract position
-`narrow`ed with `m-predicate`'s `narrow` node — materializes complete concrete
+still abstract after the query's `narrowTo` (`m-object-query`) — materializes complete concrete
 instances, so each observed row (and each `graph` leaf) additionally carries a
 **`familyVariant`** key: the concrete subtype's family variant spelling (`Dog`,
 `Cat`, …; a canonical qualified Entity spelling when duplicate local concrete

@@ -126,7 +126,7 @@ def read_story_snippet(story: ReadStory) -> str:
 
 
 READ_STORIES: Final[tuple[ReadStory, ...]] = (
-    # -- m-predicate (predicate/grouping/ordering spellings), models/orders.yaml #
+    # -- m-predicate spellings + m-object-query orderBy, models/orders.yaml -- #
     ReadStory(
         "m-op-algebra-002",
         "Equality on the primary key",

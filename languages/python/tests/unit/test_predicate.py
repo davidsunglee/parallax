@@ -175,8 +175,9 @@ def test_string_match_case_insensitive_default_omitted() -> None:
 
 def test_string_match_explicit_case_insensitive_round_trips() -> None:
     # An explicitly authored `caseInsensitive` (either `false` or `true`) round-
-    # trips verbatim; an explicit `false` is NOT dropped as if omitted (same class
-    # as the orderBy direction fix — m-predicate serialize(deserialize(op)) == op).
+    # trips verbatim; an explicit `false` is NOT dropped as if omitted (the same
+    # class of defect as the m-object-query orderBy direction fix, under this
+    # module's own serialize(deserialize(op)) == op law).
     for flag in (False, True):
         doc: dict[str, Any] = {
             "like": {"attr": "Order.name", "value": "ada", "caseInsensitive": flag}
