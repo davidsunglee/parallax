@@ -226,7 +226,8 @@ must proceed in this order:
 
 1. complete this manifest and every owning module specification;
 2. update the module catalog and DAG;
-3. update descriptor/operation schemas, compatibility models/cases, generated
+3. update the descriptor, predicate, and query schemas, compatibility
+   models/cases, generated
    artifacts, and contract tooling together until their gates are green; and
 4. only then change runtime formation or behavioral consumers.
 

@@ -285,6 +285,6 @@ authority. An occurrence name begins lowercase while an Entity's local name is
 capitalized (`m-metamodel`), so a value object can never occupy the Entity segment
 of a serialized reference — a value-object-rooted reference matches no reference
 grammar, and the refusal in a serialized document is grammar-level rather than
-model-aware. The `find-root-value-object` rule remains in force for an operation
+model-aware. The `find-root-value-object` rule remains in force for a query
 constructed natively, where no grammar stands between the caller and the resolver;
 the compatibility corpus therefore carries no `rejected` case for it.

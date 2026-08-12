@@ -851,11 +851,11 @@ def test_an_indirect_reach_out_of_the_preflight_seam_fails_lint_imports() -> Non
     lint_imports = shutil.which("lint-imports")
     assert lint_imports is not None, "lint-imports must be installed in the dev env"
 
-    # `parallax.core.entity._model` is a NAME the seam's row permits: granting the
-    # `parallax.core.entity._query` child omits its ancestor package from the
-    # row. What the row still forbids is where that name leads — the Domain Model's
-    # model-formation edge, and through it the chain toward the port that made
-    # the whole frontend too wide a grant.
+    # The seam's row forbids `parallax.core.entity` outright, so naming
+    # `parallax.core.entity._model` breaks it on that edge alone. What this canary
+    # adds is the half a row carrying `allow_indirect_imports` cannot prove: where
+    # that name LEADS — the Domain Model's model-formation edge, and through it the
+    # chain toward the port that made the whole frontend too wide a grant.
     target = PY_ROOT / "packages/parallax-snapshot/src/parallax/snapshot/handle/_preflight.py"
     original = target.read_text()
     target.write_text(

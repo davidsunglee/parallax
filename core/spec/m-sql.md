@@ -12,8 +12,8 @@ The compilation interface accepts the `EntityQuery` fields directly: the exact
 target Entity Identity, a predicate with temporal terms already injected,
 optional query-wide narrowing, ordered result keys, and an optional row cap.
 Compilation resolves the target against the accepted model and lowers those
-fields; it does not discover them by peeling query-wide operation directives
-from the predicate.
+fields; it does not discover them by peeling query-wide clauses out of the
+predicate.
 
 The core does **not** mandate *how* an implementation produces SQL (a language
 MAY lower the algebra onto an external SQL IR inside `m-sql`). The core mandates
@@ -97,12 +97,12 @@ applies to reads only.
 ## What is normative vs. dialect-local
 
 - **Normative:** the **result** (`then.rows`) — every dialect MUST return the
-  same logical rows for an operation — and, **per dialect**, the golden SQL after
+  same logical rows for a query — and, **per dialect**, the golden SQL after
   normalization. The result is the cross-dialect invariant; the golden SQL is the
   per-dialect contract.
 - **Dialect-local:** the concrete SQL text itself — chosen by the `m-dialect`
   layer. Two dialects legitimately emit *different* golden SQL for the same
-  operation (different type casts, limit syntax, lock suffixes); both are
+  query (different type casts, limit syntax, lock suffixes); both are
   normative for their dialect and both must return the same logical rows.
 
 ### The cross-dialect cases (Postgres + MariaDB)
@@ -113,7 +113,7 @@ entries and the harness runs them against **both** databases, proving the result
 invariant while each dialect emits its own optimized SQL:
 
 - **Identical SQL, different physical binds — the infinity fallback.** For most
-  operations (`eq`, `in`, the `exists` semi-join, the as-of-Latest read, the
+  reads (`eq`, `in`, the `exists` semi-join, the as-of-Latest read, the
   milestone insert) Postgres and MariaDB emit the **same** golden SQL text. The
   temporal cases additionally exercise the **max-sentinel infinity convention**
   (`m-core` / `m-dialect`): the open upper bound `out_z = ?` is carried as the
@@ -127,7 +127,7 @@ invariant while each dialect emits its own optimized SQL:
   dialects.
 - **Different SQL — the read-lock divergence.** The shared-row-lock suffix is the
   one case where the two dialects emit *different* canonical golden SQL for the
-  same operation: Postgres `… for share of t0`, MariaDB `… lock in share mode`.
+  same query: Postgres `… for share of t0`, MariaDB `… lock in share mode`.
   Both are normalizer fixed points for their dialect; both return the same rows.
 
 ## Read projection
@@ -389,7 +389,7 @@ sub-select** — a semi-join — so a to-many traversal never multiplies the que
 entity's rows. The correlated alias is `t1` (the next alias after the root
 `t0`); the correlation predicate joins the related entity's foreign-key column to
 the queried entity's key column, derived from the relationship's `join`. Any
-inner operation is appended with `and`, its attributes resolved against the
+inner predicate is appended with `and`, its attributes resolved against the
 related entity (alias `t1`):
 
 ```text
@@ -523,19 +523,19 @@ literal `infinity`, carried as a `?` bind exactly like every other literal
 and is appended **after** it (binds read user-first, then the as-of bind):
 
 ```yaml
-# asOf(eq(Balance.acctNum,'A'), transaction-time, latest) lowers to the entry:
+# eq(Balance.acctNum,'A') with transaction-time: asOf(latest) lowers to the entry:
 - sql:
     postgres: select t0.bal_id, t0.val from balance t0 where t0.acct_num = ? and t0.out_z = ?
   binds: ['A', infinity]
 ```
 
-`history(operand, dimension)` injects **no** as-of predicate — it returns every
-milestone — so its golden SQL is just the operand's predicate; its projection
-**includes** the interval columns automatically — they are declared attributes in
-the layout's Temporal tier — so the caller sees each milestone's bounds
-(the current row's `out_z` reads back as `infinity`).
+A `history` selection injects **no** as-of predicate for its dimension — it
+returns every milestone — so its golden SQL is just the user predicate; its
+projection **includes** the interval columns automatically — they are declared
+attributes in the layout's Temporal tier — so the caller sees each milestone's
+bounds (the current row's `out_z` reads back as `infinity`).
 
-`asOfRange(operand, dimension, start, end)` reads the dimension as **edge points**
+An `asOfRange(start, end)` selection reads the dimension as **edge points**
 rather than a single pin: it returns every milestone whose `[in_z, out_z)`
 interval **overlaps** the half-open window `[from, to)`. The canonical overlap
 predicate compares the milestone's start to the window **end** and the
@@ -544,7 +544,7 @@ in `[to, from]` order:
 
 | Read | Canonical predicate fragment | Binds |
 |---|---|---|
-| `asOfRange(…, from, to)` | `t0.in_z < ? and t0.out_z > ?` | `[to, from]` |
+| `asOfRange(from, to)` | `t0.in_z < ? and t0.out_z > ?` | `[to, from]` |
 
 Unlike a single `asOf` pin (one milestone per key) or `history` (no predicate at
 all), the range can return **several** milestones per key — every one the window
@@ -597,10 +597,10 @@ conflict (optimistic) or a stale/consistency error (locking), never silent
 
 ### Bitemporal as-of reads (both axes)
 
-A Bitemporal Entity is pinned on both dimensions by nesting two `asOf` nodes;
+A Bitemporal Entity is pinned on both dimensions by one `asOf` selection each;
 each dimension lowers to its own injected fragment (Latest equality or finite
-containment), composed with `and`. Valid Time is the outer pin and Transaction
-Time the inner pin, so binds follow the same order:
+containment), composed with `and`. Injection follows the declared axis rank —
+Valid Time first, then Transaction Time — so binds follow the same order:
 
 | Both-axis read | Golden predicate | Binds |
 |---|---|---|

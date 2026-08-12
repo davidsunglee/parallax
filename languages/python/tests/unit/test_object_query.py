@@ -368,5 +368,5 @@ def test_deserialize_rejects_a_malformed_query(doc: object, message: str) -> Non
 def test_a_malformed_predicate_reports_through_the_shared_error_family() -> None:
     # A query carries a predicate, so "this document is malformed" is one
     # question with one answer class whichever half is wrong.
-    with pytest.raises(OperationError, match="unknown operation node"):
+    with pytest.raises(OperationError, match="unknown predicate node"):
         oq.deserialize({"target": _ORDER, "predicate": {"mystery": {}}})

@@ -45,7 +45,7 @@ Within **one materialized graph**, one row is **one node**:
 
 ## The whole-graph pin
 
-A snapshot graph is **point-consistent**: the root operation's lowered as-of
+A snapshot graph is **point-consistent**: the root query's lowered as-of
 coordinates propagate per hop, matched by axis, to every temporal entity in the
 graph (`m-navigate` as-of propagation, applied inside each `m-deep-fetch` child
 level). Every temporal node is pinned at the propagated coordinates; an axis

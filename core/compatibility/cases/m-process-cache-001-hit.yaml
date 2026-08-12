@@ -1,15 +1,15 @@
 # Cache-hit scenario (m-process-cache): two identical finds cost ONE round trip.
 #
-# The query cache maps an operation to its result. The first find (an `eq` on the
+# The query cache maps a query to its result. The first find (an `eq` on the
 # primary key) is a cache MISS and executes one statement against the database;
-# the SECOND find issues the SAME operation, so it is a cache HIT and costs ZERO
+# the SECOND find issues the SAME query, so it is a cache HIT and costs ZERO
 # additional round trips — its result is served from the query cache (the same
 # interned objects).
 #
 # The harness proves this from the fixture's own declared counts: step 0 declares
 # roundTrips 1 and lists one golden SQL statement; step 1 declares roundTrips 0 and
 # lists none. The case-level roundTrips (1) MUST equal the sum of the per-step
-# counts. The harness never compiles the operation to SQL — the round-trip
+# counts. The harness never compiles the query to SQL — the round-trip
 # contract is asserted from the declared counts plus the listed golden SQL, then
 # the listed statement is executed to confirm it returns the expected row.
 model: models/account.yaml
@@ -39,7 +39,7 @@ when:
             value: 1
       roundTrips: 0
       sameObjectAs: 0
-      note: cache HIT — same operation, served from the query cache, zero round trips
+      note: cache HIT — same query, served from the query cache, zero round trips
       expectRows:
         - { id: 1, owner: Ada, balance: 100.00, version: 1 }
 then:

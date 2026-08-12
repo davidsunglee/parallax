@@ -152,11 +152,11 @@ def buffer_predicate(
        a target and a predicate; every result-shaping, temporal, narrowing, and
        deep-fetch clause is rejected
        (:func:`~parallax.core.object_query.mutation_selection`,
-       ``query-not-mutation-compatible``). Typed-only: the canonical instruction
-       has no clause to carry, and the instruction-level counterpart is
-       ``validate_instruction``'s own bare-predicate rule. What it answers is the
-       ephemeral Predicate Selection the rest of this function reads, which never
-       leaves this lane.
+       ``query-not-mutation-compatible``). Typed-only: it has no
+       instruction-level counterpart, because the canonical instruction carries a
+       :class:`PredicateNode` and no clause has a spelling there to refuse. What
+       it answers is the ephemeral Predicate Selection the rest of this function
+       reads, which never leaves this lane.
     2. **Target resolution** — the write-side spelling of a read's preflight
        (:func:`entity_of`, ``query-target-not-in-model``): an Object Query the
        connected model declares no Entity for is refused as a query, before
@@ -191,12 +191,11 @@ def buffer_predicate(
     5. **Build + validate the canonical instruction** (the SAME
        deserialize/`validate_instruction` round trip a keyed write buys in
        ``Transaction._buffer``). ``validate_instruction`` measures the selecting
-       predicate with the whole ``validate_operation`` vocabulary and the
-       bare-predicate rule, then rejects an inheritance-family target, then the
-       assignments — so an inverted ``between`` window, an attribute outside
-       the active position, a result modifier, or a set-based family write is
-       refused here, at build, before every buffer and before the resolving
-       read's own force-flush.
+       predicate with the whole ``validate_operation`` vocabulary, then rejects
+       an inheritance-family target, then the assignments — so an inverted
+       ``between`` window, an attribute outside the active position, or a
+       set-based family write is refused here, at build, before every buffer and
+       before the resolving read's own force-flush.
     6. **Hand off** to :func:`buffer_predicate_instruction`, which dispatches
        READLESS (one statement, `m-batch-write`) or MATERIALIZING
        (``_materialize_predicate_write``, ADR 0014).
@@ -315,8 +314,8 @@ def buffer_predicate_instruction(
     :meth:`~parallax.snapshot.handle.Transaction.write_neutral` at its own
     ingress for everyone else, the conformance engine included. EVERY
     model-aware rule is stated there, in the
-    order `m-case-format` fixes: the whole ``validate_operation`` vocabulary and
-    the bare-predicate rule over the selecting predicate, the
+    order `m-case-format` fixes: the whole ``validate_operation`` vocabulary
+    over the selecting predicate, the
     inheritance-family rejection, member-name honesty and assignability, then
     the one target-profile quadrant that validator enforces — a milestone verb
     aimed at a target deriving no As-Of Axis, and no other pairing of profile

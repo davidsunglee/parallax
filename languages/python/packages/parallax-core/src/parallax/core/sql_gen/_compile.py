@@ -1,30 +1,32 @@
 """The flat-Entity-Query read compiler (m-sql): lower -> normalize.
 
-``compile_read`` turns one flat ``m-predicate`` ``EntityQuery`` into one canonical
+``compile_read`` turns one flat ``m-object-query`` ``EntityQuery`` into one canonical
 ``LoweredStatement`` for a dialect. Lowering descends through `_predicate`'s one
 dispatcher (no visitor framework — see the third paragraph); the dialect strategy
 supplies every dialect-specific string. The emitted SQL is produced directly in
 canonical normalized form (alias-qualified columns, lowercase, single-space
 separated, canonical clause order), so ``normalize`` is a fixed-point identity
 check rather than a rewrite — the language target never depends on the reference harness's
-sqlglot normalizer (non-normative). The ``m-deep-fetch`` planning boundary peels
-query-wide directives, injects temporal terms through ``m-temporal-read``, and
-canonicalizes navigation before producing the flat ``EntityQuery`` this module
-consumes. Deep fetch (`DeepFetch`) is planned there into one read per relationship
-level and is never a predicate, so reaching this compiler as one raises a clear
-:class:`SqlGenError` and a mis-routed case fails loudly, never silently.
+sqlglot normalizer (non-normative). The ``m-deep-fetch`` planning boundary reads
+the Object Query's clauses directly, injects temporal terms through
+``m-temporal-read``, and canonicalizes navigation before producing the flat
+``EntityQuery`` this module consumes. Deep fetch (`DeepFetch`) is planned there
+into one read per relationship level and is never a predicate, so reaching this
+compiler as one raises a clear :class:`SqlGenError` and a mis-routed case fails
+loudly, never silently.
 
 Inheritance-family reads (table-per-hierarchy tag predicates / abstract-read
 superset projection, table-per-concrete-subtype union-all) are ASSEMBLED here
 (`m-sql` "Metamodel-extension lowering") from plans
 `_inheritance` resolves — which is where the `parallax.core.inheritance` edge
 lives, a legal one since `modules.md` already reaches `m-inheritance`
-transitively through `m-predicate`. `validate_operation` runs upstream (the
-conformance engine / statement frontend), so a narrow reaching this compiler is
-already known position-valid; nothing in this package re-validates it.
+transitively through `m-predicate`. Query validation runs upstream (the read
+preflight seam, which every entry point calls), so a narrow reaching this
+compiler is already known position-valid; nothing in this package re-validates
+it.
 
-Predicate lowering itself is NOT here. `_predicate` owns every descent into an
-operation — the scalar vocabulary, navigation, value-object traversal, and the
+Predicate lowering itself is NOT here. `_predicate` owns every descent into a
+predicate — the scalar vocabulary, navigation, value-object traversal, and the
 mid-predicate `narrow` — behind one entry point (`lower_predicate`) taking an
 immutable resolution scope. This module builds each statement's scope, calls
 that entry point for the read's own predicate (per `union all` branch, where
@@ -439,11 +441,10 @@ def compile_write_predicate(
     forking SQL text assembly — the same `And`/`Or`/`Group`/`Comparison`/...
     dispatch a read's `where` clause lowers through, so a write's rendered
     predicate can never drift from the read compiler's own operator vocabulary.
-    ``op`` MUST be a bare predicate (no result-shaping directive survives here —
-    a set-based write target is validated bare upstream, `m-unit-work`
-    write-instruction vocabulary / `python.md` §5 bare-statement guard); a
-    directive reaching this raises :class:`SqlGenError` exactly as it would
-    inside an ordinary read's predicate.
+    ``op`` is a :class:`PredicateNode`, which is the whole guarantee: result
+    shaping, narrowing, Temporal Selection, and Includes are Object Query clauses
+    with no spelling in this type at all (`m-unit-work` write-instruction
+    vocabulary), so nothing here has a result-shaping input to refuse.
     """
     facet = _inheritance_view(model)
     storage = _storage_view(model)

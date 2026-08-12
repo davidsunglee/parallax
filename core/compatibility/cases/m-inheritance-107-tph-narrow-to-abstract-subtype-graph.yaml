@@ -2,7 +2,7 @@
 # developer-surface per-variant node shape (m-inheritance, m-predicate,
 # m-case-format, m-sql).
 #
-# Same model, same operation, and BYTE-IDENTICAL golden SQL as the row-form original
+# Same model, same query, and BYTE-IDENTICAL golden SQL as the row-form original
 # (`m-inheritance-013`) — Animal declares no value objects, so the instance-form
 # Document-slot delta is empty. `then.graph` asserts the per-variant node shape: Rex and
 # Fido (Dog) carry NO `indoor` key; Whiskers (Cat) carries NO `bark_volume` key —

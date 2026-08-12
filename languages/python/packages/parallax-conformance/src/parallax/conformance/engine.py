@@ -2,8 +2,8 @@
 
 The adapter path compiles and runs a compatibility case directly against the
 class-free engine spine (no dynamic class synthesis): the case's model YAML is
-ingested through the ``m-descriptor`` deserializer, its ``when.operation`` through
-the ``m-predicate`` deserializer, and the tree is lowered by ``m-sql``
+ingested through the ``m-descriptor`` deserializer, its ``when.objectQuery``
+through the ``m-object-query`` deserializer, and the query is lowered by ``m-sql``
 ``compile_read`` to one ``CompiledRead`` — its canonical ``LoweredStatement`` together
 with the row transform that statement's own resolved position decided.
 ``compile`` emits that statement; ``run`` executes it through the injected
@@ -235,7 +235,7 @@ def case_entity(model: AcceptedMetamodel, name: str) -> EntityMetadata:
     """The accepted Metadata ``name`` denotes in ``model``.
 
     A case names an Entity by the spelling its own model authored — bare when
-    that is unambiguous, canonical otherwise — which is exactly the OPERATION
+    that is unambiguous, canonical otherwise — which is exactly the QUERY
     REFERENCE rule :func:`~parallax.core.metamodel.entity_by_name` adjudicates,
     so a case's spelling resolves here the way every validator and lowering site
     resolves one.
@@ -367,9 +367,9 @@ def _compile_statement(case: case_format.Case, dialect_name: str) -> CompiledRea
     try:
         metadata = case_entity(model, query.target.canonical)
         form: Literal["rows", "graph"] = "graph" if _result_form(case) == "instance" else "rows"
-        operation = _canonicalize_read(query, metadata, model, form=form)
+        entity_query = _canonicalize_read(query, metadata, model, form=form)
         return compile_read(
-            operation,
+            entity_query,
             model,
             dialect,
             result_form=_result_form(case),
@@ -396,7 +396,7 @@ def run_read_case(
     materialization, and the round-trip count are all production's, and what is
     left here is wire rendering and the case's own routing. A row this adapter
     reports is the row production materialized, not a row this adapter
-    re-derived from the operation a second time.
+    re-derived from the query a second time.
 
     A case declaring an in-transaction participation mode is RUN in one
     (`m-read-lock` "an in-transaction object find that intends to write acquires
@@ -2237,10 +2237,10 @@ def _compile_find(
     """
     query = _step_query(step)
     metadata = case_entity(model, query.target.canonical)
-    operation = _canonicalize_read(query, metadata, model)
+    entity_query = _canonicalize_read(query, metadata, model)
     lock = read_lock.mode_for(concurrency)
     return compile_read(
-        operation,
+        entity_query,
         model,
         dialect,
         result_form=result_form,
@@ -2539,8 +2539,8 @@ def _compile_snapshot_scenario(
                 continue
             query = _step_query(step)
             metadata = case_entity(model, query.target.canonical)
-            operation = _canonicalize_read(query, metadata, model)
-            statement = compile_read(operation, model, dialect, result_form="instance").statement
+            entity_query = _canonicalize_read(query, metadata, model)
+            statement = compile_read(entity_query, model, dialect, result_form="instance").statement
             emissions.append(
                 Emission(f"/scenario/{index}/objectQuery", statement.sql, statement.binds)
             )
@@ -5196,16 +5196,15 @@ def _rejected_when_kind(case: case_format.Case, when: Mapping[str, object]) -> s
 def run_rejected_case(case: case_format.Case) -> str:
     """Grade a `rejected` case's pre-SQL refusal, returning the classified rule.
 
-    A `rejected` case carries EXACTLY ONE of `when.operation` / `when.model` /
+    A `rejected` case carries EXACTLY ONE of `when.objectQuery` / `when.model` /
     `when.write` (m-case-format schema `oneOf`) — enforced by
     :func:`_rejected_when_kind` before dispatch, since the schema `oneOf` cannot
     protect a caller that reaches this engine without schema validation. An
-    `operation` input is deserialized through the same `m-predicate` serde
-    every read uses, then checked by the shared `validate_operation`
-    (`m-predicate` / `m-navigate` / `m-value-object`) — the same validator an
-    idiomatic statement frontend calls at build time, so the two paths cannot
-    drift. A `model` input first passes the descriptor frontend's own
-    pre-formation family validator
+    `objectQuery` input is deserialized through the same `m-object-query` serde
+    every read uses, then checked by the shared query validation
+    (`m-predicate` / `m-navigate` / `m-value-object`) — the same rules the read
+    preflight seam applies, so the two paths cannot drift. A `model` input first
+    passes the descriptor frontend's own pre-formation family validator
     (:func:`~parallax.descriptor.validate_inheritance_families`) for descriptor
     spellings the accepted algebra cannot represent, then goes through the same
     public :func:`~parallax.descriptor.domain_model_from_document` door every

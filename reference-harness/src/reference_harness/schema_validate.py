@@ -60,7 +60,7 @@ def validation_error(
     """Return the most relevant JSON Schema failure, or ``None`` when valid.
 
     *registry* resolves cross-file ``$ref``s (the case schema references the
-    canonical write-instruction ``$defs``, and the case, operation, and
+    canonical write-instruction ``$defs``, and the case, query, and
     write-instruction schemas all reference the identity grammars); a bare
     validator cannot reach another file, so callers validating any of those
     schemas MUST pass it.
@@ -139,6 +139,36 @@ def _check_query_target(
             f"{label}: objectQuery target {target_entity!r} is inconsistent with the "
             f"queried-entity reference class(es) {inconsistent}"
         )
+
+
+def _check_object_query(
+    query: Any,
+    schema: dict[str, Any],
+    family: Family | None,
+    label: str,
+    errors: list[str],
+    registry: Registry | None = None,
+    *,
+    model_aware: bool = True,
+    encodings: Any = None,
+    encodings_label: str | None = None,
+) -> None:
+    """Validate one Object Query wherever a case carries one, plus its encodings.
+
+    *model_aware* is ``False`` for a `rejected` case, which authors a query a
+    model-aware rule refuses, so its own references are deliberately inconsistent
+    with its target.
+    """
+    _validate(query, schema, label, errors, registry)
+    if model_aware:
+        _check_query_target(query, family, label, errors)
+        errors.extend(
+            f"{label}: {problem}" for problem in validate_temporal_selections(query, family)
+        )
+    if encodings_label is None:
+        return
+    for index, encoding in enumerate(encodings or []):
+        _validate(encoding, schema, f"{encodings_label}[{index}]", errors, registry)
 
 
 def _scenario_reference_sql_dialect_keys(
@@ -401,7 +431,7 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         except RejectionError as exc:
             errors.append(f"model {model_path.name}: {exc.rule}: {exc.detail}")
 
-    # 3. Every case + its operation validate against their schemas.
+    # 3. Every case + the Object Queries it carries validate against their schemas.
     cases_dir = compatibility_root / "cases"
     for case_path in sorted(cases_dir.glob("**/*.y*ml")):
         case = _load_yaml(case_path)
@@ -426,56 +456,40 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         when = case.get("when") if isinstance(case, dict) else None
         when = when if isinstance(when, dict) else {}
         if "objectQuery" in when:
-            _validate(
+            _check_object_query(
                 when["objectQuery"],
                 object_query_schema,
+                family,
                 f"case {case_path.name} objectQuery",
                 errors,
                 registry,
+                model_aware=case.get("shape") == "read",
+                encodings=when.get("equivalentEncodings"),
+                encodings_label=f"case {case_path.name} equivalentEncodings",
             )
-            # A `rejected` case authors a query that a model-aware rule refuses,
-            # so its own references are deliberately inconsistent with its target.
-            if case.get("shape") == "read":
-                _check_query_target(when["objectQuery"], family, f"case {case_path.name}", errors)
-                errors.extend(
-                    f"case {case_path.name}: {problem}"
-                    for problem in validate_temporal_selections(when["objectQuery"], family)
-                )
-            for index, encoding in enumerate(when.get("equivalentEncodings", [])):
-                _validate(
-                    encoding,
-                    object_query_schema,
-                    f"case {case_path.name} equivalentEncodings[{index}]",
-                    errors,
-                    registry,
-                )
         # A scenario case carries its Object Query per step (under
         # `when.scenario[].objectQuery`); each one validates the same way.
         if isinstance(when.get("scenario"), list):
             for index, step in enumerate(when["scenario"]):
                 if isinstance(step, dict) and "objectQuery" in step:
-                    label = f"case {case_path.name} scenario[{index}].objectQuery"
-                    _validate(step["objectQuery"], object_query_schema, label, errors, registry)
+                    _check_object_query(
+                        step["objectQuery"],
+                        object_query_schema,
+                        family,
+                        f"case {case_path.name} scenario[{index}].objectQuery",
+                        errors,
+                        registry,
+                        encodings=step.get("equivalentEncodings"),
+                        encodings_label=(
+                            f"case {case_path.name} scenario[{index}].equivalentEncodings"
+                        ),
+                    )
                     _validate_scenario_reference_sql(
                         step,
                         case_schema,
                         f"case {case_path.name} scenario[{index}]",
                         errors,
                     )
-                    _check_query_target(step["objectQuery"], family, label, errors)
-                    errors.extend(
-                        f"{label}: {problem}"
-                        for problem in validate_temporal_selections(step["objectQuery"], family)
-                    )
-                    for encoding_index, encoding in enumerate(step.get("equivalentEncodings", [])):
-                        _validate(
-                            encoding,
-                            object_query_schema,
-                            f"case {case_path.name} scenario[{index}].equivalentEncodings"
-                            f"[{encoding_index}]",
-                            errors,
-                            registry,
-                        )
                 if isinstance(step, dict) and isinstance(step.get("write"), dict):
                     entity = _validate_predicate_write(
                         step["write"],
@@ -506,12 +520,13 @@ def validate_tree(compatibility_root: Path) -> list[str]:
         if isinstance(when.get("coherence"), list):
             for index, step in enumerate(when["coherence"]):
                 if isinstance(step, dict) and "objectQuery" in step:
-                    label = f"case {case_path.name} coherence[{index}].objectQuery"
-                    _validate(step["objectQuery"], object_query_schema, label, errors, registry)
-                    _check_query_target(step["objectQuery"], family, label, errors)
-                    errors.extend(
-                        f"{label}: {problem}"
-                        for problem in validate_temporal_selections(step["objectQuery"], family)
+                    _check_object_query(
+                        step["objectQuery"],
+                        object_query_schema,
+                        family,
+                        f"case {case_path.name} coherence[{index}].objectQuery",
+                        errors,
+                        registry,
                     )
         # The referenced model must exist.
         if isinstance(case, dict) and isinstance(case.get("model"), str):

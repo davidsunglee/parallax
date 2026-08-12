@@ -1178,7 +1178,7 @@ def _walk_active_position(
     """Walk *node*, judging every positional rule against the active position.
 
     The position is *current_set*, the active polymorphic position's effective
-    concrete set, threaded down the whole operation tree and re-narrowed per hop.
+    concrete set, threaded down the whole predicate tree and re-narrowed per hop.
     Two rules are asked of it — a ``narrow``'s subset check and every attribute
     reference's applicability — and the second runs for a standalone descriptor
     too, so this walk is not narrow-specific.

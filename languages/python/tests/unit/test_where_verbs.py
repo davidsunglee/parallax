@@ -1,7 +1,7 @@
 """Unit pins for the ``_where`` verb family's own build-time surface
 (python.md §5): the ``.set(...)`` assignment DSL
 (``entity/_expressions.py``) and the mutation-compatibility guard
-(``entity/_query.py``). The materializing/readless DISPATCH and the
+(``object_query/_fluent.py``). The materializing/readless DISPATCH and the
 rendered SQL are pinned in ``test_transaction_predicate_writes.py`` /
 ``test_write_lowering.py`` /
 ``test_engine.py``; these tests isolate the two build-time, entity-scoped

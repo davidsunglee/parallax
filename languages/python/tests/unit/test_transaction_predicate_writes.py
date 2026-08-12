@@ -1222,8 +1222,8 @@ def test_update_where_refuses_a_target_the_connected_model_does_not_declare() ->
 
 
 # --------------------------------------------------------------------------- #
-# The selecting predicate is a canonical operation and carries the WHOLE       #
-# model-aware operation vocabulary, not just the rules the write instruction   #
+# The selecting predicate is a canonical Predicate node and carries the WHOLE  #
+# model-aware validation vocabulary, not just the rules the write instruction  #
 # itself states. Authoring reaches no model, so a `_where` verb is the only    #
 # place these can be enforced on a predicate-selected write; the two rules     #
 # below come from different families so the pin covers the vocabulary rather   #
@@ -1496,7 +1496,7 @@ def _refused_predicates(entity: str) -> list[tuple[str, str, dict[str, object]]]
         ("between", "upper bound", {"between": {"attr": f"{entity}.id", "lower": 10, "upper": 1}}),
         (
             "unknown-node",
-            "unknown operation node 'limit'",
+            "unknown predicate node 'limit'",
             {"limit": {"operand": {"all": {}}, "count": 1}},
         ),
     ]

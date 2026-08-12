@@ -1,8 +1,8 @@
 """The parallax m-case-format compatibility harness.
 
-Tooling, not an ORM: this package never compiles operations to SQL. It validates
+Tooling, not an ORM: this package never compiles a query to SQL. It validates
 the compatibility suite against its JSON Schemas, normalizes and parses golden
-SQL, round-trips operations and descriptors through canonical serde, boots real
+SQL, round-trips queries and descriptors through canonical serde, boots real
 databases behind the database-provider seam, and asserts that each case's golden
 SQL and independent reference SQL both return the authored expected rows.
 """

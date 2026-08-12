@@ -467,7 +467,7 @@ user-written join. The canonical wire form spells that identity as
 `Class.relationship`; resolution binds it to `m-metamodel`, while `m-navigate`
 uses the compiled `m-relationship` facet for target and join behavior. A
 navigation node references a relationship and (for
-the filter forms) carries an optional inner operation constraining the related
+the filter forms) carries an optional inner predicate constraining the related
 entity. These nodes lower to **correlated semi-joins** so a to-many traversal
 never multiplies the queried entity's rows (`m-sql`, `m-navigate`).
 
@@ -483,7 +483,7 @@ never multiplies the queried entity's rows (`m-sql`, `m-navigate`).
 and `exists` are the same correlated-`EXISTS` lowering (a navigation filter *is*
 a positive existence check); `notExists` is the negated form. With no `op`,
 `exists`/`notExists` are pure existence/absence checks. The inner `op` is a
-normal operation tree resolved **against the related entity's attributes**
+normal predicate tree resolved **against the related entity's attributes**
 (`OrderItem.sku`, …), so any predicate from the single-entity algebra composes
 inside a navigation.
 

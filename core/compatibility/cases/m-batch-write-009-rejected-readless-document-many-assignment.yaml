@@ -1,7 +1,7 @@
 # An unversioned, non-temporal predicate-selected update has a valid bare target,
 # predicate, and document-resident `many` assignment, but their readless combination
 # is refused before buffering or SQL because whole-array replacement cannot compare
-# against stored elements. This distinguishes the operation-specific refusal from
+# against stored elements. This distinguishes the mutation-specific refusal from
 # model formation and preserves the one-statement readless route for scalar and `one`.
 model: models/document-layout.yaml
 tags: [m-batch-write, m-unit-work, m-storage-layout, m-document-codec, rejected, document-layout, slice-snapshot-1, slice-managed-1]

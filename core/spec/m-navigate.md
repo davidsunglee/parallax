@@ -88,7 +88,7 @@ resolves the target to its **effective concrete-subtype set** and constrains the
 correlated sub-select to exactly that set — the same effective-set derivation a
 top-level read uses, applied at the relationship target.
 
-`narrow` (`m-predicate`) MAY appear in a navigation filter's inner operation
+`narrow` (`m-predicate`) MAY appear in a navigation filter's inner predicate
 (`op`) to constrain the relationship target. Context supplies the target's
 polymorphic position, and `narrow.to` is `m-inheritance`'s shared Subtype
 Selection. A narrow whose resolved concrete set is **not a subset** of the

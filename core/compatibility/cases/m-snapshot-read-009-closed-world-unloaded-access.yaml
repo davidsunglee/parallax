@@ -4,7 +4,7 @@
 # Step 0 materializes a snapshot of order 1 (a plain-value read, no includes). Step 1
 # accesses `statuses`, which the snapshot never included: a snapshot is closed-world,
 # so the relationship is found ABSENT and NO query is issued (roundTrips 0) — the
-# defining difference from a managed operation-backed list, which would resolve a
+# defining difference from a managed operation-backed list (m-op-list), which would resolve a
 # deferred load here. The per-language absence representation (null / empty / a raised
 # access error) is deliberately unconstrained, so this is graded by each language's
 # API Conformance Suite (api-conformance lane); the wire assertion is only that no SQL

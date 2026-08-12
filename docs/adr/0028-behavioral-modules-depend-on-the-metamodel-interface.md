@@ -267,7 +267,7 @@ RelationshipDeclaration =
     )
 ```
 
-Resolved operation nodes use the same identities. Relationship Join remains a
+Resolved predicate nodes use the same identities. Relationship Join remains a
 static mapping fact rather than reusing an executable attribute-to-literal
 comparison node, preserving the one-way `m-predicate -> m-metamodel`
 dependency. Python authoring gets its sole target from `Rel[T]`, while
@@ -512,7 +512,7 @@ As-Of Axis Metadata contains no defaulting member. Omission is behavioral and
 is owned by `m-temporal-read`: an omitted dimension means Latest and lowers to
 `end = infinity`. Now is a distinct finite current-clock instant and, if a
 language exposes it explicitly, lowers to interval containment. Neither
-descriptor nor operation serde may spell Latest as `now`.
+descriptor nor query serde may spell Latest as `now`.
 
 Declaration and accepted Inheritance share one parent-parameterized closed
 local-declaration algebra rather than parallel records or one record with

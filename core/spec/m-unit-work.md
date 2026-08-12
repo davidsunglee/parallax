@@ -105,7 +105,7 @@ observes the original, pre-transaction rows.
 ## Write instruction vocabulary
 
 Every write a unit of work buffers — from any frontend, keyed or predicate-selected
-— is a neutral **write instruction**, the write-side analogue of the operation
+— is a neutral **write instruction**, the write-side analogue of the Predicate
 algebra. The canonical, language-neutral shapes are hosted in
 [`write-instruction.schema.json`](../schemas/write-instruction.schema.json), mirroring
 how `m-predicate` hosts `predicate.schema.json`; `m-case-format` and
@@ -133,7 +133,7 @@ names one declared Entity, or the canonical `<namespace>.<Entity>` — and resol
 the same rule. An `assignments[].attr` is that Entity spelling followed by one
 member identifier: `Account.balance`, `parallax.compatibility.Account.balance`.
 
-Input is permissive and output is exact here exactly as it is in the operation
+Input is permissive and output is exact here exactly as it is in the Predicate
 algebra: a frontend accepts either spelling, and every durable write instruction
 it **serializes** MUST carry the resolved canonical one at all three positions.
 The owner of an `assignments[].attr` is measured by IDENTITY rather than by text,
@@ -934,7 +934,7 @@ operation steps, each with a declared round-trip count — and plain write cases
 A scenario's declared round-trip counts **MUST** be internally consistent with
 the golden SQL it lists: each step's `roundTrips` equals the number of golden SQL
 statements that step emits. The harness asserts this consistency without ever
-compiling an operation to SQL — proving the round-trip contract from the fixture
+compiling a query to SQL — proving the round-trip contract from the fixture
 itself — and executes the listed golden SQL against the real database to confirm
 result-correctness.
 

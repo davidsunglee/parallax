@@ -6,7 +6,7 @@
 # Targeting the CONCRETE subtype Bond injects the tag-equality predicate
 # (`t0.kind = ?`, bind ['bond']) AFTER the as-of predicate (m-sql: the temporal
 # composition runs upstream of the tag-predicate lowering) — Stock's row is excluded
-# regardless of the as-of pin. The operation pins `dimension: valid-time` —
+# regardless of the as-of pin. The query pins `dimension: valid-time` —
 # Bond's OWN class-name prefix over an axis it never locally declares (Instrument,
 # the root, does) — proving the inherited spelling resolves for a table-per-hierarchy
 # concrete position exactly as it does for table-per-concrete-subtype

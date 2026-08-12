@@ -2,7 +2,7 @@
 
 `m-case-format` is the **compatibility-case contract** and the no-mock,
 real-database harness that proves it. It is **tooling, not an ORM**: it **never
-compiles operations to SQL** — that is exactly what a real implementation must do
+compiles a query to SQL** — that is exactly what a real implementation must do
 and prove against the golden SQL. The harness only proves the *suite itself* is
 internally consistent and that the golden SQL is correct for the data, across
 every database behind the provider seam. As a conformance-family module,
@@ -511,7 +511,7 @@ reads of that same model, which project it. Two scenario witnesses pin the step-
 pair, one per materializing target class. The `subscriber` witness pins the row-form
 **default**: a versioned predicate `delete` retains only the observed version, so its
 resolving read omits `address` while the managed find one step earlier — the same
-canonical operation over the same row — projects it, the two goldens differing in that
+canonical query over the same row — projects it, the two goldens differing in that
 one slot.
 The `supplier` witness pins the **widening**: an audit-only close's resolving read
 projects `address` even though the close copies no payload, because the observation it
@@ -694,7 +694,7 @@ carries **no** entry for that path's relationship rather than an empty one.
 
 For each deep-fetch level whose child entity is temporal, the harness derives the
 **propagated as-of binds independently** (an oracle, parallel to the ordering
-oracle): it reads the root pin from the operation's nested `asOf` nodes, matches
+oracle): it reads the root pin from the query's own Temporal Selections, matches
 each axis to the child entity's as-of dimension, and computes the expected child
 as-of binds (the `infinity` equality for latest, the `[D, D]` range for an
 instant, Valid Time first and Transaction Time second). It then splits the authored child binds into the
@@ -892,7 +892,7 @@ attribute issues no DML (`m-opt-lock`) — and executes nothing, exactly like a
 cache-hit read step. The rolled-back DML still executes, so it counts its
 statements as round trips exactly as a committed write does. The harness asserts
 per-step round-trip / golden-SQL count consistency, executes each step, and checks
-`sameObjectAs` identity assertions; it never compiles an operation to SQL.
+`sameObjectAs` identity assertions; it never compiles a query to SQL.
 
 A scenario case MAY carry an out-of-band **`given.apply`**, applied after the
 model's fixtures load and **before the first step** — the same position the
@@ -1002,7 +1002,7 @@ declares `compileEligibility: run-only` (see *Compile eligibility*).
 #### Predicate-selected write instruction
 
 A scenario write MAY retain the legacy string label, or use the canonical object
-form below. This object is the language-neutral requested operation consumed by
+form below. This object is the language-neutral requested write consumed by
 `compile`, `run`, and API no-drift checks; golden SQL remains the independent
 expected lowering, never the source from which an adapter deduces the write.
 
@@ -1034,19 +1034,22 @@ are deliberately small and structural:
 | Field | Required | Rule |
 |---|---|---|
 | `mutation` | yes | one of `update`, `delete`, `terminate`, `updateUntil`, `terminateUntil` |
-| `target.entity` | yes | exact concrete descriptor entity where the operation starts |
-| `target.predicate` | yes | one schema-valid `m-predicate` operation; it is a bare write predicate, never a result modifier |
+| `target.entity` | yes | exact concrete descriptor entity the write begins from |
+| `target.predicate` | yes | one schema-valid `m-predicate` node; a set-based write shapes no result, so the Object Query clauses have no spelling in this position |
 | `assignments` | only `update` / `updateUntil` | ordered `{attr, value}` data; nonempty and unique; `attr` names an assignable qualified top-level attribute or value object. An attribute takes a neutral scalar/null literal; a value object takes its complete object/array document or null according to its declared multiplicity/nullability. |
 | `at` | temporal target | harness-supplied Transaction-Time instant for close/chain behavior; context, not an instruction member |
-| `validFrom` | Bitemporal target | Valid-Time lower bound for the plain or bounded temporal operation |
-| `until` | `updateUntil` / `terminateUntil` | bounded operation's exclusive upper bound |
+| `validFrom` | Bitemporal target | Valid-Time lower bound for the plain or bounded temporal write |
+| `until` | `updateUntil` / `terminateUntil` | bounded write's exclusive upper bound |
 
 Delete and terminate mutations carry **no** assignments. Assignment list order is
 not SQL order: the target's Entity Layout order determines the emitted `set`
 columns and assignment binds. The model-aware validator validates the predicate
-against `predicate.schema.json`, checks entity scope and bare-predicate rules,
-rejects duplicate or framework-owned/unassignable assignments, and requires only
-the temporal coordinates the target profile uses. It rejects a predicate-selected
+against `predicate.schema.json` and checks its entity scope, rejects duplicate or
+framework-owned/unassignable assignments, and requires only the temporal
+coordinates the target profile uses. It states no rule refusing a query-wide
+clause: `write-instruction.schema.json` reaches the Predicate grammar directly,
+where ordering, the cap, Temporal Selections, result narrowing, and Includes have
+no spelling, so a result-shaping input never survives ingress to be classified. It rejects a predicate-selected
 inheritance-family write before SQL, as `m-inheritance` requires.
 
 Materializing cases make the observation explicit: a preceding scenario read
@@ -1309,7 +1312,7 @@ a `write` step **commits** DML on its node; a `read` step issues an `objectQuery
 (naming its own `target`, as a read case does). The final
 node-B re-fetch carries **`observeRows`** — node A's committed **post-write**
 state, which node B **MUST** observe (never the stale pre-write rows). Each step's
-golden SQL is normalized (layer 3), and the read steps' operations and the
+golden SQL is normalized (layer 3), and the read steps' queries and the
 descriptor survive serde (layer 4). The harness contains no cache and no
 notification bus; it proves the suite's post-write golden SQL is correct against
 real, committed, cross-connection data — the observable contract any conforming
@@ -1403,11 +1406,13 @@ matching `execution` observation (`m-conformance-adapter`).
 
 A **rejected** case proves a **negative**: that a model-aware validator refuses an
 invalid input **before any SQL is emitted** (resolved question 7). It carries the
-invalid input under `when` — **exactly one** of an `operation` (a schema-valid
-`m-predicate` node), a `write` (a neutral write row, ①), **or** a `model` (an
-inline invalid model descriptor, below) — and a `then.rejectedRule` naming
-the violated normative rule. A rejected case pins a **single** invalid input:
-carrying **more than one** of `operation` / `write` / `model`, or **none**, is
+invalid input under `when` — **exactly one** of an `objectQuery` (a schema-valid
+`m-object-query` document, its predicate included), a `write` (a neutral write
+row, ①), **or** a `model` (an inline invalid model descriptor, below) — and a
+`then.rejectedRule` naming the violated normative rule. A rejected read names its
+own queried position inside that document, so no lane falls back to a default
+root. A rejected case pins a **single** invalid input: carrying **more than one**
+of `objectQuery` / `write` / `model`, or **none**, is
 invalid — enforced by the schema `oneOf` (paired with the `propertyNames` enum
 that forbids other keys) and mirrored by a harness guard, so the "exactly one
 invalid input" rule holds even for a caller that reaches the runner without schema
@@ -1658,9 +1663,9 @@ invalid models out of the reusable model registry while making each boundary
 executable.
 
 Purely **regex-level** negatives — an empty path after the value-object name, a
-bad-cased segment — are the operation schema's job (the `nestedRef` grammar) and
+bad-cased segment — are the Predicate schema's job (the `nestedRef` grammar) and
 stay **schema-validation unit tests**, never `rejected` cases: a syntactically
-malformed operation is refused at layer 1 (schema conformance) before a model-aware
+malformed query is refused at layer 1 (schema conformance) before a model-aware
 resolver ever runs. Likewise, purely **schema-expressible per-entity** inheritance negatives (a
 rejected `strategy` enum value or the retired `discriminator` vocabulary) are
 refused at layer 1 and stay schema-validation unit tests; `when.model` cases pin all

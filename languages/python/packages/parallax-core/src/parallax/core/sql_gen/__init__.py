@@ -9,7 +9,7 @@ The seven names below are the whole supported seam; everything else in this
 package is private implementation. ``compile_read`` returns a self-contained
 :class:`CompiledRead` — statement, root narrow, and row transform together — so
 a caller executes and transforms without re-deriving anything from the
-operation it just compiled. The projection this package emits follows the
+query it just compiled. The projection this package emits follows the
 canonical slot order of ``m-storage-layout``'s compiled ``TableLayout.columns``,
 reached through the Entity and position views over it; ``m-inheritance`` keeps
 family semantics — ancestry, applicability, discriminator meaning — and no
@@ -23,14 +23,14 @@ That implementation is five private modules, each owning one concern:
   ``order by`` / ``limit`` / read-lock tail, normalization, and
   statement assembly, including the inheritance-family read forms it builds from
   the plans ``_inheritance`` resolves.
-* ``_predicate`` — the package's ONE recursive owner. Every descent into an
-  operation happens behind its single ``lower_predicate`` entry point, which
+* ``_predicate`` — the package's ONE recursive owner. Every descent into a
+  predicate happens behind its single ``lower_predicate`` entry point, which
   dispatches over an immutable resolution scope: an entity scope (active entity,
   its alias, and whether the statement aliases its own columns at all) or a
   value-object element scope. It holds the package's only RECURSIVE dispatch over
   the node union, so "where does this node get lowered?" has one answer. (The two
   other ``match`` statement in the package lives in ``_compile`` and selects an
-  inheritance plan type rather than descending into an operation.)
+  inheritance plan type rather than descending into a predicate.)
 * ``_navigation`` — relationship resolution and correlated-hop planning.
 * ``_inheritance`` — table-per-hierarchy and table-per-concrete-subtype
   planning, family projection, tag predicates, and ``familyVariant`` row

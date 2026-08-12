@@ -99,7 +99,7 @@ string that each consumer re-splits; every such string denotes exactly one
 `MemberIdentity`, and a consumer that resolves the string once and then carries
 the identity is conforming. Replacing those authored spellings is not required
 by this contract: the Predicate algebra's wire form is unchanged, and no
-descriptor or operation position accepts a `MemberIdentity` as a serialized
+descriptor or query position accepts a `MemberIdentity` as a serialized
 value.
 
 An empty namespace is invalid. The canonical Entity spelling is

@@ -20,7 +20,7 @@ The SQL lowering of this envelope is owned by the sibling module `m-sql-agg`.
   subset of that algebra; aggregate-row ordering references group-key names or
   aggregate aliases rather than Entity Attributes.
 - **Schema surface.** The aggregate query envelope requires its own closed
-  interchange schema rather than alternatives in Object Query's operation schema.
+  interchange schema rather than alternatives in the Object Query schema.
 - **Read-lock suppression.** An aggregation read never carries the shared read-lock
   suffix (`m-read-lock` / `m-sql`): a grouped / aggregate result has no identifiable
   base row to lock.

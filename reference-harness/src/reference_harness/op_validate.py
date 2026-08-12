@@ -1,8 +1,8 @@
-"""Model-aware OPERATION validation for the ``rejected`` case shape (m-predicate).
+"""Model-aware Object Query validation for the ``rejected`` case shape.
 
-An operation `rejected` case (m-case-format, resolved Q7) carries a SCHEMA-VALID
-`m-predicate` node that a model-aware resolver MUST refuse **before any SQL is
-emitted**. This module walks the operation tree — mostly against the queried
+A query `rejected` case (m-case-format, resolved Q7) carries a SCHEMA-VALID
+`m-object-query` document that a model-aware resolver MUST refuse **before any
+SQL is emitted**. This module walks that document — mostly against the queried
 entity's declared value-object structure — and raises
 :class:`~reference_harness.value_object_resolve.RejectionError` naming the violated
 normative rule:
@@ -45,14 +45,14 @@ the top level. The combinators do not change the root entity, so resolution stay
 against the same declared value-object structure throughout.
 
 Tracked scope limitation (future extension): value-object rules inside a
-RELATED-entity sub-operation — a navigation's inner operation (``navigationFilter.op``
+RELATED-entity sub-predicate — a navigation's inner predicate (``navigationFilter.op``
 / the ``op`` a ``navigate`` / ``exists`` / ``notExists`` carries, which resolves
 against a DIFFERENT entity) — are NOT enforced here. That would require cross-entity
 model resolution (following the relationship to its target entity's declared
 structure); no corpus case exercises it, and value objects are never navigation
 targets (they have no identity to correlate), so :func:`validate_object_query` refuses a
 value-object-TARGETED navigation but does not recurse INTO a related entity's
-sub-operation. Enforcing nested value-object rules across a relationship boundary is
+sub-predicate. Enforcing nested value-object rules across a relationship boundary is
 a documented future extension.
 """
 

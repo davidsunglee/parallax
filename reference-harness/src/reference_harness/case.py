@@ -798,7 +798,7 @@ class Case:
         """True for a cross-process cache-coherence case.
 
         A coherence case carries ``when.coherence`` — a two-node step sequence
-        (run over two connections to one database) instead of a single operation;
+        (run over two connections to one database) instead of a single query;
         golden SQL lives per step, and the final node-B re-fetch asserts
         ``observeRows`` (node A's committed write).
         """

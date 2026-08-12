@@ -10,7 +10,7 @@
 # each locking read is well-formed and result-correct against its real database,
 # cross-checked by a dialect-neutral oracle (the same select WITHOUT a lock, which
 # must return the same rows). This is the first matrix row where the two dialects
-# emit DIFFERENT optimized SQL for the same operation.
+# emit DIFFERENT optimized SQL for the same query.
 model: models/account.yaml
 tags: [m-read-lock, m-dialect]
 shape: read

@@ -11,7 +11,7 @@ is structural and type-checked: it validates
 each node's closed shape, enforces every reference string against the schema
 pattern for its position (attribute / relationship / entity / nested / value-
 object / element-relative), and constrains a nested ``where`` to exactly the
-element-predicate operations the schema admits there. Metamodel binding
+element predicates the schema admits there. Metamodel binding
 (attribute→column, nested-path and narrow resolution) is applied by ``m-sql`` at
 lowering time, which holds the metamodel.
 """
@@ -113,7 +113,7 @@ _ELEMENT_TAGS: frozenset[str] = (
 
 
 class OperationError(ValueError):
-    """An operation document is not a well-formed canonical operation node."""
+    """A serialized document is not a well-formed canonical node."""
 
 
 # --------------------------------------------------------------------------- #
@@ -177,14 +177,14 @@ def _check_shape(tag: str, shape: _Shape, body: Mapping[str, object]) -> None:
 # --------------------------------------------------------------------------- #
 def _single_key(doc: object) -> tuple[str, Mapping[str, object]]:
     if not isinstance(doc, Mapping):
-        raise OperationError(f"operation node must be a mapping, got {type(doc).__name__}")
+        raise OperationError(f"predicate node must be a mapping, got {type(doc).__name__}")
     node = cast("Mapping[str, object]", doc)
     if len(node) != 1:
-        raise OperationError(f"operation node must have exactly one key, got {sorted(node)}")
+        raise OperationError(f"predicate node must have exactly one key, got {sorted(node)}")
     (tag,) = node
     body = node[tag]
     if not isinstance(body, Mapping):
-        raise OperationError(f"operation {tag!r} body must be a mapping")
+        raise OperationError(f"predicate {tag!r} body must be a mapping")
     return tag, cast("Mapping[str, object]", body)
 
 
@@ -275,7 +275,7 @@ def _nested_where(body: Mapping[str, object]) -> PredicateNode | None:
 
 
 def deserialize(doc: object) -> PredicateNode:
-    """Parse an operation document and canonicalize its set-valued carriers."""
+    """Parse a Predicate document and canonicalize its set-valued carriers."""
     return _deserialize(doc, element_scope=False)
 
 
@@ -393,11 +393,11 @@ def _deserialize(doc: object, *, element_scope: bool) -> PredicateNode:
         return NotExists(
             rel=_ref(body, "rel", tag, _MEMBER_REF, "relationship reference"), op=_nav_op(body)
         )
-    raise OperationError(f"unknown operation node {tag!r}")
+    raise OperationError(f"unknown predicate node {tag!r}")
 
 
 def _nav_op(body: Mapping[str, object]) -> PredicateNode | None:
-    # A navigation `op` references the FULL operation grammar (schema), so it is
+    # A navigation `op` references the FULL Predicate grammar (schema), so it is
     # always deserialized in top-level (non-element) scope.
     if "op" not in body:
         return None

@@ -1,7 +1,7 @@
 # `exists` over a polymorphic target NARROWED to ONE concrete subtype
 # (m-navigate, m-predicate, m-inheritance, resolved Q10).
 #
-# The relationship-target narrowing reuses the `narrow` operation node in the
+# The relationship-target narrowing reuses the `narrow` predicate node in the
 # navigation filter's `op` position, where context supplies Pet as the position;
 # the shared selection narrows it to [Cat]. The narrow lifts into the EXISTS's tag selection exactly
 # as it does for a top-level read — one concrete resolves to `t1.kind = ?` (bind

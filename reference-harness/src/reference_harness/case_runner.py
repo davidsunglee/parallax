@@ -2,20 +2,20 @@
 
 Per case, against a freshly-provisioned database selected via the provider seam:
 
-1. **Schema conformance** — descriptor / operation / case validate (done
+1. **Schema conformance** — descriptor / query / case validate (done
    statically by :mod:`schema_validate`; re-asserted here for the loaded case).
 2. **Triple equivalence** — ``exec(then.statements[dialect]) == exec(referenceSql) ==
    then.rows`` (the ``referenceSql`` term only when present).
 3. **Normalization determinism** — ``normalize(then.statements[dialect]) ==
    then.statements[dialect]`` (per statement, for multi-statement cases).
 4. **Serde round-trip** — ``serialize(deserialize(x)) == x`` for BOTH the
-   operation encoding AND the model descriptor, in BOTH JSON and YAML.
+   Object Query encoding AND the model descriptor, in BOTH JSON and YAML.
 5. **Round-trip-count consistency** — for relationship / deep-fetch
    cases the number of golden SQL statements equals the declared ``roundTrips``,
    each level executes (child levels keyed by the parents gathered from the
    previous level), and the assembled object graph equals ``then.graph``.
 
-It deliberately **never compiles the operation to SQL** — that is the job of a
+It deliberately **never compiles a query to SQL** — that is the job of a
 real implementation, graded against the golden SQL.
 """
 
@@ -156,7 +156,7 @@ def _write_column_order(case: Case, entity: Entity) -> tuple[str, ...]:
     return tuple(slot.column for slot in view.columns)
 
 
-# The full pre-SQL rejection vocabulary spans value objects, operations,
+# The full pre-SQL rejection vocabulary spans value objects, queries,
 # inheritance, storage layout, writes, and keyed-instruction shape. The
 # compatibility-case schema's `rejectedRule` enum is the source of truth; these
 # sets MUST stay in lockstep with it.
@@ -1346,7 +1346,7 @@ def _assert_temporal_only_union_binds(case: Case, dialect: str) -> None:
     It derives each branch's temporal predicates in Valid-Time-first order; ``history``
     contributes none. Canonical SQL/bind goldens, compile sweeps, execution checks, and
     focused compatibility cases own complete predicate, projection, and result-directive
-    bind vectors. A no-op for every operation outside that temporal-only boundary.
+    bind vectors. A no-op for every case outside that temporal-only boundary.
     """
     if not case.path.stem.startswith("m-inheritance-093-") or not _is_temporal_only_read(
         case.object_query
@@ -3055,7 +3055,7 @@ def _assert_rejected(case: Case) -> None:
             validate_storage_layout(inline_entities)
         else:  # pragma: no cover - guarded by _assert_schema
             raise CaseFailure(
-                f"{case.path.name}: rejected case needs when.operation / when.write / when.model"
+                f"{case.path.name}: rejected case needs when.objectQuery / when.write / when.model"
             )
     except RejectionError as exc:
         if exc.rule != expected:
@@ -5574,8 +5574,8 @@ def _assert_scenario_count_consistency(case: Case, dialect: str) -> None:
     A cache HIT lists no golden SQL and declares ``roundTrips: 0``; a cache MISS
     that executes one statement declares ``roundTrips: 1``. The steps' total MUST
     equal the case-level ``roundTrips``. This is the round-trip contract proven
-    from the fixture's own declared counts — the harness never compiles an
-    operation to SQL.
+    from the fixture's own declared counts — the harness never compiles a query
+    to SQL.
     """
     total = 0
     for index, step in enumerate(case.scenario):
@@ -7042,7 +7042,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         if not case.is_boundary:
             # A read-shape api-conformance case (the read-lock matrix
             # `m-read-lock-002`, `m-read-lock-004`, and `m-read-lock-005`) still
-            # round-trips its operation + descriptor through the serde seam.
+            # round-trips its query + descriptor through the serde seam.
             _assert_serde(case)
             _assert_equivalent_encodings(case)
         return
@@ -7053,7 +7053,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         # no execution. It runs identically on every dialect (idempotent, DB-free), so
         # branch here before the dialect is even read.
         _assert_schema(case)  # layer 1 (structural invariants for the shape)
-        _assert_serde(case)  # layer 4 (operation, if any, + descriptor)
+        _assert_serde(case)  # layer 4 (query, if any, + descriptor)
         _assert_rejected(case)  # the pre-SQL refusal, asserting the named rule
         return
 
@@ -7117,7 +7117,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         # A two-connection (concurrency) error case has no top-level then.statements, so
         # branch before the then.statements access below, like the per-step shapes.
         _assert_schema(case)
-        _assert_serde(case)  # descriptor serde only (error cases have no operation)
+        _assert_serde(case)  # descriptor serde only (error cases carry no query)
         _assert_equivalent_encodings(case)
         if not _error_has_golden(case, dialect):
             return  # no golden for this dialect: dialect-agnostic checks only
@@ -7131,7 +7131,7 @@ def run_case(case: Case, db: DatabaseProvider) -> None:
         # `concurrency.rounds` (no top-level then.statements), so
         # branch before the then.statements access below, as a sibling of `is_error`.
         _assert_schema(case)
-        _assert_serde(case)  # descriptor serde only (no operation)
+        _assert_serde(case)  # descriptor serde only (no query)
         _assert_equivalent_encodings(case)
         if not _concurrency_has_golden(case, dialect):
             return  # no golden for this dialect: dialect-agnostic checks only

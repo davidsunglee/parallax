@@ -276,8 +276,8 @@ Retain the branch matching the lifecycle profile; do not answer both.
   idiomatic public-API proof against a real database through a shipped adapter.
 - **(decide and record — All slices)** The coverage-partition assertion:
   exercised union reasoned-skipped equals the active slice, with no stale IDs and
-  no empty skip reasons. Record the no-drift guard tying idiomatic operations to
-  corpus operations.
+  no empty skip reasons. Record the no-drift guard tying idiomatic queries to
+  corpus queries.
 - **(decide and record — All slices)** Usage Guide generation from suite source
   and the CI drift check. The guide and API suite are additive to, not substitutes
   for, conformance-adapter proof.

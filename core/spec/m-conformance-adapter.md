@@ -309,7 +309,7 @@ returns the observations required to compare against the case.
 
 It consumes the same structured predicate-write instruction as `compile`, then
 compares emitted SQL and binds to the authored golden unchanged. The instruction
-adds neutral operation input; it does not relax SQL comparison.
+adds neutral write input; it does not relax SQL comparison.
 
 It likewise consumes the same **ordered keyed buffer** as `compile`, buffering
 **every** entry in one unit of work and applying the `m-unit-work` flush —

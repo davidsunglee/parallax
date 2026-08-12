@@ -4,7 +4,7 @@
 # `nestedEq(Customer.address.city, …)` resolves against Customer's DECLARED
 # value-object structure, never against opaque JSON keys. Here the first segment is
 # `contact`, which Customer does not declare as a value object, so a model-aware
-# resolver MUST reject the operation before emitting any SQL (m-predicate
+# resolver MUST reject the query before emitting any SQL (m-predicate
 # nested-predicate resolver MUST). The path is schema-VALID (`nestedRef` regex), so
 # only model-aware validation catches it — exactly the gap the `rejected` shape closes.
 model: models/customer.yaml
