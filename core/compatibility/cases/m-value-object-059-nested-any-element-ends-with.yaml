@@ -8,10 +8,8 @@
 # of any-element: one satisfying element is enough and the predicate never asks which.
 # Linus (2) matches on his only element. Nils (7) carries 555-0000 and is out.
 #
-# Priya (10) is the trap: her non-array OBJECT `phones` carries the number '555-9999'
-# and would match were the array-type guard missing; she collapses to zero elements with
-# the JSON null (8), the scalar (9), the empty array (3), the null column (4), and the
-# missing keys (5, 6).
+# Every zero-element form remains out: the empty arrays (3, 9, 10), the null column
+# (4), the missing keys (5, 6), and the nested null (8).
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, any-element, string, endsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

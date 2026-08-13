@@ -4,14 +4,14 @@
 #
 # `address` declares NO temporality of its own — it rides the Supplier's single
 # Transaction-Time dimension. Reading at Latest injects the current-row predicate
-# (out_z = infinity, one bind), and the golden projects the whole structured-document
-# `address` column with the owner; the graph materializer decodes it per row. Only the
+# (out_z = infinity, one bind), and the golden projects an adjacent presence
+# discriminator plus the structured-document `address` column with the owner; the graph materializer decodes it per row. Only the
 # CURRENT milestone of each supplier is returned, so id 1 materializes D1b (Bergen,
 # work phone) — NOT the superseded D1a (Oslo) that case 029 sees as-of a past instant.
 # This proves the document rides the owner's milestone exactly like a scalar column,
 # with no value-object-specific temporal machinery.
 #
-# The golden SQL is IDENTICAL on both dialects (a bare column projection + the
+# The golden SQL is IDENTICAL on both dialects (a presence-plus-document projection + the
 # injected current-row predicate); the infinity bind is owned by the m-dialect seam
 # (Postgres native `'infinity'::timestamptz`, MariaDB the max-sentinel), so `binds` is
 # one shared flat array. The dialect-neutral referenceSql ranges `out_z > '9000-01-01'`
@@ -31,8 +31,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.out_z = ?
-        mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, t0.address from supplier t0 where t0.out_z = ?
+        postgres: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.out_z = ?
+        mariadb: select t0.sup_id, t0.name, t0.in_z, t0.out_z, not t0.address is null, t0.address from supplier t0 where t0.out_z = ?
       binds: [infinity]
   referenceSql: select sup_id, name, in_z, out_z from supplier where out_z > '9000-01-01'
   graph:

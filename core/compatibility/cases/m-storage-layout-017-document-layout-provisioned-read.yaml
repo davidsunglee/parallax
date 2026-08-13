@@ -33,8 +33,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.payload from traveler t0
-        mariadb: select t0.id, t0.payload from traveler t0
+        postgres: select t0.id, not t0.payload is null, t0.payload from traveler t0
+        mariadb: select t0.id, not t0.payload is null, t0.payload from traveler t0
   rows:
     - { id: 1, display_name: Ada, score: 7, joined_on: '2026-01-15', note: north wing }
     - { id: 2, display_name: Bo, score: 30, joined_on: '2025-12-31', note: null }

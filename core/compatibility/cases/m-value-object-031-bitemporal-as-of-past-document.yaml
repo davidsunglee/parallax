@@ -12,7 +12,7 @@
 # owner read at a different (valid x transaction) point returns a DIFFERENT address
 # document: the document rides the bitemporal milestone like a scalar column.
 #
-# The golden SQL is IDENTICAL on both dialects (a bare column projection + the four
+# The golden SQL is IDENTICAL on both dialects (a presence-plus-document projection + the four
 # injected containment predicates); the two past instants ride as four shared binds, so
 # `binds` is one flat array. The referenceSql is per-dialect only because the inline
 # timestamp-literal spelling diverges (Postgres `'…'::timestamptz`, MariaDB a
@@ -33,8 +33,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
-        mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+        postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
+        mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from branch t0 where t0.from_z <= ? and t0.thru_z > ? and t0.in_z <= ? and t0.out_z > ?
       binds: ["2024-03-01T00:00:00+00:00", "2024-03-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00", "2024-02-01T00:00:00+00:00"]
   referenceSql:
     postgres: select br_id, name, from_z, thru_z, in_z, out_z from branch where from_z <= '2024-03-01T00:00:00+00:00'::timestamptz and thru_z > '2024-03-01T00:00:00+00:00'::timestamptz and in_z <= '2024-02-01T00:00:00+00:00'::timestamptz and out_z > '2024-02-01T00:00:00+00:00'::timestamptz

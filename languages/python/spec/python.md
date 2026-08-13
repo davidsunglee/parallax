@@ -1979,17 +1979,23 @@ or descriptor authoring form and performs no audit stamping.
   ```text
   SnapshotGraphInput
     nodes: tuple[SnapshotNodeInput, ...]
-    roots: tuple[SnapshotNodeRef, ...]
+    roots: tuple[SnapshotNodeRef | InvalidRootInput, ...]
     pin: Pin
+    has_issues: bool
 
   SnapshotNodeRef
     node_index: int
+
+  InvalidRootInput
+    ordinal: int
+    issues: tuple[StoredDataIssueInput, ...]
 
   SnapshotNodeInput
     concrete_entity: EntityIdentity
     attributes: tuple[EntityAttributeInput, ...]
     value_objects: tuple[ValueObjectOccurrenceInput, ...]
     relationship_views: tuple[SnapshotRelationshipViewInput, ...]
+    issues: tuple[StoredDataIssueInput, ...]
 
   EntityAttributeInput
     identity: AttributeIdentity
@@ -2017,7 +2023,11 @@ or descriptor authoring form and performs no audit stamping.
   projections that the materializer merges. Out-of-range node references are
   rejected before merging. Omission of a Relationship View entry means
   unloaded, while a present `None` or empty tuple means loaded-null or
-  loaded-empty.
+  loaded-empty. A root whose primary key is null or undecodable is represented
+  by `InvalidRootInput`: its result ordinal and classified issues survive, but it
+  contributes no logical identity and is never hydrated. `has_issues` is set by
+  the builder whenever any node carries an issue; publication still limits its
+  verdict to nodes reachable from the requested roots.
 
   Entity Graph Construction accepts the same immutable scalar and Value Object
   carriers. Its build callback returns exactly
@@ -2048,55 +2058,33 @@ or descriptor authoring form and performs no audit stamping.
   and validates and constructs them in accepted metadata declaration order.
   Only a Many occurrence's record tuple has semantic order, preserved exactly.
   Conversion from physical structured-document values into this algebra owns
-  stored-document presence, container-shape, and Neutral Value validation.
-  A failure raises exported
-  `SnapshotDecodingError(ValueError)` with stable code
-  `snapshot-decoding-failed`, the concrete `EntityIdentity`, the applicable
-  `ValueObjectIdentity | ValueObjectAttributeIdentity`, and an optional
-  original cause. Its own message names only the Entity and the member at
-  fault and so exposes no raw database value; the value that provoked the
-  failure survives on the chained cause, which a first-party diagnosis needs
-  because the stored spelling is itself what the refusal is about. It is never
-  wrapped as `SnapshotMaterializationError`. Entity Graph Construction nevertheless
+  stored-document presence, container-shape, and Neutral Value validation. It
+  records the closed `StoredDataIssueInput` vocabulary on the node rather than
+  raising: required-member absent/null, one/many wrong-kind, undecodable leaf,
+  non-nullable Entity Attribute null, unknown family tag, and null/undecodable
+  primary key. A `StoredDataIssueInput` carries the concrete Entity, applicable
+  member identity when one exists, and a path whose member-name strings remain
+  distinct from integer array positions. Entity Graph Construction nevertheless
   revalidates every identity, duplicate, occurrence shape, and Neutral Value;
   invalid direct first-party input raises `GraphConstructionError` with
   `entity-graph-invalid-member` or
   `entity-graph-invalid-value`. A public Snapshot read reaches that path only
   through an implementation defect.
-- **Document-resident nullability.** A **document-resident** position — a Value
+- **Document-resident nullability and classification.** A **document-resident** position — a Value
   Object leaf, and a to-one or to-many occurrence inside a Structured Column —
-  reaches Entity Graph Construction with its not-present states already
-  collapsed by the read seam under `m-predicate`'s absence-collapse rule: a
+  is classified before hydration and then follows `m-predicate`'s absence
+  collapse for states the hydration table admits: a
   missing key, a stored null (SQL or JSON), and a non-object intermediate all
   arrive as `None`; for a Many, a missing key, a stored null, and a non-array
-  all arrive as `()`. Every such position collapses, and at one of them some
-  states are judged first: at a top-level occurrence inside the shared
-  Structured Column under Relational Document Layout, the read seam rejects a
-  key holding the wrong kind of value, and a required One's absent or null key,
-  as invalid stored data before either reaches the collapse; the states it
-  admits — a nullable One's absent or null key, and a Many's — collapse like
-  the rest (below).
-  The collapse takes no nullability argument —
-  `document_codec.reduce_declared_members` cannot consult `nullable` — so which
-  not-present state the document was in does not survive it: an omitted leaf and
-  a stored null arrive as the same value.
-  **Every document-resident position the collapse reaches goes unjudged**: the
-  reduction does not enforce declared nullability, nor does Entity Graph
-  Construction, nor the frozen Value Object it builds. A stored document
-  violating a required Value Object leaf or a required nested One occurrence
-  materializes as `None` instead of raising, and so does a violated top-level One
-  occurrence under `Columns` layout, where the occurrence holds a Structured
-  Column of its own and the whole column reaches the collapse.
-
-  One boundary is judged ahead of the collapse, and only under Relational
-  Document Layout: fanning the shared Structured Column out decodes each
-  projected member's Document Path through `document_codec.decode_path`, which
-  rejects a required top-level occurrence — and a document-placed Entity
-  Attribute — whose key is absent or holds JSON null as invalid stored data,
-  along with a key holding neither the object nor the array its multiplicity
-  stores. The check reaches that one key; the occurrence's own document arrives
-  whole, and every position inside it belongs to the collapse — as does the key
-  itself in every state the check admits.
+  all arrive as `()`. Classification is layout-neutral: a Columns occurrence's
+  SQL-null-aware carrier and a Relational Document Layout member's located
+  carrier pass through the same logical-member classifier before reduction.
+  Required absent/null positions and wrong-kind occurrences add findings while
+  their unavailable values are not invented; nullable absence and JSON null
+  retain the ordinary collapse. A detecting seam owns its verdict once. The
+  SQL/document transform carries both its findings and the set of members it
+  already classified, so row conversion translates those findings without
+  judging a synthesized `None` or `[]` again.
 
   The write path is untouched by this and still enforces: a Value Object authored
   for an assignment is built by ordinary Pydantic validation, where a required
@@ -2106,20 +2094,22 @@ or descriptor authoring form and performs no audit stamping.
   identity, duplicate entries, occurrence shape (record versus tuple), exact
   built-in tuple carriers, and Neutral Value validity. An Entity Attribute is no
   document-resident position under this rule wherever its Member Placement puts
-  it: its declared nullability **is** enforced, and a `None` for a non-nullable
-  Attribute raises `GraphConstructionError(entity-graph-invalid-value)`.
+  it: row conversion classifies a `None` for a non-nullable Attribute as
+  `stored-data-attribute-null` (or `stored-data-primary-key-null`) and carries no
+  fabricated value. Native database temporal infinity is already the distinct
+  `INFINITY` sentinel; a SQL NULL temporal end is invalid and is never replaced
+  with that sentinel.
 
-  The gap is declined enforcement rather than a missing capability. Every state
-  the collapse merges violates a required member, and construction still holds
-  the member's declared `nullable`, so a verdict is derivable; what the collapse
-  costs is only the ability to say which violation a document committed.
-  Enforcement is declined because the core corpus specifies the collapse —
-  `m-value-object-023` grades `city: null` for a leaf whose model declares no
-  `nullable` — and core specifications and the compatibility corpus outrank this
-  document. Enforcement would also be disproportionate to the fault: state
-  attachment and root publication are atomic, so a construction failure
-  publishes nothing and one malformed stored document would render an entire
-  result unreadable.
+  Phase 2 exposes no in-band invalid-result API. Both typed and neutral
+  materializers call one publication gate over the reachable merged graph before
+  allocating objects, deriving Object Keys, or invoking observation keying. The
+  gate raises exported `SnapshotDecodingError(ValueError)` with stable code
+  `snapshot-decoding-failed`, the concrete `EntityIdentity`, and the applicable
+  `AttributeIdentity | ValueObjectIdentity | ValueObjectAttributeIdentity |
+  None`. It exposes no raw stored value and carries no decoding cause. Invalid
+  roots and issue-bearing requested descendants therefore publish nothing;
+  unrequested projections do not affect the verdict. Phase 3 replaces this
+  transitional refusal with the specified in-band classification surface.
 - **Single graph input.** Projection merging may retain a transient logical
   identity index, references to input projections, and slot-level winner
   references. It MUST NOT clone each node's scalar, Value Object, and
@@ -2277,7 +2267,11 @@ or descriptor authoring form and performs no audit stamping.
   however the other dimension is pinned. Neither another clause nor a pin on the
   other dimension can
   hide the deferred Feature from this seam or divert a scan away from the
-  milestone-set executor.
+  milestone-set executor. The milestone-set executor converts every returned row
+  into graph input and applies the shared publication gate before reading a
+  milestone edge or sort key. An unavailable temporal start is therefore a
+  `StoredDataIssueInput` and then a `SnapshotDecodingError`, never a temporal
+  partitioning or sorting error; only clean rows are grouped by edge.
 - **Closed-world relationships.** An included to-one is the related node or
   `None` (loaded-null); an included to-many is a `tuple` (possibly empty —
   loaded-empty is `()`). A relationship outside the include set is
@@ -2349,8 +2343,8 @@ or descriptor authoring form and performs no audit stamping.
   a Snapshot. Every other failure a read can take keeps its own owner's
   classification and is never rewrapped here: query definition and target
   resolution, deferred features, transaction ownership, adapter and database
-  errors, SQL generation, and the `SnapshotDecodingError` conversion raises
-  before any graph construction has begun.
+  errors, SQL generation, and the `SnapshotDecodingError` publication refusal
+  raised before graph construction begins.
 - **Eager include execution.** One query per non-empty relationship level
   (semi-join against the parent level's keys); an empty level short-circuits
   its subtree; declared descriptor `orderBy` governs child ordering; narrowed

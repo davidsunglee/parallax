@@ -25,11 +25,13 @@ from parallax.core.base import (
     INT32,
     INT64,
     JSON,
+    SQL_NULL,
     STRING,
     TIME,
     TIMESTAMP,
     UUID,
     Decimal,
+    PresentDocument,
 )
 from parallax.core.dialect import (
     INFINITY,
@@ -108,6 +110,16 @@ def test_bytes_projection_shape(dialect: Dialect) -> None:
     plain_expr, plain_binds = dialect.project("t0", "name", STRING)
     assert plain_expr == "t0.name"
     assert plain_binds == []
+
+
+@pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)
+def test_document_read_parsing_uses_the_boolean_discriminator_first(dialect: Dialect) -> None:
+    assert dialect.parse_document_read(False, object()) is SQL_NULL
+    assert dialect.parse_document_read(True, None) == PresentDocument(None)
+    with pytest.raises(ValueError, match="must be a SQL boolean"):
+        dialect.parse_document_read(1, None)
+    with pytest.raises(ValueError, match="portable JSON value"):
+        dialect.parse_document_read(True, object())
 
 
 @pytest.mark.parametrize("dialect", DIALECTS, ids=IDS)

@@ -25,6 +25,7 @@ from _corpus_model_support import formed
 from _corpus_model_support import model as corpus_model
 from _snapshot_graph_support import documents_of, identity_of
 
+from parallax.conformance import vo_models
 from parallax.core.base import (
     BOOLEAN,
     BYTES,
@@ -39,9 +40,10 @@ from parallax.core.base import (
     UUID,
     Decimal,
     NeutralType,
+    PresentDocument,
 )
-from parallax.core.document_codec import encode_leaf
-from parallax.core.entity import ValueObjectRecord
+from parallax.core.document_codec import DocumentFinding, encode_leaf
+from parallax.core.entity import ValueObjectRecord, graph_construction_of
 from parallax.core.metamodel import (
     AttributeIdentity,
     EntityIdentity,
@@ -50,6 +52,8 @@ from parallax.core.metamodel import (
     ValueObjectIdentity,
 )
 from parallax.core.model_formation import MetamodelValidationError
+from parallax.core.sql_gen import AttributeReadContract
+from parallax.core.temporal_read import Pin
 from parallax.descriptor._records import (
     Attribute,
     Entity,
@@ -58,7 +62,9 @@ from parallax.descriptor._records import (
     ValueObjectAttribute,
 )
 from parallax.descriptor._records import Metamodel as DescriptorMetamodel
+from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.materialize import (
+    InvalidRootInput,
     LevelContext,
     MergeScope,
     SnapshotDecodingError,
@@ -74,6 +80,7 @@ ANIMAL = corpus_model("animal")
 CUSTOMER = corpus_model("customer")
 DOCUMENT = corpus_model("document")
 DOCUMENT_CODEC = corpus_model("document-codec")
+SCALARS = corpus_model("scalars")
 
 _NAMESPACE = "parallax.compatibility"
 
@@ -115,6 +122,36 @@ def test_a_scalar_column_becomes_its_own_attribute_identity() -> None:
     node = _converted(ORDERS, "Order", {"id": 1, "name": "Ada"})
     assert {entry.identity.name for entry in node.attributes} == {"id", "name"}
     assert attribute_value(node, AttributeIdentity(EntityIdentity(_NAMESPACE, "Order"), "id")) == 1
+
+
+def test_an_encoded_projection_key_decodes_into_its_logical_attribute() -> None:
+    identity = identity_of(SCALARS, "ScalarThing")
+    entity = SCALARS.entity(identity)
+    assert entity is not None
+    payload = entity.attribute("payload")
+    assert payload is not None
+    context = LevelContext(
+        identity,
+        (),
+        (
+            AttributeReadContract(
+                identity=payload.identity,
+                column="payload",
+                result_key="payload_hex",
+                type=payload.type,
+                nullable=payload.nullable,
+                temporal_end=False,
+                encoded=True,
+            ),
+        ),
+    )
+    scope = MergeScope(SCALARS)
+    node = scope.node(convert_row({"payload_hex": "0a1b"}, context, scope))
+    assert attribute_value(node, payload.identity) == b"\x0a\x1b"
+
+    invalid_scope = MergeScope(SCALARS)
+    invalid = invalid_scope.node(convert_row({"payload_hex": "not-hex"}, context, invalid_scope))
+    assert [issue.code for issue in invalid.issues] == ["stored-data-leaf-undecodable"]
 
 
 def test_a_sibling_column_and_the_synthetic_family_tag_contribute_nothing() -> None:
@@ -216,15 +253,15 @@ def test_every_nested_leaf_decodes_by_its_declared_neutral_type() -> None:
     assert _leaf(entries[0], "issued") == dt.date(2026, 2, 1)
 
 
-def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_collapses() -> None:
+def test_a_present_leaf_outside_its_declared_type_is_classified_where_absence_collapses() -> None:
     # The two halves of one boundary. A member the document DOES supply in a state
     # the model has — a JSON null, an occurrence of the wrong kind — collapses to
     # null / () as the read predicates do (m-predicate), and a member it supplies
     # not at all contributes no input, which is how the carrier keeps the document's
     # own presence. A leaf that IS supplied and decodes into no member of its
     # declared value space is a state the model does not have: it is invalid stored
-    # data (m-document-codec), so it raises here instead of reaching a caller as the
-    # raw stored value.
+    # data (m-document-codec), so conversion records an issue instead of retaining
+    # the raw stored value.
     node = _converted(
         DOCUMENT_CODEC,
         "Sample",
@@ -240,33 +277,27 @@ def test_a_present_leaf_outside_its_declared_type_fails_where_absence_still_coll
     assert _nested(profile, "origin") is None
     assert _nested(profile, "entries") == ()
 
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"amount": "bogus"}})
-    assert refusal.value.code == "snapshot-decoding-failed"
-    assert refusal.value.entity == EntityIdentity(_NAMESPACE, "Sample")
-    assert refusal.value.member == ValueObjectAttributeIdentity(
+    invalid = _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"amount": "bogus"}})
+    assert invalid.issues[0].code == "stored-data-leaf-undecodable"
+    assert invalid.issues[0].entity == EntityIdentity(_NAMESPACE, "Sample")
+    assert invalid.issues[0].member == ValueObjectAttributeIdentity(
         ValueObjectIdentity(EntityIdentity(_NAMESPACE, "Sample"), ("profile",)), "amount"
     )
-    assert "Sample.profile.amount" in str(refusal.value)
 
 
-def test_a_decoding_refusal_names_a_nested_leaf_and_exposes_no_stored_value() -> None:
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        _converted(
-            DOCUMENT_CODEC,
-            "Sample",
-            {"id": 1, "profile": {"entries": [{"issued": "2026-13-40"}]}},
-        )
-    assert refusal.value.member == ValueObjectAttributeIdentity(
+def test_a_classified_decoding_issue_names_a_nested_leaf_and_exposes_no_stored_value() -> None:
+    invalid = _converted(
+        DOCUMENT_CODEC,
+        "Sample",
+        {"id": 1, "profile": {"entries": [{"issued": "2026-13-40"}]}},
+    )
+    assert invalid.issues[0].code == "stored-data-leaf-undecodable"
+    assert invalid.issues[0].member == ValueObjectAttributeIdentity(
         ValueObjectIdentity(EntityIdentity(_NAMESPACE, "Sample"), ("profile", "entries")), "issued"
     )
-    assert "Sample.profile.entries.issued" in str(refusal.value)
-    # The value that provoked it stays on the chained cause, never in the message.
-    assert "2026-13-40" not in str(refusal.value)
-    assert "2026-13-40" in str(refusal.value.cause)
 
 
-def test_a_decoding_refusal_separates_two_members_that_spell_one_dotted_path() -> None:
+def test_classified_decoding_separates_two_members_that_spell_one_dotted_path() -> None:
     # `origin` holding a leaf `city.name`, and `origin.city` holding a leaf `name`,
     # render the same dotted path, so no reading of a `.`-joined spelling can tell
     # them apart. The codec reports its member as a sequence of declared names and
@@ -294,20 +325,21 @@ def test_a_decoding_refusal_separates_two_members_that_spell_one_dotted_path() -
         ),
     )
     model = formed(DescriptorMetamodel(entities=(entity,)))
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        _converted(model, "Twin", {"id": 1, "profile": {"origin": {"city.name": "bogus"}}})
-    assert refusal.value.member == ValueObjectAttributeIdentity(
+    invalid = _converted(model, "Twin", {"id": 1, "profile": {"origin": {"city.name": "bogus"}}})
+    assert invalid.issues[0].member == ValueObjectAttributeIdentity(
         ValueObjectIdentity(EntityIdentity(None, "Twin"), ("profile", "origin")), "city.name"
     )
 
-    with pytest.raises(SnapshotDecodingError) as sibling:
-        _converted(model, "Twin", {"id": 1, "profile": {"origin.city": {"name": "bogus"}}})
-    assert sibling.value.member == ValueObjectAttributeIdentity(
+    sibling = _converted(model, "Twin", {"id": 1, "profile": {"origin.city": {"name": "bogus"}}})
+    sibling_issue = next(
+        issue for issue in sibling.issues if issue.code == "stored-data-leaf-undecodable"
+    )
+    assert sibling_issue.member == ValueObjectAttributeIdentity(
         ValueObjectIdentity(EntityIdentity(None, "Twin"), ("profile", "origin.city")), "name"
     )
 
 
-def test_a_decoding_refusal_resolves_a_leaf_whose_own_name_carries_a_dot() -> None:
+def test_classified_decoding_resolves_a_leaf_whose_own_name_carries_a_dot() -> None:
     # Only an Entity name is dot-free; a member name is any nonempty string
     # (m-metamodel "Canonical identities and order"). The codec reports the failing
     # member as a sequence of declared names, so resolving it by splitting a
@@ -327,12 +359,30 @@ def test_a_decoding_refusal_resolves_a_leaf_whose_own_name_carries_a_dot() -> No
         ),
     )
     model = formed(DescriptorMetamodel(entities=(entity,)))
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        _converted(model, "Dotted", {"id": 1, "profile": {"amount.v1": "bogus"}})
-    assert refusal.value.member == ValueObjectAttributeIdentity(
+    invalid = _converted(model, "Dotted", {"id": 1, "profile": {"amount.v1": "bogus"}})
+    assert invalid.issues[0].member == ValueObjectAttributeIdentity(
         ValueObjectIdentity(EntityIdentity(None, "Dotted"), ("profile",)), "amount.v1"
     )
-    assert "Dotted.profile.amount.v1" in str(refusal.value)
+
+
+def test_numeric_member_names_remain_distinct_from_array_positions() -> None:
+    entity = Entity(
+        name="NumericNames",
+        table="numeric_names",
+        attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+        value_objects=(
+            ValueObject(
+                name="0",
+                column="zero",
+                attributes=(ValueObjectAttribute(name="12", type="int32"),),
+            ),
+        ),
+    )
+    model = formed(DescriptorMetamodel(entities=(entity,)))
+    invalid = _converted(model, "NumericNames", {"id": 1, "zero": {"12": "wrong"}})
+    assert invalid.issues[0].member == ValueObjectAttributeIdentity(
+        ValueObjectIdentity(EntityIdentity(None, "NumericNames"), ("0",)), "12"
+    )
 
 
 @pytest.mark.parametrize(
@@ -350,7 +400,7 @@ def test_a_decoding_refusal_resolves_a_leaf_whose_own_name_carries_a_dot() -> No
     ],
     ids=lambda param: repr(param),
 )
-def test_a_stored_leaf_that_is_not_the_tables_own_spelling_is_refused(
+def test_a_stored_leaf_that_is_not_the_tables_own_spelling_is_classified(
     member: str, stored: object
 ) -> None:
     # Every Neutral Type has exactly ONE document spelling, and for the six
@@ -358,8 +408,12 @@ def test_a_stored_leaf_that_is_not_the_tables_own_spelling_is_refused(
     # row here decodes into its declared value space and is still a DIFFERENT document
     # from the one a writer of the same value stores, so converting it would hand a
     # caller a value whose own row no predicate over that member finds.
-    with pytest.raises(SnapshotDecodingError, match=rf"Sample\.profile\.{member}"):
-        _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "label": "Ada", "profile": {member: stored}})
+    invalid = _converted(
+        DOCUMENT_CODEC, "Sample", {"id": 1, "label": "Ada", "profile": {member: stored}}
+    )
+    assert invalid.issues[0].code == "stored-data-leaf-undecodable"
+    assert isinstance(invalid.issues[0].member, ValueObjectAttributeIdentity)
+    assert invalid.issues[0].member.name == member
 
 
 def test_an_integral_float_leaf_answers_the_same_whichever_rendering_carries_it() -> None:
@@ -368,8 +422,10 @@ def test_an_integral_float_leaf_answers_the_same_whichever_rendering_carries_it(
     # value binary32 does not hold in either rendering, so both are invalid stored
     # data rather than the silently rounded `16777216.0` a narrow-first reader gives.
     for rendering in (2**24 + 1, float(2**24 + 1)):
-        with pytest.raises(SnapshotDecodingError, match=r"Sample\.profile\.ratio"):
-            _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"ratio": rendering}})
+        invalid = _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"ratio": rendering}})
+        assert invalid.issues[0].code == "stored-data-leaf-undecodable"
+        assert isinstance(invalid.issues[0].member, ValueObjectAttributeIdentity)
+        assert invalid.issues[0].member.name == "ratio"
     for rendering in (20, 20.0):
         node = _converted(DOCUMENT_CODEC, "Sample", {"id": 1, "profile": {"ratio": rendering}})
         assert _leaf(cast("ValueObjectRecord", _occurrence(node, "profile")), "ratio") == 20.0
@@ -565,7 +621,7 @@ def test_observable_columns_answers_the_whole_row_with_documents_decoded() -> No
     row: dict[str, object] = {
         "id": 1,
         "name": "Ada",
-        "address": {"street": "1 Park Ave", "city": "Oslo"},
+        "address": PresentDocument({"street": "1 Park Ave", "city": "Oslo"}),
     }
     columns = observable_columns(row, _context(CUSTOMER, "Customer"))
     assert columns["id"] == 1
@@ -592,13 +648,53 @@ def test_observable_columns_renders_a_many_occurrence_as_a_list() -> None:
     assert columns["stops"] == [{"label": "a"}]
 
 
+def test_observable_columns_rekeys_and_decodes_an_encoded_scalar_projection() -> None:
+    identity = identity_of(SCALARS, "ScalarThing")
+    entity = SCALARS.entity(identity)
+    assert entity is not None
+    payload = entity.attribute("payload")
+    assert payload is not None
+    context = LevelContext(
+        identity,
+        (),
+        (
+            AttributeReadContract(
+                identity=payload.identity,
+                column="payload",
+                result_key="payload_hex",
+                type=payload.type,
+                nullable=payload.nullable,
+                temporal_end=False,
+                encoded=True,
+            ),
+        ),
+    )
+    assert observable_columns({"payload_hex": "0a1b"}, context) == {"payload": b"\x0a\x1b"}
+
+
+def test_observable_columns_preserves_an_already_classified_document_occurrence() -> None:
+    managed = {
+        "amount": decimal.Decimal("10.25"),
+        "blob": b"\x0a\x1b",
+        "day": dt.date(2026, 1, 15),
+        "clock": dt.time(9, 30),
+        "instant": dt.datetime(2026, 1, 15, 9, 30, tzinfo=dt.UTC),
+        "token": uuid.UUID("123e4567-e89b-12d3-a456-426614174000"),
+    }
+    columns = observable_columns(
+        {"id": 1, "profile": managed},
+        _context(DOCUMENT_CODEC, "Sample"),
+        classified_members=frozenset({"profile"}),
+    )
+    assert columns["profile"] == managed
+
+
 def test_a_whole_document_stored_in_a_kind_it_cannot_be_read_as_names_the_occurrence() -> None:
-    # A top-level occurrence's own column holding a non-object is not an absence
-    # state the model has: there is no member path to blame, so the refusal names
-    # the occurrence itself.
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        _converted(CUSTOMER, "Customer", {"id": 1, "name": "Ada", "address": "not-an-object"})
-    assert refusal.value.member == ValueObjectIdentity(
+    # This is an invalid One occurrence inside the Entity document, so the
+    # occurrence itself owns the finding.
+    invalid = _converted(CUSTOMER, "Customer", {"id": 1, "name": "Ada", "address": "not-an-object"})
+    assert {issue.code for issue in invalid.issues} == {"stored-data-one-wrong-kind"}
+    assert invalid.issues[0].member == ValueObjectIdentity(
         EntityIdentity(_NAMESPACE, "Customer"), ("address",)
     )
 
@@ -611,3 +707,62 @@ def test_a_member_a_node_carries_no_entry_for_answers_none() -> None:
         attribute_value(node, AttributeIdentity(EntityIdentity(_NAMESPACE, "Order"), "name"))
         is None
     )
+
+
+@pytest.mark.parametrize(
+    ("row", "code"),
+    [
+        ({"id": None, "name": "Ada"}, "stored-data-primary-key-null"),
+        ({"id": "not-an-int", "name": "Ada"}, "stored-data-primary-key-undecodable"),
+    ],
+)
+def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], code: str) -> None:
+    scope = MergeScope(CUSTOMER)
+    ref = convert_row(row, _context(CUSTOMER, "Customer"), scope)
+    graph = scope.build((ref,), Pin())
+    assert graph.has_issues
+    assert isinstance(graph.roots[0], InvalidRootInput)
+    assert graph.roots[0].issues[0].code == code
+    with pytest.raises(SnapshotDecodingError):
+        materialize_graph(
+            graph,
+            CUSTOMER,
+            graph_construction_of(vo_models.CUSTOMER_MODEL),
+        )
+
+
+def test_direct_attribute_null_and_unknown_family_tag_become_node_issues() -> None:
+    scope = MergeScope(CUSTOMER)
+    ref = convert_row(
+        {"id": 1, "name": None},
+        _context(CUSTOMER, "Customer"),
+        scope,
+        family_tag_unknown=True,
+    )
+    assert [issue.code for issue in scope.node(ref).issues] == [
+        "stored-data-family-tag-unknown",
+        "stored-data-attribute-null",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("finding", "code"),
+    [
+        (
+            DocumentFinding("leaf-undecodable", ("id",)),
+            "stored-data-primary-key-undecodable",
+        ),
+        (DocumentFinding("required-member-null", ("name",)), "stored-data-attribute-null"),
+    ],
+)
+def test_entity_document_findings_use_attribute_specific_issue_codes(
+    finding: DocumentFinding, code: str
+) -> None:
+    scope = MergeScope(CUSTOMER)
+    ref = convert_row(
+        {"id": 1, "name": "Ada"},
+        _context(CUSTOMER, "Customer"),
+        scope,
+        findings=(finding,),
+    )
+    assert scope.node(ref).issues[0].code == code

@@ -17,8 +17,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.payload from storage_layout_transparency t0 order by t0.id asc
-        mariadb: select t0.id, t0.payload from storage_layout_transparency t0 order by t0.id asc
+        postgres: select t0.id, not t0.payload is null, t0.payload from storage_layout_transparency t0 order by t0.id asc
+        mariadb: select t0.id, not t0.payload is null, t0.payload from storage_layout_transparency t0 order by t0.id asc
   rows:
     - { id: 1, label: alpha, rank: 20 }
     - { id: 2, label: beta, rank: 10 }

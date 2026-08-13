@@ -22,7 +22,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
+from parallax.core.document_codec import DocumentPathSegment
 from parallax.core.entity._graph_input import (
     EntityAttributeInput,
     ValueObjectOccurrenceInput,
@@ -35,20 +37,53 @@ from parallax.core.metamodel import (
     PrimaryKey,
     RelationshipIdentity,
     TablePerConcreteSubtype,
+    ValueObjectAttributeIdentity,
+    ValueObjectIdentity,
 )
 from parallax.core.temporal_read import Pin
 
 __all__ = [
+    "InvalidRootInput",
     "LogicalKey",
     "RelationshipViewKey",
     "SnapshotGraphInput",
     "SnapshotNodeInput",
     "SnapshotNodeRef",
     "SnapshotRelationshipViewInput",
+    "StoredDataIssueCode",
+    "StoredDataIssueInput",
     "attribute_value",
+    "has_invalid_key",
     "logical_key",
     "validate_graph_input",
 ]
+
+
+type StoredDataIssueCode = Literal[
+    "stored-data-required-member-absent",
+    "stored-data-required-member-null",
+    "stored-data-one-wrong-kind",
+    "stored-data-many-wrong-kind",
+    "stored-data-leaf-undecodable",
+    "stored-data-attribute-null",
+    "stored-data-family-tag-unknown",
+    "stored-data-primary-key-null",
+    "stored-data-primary-key-undecodable",
+]
+"""The closed internal stored-data issue vocabulary for snapshot reads."""
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDataIssueInput:
+    """One classified stored-state contradiction with logical provenance.
+
+    ``path`` keeps declared member names distinct from integer array positions.
+    """
+
+    code: StoredDataIssueCode
+    entity: EntityIdentity
+    member: AttributeIdentity | ValueObjectIdentity | ValueObjectAttributeIdentity | None = None
+    path: tuple[DocumentPathSegment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +96,20 @@ class SnapshotNodeRef:
     """
 
     node_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidRootInput:
+    """One non-hydrating result root with no constructible node behind it."""
+
+    ordinal: int
+    issues: tuple[StoredDataIssueInput, ...]
+
+    def __post_init__(self) -> None:
+        if self.ordinal < 0:
+            raise ValueError("an invalid root ordinal is nonnegative")
+        if not self.issues:
+            raise ValueError("an invalid root carries at least one stored-data issue")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,26 +142,34 @@ class SnapshotRelationshipViewInput:
 class SnapshotNodeInput:
     """One projection of one row, keyed entirely by structured identity.
 
-    The four member categories stay apart so a Value Object storage key can equal
+    The member categories stay apart so a Value Object storage key can equal
     a relationship name without either overwriting the other, and
     ``concrete_entity`` is the exact Entity the compiled read resolved this row
-    to — not the position it was reached through.
+    to — not the position it was reached through. ``issues`` carries every
+    physical finding classified for this projection, without deduplication.
     """
 
     concrete_entity: EntityIdentity
     attributes: tuple[EntityAttributeInput, ...] = ()
     value_objects: tuple[ValueObjectOccurrenceInput, ...] = ()
     relationship_views: tuple[SnapshotRelationshipViewInput, ...] = ()
+    issues: tuple[StoredDataIssueInput, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class SnapshotGraphInput:
     """One materialization's whole graph input: every projection, the roots in
-    result order, and the whole-graph pin every node was read at."""
+    result order, and the whole-graph pin every node was read at.
+
+    A root with an invalid primary key is an :class:`InvalidRootInput`, retaining
+    its result ordinal without claiming a constructible node. ``has_issues`` is
+    set by the builder whenever any node carries classified stored-data issues.
+    """
 
     nodes: tuple[SnapshotNodeInput, ...]
-    roots: tuple[SnapshotNodeRef, ...]
+    roots: tuple[SnapshotNodeRef | InvalidRootInput, ...]
     pin: Pin
+    has_issues: bool = False
 
 
 type LogicalKey = tuple[EntityIdentity, tuple[object, ...]]
@@ -172,6 +229,14 @@ def logical_key(model: Metamodel, node: SnapshotNodeInput) -> LogicalKey | None:
     return identity, tuple(attribute_value(node, attribute.identity) for attribute in pk)
 
 
+def has_invalid_key(node: SnapshotNodeInput) -> bool:
+    """Whether ``node`` has no usable graph identity because its key is invalid."""
+    return any(
+        issue.code in {"stored-data-primary-key-null", "stored-data-primary-key-undecodable"}
+        for issue in node.issues
+    )
+
+
 def validate_graph_input(graph: SnapshotGraphInput) -> None:
     """Reject a graph input no merge could read, before any merging happens.
 
@@ -181,8 +246,14 @@ def validate_graph_input(graph: SnapshotGraphInput) -> None:
     itself — so this guards the first-party seam rather than a caller's input.
     """
     count = len(graph.nodes)
-    for root in graph.roots:
-        _require_in_range(root, count, "a root")
+    for ordinal, root in enumerate(graph.roots):
+        if isinstance(root, InvalidRootInput):
+            if root.ordinal != ordinal:
+                raise ValueError(
+                    f"invalid root at result position {ordinal} carries ordinal {root.ordinal}"
+                )
+        else:
+            _require_in_range(root, count, "a root")
     for index, node in enumerate(graph.nodes):
         _require_unique(
             (entry.identity for entry in node.attributes), index, node, "Attribute entries"

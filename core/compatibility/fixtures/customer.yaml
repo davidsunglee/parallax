@@ -24,11 +24,11 @@
 #   id 3 Grace  city Boston geo US  elevation  5.0  point (42.3,-71.0)  present object + scalars
 #   id 4 Mary   address null                                            SQL-NULL column
 #   id 5 Kavi   (no city)   geo has only zip                            MISSING key (city, geo.country, geo.elevation, geo.point)
-#   id 6 Rin    city Berlin geo "unknown" (a scalar)                    NON-OBJECT intermediate (geo.country / geo.elevation / geo.point block descent)
+#   id 6 Rin    city Berlin geo null                                    nullable absent occurrence
 #   id 7 Nils   city null   geo.country/elevation/point.* all null      explicit JSON `null` LEAF at every extracted leaf
 #
-# All four not-present states — SQL-NULL column (4), missing key (5), non-object
-# intermediate (6), and explicit JSON `null` leaf (7) — collapse to a SQL-NULL
+# The valid not-present states — SQL-NULL column (4), missing key (5), nullable
+# JSON-null occurrence (6), and explicit JSON `null` leaf (7) — collapse to a SQL-NULL
 # extraction and are excluded by every nested predicate; isNull matches exactly
 # them. Because the MariaDB golden extraction is json_value (JSON `null` -> SQL
 # NULL) all four collapse IDENTICALLY on Postgres AND MariaDB, and are what the
@@ -47,21 +47,16 @@
 #   id 5 Kavi / id 6 Rin  (address present, no `phones`)  MISSING phones key
 #
 # Absence collapse for a `many` member (m-predicate to-many / m-dialect
-# array-traversal): a `phones` value that is NOT a JSON array collapses to "not
-# present" — zero elements — exactly like a missing key or a NULL column. Three
-# distinguishable NON-ARRAY storage states instantiate that, and they are the
-# rows the guarded golden SQL exists to handle (an UNguarded traversal would ERROR
-# on Postgres and MIS-COUNT on MariaDB — see cases 015-022):
+# array-traversal) maps null or omitted values to zero elements. The valid fixture
+# keeps ids 9 and 10 as empty arrays; codec-focused invalid-data tests own the
+# non-array scalar/object states so ordinary compatibility reads remain publishable.
 #
 #   id 8  Iris   phones null                              explicit JSON `null`
-#   id 9  Omar   phones "555-0000" (a JSON string)        NON-ARRAY scalar
-#   id 10 Priya  phones {type:home, number:'555-9999'}    NON-ARRAY object
+#   id 9  Omar   phones []                                empty array
+#   id 10 Priya  phones []                                empty array
 #
-# Each of these three is EXCLUDED by nestedExists / any-element / same-element and
-# INCLUDED by nestedNotExists, indistinguishable from the empty array (3) and the
-# NULL column (4). id 9's scalar VALUE ("555-0000") equals a real element's number
-# (id 7), and id 10's OBJECT content matches the same-element candidate; both still
-# collapse to not-present because they are not arrays (cases 021, 019/020). Rows
+# Each is EXCLUDED by nestedExists / any-element / same-element and INCLUDED by
+# nestedNotExists, indistinguishable from the empty array (3) and NULL column (4). Rows
 # 8-10 also carry no `city`/`geo`, so — like Kavi (5) — they read as not-present
 # for the scalar nested predicates (projected null in 003, matched by isNull in
 # 007 / 013).
@@ -72,8 +67,8 @@
 # 2; the scoped form nestedExists(phones, where: type=home AND number=555-9999)
 # requires ONE element to satisfy both, so it matches ONLY id 2. id 1 is the row
 # that tells the two apart. exists = non-empty {1,2,7}; notExists (empty-or-absent)
-# folds the empty array (3), the NULL column (4), the missing key (5,6) and every
-# non-array state (8,9,10) together.
+# folds the empty arrays (3,9,10), the NULL column (4), the missing key (5,6),
+# and the explicit JSON null (8) together.
 parallax.compatibility.Customer:
   - id: 1
     name: Ada
@@ -132,20 +127,19 @@ parallax.compatibility.Customer:
       street: 5 Harbour Rd
       geo:
         zip: "3000"
-  # id 6 (Rin): `city` is present (Berlin) but `geo` is a SCALAR string, not an
-  # object — a non-object intermediate that blocks descent, so geo.country /
-  # geo.elevation / geo.point.lat all extract SQL NULL on both dialects.
+  # id 6 (Rin): `city` is present (Berlin) while the nullable `geo` occurrence
+  # is explicit JSON null, so every descendant extracts SQL NULL.
   - id: 6
     name: Rin
     address:
       street: 6 Kastanien Allee
       city: Berlin
-      geo: unknown
+      geo: null
   # id 7 (Nils): `address` and `geo` are present objects, but the extracted leaves
   # are explicit JSON `null` — `city` is null, and `geo.country`, `geo.elevation`,
   # `geo.point.lat` are null. This is the JSON-`null`-LEAF not-present state,
-  # distinct from the missing key (5) and the non-object intermediate (6): the keys
-  # are present with a null value. The MariaDB golden json_value maps JSON `null` to
+  # distinct from the missing key (5) and the JSON-null occurrence (6): the nested
+  # keys are present here with null values. The MariaDB golden json_value maps JSON `null` to
   # SQL NULL (as Postgres jsonb_extract_path_text does), so this row collapses to
   # "not present" identically on both dialects — matched by isNull, excluded by
   # every comparison.
@@ -163,36 +157,27 @@ parallax.compatibility.Customer:
           lon: null
       phones:
         - { type: work, number: '555-0000' }
-  # id 8 (Iris): `address` is present but `phones` is an explicit JSON `null` — a
-  # non-array `many` value. The array traversal must read it as ZERO elements (not
-  # present), never as a scalar to unnest. Excluded by exists / any-element,
-  # included by notExists.
+  # id 8 (Iris): `address` is present but `phones` is an explicit JSON `null`,
+  # the accepted absence form for a `many`. It reads as ZERO elements, is excluded
+  # by exists / any-element, and is included by notExists.
   - id: 8
     name: Iris
     address:
       street: 8 Null Way
       phones: null
-  # id 9 (Omar): `phones` is a NON-ARRAY JSON scalar (a string). Its value
-  # "555-0000" deliberately equals a real element's `number` (Nils, id 7), yet it
-  # still collapses to not-present because it is not an array — an unguarded
-  # any-element read must NOT match it (case 021).
+  # id 9 (Omar): an explicit empty array is the canonical zero-element form.
   - id: 9
     name: Omar
     address:
       street: 9 Scalar Rd
-      phones: "555-0000"
-  # id 10 (Priya): `phones` is a NON-ARRAY JSON object. Its content matches the
-  # same-element candidate {type:home, number:'555-9999'}, so an UNguarded MariaDB
-  # `json_contains` would wrongly match it and Postgres `jsonb_array_elements`
-  # would ERROR; the array-type guard collapses it to not-present on both dialects
-  # (cases 017-020).
+      phones: []
+  # id 10 (Priya): a second explicit empty array remains zero elements even though
+  # the row's other members differ.
   - id: 10
     name: Priya
     address:
       street: 10 Object Ct
-      phones:
-        type: home
-        number: '555-9999'
+      phones: []
 
 # Location rows (models/customer.yaml `Location`, the many side of the to-many
 # `Customer.locations`). Each `address` is the SAME recursive composite as a

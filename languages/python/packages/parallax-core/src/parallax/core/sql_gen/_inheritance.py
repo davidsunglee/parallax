@@ -59,11 +59,30 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, Protocol, cast
 
-from parallax.core.base import NeutralType
-from parallax.core.dialect import Dialect, LockMode
-from parallax.core.document_codec import DocumentShape, Present, decode_path, entity_shape
+from parallax.core.base import (
+    JSON,
+    DocumentReadOrdinals,
+    NeutralType,
+    PresentDocument,
+    SqlNull,
+    unwrap_document_read,
+)
+from parallax.core.dialect import Dialect, LockMode, projection_result_key
+from parallax.core.document_codec import (
+    DecodedMember,
+    DocumentFinding,
+    DocumentShape,
+    Occurrence,
+    Present,
+    decode_located_member_classified,
+    decode_occurrence_classified,
+    entity_shape,
+    locate_entity_member,
+    occurrence_shape,
+    reduce_declared_members_classified,
+)
 from parallax.core.inheritance import (
     InheritanceEntityView,
     InheritanceFacet,
@@ -78,6 +97,7 @@ from parallax.core.metamodel import (
     EntityIdentity,
     EntityMetadata,
     Metamodel,
+    Multiplicity,
     TablePerHierarchy,
     ValueObjectIdentity,
     ValueObjectMetadata,
@@ -91,6 +111,7 @@ from parallax.core.sql_gen._context import table_layout as _table_layout
 from parallax.core.storage_layout import (
     ColumnSlot,
     ColumnTier,
+    DirectColumn,
     DocumentPath,
     InheritanceDiscriminator,
     PositionBranch,
@@ -156,16 +177,30 @@ def tag_value(facet: InheritanceFacet, concrete: EntityIdentity) -> str:
 # construction details of the planners below.                                  #
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True, slots=True)
+class RowTransformResult:
+    """One row transform's values and all provenance needed by its consumers."""
+
+    values: dict[str, object]
+    resolved_entity: EntityIdentity | None = None
+    family_variant: str | None = None
+    family_tag_unknown: bool = False
+    findings: tuple[DocumentFinding, ...] = ()
+    classified_members: frozenset[str] = frozenset()
+
+
+class _RowMaterializer(Protocol):
+    def materialize(self, row: Mapping[str, object]) -> RowTransformResult: ...
+
+
+@dataclass(frozen=True, slots=True)
 class _IdentityTransform:
     """No `familyVariant` to materialize: a non-family read, a concrete-target
     table-per-hierarchy read, or a table-per-concrete-subtype read whose
     position resolved to a single concrete. Still returns a FRESH dict, so
     every caller may mutate the result regardless of which form it got."""
 
-    def materialize(
-        self, row: Mapping[str, object]
-    ) -> tuple[dict[str, object], EntityIdentity | None, str | None]:
-        return dict(row), None, None
+    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
+        return RowTransformResult(dict(row))
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,20 +227,15 @@ class _TagTransform:
     root: EntityIdentity
     tag_pairs: tuple[tuple[str, EntityIdentity, str], ...]
 
-    def materialize(
-        self, row: Mapping[str, object]
-    ) -> tuple[dict[str, object], EntityIdentity, str]:
+    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
         materialized = dict(row)
         raw = materialized.pop(self.column)
         pairs = {tag: (identity, spelling) for tag, identity, spelling in self.tag_pairs}
         resolved = pairs.get(cast("str", raw))
         if resolved is None:
-            raise SqlGenError(
-                f"{self.root.canonical}: the tag column {self.column!r} holds {raw!r}, which "
-                f"names no concrete subtype this model composes {sorted(pairs)}"
-            )
+            return RowTransformResult(materialized, self.root, family_tag_unknown=True)
         identity, spelling = resolved
-        return materialized, identity, spelling
+        return RowTransformResult(materialized, identity, spelling)
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,9 +248,7 @@ class _LiteralTransform:
     projected_fields: tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
     narrow_to_owned: bool
 
-    def materialize(
-        self, row: Mapping[str, object]
-    ) -> tuple[dict[str, object], EntityIdentity, str]:
+    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
         materialized = dict(row)
         spelling = cast("str", materialized.pop(self.column))
         fields = dict(self.projected_fields)
@@ -234,7 +262,7 @@ class _LiteralTransform:
         for alias, rendered_key in fields[spelling]:
             if alias in materialized:
                 values[rendered_key] = materialized[alias]
-        return values, dict(self.variants)[spelling], spelling
+        return RowTransformResult(values, dict(self.variants)[spelling], spelling)
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,15 +287,16 @@ class _DocumentTransform:
     shape: DocumentShape
     members: tuple[tuple[str, tuple[str, ...]], ...]
 
-    def materialize(
-        self, row: Mapping[str, object]
-    ) -> tuple[dict[str, object], EntityIdentity | None, str | None]:
+    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
         materialized = dict(row)
-        document = materialized.pop(self.column)
-        for key, path in self.members:
-            presence = decode_path(self.shape, document, path)
-            materialized[key] = presence.value if isinstance(presence, Present) else None
-        return materialized, None, None
+        document_read = materialized.pop(self.column)
+        members = _materialize_document_members(self.shape, document_read, self.members)
+        materialized.update(members.values)
+        return RowTransformResult(
+            materialized,
+            findings=members.findings,
+            classified_members=members.classified_members,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,6 +318,31 @@ class _TpcsVariantDocument:
 
 
 @dataclass(frozen=True, slots=True)
+class _MaterializedDocumentMembers:
+    values: dict[str, object]
+    findings: tuple[DocumentFinding, ...]
+    classified_members: frozenset[str]
+
+
+def _materialize_document_members(
+    shape: DocumentShape,
+    document_read: object,
+    members: tuple[tuple[str, tuple[str, ...]], ...],
+) -> _MaterializedDocumentMembers:
+    values: dict[str, object] = {}
+    findings: list[DocumentFinding] = []
+    for key, path in members:
+        decoded = _classified_entity_member(shape, document_read, path)
+        findings.extend(decoded.findings)
+        values[key] = decoded.presence.value if isinstance(decoded.presence, Present) else None
+    return _MaterializedDocumentMembers(
+        values,
+        tuple(findings),
+        frozenset(values),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class _TphDocumentTransform:
     """Resolve a TPH row's tag before decoding its heterogeneous document."""
 
@@ -298,28 +352,28 @@ class _TphDocumentTransform:
     variants: tuple[_TphVariantDocument, ...]
     padding: tuple[str, ...]
 
-    def materialize(
-        self, row: Mapping[str, object]
-    ) -> tuple[dict[str, object], EntityIdentity, str]:
+    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
         materialized = dict(row)
         raw_tag = materialized.pop(self.tag_column)
-        document = materialized.pop(self.column)
+        document_read = materialized.pop(self.column)
         variant = next(
             (candidate for candidate in self.variants if candidate.discriminator_value == raw_tag),
             None,
         )
         if variant is None:
-            tags = {candidate.discriminator_value for candidate in self.variants}
-            raise SqlGenError(
-                f"{self.root.canonical}: the tag column {self.tag_column!r} holds {raw_tag!r}, "
-                f"which names no concrete subtype this model composes {sorted(tags)}"
-            )
+            materialized.pop(self.column, None)
+            return RowTransformResult(materialized, self.root, family_tag_unknown=True)
         for key in self.padding:
             materialized[key] = None
-        for key, path in variant.members:
-            presence = decode_path(variant.shape, document, path)
-            materialized[key] = presence.value if isinstance(presence, Present) else None
-        return materialized, variant.identity, variant.spelling
+        members = _materialize_document_members(variant.shape, document_read, variant.members)
+        materialized.update(members.values)
+        return RowTransformResult(
+            materialized,
+            variant.identity,
+            variant.spelling,
+            findings=members.findings,
+            classified_members=members.classified_members,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,10 +384,11 @@ class _TpcsDocumentTransform:
     documents: tuple[_TpcsVariantDocument, ...]
     padding: tuple[str, ...]
 
-    def materialize(
-        self, row: Mapping[str, object]
-    ) -> tuple[dict[str, object], EntityIdentity, str]:
-        materialized, identity, spelling = self.base.materialize(row)
+    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
+        base = self.base.materialize(row)
+        materialized = base.values
+        identity = cast("EntityIdentity", base.resolved_entity)
+        spelling = cast("str", base.family_variant)
         variant = next(
             (document for document in self.documents if document.identity == identity), None
         )
@@ -341,12 +396,179 @@ class _TpcsDocumentTransform:
             materialized[key] = None
         if variant is None:
             materialized.pop(self.documents[0].document_column, None)
-            return materialized, identity, spelling
-        document = materialized.pop(variant.document_column)
-        for key, path in variant.members:
-            presence = decode_path(variant.shape, document, path)
-            materialized[key] = presence.value if isinstance(presence, Present) else None
-        return materialized, identity, spelling
+            return RowTransformResult(
+                materialized,
+                identity,
+                spelling,
+                base.family_tag_unknown,
+                base.findings,
+                base.classified_members | frozenset(self.padding),
+            )
+        document_read = materialized.pop(variant.document_column)
+        members = _materialize_document_members(variant.shape, document_read, variant.members)
+        materialized.update(members.values)
+        return RowTransformResult(
+            materialized,
+            identity,
+            spelling,
+            base.family_tag_unknown,
+            (*base.findings, *members.findings),
+            base.classified_members | members.classified_members,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectDocumentVariant:
+    identity: EntityIdentity
+    occurrences: tuple[ValueObjectMetadata, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DirectDocumentTransform:
+    """Classify direct Value Object Columns after inheritance resolution.
+
+    A provider folds every selected document pair before this transform runs,
+    regardless of whether the carrier is the Table's shared Structured Column
+    or a Value Object's own Column. This wrapper consumes the latter carriers,
+    decodes their declared occurrence shapes, and preserves the base transform's
+    concrete identity, family variant, and classified provenance.
+    """
+
+    base: _RowMaterializer
+    variants: tuple[_DirectDocumentVariant, ...]
+
+    def materialize(self, row: Mapping[str, object]) -> RowTransformResult:
+        base = self.base.materialize(row)
+        identity = base.resolved_entity
+        variant = next(
+            (
+                candidate
+                for candidate in self.variants
+                if identity is None or candidate.identity == identity
+            ),
+            None,
+        )
+        if variant is None:
+            return base
+        values = base.values
+        findings = list(base.findings)
+        classified = set(base.classified_members)
+        for occurrence in variant.occurrences:
+            key = occurrence.storage.name
+            if key not in values:
+                continue
+            document_read = values[key]
+            if not isinstance(document_read, (SqlNull, PresentDocument)):
+                raise SqlGenError(
+                    f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+                )
+            decoded = _classified_occurrence(
+                occurrence_shape(occurrence),
+                document_read,
+                multiplicity=occurrence.multiplicity,
+                nullable=occurrence.nullable,
+            )
+            name = occurrence.identity.path[-1]
+            findings.extend(
+                DocumentFinding(finding.code, (name, *finding.path)) for finding in decoded.findings
+            )
+            values[key] = decoded.presence.value if isinstance(decoded.presence, Present) else None
+            classified.add(key)
+        return RowTransformResult(
+            values,
+            base.resolved_entity,
+            base.family_variant,
+            base.family_tag_unknown,
+            tuple(findings),
+            frozenset(classified),
+        )
+
+
+def _classified_entity_member(
+    shape: DocumentShape, document_read: object, path: tuple[str, ...]
+) -> DecodedMember:
+    """Classify one direct logical Entity member from its tagged carrier."""
+    if len(path) != 1:  # pragma: no cover - read projection requests direct members only
+        raise SqlGenError(
+            f"an Entity document projection must address one direct member, got {path}"
+        )
+    member = path[0]
+    declared = shape.member(member)
+    if isinstance(declared, Occurrence):
+        carrier = (
+            document_read
+            if isinstance(document_read, SqlNull)
+            else locate_entity_member(document_read.document, member)
+            if isinstance(document_read, PresentDocument)
+            else None
+        )
+        if carrier is None:
+            raise SqlGenError(
+                f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+            )
+        if not isinstance(carrier, PresentDocument):
+            carrier = SqlNull()
+        decoded = _classified_occurrence(
+            declared.shape,
+            carrier,
+            multiplicity=declared.multiplicity,
+            nullable=declared.nullable,
+        )
+        return DecodedMember(
+            decoded.presence,
+            tuple(
+                DocumentFinding(finding.code, (member, *finding.path))
+                for finding in decoded.findings
+            ),
+        )
+    if isinstance(document_read, SqlNull):
+        return decode_located_member_classified(shape, document_read, member)
+    if not isinstance(document_read, PresentDocument):
+        raise SqlGenError(
+            f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+        )
+    located = locate_entity_member(document_read.document, member)
+    return decode_located_member_classified(shape, located, member)
+
+
+def _classified_occurrence(
+    shape: DocumentShape,
+    document_read: SqlNull | PresentDocument,
+    *,
+    multiplicity: Multiplicity,
+    nullable: bool,
+) -> DecodedMember:
+    """Classify and neutral-decode one complete occurrence exactly once."""
+    outer = decode_occurrence_classified(
+        shape,
+        document_read,
+        multiplicity=multiplicity,
+        nullable=nullable,
+    )
+    if not isinstance(outer.presence, Present):
+        return outer
+    findings = list(outer.findings)
+    if multiplicity is Multiplicity.MANY:
+        reduced: list[object] = []
+        for index, item in enumerate(cast("list[object]", outer.presence.value)):
+            value, nested = reduce_declared_members_classified(shape, item)
+            reduced.append(value)
+            findings.extend(
+                DocumentFinding(finding.code, (index, *finding.path)) for finding in nested
+            )
+        return DecodedMember(Present(reduced), tuple(findings))
+    value, nested = reduce_declared_members_classified(shape, outer.presence.value)
+    findings.extend(nested)
+    return DecodedMember(Present(value), tuple(findings))
+
+
+def observed_document(document_read: object) -> object | None:
+    """Unwrap a provider-neutral document carrier for predecessor retention."""
+    if not isinstance(document_read, (SqlNull, PresentDocument)):
+        raise SqlGenError(
+            f"the database port returned {type(document_read).__name__}, not a DocumentRead"
+        )
+    return unwrap_document_read(document_read)
 
 
 RowTransform = (
@@ -356,6 +578,7 @@ RowTransform = (
     | _DocumentTransform
     | _TphDocumentTransform
     | _TpcsDocumentTransform
+    | _DirectDocumentTransform
 )
 
 # The identity form is stateless, so one shared instance serves every read that
@@ -364,7 +587,28 @@ RowTransform = (
 IDENTITY_TRANSFORM = _IdentityTransform()
 
 
-def transform_structured_column(transform: RowTransform) -> str | None:
+def direct_document_transform(
+    base: RowTransform,
+    candidates: Sequence[tuple[EntityIdentity, TableLayout, Sequence[ValueObjectMetadata]]],
+) -> RowTransform:
+    """Wrap ``base`` for every projected occurrence stored in its own Column."""
+    variants = tuple(
+        _DirectDocumentVariant(
+            identity,
+            tuple(
+                occurrence
+                for occurrence in occurrences
+                if isinstance(layout.placement(occurrence.identity), DirectColumn)
+            ),
+        )
+        for identity, layout, occurrences in candidates
+    )
+    if not any(variant.occurrences for variant in variants):
+        return base
+    return _DirectDocumentTransform(base, variants)
+
+
+def transform_structured_column(transform: _RowMaterializer) -> str | None:
     """The Structured Column ``transform`` fans out, or absence when it fans out none.
 
     The document fan-out drops the raw column, so a caller that needs the stored
@@ -373,6 +617,8 @@ def transform_structured_column(transform: RowTransform) -> str | None:
     honest answer for every read that projected no Structured Column, `Columns`
     layout included.
     """
+    if isinstance(transform, _DirectDocumentTransform):
+        return transform_structured_column(transform.base)
     return (
         transform.column
         if isinstance(transform, (_DocumentTransform, _TphDocumentTransform))
@@ -554,6 +800,7 @@ class ProjectedColumn:
 
     column: str
     type: NeutralType | None
+    document: bool = False
 
 
 def position_slots(
@@ -574,9 +821,9 @@ def position_documents(
     The compiled read carries this so materialization decodes documents from the
     occurrences the position actually has, in the Position Layout's own order,
     rather than re-projecting the family superset from a round-tripped name. It
-    is keyed to the position and not to the read's result form: a row-form read
-    projects no document column, yet its rows still render every applicable
-    document key as absent.
+    is keyed to the position and not to the read's result form: a default
+    row-form read projects no document column, while the explicit
+    materializing-write widening lane may project selected or complete documents.
 
     Answered from the Position Layout's logical MEMBER sequence and each
     branch's placements rather than from its physical columns, because an
@@ -662,7 +909,7 @@ def document_projection(
     if document_slot is None:
         return None, IDENTITY_TRANSFORM
     return (
-        ProjectedColumn(document_slot.column.name, None),
+        ProjectedColumn(document_slot.column.name, None, document=True),
         _DocumentTransform(
             document_slot.column.name,
             entity_shape(document_attributes, document_occurrences),
@@ -713,7 +960,7 @@ def _tph_document_projection(
         )
     if not projects_document:
         return None, None
-    projected = ProjectedColumn(slot.column.name, None)
+    projected = ProjectedColumn(slot.column.name, None, document=True)
     if abstract_target:
         return projected, _TphDocumentTransform(
             slot.column.name,
@@ -750,10 +997,10 @@ def select_projection(
     resolved to, and keeps its own tier position rather than trailing the
     scalars.
     """
-    types: dict[object, NeutralType | None] = {
-        attribute.identity: attribute.type for attribute in attributes
+    types: dict[object, tuple[NeutralType | None, bool]] = {
+        attribute.identity: (attribute.type, False) for attribute in attributes
     }
-    types.update({member.identity: None for member in value_objects})
+    types.update({member.identity: (None, True) for member in value_objects})
     selected: list[ProjectedColumn] = []
     for slot in slots:
         if isinstance(slot.contributor, InheritanceDiscriminator):
@@ -762,13 +1009,18 @@ def select_projection(
             continue
         if slot.contributor not in types:
             continue
-        selected.append(ProjectedColumn(slot.column.name, types[slot.contributor]))
+        neutral_type, document = types[slot.contributor]
+        selected.append(ProjectedColumn(slot.column.name, neutral_type, document=document))
     return tuple(selected)
 
 
 def render_projection(
-    dialect: Dialect, alias: str, columns: Sequence[ProjectedColumn]
-) -> tuple[str, tuple[object, ...]]:
+    dialect: Dialect,
+    alias: str,
+    columns: Sequence[ProjectedColumn],
+    *,
+    document_pairs: bool = True,
+) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
     """Render one select list and its ordered projection binds against ``alias``.
 
     A `bytes` column projects `encode(col, ?)`, which is where a projection BIND
@@ -776,14 +1028,24 @@ def render_projection(
     """
     exprs: list[str] = []
     binds: list[object] = []
+    document_reads: list[DocumentReadOrdinals] = []
+    ordinal = 0
     for projected in columns:
+        if projected.document and document_pairs:
+            expression = dialect.qualified(alias, projected.column)
+            presence, document = dialect.project_document_read(expression)
+            exprs.extend((presence, document))
+            document_reads.append((ordinal, ordinal + 1))
+            ordinal += 2
+            continue
         if projected.type is None:
             exprs.append(dialect.qualified(alias, projected.column))
-            continue
-        expr, extra = dialect.project(alias, projected.column, projected.type)
-        exprs.append(expr)
-        binds.extend(extra)
-    return ", ".join(exprs), tuple(binds)
+        else:
+            expr, extra = dialect.project(alias, projected.column, projected.type)
+            exprs.append(expr)
+            binds.extend(extra)
+        ordinal += 1
+    return ", ".join(exprs), tuple(binds), tuple(document_reads)
 
 
 @dataclass(frozen=True, slots=True)
@@ -812,9 +1074,11 @@ class TphPlan:
     tag: TagPredicate | None
     transform: RowTransform
 
-    def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
+    def projection(
+        self, dialect: Dialect, alias: str, *, document_pairs: bool = True
+    ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
         """The select list and its ordered projection binds, against ``alias``."""
-        return render_projection(dialect, alias, self.columns)
+        return render_projection(dialect, alias, self.columns, document_pairs=document_pairs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -834,13 +1098,15 @@ class TpcsSinglePlan:
     inner: PredicateNode
     transform: RowTransform
 
-    def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
+    def projection(
+        self, dialect: Dialect, alias: str, *, document_pairs: bool = True
+    ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
         """The select list and its ordered projection binds, against ``alias``.
 
         The discriminator is always absent: this reads the resolved concrete's
         OWN table, whose layout carries no discriminator slot.
         """
-        return render_projection(dialect, alias, self.columns)
+        return render_projection(dialect, alias, self.columns, document_pairs=document_pairs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -857,6 +1123,7 @@ class BranchColumn:
     max_length: int | None
     owned: bool
     result_alias: str
+    document: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -869,32 +1136,55 @@ class TpcsBranchPlan:
     table: str
     columns: tuple[BranchColumn, ...]
 
-    def projection(self, dialect: Dialect, alias: str) -> tuple[str, tuple[object, ...]]:
+    def projection(
+        self, dialect: Dialect, alias: str
+    ) -> tuple[str, tuple[object, ...], tuple[DocumentReadOrdinals, ...]]:
         exprs: list[str] = []
         binds: list[object] = []
+        document_reads: list[DocumentReadOrdinals] = []
+        ordinal = 0
         for branch_column in self.columns:
             if branch_column.owned:
+                if branch_column.document:
+                    expression = dialect.qualified(alias, branch_column.column)
+                    presence, document = dialect.project_document_read(expression)
+                    if branch_column.result_alias != branch_column.column:
+                        document = f"{document} {branch_column.result_alias}"
+                    exprs.extend((presence, document))
+                    document_reads.append((ordinal, ordinal + 1))
+                    ordinal += 2
+                    continue
                 if branch_column.type is None:  # pragma: no cover - formation makes it universal
                     expr, extra = dialect.qualified(alias, branch_column.column), ()
                 else:
-                    expr, extra = dialect.project(alias, branch_column.column, branch_column.type)
-                exprs.append(
-                    expr
-                    if branch_column.result_alias == branch_column.column
-                    else f"{expr} {branch_column.result_alias}"
-                )
+                    expr, extra = dialect.project(
+                        alias,
+                        branch_column.column,
+                        branch_column.type,
+                        result_key=branch_column.result_alias,
+                    )
+                exprs.append(expr)
                 binds.extend(extra)
             else:
+                if branch_column.document:
+                    document_type = dialect.null_cast(JSON, None)
+                    exprs.extend(
+                        ("false", f"cast(null as {document_type}) {branch_column.result_alias}")
+                    )
+                    document_reads.append((ordinal, ordinal + 1))
+                    ordinal += 2
+                    continue
                 if branch_column.type is None:
                     raise SqlGenError(  # pragma: no cover
                         "a TPCS document column must be owned by every concrete branch"
                     )
                 cast_type = dialect.null_cast(branch_column.type, branch_column.max_length)
                 exprs.append(f"cast(null as {cast_type}) {branch_column.result_alias}")
+            ordinal += 1
         # The settled TPH/TPCS asymmetry: TPCS projects the variant NAME literal
         # per branch directly — there is no discriminator slot to derive it from.
         exprs.append(f"'{self.variant}' family_variant")
-        return ", ".join(exprs), tuple(binds)
+        return ", ".join(exprs), tuple(binds), tuple(document_reads)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1026,6 +1316,17 @@ def _plan_tph_read(
         columns = (*columns, document)
     if document_transform is not None:
         transform = document_transform
+    transform = direct_document_transform(
+        transform,
+        tuple(
+            (
+                concrete,
+                layout,
+                entity_view(facet, concrete).applicable_value_objects if instance_form else (),
+            )
+            for concrete in position.concrete_subtypes
+        ),
+    )
     return TphPlan(
         table=layout.table.name,
         position=tuple(position.concrete_subtypes),
@@ -1078,6 +1379,16 @@ def _plan_tpcs_read(
         )
         if document is not None:
             columns = (*columns, document)
+        transform = direct_document_transform(
+            transform,
+            (
+                (
+                    concretes[0],
+                    layout,
+                    position.superset_value_objects if instance_form else (),
+                ),
+            ),
+        )
         return TpcsSinglePlan(
             table=layout.table.name,
             position=concretes,
@@ -1146,6 +1457,7 @@ def _plan_tpcs_read(
                     max_length=None if attribute is None else attribute.max_length,
                     owned=branch.slots[index] is not None,
                     result_alias=result_alias,
+                    document=layout_position.columns[index].tier is ColumnTier.DOCUMENT,
                 )
                 for index, attribute, spelling, result_alias in zip(
                     scalars, attributes, spellings, result_aliases, strict=True
@@ -1163,7 +1475,12 @@ def _plan_tpcs_read(
             (
                 branch.variant,
                 tuple(
-                    (branch_column.result_alias, branch_column.column)
+                    (
+                        branch_column.result_alias,
+                        branch_column.column
+                        if branch_column.type is None
+                        else projection_result_key(branch_column.column, branch_column.type),
+                    )
                     for branch_column in branch.columns
                     if branch_column.owned
                 ),
@@ -1192,27 +1509,37 @@ def _plan_tpcs_read(
                     document_transform.members,
                 )
             )
+    transform: RowTransform = (
+        _TpcsDocumentTransform(
+            literal_transform,
+            tuple(documents),
+            (
+                ()
+                if instance_form
+                else tuple(
+                    dict.fromkeys(key for document in documents for key, _path in document.members)
+                )
+            ),
+        )
+        if documents
+        else literal_transform
+    )
+    transform = direct_document_transform(
+        transform,
+        tuple(
+            (
+                concrete,
+                _table_layout(storage, facet, concrete),
+                entity_view(facet, concrete).applicable_value_objects if instance_form else (),
+            )
+            for concrete in concretes
+        ),
+    )
     return TpcsUnionPlan(
         branches=branches,
         position=concretes,
         inner=inner,
-        transform=(
-            _TpcsDocumentTransform(
-                literal_transform,
-                tuple(documents),
-                (
-                    ()
-                    if instance_form
-                    else tuple(
-                        dict.fromkeys(
-                            key for document in documents for key, _path in document.members
-                        )
-                    )
-                ),
-            )
-            if documents
-            else literal_transform
-        ),
+        transform=transform,
     )
 
 

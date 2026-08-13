@@ -35,14 +35,22 @@ there is one), and assembles the clause tail around the fragment it returns.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Literal, assert_never
 
+from parallax.core.base import (
+    DocumentReadOrdinals,
+    NeutralType,
+    admits_stored_scalar,
+    decode_neutral_literal,
+)
 from parallax.core.dialect import Dialect, LockMode
+from parallax.core.document_codec import DocumentFinding
 from parallax.core.inheritance import InheritanceFacet
 from parallax.core.inheritance import view as _inheritance_view
 from parallax.core.metamodel import (
+    AttributeIdentity,
     EntityIdentity,
     EntityMetadata,
     Metamodel,
@@ -63,8 +71,12 @@ from parallax.core.sql_gen._inheritance import TagPredicate as _TagPredicate
 from parallax.core.sql_gen._inheritance import TpcsSinglePlan as _TpcsSinglePlan
 from parallax.core.sql_gen._inheritance import TpcsUnionPlan as _TpcsUnionPlan
 from parallax.core.sql_gen._inheritance import TphPlan as _TphPlan
+from parallax.core.sql_gen._inheritance import (
+    direct_document_transform as _direct_document_transform,
+)
 from parallax.core.sql_gen._inheritance import document_projection as _document_projection
 from parallax.core.sql_gen._inheritance import entity_view as _entity_view
+from parallax.core.sql_gen._inheritance import observed_document as _observed_document
 from parallax.core.sql_gen._inheritance import plan_inheritance_read as _plan_inheritance_read
 from parallax.core.sql_gen._inheritance import position_documents as _position_documents
 from parallax.core.sql_gen._inheritance import render_projection as _render_projection
@@ -80,11 +92,13 @@ from parallax.core.sql_gen._inheritance import (
 # aliasing-down convention as the family lane above.
 from parallax.core.sql_gen._predicate import EntityScope as _EntityScope
 from parallax.core.sql_gen._predicate import lower_predicate as _lower_predicate
+from parallax.core.storage_layout import DirectColumn as _DirectColumn
 from parallax.core.storage_layout import StorageLayoutFacet as _StorageLayoutFacet
 from parallax.core.storage_layout import TableLayout as _TableLayout
 from parallax.core.storage_layout import view as _storage_view
 
 __all__ = [
+    "AttributeReadContract",
     "CompiledPredicate",
     "CompiledRead",
     "LoweredStatement",
@@ -95,7 +109,8 @@ __all__ = [
 ]
 
 # The read's consumption lane (m-sql *Read projection*, *Result form*): a
-# ``row``-form read (the values lane) projects scalars only; an ``instance``-form
+# ``row``-form read (the values lane) projects scalars only by default, with an
+# explicit materializing-write override for required documents; an ``instance``-form
 # read (the object lane — a find / snapshot / deep-fetch whose rows materialize
 # into instances) additionally projects the value-object document columns (slot 4).
 # PRIVATE: `compile_read`'s ``result_form`` keyword and its semantics are part of
@@ -141,13 +156,32 @@ class MaterializedReadRow:
     Relational Document Layout, kept beside ``values`` for the same reason
     ``family_variant`` is: it is provenance rather than a field, and the fan-out
     drops it from the values a result form renders. Absent for every read that
-    projected no Structured Column.
+    projected no Structured Column. ``findings`` and ``family_tag_unknown`` are
+    classified provenance that a consumer must propagate to publication;
+    ``classified_members`` names values already judged by the document codec so
+    conversion translates them without judging their synthesized collapse again.
     """
 
     values: dict[str, object]
     resolved_entity: EntityIdentity
     family_variant: str | None
     document: object | None = None
+    findings: tuple[DocumentFinding, ...] = ()
+    family_tag_unknown: bool = False
+    classified_members: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True, slots=True)
+class AttributeReadContract:
+    """One projected Attribute's logical, physical, and driver-result contract."""
+
+    identity: AttributeIdentity
+    column: str
+    result_key: str
+    type: NeutralType
+    nullable: bool
+    temporal_end: bool
+    encoded: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,12 +189,11 @@ class CompiledRead:
     """One compiled read: its :class:`LoweredStatement`, the root narrow to materialize
     under, and the row transform that materializes `familyVariant`.
 
-    Self-contained by design: everything a caller needs to turn driver
-    rows into observed rows travels WITH the compiled statement, so the two
-    execution lanes (the conformance engine's flat wire rows and the production
-    snapshot find executor's instance-form graph rows) each shrink to "compile,
-    execute, transform" and can no longer drift from what was actually
-    projected.
+    Self-contained by design: everything a caller needs to turn driver rows into
+    observed rows travels WITH the compiled statement. Production conformance
+    enters the same ``Database.read_neutral`` path as any other neutral caller;
+    snapshot consumers use :meth:`materialize_row`, row conversion, and the
+    publication gate. Neither lane re-derives what the statement projected.
 
     ``narrow_to`` is the read's own query-wide narrowing or ``None`` for a bare read: a
     table-per-concrete-subtype position resolving to exactly one concrete emits
@@ -173,10 +206,15 @@ class CompiledRead:
     can carry, in Position Layout order — the scalar/document provenance a
     materializing caller needs, carried here so no consumer re-projects a family
     superset of its own. It is a property of the POSITION, not of the result form
-    or the layout: a row-form read projects no document column, yet its rows
-    still render every applicable document key as absent, and an occurrence is
-    just as much a member when the layout stores it inside a shared Structured
-    Column rather than in one of its own.
+    or the layout: a default row-form read projects no document column, while the
+    explicit materializing-write widening lane projects the documents it needs.
+    An occurrence is just as much a member when the layout stores it inside a
+    shared Structured Column rather than in one of its own. ``materialize_row`` is the metadata-
+    preserving contract for graph and write consumers; ``transform_row`` is only
+    for clean flat publication and refuses classified invalid state.
+    ``projected_documents`` is the demand-specific subset the statement actually
+    selected; conversion receives that subset so an unrequested occurrence is
+    never judged merely because the position could have carried it.
     """
 
     statement: LoweredStatement
@@ -184,6 +222,11 @@ class CompiledRead:
     target: EntityIdentity
     resolved_position: tuple[EntityIdentity, ...]
     documents: tuple[ValueObjectMetadata, ...]
+    projected_documents: tuple[ValueObjectMetadata, ...]
+    document_reads: tuple[DocumentReadOrdinals, ...]
+    _scalar_contracts: tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...] = field(
+        repr=False
+    )
     _transform: _RowTransform
 
     @property
@@ -199,13 +242,19 @@ class CompiledRead:
         return _transform_structured_column(self._transform)
 
     def transform_row(self, row: Mapping[str, object]) -> dict[str, object]:
-        """Materialize `familyVariant` on one observed row.
+        """Materialize one metadata-free row, refusing classified invalid state.
 
         Accepts any ``Mapping`` (a wire-rendered row or a raw driver row alike)
         and always returns a FRESH ``dict``, including when there is nothing to
         materialize.
         """
         materialized = self.materialize_row(row)
+        if (
+            materialized.findings
+            or materialized.family_tag_unknown
+            or self._has_invalid_direct_scalar(materialized)
+        ):
+            raise SqlGenError("a row carrying invalid stored data cannot be flattened")
         if materialized.family_variant is not None:
             if "familyVariant" in materialized.values:  # pragma: no cover - formation rejects it
                 raise SqlGenError(
@@ -215,16 +264,47 @@ class CompiledRead:
             materialized.values["familyVariant"] = materialized.family_variant
         return materialized.values
 
+    def _has_invalid_direct_scalar(self, row: MaterializedReadRow) -> bool:
+        contracts = dict(self._scalar_contracts).get(row.resolved_entity, ())
+        for contract in contracts:
+            if (
+                contract.result_key not in row.values
+                or contract.result_key in row.classified_members
+            ):
+                continue
+            value = row.values[contract.result_key]
+            decoded = decode_neutral_literal(value, contract.type)
+            if not admits_stored_scalar(
+                decoded,
+                contract.type,
+                nullable=contract.nullable,
+                temporal_end=contract.temporal_end,
+            ):
+                return True
+        return False
+
+    def attribute_reads(self, entity: EntityIdentity) -> tuple[AttributeReadContract, ...]:
+        """The compiled Attribute contracts for one resolved concrete Entity."""
+        return dict(self._scalar_contracts).get(entity, ())
+
     def materialize_row(self, row: Mapping[str, object]) -> MaterializedReadRow:
         """Resolve one driver row without flattening synthetic field provenance."""
         column = self.structured_column
-        values, resolved, family_variant = self._transform.materialize(row)
+        transformed = self._transform.materialize(row)
+        values = transformed.values
+        resolved = transformed.resolved_entity
         if resolved is None:
             resolved = (
                 self.resolved_position[0] if len(self.resolved_position) == 1 else self.target
             )
         return MaterializedReadRow(
-            values, resolved, family_variant, None if column is None else row.get(column)
+            values,
+            resolved,
+            transformed.family_variant,
+            None if column is None else _observed_document(row.get(column)),
+            transformed.findings,
+            transformed.family_tag_unknown,
+            transformed.classified_members,
         )
 
 
@@ -239,7 +319,12 @@ def _projection(
     result_form: _ResultForm,
     *,
     include_value_objects: bool | frozenset[str] = False,
-) -> tuple[str, list[object], _RowTransform]:
+) -> tuple[
+    str,
+    list[object],
+    tuple[DocumentReadOrdinals, ...],
+    _RowTransform,
+]:
     """The base read projection (m-sql *Read projection*), a function of the model.
 
     The Entity's own Table Layout fixes the whole order — `Identity`,
@@ -252,9 +337,9 @@ def _projection(
     :func:`_compile_tph_read` / :func:`_compile_tpcs_read`.
 
     An **instance-form** read (the object lane) additionally projects the
-    `Document` slots — a json document is always a plain alias-qualified
-    reference — so a value-object-bearing entity's whole document rides the
-    owner's single statement (the one-round-trip materialization contract,
+    `Document` slots — each json document is an adjacent SQL-presence / value
+    pair over one alias-qualified reference — so a value-object-bearing entity's
+    whole document rides the owner's single statement (the one-round-trip materialization contract,
     m-value-object). A row-form read omits them by default.
 
     ``include_value_objects`` opts a **row-form** read into the `Document` slots
@@ -284,16 +369,10 @@ def _projection(
     member lives inside it: what such a read observes includes the stored
     document a Predecessor Row retains (`m-sql` *Read projection*, rule 5).
     """
-    declared_vos = entity.declared_value_objects
     observation = result_form == "instance" or include_value_objects is True
-    if observation:
-        projected_vos = tuple(declared_vos)
-    elif isinstance(include_value_objects, frozenset):
-        projected_vos = tuple(
-            member for member in declared_vos if member.identity.path[-1] in include_value_objects
-        )
-    else:
-        projected_vos = ()
+    projected_vos = _projected_value_objects(
+        entity.declared_value_objects, result_form, include_value_objects
+    )
     columns = _select_projection(
         layout.columns,
         entity.declared_attributes,
@@ -305,8 +384,64 @@ def _projection(
     )
     if document is not None:
         columns = (*columns, document)
-    sql, binds = _render_projection(dialect, alias, columns)
-    return sql, list(binds), transform
+    transform = _direct_document_transform(transform, ((entity.identity, layout, projected_vos),))
+    sql, binds, document_reads = _render_projection(dialect, alias, columns)
+    return sql, list(binds), document_reads, transform
+
+
+def _projected_value_objects(
+    declared: Sequence[ValueObjectMetadata],
+    result_form: _ResultForm,
+    include_value_objects: bool | frozenset[str],
+) -> tuple[ValueObjectMetadata, ...]:
+    if result_form == "instance" or include_value_objects is True:
+        return tuple(declared)
+    if isinstance(include_value_objects, frozenset):
+        return tuple(
+            member for member in declared if member.identity.path[-1] in include_value_objects
+        )
+    return ()
+
+
+def _scalar_read_contracts(
+    model: Metamodel,
+    facet: InheritanceFacet,
+    storage: _StorageLayoutFacet,
+    dialect: Dialect,
+    position: tuple[EntityIdentity, ...],
+) -> tuple[tuple[EntityIdentity, tuple[AttributeReadContract, ...]], ...]:
+    contracts: list[tuple[EntityIdentity, tuple[AttributeReadContract, ...]]] = []
+    for identity in position:
+        view = _entity_view(facet, identity)
+        layout = _table_layout(storage, facet, identity)
+        root = model.entity(view.root)
+        temporal_ends: frozenset[AttributeIdentity] = (
+            frozenset()
+            if root is None
+            else frozenset(axis.end_attribute for axis in root.declared_as_of_axes)
+        )
+        entity_contracts: list[AttributeReadContract] = []
+        for attribute in view.applicable_attributes:
+            direct = isinstance(layout.placement(attribute.identity), _DirectColumn)
+            projected_key = dialect.projection_result_key(attribute.storage.name, attribute.type)
+            entity_contracts.append(
+                AttributeReadContract(
+                    attribute.identity,
+                    attribute.storage.name,
+                    projected_key if direct else attribute.storage.name,
+                    attribute.type,
+                    attribute.nullable,
+                    attribute.identity in temporal_ends,
+                    direct and projected_key != attribute.storage.name,
+                )
+            )
+        contracts.append(
+            (
+                identity,
+                tuple(entity_contracts),
+            )
+        )
+    return tuple(contracts)
 
 
 # --------------------------------------------------------------------------- #
@@ -327,14 +462,15 @@ def compile_read(
     it against ``model`` and reads the predicate, narrowing, ordering, and cap
     off sibling fields; there is no clause to peel before lowering starts.
 
-    The result carries everything the caller needs to consume the read's rows —
-    the canonical ``LoweredStatement`` for ``dialect``, the root ``narrow_to`` to
-    materialize under, and :meth:`CompiledRead.transform_row` — so no caller
-    re-derives `familyVariant` or narrowing from the query a second time.
+    The result carries everything either row consumer needs — the canonical
+    ``LoweredStatement`` for ``dialect``, the root ``narrow_to`` to materialize
+    under, and both metadata-preserving and flat row transforms — so no caller
+    re-derives `familyVariant`, narrowing, or projection keys from the query.
 
     ``result_form`` selects the projection lane (m-sql *Read projection*): a
     **row-form** read (the values lane — the corpus predicate `read` cases and the
-    internal materialized-write resolving read) projects scalars only; an
+    internal materialized-write resolving read) projects scalars only by default;
+    ``include_value_objects`` below explicitly widens that default. An
     **instance-form** read (the object lane — a find / snapshot / deep-fetch whose
     rows materialize into instances) additionally projects the value-object document
     columns. The conformance engine derives it from the case's asserted result
@@ -372,7 +508,7 @@ def compile_read(
     limit = query.limit
     narrow_to = query.narrow_to
     if target.inheritance is not None:
-        statement, plan_position, transform = _compile_inheritance_read(
+        statement, plan_position, document_reads, transform = _compile_inheritance_read(
             target,
             predicate,
             narrow_to,
@@ -385,12 +521,16 @@ def compile_read(
             result_form,
             lock,
         )
+        position_documents = _position_documents(facet, storage, plan_position)
         return CompiledRead(
             statement,
             narrow_to,
             target.identity,
             plan_position,
-            _position_documents(facet, storage, plan_position),
+            position_documents,
+            position_documents if result_form == "instance" else (),
+            document_reads,
+            _scalar_read_contracts(model, facet, storage, dialect, plan_position),
             transform,
         )
     # One context per statement (the mutable accumulator), one resolution scope
@@ -399,7 +539,7 @@ def compile_read(
     layout = _table_layout(storage, facet, target.identity)
     scope = _EntityScope(ctx, target, layout)
 
-    proj_sql, proj_binds, transform = _projection(
+    proj_sql, proj_binds, document_reads, transform = _projection(
         target,
         layout,
         dialect,
@@ -419,12 +559,17 @@ def compile_read(
     statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
     # A non-family read projects no tag and no variant literal, so the only
     # transform it can carry is the document fan-out its own projection decided.
+    position = (target.identity,)
+    position_documents = _position_documents(facet, storage, position)
     return CompiledRead(
         statement,
         narrow_to,
         target.identity,
-        (target.identity,),
-        _position_documents(facet, storage, (target.identity,)),
+        position,
+        position_documents,
+        _projected_value_objects(target.declared_value_objects, result_form, include_value_objects),
+        document_reads,
+        _scalar_read_contracts(model, facet, storage, dialect, position),
         transform,
     )
 
@@ -527,7 +672,12 @@ def _compile_inheritance_read(
     dialect: Dialect,
     result_form: _ResultForm,
     lock: LockMode | None,
-) -> tuple[LoweredStatement, tuple[EntityIdentity, ...], _RowTransform]:
+) -> tuple[
+    LoweredStatement,
+    tuple[EntityIdentity, ...],
+    tuple[DocumentReadOrdinals, ...],
+    _RowTransform,
+]:
     """Assemble an inheritance-family read from its plan.
 
     Returns the statement AND its row transform together: whether a read carries
@@ -548,7 +698,7 @@ def _compile_inheritance_read(
     )
     match plan:
         case _TphPlan():
-            statement, transform = _compile_tph_read(
+            statement, document_reads, transform = _compile_tph_read(
                 plan,
                 entity,
                 order_keys,
@@ -559,9 +709,9 @@ def _compile_inheritance_read(
                 dialect,
                 lock,
             )
-            return statement, plan.position, transform
+            return statement, plan.position, document_reads, transform
         case _TpcsSinglePlan():
-            statement, transform = _compile_tpcs_single(
+            statement, document_reads, transform = _compile_tpcs_single(
                 plan,
                 entity,
                 order_keys,
@@ -572,10 +722,12 @@ def _compile_inheritance_read(
                 dialect,
                 lock,
             )
-            return statement, plan.position, transform
+            return statement, plan.position, document_reads, transform
         case _TpcsUnionPlan():
-            statement, transform = _compile_tpcs_read(plan, entity, model, facet, storage, dialect)
-            return statement, plan.position, transform
+            statement, document_reads, transform = _compile_tpcs_read(
+                plan, entity, model, facet, storage, dialect
+            )
+            return statement, plan.position, document_reads, transform
         case _:  # pragma: no cover - exhaustiveness guard
             assert_never(plan)
 
@@ -590,7 +742,7 @@ def _compile_tph_read(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-) -> tuple[LoweredStatement, _RowTransform]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowTransform]:
     """Assemble a table-per-hierarchy read: one shared correlated `EXISTS`-free
     single-table SELECT (m-sql "Inheritance — table-per-hierarchy lowering").
 
@@ -605,7 +757,7 @@ def _compile_tph_read(
         _table_layout(storage, facet, entity.identity),
         position=plan.position,
     )
-    proj_sql, proj_binds = plan.projection(dialect, scope.alias)
+    proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
 
     select = f"select {proj_sql}"
@@ -626,7 +778,7 @@ def _compile_tph_read(
     _append_result_shape(parts, scope, order_keys, limit, lock)
     if ctx.requires_variant_partition:
         return (
-            _compile_tph_partitioned(
+            *_compile_tph_partitioned(
                 plan,
                 entity,
                 order_keys,
@@ -640,7 +792,7 @@ def _compile_tph_read(
             plan.transform,
         )
     statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
-    return statement, plan.transform
+    return statement, document_reads, plan.transform
 
 
 def _compile_tph_partitioned(
@@ -653,7 +805,7 @@ def _compile_tph_partitioned(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-) -> LoweredStatement:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...]]:
     """Assemble one tag-disjoint branch per selected TPH document variant."""
     branch_sqls: list[str] = []
     binds: list[object] = []
@@ -690,7 +842,11 @@ def _compile_tph_partitioned(
                 dialect.qualified(branch_scope.alias, column) for column in key_columns
             )
         else:
-            projection, projection_binds = plan.projection(dialect, branch_scope.alias)
+            projection, projection_binds, _branch_document_reads = plan.projection(
+                dialect,
+                branch_scope.alias,
+                document_pairs=not order_keys and limit is None,
+            )
             branch_ctx.binds.extend(projection_binds)
         branch_ctx.binds.extend(tag_binds)
         branch_ctx.binds.extend(fence_binds)
@@ -710,7 +866,7 @@ def _compile_tph_partitioned(
             layout,
             position=plan.position,
         )
-        projection, projection_binds = plan.projection(dialect, outer_scope.alias)
+        projection, projection_binds, document_reads = plan.projection(dialect, outer_scope.alias)
         outer_ctx.binds.extend(projection_binds)
         join_terms = " and ".join(
             f"{dialect.qualified('u', column)} = {dialect.qualified(outer_scope.alias, column)}"
@@ -724,10 +880,11 @@ def _compile_tph_partitioned(
         _append_result_shape(parts, outer_scope, order_keys, limit, lock)
         tail_binds = outer_ctx.binds[len(projection_binds) :]
         ordered_binds = (*projection_binds, *binds, *tail_binds)
-        return _normalize(LoweredStatement(" ".join(parts), ordered_binds))
+        return _normalize(LoweredStatement(" ".join(parts), ordered_binds)), document_reads
 
     if not order_keys and limit is None:
-        return _normalize(LoweredStatement(union, tuple(binds)))
+        _projection, _projection_binds, document_reads = plan.projection(dialect, "t0")
+        return _normalize(LoweredStatement(union, tuple(binds))), document_reads
 
     outer_ctx = _Ctx(model, facet, storage, dialect)
     outer_scope = _EntityScope(
@@ -737,16 +894,15 @@ def _compile_tph_partitioned(
         alias="u",
         position=plan.position,
     )
-    projection = ", ".join(
-        dialect.qualified(outer_scope.alias, column.column) for column in plan.columns
-    )
+    projection, projection_binds, document_reads = plan.projection(dialect, outer_scope.alias)
+    outer_ctx.binds.extend(projection_binds)
     parts = [
         f"select {projection}",
         f"from ({union}) {outer_scope.alias}",
     ]
     _append_result_shape(parts, outer_scope, order_keys, limit, None)
     binds.extend(outer_ctx.binds)
-    return _normalize(LoweredStatement(" ".join(parts), tuple(binds)))
+    return _normalize(LoweredStatement(" ".join(parts), tuple(binds))), document_reads
 
 
 def _compile_tpcs_read(
@@ -756,7 +912,7 @@ def _compile_tpcs_read(
     facet: InheritanceFacet,
     storage: _StorageLayoutFacet,
     dialect: Dialect,
-) -> tuple[LoweredStatement, _RowTransform]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowTransform]:
     """Assemble a table-per-concrete-subtype `union all` read (m-sql "Inheritance —
     table-per-concrete-subtype lowering").
 
@@ -768,6 +924,7 @@ def _compile_tpcs_read(
     """
     branch_sqls: list[str] = []
     all_binds: list[object] = []
+    document_reads: tuple[DocumentReadOrdinals, ...] | None = None
     for branch in plan.branches:
         branch_ctx = _Ctx(model, facet, storage, dialect)
         branch_scope = _EntityScope(
@@ -777,7 +934,11 @@ def _compile_tpcs_read(
             position=plan.position,
             variant=branch.identity,
         )
-        proj_sql, proj_binds = branch.projection(dialect, branch_scope.alias)
+        proj_sql, proj_binds, branch_document_reads = branch.projection(dialect, branch_scope.alias)
+        if document_reads is None:
+            document_reads = branch_document_reads
+        elif document_reads != branch_document_reads:  # pragma: no cover - aligned union invariant
+            raise SqlGenError("table-per-concrete-subtype branches disagree on document ordinals")
         branch_ctx.binds.extend(proj_binds)
         parts = [f"select {proj_sql}", f"from {branch.table} {branch_scope.alias}"]
         where_sql = _lower_predicate(plan.inner, branch_scope)
@@ -787,7 +948,7 @@ def _compile_tpcs_read(
         all_binds.extend(branch_ctx.binds)
 
     statement = _normalize(LoweredStatement(" union all ".join(branch_sqls), tuple(all_binds)))
-    return statement, plan.transform
+    return statement, document_reads or (), plan.transform
 
 
 def _compile_tpcs_single(
@@ -800,7 +961,7 @@ def _compile_tpcs_single(
     storage: _StorageLayoutFacet,
     dialect: Dialect,
     lock: LockMode | None,
-) -> tuple[LoweredStatement, _RowTransform]:
+) -> tuple[LoweredStatement, tuple[DocumentReadOrdinals, ...], _RowTransform]:
     """Assemble a table-per-concrete-subtype read resolving to exactly one
     concrete: an ordinary single-table read of that subtype's own table, no tag,
     no union, no `familyVariant` — attribute resolution still widens across the
@@ -816,7 +977,7 @@ def _compile_tpcs_single(
     """
     ctx = _Ctx(model, facet, storage, dialect)
     scope = _EntityScope(ctx, entity, _table_layout(storage, facet, plan.position[0]))
-    proj_sql, proj_binds = plan.projection(dialect, scope.alias)
+    proj_sql, proj_binds, document_reads = plan.projection(dialect, scope.alias)
     ctx.binds.extend(proj_binds)
     select = f"select {proj_sql}"
     parts = [select, f"from {plan.table} {scope.alias}"]
@@ -825,7 +986,7 @@ def _compile_tpcs_single(
         parts.append(f"where {where_sql}")
     _append_result_shape(parts, scope, order_keys, limit, lock)
     statement = _normalize(LoweredStatement(" ".join(parts), tuple(ctx.binds)))
-    return statement, plan.transform
+    return statement, document_reads, plan.transform
 
 
 # --------------------------------------------------------------------------- #

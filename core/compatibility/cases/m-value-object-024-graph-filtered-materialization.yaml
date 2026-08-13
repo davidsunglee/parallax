@@ -4,7 +4,8 @@
 #
 # A nested-field filter selects the owners (nestedEq(Customer.address.city, Oslo)
 # -> Ada and Linus, the same extraction as m-value-object-001), and the same
-# single statement projects the `address` document column so their whole nested
+# single statement projects the `address` document slot's adjacent presence/value
+# pair so their whole nested
 # composite — the to-one `geo` -> `point` (three levels) and the to-many `phones`
 # array — materializes with them. There is NO deep-fetch statement: roundTrips is
 # 1, and `then.graph` carries the decoded composite for exactly the matched rows.
@@ -34,8 +35,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.address from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
-        mariadb: select t0.id, t0.name, t0.address from customer t0 where json_value(t0.address, ?) = ?
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where jsonb_extract_path_text(t0.address, ?) = ?
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where json_value(t0.address, ?) = ?
       binds:
         postgres: [city, Oslo]
         mariadb: ['$.city', Oslo]

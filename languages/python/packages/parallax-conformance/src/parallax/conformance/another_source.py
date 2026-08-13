@@ -46,7 +46,11 @@ from parallax.core.entity import (
 from parallax.core.entity._model import model_of
 from parallax.core.object_query._fluent import ObjectQuery, object_query_node
 from parallax.snapshot.handle import find as execute_read
-from parallax.snapshot.materialize import SnapshotGraphInput, merge_graph_input
+from parallax.snapshot.materialize import (
+    SnapshotGraphInput,
+    merge_graph_input,
+    require_publishable,
+)
 
 __all__ = ["AnotherSource"]
 
@@ -120,13 +124,14 @@ class AnotherSource:
         guarantees by refusing a deep fetch.
         """
         merge = merge_graph_input(graph, self._meta)
+        require_publishable(merge)
 
         def build(writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
             handles = [writer.allocate(identity) for identity in merge.order]
             for index, handle in enumerate(handles):
                 node = merge.node(index)
                 writer.populate(handle, node.attributes, node.value_objects, ())
-            return tuple(handles[index] for index in merge.roots)
+            return tuple(handles[index] for index in merge.roots if index is not None)
 
         return graph_construction_of(self._model).construct(
             build, state_factory=lambda _view, _handle: _AnotherSourceState(self)

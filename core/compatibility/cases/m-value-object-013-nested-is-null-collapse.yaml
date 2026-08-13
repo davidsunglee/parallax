@@ -1,15 +1,14 @@
-# valueObject absence collapse: FOUR storage states, one 'not present'
+# valueObject absence collapse: four storage paths, one 'not present'
 # (m-value-object, m-predicate), on Postgres AND MariaDB.
 #
 # nestedIsNull(Customer.address.geo.country) matches every row whose two-level
 # geo.country extraction is not present — and ALL FOUR distinct storage states
 # collapse to exactly that: the null column (4), the missing-key row (5, `geo`
-# present but no `country`; likewise the non-array-`phones` rows 8/9/10, which
-# carry no `geo` at all), the non-object intermediate (6, `geo` is the scalar
-# "unknown", which blocks descent), and the explicit JSON `null` leaf (7,
-# `geo.country: null`). All four extract SQL NULL identically on both dialects —
-# MariaDB json_value maps a JSON `null` leaf (and a missing path, and a non-object
-# descent) to SQL NULL, exactly as Postgres jsonb_extract_path_text does. The
+# present but no `country`; likewise rows 8/9/10, which carry no `geo` at all),
+# the explicit JSON-null occurrence (6, `geo: null`), and the explicit JSON-null
+# leaf (7, `geo.country: null`). All four paths extract SQL NULL identically on
+# both dialects — MariaDB json_value maps JSON `null` and a missing path to SQL
+# NULL, exactly as Postgres jsonb_extract_path_text does. The
 # present countries — NO (1, 2) and US (3) — are excluded. Postgres
 # `jsonb_extract_path_text(t0.address, ?, ?) is null`; MariaDB
 # `json_value(t0.address, ?) is null`.

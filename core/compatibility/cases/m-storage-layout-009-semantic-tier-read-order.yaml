@@ -32,7 +32,7 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.sensor, t0.celsius, t0.in_z, t0.out_z, t0.probe from layout_reading t0 where t0.out_z = ?
+        postgres: select t0.id, t0.kind, t0.sensor, t0.celsius, t0.in_z, t0.out_z, not t0.probe is null, t0.probe from layout_reading t0 where t0.out_z = ?
       binds: [infinity]
   referenceSql: select id, kind, sensor, celsius, in_z, out_z from layout_reading where out_z = 'infinity'::timestamptz
   graph:

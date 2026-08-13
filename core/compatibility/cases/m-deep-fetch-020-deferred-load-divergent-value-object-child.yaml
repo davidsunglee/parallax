@@ -10,12 +10,12 @@
 # The classification pinned: a relationship `action: load` step is INSTANCE-FORM
 # (m-case-format "Read result form", object lane), and its SQL-producing child read
 # projects the read entity's OWN instance-form list — scalars plus the `address`
-# Document slot LAST (m-sql "Read projection") — decoded with the relationship
+# Document slot's adjacent presence/value pair LAST (m-sql "Read projection") — decoded with the relationship
 # path's TERMINAL entity descriptor (Depot), never the scenario root's. The deferred
 # load emits ONE IN-keyed child statement (not one per parent) honoring
 # `orderBy: id asc`; depot 201's SQL-NULL document materializes a null address — the
 # absence collapse pinned AT DEPTH for the divergent flat composite. Golden SQL is
-# dialect-identical (bare projections, no JSON extraction); compileEligibility is
+# dialect-identical (presence-plus-document projections, no JSON extraction); compileEligibility is
 # run-only because the `customer_id IN (…)` binds are the distinct parent keys
 # gathered from step 0's find RESULT, exactly as m-deep-fetch-019 names.
 model: models/customer.yaml
@@ -34,11 +34,11 @@ when:
             attr: parallax.compatibility.Customer.id
             value: 1
       roundTrips: 1
-      note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM (id, name, then address last)
+      note: managed find materializes the owner WITH its address Document slot — INSTANCE-FORM (id, name, then address presence/value pair last)
       statements:
         - sql:
-            postgres: select t0.id, t0.name, t0.address from customer t0 where t0.id = ?
-            mariadb: select t0.id, t0.name, t0.address from customer t0 where t0.id = ?
+            postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ?
+            mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0 where t0.id = ?
           binds: [1]
       expectRows:
         - id: 1
@@ -57,11 +57,11 @@ when:
       "on": 0
       path: depots
       roundTrips: 1
-      note: deferred load of the DIVERGENT VO-bearing child Depot — INSTANCE-FORM, projects Depot's own list (id, customer_id, label, address); each row's flat address decodes with DEPOT's descriptor, not Customer's
+      note: deferred load of the DIVERGENT VO-bearing child Depot — INSTANCE-FORM, projects Depot's own list (id, customer_id, label, then address presence/value pair); each row's flat address decodes with DEPOT's descriptor, not Customer's
       statements:
         - sql:
-            postgres: select t0.id, t0.customer_id, t0.label, t0.address from depot t0 where t0.customer_id in (?) order by t0.id asc
-            mariadb: select t0.id, t0.customer_id, t0.label, t0.address from depot t0 where t0.customer_id in (?) order by t0.id asc
+            postgres: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from depot t0 where t0.customer_id in (?) order by t0.id asc
+            mariadb: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from depot t0 where t0.customer_id in (?) order by t0.id asc
           binds: [1]
       expectRows:
         - id: 200

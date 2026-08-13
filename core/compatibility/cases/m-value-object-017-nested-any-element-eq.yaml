@@ -4,12 +4,9 @@
 #
 # nestedEq(Customer.address.phones.type, 'home') matches a row iff SOME element of
 # its `phones` array has type = home. Ada (home in element 0) and Linus (home)
-# match; Nils has only a `work` phone. Every not-present state is excluded — the
-# empty/absent-phones rows AND the three NON-ARRAY states (8, 9, 10). The object
-# row (10) is the trap: its content {type:home, number:'555-9999'} contains
-# type=home, so an UNguarded MariaDB `json_contains` would wrongly match it (and
-# Postgres `jsonb_array_elements` would ERROR on it); the array-type guard collapses
-# it to not-present on both dialects.
+# match; Nils has only a `work` phone. Every empty or absent state is excluded:
+# the empty arrays (3, 9, 10), NULL/missing occurrences (4, 5, 6), and JSON-null
+# occurrence (8).
 #
 # Postgres unnests with `jsonb_array_elements` (behind the `case`/`jsonb_typeof`
 # array guard of case 015) and reads the element's field with

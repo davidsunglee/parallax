@@ -8,9 +8,9 @@
 # is R3 — the corrected address D3 (Tampere, two phones), true in the world now and
 # known now. R1 is superseded on the Transaction-Time dimension; R2 (the head) is current on
 # Transaction Time but its Valid-Time thru_z is finite, so valid-time=Latest excludes it. Only R3's
-# document materializes, decoded from the one structured-document column with the owner.
+# document materializes, decoded from its adjacent presence/document projection.
 #
-# The golden SQL is IDENTICAL on both dialects (a bare column projection + the two
+# The golden SQL is IDENTICAL on both dialects (a presence-plus-document projection + the two
 # injected current-row predicates); both infinity binds are owned by the m-dialect seam,
 # so `binds` is one shared flat array. The dialect-neutral referenceSql ranges both
 # `to` columns above the year-9000 floor (selecting the fully-Latest rectangle on both
@@ -31,8 +31,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
-        mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
+        postgres: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
+        mariadb: select t0.br_id, t0.name, t0.from_z, t0.thru_z, t0.in_z, t0.out_z, not t0.address is null, t0.address from branch t0 where t0.thru_z = ? and t0.out_z = ?
       binds: [infinity, infinity]
   referenceSql: select br_id, name, from_z, thru_z, in_z, out_z from branch where thru_z > '9000-01-01' and out_z > '9000-01-01'
   graph:

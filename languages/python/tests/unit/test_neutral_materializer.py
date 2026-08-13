@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import cast
 
 import pytest
@@ -100,32 +101,23 @@ def test_a_stored_document_reads_back_every_declared_member() -> None:
 
 
 def test_an_omitted_leaf_reads_null_rather_than_disappearing() -> None:
-    """m-value-object-023's Customer 5: the carrier omits `city` and every inner
-    key of `geo`, and the getter surface still answers every declared member."""
+    """Required omissions are classified and no neutral graph is published."""
     builder = GraphBuilder(vom.CUSTOMER_MODEL)
     root = builder.node(
         "Customer", {"id": 5, "name": "Kavi", "address": {"street": "5 Harbour Rd", "geo": {}}}
     )
-    address = _members(_neutral(builder, root, model=CUSTOMER).roots[0], "address")
-    assert address == {
-        "street": "5 Harbour Rd",
-        "city": None,
-        "geo": {"country": None, "elevation": None, "point": None},
-        "phones": (),
-    }
+    with pytest.raises(ValueError, match="invalid stored data"):
+        _neutral(builder, root, model=CUSTOMER)
 
 
 def test_an_absent_many_occurrence_reads_empty_and_an_absent_one_reads_null() -> None:
-    """m-value-object-023's Customer 6: `geo` absent is null, `phones` absent is
-    empty — the two absences the declared lists distinguish and the carrier does
-    not."""
+    """A required top-level leaf omission refuses the whole neutral root."""
     builder = GraphBuilder(vom.CUSTOMER_MODEL)
     root = builder.node(
         "Customer", {"id": 6, "name": "Rin", "address": {"street": "6 Kastanien Allee"}}
     )
-    address = _members(_neutral(builder, root, model=CUSTOMER).roots[0], "address")
-    assert address["geo"] is None
-    assert address["phones"] == ()
+    with pytest.raises(ValueError, match="invalid stored data"):
+        _neutral(builder, root, model=CUSTOMER)
 
 
 def test_a_null_occurrence_stays_null_rather_than_becoming_a_filled_shell() -> None:
@@ -321,9 +313,9 @@ def _order_row(order_id: int) -> dict[str, object]:
         "name": "order",
         "sku": None,
         "qty": 1,
-        "price": 1,
+        "price": Decimal("1"),
         "active": True,
-        "ordered_on": "2024-01-01",
+        "ordered_on": dt.date(2024, 1, 1),
     }
 
 

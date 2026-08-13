@@ -25,19 +25,41 @@ the adapter only extracts psycopg's driver-specific SQLSTATE and message.
 from __future__ import annotations
 
 import contextlib
+import json
 from collections.abc import Callable, Generator, Sequence
 
 import psycopg
 from psycopg.rows import TupleRow, dict_row
 from psycopg.types.datetime import TimestamptzLoader
-from psycopg.types.json import Jsonb
+from psycopg.types.json import Jsonb, JsonbBinaryLoader, JsonbLoader
 
 from parallax.core.base import INFINITY
 from parallax.core.db_error import DatabaseError, classify_error
-from parallax.core.db_port import DbPort, JsonDocument, Row
+from parallax.core.db_port import DbPort, DocumentReadOrdinals, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
 
 __all__ = ["PostgresAdapter"]
+
+
+class _PresentJsonNull:
+    __slots__ = ()
+
+
+_PRESENT_JSON_NULL = _PresentJsonNull()
+
+
+def _load_json_preserving_null(data: str | bytes) -> object:
+    """Decode JSON while retaining a present JSON null as a distinct sentinel."""
+    value = json.loads(data)
+    return _PRESENT_JSON_NULL if value is None else value
+
+
+class _DocumentJsonbLoader(JsonbLoader):
+    _loads = staticmethod(_load_json_preserving_null)
+
+
+class _DocumentJsonbBinaryLoader(JsonbBinaryLoader):
+    _loads = staticmethod(_load_json_preserving_null)
 
 
 class _InfinityTimestamptzLoader(TimestamptzLoader):  # pragma: no cover - Docker read lane
@@ -166,6 +188,45 @@ def adapt_binds(binds: Sequence[object]) -> list[object]:
     return [Jsonb(bind.value) if isinstance(bind, JsonDocument) else bind for bind in binds]
 
 
+def fold_document_reads(
+    names: Sequence[str],
+    rows: Sequence[Sequence[object]],
+    document_reads: Sequence[DocumentReadOrdinals],
+) -> list[Row]:
+    """Fold raw adjacent document cells into provider-neutral managed rows."""
+    pairs = tuple(document_reads)
+    occupied: set[int] = set()
+    for presence, document in pairs:
+        if document != presence + 1 or presence < 0 or document >= len(names):
+            raise ValueError(
+                "document-read ordinals must be adjacent, zero-based, and within the projection"
+            )
+        if presence in occupied or document in occupied:
+            raise ValueError("document-read ordinal pairs must not overlap")
+        occupied.update((presence, document))
+
+    by_document = {document: presence for presence, document in pairs}
+    omitted = {presence for presence, _document in pairs}
+    managed: list[Row] = []
+    for raw in rows:
+        if len(raw) != len(names):
+            raise ValueError("a database row does not match its result description")
+        row: Row = {}
+        for ordinal, (name, value) in enumerate(zip(names, raw, strict=True)):
+            if ordinal in omitted:
+                continue
+            presence = by_document.get(ordinal)
+            if value is _PRESENT_JSON_NULL:
+                value = None
+            row[name] = (
+                POSTGRES.parse_document_read(raw[presence], value)
+                if presence is not None
+                else value
+            )
+        managed.append(row)
+    return managed
+
+
 class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/provider lanes
     """A psycopg-backed :class:`~parallax.core.db_port.DbPort` over one connection."""
 
@@ -175,6 +236,8 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         # a temporal interval's open upper bound reads back as the neutral m-core
         # infinity sentinel rather than raising psycopg's out-of-range error.
         connection.adapters.register_loader("timestamptz", _InfinityTimestamptzLoader)
+        connection.adapters.register_loader("jsonb", _DocumentJsonbLoader)
+        connection.adapters.register_loader("jsonb", _DocumentJsonbBinaryLoader)
 
     @classmethod
     def connect(
@@ -201,12 +264,31 @@ class PostgresAdapter:  # pragma: no cover - exercised by the Docker adapter/pro
         """The underlying psycopg connection (for provider-lane provisioning)."""
         return self._connection
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
-        with translating_driver_errors(), self._connection.cursor(row_factory=dict_row) as cursor:
-            cursor.execute(sql.encode(), adapt_binds(binds))
-            if cursor.description is None:
-                return []
-            return [dict(row) for row in cursor.fetchall()]
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        with translating_driver_errors():
+            if document_reads:
+                with self._connection.cursor() as cursor:
+                    cursor.execute(sql.encode(), adapt_binds(binds))
+                    if cursor.description is None:
+                        return []
+                    names = [column.name for column in cursor.description]
+                    return fold_document_reads(names, cursor.fetchall(), document_reads)
+            with self._connection.cursor(row_factory=dict_row) as cursor:
+                cursor.execute(sql.encode(), adapt_binds(binds))
+                if cursor.description is None:
+                    return []
+                return [
+                    {
+                        name: None if value is _PRESENT_JSON_NULL else value
+                        for name, value in row.items()
+                    }
+                    for row in cursor.fetchall()
+                ]
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         with translating_driver_errors(), self._connection.cursor() as cursor:

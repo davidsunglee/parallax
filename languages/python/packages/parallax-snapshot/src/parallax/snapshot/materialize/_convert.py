@@ -27,13 +27,26 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Final, cast
+from typing import Protocol, cast
 
+from parallax.core.base import (
+    DocumentValue,
+    NeutralType,
+    PresentDocument,
+    SqlNull,
+    admits_stored_scalar,
+    decode_neutral_literal,
+    unwrap_document_read,
+)
 from parallax.core.db_port import Row
 from parallax.core.document_codec import (
-    LeafEncodingError,
+    UNAVAILABLE,
+    DocumentFinding,
+    DocumentPathSegment,
+    Present,
+    decode_occurrence_classified,
     occurrence_shape,
-    reduce_declared_members,
+    reduce_declared_members_classified,
 )
 from parallax.core.entity._graph_input import (
     EntityAttributeInput,
@@ -43,24 +56,34 @@ from parallax.core.entity._graph_input import (
 )
 from parallax.core.inheritance import view as inheritance_view
 from parallax.core.metamodel import (
+    AttributeIdentity,
     AttributeMetadata,
     EntityIdentity,
     Metamodel,
     Multiplicity,
     NestedValueObjectMetadata,
+    PrimaryKey,
     ValueObjectAttributeIdentity,
     ValueObjectIdentity,
     ValueObjectMetadata,
 )
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.materialize._input import (
+    InvalidRootInput,
     LogicalKey,
     RelationshipViewKey,
     SnapshotGraphInput,
     SnapshotNodeInput,
     SnapshotNodeRef,
     SnapshotRelationshipViewInput,
+    StoredDataIssueCode,
+    StoredDataIssueInput,
+    has_invalid_key,
     logical_key,
+)
+from parallax.snapshot.materialize._publication import (
+    SNAPSHOT_DECODING_FAILED,
+    SnapshotDecodingError,
 )
 
 __all__ = [
@@ -74,41 +97,22 @@ __all__ = [
 
 _VoContainer = ValueObjectMetadata | NestedValueObjectMetadata
 
-SNAPSHOT_DECODING_FAILED: Final[str] = "snapshot-decoding-failed"
-"""The one code conversion refuses under."""
 
+class _AttributeReadContract(Protocol):
+    @property
+    def identity(self) -> AttributeIdentity: ...
 
-class SnapshotDecodingError(ValueError):
-    """Stored data a read cannot convert into the graph-input algebra.
+    @property
+    def column(self) -> str: ...
 
-    Raised where a stored document contradicts its declared shape — a leaf that is
-    not the one document spelling its Neutral Type gives some value of its space,
-    or an occurrence stored in a kind its multiplicity does not admit. It carries
-    the concrete Entity the row resolved to and the member identity at fault, and
-    it deliberately exposes **no** raw database value: the value that provoked it
-    survives on the chained ``cause`` for a first-party diagnosis, not in the
-    message a caller sees.
+    @property
+    def result_key(self) -> str: ...
 
-    A decoding failure is never wrapped as
-    :class:`~parallax.snapshot.handle.SnapshotMaterializationError`: no Entity
-    graph was being built when it happened.
-    """
+    @property
+    def type(self) -> NeutralType: ...
 
-    code: Final[str] = SNAPSHOT_DECODING_FAILED
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        entity: EntityIdentity,
-        member: ValueObjectIdentity | ValueObjectAttributeIdentity,
-        cause: Exception | None = None,
-    ) -> None:
-        super().__init__(f"{SNAPSHOT_DECODING_FAILED}: {message}")
-        self.message = message
-        self.entity = entity
-        self.member = member
-        self.cause = cause
+    @property
+    def encoded(self) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,10 +124,14 @@ class LevelContext:
     here rather than being re-derived from a synthetic tag. ``documents`` is the
     resolved position's own `Document` tier contributors, decided once where the
     projection was, so no level re-projects a family superset of its own.
+    ``attribute_reads`` carries each compiled projection's logical identity,
+    physical column, actual driver key, and decode contract intact. This keeps an
+    encoded result such as ``payload_hex`` attached to physical ``payload``.
     """
 
     concrete_entity: EntityIdentity
     documents: tuple[ValueObjectMetadata, ...] = ()
+    attribute_reads: tuple[_AttributeReadContract, ...] = ()
 
 
 def _new_nodes() -> list[SnapshotNodeInput]:
@@ -166,7 +174,7 @@ class MergeScope:
         ref = SnapshotNodeRef(len(self._nodes))
         self._nodes.append(node)
         self._views.append({})
-        key = logical_key(self.model, node)
+        key = None if has_invalid_key(node) else logical_key(self.model, node)
         if key is not None:  # pragma: no branch - every accepted Entity keys
             self._identity.setdefault(key, ref)
         return ref
@@ -206,47 +214,149 @@ class MergeScope:
                 attributes=node.attributes,
                 value_objects=node.value_objects,
                 relationship_views=tuple(views.values()),
+                issues=node.issues,
             )
             for node, views in zip(self._nodes, self._views, strict=True)
         )
-        return SnapshotGraphInput(nodes=nodes, roots=roots, pin=pin)
+        result_roots = tuple(
+            InvalidRootInput(ordinal, nodes[ref.node_index].issues)
+            if has_invalid_key(nodes[ref.node_index])
+            else ref
+            for ordinal, ref in enumerate(roots)
+        )
+        return SnapshotGraphInput(
+            nodes=nodes,
+            roots=result_roots,
+            pin=pin,
+            has_issues=any(node.issues for node in nodes),
+        )
 
 
-def convert_row(row: Row, level: LevelContext, scope: MergeScope) -> SnapshotNodeRef:
+def convert_row(
+    row: Row,
+    level: LevelContext,
+    scope: MergeScope,
+    *,
+    findings: tuple[DocumentFinding, ...] = (),
+    family_tag_unknown: bool = False,
+    classified_members: frozenset[str] = frozenset(),
+) -> SnapshotNodeRef:
     """Convert one driver row into ``scope``'s next :class:`SnapshotNodeInput`.
 
     Answers the reference the scope assigned rather than the record itself: the
     scope retains the record, and a caller that held its own copy would be the
     second place a projection lives.
 
-    Scalars are keyed by each Attribute's own physical column, so a disjoint
-    sibling's null-padded column — and the synthetic family tag — contributes
+    Scalars are keyed by the compiled projection contract. A disjoint sibling's
+    null-padded result — and the synthetic family tag — therefore contributes
     nothing rather than landing on a member that never declared it.
     """
     projected = _document_columns(level)
-    attributes = tuple(
-        EntityAttributeInput(attribute.identity, row[attribute.storage.name])
-        for attribute in _applicable_attributes(scope.model, level.concrete_entity)
-        if attribute.storage.name in row
-    )
-    value_objects = tuple(
-        ValueObjectOccurrenceInput(
-            occurrence.identity,
-            _occurrence(row.get(occurrence.storage.name), occurrence, level.concrete_entity),
+    issues: list[StoredDataIssueInput] = [
+        _translate_finding(finding, level, scope.model) for finding in findings
+    ]
+    if family_tag_unknown:
+        issues.append(StoredDataIssueInput("stored-data-family-tag-unknown", level.concrete_entity))
+    attributes: list[EntityAttributeInput] = []
+    result_keys = {contract.identity: contract for contract in level.attribute_reads}
+    for attribute in _applicable_attributes(scope.model, level.concrete_entity):
+        contract = result_keys.get(attribute.identity)
+        result_key = attribute.storage.name if contract is None else contract.result_key
+        if result_key not in row:
+            continue
+        raw = row[result_key]
+        value = (
+            decode_neutral_literal(raw, attribute.type)
+            if contract is not None and contract.encoded
+            else raw
         )
-        for occurrence in _applicable_value_objects(scope.model, level.concrete_entity)
-        if occurrence.storage.name in projected
-    )
+        issue = (
+            None
+            if result_key in classified_members
+            else _attribute_issue(attribute, value, level.concrete_entity, scope.model)
+        )
+        if issue is not None:
+            issues.append(issue)
+        if admits_stored_scalar(
+            value,
+            attribute.type,
+            nullable=attribute.nullable,
+            temporal_end=_is_temporal_end(attribute, level.concrete_entity, scope.model),
+        ):
+            attributes.append(EntityAttributeInput(attribute.identity, value))
+    value_objects: list[ValueObjectOccurrenceInput] = []
+    for occurrence in _applicable_value_objects(scope.model, level.concrete_entity):
+        if occurrence.storage.name not in projected:
+            continue
+        raw = row.get(occurrence.storage.name)
+        value, occurrence_findings = _occurrence(
+            raw,
+            occurrence,
+            level.concrete_entity,
+            outer_classified=occurrence.storage.name in classified_members,
+        )
+        issues.extend(
+            _occurrence_issue(finding, occurrence, level.concrete_entity)
+            for finding in occurrence_findings
+        )
+        value_objects.append(ValueObjectOccurrenceInput(occurrence.identity, value))
     return scope.add(
         SnapshotNodeInput(
             concrete_entity=level.concrete_entity,
-            attributes=attributes,
-            value_objects=value_objects,
+            attributes=tuple(attributes),
+            value_objects=tuple(value_objects),
+            issues=tuple(issues),
         )
     )
 
 
-def observable_columns(row: Row, level: LevelContext) -> dict[str, object]:
+def _attribute_issue(
+    attribute: AttributeMetadata,
+    value: object,
+    entity: EntityIdentity,
+    model: Metamodel,
+) -> StoredDataIssueInput | None:
+    temporal_end = _is_temporal_end(attribute, entity, model)
+    if admits_stored_scalar(
+        value,
+        attribute.type,
+        nullable=attribute.nullable,
+        temporal_end=temporal_end,
+    ):
+        return None
+    if value is None:
+        code: StoredDataIssueCode = (
+            "stored-data-primary-key-null"
+            if isinstance(attribute.primary_key, PrimaryKey)
+            else "stored-data-attribute-null"
+        )
+        return StoredDataIssueInput(code, entity, attribute.identity)
+    code = (
+        "stored-data-primary-key-undecodable"
+        if isinstance(attribute.primary_key, PrimaryKey)
+        else "stored-data-leaf-undecodable"
+    )
+    return StoredDataIssueInput(code, entity, attribute.identity)
+
+
+def _is_temporal_end(
+    attribute: AttributeMetadata, entity: EntityIdentity, model: Metamodel
+) -> bool:
+    position = inheritance_view(model).entity(entity)
+    if position is None:  # pragma: no cover - accepted entities have a view
+        return False
+    root = model.entity(position.root)
+    return root is not None and any(
+        axis.end_attribute == attribute.identity for axis in root.declared_as_of_axes
+    )
+
+
+def observable_columns(
+    row: Row,
+    level: LevelContext,
+    *,
+    classified_members: frozenset[str] = frozenset(),
+) -> dict[str, object]:
     """One row's observable state, keyed by PHYSICAL column, documents decoded.
 
     What a participating read hands its observation collector: the complete
@@ -260,11 +370,25 @@ def observable_columns(row: Row, level: LevelContext) -> dict[str, object]:
     mapping riding along inside a converted node.
     """
     projected = _document_columns(level)
-    columns = {key: value for key, value in row.items() if key not in projected}
-    for occurrence in level.documents:
-        columns[occurrence.storage.name] = _decode_document(
-            row.get(occurrence.storage.name), occurrence, level.concrete_entity
+    attribute_keys = frozenset(contract.result_key for contract in level.attribute_reads)
+    columns = {key: value for key, value in row.items() if key not in projected | attribute_keys}
+    for contract in level.attribute_reads:
+        if contract.result_key not in row:
+            continue
+        raw = row[contract.result_key]
+        columns[contract.column] = (
+            decode_neutral_literal(raw, contract.type) if contract.encoded else raw
         )
+    for occurrence in level.documents:
+        raw = row.get(occurrence.storage.name)
+        if isinstance(raw, (SqlNull, PresentDocument)):
+            raw = unwrap_document_read(raw)
+        columns[occurrence.storage.name] = _decode_document(
+            raw,
+            occurrence,
+            level.concrete_entity,
+            outer_classified=occurrence.storage.name in classified_members,
+        )[0]
     return columns
 
 
@@ -298,8 +422,12 @@ def _applicable_value_objects(
 
 
 def _occurrence(
-    raw: object, declared: _VoContainer, entity: EntityIdentity
-) -> ValueObjectRecord | tuple[ValueObjectRecord, ...] | None:
+    raw: object,
+    declared: _VoContainer,
+    entity: EntityIdentity,
+    *,
+    outer_classified: bool = False,
+) -> tuple[ValueObjectRecord | tuple[ValueObjectRecord, ...] | None, tuple[DocumentFinding, ...]]:
     """One TOP-LEVEL occurrence as the immutable record algebra.
 
     Decoding and structuring are two passes on purpose: the codec's reduction is
@@ -308,7 +436,8 @@ def _occurrence(
     second time would ask the codec to read a managed value as a document
     spelling, which is a different thing entirely.
     """
-    return _structure_occurrence(_decode_document(raw, declared, entity), declared)
+    decoded, findings = _decode_document(raw, declared, entity, outer_classified=outer_classified)
+    return _structure_occurrence(decoded, declared), findings
 
 
 def _structure_occurrence(
@@ -333,18 +462,52 @@ def _structure_occurrence(
     return _structure(cast("Mapping[str, object]", decoded), declared)
 
 
-def _decode_document(raw: object, declared: _VoContainer, entity: EntityIdentity) -> object:
+def _decode_document(
+    raw: object,
+    declared: _VoContainer,
+    entity: EntityIdentity,
+    *,
+    outer_classified: bool = False,
+) -> tuple[object, tuple[DocumentFinding, ...]]:
     """One occurrence reduced to its declared members, as the plain document shape
     an observation retains."""
+    if outer_classified:
+        return raw, ()
+    outer_findings: tuple[DocumentFinding, ...] = ()
+    carrier = (
+        raw
+        if isinstance(raw, (SqlNull, PresentDocument))
+        else SqlNull()
+        if raw is None
+        else PresentDocument(cast("DocumentValue", raw))
+    )
+    classified = decode_occurrence_classified(
+        occurrence_shape(declared),
+        carrier,
+        multiplicity=declared.multiplicity,
+        nullable=declared.nullable,
+    )
+    outer_findings = classified.findings
+    raw = classified.presence.value if isinstance(classified.presence, Present) else None
     if declared.multiplicity is Multiplicity.MANY:
         items = cast("list[object]", raw) if isinstance(raw, list) else []
-        return [_decode_element(item, declared, entity) for item in items]
-    return _decode_element(raw, declared, entity)
+        decoded: list[object] = []
+        findings: list[DocumentFinding] = list(outer_findings)
+        for index, item in enumerate(items):
+            element, element_findings = _decode_element(item, declared, entity)
+            decoded.append(element)
+            findings.extend(
+                DocumentFinding(finding.code, (index, *finding.path))
+                for finding in element_findings
+            )
+        return decoded, tuple(findings)
+    one_decoded, one_findings = _decode_element(raw, declared, entity)
+    return one_decoded, (*outer_findings, *one_findings)
 
 
 def _decode_element(
     raw: object, declared: _VoContainer, entity: EntityIdentity
-) -> dict[str, object] | None:
+) -> tuple[dict[str, object] | None, tuple[DocumentFinding, ...]]:
     """One ``one``-shaped document (or array element) reduced to the DECLARED
     members the stored document holds: a non-mapping collapses to ``None`` — the
     whole composite absent — never a partial mapping, and a JSON-null leaf answers
@@ -356,16 +519,10 @@ def _decode_element(
     re-serialized without inventing a key storage never held. The presence option
     is not the authored-member mask mutation comparison supplies: this source
     answers for itself which members it holds, so no mask is passed."""
-    try:
-        reduced = reduce_declared_members(
-            occurrence_shape(declared),
-            raw,
-            preserve_presence=True,
-            collapse_invalid_occurrences=True,
-        )
-    except LeafEncodingError as exc:
-        raise _decoding_error(exc, declared, entity) from exc
-    return cast("dict[str, object] | None", reduced)
+    reduced, findings = reduce_declared_members_classified(
+        occurrence_shape(declared), raw, preserve_presence=True
+    )
+    return cast("dict[str, object] | None", reduced), findings
 
 
 def _structure(document: Mapping[str, object], declared: _VoContainer) -> ValueObjectRecord:
@@ -375,7 +532,7 @@ def _structure(document: Mapping[str, object], declared: _VoContainer) -> ValueO
         attributes=tuple(
             ValueObjectAttributeInput(leaf.identity, document[leaf.identity.name])
             for leaf in declared.attributes
-            if leaf.identity.name in document
+            if leaf.identity.name in document and document[leaf.identity.name] is not UNAVAILABLE
         ),
         value_objects=tuple(
             ValueObjectOccurrenceInput(
@@ -388,25 +545,67 @@ def _structure(document: Mapping[str, object], declared: _VoContainer) -> ValueO
     )
 
 
-def _decoding_error(
-    exc: LeafEncodingError, declared: _VoContainer, entity: EntityIdentity
-) -> SnapshotDecodingError:
-    """The refusal one codec failure becomes, resolved to the member at fault.
-
-    The codec names the failing member as a SEQUENCE of declared names relative to
-    the occurrence being reduced, and its detail may quote the stored value. Only
-    the names reach the refusal's OWN message; the detail stays on the chained
-    cause, which is where a first-party diagnosis reads the stored spelling the
-    refusal is about.
-    """
-    occurrence = ".".join(declared.identity.path)
-    spelled = ".".join((occurrence, *exc.path))
-    return SnapshotDecodingError(
-        f"{entity.canonical}.{spelled} holds data its declared shape does not admit",
-        entity=entity,
-        member=_member_identity(declared, exc.path),
-        cause=exc,
+def _translate_finding(
+    finding: DocumentFinding, level: LevelContext, model: Metamodel
+) -> StoredDataIssueInput:
+    path = _logical_path(finding.path)
+    occurrence = next(
+        (
+            declared
+            for declared in _applicable_value_objects(model, level.concrete_entity)
+            if path and declared.identity.path[-1] == path[0]
+        ),
+        None,
     )
+    attribute = next(
+        (
+            declared
+            for declared in _applicable_attributes(model, level.concrete_entity)
+            if path and declared.identity.name == path[0]
+        ),
+        None,
+    )
+    member = (
+        attribute.identity
+        if attribute is not None
+        else None
+        if occurrence is None
+        else _member_identity(occurrence, path[1:])
+    )
+    code = _stored_issue_code(
+        finding,
+        entity_attribute=attribute is not None,
+        primary_key=attribute is not None and isinstance(attribute.primary_key, PrimaryKey),
+    )
+    return StoredDataIssueInput(code, level.concrete_entity, member, finding.path)
+
+
+def _occurrence_issue(
+    finding: DocumentFinding, declared: _VoContainer, entity: EntityIdentity
+) -> StoredDataIssueInput:
+    path = _logical_path(finding.path)
+    return StoredDataIssueInput(
+        _stored_issue_code(finding),
+        entity,
+        _member_identity(declared, path),
+        (declared.identity.path[-1], *finding.path),
+    )
+
+
+def _stored_issue_code(
+    finding: DocumentFinding,
+    *,
+    entity_attribute: bool = False,
+    primary_key: bool = False,
+) -> StoredDataIssueCode:
+    if primary_key and finding.code == "leaf-undecodable":
+        return "stored-data-primary-key-undecodable"
+    if entity_attribute and finding.code in {
+        "required-member-absent",
+        "required-member-null",
+    }:
+        return "stored-data-attribute-null"
+    return cast("StoredDataIssueCode", f"stored-data-{finding.code}")
 
 
 def _member_identity(
@@ -433,3 +632,7 @@ def _member_identity(
             break
         container = nested
     return container.identity
+
+
+def _logical_path(path: tuple[DocumentPathSegment, ...]) -> tuple[str, ...]:
+    return tuple(part for part in path if isinstance(part, str))

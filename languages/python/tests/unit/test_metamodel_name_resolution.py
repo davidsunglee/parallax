@@ -14,6 +14,7 @@ what makes "preflight accepted this reference" imply "lowering resolves it".
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import cast
 
 import pytest
@@ -123,7 +124,9 @@ class _RefusingPort:
     """Every adapter call is a failure — a read refused for its spelling reaches
     none of them."""
 
-    def execute(self, sql: str, binds: object) -> list[dict[str, object]]:
+    def execute(
+        self, sql: str, binds: object, document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[dict[str, object]]:
         raise AssertionError(f"the read reached the adapter: {sql!r}")
 
     def execute_write(self, sql: str, binds: object) -> int:

@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import datetime as dt
 import enum
+import math
 import re
 from collections.abc import Mapping, Sequence
-from typing import Final, cast
+from dataclasses import dataclass
+from typing import Final, TypeGuard, cast
 
 from parallax.core.base._inference import NEUTRAL_FROM_PYTHON, infer_neutral_type
 from parallax.core.base._neutral import (
@@ -66,6 +68,7 @@ __all__ = [
     "JSON",
     "NEUTRAL_FROM_PYTHON",
     "NEUTRAL_TYPES",
+    "SQL_NULL",
     "STRING",
     "TIME",
     "TIMESTAMP",
@@ -75,6 +78,9 @@ __all__ = [
     "Bytes",
     "Date",
     "Decimal",
+    "DocumentRead",
+    "DocumentReadOrdinals",
+    "DocumentValue",
     "Float32",
     "Float64",
     "InstantError",
@@ -82,19 +88,73 @@ __all__ = [
     "Int64",
     "Json",
     "NeutralType",
+    "PresentDocument",
+    "SqlNull",
     "String",
     "TemporalBound",
     "Time",
     "Timestamp",
     "Uuid",
+    "admits_stored_scalar",
     "coerce_neutral_input",
     "decode_neutral_literal",
     "detach_json_container",
     "infer_neutral_type",
+    "is_document_value",
     "is_neutral_type",
     "matches_neutral_type",
     "normalize_instant",
+    "unwrap_document_read",
 ]
+
+
+type DocumentValue = (
+    bool | int | float | str | list[DocumentValue] | dict[str, DocumentValue] | None
+)
+"""A portable JSON data-model value, including bare JSON null."""
+
+
+@dataclass(frozen=True, slots=True)
+class SqlNull:
+    """A structured-document result whose SQL column is NULL."""
+
+
+SQL_NULL: Final[SqlNull] = SqlNull()
+
+
+@dataclass(frozen=True, slots=True)
+class PresentDocument:
+    """A non-SQL-null structured-document result, including JSON null."""
+
+    document: DocumentValue
+
+
+type DocumentRead = SqlNull | PresentDocument
+"""The provider-neutral structured-document read transport."""
+
+type DocumentReadOrdinals = tuple[int, int]
+"""Adjacent zero-based ``(presence, document)`` projection ordinals."""
+
+
+def unwrap_document_read(value: DocumentRead) -> DocumentValue | None:
+    """Return a document carrier's payload, mapping SQL NULL to ``None``."""
+    return None if isinstance(value, SqlNull) else value.document
+
+
+def is_document_value(value: object) -> TypeGuard[DocumentValue]:
+    """Whether ``value`` belongs to the portable JSON data model."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, list):
+        return all(is_document_value(item) for item in cast("list[object]", value))
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and is_document_value(item)
+            for key, item in cast("dict[object, object]", value).items()
+        )
+    return False
 
 
 def detach_json_container(value: object) -> object:
@@ -163,6 +223,26 @@ class InstantError(ValueError):
 def is_neutral_type(name: str) -> bool:
     """Whether ``name`` is a base neutral type or a ``decimal(p,s)`` spelling."""
     return name in NEUTRAL_TYPES or _DECIMAL.match(name) is not None
+
+
+def admits_stored_scalar(
+    value: object,
+    declared: NeutralType,
+    *,
+    nullable: bool,
+    temporal_end: bool,
+) -> bool:
+    """Whether one decoded stored scalar satisfies its logical read contract.
+
+    SQL NULL is admitted only by a nullable Attribute, the native infinity
+    sentinel only by a temporal end Attribute, and every other value must
+    inhabit the Attribute's declared Neutral Type.
+    """
+    if value is None:
+        return nullable
+    if value is INFINITY:
+        return temporal_end
+    return matches_neutral_type(value, declared)
 
 
 def normalize_instant(value: dt.datetime) -> dt.datetime:

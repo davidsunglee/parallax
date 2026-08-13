@@ -115,6 +115,16 @@ def test_membership_between_null_and_string_operators() -> None:
     assert ci["like"]["caseInsensitive"] is True  # type: ignore[index] - indexes the JSON-union operand at its known serialized shape
 
 
+@pytest.mark.parametrize("expression", [Widget.id, Widget.name], ids=["primary-key", "string"])
+def test_non_nullable_members_refuse_null_checks(expression: AttributeExpr[Any, Any]) -> None:
+    with pytest.raises(QueryDefinitionError) as is_null:
+        expression.is_null()
+    assert is_null.value.code == "query-expression-invalid"
+    with pytest.raises(QueryDefinitionError) as is_not_null:
+        expression.is_not_null()
+    assert is_not_null.value.code == "query-expression-invalid"
+
+
 def test_boolean_combinators_and_grouping() -> None:
     conj = _op((Widget.qty > 1) & (Widget.qty < 9))
     assert conj == {

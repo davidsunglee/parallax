@@ -15,8 +15,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.person_id, t0.tax_i_d, t0.line2_item, t0.already_snake, t0.legacy__i_d, t0.mailing_address from member_column_defaults t0
-        mariadb: select t0.id, t0.person_id, t0.tax_i_d, t0.line2_item, t0.already_snake, t0.legacy__i_d, t0.mailing_address from member_column_defaults t0
+        postgres: select t0.id, t0.person_id, t0.tax_i_d, t0.line2_item, t0.already_snake, t0.legacy__i_d, not t0.mailing_address is null, t0.mailing_address from member_column_defaults t0
+        mariadb: select t0.id, t0.person_id, t0.tax_i_d, t0.line2_item, t0.already_snake, t0.legacy__i_d, not t0.mailing_address is null, t0.mailing_address from member_column_defaults t0
   graph:
     MemberColumnDefaults:
       - id: 1

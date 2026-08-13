@@ -62,7 +62,9 @@ class _CannedPort:
     def __init__(self, responses: Sequence[list[Row]] = ()) -> None:
         self._responses = list(responses)
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return self._responses.pop(0) if self._responses else []
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:  # pragma: no cover

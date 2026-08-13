@@ -17,6 +17,7 @@ import re
 from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
 from _transact_support import (
@@ -54,7 +55,7 @@ from parallax.core import (
     attr,
     inheritance,
 )
-from parallax.core.base import InstantError
+from parallax.core.base import INFINITY, DocumentValue, InstantError, PresentDocument, SqlNull
 from parallax.core.db_error import DatabaseError
 from parallax.core.db_port import Bind, JsonDocument, Row
 from parallax.core.dialect import POSTGRES
@@ -71,12 +72,16 @@ from parallax.core.unit_work import (
 from parallax.core.unit_work.write_planner import (
     assigned_many_path,
 )
-from parallax.snapshot import QueryTargetError
+from parallax.snapshot import QueryTargetError, SnapshotDecodingError
 from parallax.snapshot.handle import Database, Transaction
 
 # The buffering seam below every write ingress, driven directly by the case that
 # pins its own refusals.
 from parallax.snapshot.handle._predicate_writes import buffer_predicate_instruction
+from parallax.snapshot.handle._write_inputs import (
+    is_no_op_assignment,
+    normalize_assignment_values,
+)
 
 
 # A local Transaction-Time-Only, value-object-bearing entity with the
@@ -129,10 +134,51 @@ class WhereSubscriber(Entity, table="where_subscriber", namespace="parallax.comp
     id: Attr[int] = attr(primary_key=True)
     version: Attr[int] = attr(type=Int32, optimistic_locking=True)
     address: Attr[WhereSubscriberAddress | None]
-    profile: Attr[WhereSubscriberProfile | None]
+    profile: Attr[WhereSubscriberProfile]
 
 
 _WHERE_SUBSCRIBER_META = DomainModel(WhereSubscriber)
+
+
+class WhereManagedOccurrence(ValueObject):
+    amount: Attr[Decimal] = attr(precision=18, scale=2)
+    payload: Attr[bytes]
+    day: Attr[dt.date]
+    time: Attr[dt.time]
+    instant: Attr[dt.datetime]
+    token: Attr[UUID]
+
+
+class WhereManagedSubscriber(
+    Entity, table="where_managed_subscriber", namespace="parallax.compatibility"
+):
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    details: Attr[WhereManagedOccurrence]
+    entries: Attr[tuple[WhereManagedOccurrence, ...]]
+
+
+_WHERE_MANAGED_SUBSCRIBER_META = DomainModel(WhereManagedSubscriber)
+
+
+class WhereBinary(Entity, table="where_binary", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    version: Attr[int] = attr(type=Int32, optimistic_locking=True)
+    payload: Attr[bytes]
+
+
+_WHERE_BINARY_META = DomainModel(WhereBinary)
+
+
+class WhereBinaryLedger(
+    TxTemporal, table="where_binary_ledger", namespace="parallax.compatibility"
+):
+    id: Attr[int] = attr(primary_key=True)
+    name: Attr[str] = attr(max_length=64)
+    payload: Attr[bytes]
+
+
+_WHERE_BINARY_LEDGER_META = DomainModel(WhereBinaryLedger)
 
 
 # A local Transaction-Time-Only entity under Relational Document Layout: the two
@@ -461,8 +507,8 @@ def test_materializing_update_where_skips_no_op_rows_and_gates_the_rest() -> Non
     # changed (one gated per-row UPDATE).
     port = RecordingPort(
         rows=[
-            {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1},
-            {"id": 3, "owner": "Grace", "balance": 10.00, "version": 1},
+            {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
+            {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
         ]
     )
 
@@ -486,8 +532,8 @@ def test_materializing_delete_where_writes_every_resolved_row() -> None:
     # so every resolved row writes — N always equals the resolved-row count.
     port = RecordingPort(
         rows=[
-            {"id": 1, "owner": "Ada", "balance": 100.00, "version": 1},
-            {"id": 3, "owner": "Grace", "balance": 10.00, "version": 1},
+            {"id": 1, "owner": "Ada", "balance": Decimal("100.00"), "version": 1},
+            {"id": 3, "owner": "Grace", "balance": Decimal("10.00"), "version": 1},
         ]
     )
 
@@ -520,7 +566,9 @@ def test_a_failed_resolving_read_is_still_recorded_as_the_call_it_made() -> None
     # predicate, so `m-execution-log` owes that round trip an account whether the
     # call came back with rows or with a failure.
     class _FailingReadPort(RecordingPort):
-        def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+        def execute(
+            self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[Row]:
             raise DatabaseError(
                 category="lockWaitTimeout", native_code="55P03", message="lock wait timeout"
             )
@@ -545,16 +593,16 @@ def _two_terminate_rows() -> list[Row]:
         {
             "bal_id": 1,
             "acct_num": "A",
-            "val": 150.00,
-            "in_z": "2024-01-01T00:00:00+00:00",
-            "out_z": "infinity",
+            "val": Decimal("150.00"),
+            "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+            "out_z": INFINITY,
         },
         {
             "bal_id": 2,
             "acct_num": "B",
-            "val": 50.00,
-            "in_z": "2024-02-01T00:00:00+00:00",
-            "out_z": "infinity",
+            "val": Decimal("50.00"),
+            "in_z": dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+            "out_z": INFINITY,
         },
     ]
 
@@ -600,9 +648,19 @@ def test_materializing_terminate_where_audit_only_gates_under_optimistic_concurr
         "update balance set out_z = ? where bal_id = ? and out_z = ? and in_z = ?"
     )
     assert writes[0][1] == gated_sql
-    assert writes[0][2] == ("2024-06-01T00:00:00+00:00", 1, "infinity", "2024-01-01T00:00:00+00:00")
+    assert writes[0][2] == (
+        "2024-06-01T00:00:00+00:00",
+        1,
+        "infinity",
+        dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+    )
     assert writes[1][1] == gated_sql
-    assert writes[1][2] == ("2024-06-01T00:00:00+00:00", 2, "infinity", "2024-02-01T00:00:00+00:00")
+    assert writes[1][2] == (
+        "2024-06-01T00:00:00+00:00",
+        2,
+        "infinity",
+        dt.datetime(2024, 2, 1, tzinfo=dt.UTC),
+    )
 
 
 def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
@@ -614,9 +672,9 @@ def test_materializing_update_where_audit_only_chains_the_new_value() -> None:
             {
                 "bal_id": 1,
                 "acct_num": "A",
-                "val": 150.00,
-                "in_z": "2024-01-01T00:00:00+00:00",
-                "out_z": "infinity",
+                "val": Decimal("150.00"),
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": INFINITY,
             }
         ]
     )
@@ -650,9 +708,9 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
             {
                 "id": 1,
                 "name": "Nordic Foods",
-                "address": {"city": "Bergen"},
-                "in_z": "2024-01-01T00:00:00+00:00",
-                "out_z": "infinity",
+                "address": PresentDocument({"city": "Bergen"}),
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": INFINITY,
             }
         ]
     )
@@ -666,7 +724,8 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
     reads = [op for op in port.ops if op[0] == "read"]
     writes = [op for op in port.ops if op[0] == "write"]
     assert reads[0][1] == POSTGRES.to_driver_sql(
-        "select t0.id, t0.name, t0.in_z, t0.out_z, t0.address from where_ledger t0 "
+        "select t0.id, t0.name, t0.in_z, t0.out_z, not t0.address is null, "
+        "t0.address from where_ledger t0 "
         "where t0.id = ? and t0.out_z = ? for share of t0"
     )
     assert len(writes) == 2  # close then chain
@@ -683,6 +742,31 @@ def test_materializing_update_where_audit_only_carries_the_unassigned_value_obje
     )
 
 
+def test_materializing_update_where_carries_an_encoded_scalar_in_the_predecessor() -> None:
+    port = RecordingPort(
+        rows=[
+            {
+                "id": 1,
+                "name": "old",
+                "payload_hex": "0a1b",
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": INFINITY,
+            }
+        ]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereBinaryLedger.where(WhereBinaryLedger.id == 1),
+            WhereBinaryLedger.name.set("new"),
+        )
+
+    Database.connect(port, _WHERE_BINARY_LEDGER_META, clock=FixedClock(FIXED)).transact(fn)
+    writes = [op for op in port.ops if op[0] == "write"]
+    assert len(writes) == 2
+    assert b"\x0a\x1b" in cast("tuple[object, ...]", writes[1][2])
+
+
 def test_materializing_update_where_document_layout_patches_the_retained_document() -> None:
     # The materializing lane is the one that reads a real stored document rather
     # than reconstructing one, so it is where retention is observable: the resolve
@@ -690,7 +774,7 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
     # and the chained successor is that document patched — which is why
     # `charterCode`, a key this model declares nowhere, is still in the row the
     # chain writes, and why `manifest` rides forward with the key inside IT too.
-    stored = {
+    stored: DocumentValue = {
         "title": "Coastal Run",
         "charterCode": "NB-118",
         "manifest": {"cargo": "grain", "sealNumber": "S-4021"},
@@ -699,9 +783,9 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
         rows=[
             {
                 "id": 1,
-                "in_z": "2024-01-01T00:00:00+00:00",
-                "out_z": "infinity",
-                "payload": stored,
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": INFINITY,
+                "payload": PresentDocument(stored),
             }
         ]
     )
@@ -715,7 +799,8 @@ def test_materializing_update_where_document_layout_patches_the_retained_documen
     reads = [op for op in port.ops if op[0] == "read"]
     writes = [op for op in port.ops if op[0] == "write"]
     assert reads[0][1] == POSTGRES.to_driver_sql(
-        "select t0.id, t0.in_z, t0.out_z, t0.payload from where_voyage t0 "
+        "select t0.id, t0.in_z, t0.out_z, not t0.payload is null, "
+        "t0.payload from where_voyage t0 "
         "where t0.id = ? and t0.out_z = ? for share of t0"
     )
     assert len(writes) == 2  # close then chain
@@ -745,7 +830,7 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
     # containers read-only, and a read-only view is not something a structured-
     # document bind can serialize, so a retained container reaching the statement
     # would fail the whole write rather than insert the row it carried.
-    stored = {
+    stored: DocumentValue = {
         "route": "Oslo-Bergen",
         "charterCode": "NB-118",
         "terms": {"clause": "standard", "sealNumber": "S-4021"},
@@ -755,11 +840,11 @@ def test_materializing_terminate_where_document_layout_binds_a_carried_document_
         rows=[
             {
                 "id": 1,
-                "from_z": "2024-01-01T00:00:00+00:00",
-                "thru_z": "infinity",
-                "in_z": "2024-01-01T00:00:00+00:00",
-                "out_z": "infinity",
-                "payload": stored,
+                "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "thru_z": INFINITY,
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": INFINITY,
+                "payload": PresentDocument(stored),
             }
         ]
     )
@@ -785,11 +870,11 @@ def _position_row() -> Row:
     return {
         "id": 1,
         "acct_num": "A",
-        "value": 200.00,
-        "from_z": "2024-01-01T00:00:00+00:00",
-        "thru_z": "infinity",
-        "in_z": "2024-01-01T00:00:00+00:00",
-        "out_z": "infinity",
+        "value": Decimal("200.00"),
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": INFINITY,
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY,
     }
 
 
@@ -887,16 +972,16 @@ def test_materializing_terminate_until_where_writes_per_resolved_row() -> None:
     assert len(writes) == 6  # 2 resolved rows * (close + head + tail)
 
 
-def _rectangle_row(*, address: dict[str, object] | None) -> Row:
+def _rectangle_row(*, address: dict[str, DocumentValue] | None) -> Row:
     return {
         "id": 1,
         "acct_num": "A",
-        "value": 200.00,
-        "address": address,
-        "from_z": "2024-01-01T00:00:00+00:00",
-        "thru_z": "infinity",
-        "in_z": "2024-01-01T00:00:00+00:00",
-        "out_z": "infinity",
+        "value": Decimal("200.00"),
+        "address": SqlNull() if address is None else PresentDocument(address),
+        "from_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "thru_z": INFINITY,
+        "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+        "out_z": INFINITY,
     }
 
 
@@ -908,7 +993,7 @@ def test_materializing_bitemporal_update_where_carries_the_unassigned_value_obje
     # reassign it (`m-bitemp-write` "head/tail old values come from the
     # observed prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole" — never decomposed).
-    address: dict[str, object] = {"city": "Helsinki"}
+    address: dict[str, DocumentValue] = {"city": "Helsinki"}
     port = RecordingPort(rows=[_rectangle_row(address=address)])
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
@@ -940,7 +1025,7 @@ def test_materializing_update_until_where_bitemporal_carries_the_value_object_on
     # shape, VO-free `Position`): every one of head/middle/tail carries the
     # resolved row's own `address` forward, whole, since the caller reassigns
     # only `value` — the document is never decomposed at any chain slot.
-    address: dict[str, object] = {"city": "Tampere"}
+    address: dict[str, DocumentValue] = {"city": "Tampere"}
     port = RecordingPort(rows=[_rectangle_row(address=address)])
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
@@ -979,7 +1064,7 @@ def test_materializing_plain_terminate_where_bitemporal_carries_the_document() -
     # below). `m-bitemp-write` "head/tail old values come from the observed
     # prior rectangle"; `m-value-object` "the document rides every
     # chained/split row whole".
-    address: dict[str, object] = {"city": "Oslo"}
+    address: dict[str, DocumentValue] = {"city": "Oslo"}
     port = RecordingPort(rows=[_rectangle_row(address=address)])
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
 
@@ -1004,7 +1089,7 @@ def test_materializing_terminate_until_where_bitemporal_carries_the_document_on_
     # hole in Valid Time, `terminate_until_where`'s own docstring), and
     # BOTH chain the resolved row's OLD payload forward
     # (`bitemp_write.plan`), so the document rides both, whole.
-    address: dict[str, object] = {"city": "Tampere"}
+    address: dict[str, DocumentValue] = {"city": "Tampere"}
     port = RecordingPort(rows=[_rectangle_row(address=address)])
     valid_from = dt.datetime(2024, 7, 1, tzinfo=dt.UTC)
     until = dt.datetime(2024, 9, 1, tzinfo=dt.UTC)
@@ -1040,9 +1125,9 @@ def test_materializing_terminate_where_audit_only_observes_the_whole_document() 
             {
                 "id": 1,
                 "name": "Nordic Foods",
-                "address": {"city": "Bergen"},
-                "in_z": "2024-01-01T00:00:00+00:00",
-                "out_z": "infinity",
+                "address": PresentDocument({"city": "Bergen"}),
+                "in_z": dt.datetime(2024, 1, 1, tzinfo=dt.UTC),
+                "out_z": INFINITY,
             }
         ]
     )
@@ -1068,7 +1153,9 @@ def test_materializing_terminate_where_audit_only_observes_the_whole_document() 
 # declared value object.                                                       #
 # --------------------------------------------------------------------------- #
 def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_row() -> None:
-    port = RecordingPort(rows=[{"id": 1, "version": 1, "address": {"city": "Bergen"}}])
+    port = RecordingPort(
+        rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
+    )
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -1084,8 +1171,60 @@ def test_materializing_versioned_update_where_eliminates_a_no_op_value_object_ro
     assert [op[0] for op in port.ops] == ["begin", "read", "commit"]
 
 
+def test_no_op_comparison_normalizes_production_encoded_one_and_many_assignments() -> None:
+    encoded = {
+        "amount": "19.95",
+        "payload": "0a1b",
+        "day": "2026-08-13",
+        "time": "09:30:00",
+        "instant": "2026-08-13T13:30:00.000000Z",
+        "token": "12345678-1234-5678-1234-567812345678",
+    }
+    managed = {
+        "amount": Decimal("19.95"),
+        "payload": b"\x0a\x1b",
+        "day": dt.date(2026, 8, 13),
+        "time": dt.time(9, 30),
+        "instant": dt.datetime(2026, 8, 13, 13, 30, tzinfo=dt.UTC),
+        "token": UUID("12345678-1234-5678-1234-567812345678"),
+    }
+    entity = next(
+        entity
+        for entity in _WHERE_MANAGED_SUBSCRIBER_META.entities
+        if entity.identity.name == "WhereManagedSubscriber"
+    )
+    occurrences = {
+        occurrence.identity.path[-1]: occurrence for occurrence in entity.declared_value_objects
+    }
+    columns = {"details": ("details", True), "entries": ("entries", True)}
+    row: Row = {"details": managed, "entries": [managed]}
+
+    assignments = normalize_assignment_values(
+        {"details": encoded, "entries": [encoded]}, occurrences
+    )
+
+    assert is_no_op_assignment(columns, assignments, row, occurrences)
+
+
+def test_materializing_versioned_update_where_eliminates_an_encoded_scalar_no_op() -> None:
+    port = RecordingPort(rows=[{"id": 1, "version": 1, "payload_hex": "0a1b"}])
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereBinary.where(WhereBinary.id == 1),
+            WhereBinary.payload.set(b"\x0a\x1b"),
+        )
+
+    Database.connect(port, _WHERE_BINARY_META, clock=FixedClock(FIXED)).transact(
+        fn, concurrency="optimistic"
+    )
+    assert [op[0] for op in port.ops] == ["begin", "read", "commit"]
+
+
 def test_materializing_versioned_update_where_gates_a_changed_value_object_row() -> None:
-    port = RecordingPort(rows=[{"id": 1, "version": 1, "address": {"city": "Bergen"}}])
+    port = RecordingPort(
+        rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
+    )
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -1104,11 +1243,31 @@ def test_materializing_versioned_update_where_gates_a_changed_value_object_row()
     assert writes[0][2] == (JsonDocument({"city": "Oslo"}), 2, 1, 1)
 
 
+def test_materializing_predicate_write_refuses_an_invalid_direct_version() -> None:
+    port = RecordingPort(
+        rows=[{"id": 1, "version": "bad", "address": PresentDocument({"city": "Bergen"})}]
+    )
+
+    def fn(tx: Transaction) -> None:
+        tx.update_where(
+            WhereSubscriber.where(WhereSubscriber.id == 1),
+            WhereSubscriber.address.set(WhereSubscriberAddress(city="Oslo")),
+        )
+
+    with pytest.raises(SnapshotDecodingError):
+        Database.connect(port, _WHERE_SUBSCRIBER_META, clock=FixedClock(FIXED)).transact(
+            fn, concurrency="optimistic"
+        )
+    assert [op[0] for op in port.ops] == ["begin", "read", "rollback"]
+
+
 def test_materializing_versioned_update_where_projects_only_the_assigned_value_object() -> None:
     # Minimal-read discipline: the resolving read projects the ASSIGNED
     # document (`address`) only -- never `profile`, the entity's OTHER
     # declared value object, which this `update_where` never touches.
-    port = RecordingPort(rows=[{"id": 1, "version": 1, "address": {"city": "Bergen"}}])
+    port = RecordingPort(
+        rows=[{"id": 1, "version": 1, "address": PresentDocument({"city": "Bergen"})}]
+    )
 
     def fn(tx: Transaction) -> None:
         tx.update_where(
@@ -1121,7 +1280,8 @@ def test_materializing_versioned_update_where_projects_only_the_assigned_value_o
     )
     reads = [op for op in port.ops if op[0] == "read"]
     assert reads[0][1] == POSTGRES.to_driver_sql(
-        "select t0.id, t0.version, t0.address from where_subscriber t0 where t0.id = ?"
+        "select t0.id, t0.version, not t0.address is null, t0.address "
+        "from where_subscriber t0 where t0.id = ?"
     )
 
 

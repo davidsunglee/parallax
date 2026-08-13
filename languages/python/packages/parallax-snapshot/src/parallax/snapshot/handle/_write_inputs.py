@@ -55,6 +55,11 @@ from typing import Final, cast
 
 from parallax.core.base import normalize_instant
 from parallax.core.db_port import Row
+from parallax.core.document_codec import (
+    mask_managed_members,
+    occurrence_shape,
+    reduce_declared_members,
+)
 from parallax.core.entity import Entity as EntityBase
 from parallax.core.entity import lifecycle_state_of
 from parallax.core.entity._declaration import declaration_of
@@ -108,6 +113,7 @@ __all__ = [
     "is_no_op_assignment",
     "key_column_values",
     "metadata_of_instance",
+    "normalize_assignment_values",
     "observation_keying",
     "predecessor_payload",
     "record_observations",
@@ -738,6 +744,37 @@ def validate_until(
     return until_normalized.isoformat()
 
 
+def normalize_assignment_values(
+    assignments: Mapping[str, object],
+    occurrences: Mapping[str, ValueObjectMetadata] | None = None,
+) -> dict[str, object]:
+    """Decode each encoded occurrence assignment once into its managed value.
+
+    Scalar assignments already carry managed values. A ``one`` keeps the caller's
+    authored-member mask, while a ``many`` decodes every replacement element whole.
+    The returned mapping is reusable across every row resolved by one predicate write.
+    """
+    occurrence_index: Mapping[str, ValueObjectMetadata] = (
+        cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
+    )
+    normalized: dict[str, object] = {}
+    for member, value in assignments.items():
+        occurrence = occurrence_index.get(member)
+        if occurrence is None:
+            normalized[member] = value
+            continue
+        shape = occurrence_shape(occurrence)
+        if occurrence.multiplicity is Multiplicity.MANY:
+            encoded = list(cast("tuple[object, ...]", value)) if isinstance(value, tuple) else value
+            normalized[member] = [
+                reduce_declared_members(shape, element, named_by=element)
+                for element in cast("Sequence[object]", encoded)
+            ]
+        else:
+            normalized[member] = reduce_declared_members(shape, value, named_by=value)
+    return normalized
+
+
 def is_no_op_assignment(
     member_columns: Mapping[str, tuple[str, bool]],
     assignments: Mapping[str, object],
@@ -756,18 +793,17 @@ def is_no_op_assignment(
     not-present state a NULL Column also carries, so a member assigned ``None``
     is a no-op in either spelling.
 
+    ``assignments`` has already crossed :func:`normalize_assignment_values` once
+    for the whole predicate write. A ``one`` comparison applies that codec-owned
+    authored-member mask to the managed row; a ``many`` compares its whole ordered
+    replacement without decoding either side again.
+
     This is the ONE narrow result-dependent normalization a materializing
     resolve performs while streaming: a resolved row an assignment-bearing
     verb would leave unchanged never joins its Materialized Write Group.
     ``delete`` / ``terminate`` / ``terminateUntil`` have no assignments to
     compare and therefore never call this — every resolved row is retained.
     """
-    from parallax.core.document_codec import (
-        LeafEncodingError,
-        occurrence_shape,
-        reduce_declared_members,
-    )
-
     occurrence_index: Mapping[str, ValueObjectMetadata] = (
         cast("Mapping[str, ValueObjectMetadata]", {}) if occurrences is None else occurrences
     )
@@ -775,24 +811,14 @@ def is_no_op_assignment(
         stored = row.get(member_columns[member][0])
         occurrence = occurrence_index.get(member)
         if occurrence is None:
-            if value != stored:
-                return False
-            continue
-        shape = occurrence_shape(occurrence)
-        if occurrence.multiplicity is Multiplicity.MANY:
-            if not isinstance(stored, list):
-                raise LeafEncodingError(f"{member}: expected array, got {type(stored).__name__}")
-            stored_items = cast("Sequence[object]", stored)
-            assigned_items: Sequence[object] = (
-                cast("Sequence[object]", value) if isinstance(value, (list, tuple)) else ()
+            compared = stored
+        elif occurrence.multiplicity is Multiplicity.MANY:
+            compared = (
+                list(cast("tuple[object, ...]", stored)) if isinstance(stored, tuple) else stored
             )
-            if [reduce_declared_members(shape, item) for item in stored_items] != [
-                reduce_declared_members(shape, item) for item in assigned_items
-            ]:
-                return False
-        elif reduce_declared_members(shape, stored, named_by=value) != reduce_declared_members(
-            shape, value, named_by=value
-        ):
+        else:
+            compared = mask_managed_members(stored, value)
+        if value != compared:
             return False
     return True
 

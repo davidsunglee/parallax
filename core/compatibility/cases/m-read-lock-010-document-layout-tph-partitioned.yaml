@@ -34,8 +34,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.kind, t0.payload from payment_document t0 join (select p1.id from (select * from payment_document t1 where t1.kind = ? offset 0) p1 where jsonb_extract_path_text(p1.payload, ?) = ? or 1 = 0 union all select p2.id from (select * from payment_document t2 where t2.kind = ? offset 0) p2 where 1 = 0 or cast(jsonb_extract_path_text(p2.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id for share of t0
-        mariadb: select t0.id, t0.kind, t0.payload from payment_document t0 join (select p1.id from (select * from payment_document t1 where t1.kind = ? limit ?) p1 where json_value(p1.payload, ?) = ? or 1 = 0 union all select p2.id from (select * from payment_document t2 where t2.kind = ? limit ?) p2 where 1 = 0 or cast(json_value(p2.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id lock in share mode
+        postgres: select t0.id, t0.kind, not t0.payload is null, t0.payload from payment_document t0 join (select p1.id from (select * from payment_document t1 where t1.kind = ? offset 0) p1 where jsonb_extract_path_text(p1.payload, ?) = ? or 1 = 0 union all select p2.id from (select * from payment_document t2 where t2.kind = ? offset 0) p2 where 1 = 0 or cast(jsonb_extract_path_text(p2.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id for share of t0
+        mariadb: select t0.id, t0.kind, not t0.payload is null, t0.payload from payment_document t0 join (select p1.id from (select * from payment_document t1 where t1.kind = ? limit ?) p1 where json_value(p1.payload, ?) = ? or 1 = 0 union all select p2.id from (select * from payment_document t2 where t2.kind = ? limit ?) p2 where 1 = 0 or cast(json_value(p2.payload, ?) as decimal(18, 2)) > ?) u on u.id = t0.id lock in share mode
       binds:
         postgres: [card, detail, visa-4242, cash, detail, '10.0']
         mariadb: [card, 18446744073709551615, '$.detail', visa-4242, cash, 18446744073709551615, '$.detail', '10.0']

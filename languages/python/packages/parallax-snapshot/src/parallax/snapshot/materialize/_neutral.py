@@ -55,6 +55,7 @@ from parallax.core.temporal_read import Pin
 from parallax.core.unit_work import ObjectKey, ObservationKey
 from parallax.snapshot.materialize._input import RelationshipViewKey
 from parallax.snapshot.materialize._merge import GraphMerge, MergedNode
+from parallax.snapshot.materialize._publication import require_publishable
 
 __all__ = [
     "NeutralGraph",
@@ -90,7 +91,8 @@ type ObservationKeying = Callable[
 ]
 """How a node learns the slot the active unit of work filed its observation
 under, given the object identity this module already derived and the node's own
-member values.
+member values. Publication eligibility is checked before either construction
+pass, so invalid keys never reach Object Key or observation-key derivation.
 
 Supplying one *is* the decision to carry observation keys, exactly as supplying an
 ``ObservationCollector`` is the decision to observe: a standalone read passes
@@ -208,6 +210,7 @@ def neutral_graph(
     filled, so a cycle closes on a complete object and the whole graph publishes
     at once or not at all.
     """
+    require_publishable(merge)
     nodes = [merge.node(index) for index in range(len(merge.order))]
     pending: list[dict[RelationshipViewKey, NeutralRelationshipView]] = []
     views: list[NeutralNodeView] = []
@@ -218,7 +221,9 @@ def neutral_graph(
     for merged, relationships in zip(nodes, pending, strict=True):
         for view in merged.views:
             relationships[view.view] = _relationship(view.value, views)
-    return NeutralGraph(tuple(views[index] for index in merge.roots), merge.pin)
+    return NeutralGraph(
+        tuple(views[index] for index in merge.roots if index is not None), merge.pin
+    )
 
 
 def neutral_graphs(graphs: Iterable[NeutralGraph]) -> NeutralGraphs:

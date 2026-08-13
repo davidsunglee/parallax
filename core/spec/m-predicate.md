@@ -175,6 +175,13 @@ literal kind keeps the rule free of attribute-type resolution, and ISO-8601
 logic, `isNotNull` excludes NULL rows; `notLike`/`notIn`/`notEq` against a NULL
 column likewise yield NULL (not true) and so exclude that row.
 
+A null check is meaningful only where the declared member admits null. A
+model-aware resolver **MUST** reject `isNull` / `isNotNull`, `nestedIsNull` /
+`nestedIsNotNull`, and element-relative null checks over a non-nullable leaf
+(`null-check-non-nullable-member`, `m-case-format` rejected vocabulary) before
+emitting SQL. This is checked at the resolved leaf in every scope; physical
+Columns or Document placement does not change the verdict.
+
 ### String
 
 The string predicates take `{ "attr", "value", "caseInsensitive"? }`

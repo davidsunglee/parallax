@@ -23,7 +23,7 @@ from parallax.conformance import boundary_runner, case_format
 from parallax.conformance.boundary_runner import FaultInjectingPort
 from parallax.conformance.class_models import MODELS
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot.handle import Database, Transaction
 
@@ -113,7 +113,13 @@ class _FakePort:
         self.rows = rows
         self.writes: list[tuple[str, tuple[object, ...]]] = []
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        del sql, binds, document_reads
         return [dict(row) for row in self.rows]
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:

@@ -1343,13 +1343,14 @@ per dialect (Postgres `(t0.address -> 'geo' ->> 'elevation')::double precision`,
 MariaDB `nullif(json_unquote(json_extract(t0.address, '$.geo.elevation')), 'null') + 0`
 — arithmetic coercion of an independent extraction rather than the golden's explicit
 `cast(json_value(…) as double)`), each an independent formulation returning the same
-rows. **All four not-present states collapse identically on both dialects.** The
-MariaDB golden extraction is `json_value` precisely because it maps an explicit JSON
-`null` leaf — like a missing key, a non-object intermediate, and a SQL `NULL` column
-— to SQL `NULL` (as Postgres `jsonb_extract_path_text` does), so every not-present
-state casts or compares SQL `NULL` and the absence-collapse rule (`m-predicate`)
-holds portably. The compatibility corpus pins all four states on Postgres **and**
-MariaDB (`m-value-object-013` asserts all four at `geo.country`).
+rows. **All accepted not-present paths collapse identically on both dialects.**
+The MariaDB golden extraction is `json_value` precisely because it maps an
+explicit JSON-null occurrence or leaf — like a missing key and a SQL `NULL`
+column — to SQL `NULL` (as Postgres `jsonb_extract_path_text` does), so every
+accepted not-present state casts or compares SQL `NULL` and the absence-collapse
+rule (`m-predicate`) holds portably. The compatibility corpus pins those paths on
+Postgres **and** MariaDB (`m-value-object-013` asserts them at `geo.country`);
+wrong-kind stored state is covered by classified invalid-data tests.
 
 #### To-many — exists / notExists and any-element predicates
 
@@ -1478,8 +1479,10 @@ non-array) and `jsonb_array_length` (under a `jsonb_typeof` guard), MariaDB an
 array-type-guarded `JSON_TABLE(…)` element unnest (parse-only, executed against real
 MariaDB — the element-unnest golden SQL cannot use, since its `COLUMNS ( … PATH '…')`
 paths cannot be `?` binds and do not normalize). Corpus `m-value-object-021` /
-`-022` pin that a non-array `phones` collapses even when its scalar value or object
-content collides with the query value.
+`-022` pin the positive and negated element semantics against valid arrays and
+accepted absence states. The wrong-kind collapse remains a lowering requirement
+so predicates are total over invalid stored state, but invalid fixture rows are
+classified at publication rather than used as ordinary result witnesses.
 
 A range, a negated membership, or a string predicate crossing a `many` member
 composes the same way, in

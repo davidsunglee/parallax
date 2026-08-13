@@ -613,8 +613,9 @@ class Transaction:
                     recorder=recorder,
                 )
             )
+        snapshot = snapshot_from_find_result(find_result, self._meta, construction)
         record_observations(self._uow, self._meta, observations)
-        return snapshot_from_find_result(find_result, self._meta, construction)
+        return snapshot
 
     def read_neutral(self, request: NeutralReadRequest) -> NeutralReadResult:
         """Run a PARTICIPATING neutral read and return its materialized output.

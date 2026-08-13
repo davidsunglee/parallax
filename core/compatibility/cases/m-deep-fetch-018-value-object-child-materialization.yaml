@@ -8,12 +8,11 @@
 # a graph, not just the root:
 #
 #   level 0 (root)  : all customers, projecting Customer's instance-form list
-#                     `id, name, address` (scalar layout slots, then the single
-#                     `address` document column LAST).
+#                     `id, name`, then the `address` presence/value pair LAST.
 #   level 1 (child) : location rows whose customer_id is in the DISTINCT customer
 #                     ids {1..10}, projecting Location's OWN instance-form list
-#                     `id, customer_id, label, address` (the FK `customer_id` is a
-#                     Domain slot; the `address` document is the final Document slot).
+#                     `id, customer_id, label`, then the `address` presence/value
+#                     pair (the FK `customer_id` is a Domain slot).
 #                     roundTrips = 2 (root + one IN-keyed child level), NOT
 #                     1 + N.
 #
@@ -27,9 +26,8 @@
 # document). Customers with no locations (3-10) still appear with an empty
 # `locations` list (the fan-out attaches by key, never dropping childless parents).
 #
-# The golden SQL is identical on Postgres and MariaDB (bare column projections, no
-# JSON extraction in the SELECT/WHERE); MariaDB returns each `json` column as text
-# and Postgres the `jsonb` parsed, but both decode to the same composite. The
+# Both dialects project an adjacent SQL-presence discriminator before each
+# document and decode to the same composite. The
 # `phones` arrays are authored readably, but to-many value-object element order is
 # UNSPECIFIED (m-value-object), so `then.graph` array comparison is a multiset.
 #
@@ -55,11 +53,11 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.name, t0.address from customer t0
-        mariadb: select t0.id, t0.name, t0.address from customer t0
+        postgres: select t0.id, t0.name, not t0.address is null, t0.address from customer t0
+        mariadb: select t0.id, t0.name, not t0.address is null, t0.address from customer t0
     - sql:
-        postgres: select t0.id, t0.customer_id, t0.label, t0.address from location t0 where t0.customer_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id asc
-        mariadb: select t0.id, t0.customer_id, t0.label, t0.address from location t0 where t0.customer_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id asc
+        postgres: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.customer_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id asc
+        mariadb: select t0.id, t0.customer_id, t0.label, not t0.address is null, t0.address from location t0 where t0.customer_id in (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) order by t0.id asc
       binds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
   referenceSql: select id, name, address from customer
   graph:

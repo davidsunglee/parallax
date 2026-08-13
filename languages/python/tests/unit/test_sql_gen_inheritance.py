@@ -21,8 +21,14 @@ from _corpus_model_support import formed, model, target
 from _support.sql import compile_read
 from parallax.core import object_query as oq
 from parallax.core import predicate as oa
+from parallax.core.base import PresentDocument
 from parallax.core.dialect import POSTGRES
+from parallax.core.metamodel import EntityIdentity
 from parallax.core.sql_gen import SqlGenError
+from parallax.core.sql_gen._inheritance import (
+    BranchColumn,
+    TpcsBranchPlan,
+)
 
 PAYMENT = model("payment")
 ANIMAL = model("animal")
@@ -71,7 +77,7 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
     assert compiled.transform_row(
         {
             "id": 10,
-            "payload": {"title": "Systems", "detail": "ISBN-10", "pages": 320},
+            "payload": PresentDocument({"title": "Systems", "detail": "ISBN-10", "pages": 320}),
             "family_variant": "Book",
         }
     ) == {
@@ -84,7 +90,7 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
     assert compiled.transform_row(
         {
             "id": 20,
-            "payload": {"title": "Frames", "detail": 850, "minutes": 95},
+            "payload": PresentDocument({"title": "Frames", "detail": 850, "minutes": 95}),
             "family_variant": "Film",
         }
     ) == {
@@ -101,7 +107,7 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
         row_compiled.transform_row(
             {
                 "id": 10,
-                "payload": {"title": "Systems", "detail": "ISBN-10", "pages": 320},
+                "payload": PresentDocument({"title": "Systems", "detail": "ISBN-10", "pages": 320}),
                 "family_variant": "Book",
             }
         )["minutes"]
@@ -114,7 +120,7 @@ def test_tpcs_document_union_decodes_each_branch_before_padding() -> None:
     assert without_sibling_document_members.transform_row(
         {
             "id": 20,
-            "payload": {"title": "Frames"},
+            "payload": PresentDocument({"title": "Frames"}),
             "family_variant": "Film",
         }
     ) == {
@@ -136,13 +142,34 @@ def test_tpcs_document_single_branch_projects_and_decodes_its_document() -> None
         narrow_to=_narrow(DOCUMENT_LAYOUT, "Book"),
         result_form="instance",
     )
-    assert compiled.statement.sql == "select t0.id, t0.payload from publication_book t0"
+    assert compiled.statement.sql == (
+        "select t0.id, not t0.payload is null, t0.payload from publication_book t0"
+    )
     assert compiled.transform_row(
         {
             "id": 10,
-            "payload": {"title": "Systems", "detail": "ISBN-10", "pages": 320},
+            "payload": PresentDocument({"title": "Systems", "detail": "ISBN-10", "pages": 320}),
         }
     ) == {"id": 10, "title": "Systems", "detail": "ISBN-10", "pages": 320}
+
+
+def test_tpcs_document_branches_alias_owned_cells_and_type_absent_cells() -> None:
+    plan = TpcsBranchPlan(
+        identity=EntityIdentity(None, "First"),
+        variant="First",
+        table="first_tbl",
+        columns=(
+            BranchColumn("first_payload", None, None, True, "payload", document=True),
+            BranchColumn("second_payload", None, None, False, "other_payload", document=True),
+        ),
+    )
+    projection, binds, document_reads = plan.projection(POSTGRES, "t0")
+    assert projection == (
+        "not t0.first_payload is null, t0.first_payload payload, false, "
+        "cast(null as jsonb) other_payload, 'First' family_variant"
+    )
+    assert binds == ()
+    assert document_reads == ((0, 1), (2, 3))
 
 
 def test_a_narrow_naming_an_undeclared_entity_is_refused() -> None:
@@ -328,7 +355,9 @@ def test_tph_document_partition_wraps_result_shaping_around_the_union() -> None:
         limit=1,
     )
 
-    assert compiled.statement.sql.startswith("select u.id, u.kind, u.payload from (")
+    assert compiled.statement.sql.startswith(
+        "select u.id, u.kind, not u.payload is null, u.payload from ("
+    )
     assert compiled.statement.sql.endswith("order by u.id asc limit ?")
     assert compiled.statement.binds[-1] == 1
 
@@ -345,7 +374,7 @@ def test_tph_document_partition_locks_base_rows_through_one_outer_read() -> None
 
     assert compiled.statement.sql.count("select ") == 5
     assert compiled.statement.sql.startswith(
-        "select t0.id, t0.kind, t0.payload from payment_document t0 join ("
+        "select t0.id, t0.kind, not t0.payload is null, t0.payload from payment_document t0 join ("
     )
     assert (
         "select p1.id from (select * from payment_document t1 where t1.kind = ? offset 0) p1"
@@ -376,7 +405,7 @@ def test_tph_document_materialization_decodes_only_the_tagged_variant_shape() ->
         {
             "id": 1,
             "kind": "card",
-            "payload": {"detail": "visa-4242", "authorizationCode": "AUTH-7"},
+            "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
         }
     ) == {
         "id": 1,
@@ -384,19 +413,25 @@ def test_tph_document_materialization_decodes_only_the_tagged_variant_shape() ->
         "authorization_code": "AUTH-7",
         "familyVariant": "CardPayment",
     }
-    assert compiled.transform_row({"id": 2, "kind": "cash", "payload": {"detail": "12.50"}}) == {
+    assert compiled.transform_row(
+        {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
+    ) == {
         "id": 2,
         "detail": Decimal("12.50"),
         "familyVariant": "CashPayment",
     }
-    with pytest.raises(SqlGenError, match="names no concrete subtype"):
-        compiled.transform_row({"id": 3, "kind": "wire", "payload": {"detail": "x"}})
+    unknown = compiled.materialize_row(
+        {"id": 3, "kind": "wire", "payload": PresentDocument({"detail": "x"})}
+    )
+    assert unknown.family_tag_unknown
 
 
 def test_tph_document_row_projection_pads_members_outside_the_tagged_variant() -> None:
     compiled = compile_read(oa.All(), DOCUMENT_LAYOUT, POSTGRES, target(DOCUMENT_LAYOUT, "Payment"))
 
-    assert compiled.transform_row({"id": 2, "kind": "cash", "payload": {"detail": "12.50"}}) == {
+    assert compiled.transform_row(
+        {"id": 2, "kind": "cash", "payload": PresentDocument({"detail": "12.50"})}
+    ) == {
         "id": 2,
         "detail": Decimal("12.50"),
         "authorization_code": None,
@@ -412,7 +447,7 @@ def test_tph_concrete_document_read_uses_only_that_variants_shape() -> None:
     assert compiled.transform_row(
         {
             "id": 1,
-            "payload": {"detail": "visa-4242", "authorizationCode": "AUTH-7"},
+            "payload": PresentDocument({"detail": "visa-4242", "authorizationCode": "AUTH-7"}),
         }
     ) == {"id": 1, "detail": "visa-4242", "authorization_code": "AUTH-7"}
 
@@ -805,7 +840,81 @@ def test_tph_abstract_instance_form_projects_the_value_object_document_last() ->
     )
     meta = formed(Metamodel(entities=(root, leaf)))
     compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Root"), result_form="instance")
-    assert compiled.statement.sql == "select t0.id, t0.kind, t0.x, t0.meta from root_tbl t0"
+    assert compiled.statement.sql == (
+        "select t0.id, t0.kind, t0.x, not t0.meta is null, t0.meta from root_tbl t0"
+    )
+    assert compiled.transform_row(
+        {
+            "id": 1,
+            "kind": "leaf",
+            "x": 7,
+            "meta": PresentDocument({"note": "tagged"}),
+        }
+    ) == {"id": 1, "x": 7, "meta": {"note": "tagged"}, "familyVariant": "Leaf"}
+    unknown = compiled.materialize_row(
+        {
+            "id": 2,
+            "kind": "unknown",
+            "x": None,
+            "meta": PresentDocument({"note": "unclassified"}),
+        }
+    )
+    assert unknown.family_tag_unknown
+    assert unknown.resolved_entity.name == "Root"
+
+
+def test_tpcs_literal_transform_classifies_a_direct_value_object_column() -> None:
+    # A union branch resolves its concrete through the synthetic literal before
+    # the direct document wrapper chooses that concrete's occurrence contract.
+    from parallax.descriptor._records import (
+        Attribute,
+        Entity,
+        Inheritance,
+        Metamodel,
+        ValueObject,
+        ValueObjectAttribute,
+    )
+
+    root = Entity(
+        name="Root",
+        inheritance=Inheritance(role="root", strategy="table-per-concrete-subtype"),
+        attributes=(
+            Attribute(name="id", type="int64", column="id", primary_key=True),
+            Attribute(name="payload", type="bytes", column="payload", nullable=True),
+        ),
+        value_objects=(
+            ValueObject(
+                name="meta",
+                column="meta",
+                attributes=(ValueObjectAttribute(name="note", type="string"),),
+            ),
+        ),
+    )
+    first = Entity(
+        name="First",
+        table="first_tbl",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+    )
+    second = Entity(
+        name="Second",
+        table="second_tbl",
+        inheritance=Inheritance(role="concrete-subtype", parent="Root"),
+    )
+    meta = formed(Metamodel(entities=(root, first, second)))
+    compiled = compile_read(oa.All(), meta, POSTGRES, target(meta, "Root"), result_form="instance")
+    assert compiled.transform_row(
+        {
+            "id": 1,
+            "payload": "00ff",
+            "meta": PresentDocument({"note": "literal"}),
+            "family_variant": "First",
+        }
+    ) == {
+        "id": 1,
+        "payload_hex": "00ff",
+        "meta": {"note": "literal"},
+        "familyVariant": "First",
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -879,8 +988,8 @@ def test_tph_row_tagged_outside_the_composed_family_is_refused_by_name() -> None
     assert compiled.statement.sql == "select t0.id, t0.kind, t0.howl from beast t0"
     wolf_row = compiled.transform_row({"id": 1, "kind": "wolf", "howl": "aooo"})
     assert wolf_row["familyVariant"] == "Wolf"
-    with pytest.raises(SqlGenError, match="names no concrete subtype this model composes"):
-        compiled.transform_row({"id": 2, "kind": "bear", "howl": None})
+    unknown = compiled.materialize_row({"id": 2, "kind": "bear", "howl": None})
+    assert unknown.family_tag_unknown
 
 
 def test_tpcs_union_read_renames_the_projected_literal_column() -> None:

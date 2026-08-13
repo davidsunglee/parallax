@@ -165,7 +165,9 @@ class _CannedPort:
     """A fake `m-db-port` answering every read with no rows, which is all a
     run-through proof needs: an empty root level short-circuits every child."""
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         return []
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:  # pragma: no cover

@@ -169,6 +169,34 @@ _ANIMAL_WITH_A_CHILDLESS_SUBTYPE = Metamodel(
     )
 )
 
+_INHERITED_VALUE_OBJECTS = Metamodel(
+    entities=(
+        Entity(
+            name="Root",
+            table="root",
+            inheritance=Inheritance(role="root", strategy="table-per-hierarchy", tag_column="kind"),
+            attributes=(Attribute(name="id", type="int64", column="id", primary_key=True),),
+            value_objects=(
+                ValueObject(
+                    name="spec",
+                    column="spec",
+                    attributes=(ValueObjectAttribute(name="flag", type="boolean"),),
+                ),
+                ValueObject(
+                    name="entries",
+                    column="entries",
+                    multiplicity="many",
+                    attributes=(ValueObjectAttribute(name="flag", type="boolean"),),
+                ),
+            ),
+        ),
+        Entity(
+            name="Leaf",
+            inheritance=Inheritance(role="concrete-subtype", parent="Root", tag_value="leaf"),
+        ),
+    )
+)
+
 
 def _validate(target: str, op: PredicateNode, meta: Metamodel) -> None:
     """Form ``meta`` into an accepted model, resolve ``target`` to its accepted
@@ -500,6 +528,24 @@ def test_an_ancestors_attribute_is_addressable_from_a_descendant_position() -> N
     # The contravariant half the family rule keeps: an ancestor's member applies to
     # every concrete under it, so it applies at a narrower position too.
     _validate("Dog", Comparison(op="eq", attr="Animal.name", value="Rex"), _ANIMAL)
+
+
+def test_a_descendant_scoped_null_check_resolves_an_inherited_non_nullable_attribute() -> None:
+    exc = _rejects(NullCheck(op="isNull", attr="Dog.name"), _ANIMAL, "Dog")
+    assert exc.rule == "null-check-non-nullable-member"
+
+
+def test_descendant_scoped_null_checks_resolve_inherited_value_objects() -> None:
+    operations = (
+        NestedNullCheck(op="nestedIsNull", path="Leaf.spec.flag"),
+        NestedExists(
+            path="Leaf.entries",
+            where=NestedNullCheck(op="nestedIsNull", path="flag"),
+        ),
+    )
+    for operation in operations:
+        exc = _rejects(operation, _INHERITED_VALUE_OBJECTS, "Leaf")
+        assert exc.rule == "null-check-non-nullable-member"
 
 
 @pytest.mark.parametrize(
@@ -840,9 +886,18 @@ def test_nested_membership_literal_type_mismatch_rejects() -> None:
     assert exc.rule == "nested-literal-type-mismatch"
 
 
-def test_nested_null_check_resolves_the_path_without_a_type_check() -> None:
-    op = NestedNullCheck(op="nestedIsNotNull", path="Customer.address.city")
-    _validate("Customer", op, _CUSTOMER)  # no raise
+def test_nested_null_check_rejects_a_non_nullable_leaf() -> None:
+    op = NestedNullCheck(op="nestedIsNotNull", path="Customer.address.street")
+    exc = _rejects(op, _CUSTOMER, "Customer")
+    assert exc.rule == "null-check-non-nullable-member"
+
+
+def test_null_checks_accept_nullable_leaves_in_top_level_and_nested_scopes() -> None:
+    for op in (
+        NullCheck(op="isNull", attr="Customer.contact"),
+        NestedNullCheck(op="nestedIsNotNull", path="Customer.address.geo.elevation"),
+    ):
+        _validate("Customer", op, _CUSTOMER)
 
 
 def test_nested_exists_value_object_terminated_path_accepts() -> None:
@@ -987,7 +1042,7 @@ def test_boolean_combinators_walk_every_operand() -> None:
         operands=(
             Comparison(op="eq", attr="Customer.name", value="Ada"),
             Between(attr="Customer.id", lower=1, upper=10),
-            NullCheck(op="isNotNull", attr="Customer.name"),
+            NullCheck(op="isNotNull", attr="Customer.contact"),
             StringMatch(op="startsWith", attr="Customer.name", value="A"),
             Membership(op="in", attr="Customer.id", values=(1, 2, 3)),
         )

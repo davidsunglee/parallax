@@ -1,0 +1,16 @@
+# Negative (m-predicate non-nullable null-check MUST): `isNull` targets the
+# required `Order.name` member, so model-aware validation refuses the query
+# before SQL rather than compiling a predicate whose answer is fixed by the
+# accepted model. This distinguishes illegal null checks on required members
+# from the nullable `Order.sku` checks in m-predicate-009 and m-predicate-010.
+model: models/orders.yaml
+tags: [m-predicate, rejected, negative, isNull, slice-snapshot-1, slice-managed-1]
+shape: rejected
+when:
+  objectQuery:
+    target: parallax.compatibility.Order
+    predicate:
+      isNull:
+        attr: parallax.compatibility.Order.name
+then:
+  rejectedRule: null-check-non-nullable-member

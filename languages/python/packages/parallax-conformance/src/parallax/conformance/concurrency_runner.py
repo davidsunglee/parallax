@@ -59,7 +59,7 @@ from typing import Protocol, cast, runtime_checkable
 
 from parallax.conformance import case_format
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, Row
+from parallax.core.db_port import Bind, DocumentReadOrdinals, Row
 from parallax.core.dialect import Dialect
 
 __all__ = [
@@ -134,7 +134,12 @@ class PeerSession(Protocol):
     — a demarcated `Database` handle never closes its own port).
     """
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]: ...
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]: ...
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int: ...
 

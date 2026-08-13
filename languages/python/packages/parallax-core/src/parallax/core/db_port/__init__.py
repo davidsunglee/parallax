@@ -18,7 +18,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-__all__ = ["Bind", "DbPort", "JsonDocument", "Row"]
+from parallax.core.base import DocumentReadOrdinals
+
+__all__ = ["Bind", "DbPort", "DocumentReadOrdinals", "JsonDocument", "Row"]
 
 # A neutral bind value (m-core scalars) or the language's managed carriers.
 Bind = object
@@ -61,8 +63,17 @@ class DbPort(Protocol):
     it propagate unchanged and governs nothing about its identity.
     """
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
-        """Run a row-returning statement and return managed rows."""
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        """Run a row-returning statement and return managed rows.
+
+        Each document-read pair is folded into one :class:`DocumentRead` under
+        the document cell's result key before the row crosses this boundary.
+        """
         ...
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:

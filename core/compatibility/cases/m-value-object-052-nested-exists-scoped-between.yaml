@@ -12,11 +12,8 @@
 # and this scoped form does not — the same contrast m-value-object-018 draws against
 # -019, now with a range on one side. Nils's element is `work`, so he is out.
 #
-# Priya (10) is the trap: her non-array OBJECT `phones` is exactly the candidate
-# {type: home, number: '555-9999'}, so an unguarded traversal would match it and
-# Postgres `jsonb_array_elements` would ERROR on it; the array-type guard collapses
-# it to not-present, together with the empty array (3), the null column (4), the
-# missing keys (5, 6) and the other non-array states (8, 9).
+# Every zero-element form is out: the empty arrays (3, 9, 10), the null column (4),
+# the missing keys (5, 6), and the nested null (8).
 #
 # Both element predicates lower against the SAME unnested alias t1, which is the
 # structural signal of same-element matching. The oracle guards with an outer

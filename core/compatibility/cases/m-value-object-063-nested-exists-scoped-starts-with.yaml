@@ -9,10 +9,8 @@
 # rides a `work` element, so the unscoped AND of the two flat predicates would match her
 # while the same-element form does not.
 #
-# Priya (10) is the trap: her non-array OBJECT `phones` satisfies the whole compound
-# ({type: home, number: '555-9999'}); the array-type guard reads it as zero elements,
-# with the empty array (3), the null column (4), the missing keys (5, 6), and the other
-# non-array states (8, 9).
+# The array-type guard makes every zero-element form not-present: the empty arrays
+# (3, 9, 10), the null column (4), the missing keys (5, 6), and the nested null (8).
 model: models/customer.yaml
 tags: [m-value-object, m-predicate, m-sql, m-dialect, nested, json, to-many, exists, scoped, same-element, string, startsWith, array-traversal, slice-snapshot-1, slice-managed-1]
 shape: read

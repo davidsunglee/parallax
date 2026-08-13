@@ -28,6 +28,7 @@ import pytest
 from pydantic import ValidationError
 
 from _support.corpus import case_document, compare_binds
+from _support.document_reads import fold_mapping_rows
 from parallax.conformance import case_format
 from parallax.conformance.class_models import MODELS
 from parallax.conformance.engine import decode_write_row
@@ -257,12 +258,14 @@ class _RecordingPort:
         self._rows = [dict(row) for row in rows]
         self._scripted = [[dict(row) for row in answer] for answer in reads]
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+    def execute(
+        self, sql: str, binds: Sequence[Bind], document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[Row]:
         self.ops.append(("read", sql, tuple(binds)))
         if self._scripted:
-            return [dict(row) for row in self._scripted.pop(0)]
+            return fold_mapping_rows(self._scripted.pop(0), document_reads)
         matched = [row for row in self._rows if next(iter(row.values())) in binds]
-        return [dict(row) for row in (matched or self._rows[:1])]
+        return fold_mapping_rows(matched or self._rows[:1], document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.ops.append(("write", sql, tuple(binds)))

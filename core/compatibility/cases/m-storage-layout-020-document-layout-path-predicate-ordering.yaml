@@ -39,8 +39,8 @@ when:
 then:
   statements:
     - sql:
-        postgres: select t0.id, t0.payload from traveler t0 where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? order by cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last limit ?
-        mariadb: select t0.id, t0.payload from traveler t0 where cast(json_value(t0.payload, ?) as signed) > ? order by cast(json_value(t0.payload, ?) as signed) desc limit ?
+        postgres: select t0.id, not t0.payload is null, t0.payload from traveler t0 where cast(jsonb_extract_path_text(t0.payload, ?) as bigint) > ? order by cast(jsonb_extract_path_text(t0.payload, ?) as bigint) desc nulls last limit ?
+        mariadb: select t0.id, not t0.payload is null, t0.payload from traveler t0 where cast(json_value(t0.payload, ?) as signed) > ? order by cast(json_value(t0.payload, ?) as signed) desc limit ?
       binds:
         postgres: [score, 5, score, 1]
         mariadb: ['$.score', 5, '$.score', 1]

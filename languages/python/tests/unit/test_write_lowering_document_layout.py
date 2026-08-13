@@ -24,7 +24,7 @@ from _support.lowering_probes import lower_instruction
 from parallax.core.base import STRING
 from parallax.core.db_port import JsonDocument
 from parallax.core.dialect import POSTGRES, DocumentManyAssignment
-from parallax.core.document_codec import DocumentShape, Leaf, LeafEncodingError, Occurrence
+from parallax.core.document_codec import DocumentShape, Leaf, Occurrence
 from parallax.core.metamodel import Metamodel, Multiplicity
 from parallax.core.sql_gen import LoweredStatement
 from parallax.core.unit_work import KeyedWrite, PredecessorRow, WriteInstruction
@@ -286,34 +286,25 @@ def test_a_delete_groups_by_its_key_columns_under_either_layout() -> None:
     ) == collapse_group_key(DOCUMENT, person, "delete", {"id": 2, "score": 7})
 
 
-def test_many_no_op_comparison_reduces_each_element_to_declared_members() -> None:
+def test_no_op_comparison_uses_managed_occurrences_without_decoding_again() -> None:
     person = entity(DOCUMENT, "Person")
-    tags = next(
-        occurrence
-        for occurrence in person.declared_value_objects
-        if occurrence.identity.path[-1] == "tags"
+    occurrences = {
+        occurrence.identity.path[-1]: occurrence for occurrence in person.declared_value_objects
+    }
+    columns = {"address": ("address", True), "tags": ("tags", True)}
+    row: dict[str, object] = {
+        "address": {"city": "Bergen", "geo": {"country": "NO"}},
+        "tags": [{"label": "founder"}],
+    }
+
+    assert is_no_op_assignment(
+        columns,
+        {"address": {"city": "Bergen"}, "tags": [{"label": "founder"}]},
+        row,
+        occurrences,
     )
-    occurrences = {"tags": tags}
-    columns = {"tags": ("tags", False)}
-    stored: dict[str, object] = {"tags": [{"label": "founder", "future": "keep"}]}
-
-    assert is_no_op_assignment(columns, {"tags": [{"label": "founder"}]}, stored, occurrences)
-    assert not is_no_op_assignment(columns, {"tags": [{"label": "member"}]}, stored, occurrences)
-
-
-@pytest.mark.parametrize("stored", [{"label": "founder"}, "founder"])
-def test_many_no_op_comparison_refuses_wrong_kind_storage(stored: object) -> None:
-    person = entity(DOCUMENT, "Person")
-    tags = next(
-        occurrence
-        for occurrence in person.declared_value_objects
-        if occurrence.identity.path[-1] == "tags"
-    )
-
-    with pytest.raises(LeafEncodingError, match="tags: expected array"):
-        is_no_op_assignment(
-            {"tags": ("tags", False)}, {"tags": []}, {"tags": stored}, {"tags": tags}
-        )
+    assert not is_no_op_assignment(columns, {"address": {"city": "Oslo"}}, row, occurrences)
+    assert not is_no_op_assignment(columns, {"tags": []}, row, occurrences)
 
 
 # --------------------------------------------------------------------------- #

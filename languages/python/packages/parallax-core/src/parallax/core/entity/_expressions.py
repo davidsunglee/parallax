@@ -507,14 +507,27 @@ class AttributeExpr[E, T]:
         return Predicate(Between(attr=str(self.ref), lower=lower, upper=upper))
 
     def is_null(self) -> Predicate[E]:
+        self._reject_non_nullable_null_check()
         if self._path:
             return Predicate(NestedNullCheck(op="nestedIsNull", path=self._dotted()))
         return Predicate(NullCheck(op="isNull", attr=str(self.ref)))
 
     def is_not_null(self) -> Predicate[E]:
+        self._reject_non_nullable_null_check()
         if self._path:
             return Predicate(NestedNullCheck(op="nestedIsNotNull", path=self._dotted()))
         return Predicate(NullCheck(op="isNotNull", attr=str(self.ref)))
+
+    def _reject_non_nullable_null_check(self) -> None:
+        if self._path or self._member is None or self._member.nullable:
+            return
+        raise QueryDefinitionError(
+            code="query-expression-invalid",
+            message=(
+                f"{self._dotted()}: is_null()/is_not_null() is invalid for a "
+                "non-nullable member (m-predicate null-check validity)"
+            ),
+        )
 
     def exists(self, *predicates: Predicate[Any]) -> Predicate[E]:
         """The value-object member is present/non-empty (optionally matching

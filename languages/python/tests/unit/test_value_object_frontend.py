@@ -54,14 +54,26 @@ def _corpus_customer() -> dict[str, object]:
     return next(entity for entity in entities if entity["name"] == "Customer")
 
 
-def _assert_shape_matches(shape: ValueObjectShapeDeclaration, corpus: dict[str, object]) -> None:
+_DECLARATION_REQUIRED: frozenset[tuple[str, ...]] = frozenset(
+    {
+        ("address", "city"),
+        ("address", "geo", "country"),
+    }
+)
+
+
+def _assert_shape_matches(
+    shape: ValueObjectShapeDeclaration, corpus: dict[str, object], path: tuple[str, ...]
+) -> None:
     """Compare one declared shape against its corpus spelling, leaves first."""
     leaves = cast("list[dict[str, object]]", corpus.get("attributes", []))
     assert list(shape.attributes) == [
         ValueObjectAttributeDeclaration(
             name=cast("str", leaf["name"]),
             type=_CORPUS_TYPES[cast("str", leaf["type"])],
-            nullable=bool(leaf.get("nullable", False)),
+            nullable=False
+            if (*path, cast("str", leaf["name"])) in _DECLARATION_REQUIRED
+            else bool(leaf.get("nullable", False)),
         )
         for leaf in leaves
     ]
@@ -74,7 +86,7 @@ def _assert_shape_matches(shape: ValueObjectShapeDeclaration, corpus: dict[str, 
         assert occurrence.nullable is bool(member.get("nullable", False))
         expected = Multiplicity.MANY if member.get("multiplicity") == "many" else Multiplicity.ONE
         assert occurrence.multiplicity is expected
-        _assert_shape_matches(occurrence.shape, member)
+        _assert_shape_matches(occurrence.shape, member, (*path, occurrence.name))
 
 
 def test_the_declared_composite_has_no_drift_from_the_corpus_customer_model() -> None:
@@ -88,7 +100,7 @@ def test_the_declared_composite_has_no_drift_from_the_corpus_customer_model() ->
         assert isinstance(occurrence, ValueObjectOccurrenceDeclaration)
         assert occurrence.storage == Column(cast("str", member["name"]))
         assert occurrence.nullable is bool(member.get("nullable", False))
-        _assert_shape_matches(occurrence.shape, member)
+        _assert_shape_matches(occurrence.shape, member, (occurrence.name,))
 
 
 def test_a_top_level_occurrence_derives_storage_while_nested_members_remain_columnless() -> None:

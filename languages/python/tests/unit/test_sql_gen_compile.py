@@ -29,6 +29,7 @@ from parallax.core import predicate as oa
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import EntityIdentity, Metamodel
 from parallax.core.sql_gen import (
+    AttributeReadContract,
     CompiledPredicate,
     CompiledRead,
     LoweredStatement,
@@ -65,7 +66,10 @@ def test_instance_form_projects_value_object_document_last() -> None:
     instance = compile_read(
         oa.All(), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"), result_form="instance"
     )
-    assert instance.statement.sql == "select t0.id, t0.name, t0.address from customer t0"
+    assert instance.statement.sql == (
+        "select t0.id, t0.name, not t0.address is null, t0.address from customer t0"
+    )
+    assert instance.document_reads == ((2, 3),)
     # Row-form (the default values lane) omits slot 4 — the scalars alone.
     row = compile_read(oa.All(), CUSTOMER, POSTGRES, target(CUSTOMER, "Customer"))
     assert row.statement.sql == "select t0.id, t0.name from customer t0"
@@ -158,18 +162,19 @@ def test_statement_is_frozen_value() -> None:
 
 # --------------------------------------------------------------------------- #
 # The supported interface itself. `parallax.core.sql_gen` exports               #
-# exactly seven names; everything else in the package is private implementation. #
+# exactly eight names; everything else in the package is private implementation. #
 # The result objects are ordinary frozen dataclasses, so equality, `repr`,      #
 # hashing, copying, and same-version pickling are all structural — no           #
 # `__reduce__`, no stored callable, nothing to keep in sync by hand.            #
 # --------------------------------------------------------------------------- #
-def test_the_package_exports_exactly_the_seven_supported_names() -> None:
+def test_the_package_exports_exactly_the_eight_supported_names() -> None:
     # An EXACT set, not a superset: re-exporting a private helper is precisely the
     # regression this guards, and a superset assertion would not see it. Canonical
     # column order is `m-inheritance`'s export, so its absence here is the point.
     import parallax.core.sql_gen as sql_gen
 
     assert set(sql_gen.__all__) == {
+        "AttributeReadContract",
         "CompiledPredicate",
         "CompiledRead",
         "LoweredStatement",
@@ -229,7 +234,8 @@ def test_compiled_read_repr_is_exact_and_stable() -> None:
         "t0.qty, t0.price, t0.active, t0.ordered_on from orders t0', binds=()), "
         "narrow_to=None, target=EntityIdentity(namespace='parallax.compatibility', name='Order'), "
         "resolved_position=(EntityIdentity(namespace='parallax.compatibility', name='Order'),), "
-        "documents=(), _transform=_IdentityTransform())"
+        "documents=(), projected_documents=(), document_reads=(), "
+        "_transform=_IdentityTransform())"
     )
 
 
@@ -298,6 +304,29 @@ def test_projection_binds_precede_predicate_binds() -> None:
         "t0.external_id from scalar_thing t0 where t0.f64 > ?"
     )
     assert compiled.statement.binds == ("hex", 1.5)
+
+
+def test_encoded_projection_result_key_carries_its_logical_scalar_contract() -> None:
+    entity = target(SCALARS, "ScalarThing")
+    compiled = compile_read(oa.All(), SCALARS, POSTGRES, entity)
+    payload = entity.attribute("payload")
+    assert payload is not None
+    assert AttributeReadContract(
+        identity=payload.identity,
+        column="payload",
+        result_key="payload_hex",
+        type=payload.type,
+        nullable=payload.nullable,
+        temporal_end=False,
+        encoded=True,
+    ) in compiled.attribute_reads(entity.identity)
+    assert compiled.transform_row({"id": 1, "payload_hex": "00ff"}) == {
+        "id": 1,
+        "payload_hex": "00ff",
+    }
+    for invalid in (None, "not-hex"):
+        with pytest.raises(SqlGenError, match="invalid stored data"):
+            compiled.transform_row({"id": 1, "payload_hex": invalid})
 
 
 def test_limit_bind_lands_after_predicate_binds() -> None:
@@ -372,7 +401,9 @@ def test_a_record_free_model_compiles_the_same_reads() -> None:
     )
     # Instance form adds the `Document` tier slot after every scalar tier.
     instance = compile_read(oa.All(), model, POSTGRES, account, result_form="instance")
-    assert instance.statement.sql.endswith("t0.opened_on, t0.contact_doc from account t0")
+    assert instance.statement.sql.endswith(
+        "t0.opened_on, not t0.contact_doc is null, t0.contact_doc from account t0"
+    )
 
 
 def test_a_record_free_model_lowers_navigation_and_value_object_paths() -> None:

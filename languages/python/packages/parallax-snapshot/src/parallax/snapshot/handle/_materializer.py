@@ -49,6 +49,7 @@ from parallax.snapshot.materialize import (
     MergedNode,
     SnapshotGraphInput,
     merge_graph_input,
+    require_publishable,
 )
 
 __all__ = ["materialize_graph"]
@@ -84,6 +85,7 @@ class _Materialization:
         self._pending = iter(range(len(merge.order)))
 
     def run(self, construction: EntityGraphConstruction) -> tuple[object, ...]:
+        require_publishable(self._merge)
         return construction.construct(self.build, state_factory=self.state)
 
     def build(self, writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
@@ -100,7 +102,7 @@ class _Materialization:
                     if merged.view.narrowed_view is None
                 ),
             )
-        return tuple(self._handles[index] for index in self._merge.roots)
+        return tuple(self._handles[index] for index in self._merge.roots if index is not None)
 
     def state(self, view: ResolutionView, handle: NodeHandle) -> SnapshotNodeState:
         """One node's Snapshot state, built in allocation order.

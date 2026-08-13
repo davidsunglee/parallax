@@ -26,6 +26,7 @@ pin (`test_write_no_drift.py`). A graph story's grading is bespoke per case
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -750,9 +751,11 @@ class _StatementCapturePort:
             statements if statements is not None else []
         )
 
-    def execute(self, sql: str, binds: Any) -> list[dict[str, Any]]:
+    def execute(
+        self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()
+    ) -> list[dict[str, Any]]:
         self.statements.append((sql, tuple(binds)))
-        return self._inner.execute(sql, binds)
+        return self._inner.execute(sql, binds, document_reads=document_reads)
 
     def execute_write(self, sql: str, binds: Any) -> int:
         return self._inner.execute_write(sql, binds)
@@ -764,6 +767,21 @@ class _StatementCapturePort:
             return body(_StatementCapturePort(conn, statements=statements))
 
         return self._inner.transaction(wrapped)
+
+
+def test_statement_capture_forwards_document_read_metadata() -> None:
+    class _Inner:
+        def execute(
+            self, sql: str, binds: Any, document_reads: Sequence[tuple[int, int]] = ()
+        ) -> list[dict[str, Any]]:
+            assert (sql, tuple(binds), tuple(document_reads)) == (
+                "select false, payload",
+                (),
+                ((0, 1),),
+            )
+            return []
+
+    assert _StatementCapturePort(_Inner()).execute("select false, payload", [], ((0, 1),)) == []
 
 
 @pytest.mark.parametrize("story", READ_STORIES, ids=_READ_STORY_IDS)

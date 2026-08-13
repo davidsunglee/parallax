@@ -43,6 +43,7 @@ from .references import split_reference
 # PredicateNode rules (m-predicate bound-ordering + nested-predicate resolver MUSTs,
 # m-value-object materialization/navigation contract clauses 4/5).
 BETWEEN_BOUNDS_INVERTED = "between-bounds-inverted"
+NULL_CHECK_NON_NULLABLE_MEMBER = "null-check-non-nullable-member"
 NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT = "nested-path-first-segment-not-value-object"
 NESTED_PATH_UNKNOWN_MEMBER = "nested-path-unknown-member"
 NESTED_LITERAL_TYPE_MISMATCH = "nested-literal-type-mismatch"
@@ -59,6 +60,7 @@ WRITE_VALUE_TYPE_MISMATCH = "write-value-type-mismatch"
 REJECTED_RULES: frozenset[str] = frozenset(
     {
         BETWEEN_BOUNDS_INVERTED,
+        NULL_CHECK_NON_NULLABLE_MEMBER,
         NESTED_PATH_FIRST_SEGMENT_NOT_VALUE_OBJECT,
         NESTED_PATH_UNKNOWN_MEMBER,
         NESTED_LITERAL_TYPE_MISMATCH,

@@ -24,7 +24,9 @@ import pytest
 
 from parallax.conformance import engine, provision
 from parallax.conformance.case_format import default_cases_dir, load_case
+from parallax.core.base import SQL_NULL, PresentDocument
 from parallax.core.db_error import DatabaseError
+from parallax.postgres import adapter as adapter_module
 
 
 def _grade_case() -> Any:
@@ -57,6 +59,24 @@ def test_exec_affected_rows_matched_and_unmatched(provisioner: Any) -> None:
 def test_scalar_read_returns_managed_values(provisioner: Any) -> None:
     (row,) = provisioner.port.execute("select 1 as one, 'x'::text as who", [])
     assert row == {"one": 1, "who": "x"}
+
+
+def test_live_structured_document_reads_preserve_sql_null_and_json_null(
+    provisioner: Any,
+) -> None:
+    sql = "select false as present, null::jsonb as document union all select true, 'null'::jsonb"
+    assert provisioner.port.execute(sql, [], document_reads=((0, 1),)) == [
+        {"document": SQL_NULL},
+        {"document": PresentDocument(None)},
+    ]
+    assert provisioner.port.execute(
+        "select null::jsonb as sql_null, 'null'::jsonb as json_null", []
+    ) == [{"sql_null": None, "json_null": None}]
+
+    for binary in (False, True):
+        with provisioner.port.connection.cursor(binary=binary) as cursor:
+            cursor.execute(b"select 'null'::jsonb")
+            assert cursor.fetchone() == (adapter_module._PRESENT_JSON_NULL,)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_transaction_commits_and_returns_its_value(provisioner: Any) -> None:

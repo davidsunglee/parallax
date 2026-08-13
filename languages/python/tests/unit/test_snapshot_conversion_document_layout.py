@@ -28,6 +28,7 @@ from _snapshot_graph_support import documents_of
 from _support.sql import compile_read
 from parallax.conformance import models
 from parallax.core import predicate as oa
+from parallax.core.base import DocumentValue, PresentDocument
 from parallax.core.dialect import POSTGRES
 from parallax.core.metamodel import Metamodel
 from parallax.snapshot.materialize import (
@@ -48,8 +49,21 @@ def _converted(model: Metamodel, name: str, stored: Mapping[str, object]) -> Sna
     compiled = compile_read(oa.All(), model, POSTGRES, target, result_form="instance")
     materialized = compiled.materialize_row(stored)
     scope = MergeScope(model)
-    context = LevelContext(materialized.resolved_entity, compiled.documents)
-    return scope.node(convert_row(materialized.values, context, scope))
+    context = LevelContext(
+        materialized.resolved_entity,
+        compiled.projected_documents,
+        compiled.attribute_reads(materialized.resolved_entity),
+    )
+    return scope.node(
+        convert_row(
+            materialized.values,
+            context,
+            scope,
+            findings=materialized.findings,
+            family_tag_unknown=materialized.family_tag_unknown,
+            classified_members=materialized.classified_members,
+        )
+    )
 
 
 def _members(node: SnapshotNodeInput) -> dict[str, Any]:
@@ -69,16 +83,17 @@ def _leaves(record: Any) -> list[tuple[str, object]]:
 # it: one direct Column for the primary key and one Structured Column carrying
 # every other member under its own name, each leaf in the codec's portable
 # spelling (`joinedOn` an ISO-8601 string, `score` a JSON number).
+_ADA_DOCUMENT: DocumentValue = {
+    "displayName": "Ada",
+    "score": 7,
+    "joinedOn": "2026-01-15",
+    "note": "north wing",
+    "address": {"city": "Oslo", "geo": {"country": "NO"}},
+    "tags": [{"label": "founder"}, {"label": "staff"}],
+}
 _ADA: Mapping[str, object] = {
     "id": 1,
-    "payload": {
-        "displayName": "Ada",
-        "score": 7,
-        "joinedOn": "2026-01-15",
-        "note": "north wing",
-        "address": {"city": "Oslo", "geo": {"country": "NO"}},
-        "tags": [{"label": "founder"}, {"label": "staff"}],
-    },
+    "payload": PresentDocument(_ADA_DOCUMENT),
 }
 
 
@@ -109,17 +124,30 @@ def test_a_document_layout_row_converts_every_member_by_its_declared_identity() 
     ],
 )
 def test_an_absent_and_a_json_null_document_leaf_convert_alike(
-    payload: dict[str, object],
+    payload: dict[str, DocumentValue],
 ) -> None:
     # The corpus's own presence pair (`m-storage-layout-021`, Travelers 2 and 3),
     # asserted where a graph is built rather than where rows are compared: a
     # Column has one not-present state and a document has two, and conversion
     # answers `None` for all three so the layout cannot be told apart by them.
-    node = _converted(_CORPUS, "Traveler", {"id": 2, "payload": payload})
+    node = _converted(
+        _CORPUS,
+        "Traveler",
+        {"id": 2, "payload": PresentDocument(dict(payload))},
+    )
     members = _members(node)
     assert members["note"] is None
     assert members["address"] is None
     assert members["tags"] == ()
+
+
+def test_entity_document_findings_are_translated_without_rejudging_collapsed_values() -> None:
+    node = _converted(
+        _CORPUS,
+        "Traveler",
+        {"id": 2, "payload": PresentDocument({"displayName": 7})},
+    )
+    assert [issue.code for issue in node.issues] == ["stored-data-leaf-undecodable"]
 
 
 def test_the_layout_is_unobservable_across_a_member_for_member_twin() -> None:
@@ -127,27 +155,53 @@ def test_the_layout_is_unobservable_across_a_member_for_member_twin() -> None:
     # Columns and differ only in the root's `layout`, so equal converted carriers
     # are the whole claim: nothing below conversion can tell which shape the row
     # was stored in.
+    stored_document_value: DocumentValue = {
+        "displayName": "Ada",
+        "score": 7,
+        "joinedOn": "2026-01-15",
+        "address": {"city": "Oslo", "geo": {"country": "NO"}},
+        "tags": [{"label": "founder"}],
+    }
     stored_document: Mapping[str, object] = {
         "id": 1,
-        "payload": {
-            "displayName": "Ada",
-            "score": 7,
-            "joinedOn": "2026-01-15",
-            "address": {"city": "Oslo", "geo": {"country": "NO"}},
-            "tags": [{"label": "founder"}],
-        },
+        "payload": PresentDocument(stored_document_value),
     }
     stored_columns: Mapping[str, object] = {
         "id": 1,
         "display_name": "Ada",
         "score": 7,
         "joined_on": dt.date(2026, 1, 15),
-        "address": {"city": "Oslo", "geo": {"country": "NO"}},
-        "tags": [{"label": "founder"}],
+        "address": PresentDocument({"city": "Oslo", "geo": {"country": "NO"}}),
+        "tags": PresentDocument([{"label": "founder"}]),
     }
     assert _converted(_TWIN_DOCUMENT, "Person", stored_document) == _converted(
         _TWIN_COLUMNS, "Person", stored_columns
     )
+
+
+def test_wrong_kind_occurrences_classify_identically_without_retaining_valid_siblings() -> None:
+    document = _converted(
+        _TWIN_DOCUMENT,
+        "Person",
+        {
+            "id": 1,
+            "payload": PresentDocument({"tags": [{"label": "valid"}, "wrong"]}),
+        },
+    )
+    columns = _converted(
+        _TWIN_COLUMNS,
+        "Person",
+        {
+            "id": 1,
+            "display_name": None,
+            "score": None,
+            "joined_on": None,
+            "tags": PresentDocument([{"label": "valid"}, "wrong"]),
+        },
+    )
+    assert document == columns
+    assert [issue.code for issue in document.issues] == ["stored-data-many-wrong-kind"]
+    assert _members(document)["tags"] == ()
 
 
 def test_an_entity_with_no_document_resident_member_converts_off_its_columns_alone() -> None:
@@ -157,5 +211,5 @@ def test_an_entity_with_no_document_resident_member_converts_off_its_columns_alo
     # nothing for the document.
     identity = entity(_TWIN_DOCUMENT, "Marker").identity
     assert documents_of(_TWIN_DOCUMENT, identity) == ()
-    node = _converted(_TWIN_DOCUMENT, "Marker", {"id": 5, "payload": {}})
+    node = _converted(_TWIN_DOCUMENT, "Marker", {"id": 5, "payload": PresentDocument({})})
     assert _members(node) == {"id": 5}

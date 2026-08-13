@@ -3,11 +3,10 @@
 # array-traversal form), on Postgres AND MariaDB.
 #
 # nestedNotExists(Customer.address.phones) matches every row whose `phones` array
-# is empty OR absent OR not an array. Grace's empty array (3), Mary's NULL column
-# (4), the two missing-`phones` rows (5, 6), AND the three NON-ARRAY states — the
-# JSON `null` (8), the scalar (9) and the object (10) — all match: an empty array,
-# a NULL column and a non-array value are INDISTINGUISHABLE to the algebra, the
-# whole point of this case. Ada, Linus, Nils (non-empty arrays) are excluded.
+# is empty or absent. Grace's empty array (3), Mary's NULL column (4), the two
+# missing-`phones` rows (5, 6), Iris's JSON-null occurrence (8), and Omar's and
+# Priya's empty arrays (9, 10) all match. Ada, Linus, Nils (non-empty arrays) are
+# excluded.
 #
 # Postgres `not exists (...)` over zero unnested elements is true; the same
 # `case when jsonb_typeof(...) = 'array'` guard as case 015 keeps the strict

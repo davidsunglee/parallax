@@ -19,10 +19,12 @@ from decimal import Decimal
 from typing import Final, cast
 
 from _support import mirrored_models as mm
+from _support.document_reads import fold_mapping_rows
 from parallax.conformance.class_models import MODELS
 from parallax.core import Attr, Bitemporal, DomainModel, attr
+from parallax.core.base import PresentDocument, SqlNull
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import Bind, DbPort, Row
+from parallax.core.db_port import Bind, DbPort, DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES
 from parallax.core.unit_work import FixedClock
 from parallax.snapshot import connect
@@ -162,12 +164,22 @@ class RecordingPort:
         self.txn_faults: list[DatabaseError] = []
         self.read_faults: list[DatabaseError] = []
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
         if self.read_faults:
             raise self.read_faults.pop(0)
         self.ops.append(("read", sql, tuple(binds)))
         result = self.row_queue.pop(0) if self.row_queue else self.rows
-        return [dict(row) for row in result]
+        if not document_reads or all(
+            any(isinstance(value, (SqlNull, PresentDocument)) for value in row.values())
+            for row in result
+        ):
+            return [dict(row) for row in result]
+        return fold_mapping_rows(result, document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:
         self.ops.append(("write", sql, tuple(binds)))
@@ -228,7 +240,13 @@ def balance_row(*, in_z: dt.datetime, out_z: dt.datetime = INFINITY_INSTANT) -> 
 class NoIoPort:
     """A minimal ``DbPort`` that raises if the connection is ever touched."""
 
-    def execute(self, sql: str, binds: Sequence[Bind]) -> list[Row]:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[Bind],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        del sql, binds, document_reads
         raise AssertionError("no read expected — the guard runs first")
 
     def execute_write(self, sql: str, binds: Sequence[Bind]) -> int:

@@ -3,7 +3,7 @@
 #
 # nestedIsNull(Customer.address.city) matches the rows whose city extraction is
 # 'not present'. THREE distinct storage states collapse here: the null column (4),
-# the missing `city` key (5, and likewise the non-array-`phones` rows 8/9/10 that
+# the missing `city` key (5, and likewise rows 8/9/10, whose address documents
 # carry no `city`), and the explicit JSON `null` leaf (7, `city: null`) all extract
 # SQL NULL, so all match. Present cities — Oslo (1, 2), Boston (3), Berlin (6) —
 # are excluded. Postgres

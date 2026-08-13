@@ -54,7 +54,7 @@ than through a second copy of the timing and failed-call rules.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, cast
 
@@ -87,6 +87,8 @@ from parallax.snapshot.materialize import (
     NeutralGraph,
     ObservationKeying,
     RelationshipViewKey,
+    SnapshotDecodingError,
+    SnapshotGraphInput,
     SnapshotNodeRef,
     attribute_value,
     convert_row,
@@ -95,6 +97,7 @@ from parallax.snapshot.materialize import (
     neutral_graphs,
     neutral_rows,
     observable_columns,
+    require_publishable,
 )
 
 __all__ = [
@@ -394,10 +397,41 @@ def find_rows(
     plan_ = deep_fetch.plan(root_entity, query, meta)
     compiled = compile_read(plan_.root, meta, dialect, result_form="row", lock=lock)
     calls = recorder if recorder is not None else TraceRecorder()
-    rows = execute_read(port, dialect, compiled.statement, calls)
+    rows = execute_read(
+        port,
+        dialect,
+        compiled.statement,
+        calls,
+        document_reads=compiled.document_reads,
+    )
+    materialized = [compiled.materialize_row(row) for row in rows]
+    scope = MergeScope(meta)
+    refs = tuple(
+        convert_row(
+            item.values,
+            LevelContext(
+                item.resolved_entity,
+                compiled.projected_documents,
+                compiled.attribute_reads(item.resolved_entity),
+            ),
+            scope,
+            findings=item.findings,
+            family_tag_unknown=item.family_tag_unknown,
+            classified_members=item.classified_members,
+        )
+        for item in materialized
+    )
+    require_publishable(
+        merge_graph_input(
+            scope.build(refs, query_pin(query, declaring_metadata(meta, root_entity.identity))),
+            meta,
+        )
+    )
+    for item in materialized:
+        if item.family_variant is not None:
+            item.values["familyVariant"] = item.family_variant
     return NeutralReadResult(
-        output=neutral_rows(compiled.transform_row(row) for row in rows),
-        execution=calls.read_trace(),
+        output=neutral_rows(item.values for item in materialized), execution=calls.read_trace()
     )
 
 
@@ -439,20 +473,33 @@ def find_history(
     entity = declaring_metadata(meta, metadata.identity)
     compiled = compile_read(plan_.root, meta, dialect, result_form="instance")
     calls = recorder if recorder is not None else TraceRecorder()
+    materialized_rows = list(_execute_compiled(port, dialect, compiled, calls))
+    staging = MergeScope(meta)
+    staged = tuple(
+        convert_row(
+            row.values,
+            LevelContext(
+                row.resolved_entity,
+                compiled.projected_documents,
+                compiled.attribute_reads(row.resolved_entity),
+            ),
+            staging,
+            findings=row.findings,
+            family_tag_unknown=row.family_tag_unknown,
+            classified_members=row.classified_members,
+        )
+        for row in materialized_rows
+    )
+    require_publishable(merge_graph_input(staging.build(staged, Pin()), meta))
+
     milestones: dict[Edge, _Milestone] = {}
-    for row in _execute_compiled(port, dialect, compiled, calls):
+    for row, staged_ref in zip(materialized_rows, staged, strict=True):
         edge = milestone_edge(entity, row.values)
         milestone = milestones.get(edge)
         if milestone is None:
             milestone = _Milestone(MergeScope(meta), _edge_sort_key(entity, row.values))
             milestones[edge] = milestone
-        milestone.roots.append(
-            convert_row(
-                row.values,
-                LevelContext(row.resolved_entity, compiled.documents),
-                milestone.scope,
-            )
-        )
+        milestone.roots.append(milestone.scope.add(staging.node(staged_ref)))
     graphs = tuple(
         milestone.scope.build(tuple(milestone.roots), _edge_pin(edge))
         for edge, milestone in sorted(milestones.items(), key=lambda entry: entry[1].rank)
@@ -484,11 +531,29 @@ def _convert_level(
     """
     refs: list[SnapshotNodeRef] = []
     for row in _execute_compiled(port, dialect, compiled, recorder):
-        context = LevelContext(row.resolved_entity, compiled.documents)
-        refs.append(convert_row(row.values, context, scope))
-        if observations is not None:
+        context = LevelContext(
+            row.resolved_entity,
+            compiled.projected_documents,
+            compiled.attribute_reads(row.resolved_entity),
+        )
+        ref = convert_row(
+            row.values,
+            context,
+            scope,
+            findings=row.findings,
+            family_tag_unknown=row.family_tag_unknown,
+            classified_members=row.classified_members,
+        )
+        refs.append(ref)
+        if observations is not None and not scope.node(ref).issues:
             observations.observe_row(
-                row.resolved_entity, observable_columns(row.values, context), row.document
+                row.resolved_entity,
+                observable_columns(
+                    row.values,
+                    context,
+                    classified_members=row.classified_members,
+                ),
+                row.document,
             )
     return tuple(refs)
 
@@ -618,11 +683,25 @@ def _execute_compiled(
     exactly as long as its consumer takes to convert it, and the level never
     holds a second copy of its result set.
     """
-    return map(compiled.materialize_row, execute_read(port, dialect, compiled.statement, recorder))
+    return map(
+        compiled.materialize_row,
+        execute_read(
+            port,
+            dialect,
+            compiled.statement,
+            recorder,
+            document_reads=compiled.document_reads,
+        ),
+    )
 
 
 def execute_read(
-    port: DbPort, dialect: Dialect, statement: LoweredStatement, recorder: CallRecorder
+    port: DbPort,
+    dialect: Dialect,
+    statement: LoweredStatement,
+    recorder: CallRecorder,
+    *,
+    document_reads: Sequence[tuple[int, int]] = (),
 ) -> list[Row]:
     """Run one read statement, recording the Database Call either way.
 
@@ -635,7 +714,13 @@ def execute_read(
     """
     started = time.perf_counter_ns()
     try:
-        rows = port.execute(dialect.to_driver_sql(statement.sql), list(statement.binds))
+        driver_sql = dialect.to_driver_sql(statement.sql)
+        binds = list(statement.binds)
+        rows = (
+            port.execute(driver_sql, binds, document_reads)
+            if document_reads
+            else port.execute(driver_sql, binds)
+        )
     except DatabaseError as exc:
         recorder.failed(statement, "read", time.perf_counter_ns() - started, exc)
         raise
@@ -881,7 +966,7 @@ def neutral_from_history_result(result: HistoryFindResult, meta: Metamodel) -> N
 def snapshot_from_find_result(
     result: FindResult, meta: Metamodel, construction: EntityGraphConstruction
 ) -> Snapshot[Any]:
-    roots = _materialized(lambda: materialize_graph(result.graph, meta, construction))
+    roots = _materialize_result_graph(result.graph, meta, construction)
     return Snapshot(roots, result.graph.pin, result.execution)
 
 
@@ -890,23 +975,18 @@ def snapshot_from_history_result(
 ) -> Snapshot[Any]:
     roots: list[Any] = []
     for graph in result.graphs:
-        roots.extend(_materialized(lambda: materialize_graph(graph, meta, construction)))  # noqa: B023
+        roots.extend(_materialize_result_graph(graph, meta, construction))
     return Snapshot(tuple(roots), Pin(), result.execution)
 
 
-def _materialized(build: Callable[[], tuple[object, ...]]) -> tuple[Any, ...]:
-    """One graph's roots, or the single translation of a materialization failure.
-
-    This is the ONE boundary where graph construction, lifecycle build, and
-    state-factory failures become
-    :class:`~parallax.snapshot.handle._errors.SnapshotMaterializationError`, so a
-    caller sees exactly one wrapping with the original cause chained. Everything
-    that failed BEFORE a graph was being built — the query, the connection, the
-    transaction, the adapter, SQL generation, row conversion — has already
-    raised with its own classification and never reaches here.
-    """
+def _materialize_result_graph(
+    graph: SnapshotGraphInput, meta: Metamodel, construction: EntityGraphConstruction
+) -> tuple[Any, ...]:
+    """Refuse classified stored data before graph-construction failure translation."""
     try:
-        return build()
+        return materialize_graph(graph, meta, construction)
+    except SnapshotDecodingError:
+        raise
     except Exception as exc:
         raise SnapshotMaterializationError(
             "the read succeeded but its Entity graph could not be built "

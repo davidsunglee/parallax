@@ -397,14 +397,14 @@ def customer_nested_is_null_collapses_every_not_present_state(db: Database) -> S
 
 def customer_to_many_nested_exists_is_a_nonempty_test(db: Database) -> Snapshot[Any]:
     """A to-many nested existence test (`m-value-object-015`): true for a row
-    whose `phones` array has at least one element; every not-present state
-    (empty, absent, or non-array) is excluded."""
+    whose `phones` array has at least one element; empty and absent states are
+    excluded."""
     return db.find(Customer.where(Customer.address.phones.exists()))
 
 
 def customer_to_many_nested_not_exists_folds_every_not_present_state(db: Database) -> Snapshot[Any]:
-    """A to-many nested absence test (`m-value-object-016`): empty, absent,
-    and non-array `phones` states are all INDISTINGUISHABLE to the algebra —
+    """A to-many nested absence test (`m-value-object-016`): empty and absent
+    `phones` states are indistinguishable to the algebra —
     the negated sibling of `customer_to_many_nested_exists_is_a_nonempty_test`."""
     return db.find(Customer.where(Customer.address.phones.not_exists()))
 

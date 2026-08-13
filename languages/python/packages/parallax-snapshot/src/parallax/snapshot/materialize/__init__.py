@@ -14,10 +14,12 @@ produce and consume it.
   its conversion, and no consumer here reaches back into the raw result set the
   driver answered a level's statement with.
 - :mod:`~parallax.snapshot.materialize._merge` collapses duplicate projections
-  into one deterministic allocation order, holding integers and references only.
+  into one deterministic allocation order, holding integers and references only;
+  classified issues ride each winning logical node without deduplication.
 - :mod:`~parallax.snapshot.materialize._neutral` turns one merge into class-free
   nodes and views — the second materializer, a peer of the typed one rather than
-  a wrapper of it.
+  a wrapper of it. Both materializers call the same publication refusal before
+  deriving identity, observation evidence, or allocating results.
 
 Nothing here constructs an Entity: this scope is granted the shared carrier
 algebra (``parallax.core.entity._graph_input``) and nothing else of the Entity
@@ -47,13 +49,17 @@ from parallax.snapshot.materialize._convert import (
     observable_columns,
 )
 from parallax.snapshot.materialize._input import (
+    InvalidRootInput,
     LogicalKey,
     RelationshipViewKey,
     SnapshotGraphInput,
     SnapshotNodeInput,
     SnapshotNodeRef,
     SnapshotRelationshipViewInput,
+    StoredDataIssueCode,
+    StoredDataIssueInput,
     attribute_value,
+    has_invalid_key,
     logical_key,
     validate_graph_input,
 )
@@ -77,10 +83,14 @@ from parallax.snapshot.materialize._neutral import (
     neutral_graphs,
     neutral_rows,
 )
+from parallax.snapshot.materialize._publication import (
+    require_publishable,
+)
 
 __all__ = [
     "SNAPSHOT_DECODING_FAILED",
     "GraphMerge",
+    "InvalidRootInput",
     "LevelContext",
     "LogicalKey",
     "MergeScope",
@@ -101,13 +111,17 @@ __all__ = [
     "SnapshotNodeInput",
     "SnapshotNodeRef",
     "SnapshotRelationshipViewInput",
+    "StoredDataIssueCode",
+    "StoredDataIssueInput",
     "attribute_value",
     "convert_row",
+    "has_invalid_key",
     "logical_key",
     "merge_graph_input",
     "neutral_graph",
     "neutral_graphs",
     "neutral_rows",
     "observable_columns",
+    "require_publishable",
     "validate_graph_input",
 ]

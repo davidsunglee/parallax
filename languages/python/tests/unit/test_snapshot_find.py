@@ -20,14 +20,14 @@ import pytest
 from _transact_support import ACCOUNT, PERSON, NoIoPort
 
 from _support import mirrored_models as mm
+from _support.document_reads import fold_mapping_rows
 from parallax.conformance import models, read_models
 from parallax.conformance import vo_models as vo
 from parallax.conformance.graph_models import POLICY_MODEL, Policy
-from parallax.core import LATEST, TX_TIME
+from parallax.core import LATEST, TX_TIME, Attr, DomainModel, Entity, ValueObject, attr
 from parallax.core.base import INFINITY
-from parallax.core.db_port import DbPort, Row
+from parallax.core.db_port import DbPort, DocumentReadOrdinals, Row
 from parallax.core.dialect import POSTGRES
-from parallax.core.entity import GraphConstructionError
 from parallax.core.execution_log import DatabaseCall, ReadCompleted, ReadTrace
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity
 from parallax.core.object_query import ObjectQueryNode
@@ -43,6 +43,7 @@ from parallax.snapshot import (
 )
 from parallax.snapshot.handle import _database
 from parallax.snapshot.materialize import (
+    InvalidRootInput,
     SnapshotDecodingError,
     SnapshotGraphInput,
     SnapshotNodeInput,
@@ -60,9 +61,27 @@ DOCUMENT = _MODELS["document"]
 _UTC = dt.UTC
 
 
+class RequiredProfile(ValueObject):
+    label: Attr[str]
+
+
+class ProfileOwner(Entity, table="profile_owner", namespace="parallax.compatibility"):
+    id: Attr[int] = attr(primary_key=True)
+    profile: Attr[RequiredProfile]
+
+
+_PROFILE_OWNER_MODEL = DomainModel(ProfileOwner)
+
+
 def _root(result: handle.FindResult) -> SnapshotNodeInput:
     graph = result.graph
-    return graph.nodes[graph.roots[0].node_index]
+    return graph.nodes[_valid_root(graph).node_index]
+
+
+def _valid_root(graph: SnapshotGraphInput, index: int = 0) -> SnapshotNodeRef:
+    root = graph.roots[index]
+    assert not isinstance(root, InvalidRootInput)
+    return root
 
 
 def _value(graph: SnapshotGraphInput, ref: SnapshotNodeRef, entity: str, member: str) -> object:
@@ -96,9 +115,14 @@ class QueuePort:
         self._responses = list(responses)
         self.executed: list[tuple[str, list[object]]] = []
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
         self.executed.append((sql, list(binds)))
-        return self._responses.pop(0)
+        return fold_mapping_rows(self._responses.pop(0), document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:  # pragma: no cover
         raise NotImplementedError
@@ -149,6 +173,15 @@ def test_find_empty_root_short_circuits_with_no_child_statement() -> None:
     result = handle.find(query, ORDERS, POSTGRES, port)
     assert result.execution.round_trips == 1
     assert result.graph.roots == ()
+    assert len(port.executed) == 1
+
+
+def test_row_form_does_not_judge_an_unrequested_required_occurrence() -> None:
+    port = QueuePort([[{"id": 1}]])
+    result = handle.Database.connect(port, _PROFILE_OWNER_MODEL).read_neutral(
+        handle.NeutralReadRequest.rows(object_query_node(ProfileOwner.where(ProfileOwner.id == 1)))
+    )
+    assert result.output == handle.NeutralRows(({"id": 1},))
     assert len(port.executed) == 1
 
 
@@ -348,7 +381,7 @@ def test_find_history_groups_rows_into_chronologically_ordered_edge_pinned_graph
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 4, 1, tzinfo=_UTC),
     ]
-    assert [_value(g, g.roots[0], "InvoiceLine", "amount") for g in result.graphs] == [
+    assert [_value(g, _valid_root(g), "InvoiceLine", "amount") for g in result.graphs] == [
         Decimal("50.00"),
         Decimal("75.00"),
     ]
@@ -389,7 +422,40 @@ def test_find_history_groups_two_distinct_rows_sharing_one_edge_into_one_graph()
     result = handle.find_history(query, INVOICE, POSTGRES, port)
     assert len(result.graphs) == 1
     graph = result.graphs[0]
-    assert [_value(graph, ref, "InvoiceLine", "id") for ref in graph.roots] == [1000, 2000]
+    assert [
+        _value(graph, _valid_root(graph, index), "InvoiceLine", "id") for index in range(2)
+    ] == [
+        1000,
+        2000,
+    ]
+
+
+def test_find_history_classifies_an_invalid_milestone_before_partitioning() -> None:
+    port = QueuePort(
+        [
+            [
+                {
+                    "id": 1000,
+                    "invoice_id": 100,
+                    "amount": Decimal("50.00"),
+                    "in_z": None,
+                    "out_z": INFINITY,
+                }
+            ]
+        ]
+    )
+    query = deserialize_query(
+        {
+            "target": "InvoiceLine",
+            "predicate": {"eq": {"attr": "InvoiceLine.invoiceId", "value": 100}},
+            "temporal": {"transaction-time": {"history": {}}},
+        }
+    )
+    with pytest.raises(SnapshotDecodingError) as refusal:
+        handle.find_history(query, INVOICE, POSTGRES, port)
+    assert refusal.value.member == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", "InvoiceLine"), "txStart"
+    )
 
 
 def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes() -> None:
@@ -433,7 +499,7 @@ def test_find_history_over_a_concrete_inheritance_target_resolves_the_roots_axes
         dt.datetime(2024, 1, 1, tzinfo=_UTC),
         dt.datetime(2024, 2, 1, tzinfo=_UTC),
     ]
-    assert [_value(g, g.roots[0], "Rate", "amount") for g in result.graphs] == [
+    assert [_value(g, _valid_root(g), "Rate", "amount") for g in result.graphs] == [
         Decimal("2.25"),
         Decimal("2.50"),
     ]
@@ -579,21 +645,17 @@ def test_every_execution_reads_the_querys_own_canonical_node(
 # The materialization boundary translates a graph-construction or lifecycle    #
 # failure exactly once, and publishes nothing.                                 #
 # --------------------------------------------------------------------------- #
-def test_a_graph_construction_failure_is_translated_once_at_the_read_boundary() -> None:
-    # The read itself succeeded — one statement, one row — and the failure is in
-    # building the graph that row describes: `balance` is a Decimal member and
-    # the row carries a string, which nothing between the driver and the frozen
-    # instance would otherwise reject.
+def test_an_undecodable_columns_leaf_is_a_stored_data_refusal() -> None:
+    # The read itself succeeded, but `balance` lies outside its declared Decimal
+    # value space. Conversion classifies that state before graph construction.
     port = QueuePort([[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]])
     db = handle.Database.connect(port, ACCOUNT)
-    with pytest.raises(SnapshotMaterializationError) as refusal:
+    with pytest.raises(SnapshotDecodingError) as refusal:
         db.find(mm.Account.where(mm.Account.id == 1))
-    assert refusal.value.code == "snapshot-materialization-failed"
-    cause = refusal.value.cause
-    assert isinstance(cause, GraphConstructionError)
-    assert cause.code == "entity-graph-invalid-value"
-    # The original defect stays diagnosable rather than being replaced.
-    assert refusal.value.__cause__ is cause
+    assert refusal.value.code == "snapshot-decoding-failed"
+    assert refusal.value.member == AttributeIdentity(
+        EntityIdentity("parallax.compatibility", "Account"), "balance"
+    )
     assert len(port.executed) == 1
 
 
@@ -606,10 +668,10 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
         db.find(Policy.where(Policy.all).as_of(valid_time=LATEST))
 
 
-def test_a_conversion_failure_keeps_its_own_classification_and_publishes_nothing() -> None:
-    # Stored data that contradicts its declared shape is refused BEFORE any graph
-    # is being built, so it surfaces as its own decoding refusal rather than as a
-    # materialization failure — and no Snapshot is published either way.
+def test_an_issue_bearing_graph_is_refused_at_publication_and_publishes_nothing() -> None:
+    # Conversion carries the stored-data issue into graph input. The shared
+    # publication gate surfaces the decoding refusal before graph construction,
+    # rather than translating it as a materialization failure.
     port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": 7}}]])
     db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
     with pytest.raises(SnapshotDecodingError) as refusal:

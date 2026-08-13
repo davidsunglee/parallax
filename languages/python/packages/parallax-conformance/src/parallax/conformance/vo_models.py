@@ -213,7 +213,7 @@ class CustomerPoint(ValueObject):
 
 
 class CustomerGeo(ValueObject):
-    country: Attr[str]
+    country: Attr[str | None]
     elevation: Attr[float | None]
     point: Attr[CustomerPoint | None]
 
@@ -225,7 +225,7 @@ class CustomerPhone(ValueObject):
 
 class CustomerAddress(ValueObject):
     street: Attr[str]
-    city: Attr[str]
+    city: Attr[str | None]
     geo: Attr[CustomerGeo | None]
     phones: Attr[tuple[CustomerPhone, ...]]
 

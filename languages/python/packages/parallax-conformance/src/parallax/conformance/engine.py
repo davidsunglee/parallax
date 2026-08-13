@@ -1,16 +1,14 @@
 """The conformance compile/run engine — binding the corpus to the spine.
 
-The adapter path compiles and runs a compatibility case directly against the
-class-free engine spine (no dynamic class synthesis): the case's model YAML is
-ingested through the ``m-descriptor`` deserializer, its ``when.objectQuery``
-through the ``m-object-query`` deserializer, and the query is lowered by ``m-sql``
-``compile_read`` to one ``CompiledRead`` — its canonical ``LoweredStatement`` together
-with the row transform that statement's own resolved position decided.
-``compile`` emits that statement; ``run`` executes it through the injected
-``m-db-port``, renders each observed row to wire form, and passes it through the
-compiled read's own ``transform_row``. Compile eligibility (``m-case-format``
-``compileEligibility``) is read from the case; the run-only minority is never
-compiled.
+The adapter path compiles and runs a compatibility case against the class-free
+production spine (no dynamic class synthesis): the case's model YAML is ingested
+through the ``m-descriptor`` deserializer and its ``when.objectQuery`` through the
+``m-object-query`` deserializer. ``compile`` lowers that query through ``m-sql``;
+``run`` routes it through the production neutral-read seam, which owns planning,
+compilation, execution, conversion, publication, and row materialization before
+the adapter renders the observed result to wire form. Compile eligibility
+(``m-case-format`` ``compileEligibility``) is read from the case; the run-only
+minority is never compiled.
 """
 
 from __future__ import annotations
@@ -44,7 +42,7 @@ from parallax.core.base import (
     normalize_instant,
 )
 from parallax.core.db_error import DatabaseError
-from parallax.core.db_port import DbPort, JsonDocument, Row
+from parallax.core.db_port import DbPort, DocumentReadOrdinals, JsonDocument, Row
 from parallax.core.dialect import Dialect, dialect_for
 from parallax.core.execution_log import (
     DatabaseCall,
@@ -849,8 +847,13 @@ class _AbortingPort:
     def __init__(self, inner: DbPort) -> None:
         self._inner = inner
 
-    def execute(self, sql: str, binds: Sequence[object]) -> list[Row]:
-        return self._inner.execute(sql, binds)
+    def execute(
+        self,
+        sql: str,
+        binds: Sequence[object],
+        document_reads: Sequence[DocumentReadOrdinals] = (),
+    ) -> list[Row]:
+        return self._inner.execute(sql, binds, document_reads)
 
     def execute_write(self, sql: str, binds: Sequence[object]) -> int:
         return self._inner.execute_write(sql, binds)
