@@ -42,8 +42,8 @@ trail. Key invariants the suite pins down:
 - After a `terminateUntil`, the window `[validFrom, until)` is covered by **no**
   current-on-Transaction-Time row.
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
-  inactivation is an error in any mode (the affected-row conflict contract,
-  `m-txtime-write`). In optimistic mode the inactivation additionally gates on the
+  inactivation is an error under either strategy (the affected-row conflict contract,
+  `m-txtime-write`). Under Optimistic the inactivation additionally gates on the
   observed `txStart`, appended **after** the address:
   `… and thru_z = ? and out_z = ? and in_z = ?`. The observed `in_z` is the
   version analogue (`m-opt-lock`, `m-opt-lock --> m-temporal-read`); the chained
@@ -51,7 +51,7 @@ trail. Key invariants the suite pins down:
   table-per-hierarchy concrete subtype the tag guard joins the identity
   predicates immediately after the primary key, before the per-axis upper bounds,
   exactly as it does for a Transaction-Time-Only close (`m-txtime-write` "Composed predicate
-  order under optimistic mode") — the observed-`in_z` gate still binds last.
+  order under Optimistic") — the observed-`in_z` gate still binds last.
 
 This mirrors `GenericBiTemporalDirector.updateUntil` / `splitTailEnd`
 (research §6, the bitemporal rectangle split). The same multi-row physical primary
@@ -90,12 +90,12 @@ and differ only in the tail — `update` chains a new `tail` carrying the new va
 - For plain `update` and plain `terminate`, the inactivation `UPDATE` addresses the
   one current rectangle exactly as the `*Until` inactivation does
   (`pk and thru_z = ? and out_z = ?`), so only that rectangle is inactivated; the
-  chained rows are inserted **after** it. In optimistic mode the inactivation gains
+  chained rows are inserted **after** it. Under Optimistic the inactivation gains
   the observed-`txStart` gate after the address, again exactly as the `*Until`
   inactivation does; the chained `head` / new `tail` are ungated `INSERT`s at the
   fresh `in_z`.
 - The inactivation `UPDATE` **MUST** affect exactly **one** row; a zero-row
-  inactivation is an error in any mode (the affected-row conflict contract,
+  inactivation is an error under either strategy (the affected-row conflict contract,
   `m-txtime-write`).
 - After a plain `update`, Valid Time `[from_z, V)` is current on Transaction Time
   through the `head` (old value) and `[V, infinity)` through the new `tail` (new
@@ -152,8 +152,8 @@ detects a lost update are **separate** facts (ADR 0046). The **Milestone Target*
 exclusive upper bound **per As-Of Axis** — the observed predecessor's Valid-Time
 end, and the invariant Transaction-Time `Infinity` that keeps an operational close
 on the **current** rectangle. It carries no axis **start**, no Write Observation,
-no gate, and no concurrency mode, and the planner derives it **identically in both
-concurrency modes**. Two axes are exactly why the Valid-Time end is required: a key
+no gate, and no Effective Concurrency Strategy, and the planner derives it
+**identically under both strategies**. Two axes are exactly why the Valid-Time end is required: a key
 plus the current Transaction-Time bound may still select several disjoint current
 rectangles.
 
@@ -170,7 +170,7 @@ rectangle when it was read and that another transaction has since superseded —
 still addresses the current slot rather than copying a finite historical end into
 it: closed history is never mutated, and the stale gate reports the conflict
 instead (`m-txtime-write`). An observation of a rectangle the Transaction-Time
-past holds never reaches planning at all, in either mode: it could only come from
+past holds never reaches planning at all, under either strategy: it could only come from
 a view pinned at a finite Transaction-Time instant, which is read-only
 (`m-identity-map`).
 

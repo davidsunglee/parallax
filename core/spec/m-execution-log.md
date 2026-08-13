@@ -92,15 +92,17 @@ second record of the same call exists.
 One Execution Log describes **one logical transaction invocation** and spans
 every physical Transaction Attempt `m-auto-retry` runs. It retains, once:
 
-- the **effective concurrency mode** (`m-unit-work`'s Locking or Optimistic),
-  because that mode decides how the log's read locks, observations, and write
-  gates are to be read;
+- the resolved **Concurrency Preference** (`m-unit-work`'s `locking` or
+  `optimistic`), because it is needed to interpret why each Entity's Optimistic
+  Lock Facet produced its effective read-lock and write-gate behavior;
 - an immutable **Retry Policy** snapshot — the effective maximum re-execution
   count and the optimistic-conflict retry opt-in (`m-auto-retry`) — after
   defaults and outer-transaction inheritance are resolved.
 
 Both record the **resolved value** only. Whether the caller supplied it
-explicitly or inherited a default is not retained.
+explicitly or inherited a default is not retained. The log does not pretend that
+the preference is one uniform transaction-wide strategy: individual Database
+Calls retain the actual locking or gated statement produced for each Entity.
 
 An attempt is **active** before its body runs, so the log never shows a gap. A
 trace is appended only once its read or write batch has succeeded or raised, so

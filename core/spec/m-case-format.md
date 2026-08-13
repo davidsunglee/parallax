@@ -292,7 +292,7 @@ keeps the assertion honest across engines.
 | `when.write` | `when` | conflict / rejected | the single-attempt neutral write input (①): the flat attribute-named row the versioned `UPDATE` / `DELETE` (or temporal close) operates on; on a `rejected` case, a write the validator MUST refuse pre-SQL — a row, a predicate-selected instruction, or a whole keyed instruction, dispatched on the members it carries (see *Rejected cases*) |
 | `when.mutation` | `when` | conflict | the keyed verb `when.write` names — `update` (default) or `delete`; ignored for a temporal target, whose conflict write is always the milestone close |
 | `when.model` | `when` | rejected | an inline model descriptor whose accepted-model formation is invalid — either a standalone/table-level defect or a cross-entity family invariant a model-aware validator MUST reject pre-SQL; kept inline so the shared `models/` registry stays loadable (see *Rejected cases*) |
-| `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; descriptive |
+| `when.uow` | `when` | no | unit-of-work configuration (`concurrency: locking \| optimistic`, `retries`, `retryOptimisticConflicts`) the action runs under; `concurrency` is the resolved Concurrency Preference, not a claim that every Entity uses one strategy; descriptive |
 | `when.at` / `when.observedTxStart` | `when` | conflict | the harness-supplied Transaction-Time close instant (→ new `out_z`) and observed `txStart` / physical `in_z` the optimistic gate binds |
 | `when.observedValidStart` | `when` | conflict | the observed milestone's `validStart` / physical `from_z` — with `when.observedTxStart` it is that milestone's own EDGE, naming the milestone the close observed instead of the close's address (see *Naming the observed milestone*, below) |
 | `when.equivalentEncodings` | `when` or a scenario read step | no | alternate authoring encodings of the sibling `objectQuery`; each MUST normalize and canonicalize to it |
@@ -1135,11 +1135,14 @@ golden SQL executed verbatim, plus `tableState` / `expectRows`.
 ```
 
 A case MAY carry a **`when.uow`** block (`{ concurrency: locking |
-optimistic }`) declaring the unit-of-work strategy its golden SQL runs under
+optimistic }`) declaring the unit-of-work Concurrency Preference its golden SQL runs under
 (`m-unit-work` strategy selection). The block is **descriptive**: the harness
 executes the authored golden SQL either way — the block records which mode produced
-it, so an optimistic conflict case's gated `UPDATE` and a locking-mode case's
-ungated version-advancing `UPDATE` are self-describing. Its default is `locking`.
+it, so an optimistic conflict case's gated `UPDATE` and a locking-strategy case's
+ungated version-advancing `UPDATE` are self-describing. Its default is
+`optimistic`; the target Entity's Optimistic Lock Facet then decides whether that
+preference yields Optimistic or the mandatory Locking fallback. A case whose SQL
+depends on that effective choice SHOULD declare `when.uow.concurrency` explicitly.
 
 #### Lifecycle action steps
 

@@ -285,7 +285,7 @@ plan(
     PlanningRequest(
         subject_identity:     SubjectIdentity,
         transaction_instant:  TransactionInstant,
-        concurrency:          Concurrency,
+        concurrency_preference: ConcurrencyPreference,
         buffered_writes:      BufferedWrites,
     )
 ) -> WritePlan
@@ -363,7 +363,7 @@ cancellation, and known no-op elimination, with temporal topology and correctnes
 semantics already decided.
 
 - A Write Plan **MUST NOT** retain a Transaction Instant, a raw Write
-  Observation, the transaction's concurrency mode, a Subject Identity, a strategy
+  Observation, the transaction's Concurrency Preference, a Subject Identity, a strategy
   object, a barrier marker, a private group, or any other planning context.
   Derived values are materialized *into* the steps instead.
 - An **empty** Planned Steps sequence is the one canonical result for complete
@@ -512,7 +512,7 @@ TemporalUpperBound = Finite(Instant) | Infinity
   tuple plus one write-required **exclusive upper bound per As-Of Axis** — the
   observed predecessor's Valid-Time end where that axis exists, and invariant
   `Infinity` for Transaction Time. It contains no axis start, gate, observation,
-  or concurrency mode, and it is **identical in both concurrency modes**
+  or Effective Concurrency Strategy, and it is **identical under both strategies**
   (ADR 0046). Only the gate differs.
 
 ### Write Observation
@@ -564,7 +564,7 @@ Absence is **structural**:
 A required observation that is missing is a **planning error**. An implementation
 **MUST NOT** define a `NoObservation` value, a nullable observation that flows
 downstream, or a mode in which an observation-requiring write proceeds unobserved
-— the requirement holds in **both** concurrency modes (`m-opt-lock`).
+— the requirement holds under **both** Effective Concurrency Strategies (`m-opt-lock`).
 
 Structural absence extends to the buffer. A buffered write that has an
 observation is buffered **paired** with it — one keyed instruction and the one
@@ -651,13 +651,13 @@ NonTemporalConcurrency =
 A **Write Gate** carries only the extra equality predicate lowering renders. The
 advanced version value and the close instant are **assignments**, not gate
 members, and a gate repeats neither the full observation nor the transaction's
-concurrency mode — both are consumed during planning and do not survive in the
-plan.
+Effective Concurrency Strategy — both are consumed during planning and do not
+survive in the plan.
 
 Planned Update and Planned Delete carry a Non-Temporal Concurrency decision;
 Planned Close carries `TemporalGate | Ungated` directly, because every close
-requires a temporal observation and so has no unversioned case. Locking mode
-records an **explicit** `Ungated` decision rather than a null gate, which is what
+requires a temporal observation and so has no unversioned case. The effective
+Locking strategy records an **explicit** `Ungated` decision rather than a null gate, which is what
 makes gate applicability structural. The gate rule itself is uniform across
 update, delete, and close and belongs to `m-opt-lock`.
 
@@ -776,8 +776,8 @@ template) cannot be planned from buffered data alone. Its resolving read happens
 
 1. force-flushes preceding writes when the read needs read-your-own-writes;
 2. performs the resolving database read;
-3. acquires the selected physical row locks when locking mode requires them
-   (`m-read-lock`);
+3. acquires the selected physical row locks when the Entity's Effective
+   Concurrency Strategy is Locking (`m-read-lock`);
 4. compares assigned members with their persisted values, using this module's
    structural equality rules, for an assignment-bearing mutation;
 5. records the effective rows in database resolution order; and
@@ -896,27 +896,46 @@ backend **MUST** execute distinct `ExactCount` steps separately; it MAY still
 reuse statement preparation and stream bind rows. This is what preserves exact
 attribution of a shortfall to the step that caused it.
 
-## Strategy selection — the per-unit-of-work participation mode
+## Strategy selection — one preference, an effective strategy per Entity
 
-A unit of work selects, per transaction, **how** its read-then-writes are made
-correct — mirroring Reladomo's `TxParticipationMode`. Two strategies:
+An outer unit of work resolves one **Concurrency Preference**, `locking` or
+`optimistic`, from its boundary options. Omission resolves to **`optimistic`**.
+A joining boundary inherits that resolved preference and may not renegotiate it.
+The preference is not itself the correctness mechanism: the Unit Work combines it
+with the target Entity's Optimistic Lock Facet to derive an **Effective
+Concurrency Strategy** for each participating Entity:
 
-- **`locking`** (the **default**) — the automatic in-transaction shared read lock
-  (`m-read-lock`). A lockable object find participating in a read-then-write takes
-  a row lock, and every observation-requiring write records the explicit `Ungated`
-  decision.
-- **`optimistic`** — the alternative (`m-opt-lock`): the same participating object
-  find takes **no** lock, and every observation-requiring keyed write carries the
-  gate its observation supplies. Selected explicitly on the unit of work
-  (`concurrency: optimistic`).
+| Concurrency Preference | Optimistic Key | Effective Concurrency Strategy |
+|---|---|---|
+| `locking` | any | **Locking** — participating object reads take the `m-read-lock` shared lock; observation-requiring writes are `Ungated` |
+| `optimistic` | `ExplicitVersion` | **Optimistic** — reads omit the shared lock; writes gate on the observed version |
+| `optimistic` | `TransactionTimeDerived` | **Optimistic** — reads omit the shared lock; temporal closes gate on observed `txStart` |
+| `optimistic` | `Unversioned` | **Locking** — participating object reads take the shared lock; writes are ungated |
 
-The mode is a property of the **unit of work**, not of the entity: the same
-versioned entity is written under the shared lock in one workflow and under the
-version gate in another. The metamodel only *names* the version column
-(`m-descriptor`); opting into optimistic mode is what makes participating object
-finds omit the shared lock and emits the gate. The mode is consumed **during**
-planning: it decides each step's concurrency decision and never appears in the
-Write Plan itself.
+Thus `optimistic` means **use optimistic concurrency wherever the model supplies
+a gate, with a locking fallback where it does not**. It never means that a
+heterogeneous transaction is universally lock-free. An explicit `locking`
+preference remains the workflow-level override for making every lockable Entity
+participate pessimistically. The same versioned or temporal Entity can therefore
+use its optimistic key in one workflow and a shared lock in another.
+
+An object read resolves the strategy of the Entity it materializes. Separate
+deep-fetch levels resolve independently, so one transaction may read a versioned
+root optimistically and an unversioned included Entity under a shared lock. The
+Effective Concurrency Strategy also determines write evidence: Locking requires
+current-transaction read participation proving that the lock is held, while
+Optimistic may use authentic retained version or milestone evidence and lets the
+database gate detect an intervening write (`m-opt-lock`).
+
+Reladomo is prior art for mixed participation, but exposes the choice per
+transaction and object portal/class. Parallax deliberately keeps one ergonomic
+Unit Work preference and derives the safe per-Entity result instead of exposing
+per-Entity overrides.
+
+The Write Planner consumes the Concurrency Preference and the model's Optimistic
+Lock Facet, settles each Planned Write's gate or explicit `Ungated` decision, and
+retains neither the preference nor the Effective Concurrency Strategy in the
+Write Plan.
 
 ## What the suite pins down
 

@@ -3,7 +3,7 @@
 `m-opt-lock` is the **optimistic concurrency** strategy: instead of an object find
 holding a row lock for the duration of a read-then-write (`m-read-lock`'s automatic
 shared-row lock), an entity carries a **version column** that a write **advances**
-and, in optimistic mode, **gates on**. A concurrent write that changed the version
+and, under the Optimistic strategy, **gates on**. A concurrent write that changed the version
 first makes the stale-version write match **no** row, and that *missing* row is the
 conflict signal.
 
@@ -23,15 +23,19 @@ immutable Optimistic Lock Facet ("The Optimistic Lock Facet", below),
 identifying each Entity's effective explicit or Transaction-Time-derived
 optimistic key without copying Attribute Metadata.
 
-Optimistic locking is a **per-unit-of-work participation mode** the caller
-selects (`m-unit-work` strategy selection — `concurrency: optimistic`), not a
-static entity property. In optimistic mode a participating object find takes
-**no** lock, and correctness is recovered at write time by the version check; the
-default `locking` mode instead gives that object find the `m-read-lock` shared read
-lock. The same versioned entity can be written under either mode in different workflows.
-The metamodel only **names** the version column (`optimisticLocking: true`,
-`m-descriptor`); whether the gate is emitted is the unit of work's choice.
-Optimistic mode suits read-mostly workloads and detached edits (`m-detach`), where
+Optimistic locking is an **Effective Concurrency Strategy** derived for one
+Entity inside a Unit Work, not one uniform mode imposed on every Entity in the
+transaction. The Unit Work's `optimistic` Concurrency Preference — also the
+default — selects this strategy for an Entity whose Optimistic Lock Facet carries
+an explicit version or Transaction-Time-derived key. Its participating object
+find takes **no** shared lock and correctness is recovered at write time by the
+gate. An explicit `locking` preference instead gives that same Entity the
+`m-read-lock` shared read lock and omits the gate. An unversioned Non-Temporal
+Entity cannot use this strategy and falls back to Locking even under the
+`optimistic` preference (`m-unit-work`). The metamodel names the capability
+(`optimisticLocking: true` or the Transaction-Time start); the preference and
+Facet together decide whether a particular Entity uses it.
+The Optimistic strategy suits read-mostly workloads and detached edits (`m-detach`), where
 holding a lock across the edit is undesirable or impossible.
 
 ## The Optimistic Lock Facet
@@ -87,37 +91,39 @@ integer an implementation **MUST**:
   observes the current version — the versioned-read golden SELECTs the version
   column);
 - **advance** in the `set` of **every `UPDATE` statement** issued against the
-  entity, in **both** modes (so every successful write moves the version forward);
-- **gate** on **in optimistic mode only** — include `and <version> = ?` in the
+  entity, under **both** strategies (so every successful write moves the version forward);
+- **gate** under the **Optimistic strategy only** — include `and <version> = ?` in the
   `where` clause binding the version the unit of work *observed* for that row. In
-  `locking` mode the shared read lock makes the write correct, so no gate is
+  the Locking strategy the shared read lock makes the write correct, so no gate is
   emitted (the `UPDATE` still advances the version — the `m-detach-002` /
   locking-mode shape).
 
-### Concurrency mode determines the gate uniformly
+### Effective Concurrency Strategy determines the gate uniformly
 
 Whether a write carries its observation-bound gate predicate is decided by the
-**concurrency mode alone**, never by the mutation kind. Optimistic mode emits a
+target Entity's **Effective Concurrency Strategy alone**, never by the mutation
+kind. The Unit Work derives that strategy from its Concurrency Preference and the
+Entity's Optimistic Lock Facet before considering the verb. Optimistic emits a
 gate on **every** observation-requiring write — a versioned keyed `UPDATE`, a
-versioned keyed `DELETE`, and a temporal milestone close alike. Locking mode
+versioned keyed `DELETE`, and a temporal milestone close alike. Locking
 emits **none** of them, because the shared read lock the required prior
 observation took is what makes the write correct. The requirement to *hold* an
-observation is unaffected: it is mandatory in **both** modes for all three
+observation is unaffected: it is mandatory under **both** strategies for all three
 shapes, and only what the statement *renders* differs.
 
 An implementation **MUST NOT** make gate presence depend on the verb. A keyed
-`DELETE` that retained its observed-version predicate under locking mode would
-give the gate two different meanings in one mode and let a locking-mode failure
+`DELETE` that retained its observed-version predicate under Locking would give
+the gate two different meanings under one strategy and let a Locking shortfall
 surface as an optimistic conflict.
 
-The canonical locking-mode goldens are therefore uniform in shape:
+The canonical effective-Locking goldens are therefore uniform in shape:
 
 ```text
 update account set balance = ?, version = ? where id = ?
 delete from account where id = ?
 ```
 
-and their optimistic-mode counterparts each append `and version = ?`, binding
+and their effective-Optimistic counterparts each append `and version = ?`, binding
 the observed version last.
 
 ### A gate carries only its equality predicate
@@ -136,30 +142,33 @@ Ungated
   are **assignments**, not gate members. A gate answers "which extra equality
   must hold", never "what does this write set".
 - A gate repeats **neither** the full Write Observation **nor** the transaction's
-  concurrency mode. Both are consumed while planning: the mode selects
+  Concurrency Preference or the Entity's Effective Concurrency Strategy. Those
+  are consumed while planning: the effective strategy selects
   `VersionGate` / `TemporalGate` or `Ungated`, and the observation supplies the
   bound value. Neither survives into the plan, so nothing downstream can
   re-derive a gate or reach a different answer than the planner did.
-- `Ungated` is an **explicit** locking-mode decision, not a null gate. Gate
+- `Ungated` is an **explicit** effective-Locking decision, not a null gate. Gate
   applicability is therefore structural rather than a nullable field every
   consumer must re-check.
 - A Version Gate applies to exactly **one** row: it binds that row's observed
   version, so it is legal only on a single-key target. This is the same fact that
   forbids a versioned readless predicate template.
 
-### What licenses a locking-mode write
+### What licenses a write under Locking
 
 An observation is mandatory for a gated *and* an ungated observation-requiring
-write, and both modes accept the same observation. Locking mode's ungated write
-is licensed by the **shared read lock** the observing read took — and it holds
+write, and both strategies accept the same observation. The Locking strategy's
+ungated write is licensed by the **shared read lock** the observing read took — and it holds
 that lock on exactly the row it closes, because the two derive from one value:
 the write's address is the milestone its own written value came from, and the
 observation the address comes from is the record of the read that locked that
 milestone (`m-unit-work`, Write Observation). There is no separate license to
-check. A write whose value names a milestone the unit of work never observed is
-already refused as an unobserved write, and a write over a view pinned at a
+check. Under Locking, a write whose value names a milestone the current unit of
+work never observed is already refused because no participating read proves the
+lock is held; under Optimistic, an authentic standalone observation may supply
+the gate instead. A write over a view pinned at a
 finite Transaction-Time instant is already refused by the pin rule
-(`m-identity-map`), in **both** modes, before any planning.
+(`m-identity-map`), under **both** strategies, before any planning.
 
 The invariant is therefore a property of how the close is constructed rather
 than a precondition validated on the input side. Nothing about the *read* that
@@ -170,20 +179,21 @@ another observation of that same milestone.
 
 ### Version values are framework-owned
 
-The version an implementation binds in the gate **MUST** be the version the unit
-of work *observed* for that row — the value a transaction-scoped read hydrated
-into the identity cache (a detached copy carries the one read at detachment,
-`m-detach`). An implementation **MUST NOT** accept a caller-authored version value
-as the gate or as the new version; the new version is always runtime-computed
-(`observed + 1`). "Caller-driven" refers to conflict *handling* only, never to the
-version *value*. A keyed `UPDATE` or `DELETE` of a versioned row the unit of work
-never observed is a **read-before-write** error in **either** mode: the new
-version is computed from the observed one (`observed + 1`), so with no observed
-version there is nothing to advance from — and, in optimistic mode, nothing to
-gate on — so the implementation **MUST** raise rather than write blindly. A
-`DELETE` writes no version, but the observation is still what licenses it: under
-locking mode the read that recorded it is what took the shared lock, and under
-optimistic mode it is what the gate binds.
+The version an implementation binds in the gate **MUST** be one Parallax
+authentically observed for that row. Under the Locking strategy it must come from
+a current-transaction participating read, because that read is what acquired the
+shared lock. Under the Optimistic strategy it may instead be retained by an
+authentic Typed or Wire source produced by a standalone Parallax read; the
+database gate remains the concurrency authority. A detached copy carries the
+authentic observation made at detachment (`m-detach`). An implementation **MUST
+NOT** accept a caller-authored or reconstructed version value as the gate or as
+the new version; the new version is always runtime-computed (`observed + 1`).
+"Caller-driven" refers to conflict *handling* only, never to the version *value*.
+A keyed `UPDATE` or `DELETE` with no authentic observation is a
+**read-before-write** error under either strategy: there is nothing from which to
+advance the version and, when Optimistic, nothing to gate on. A `DELETE` writes no
+version, but still requires the same evidence: current lock participation under
+Locking or retained observed-version evidence under Optimistic.
 
 ### No-op updates issue no DML
 
@@ -201,15 +211,16 @@ from golden SQL. Query clauses (`orderBy`, `limit`, `includes`, `temporal`,
 `asOfRange`, `history`, and `narrowTo`) are not write targets.
 The canonical instruction and its assignment rules are `m-case-format`.
 
-A keyed write of one versioned row gates on (optimistic) and advances (both modes)
-the version the unit of work observed for that row. A predicate-selected write to a
+A keyed write of one versioned row gates under Optimistic and advances under
+both strategies from the version observed for that row. A predicate-selected write to a
 versioned entity has **no** single-statement versioned template: the gate binds a
 *per-row* observed version. It **MUST** therefore **materialize** (ADR 0014):
 
 1. resolve the predicate through a read, recording each matched row's observed
-   version; in `locking` mode this read takes the `m-read-lock` shared lock; then
-2. issue one keyed per-object write for every row that the verb writes — gated in
-   optimistic mode and ungated-but-version-advancing in locking mode.
+   version; under the Entity's effective Locking strategy this read takes the
+   `m-read-lock` shared lock; then
+2. issue one keyed per-object write for every row that the verb writes — gated
+   under Optimistic and ungated-but-version-advancing under Locking.
 
 For assignment-bearing mutations, no-op elimination is **per resolved row**: when
 all assignments already equal that row's values, it issues no DML, advances no
@@ -245,7 +256,7 @@ observed-version or Transaction-Time materialization rule.
 
 A Transaction-Time Entity (`m-temporal-read`) carries **no** version column, so
 its optimistic key is **derived**: the observed `txStart` (`in_z`)
-value **is** the version analogue (Reladomo's `IN_Z` rule). In optimistic mode the
+value **is** the version analogue (Reladomo's `IN_Z` rule). Under Optimistic the
 milestone close/inactivate `UPDATE` the write already issues gains an
 `and <in_z> = ?` gate bound to the `in_z` the unit of work observed for the current
 milestone; a concurrent chain that superseded that milestone left a **fresh**
@@ -254,9 +265,9 @@ On **success** no version numbers exist to bump: the gate rides only on the
 close(s) (one per closed/inactivated current row, each binding *that row's*
 observed `in_z`, each **MUST** affect exactly one row), and the chained replacement
 rows are plain ungated `INSERT`s whose fresh `in_z = txInstant` **is** the advance.
-A **zero-row** close is an error in **any** mode (never silent) — a retriable
-conflict in optimistic mode, a distinct non-retriable stale/consistency error in
-locking mode. The write shapes and the current-row-predicate-is-not-a-gate
+A **zero-row** close is an error under **either** strategy (never silent) — a
+retriable conflict under Optimistic, a distinct non-retriable stale/consistency
+error under Locking. The write shapes and the current-row-predicate-is-not-a-gate
 rationale are `m-txtime-write` / `m-bitemp-write`; the conflict/retry contract is
 this module (the `m-opt-lock --> m-temporal-read` composition edge). Combining an
 explicit `optimisticLocking` attribute with a temporal `temporality`
@@ -266,7 +277,7 @@ Valid-Time-Only is unsupported, so no temporal formation lacks this derived key.
 
 ## Conflict detection
 
-In **optimistic mode** the version turns a lost update into a **detectable**
+Under the **Optimistic strategy** the version turns a lost update into a **detectable**
 event. The canonical golden `UPDATE` (`m-sql`) gates on the observed version:
 
 ```text
@@ -274,7 +285,7 @@ update account set balance = ?, version = ? where id = ? and version = ?
 binds: [<new-balance>, <new-version>, <pk>, <observed-version>]
 ```
 
-The `locking`-mode golden for the same write drops the gate but still advances
+The effective-Locking golden for the same write drops the gate but still advances
 the version (`update account set balance = ?, version = ? where id = ?`) — the
 shared read lock, not the version, is what makes it correct. Conflict detection
 below applies to the gated optimistic form.
@@ -294,15 +305,15 @@ moved, so the count — not an error from the database — is the conflict carri
 
 Classification follows the **gate**, uniformly with the temporal close rule
 above. A **gated** (optimistic) shortfall is the retriable conflict. An
-**ungated** (locking-mode) shortfall on a write that still required a prior
+**ungated** (effective-Locking) shortfall on a write that still required a prior
 observation — a versioned keyed `UPDATE`, a versioned keyed `DELETE`, a
 milestone close alike — is a categorically different, **non-retriable**
 stale/consistency outcome: no gate could have caused it, so it is not a detected
 lost update a re-read could resolve.
 
-An implementation **MUST NOT** classify by verb here either. A locking-mode
+An implementation **MUST NOT** classify by verb here either. An effective-Locking
 `UPDATE` whose shortfall surfaced as the retriable conflict would be retried
-against an unchanged cause, since re-reading cannot supply a gate the mode never
+against an unchanged cause, since re-reading cannot supply a gate the strategy never
 rendered.
 
 ## Retry contract
@@ -360,13 +371,13 @@ The case carries an optional out-of-band **`given.apply`** — naive statement
 entries that simulate a concurrent transaction mutating the row — and a
 **`then.affectedRows`** count:
 
-| Case | Mode | given.apply | Golden gate | Affected rows |
+| Case | Concurrency Preference | given.apply | Golden gate | Affected rows |
 |---|---|---|---|---|
 | optimistic-lock conflict | optimistic | bump the row's version out of band | the now-stale observed version | **0** (conflict detected) |
 | optimistic-lock success | optimistic | none | the observed version | **1** (write applied) |
-| versioned update, locking mode | locking | none | none — no gate, version still advances | **1** (write applied) |
-| versioned update, locking mode | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
-| versioned delete, locking mode | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
+| versioned update, effective Locking | locking | none | none — no gate, version still advances | **1** (write applied) |
+| versioned update, effective Locking | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
+| versioned delete, effective Locking | locking | remove the row out of band | none — no gate | **0** (non-retriable stale write) |
 
 A companion **scenario** case pins the no-op rule: a versioned update whose `set`
 changes no attribute declares `roundTrips: 0` and lists no golden DML (no
@@ -374,7 +385,7 @@ statement issued). Predicate-selected witnesses use a materializing `find`, the
 structured `write` instruction, and a verification `find`; non-trivial finds carry
 their own naive `referenceSql` oracle.
 
-| Witness | Target / mode | Observable rule |
+| Witness | Target / Concurrency Preference | Observable rule |
 |---|---|---|
 | `m-opt-lock-003`, `-004` | `Account` update, optimistic / locking | materialize then per-object update; optimistic reads/gates are lock-free, locking reads carry `for share of t0` and writes omit the gate |
 | `m-opt-lock-014` | `Account` update, locking | mixed equal/changed rows gives `1 + 1`, proving per-row no-op elimination and no spurious version bump |

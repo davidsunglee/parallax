@@ -2393,8 +2393,8 @@ or descriptor authoring form and performs no audit stamping.
   application's own staleness test, and the refusal it raises is the
   application's own error rather than a framework one — no framework error
   carries the meaning "the milestone the form displayed is no longer the
-  current one", and the framework is not a party to this comparison under
-  either concurrency mode. A
+  current one", and the framework is not a party to this comparison under either
+  Effective Concurrency Strategy. A
   Transaction-Time pin cannot make that assertion in a comparison's place: it
   *selects* the displayed milestone whether or not it is still current, which
   is the one thing the submit needs to know. A **Bitemporal** Entity still
@@ -2414,12 +2414,12 @@ or descriptor authoring form and performs no audit stamping.
   observed the current `in_z`, and the concurrent chain leaves a row whose
   fresh `in_z` fails the observed-`in_z` gate (a zero-row close — the conflict;
   a Bitemporal Entity's close additionally *addresses* the observed
-  rectangle's own Valid-Time end, in both modes, so it means exactly that
+  rectangle's own Valid-Time end, under both strategies, so it means exactly that
   rectangle whether or not it gates, per `m-bitemp-write`), while an untouched
-  row succeeds. The recipe is therefore legal under **both** concurrency
-  modes, for different reasons (§5): `locking` takes a shared read lock on the
+  row succeeds. The recipe is therefore legal under **both** effective
+  strategies, for different reasons (§5): Locking takes a shared read lock on the
   current row at read time, so once the comparison passes nothing can
-  supersede that row before the flush, while `optimistic` takes no lock and
+  supersede that row before the flush, while Optimistic takes no lock and
   the gate covers exactly that window.
 
   Weaker transports fail. The `LATEST` sentinel is not a coordinate: it
@@ -2474,8 +2474,8 @@ or descriptor authoring form and performs no audit stamping.
   a **finite Transaction-Time instant** is read-only exactly as the view is, so
   `tx.update(node.edit(...))` over such a view raises
   `TransactionTimePinReadOnlyError(transaction-time-pin-read-only)` at the
-  verb, in either concurrency mode, before any DML. Deriving a copy is not a
-  route to rewriting the Transaction-Time past, and no concurrency mode is
+  verb, under either Effective Concurrency Strategy, before any DML. Deriving a
+  copy is not a route to rewriting the Transaction-Time past, and no strategy is
   either. A plainly constructed instance has no views and no lifecycle state to
   carry, so an edited construction and an edited node stay distinguishable by
   **provenance** rather than by editedness: the Snapshot inspection surface
@@ -2666,11 +2666,11 @@ or descriptor authoring form and performs no audit stamping.
   Every option is **sentinel-backed** so an omitted option is distinguishable
   from an explicitly passed value: `None` (the default) means *apply the
   outermost defaults when this call opens the transaction — `retries=10`,
-  `concurrency="locking"`, `retry_optimistic_conflicts=False` — and inherit
+  `concurrency="optimistic"`, `retry_optimistic_conflicts=False` — and inherit
   the active transaction's settings when this call joins one*. The closure
   receives the Parallax Transaction (`def fn(tx): ...`),
-  `tx.find(query)` reads inside the transaction (participating per the selected
-  mode), and the call returns a `TransactionResult[T]` carrying that callback's
+  `tx.find(query)` reads inside the transaction (participating according to each
+  Entity's Effective Concurrency Strategy), and the call returns a `TransactionResult[T]` carrying that callback's
   `.value` **only after a durable commit** — on rollback, or on commit failure,
   the call raises instead of returning the value as though durable. A `with`-block demarcation is
   deliberately not offered: the core retry contract requires re-executing the
@@ -2737,7 +2737,7 @@ or descriptor authoring form and performs no audit stamping.
   neutral write on `Database`, or public flush: runtime returns and retains no
   `WritePlan`, and a buffered write executes only when a dependency batch or the
   outer boundary's finalization requires it.
-- **Nesting, ownership, and participation mode.** A `db.transact` call while
+- **Nesting, ownership, and concurrency preference.** A `db.transact` call while
   a transaction is already active on the current thread **joins** it, but only
   through the exact `Database` object that opened the boundary. The outermost
   demarcation retains a strong reference to that object, and a nested call joins
@@ -2784,10 +2784,14 @@ or descriptor authoring form and performs no audit stamping.
   settings. The active transaction
   is tracked per thread; a transaction object is owned by its outermost
   closure invocation and is not thread-safe; escaping references raise on use
-  after the scope ends. The per-transaction participation mode is
-  `locking` (default — a lockable in-transaction object find carries the
-  dialect's shared read lock) or `optimistic` (the same object find omits that
-  lock; keyed writes gate on the observed version analogue). Connections open
+  after the scope ends. The per-transaction `concurrency` option is a
+  **Concurrency Preference**, not one strategy imposed uniformly on every
+  Entity. `optimistic` is the default: an Entity with an explicit version or a
+  Transaction-Time-derived `in_z` key uses lock-free participating reads plus
+  its observation-bound gate, while an unversioned Non-Temporal Entity falls
+  back to the dialect's shared read lock. `locking` forces that shared-lock,
+  ungated strategy for every lockable Entity. One transaction may therefore use
+  optimistic concurrency for one Entity and Locking for another. Connections open
   at the database's default isolation (READ COMMITTED); no isolation knob is
   exposed.
 - **Buffering, flush, and read-your-own-writes.** Writes buffer in the unit of
@@ -2822,7 +2826,8 @@ or descriptor authoring form and performs no audit stamping.
   assignments including the framework-derived version advance, and its
   **Affected Rows Policy** — the expected effect plus the neutral outcome class a
   shortfall names. Whether a gate applies is decided while the step is being
-  settled, from the transaction's mode, so no lowering reads that mode; a missing
+  settled from the transaction's Concurrency Preference and the target Entity's
+  Optimistic Lock Facet, so no lowering reads either input; a missing
   required observation is likewise a planning error raised there, never a null
   value that reaches SQL.
 - **Temporal topology is settled, not lowered.** A temporal mutation expands
@@ -2912,16 +2917,17 @@ or descriptor authoring form and performs no audit stamping.
   come from the handle-configured
   **Clock Strategy** (default system UTC; tests inject a fixed clock) — never
   from callers, with no per-operation overrides. Temporal `update`/`terminate`
-  follow the same prior-observation rule as versioned writes (below): the
+  follow the same authentic-evidence rule as versioned writes (below). The
   values a bitemporal rectangle split carries forward, the close's own **address**,
-  and — under optimistic mode only — the observed `tx_start` (`in_z`) its gate
-  binds all come
-  from the milestone this unit of work observed via a transaction-scoped
-  read — never from an implicit write-path read. The **close target is
+  and — under the Optimistic strategy only — the observed `tx_start` (`in_z`)
+  its gate binds all come from the source's privately retained observation,
+  never from visible caller-authored fields or an implicit write-path read.
+  Under Locking that source must have participated in this transaction; under
+  Optimistic it may come from a standalone Parallax read. The **close target is
   mode-independent** (`m-bitemp-write`, ADR 0046): the lowered `UPDATE` is keyed on
   the primary key plus one exclusive upper bound per declared as-of axis — the
   observed rectangle's own `thru_z` for a Bitemporal Entity, then the invariant
-  `out_z = infinity` — in both `locking` and `optimistic` mode, and only the
+  `out_z = infinity` — under both Effective Concurrency Strategies, and only the
   trailing `and in_z = ?` gate varies. A key plus `out_z = infinity` alone would
   be ambiguous on a Bitemporal Entity, whose one key may have several disjoint
   Valid-Time rectangles current on Transaction Time.
@@ -3076,66 +3082,48 @@ or descriptor authoring form and performs no audit stamping.
   a value with no Change Record belongs to that verb, which knows what the
   developer called; the codec knows only that it received a value its operation
   does not accept.
-- **Versioned keyed writes require prior observation; set-based writes
-  materialize.** One observation rule, matching `m-opt-lock` exactly, ordered
-  no-op-first. **First**, no-op detection: an update whose effective change
-  set is empty is dropped before any observation or locking concern — no
-  observation read, no DML, zero round trips (the corpus's no-op scenario
-  shape). **Then**, for every write that survives, the version driving a keyed
-  write must already have been **observed by this unit of work** — recorded by
-  a transaction-scoped read (`tx.find`, `tx.read_neutral` in graph form, or the
-  set-based materialize read
-  below) that in `locking` mode takes the dialect's shared read lock and in
-  `optimistic` mode takes none. A keyed `update` or `delete` of a versioned
-  row this unit of work never observed **raises** in either mode; the
-  framework never issues an implicit resolving `SELECT` on behalf of a keyed
-  write (which would add round trips no corpus golden represents). The one
-  exception is `tx.write_neutral`'s explicit `WriteObservation` argument, which
-  is the observation itself rather than a reference to a recorded one: the
-  developer verbs offer no such parameter, so a typed caller can reach this
-  rule only through a read this unit of work performed. Explicit evidence is
-  the caller's assertion about a row it already holds, and the framework still
-  issues no read of its own to check it — under `optimistic` concurrency the
-  version gate the write carries is what the database checks, and under
-  `locking` concurrency evidence carried in from outside the unit of work
-  brings no shared read lock with it, so the caller owns that exposure. A keyed
-  write row that itself authors an explicit value for the entity's version
-  attribute **raises** `CallerAuthoredVersionError`, checked before the
-  observation-required rule above even runs: the version is framework-owned
-  end to end (ADR 0013), so a row-carried value is never a legitimate
-  alternative to the unit of work's own recorded observation, observed or
-  not. **Both modes accept the same observation**, and there is no further
-  license to check. A locking-mode close is ungated, so the shared read lock
-  is its only protection — and it holds that lock on exactly the row it
-  closes, because the close's address is the milestone its own written value
-  came from and the observation supplying that address is the record of the
-  read that locked that milestone. Nothing about the read survives into the
-  observation, so no observation of a milestone is less licensing than another
-  observation of that same milestone: an audit read of a row already read at
-  latest revokes nothing. A write whose value came from a **historical**
-  milestone never reaches this rule at all — such a value carries a finite
-  Transaction-Time pin, which
-  `TransactionTimePinReadOnlyError(transaction-time-pin-read-only)` refuses at
-  the verb, in **both** concurrency modes, before buffering and before any
-  DML. The lowered
-  `UPDATE` sets the effective
-  changed fields plus the framework-computed advance (`observed + 1`) in
-  both modes; the lowered `DELETE` is keyed on the primary key alone. Both
-  add the `and version = ?` gate binding the observed version in
-  **optimistic mode only** — the gate follows the concurrency mode
-  uniformly, never the mutation kind, exactly as a temporal close's gate
-  does. The zero-row outcome follows that same gate, never the verb: a
-  **gated** statement affecting zero rows is the optimistic conflict —
-  surfaced always, retriable only via `retry_optimistic_conflicts=True` —
-  while an **ungated** locking-mode statement that still required a prior
-  observation affecting zero rows is the never-retriable stale-write outcome,
-  identically for the keyed `UPDATE`, the keyed `DELETE`, and the temporal
-  close: no gate could have caused the shortfall, so it is a consistency
-  violation rather than a detected lost update. **Set-based** writes — selecting rows by
-  predicate rather than key — are the one path where the framework itself
-  materializes observations: one real read resolves the predicate to rows,
-  recording each matched row's observed version (locked in `locking` mode),
-  then one keyed per-object statement per written row — for the
+- **Keyed writes require authentic evidence; set-based writes materialize.**
+  Existing-object Typed and Wire keyed writes accept only a source produced by a
+  Parallax read; neither an ordinary mapping nor a caller-authored version is
+  evidence. The framework never issues an implicit resolving `SELECT` on behalf
+  of a keyed verb. After ordinary no-op and assignment legality rules, the target
+  Entity's Effective Concurrency Strategy decides what evidence that authentic
+  source must supply. Under **Locking**, the source must have been read by this
+  transaction through `tx.find` or `tx.wire.find`, proving that the current
+  attempt acquired and still holds the shared row lock. A value from `db.find` or
+  `db.wire.find` cannot prove that participation. Under **Optimistic**, an
+  authentic versioned or temporal source may instead carry the version or exact
+  milestone observed by a standalone read; the emitted database gate detects an
+  intervening writer. An unversioned Non-Temporal Entity has no gate and therefore
+  uses the Locking evidence rule even when the Unit Work's preference is
+  `optimistic`.
+
+  A keyed assignment payload that tries to change the Entity's version Attribute
+  raises `CallerAuthoredVersionError` before evidence resolution. An authentic
+  Typed or Wire read source naturally exposes its observed version as ordinary
+  Entity data, but that property is read-only for write authoring and its visible
+  value is never trusted as evidence; Parallax uses the source's privately retained
+  observation. The version is framework-owned end to end (ADR 0013). A write whose source came
+  from a finite historical Transaction-Time milestone is likewise refused at the
+  verb as `TransactionTimePinReadOnlyError(transaction-time-pin-read-only)` under
+  either effective strategy. A Locking temporal close is licensed by the
+  current-transaction read that locked the exact milestone it closes; an
+  Optimistic close may bind the authentic standalone source's observed `in_z`.
+
+  A versioned `UPDATE` advances the framework-computed version under either
+  strategy, and a `DELETE` writes no version. The target Entity's effective
+  Optimistic strategy appends the observed-version or `in_z` gate uniformly for
+  update, delete, and temporal close; Locking emits no gate for any of them. A
+  gated zero-row shortfall is `OptimisticLockConflictError`, surfaced always and
+  retriable only through `retry_optimistic_conflicts=True`. An ungated,
+  observation-requiring shortfall is the never-retriable stale-write outcome.
+
+  **Set-based** writes — selecting rows by predicate rather than key — are the
+  path where the framework itself materializes observations: one participating
+  read resolves the predicate to rows, recording each matched row's observed
+  version or milestone and taking shared locks exactly when that Entity's
+  Effective Concurrency Strategy is Locking, then one keyed per-object statement
+  per written row — for the
   assignment-bearing verbs (`update_where` / `update_until_where`), each
   resolved row that survives the per-row no-op elimination below; for the
   delete and terminate verbs, every resolved row (`1 + N` round trips, a
@@ -3147,16 +3135,13 @@ or descriptor authoring form and performs no audit stamping.
   carries, because every one of them shapes a **result** and a set-based write
   has none to shape. This is the single definition; the set-based verbs below
   reference it rather than restating fragments. Version values are
-  framework-owned end
-  to end: the version field on a node, an edited copy, or any caller input
-  never feeds the gate or the advance. The developer-experience consequence
-  is stated plainly: an edited copy whose original node was fetched
-  **outside** the writing transaction cannot be updated directly — the row
-  must be re-fetched inside the transaction before `tx.update`, in either
-  mode, because a value carrying no milestone this unit of work observed
-  matches no evidence (the §3 stale-web-edit recipe re-fetches for exactly
-  this reason, and is legal under both modes).
-- **A finite Transaction-Time pin is read-only in both modes.** Every keyed
+  framework-owned end to end: the version field on a node, an edited copy, or
+  caller input never feeds the gate or advance. An edited authentic versioned or
+  temporal source fetched outside the writing transaction may be updated directly
+  only when its Entity's Effective Concurrency Strategy is Optimistic. The same
+  source under Locking, and every unversioned Non-Temporal source, must be reread
+  inside the transaction so the required shared lock is actually held.
+- **A finite Transaction-Time pin is read-only under both strategies.** Every keyed
   verb — `insert`, `update`, `delete`, `terminate`, and the `*_until` trio —
   refuses a source value whose view is pinned at a finite Transaction-Time
   instant, raising exported
@@ -3166,7 +3151,7 @@ or descriptor authoring form and performs no audit stamping.
   `m-txtime-write`'s invariant that Parallax never rewrites the Transaction-Time
   past *across the required parity surface* (`m-identity-map`), and that
   invariant is a property of the write surface rather than of a concurrency
-  decision. Optimistic mode is emphatically **not** a way past it: the same DML
+  decision. The Optimistic strategy is emphatically **not** a way past it: the same DML
   under optimistic concurrency addresses a superseded milestone, whose gate
   matches zero rows, so it raises `OptimisticLockConflictError` instead of
   silently rewriting history. An **Edited Copy** carries its source's `Pin`
@@ -3198,9 +3183,10 @@ or descriptor authoring form and performs no audit stamping.
   read: every `Database` over one store shares this one lifecycle, so a value a
   second handle read is this source's value, and a non-transactional
   `db.find(...)` produces one exactly as `tx.find(...)` does (ADR 0010). What such
-  a value may then be written into is the prior-observation rule's answer rather
-  than provenance's — that rule is what carries consistency across reads, and it
-  asks only whether THIS unit of work observed the row. The
+  a value may then be written into is the write-evidence rule's answer rather
+  than provenance's: an effective Locking strategy requires this transaction's
+  participating read, while an effective Optimistic strategy may accept the
+  authentic standalone source's retained version or milestone. The
   refusal is decided in the shared keyed-verb preamble, **before** any row is
   derived, so a refused value reaches no codec, no buffer, no plan, and no
   adapter — it is never a translation of a lower-level failure, and no
@@ -3229,12 +3215,15 @@ or descriptor authoring form and performs no audit stamping.
 - **A keyed temporal close requires a value that names a milestone.** The
   observation a temporal `update`/`terminate`/`*_until` settles against is
   resolved at the verb from the **value being written** — its own `Edge` —
-  rather than from the primary key it carries. A fresh instance, an edited copy
-  of one, and a copy carried across transactions all name no milestone, so no
-  observation can match and the verb raises `UnobservedMilestoneError` before
-  any DML, in either mode. In practice this means a temporal close is spelled
-  "find it, then close what you found": `tx.terminate(Position(id=1, ...))` is
-  not a supported shape, while `tx.terminate(tx.find(...).result())` is. The
+  rather than from the primary key it carries. A fresh instance and an edited
+  copy of one name no milestone, so no observation can match and the verb raises
+  its write-evidence error before any DML. A source returned by `tx.find` names
+  the milestone and, under effective Locking, proves the lock is held. An
+  authentic source returned by `db.find` also names the milestone and may be
+  closed directly under effective Optimistic because its retained `in_z`
+  supplies the database gate; it is insufficient under Locking. Thus
+  `tx.terminate(Position(id=1, ...))` is unsupported, while closing an authentic
+  current Typed or Wire read source follows the Entity's effective strategy. The
   same-transaction exemption is unaffected — an inserted instance names no
   milestone either, so the insert and a close derived from it resolve to one
   slot and the pair still coalesces.
@@ -3270,12 +3259,13 @@ or descriptor authoring form and performs no audit stamping.
   **mutation-compatible** (the single definition above), and one that is not
   raises `QueryDefinitionError(query-not-mutation-compatible)` before Unit of
   Work buffering, SQL, or adapter access;
-  resolution happens inside the transaction and participates in its mode
-  (shared-locked under `locking`, lock-free under `optimistic`). Lowering
+  resolution happens inside the transaction and participates according to the
+  target Entity's Effective Concurrency Strategy (shared-locked under Locking,
+  lock-free under Optimistic). Lowering
   follows the observation rule above, with **per-path no-op semantics**.
   Versioned and temporal targets **materialize** — the resolving read records
-  per-row observations, then one keyed per-row statement (gated in optimistic
-  mode), `1 + N` round trips where `N` counts **written** rows. Which rows
+  per-row observations, then one keyed per-row statement (gated under
+  Optimistic), `1 + N` round trips where `N` counts **written** rows. Which rows
   are written is per-verb. For the assignment-bearing verbs, per-row no-op
   elimination applies: a resolved row whose assignments all equal its
   current values (structural equality, the same rules as the change-record
@@ -3312,7 +3302,7 @@ or descriptor authoring form and performs no audit stamping.
   family is **rejected before SQL** with the corpus's
   `subtype-write-set-based-unsupported` classification (`m-inheritance-089`).
   Corpus coverage is annotated per flavor, honestly: versioned non-temporal
-  `update_where` is covered in both modes (`m-opt-lock-003` / `-004`) and its
+  `update_where` is covered under both strategies (`m-opt-lock-003` / `-004`) and its
   mixed equal/changed-row elimination in `m-opt-lock-014`; versioned
   `delete_where` is predicate-shaped in `m-opt-lock-015`; readless
   non-versioned `delete_where` / `update_where` (including Entity Layout
@@ -3342,7 +3332,7 @@ or descriptor authoring form and performs no audit stamping.
   committed as a silent zero-row no-op (`m-unit-work-013` / `-014`). A result
   reporting **more** rows than its target's cardinality permits — an accepted
   identity, storage, or lowering invariant broken, never a concurrency outcome
-  — raises the never-retriable `CardinalityCorruptionError` in either mode,
+  — raises the never-retriable `CardinalityCorruptionError` under either strategy,
   for a keyed write or a temporal close alike. No compatibility case drives it:
   a temporal close addresses its Milestone Target by what is now the physical
   primary key, so no corpus fixture can stage state a correctly addressed close

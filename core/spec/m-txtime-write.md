@@ -102,7 +102,8 @@ to that planner:
   `terminate`;
 - the **gate basis** — the observed `txStart` an optimistic close binds, which
   the planner renders as a Temporal Gate or discards for the explicit `Ungated`
-  decision according to the transaction's concurrency mode (`m-opt-lock`); and
+  decision according to the Entity's Effective Concurrency Strategy
+  (`m-opt-lock`); and
 - the **successors** — the chained current rows, each with its Insert Origin: a
   successor carrying the predecessor's represented state is `CarriedFrom` it, and
   one carrying the mutation's new state is `ChangedFrom` it. An `insert` has no
@@ -128,34 +129,34 @@ that those steps belong together — there is no group, wrapper, or identifier.
 A close addresses `m-unit-work`'s **Milestone Target**: the primary key plus one
 write-required **exclusive upper bound per As-Of Axis**. For Transaction-Time-Only
 data that is the single `out_z = infinity` bound. The target carries no axis
-start, no observation, no gate, and no concurrency mode, and it is **identical in
-both concurrency modes** (ADR 0046) — only the gate differs.
+start, no observation, no gate, and no Effective Concurrency Strategy, and it is
+**identical under both strategies** (ADR 0046) — only the gate differs.
 
 That separation is what makes a **stale** observation safe — one that named the
 current milestone when it was read and that another transaction has since
 superseded. Such a write still targets `out_z = infinity`; it never copies a
-finite historical end into the target, so closed history is never mutated. In
-optimistic mode the stale observed `in_z` rides the gate, matches zero rows
-against the newer current milestone, and reports the conflict. Locking mode
+finite historical end into the target, so closed history is never mutated. Under
+Optimistic the stale observed `in_z` rides the gate, matches zero rows against
+the newer current milestone, and reports the conflict. Locking
 renders no gate and needs none: its observing read holds a shared read lock on
 the milestone the observation names, which is the same milestone the close
 addresses, so no concurrent writer can have superseded it (`m-opt-lock`,
 `m-read-lock`).
 
 An observation of a milestone the Transaction-Time past holds is a different
-thing and never reaches planning in either mode: it could only come from a view
+thing and never reaches planning under either strategy: it could only come from a view
 pinned at a finite Transaction-Time instant, and mutating one is refused at the
 authoring surface by the read-only rule above.
 
 ## Affected-row conflict contract for closes
 
 The close `UPDATE` **MUST** affect exactly **one** row. A close that affects
-**zero** rows is an **error in any mode** — it **MUST NOT** silently succeed and
+**zero** rows is an **error under either strategy** — it **MUST NOT** silently succeed and
 proceed to chain the replacement row (which would produce a duplicate or an
 orphaned current row). The current-row predicate (`pk and out_z = infinity`) alone
 is **not** a sufficient gate against a concurrent writer: a fully-committed
 concurrent chain leaves a *new* current row that a stale close would silently
-re-close — a lost update — so under optimistic mode the close carries an additional
+re-close — a lost update — so under Optimistic the close carries an additional
 `and <in_z> = ?` gate on the `txStart` the unit of work **observed**:
 
 ```text
@@ -166,7 +167,7 @@ binds: [<txInstant>, <pk>, <infinity>, <observedTxStart>]
 The observed `in_z` is the optimistic-lock **version analogue** for a temporal
 entity, which carries no version column (the `m-opt-lock` composition,
 `m-opt-lock --> m-temporal-read`). A zero-row gated close is a **retriable
-conflict** (`updatedRows != 1`); a zero-row *ungated* (locking-mode) close is a
+conflict** (`updatedRows != 1`); a zero-row *ungated* (effective-Locking) close is a
 distinct **non-retriable** stale/consistency error — a categorically different
 outcome from the gated conflict, but not a new `m-db-error` category: `then`
 carries no `errorClass` for either shape, since a conflict (gated or ungated) is

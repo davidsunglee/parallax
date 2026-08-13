@@ -1,22 +1,26 @@
 # m-read-lock — In-Transaction Shared Read Lock
 
-`m-read-lock` is the default (`locking`-mode) correctness strategy: an
+`m-read-lock` is the **Locking Effective Concurrency Strategy**: an
 in-transaction **object find** that intends to write acquires a **shared row lock**
 so a concurrent transaction cannot mutate the row out from under a
 read-then-write. Per the dependency graph, `m-read-lock` depends on `m-unit-work`
-(the transaction whose mode selects it) and `m-dialect` (which owns the lock
+(whose Concurrency Preference and Optimistic Lock Facet select it per Entity) and
+`m-dialect` (which owns the lock
 spelling and application). The optimistic alternative — an object find that
 takes no lock and a version-gated write — is `m-opt-lock`.
 
 ## Automatic read-lock correctness
 
 Reads performed **inside a unit of work** that intends to write **MUST** be made
-correct without the caller writing locking SQL. The default (`locking`) in-
-transaction **object find** acquires a **shared row lock**.
+correct without the caller writing locking SQL. An in-transaction **object
+find** governed by the effective Locking strategy acquires a **shared row lock**.
+That strategy applies when the caller explicitly selects the `locking`
+preference and as the mandatory fallback for an unversioned Non-Temporal Entity
+under the default `optimistic` preference.
 
 **Whether and where to attach the lock is a `m-dialect` decision**, not
-`m-unit-work`'s: the unit of work asks the dialect to apply this transaction's read
-lock to a compiled read, and the dialect returns an object find with its
+`m-unit-work`'s: the unit of work asks the dialect to apply the Entity's effective
+read strategy to a compiled read, and the dialect returns an object find with its
 shared-row-lock form appended (Postgres `for share of t0`; MariaDB `lock in share
 mode`). `m-unit-work` contains no dialect-specific SQL shaping.
 
@@ -37,7 +41,7 @@ on both:
   (`m-opt-lock`). Observing one rectangle licenses closing that rectangle alone.
 - A temporal observation names **one milestone** and records nothing about the
   read that produced it, so what it says about lock scope is exactly what this
-  section says: the read locked that one row. A locking-mode write is licensed
+  section says: the read locked that one row. A write under Locking is licensed
   by that lock because it closes that same milestone — the observation it
   settles against is the one filed under the milestone its own written value
   came from (`m-unit-work`, Write Observation). A read at a **historical**
