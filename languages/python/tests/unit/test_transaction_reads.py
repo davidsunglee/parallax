@@ -52,7 +52,7 @@ from parallax.core.unit_work import (
     FixedClock,
     OptimisticLockConflictError,
 )
-from parallax.snapshot import DeferredFeatureError, QueryTargetError, SnapshotDecodingError
+from parallax.snapshot import DeferredFeatureError, InvalidData, QueryTargetError
 from parallax.snapshot.handle import (
     Database,
     FindResult,
@@ -130,8 +130,9 @@ def test_a_participating_find_hands_the_executor_a_collector() -> None:
 def test_an_invalid_participating_find_records_no_observation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A classified graph is refused before publication, so none of the rows that
-    # contributed to it may license a later write in this unit of work.
+    # The read now publishes its classified root in band rather than refusing,
+    # and the row behind that root still licenses no later write: a classified
+    # projection is never observed, so the unit of work is handed nothing for it.
     recorded: list[ReadObservations] = []
 
     def recording(*args: object) -> None:
@@ -142,11 +143,12 @@ def test_an_invalid_participating_find_records_no_observation(
     port = RecordingPort(rows=[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}])
 
     def fn(tx: Transaction) -> None:
-        with pytest.raises(SnapshotDecodingError):
-            tx.find(mm.Account.where(mm.Account.id == 1))
+        root = tx.find(mm.Account.where(mm.Account.id == 1)).checked().result()
+        assert isinstance(root, InvalidData)
+        assert root.data is None
 
     account_db(port).transact(fn)
-    assert recorded == []
+    assert [observations.rows for observations in recorded] == [[]]
 
 
 def test_the_collector_takes_every_attached_level_row_as_that_level_lands() -> None:

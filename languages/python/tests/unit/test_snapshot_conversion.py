@@ -23,7 +23,7 @@ from typing import Any, cast
 import pytest
 from _corpus_model_support import formed
 from _corpus_model_support import model as corpus_model
-from _snapshot_graph_support import documents_of, identity_of
+from _snapshot_graph_support import documents_of, identity_of, invalid_record
 
 from parallax.conformance import vo_models
 from parallax.core.base import (
@@ -67,7 +67,6 @@ from parallax.snapshot.materialize import (
     InvalidRootInput,
     LevelContext,
     MergeScope,
-    SnapshotDecodingError,
     SnapshotNodeInput,
     attribute_value,
     convert_row,
@@ -723,12 +722,15 @@ def test_an_invalid_requested_root_key_is_non_hydrating(row: dict[str, object], 
     assert graph.has_issues
     assert isinstance(graph.roots[0], InvalidRootInput)
     assert graph.roots[0].issues[0].code == code
-    with pytest.raises(SnapshotDecodingError):
-        materialize_graph(
-            graph,
-            CUSTOMER,
-            graph_construction_of(vo_models.CUSTOMER_MODEL),
-        )
+    (root,) = materialize_graph(
+        graph,
+        CUSTOMER,
+        graph_construction_of(vo_models.CUSTOMER_MODEL),
+    )
+    published = invalid_record(root)
+    assert published.data is None
+    assert published.object_key is None
+    assert {issue.code for issue in published.issues} == {code}
 
 
 def test_direct_attribute_null_and_unknown_family_tag_become_node_issues() -> None:

@@ -19,7 +19,7 @@ from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from _snapshot_graph_support import GraphBuilder
+from _snapshot_graph_support import GraphBuilder, invalid_record
 
 from _support import snapshot_models as sm
 from parallax.conformance import read_models, vo_models
@@ -42,11 +42,11 @@ from parallax.core.entity._model import model_of
 from parallax.core.metamodel import AttributeIdentity, EntityIdentity, RelationshipIdentity
 from parallax.core.object_query import IncludeSegment
 from parallax.core.temporal_read import Pin
+from parallax.core.unit_work import ObjectKey
 from parallax.snapshot import SnapshotInspectionError, edge_of, is_view_loaded, pin_of, view
 from parallax.snapshot.materialize import (
     InvalidRootInput,
     RelationshipViewKey,
-    SnapshotDecodingError,
     SnapshotGraphInput,
     SnapshotNodeInput,
     SnapshotNodeRef,
@@ -302,19 +302,24 @@ def test_duplicate_projections_preserve_each_physical_stored_data_issue() -> Non
     assert item.issues[0].code == "stored-data-leaf-undecodable"
 
 
-def test_an_invalid_descendant_refuses_the_reachable_root() -> None:
-    # Publication is graph-atomic: a clean root cannot hide an invalid included
-    # child merely because the root's own members are constructible.
+def test_an_invalid_descendant_classifies_the_reachable_root() -> None:
+    # Classification is root-granular: a clean root cannot hide an invalid
+    # included child merely because the root's own members are constructible,
+    # and the child's undecodable leaf leaves no value to hydrate the root from.
     builder = GraphBuilder(_STORY_ORDERS)
     order = builder.node("Order", _ORDER_ROW)
     invalid = builder.node("OrderItem", {**_ITEM_ROW, "shipped_on": "not-a-date"})
     builder.attach(order, "parallax.compatibility.Order.items", (invalid,))
 
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        builder.materialize(order)
-    assert refusal.value.member == AttributeIdentity(
-        EntityIdentity(_NAMESPACE, "OrderItem"), "shippedOn"
-    )
+    published = invalid_record(builder.materialize(order)[0])
+    assert published.data is None
+    assert {(issue.code, issue.member) for issue in published.issues} == {
+        (
+            "stored-data-leaf-undecodable",
+            AttributeIdentity(EntityIdentity(_NAMESPACE, "OrderItem"), "shippedOn"),
+        )
+    }
+    assert published.object_key == ObjectKey(EntityIdentity(_NAMESPACE, "Order"), (("id", 1),))
 
 
 def test_an_unrequested_invalid_projection_does_not_refuse_a_clean_root() -> None:
@@ -339,8 +344,11 @@ def test_an_invalid_descendant_key_never_enters_logical_identity() -> None:
         merge.node(index) for index, entity in enumerate(merge.order) if entity.name == "OrderItem"
     )
     assert [issue.code for issue in item.issues] == ["stored-data-primary-key-null"]
-    with pytest.raises(SnapshotDecodingError):
-        builder.materialize(order)
+    published = invalid_record(builder.materialize(order)[0])
+    assert published.data is None
+    # The child's own identity never decoded, so its diagnosis locates no object
+    # while the root's record still locates the result position it invalidated.
+    assert [issue.object_key for issue in published.issues] == [None]
 
 
 # --------------------------------------------------------------------------- #
