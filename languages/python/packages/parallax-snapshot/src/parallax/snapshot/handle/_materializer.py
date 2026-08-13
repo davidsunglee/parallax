@@ -4,8 +4,9 @@ Private handle implementation, never re-exported: ``_read`` is its only caller,
 and the frozen graphs it builds reach callers as :class:`~parallax.snapshot.handle.Snapshot`
 roots.
 
-It owns nothing about carriers, identity, or merging — :mod:`parallax.snapshot.materialize`
-settles all three before this module runs — and nothing about Pydantic, cycle
+It owns nothing about carriers, identity, merging, or root classification —
+:mod:`parallax.snapshot.materialize` settles all four before this module runs —
+and nothing about Pydantic, cycle
 closure, or the private lifecycle slot, which
 :class:`~parallax.core.entity.EntityGraphConstruction` owns. What is left is the
 thin translation between them: merge state in, ``allocate`` / ``populate`` calls
@@ -13,6 +14,13 @@ out, and one :class:`~parallax.snapshot._inspection.SnapshotNodeState` per node
 built in the state factory, where every handle resolves to its final instance.
 Building the state there is what closes a cyclic narrowed view without exposing a
 partial object.
+
+Construction covers the classified scope rather than the whole merge: a node no
+publishable root reaches is never allocated, so atomic publication keeps meaning
+*everything constructible publishes together, or nothing does*. Each root then
+leaves here as itself or as its :class:`~parallax.snapshot.materialize.InvalidData`
+record — the classification decided which; this module only fills a hydrated
+root's ``data``.
 
 A merged view's shape carries its own arm: a tuple is loaded-many (empty included),
 ``None`` is loaded-null, and a lone allocation index is loaded-one. A relationship
@@ -27,7 +35,7 @@ non-terminating, so such nodes are shareable but not hashable.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 from parallax.core.entity import LOADED_NULL as _LOADED_NULL
 from parallax.core.entity import (
@@ -45,30 +53,46 @@ from parallax.core.metamodel import EntityIdentity, EntityMetadata, Metamodel
 from parallax.core.temporal_read import Edge, milestone_edge_of
 from parallax.snapshot._inspection import SnapshotNodeState
 from parallax.snapshot.materialize import (
+    ClassifiedRoot,
+    ConformingRoot,
+    GraphClassification,
     GraphMerge,
+    InvalidData,
     MergedNode,
     SnapshotGraphInput,
+    classify_roots,
     merge_graph_input,
-    require_publishable,
 )
 
 __all__ = ["materialize_graph"]
 
 
 def materialize_graph(
-    graph: SnapshotGraphInput, model: Metamodel, construction: EntityGraphConstruction
-) -> tuple[object, ...]:
-    """Merge ``graph`` and construct its roots as frozen Entity instances.
+    graph: SnapshotGraphInput,
+    model: Metamodel,
+    construction: EntityGraphConstruction,
+    *,
+    ordinal_offset: int = 0,
+) -> tuple[object | InvalidData[object], ...]:
+    """Merge ``graph``, classify its roots, and construct the ones that hydrate.
 
-    Every node is allocated before any is populated, so a cycle closes on an
-    object that already exists, and the whole result publishes at once or not at
-    all.
+    Every constructible node is allocated before any is populated, so a cycle
+    closes on an object that already exists, and everything constructible
+    publishes at once or not at all.
+
+    ``ordinal_offset`` is where this graph's roots start in the ordered result the
+    caller publishes, which is nonzero only where one Snapshot spans several
+    graphs.
     """
-    return _Materialization(merge_graph_input(graph, model), model).run(construction)
+    merge = merge_graph_input(graph, model)
+    return _Materialization(
+        merge, model, classify_roots(merge, model, ordinal_offset=ordinal_offset)
+    ).run(construction)
 
 
 class _Materialization:
-    """One graph's construction drive: the merge, and the two callbacks over it.
+    """One graph's construction drive: the merge, its classification, and the two
+    callbacks over them.
 
     Between the two callbacks it retains the allocation handles and nothing else.
     A node's own merged inputs are recomposed from the merge at each callback, so
@@ -76,24 +100,31 @@ class _Materialization:
     beside Snapshot Graph Input and the merge itself.
     """
 
-    __slots__ = ("_handles", "_merge", "_model", "_pending")
+    __slots__ = ("_classification", "_handles", "_merge", "_model", "_pending", "_scope")
 
-    def __init__(self, merge: GraphMerge, model: Metamodel) -> None:
+    def __init__(
+        self, merge: GraphMerge, model: Metamodel, classification: GraphClassification
+    ) -> None:
         self._merge = merge
         self._model = model
-        self._handles: list[NodeHandle] = []
-        self._pending = iter(range(len(merge.order)))
+        self._classification = classification
+        self._scope = tuple(
+            index for index in range(len(merge.order)) if index not in classification.excluded
+        )
+        self._handles: dict[int, NodeHandle] = {}
+        self._pending = iter(self._scope)
 
-    def run(self, construction: EntityGraphConstruction) -> tuple[object, ...]:
-        require_publishable(self._merge)
-        return construction.construct(self.build, state_factory=self.state)
+    def run(
+        self, construction: EntityGraphConstruction
+    ) -> tuple[object | InvalidData[object], ...]:
+        return self._published(construction.construct(self.build, state_factory=self.state))
 
     def build(self, writer: EntityGraphWriter) -> tuple[NodeHandle, ...]:
-        self._handles = [writer.allocate(identity) for identity in self._merge.order]
-        for index, handle in enumerate(self._handles):
+        self._handles = {index: writer.allocate(self._merge.order[index]) for index in self._scope}
+        for index in self._scope:
             node = self._merge.node(index)
             writer.populate(
-                handle,
+                self._handles[index],
                 node.attributes,
                 node.value_objects,
                 tuple(
@@ -102,7 +133,25 @@ class _Materialization:
                     if merged.view.narrowed_view is None
                 ),
             )
-        return tuple(self._handles[index] for index in self._merge.roots if index is not None)
+        return tuple(
+            self._handles[root.node] for root in self._classification.roots if root.node is not None
+        )
+
+    def _published(
+        self, constructed: tuple[object, ...]
+    ) -> tuple[object | InvalidData[object], ...]:
+        """Each result root as itself or as its record, in result order.
+
+        A conforming graph hands the constructed roots over untouched, so the
+        common case allocates no wrapper at all.
+        """
+        if self._classification.conforming:
+            return constructed
+        instances = iter(constructed)
+        return tuple(
+            next(instances) if isinstance(root, ConformingRoot) else _record(root, instances)
+            for root in self._classification.roots
+        )
 
     def state(self, view: ResolutionView, handle: NodeHandle) -> SnapshotNodeState:
         """One node's Snapshot state, built in allocation order.
@@ -154,6 +203,16 @@ class _Materialization:
         return milestone_edge_of(
             declaring, {entry.identity: entry.value for entry in node.attributes}
         )
+
+
+def _record(root: ClassifiedRoot, instances: Iterator[object]) -> InvalidData[object]:
+    """One classified root's published record.
+
+    A hydrating root takes the next constructed instance, in the same order its
+    handle was answered; a non-hydrating one takes nothing at all, which is what
+    keeps the two iterators aligned without an index.
+    """
+    return root.published(None if root.node is None else next(instances))
 
 
 def _by_arm[T](

@@ -16,10 +16,15 @@ produce and consume it.
 - :mod:`~parallax.snapshot.materialize._merge` collapses duplicate projections
   into one deterministic allocation order, holding integers and references only;
   classified issues ride each winning logical node without deduplication.
+- :mod:`~parallax.snapshot.materialize._classify` attributes those issues to the
+  result roots whose requested include trees reach them, and settles the
+  construction scope that attribution implies.
+- :mod:`~parallax.snapshot.materialize._invalid` holds the public record a
+  classified root publishes in place of itself.
 - :mod:`~parallax.snapshot.materialize._neutral` turns one merge into class-free
   nodes and views — the second materializer, a peer of the typed one rather than
-  a wrapper of it. Both materializers call the same publication refusal before
-  deriving identity, observation evidence, or allocating results.
+  a wrapper of it. It still calls the shared publication refusal; the typed
+  materializer classifies instead, in band.
 
 Nothing here constructs an Entity: this scope is granted the shared carrier
 algebra (``parallax.core.entity._graph_input``) and nothing else of the Entity
@@ -40,6 +45,13 @@ SQL generation.
 
 from __future__ import annotations
 
+from parallax.snapshot.materialize._classify import (
+    ClassifiedRoot,
+    ConformingRoot,
+    GraphClassification,
+    RootClassification,
+    classify_roots,
+)
 from parallax.snapshot.materialize._convert import (
     SNAPSHOT_DECODING_FAILED,
     LevelContext,
@@ -62,6 +74,11 @@ from parallax.snapshot.materialize._input import (
     has_invalid_key,
     logical_key,
     validate_graph_input,
+)
+from parallax.snapshot.materialize._invalid import (
+    InvalidData,
+    InvalidDataError,
+    StoredDataIssue,
 )
 from parallax.snapshot.materialize._merge import (
     GraphMerge,
@@ -89,7 +106,12 @@ from parallax.snapshot.materialize._publication import (
 
 __all__ = [
     "SNAPSHOT_DECODING_FAILED",
+    "ClassifiedRoot",
+    "ConformingRoot",
+    "GraphClassification",
     "GraphMerge",
+    "InvalidData",
+    "InvalidDataError",
     "InvalidRootInput",
     "LevelContext",
     "LogicalKey",
@@ -106,14 +128,17 @@ __all__ = [
     "NeutralValue",
     "ObservationKeying",
     "RelationshipViewKey",
+    "RootClassification",
     "SnapshotDecodingError",
     "SnapshotGraphInput",
     "SnapshotNodeInput",
     "SnapshotNodeRef",
     "SnapshotRelationshipViewInput",
+    "StoredDataIssue",
     "StoredDataIssueCode",
     "StoredDataIssueInput",
     "attribute_value",
+    "classify_roots",
     "convert_row",
     "has_invalid_key",
     "logical_key",

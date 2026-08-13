@@ -50,7 +50,8 @@ public-surface check promises. Where the exported names live:
   gate every entry point crosses before any I/O.
 - :mod:`~parallax.snapshot.handle._read` — :func:`find` and :func:`find_history`,
   the one production find executor, plus the result surface they build
-  (:class:`Snapshot`, :class:`FindResult`, :class:`HistoryFindResult`,
+  (:class:`Snapshot`, :class:`CheckedSnapshot`, :class:`FindResult`,
+  :class:`HistoryFindResult`,
   :class:`NoResultFound`, :class:`TooManyResultsFound`) and
   :class:`ObservationCollector`, the optional seam a participating read hands its
   materialized rows to. :class:`NeutralReadRequest` is what the model-neutral
@@ -60,7 +61,12 @@ The model-neutral read vocabulary — :class:`NeutralRows`, :class:`NeutralGraph
 :class:`NeutralGraphs`, :class:`NeutralNode`, :class:`NeutralNodeView` — is
 :mod:`parallax.snapshot.materialize`'s, built by the second materializer beside
 the merge both materializers consume, and re-exported here beside the entry
-points that answer it. :class:`~parallax.core.unit_work.ObservationKey` is
+points that answer it. The invalid-result vocabulary a classified root publishes
+— :class:`InvalidData`, :class:`StoredDataIssue`, :class:`InvalidDataError`, and
+:class:`~parallax.core.unit_work.ObjectKey`, the identity a record locates itself
+by — is re-exported for the same reason: a ``Snapshot`` element's own type must
+be nameable beside the accessor that answers it.
+:class:`~parallax.core.unit_work.ObservationKey` is
 re-exported for the same reason the execution-provenance subset is: a caller
 cannot use :meth:`Transaction.write_neutral`'s documented contract, or read the
 key a neutral node publishes, without naming the type.
@@ -107,7 +113,7 @@ from parallax.core.execution_log import (
     TransactionNotCommittedError,
     TransactionResult,
 )
-from parallax.core.unit_work import ObservationKey
+from parallax.core.unit_work import ObjectKey, ObservationKey
 from parallax.snapshot.handle._database import (
     Database,
     TransactionOptionConflictError,
@@ -124,6 +130,7 @@ from parallax.snapshot.handle._features import DeferredFeatureError
 from parallax.snapshot.handle._planning import build_write_planner, plan_temporal_close
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.handle._read import (
+    CheckedSnapshot,
     FindResult,
     HistoryFindResult,
     NeutralReadRequest,
@@ -146,22 +153,28 @@ from parallax.snapshot.handle._write_inputs import (
 from parallax.snapshot.handle._write_lowering import stream_lowered
 from parallax.snapshot.handle._write_types import WriteLoweringError
 from parallax.snapshot.materialize import (
+    InvalidData,
+    InvalidDataError,
     NeutralGraph,
     NeutralGraphs,
     NeutralNode,
     NeutralNodeView,
     NeutralReadOutput,
     NeutralRows,
+    StoredDataIssue,
 )
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
+    "CheckedSnapshot",
     "Database",
     "DatabaseCall",
     "DeferredFeatureError",
     "ExecutionLog",
     "FindResult",
     "HistoryFindResult",
+    "InvalidData",
+    "InvalidDataError",
     "KeyedWriteValueError",
     "NeutralGraph",
     "NeutralGraphs",
@@ -172,6 +185,7 @@ __all__ = [
     "NeutralReadResult",
     "NeutralRows",
     "NoResultFound",
+    "ObjectKey",
     "ObservationCollector",
     "ObservationKey",
     "QueryTargetError",
@@ -179,6 +193,7 @@ __all__ = [
     "Snapshot",
     "SnapshotConnectionError",
     "SnapshotMaterializationError",
+    "StoredDataIssue",
     "TooManyResultsFound",
     "Transaction",
     "TransactionAttempt",

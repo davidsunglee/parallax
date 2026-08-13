@@ -4,7 +4,11 @@ Snapshot graph materialization and the developer handle over the spine. The
 package re-exports exactly the spec §8 surface: :func:`connect` (the
 composition-root entry point — application code constructs a concrete adapter
 and calls ``parallax.snapshot.connect(adapter, model)``), :class:`Snapshot`
-(``Snapshot[T]``), and the execution-provenance subset a result carries —
+(``Snapshot[T]``) with :class:`CheckedSnapshot` (``CheckedSnapshot[T]``), its
+checked view, the in-band invalid-result vocabulary a classified root publishes
+— :class:`InvalidData`, :class:`StoredDataIssue`, :class:`ObjectKey` (the
+identity a record locates itself by), and the :class:`InvalidDataError` a
+default accessor raises — and the execution-provenance subset a result carries —
 :class:`ReadTrace`, :class:`DatabaseCall`, :class:`ExecutionLog`,
 :class:`TransactionAttempt`, and :class:`TransactionResult`, with
 :class:`TransactionInProgressError` / :class:`TransactionNotCommittedError`
@@ -48,16 +52,21 @@ from parallax.snapshot._inspection import (
 )
 from parallax.snapshot.handle import (
     KEYED_WRITE_VALUE_CODES,
+    CheckedSnapshot,
     DatabaseCall,
     DeferredFeatureError,
     ExecutionLog,
+    InvalidData,
+    InvalidDataError,
     KeyedWriteValueError,
     NoResultFound,
+    ObjectKey,
     QueryTargetError,
     ReadTrace,
     Snapshot,
     SnapshotConnectionError,
     SnapshotMaterializationError,
+    StoredDataIssue,
     TooManyResultsFound,
     TransactionAttempt,
     TransactionInProgressError,
@@ -70,11 +79,15 @@ from parallax.snapshot.materialize import SnapshotDecodingError
 
 __all__ = [
     "KEYED_WRITE_VALUE_CODES",
+    "CheckedSnapshot",
     "DatabaseCall",
     "DeferredFeatureError",
     "ExecutionLog",
+    "InvalidData",
+    "InvalidDataError",
     "KeyedWriteValueError",
     "NoResultFound",
+    "ObjectKey",
     "QueryTargetError",
     "ReadTrace",
     "Snapshot",
@@ -82,6 +95,7 @@ __all__ = [
     "SnapshotDecodingError",
     "SnapshotInspectionError",
     "SnapshotMaterializationError",
+    "StoredDataIssue",
     "TooManyResultsFound",
     "TransactionAttempt",
     "TransactionInProgressError",

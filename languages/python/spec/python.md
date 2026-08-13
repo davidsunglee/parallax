@@ -2100,16 +2100,30 @@ or descriptor authoring form and performs no audit stamping.
   `INFINITY` sentinel; a SQL NULL temporal end is invalid and is never replaced
   with that sentinel.
 
-  Phase 2 exposes no in-band invalid-result API. Both typed and neutral
-  materializers call one publication gate over the reachable merged graph before
-  allocating objects, deriving Object Keys, or invoking observation keying. The
-  gate raises exported `SnapshotDecodingError(ValueError)` with stable code
-  `snapshot-decoding-failed`, the concrete `EntityIdentity`, and the applicable
-  `AttributeIdentity | ValueObjectIdentity | ValueObjectAttributeIdentity |
-  None`. It exposes no raw stored value and carries no decoding cause. Invalid
-  roots and issue-bearing requested descendants therefore publish nothing;
-  unrequested projections do not affect the verdict. Phase 3 replaces this
-  transitional refusal with the specified in-band classification surface.
+  The typed graph materializer classifies those findings in band (§4). Every
+  other lane — the values lane, milestone-set staging, and the neutral graph
+  materializer — still calls one publication gate over the reachable merged graph
+  before allocating objects, deriving Object Keys, or invoking observation
+  keying. The gate raises exported `SnapshotDecodingError(ValueError)` with
+  stable code `snapshot-decoding-failed`, the concrete `EntityIdentity`, and the
+  applicable `AttributeIdentity | ValueObjectIdentity |
+  ValueObjectAttributeIdentity | None`. It exposes no raw stored value and
+  carries no decoding cause. Invalid roots and issue-bearing requested
+  descendants therefore publish nothing on those lanes; unrequested projections
+  do not affect the verdict.
+- **Root classification and the construction scope.** Classification runs once
+  over the merged graph, after merging and before construction, and no seam below
+  it re-judges what it answers. A root is invalid when any node its requested
+  include tree reaches carries an issue; node-level unions and pruning are
+  forbidden, one shared invalid node repeats its diagnosis in every affected
+  root, and duplicate diagnoses within one root collapse. A root all of whose
+  issues admit the normative collapse hydrates and carries its complete value; a
+  root reaching `stored-data-leaf-undecodable`, `stored-data-attribute-null`,
+  `stored-data-family-tag-unknown`, or either invalid-primary-key code hydrates
+  nothing. Construction covers exactly the nodes the hydrating roots reach, so
+  atomic publication means everything constructible publishes together. A graph
+  carrying no issue is answered without a reachability walk and constructs
+  unfiltered and unwrapped.
 - **Single graph input.** Projection merging may retain a transient logical
   identity index, references to input projections, and slot-level winner
   references. It MUST NOT clone each node's scalar, Value Object, and
@@ -2652,6 +2666,65 @@ or descriptor authoring form and performs no audit stamping.
   the view's `tuple` for a to-many hop (the related node or `None` for
   to-one); a single-concrete view is typed as that concrete class, and a
   multi-concrete view's elements are their concrete classes.
+
+### Invalid stored data
+
+- **The result element.** A Snapshot element is `T | InvalidData[T]`: a root
+  whose whole requested include tree conforms is delivered as `T`, and a root
+  some stored state contradicted is delivered as its record. Stored-data
+  violations are always reported; there is no ignore posture, connection
+  setting, or Object Query clause.
+- **The published shapes**, all frozen and slotted, exported from
+  `parallax.snapshot`:
+
+  ```python
+  class StoredDataIssue:
+      code: StoredDataIssueCode
+      entity: EntityIdentity
+      member: MemberIdentity | None
+      object_key: ObjectKey | None
+
+
+  class InvalidData[T]:
+      issues: frozenset[StoredDataIssue]
+      data: T | None
+      object_key: ObjectKey | None
+      version: int | None
+      edge: Edge | None
+      ordinal: int
+
+
+  class InvalidDataError(RuntimeError):
+      invalid_data: tuple[InvalidData[object], ...]
+  ```
+
+  A `StoredDataIssue` names the concrete Entity it was judged against — the
+  queried family root for an unknown family tag, which is the only case with no
+  `member` — and the affected object, absent where an invalid primary key or a
+  family tag naming no concrete subtype left no identity. It carries no raw
+  stored value, no
+  cause, no mutable details mapping, and no separately authoritative message.
+  `InvalidData.issues` is unordered: identical diagnoses collapse, and reaching
+  one affected object through several include paths does not duplicate it.
+  `InvalidData.object_key` names the RESULT root rather than an affected
+  descendant; `version` is populated for a decoded explicitly versioned root and
+  `edge` for a decoded temporal one, so the two never appear together; `ordinal`
+  is always the zero-based position in the ordered result. These are diagnostic
+  facts only — they expose no observation address and grant no write authority.
+  `InvalidDataError.invalid_data` is nonempty and is the exception's sole
+  machine-readable report; its message derives a count and an issue-code summary.
+- **Default and checked views.** `Snapshot`'s accessors are the default view:
+  each performs its existing arity check FIRST and then raises `InvalidDataError`
+  when the roots it narrowed to carry invalid data. `result()` and
+  `result_or_none()` therefore report exactly their sole element's record, and
+  `results()` aggregates every invalid root in result order.
+  `Snapshot.checked() -> CheckedSnapshot[T]` is a read-only view over the same
+  result storage: it performs no I/O, forwards `pin` and `execution`, keeps the
+  same arity errors, and returns `T | InvalidData[T]` in band from `result()`,
+  `result_or_none()`, and `results()`. `checked().results()` is the complete
+  eager checked surface; a caller partitions that finite union with ordinary
+  collection operations, and Parallax adds no partition method or side
+  collection.
 
 ## 5. Transactions and writes
 
@@ -3980,7 +4053,7 @@ hatchling.
 |---|---|---|---|---|---|
 | `parallax-core` (the common runtime) | production | all `parallax.core.*` scopes of §7 (behavioral modules, Entity/Object Query frontend, driver-free postgres dialect strategy) | `pydantic` | (none) | `parallax.core`: the `Entity`/`TxTemporal`/`Bitemporal`/`ValueObject` bases, `Attr`, `Rel`, `attr`, `rel`, `index`, `desc`, `asc`, `Int32`, `Float32`, `MAX`, `Sequence`, the cardinality, persistence, inheritance role and strategy values, `DomainModel`, the Object Query authoring vocabulary — `ObjectQuery`, `AttributeExpr`, `RelationshipPath`, `Predicate`, `AllPredicate`, `SortKey` — `LATEST`, `VALID_TIME`, `TX_TIME`, `Pin`, `Edge`, and its documented errors |
 | `parallax-descriptor` (descriptor interchange) | production, optional | `parallax.descriptor` (`m-descriptor` plus its private Hub orchestration) | `pyyaml`, `jsonschema` | `parallax-core` | `parallax.descriptor`: `domain_model_from_document`, `domain_model_from_json`, `domain_model_from_yaml`, `export_document`, `export_json`, `export_yaml`, `validate_inheritance_families`, `DescriptorError`, `DescriptorSyntaxError`, `DescriptorSchemaError`, `DescriptorValueError`, `DescriptorSchemaViolation`, `DescriptorValueViolation`, `DescriptorExportError` |
-| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
+| `parallax-snapshot` (snapshot lifecycle extension) | production | `parallax.snapshot.*` (`materialize`, `handle`) | (none beyond core) | `parallax-core` | `parallax.snapshot`: `connect()`, `Snapshot[T]`, `CheckedSnapshot[T]`, `InvalidData[T]`, `StoredDataIssue`, `ObjectKey`, `InvalidDataError`, `ReadTrace`, `DatabaseCall`, `ExecutionLog`, `TransactionAttempt`, `TransactionResult`, `TransactionInProgressError`, `TransactionNotCommittedError`, `is_view_loaded`, `view`, `pin_of`, `edge_of`, `UnloadedRelationshipError`, `DeferredFeatureError`, `SnapshotConnectionError`, `SnapshotDecodingError`, `SnapshotMaterializationError`, `SnapshotInspectionError`, `TransactionOwnershipError`, `QueryTargetError` |
 | `parallax-postgres` (Postgres database adapter) | production | `parallax.postgres.*` (concrete port over psycopg) | `psycopg[binary]` (sole declarer) | `parallax-core` | `parallax.postgres`: `PostgresAdapter` |
 | `parallax-conformance` | development-only | `parallax.conformance.*` (CLI, case format, corpus loading, provider harness) | `testcontainers`, `jsonschema` | `parallax-core`, `parallax-descriptor`, `parallax-snapshot`, `parallax-postgres` | `parallax-conformance` console script (`describe` / `compile` / `run`) |
 

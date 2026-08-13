@@ -39,6 +39,12 @@ degenerate case — the transformed row IS the representation, so it publishes t
 neutral result directly and shares with :func:`find` exactly the canonicalization,
 compilation, and call recording that decide behavior.
 
+They differ in what stored state that contradicts the model does to a result. The
+typed lane classifies it: a Snapshot element is ``T | InvalidData[T]``, the
+default accessors here refuse an invalid result after their own arity check, and
+:meth:`Snapshot.checked` reads the same storage in band. Every other lane still
+refuses the whole read at the shared publication gate.
+
 What a find EXECUTED is `m-execution-log`'s vocabulary, not this module's: each
 call is bracketed into a
 :class:`~parallax.core.execution_log.TraceRecorder`, whose sealed Read Trace is
@@ -82,12 +88,13 @@ from parallax.snapshot.handle._errors import QueryTargetError, SnapshotMateriali
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.handle._preflight import preflight
 from parallax.snapshot.materialize import (
+    InvalidData,
+    InvalidDataError,
     LevelContext,
     MergeScope,
     NeutralGraph,
     ObservationKeying,
     RelationshipViewKey,
-    SnapshotDecodingError,
     SnapshotGraphInput,
     SnapshotNodeRef,
     attribute_value,
@@ -101,6 +108,7 @@ from parallax.snapshot.materialize import (
 )
 
 __all__ = [
+    "CheckedSnapshot",
     "FindResult",
     "HistoryFindResult",
     "NeutralReadRequest",
@@ -128,51 +136,102 @@ class TooManyResultsFound(RuntimeError):
     (spec §2/§3)."""
 
 
+def _sole[T](roots: tuple[T, ...], *, empty_is_absence: bool) -> T | None:
+    """The one root ``roots`` holds, applying the arity rule both views share.
+
+    Arity is settled before stored-data validity is even consulted, so a
+    zero-root or multi-root refusal reads the same whichever view asked — the
+    checked view narrows what a VALID single root is delivered as, never how many
+    roots an accessor accepts.
+    """
+    count = len(roots)
+    if count == 0:
+        if empty_is_absence:
+            return None
+        raise NoResultFound("the snapshot matched no roots")
+    if count > 1:
+        expected = "0 or 1" if empty_is_absence else "exactly 1"
+        raise TooManyResultsFound(f"the snapshot matched {count} roots, expected {expected}")
+    return roots[0]
+
+
+def _invalid_records[T](
+    roots: tuple[T | InvalidData[T], ...],
+) -> tuple[InvalidData[object], ...]:
+    """Every invalid root in result order — empty for a wholly conforming read."""
+    return tuple(
+        cast("InvalidData[object]", root) for root in roots if isinstance(root, InvalidData)
+    )
+
+
 class Snapshot[T]:
     """The Python reification of a core Snapshot Graph (spec §3): ``db.find`` /
     ``tx.find``'s result. The complete surface: :meth:`result`,
     :meth:`result_or_none`, :meth:`results` (a FRESH ``list[T]`` per call),
+    :meth:`checked`,
     :attr:`pin` (the lowered as-of coordinates — only genuinely PINNED axes; a
     scanned axis is absent), :attr:`execution` (the read's own Read Trace), and
     ``__repr__``. Deliberately ABSENT: iteration / ``len`` / truthiness /
     indexing on the container, refresh or write methods, and any lazy
     behavior — every accessor is a pure in-memory read over roots already
     materialized in full by ``db.find`` / ``tx.find``.
+
+    A root whose stored state contradicted the model is held as its
+    :class:`~parallax.snapshot.materialize.InvalidData` record. The accessors
+    here are the DEFAULT view: they check arity first and then refuse the read
+    with :class:`~parallax.snapshot.materialize.InvalidDataError`, so a caller
+    who never asks about stored-data validity can never silently receive a
+    record in place of an Entity. :meth:`checked` is the same storage read in
+    band instead. There is no ignore posture and no partition API: a finite
+    union is partitioned with ordinary collection operations.
     """
 
-    __slots__ = ("_execution", "_pin", "_roots")
+    __slots__ = ("_execution", "_invalid", "_pin", "_roots")
 
-    _roots: tuple[T, ...]
+    _roots: tuple[T | InvalidData[T], ...]
+    _invalid: tuple[InvalidData[object], ...]
     _pin: Pin
     _execution: ReadTrace
 
-    def __init__(self, roots: tuple[T, ...], pin: Pin, execution: ReadTrace) -> None:
+    def __init__(
+        self, roots: tuple[T | InvalidData[T], ...], pin: Pin, execution: ReadTrace
+    ) -> None:
         self._roots = roots
+        self._invalid = _invalid_records(roots)
         self._pin = pin
         self._execution = execution
 
     def result(self) -> T:
-        """The single matched root; raises on zero or more than one."""
-        count = len(self._roots)
-        if count == 0:
-            raise NoResultFound("the snapshot matched no roots")
-        if count > 1:
-            raise TooManyResultsFound(f"the snapshot matched {count} roots, expected exactly 1")
-        return self._roots[0]
+        """The single matched root; raises on zero, on more than one, and on
+        invalid stored data — in that order."""
+        root = _sole(self._roots, empty_is_absence=False)
+        self._require_valid()
+        return cast("T", root)
 
     def result_or_none(self) -> T | None:
-        """The single matched root, or ``None`` on zero; raises on more than one."""
-        count = len(self._roots)
-        if count == 0:
-            return None
-        if count > 1:
-            raise TooManyResultsFound(f"the snapshot matched {count} roots, expected 0 or 1")
-        return self._roots[0]
+        """The single matched root, or ``None`` on zero; raises on more than one
+        and then on invalid stored data."""
+        root = _sole(self._roots, empty_is_absence=True)
+        self._require_valid()
+        return cast("T | None", root)
 
     def results(self) -> list[T]:
         """Every matched root as an ordinary ``list[T]`` the caller owns (a
-        fresh copy per call — this accessor is unaffected by node immutability)."""
-        return list(self._roots)
+        fresh copy per call — this accessor is unaffected by node immutability).
+
+        Eager access aggregates: every invalid root is reported together, in
+        result order, rather than one refusal per call.
+        """
+        self._require_valid()
+        return cast("list[T]", list(self._roots))
+
+    def checked(self) -> CheckedSnapshot[T]:
+        """This result's checked view — the same roots, delivered in band.
+
+        A lightweight read-only view over the same storage: it performs no I/O,
+        copies no root, and forwards :attr:`pin` and :attr:`execution` unchanged.
+        """
+        return CheckedSnapshot(self._roots, self._pin, self._execution)
 
     @property
     def pin(self) -> Pin:
@@ -192,6 +251,71 @@ class Snapshot[T]:
     def __repr__(self) -> str:
         return (
             f"Snapshot(roots={len(self._roots)}, pin={self._pin!r}, "
+            f"round_trips={self._execution.round_trips})"
+        )
+
+    def _require_valid(self) -> None:
+        """Refuse once arity is settled, carrying exactly the roots in range.
+
+        An accessor that already narrowed to one root has narrowed this tuple to
+        that root's own record too, so the singular accessors report one and
+        ``results()`` reports them all without either restating the rule.
+        """
+        if self._invalid:
+            raise InvalidDataError(self._invalid)
+
+
+class CheckedSnapshot[T]:
+    """A :class:`Snapshot`'s roots as ``T | InvalidData[T]`` (spec §4).
+
+    The whole eager checked surface: the same three arity accessors, the same
+    :attr:`pin` and :attr:`execution`, and nothing else. It shares the result
+    storage rather than owning a second copy of it, does no I/O, and refuses
+    nothing a default accessor would have accepted — an invalid root simply
+    arrives as its record instead of raising.
+    """
+
+    __slots__ = ("_execution", "_pin", "_roots")
+
+    _roots: tuple[T | InvalidData[T], ...]
+    _pin: Pin
+    _execution: ReadTrace
+
+    def __init__(
+        self, roots: tuple[T | InvalidData[T], ...], pin: Pin, execution: ReadTrace
+    ) -> None:
+        self._roots = roots
+        self._pin = pin
+        self._execution = execution
+
+    def result(self) -> T | InvalidData[T]:
+        """The single matched root, valid or classified; raises on zero or more
+        than one."""
+        return cast("T | InvalidData[T]", _sole(self._roots, empty_is_absence=False))
+
+    def result_or_none(self) -> T | InvalidData[T] | None:
+        """The single matched root, valid or classified, or ``None`` on zero;
+        raises on more than one."""
+        return _sole(self._roots, empty_is_absence=True)
+
+    def results(self) -> list[T | InvalidData[T]]:
+        """Every matched root, valid or classified, as a fresh ``list`` the
+        caller owns and may partition with ordinary collection operations."""
+        return list(self._roots)
+
+    @property
+    def pin(self) -> Pin:
+        """The source Snapshot's own pin, forwarded unchanged."""
+        return self._pin
+
+    @property
+    def execution(self) -> ReadTrace:
+        """The source Snapshot's own Read Trace, forwarded unchanged."""
+        return self._execution
+
+    def __repr__(self) -> str:
+        return (
+            f"CheckedSnapshot(roots={len(self._roots)}, pin={self._pin!r}, "
             f"round_trips={self._execution.round_trips})"
         )
 
@@ -1006,20 +1130,36 @@ def snapshot_from_find_result(
 def snapshot_from_history_result(
     result: HistoryFindResult, meta: Metamodel, construction: EntityGraphConstruction
 ) -> Snapshot[Any]:
+    """Every milestone's roots as ONE ordered result.
+
+    Each milestone graph is classified on its own — graph-local identity never
+    promises reuse across milestones — while a classified root's ordinal names
+    its position in the published result rather than in the graph it came from,
+    so the offset advances by what each graph contributed.
+    """
     roots: list[Any] = []
     for graph in result.graphs:
-        roots.extend(_materialize_result_graph(graph, meta, construction))
+        roots.extend(
+            _materialize_result_graph(graph, meta, construction, ordinal_offset=len(roots))
+        )
     return Snapshot(tuple(roots), Pin(), result.execution)
 
 
 def _materialize_result_graph(
-    graph: SnapshotGraphInput, meta: Metamodel, construction: EntityGraphConstruction
+    graph: SnapshotGraphInput,
+    meta: Metamodel,
+    construction: EntityGraphConstruction,
+    *,
+    ordinal_offset: int = 0,
 ) -> tuple[Any, ...]:
-    """Refuse classified stored data before graph-construction failure translation."""
+    """Translate a graph-construction or lifecycle failure exactly once.
+
+    Stored state that contradicts the model is no failure here: it was
+    classified before construction and publishes in band, so what reaches this
+    wrapper is only a defect in building the Entity graph a valid row describes.
+    """
     try:
-        return materialize_graph(graph, meta, construction)
-    except SnapshotDecodingError:
-        raise
+        return materialize_graph(graph, meta, construction, ordinal_offset=ordinal_offset)
     except Exception as exc:
         raise SnapshotMaterializationError(
             "the read succeeded but its Entity graph could not be built "

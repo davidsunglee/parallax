@@ -37,8 +37,12 @@ from parallax.core.sql_gen import LoweredStatement
 from parallax.core.temporal_read import Pin, TemporalReadError
 from parallax.snapshot import (
     DeferredFeatureError,
+    InvalidData,
+    InvalidDataError,
+    ObjectKey,
     QueryTargetError,
     SnapshotMaterializationError,
+    StoredDataIssue,
     handle,
 )
 from parallax.snapshot.handle import _database
@@ -645,17 +649,23 @@ def test_every_execution_reads_the_querys_own_canonical_node(
 # The materialization boundary translates a graph-construction or lifecycle    #
 # failure exactly once, and publishes nothing.                                 #
 # --------------------------------------------------------------------------- #
-def test_an_undecodable_columns_leaf_is_a_stored_data_refusal() -> None:
+def test_an_undecodable_columns_leaf_is_a_non_hydrating_root() -> None:
     # The read itself succeeded, but `balance` lies outside its declared Decimal
-    # value space. Conversion classifies that state before graph construction.
+    # value space. Conversion classifies that state before graph construction,
+    # and no conforming scalar exists to hydrate the root from.
     port = QueuePort([[{"id": 1, "owner": "Ada", "balance": "not-a-decimal", "version": 1}]])
     db = handle.Database.connect(port, ACCOUNT)
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        db.find(mm.Account.where(mm.Account.id == 1))
-    assert refusal.value.code == "snapshot-decoding-failed"
-    assert refusal.value.member == AttributeIdentity(
-        EntityIdentity("parallax.compatibility", "Account"), "balance"
-    )
+    root = db.find(mm.Account.where(mm.Account.id == 1)).checked().result()
+    assert isinstance(root, InvalidData)
+    assert root.data is None
+    assert {(issue.code, issue.member) for issue in root.issues} == {
+        (
+            "stored-data-leaf-undecodable",
+            AttributeIdentity(EntityIdentity("parallax.compatibility", "Account"), "balance"),
+        )
+    }
+    assert root.version == 1
+    assert root.edge is None
     assert len(port.executed) == 1
 
 
@@ -668,16 +678,39 @@ def test_a_query_failure_keeps_its_own_classification_at_that_boundary() -> None
         db.find(Policy.where(Policy.all).as_of(valid_time=LATEST))
 
 
-def test_an_issue_bearing_graph_is_refused_at_publication_and_publishes_nothing() -> None:
-    # Conversion carries the stored-data issue into graph input. The shared
-    # publication gate surfaces the decoding refusal before graph construction,
-    # rather than translating it as a materialization failure.
+def test_an_issue_bearing_graph_classifies_rather_than_failing_materialization() -> None:
+    # Conversion carries the stored-data issue into graph input, and
+    # classification answers it in band. A default accessor still refuses — with
+    # the invalid-data report, never with a materialization failure.
     port = QueuePort([[{"id": 1, "name": "Ada", "address": {"city": 7}}]])
     db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
-    with pytest.raises(SnapshotDecodingError) as refusal:
-        db.find(vo.Customer.where(vo.Customer.id == 1))
-    assert refusal.value.code == "snapshot-decoding-failed"
+    snapshot = db.find(vo.Customer.where(vo.Customer.id == 1))
+    with pytest.raises(InvalidDataError) as refusal:
+        snapshot.result()
     assert not isinstance(refusal.value, SnapshotMaterializationError)
+    (record,) = refusal.value.invalid_data
+    assert record.data is None
+    # Both diagnoses ride one record: the required `street` key is absent and the
+    # stored `city` is no string. The undecodable leaf is what makes it
+    # non-hydrating; absence alone would have collapsed.
+    assert {issue.code for issue in record.issues} == {
+        "stored-data-required-member-absent",
+        "stored-data-leaf-undecodable",
+    }
+
+
+def test_the_values_lane_still_refuses_an_invalid_requested_root_key() -> None:
+    # In-band classification is the typed graph lane's; every other lane still
+    # crosses the shared publication gate, and a root whose own key never decoded
+    # is the arm of it with no converted node behind the result position at all.
+    port = QueuePort([[{"id": None, "name": "Ada"}]])
+    db = handle.Database.connect(port, vo.CUSTOMER_MODEL)
+    request = handle.NeutralReadRequest.rows(
+        deserialize_query({"target": "Customer", "predicate": {"all": {}}})
+    )
+    with pytest.raises(SnapshotDecodingError) as refusal:
+        db.read_neutral(request)
+    assert refusal.value.code == "snapshot-decoding-failed"
 
 
 def test_a_per_node_state_failure_is_translated_once_and_publishes_nothing() -> None:
@@ -733,6 +766,85 @@ def test_snapshot_has_no_iteration_len_or_indexing() -> None:
     assert not hasattr(snapshot, "__iter__")
     assert not hasattr(snapshot, "__len__")
     assert not hasattr(snapshot, "__getitem__")
+
+
+def _invalid(ordinal: int, code: str = "stored-data-attribute-null") -> InvalidData[object]:
+    """One published record, spelled the way classification publishes it."""
+    return InvalidData(
+        issues=frozenset(
+            {StoredDataIssue(code, EntityIdentity("parallax.compatibility", "Account"))}  # pyright: ignore[reportArgumentType]
+        ),
+        data=None,
+        object_key=ObjectKey(
+            EntityIdentity("parallax.compatibility", "Account"), (("id", ordinal),)
+        ),
+        version=None,
+        edge=None,
+        ordinal=ordinal,
+    )
+
+
+def test_arity_is_settled_before_stored_data_validity_is_consulted() -> None:
+    # Arity precedence is unchanged: an empty or plural result answers its own
+    # arity error whether or not the roots it holds are valid.
+    with pytest.raises(handle.NoResultFound):
+        _snapshot(()).result()
+    with pytest.raises(handle.TooManyResultsFound):
+        _snapshot((_invalid(0), _invalid(1))).result()
+    with pytest.raises(handle.TooManyResultsFound):
+        _snapshot((_invalid(0), 2)).result_or_none()
+
+
+def test_a_singular_accessor_reports_exactly_the_root_it_narrowed_to() -> None:
+    record = _invalid(0)
+    for accessor in ("result", "result_or_none"):
+        with pytest.raises(InvalidDataError) as refusal:
+            getattr(_snapshot((record,)), accessor)()
+        assert refusal.value.invalid_data == (record,)
+
+
+def test_eager_results_aggregates_every_invalid_root_in_result_order() -> None:
+    first, second = _invalid(0), _invalid(1, "stored-data-family-tag-unknown")
+    with pytest.raises(InvalidDataError) as refusal:
+        _snapshot((first, "valid", second)).results()
+    assert refusal.value.invalid_data == (first, second)
+    assert "2 result root(s)" in str(refusal.value)
+    assert "stored-data-attribute-null, stored-data-family-tag-unknown" in str(refusal.value)
+
+
+def test_the_invalid_data_report_is_the_errors_sole_machine_readable_surface() -> None:
+    record = _invalid(0)
+    error = InvalidDataError((record,))
+    assert error.invalid_data == (record,)
+    for absent in ("code", "issues", "records", "cause"):
+        assert not hasattr(error, absent)
+    with pytest.raises(ValueError, match="at least one record"):
+        InvalidDataError(())
+
+
+def test_the_checked_view_returns_the_union_in_band_over_the_same_storage() -> None:
+    record = _invalid(0)
+    snapshot = _snapshot((record, "valid"))
+    checked = snapshot.checked()
+    assert checked.results() == [record, "valid"]
+    assert checked.results() is not checked.results()
+    assert checked.pin is snapshot.pin
+    assert checked.execution is snapshot.execution
+    assert "CheckedSnapshot(roots=2" in repr(checked)
+    # Same storage, so a second view is another window on one result rather than
+    # another copy of it.
+    assert snapshot.checked().results() == checked.results()
+
+
+def test_the_checked_view_keeps_the_same_arity_rule_and_refuses_nothing_else() -> None:
+    record = _invalid(0)
+    assert _snapshot((record,)).checked().result() is record
+    assert _snapshot((record,)).checked().result_or_none() is record
+    assert _snapshot(()).checked().result_or_none() is None
+    with pytest.raises(handle.NoResultFound):
+        _snapshot(()).checked().result()
+    with pytest.raises(handle.TooManyResultsFound):
+        _snapshot((record, "valid")).checked().result()
 
 
 def test_snapshot_pin_and_execution_and_repr() -> None:

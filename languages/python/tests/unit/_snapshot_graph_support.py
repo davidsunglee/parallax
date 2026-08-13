@@ -18,6 +18,7 @@ carried by this MODULE's underscore. Never imported by production code.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import cast
 
 from parallax.core import DomainModel
 from parallax.core.entity import graph_construction_of
@@ -33,6 +34,7 @@ from parallax.core.metamodel import (
 from parallax.core.temporal_read import Pin
 from parallax.snapshot.handle._materializer import materialize_graph
 from parallax.snapshot.materialize import (
+    InvalidData,
     LevelContext,
     MergeScope,
     RelationshipViewKey,
@@ -42,9 +44,21 @@ from parallax.snapshot.materialize import (
     convert_row,
 )
 
-__all__ = ["GraphBuilder", "documents_of", "identity_of"]
+__all__ = ["GraphBuilder", "documents_of", "identity_of", "invalid_record"]
 
 _NO_PIN = Pin()
+
+
+def invalid_record(published: object) -> InvalidData[object]:
+    """The classified record ``published`` is, narrowed for the assertions on it.
+
+    A published root is typed as widely as the roots it may hold, so narrowing it
+    by ``isinstance`` alone leaves the record's own element type unknown under
+    pyright strict. Naming the narrowing once keeps every assertion site reading
+    as a claim about the record rather than about the type checker.
+    """
+    assert isinstance(published, InvalidData), published
+    return cast("InvalidData[object]", published)
 
 
 def identity_of(model: Metamodel, name: str) -> EntityIdentity:
@@ -109,8 +123,14 @@ class GraphBuilder:
         """The whole graph input, roots in the order given."""
         return self._scope.build(roots, pin)
 
-    def materialize(self, *roots: SnapshotNodeRef, pin: Pin = _NO_PIN) -> tuple[object, ...]:
-        """Merge and construct this graph's roots as frozen Entity instances."""
+    def materialize(
+        self, *roots: SnapshotNodeRef, pin: Pin = _NO_PIN
+    ) -> tuple[object | InvalidData[object], ...]:
+        """Merge, classify, and publish this graph's roots.
+
+        A conforming root is its frozen Entity instance; one some stored state
+        contradicted is its :class:`InvalidData` record instead.
+        """
         return materialize_graph(
             self.graph(*roots, pin=pin), self._model, graph_construction_of(self._domain)
         )
