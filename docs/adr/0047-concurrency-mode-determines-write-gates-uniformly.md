@@ -1,11 +1,11 @@
-# Concurrency mode determines write gates uniformly
+# Effective concurrency strategy determines write gates uniformly
 
 Every observation-requiring write uses the same closed concurrency decision.
-Optimistic mode emits a Version Gate for a versioned Non-Temporal update or
-delete and a Temporal Gate for a temporal close. Locking mode emits neither
+The Optimistic strategy emits a Version Gate for a versioned Non-Temporal update
+or delete and a Temporal Gate for a temporal close. The Locking strategy emits neither
 predicate and records an explicit Ungated decision because the required prior
 observation's shared read lock provides the concurrency guarantee. Observations
-remain mandatory in both modes.
+remain mandatory under both strategies.
 
 Planned Updates and Planned Deletes encode gate applicability as
 `NonTemporalConcurrency = Unversioned | Versioned(VersionGate | Ungated)`.
@@ -19,7 +19,7 @@ Gate payloads retain only what lowering needs to add the equality predicate:
 `VersionGate(attribute: AttributeIdentity, observed_version: int)` and
 `TemporalGate(start_attribute: AttributeIdentity, observed_start: Instant)`.
 `Ungated` is payload-free. Advanced versions and close instants already appear
-in assignments, while full observations and concurrency mode are consumed
+in assignments, while full observations and Effective Concurrency Strategy are consumed
 during planning rather than repeated in gates.
 
 Affected-row classification follows that decision. A gated shortfall is a
@@ -34,3 +34,10 @@ delete, even in locking mode. That made gate meaning depend on the mutation
 kind and allowed a locking failure to masquerade as an optimistic conflict.
 Parallax removes that asymmetry; Reladomo likewise appends its optimistic
 predicate only under optimistic participation.
+
+ADR 0059 changes how the strategy is selected, not this uniform gate rule. The
+Unit Work's Concurrency Preference and the target Entity's Optimistic Lock Facet
+derive one Effective Concurrency Strategy before the mutation kind is
+considered. A heterogeneous transaction may therefore contain both strategies,
+but every write for one Entity follows its derived strategy uniformly across
+update, delete, and temporal close.

@@ -30,10 +30,11 @@ and outer-transaction inheritance are resolved. It does not retain whether an
 option was explicit or defaulted. Together with each failure's
 `retry_eligible` value and the ordered attempts, that snapshot explains a
 missing successor without duplicating policy on every attempt. The log also
-retains the effective Locking or Optimistic concurrency mode once because that
-mode changes how its read locks, observations, and write gates are interpreted;
-like the retry policy, it records the resolved value rather than whether the
-caller supplied it explicitly.
+retains the resolved Locking or Optimistic Concurrency Preference once. That
+preference combines with each Entity's Optimistic Lock Facet to explain its
+effective read-lock and write-gate behavior; it does not assert that one strategy
+governed the whole transaction. Like the retry policy, it records the resolved
+value rather than whether the caller supplied it explicitly.
 
 The runtime records one lightweight value per database round trip and shares a
 read's trace with its Snapshot instead of constructing a second record. It does

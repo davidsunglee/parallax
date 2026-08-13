@@ -256,6 +256,20 @@ family-uniform optimistic key: Unversioned, an explicit root-owned version
 Attribute Identity, or the Transaction-Time-derived start Attribute.
 _Avoid_: version column cache, per-subtype version, copied attribute metadata
 
+**Concurrency Preference**:
+The Unit Work's resolved `locking` or `optimistic` workflow policy. Omission
+defaults to `optimistic`; Locking forces shared-lock participation, while
+Optimistic asks each Entity to use its optimistic key when it has one and the
+Locking fallback otherwise.
+_Avoid_: transaction-wide concurrency strategy, global lock mode, participation mode
+
+**Effective Concurrency Strategy**:
+The Locking or Optimistic correctness mechanism derived for one Entity from the
+Unit Work's Concurrency Preference and that Entity's Optimistic Lock Facet. It
+decides the Entity read's shared-lock participation, the write's evidence
+requirement, and whether the Planned Write is gated.
+_Avoid_: Concurrency Preference, entity override, mutation-specific mode
+
 **Audit Metadata**:
 The family-wide, root-owned association between an audited Entity's provenance
 semantics and explicitly declared Attribute Identities. Every descendant
@@ -524,22 +538,44 @@ _Avoid_: Domain Snapshot, Neutral Graph, serialized Snapshot Graph, physical row
 
 **StoredDataIssue**:
 A structured diagnosis that persisted state violates the accepted model,
-carrying stable Entity and member identity plus an Issue Code but no raw stored
-value.
+carrying an Issue Code, the affected Entity Identity, the affected Object Key
+when decodable, and a Member Identity except when an invalid family tag prevents
+identifying a concrete member. It carries no raw stored value, cause, mutable
+details, or separately authoritative message. Snapshot Read owns its closed
+public code vocabulary and issue identity; the lower codec or conversion seam
+that understands a violation owns detecting it. `InvalidData` carries unique
+issues as an unordered immutable set because traversal order has no domain
+meaning.
 _Avoid_: validation issue, decoding exception, raw bad value, repair instruction
 
 **InvalidData**:
 The root-level read result classification for one or more StoredDataIssues. It
 carries the hydrated root exactly when a value can be produced without
-invention; otherwise it carries the root's decodable identity or ordinal
-position alone.
+invention. It also carries the result root's decodable Object Key, mutually
+exclusive observed version or milestone Edge, and always-present ordered-result
+ordinal for diagnosis. Those locator facts grant no write authority.
+When present, the hydrated root is an ordinary observed source, not a repair
+command. Ordinary no-op rules apply even when an assignment equal to a hydrated
+collapse could have replaced malformed storage. A keyed Wire assignment is
+compared with its frozen hydrated source just as a Typed assignment is compared
+with its Change Record original. An effective ordinary write may incidentally
+replace the bad representation, but neither interface makes a general repair
+guarantee and no repair-sensitive bookkeeping is retained. A later read
+classifies what remains.
+The wrapper itself is not writable; storage-aware administrative repair is
+outside this contract.
+The wrapper's diagnostic locators never claim write evidence. `data=None`
+retains no eligible observation, while a hydrated data graph gives each
+independently writable Entity node its ordinary source-liveness claim.
 _Avoid_: invalid node, skipped row, validation error, repaired value
 
 **Checked Result View**:
 The read-result view that returns conforming roots and InvalidData in one
 ordered union instead of raising for stored-data violations. It changes
-data-error handling only, never result arity or ordering.
-_Avoid_: lenient mode, ignore-invalid option, invalid side channel
+data-error handling only, never result arity or ordering, and introduces no
+separate partition API.
+_Avoid_: lenient mode, ignore-invalid option, invalid side channel, valid and
+invalid collections
 
 **Includes**:
 The Object Query clause naming the graph shape a read asks for: an
@@ -614,7 +650,7 @@ _Avoid_: caught exception, traceback record, Database Call failure, retry decisi
 **Execution Log**:
 The production-owned, read-only history of one logical transaction invocation,
 grouping traces by Transaction Attempt across automatic retries and retaining
-the effective concurrency and retry policy. It is live while the boundary is
+the resolved Concurrency Preference and retry policy. It is live while the boundary is
 active and seals at terminal completion.
 _Avoid_: mutable logger, query log, profiler output, Write Plan history
 
@@ -753,23 +789,39 @@ _Avoid_: nullable instant, database max timestamp, raw infinity string
 
 **Object Key**:
 One object's structured Entity Identity plus its ordered primary-key values,
-used to address that object during write coalescing and observation lookup.
-_Avoid_: object ID, row key, primary-key mapping, entity spelling
+used to address that object across all of its versioned or temporal states. It
+is the key for write coalescing, cancellation, and buffered-insert recognition;
+it deliberately carries no version or milestone.
+_Avoid_: observed state, object ID, row key, primary-key mapping, entity spelling
 
 **Source Hint**:
-The opaque, non-authoritative provenance associated with a Wire Entity value,
-identifying its exact Entity and observed milestone so a transaction can select
-and validate its own retained evidence. It neither contains nor grants a Write
-Observation and is absent from serialized Wire data.
+The opaque, non-authoritative provenance associated with a frozen Wire Entity
+value returned by a Wire read, identifying its concrete Entity and original
+Object Key and, when write evidence is required, selecting its exact observed
+state so a transaction can validate its own retained evidence. It neither
+contains nor grants a Write Observation and is absent from serialized Wire data.
+Every existing-object keyed write requires proof that the source was read
+through Parallax. Under the effective Locking strategy it must have participated in the current Unit
+Work, proving that the read acquired the shared row lock that makes the otherwise
+ungated write safe. Under the effective Optimistic strategy, an authentic versioned or temporal
+source may instead contribute its retained version or milestone evidence even
+when `db.find` produced it outside the transaction; the database gate remains
+the concurrency authority. The Source Hint selects that privately retained
+evidence but is not itself evidence. An unversioned Non-Temporal source has no
+optimistic gate and therefore gains no detached-source exception. Copy
+operations on the immutable value may return the same value, while conversion
+or serialization produces ordinary data that is not a keyed write source.
+Callers cannot construct or attach a Source Hint.
 _Avoid_: Observation Hint, Observation Key, capability token, metadata field
 
-**Observation Key**:
-The internal Unit Work address of one Write Observation: an Object Key plus the
-observed milestone's Edge, with no Edge for a versioned Non-Temporal row. It
-names evidence in one active Unit Work and is neither caller-facing, the
-evidence itself, nor a read pin.
-_Avoid_: public provenance, Source Hint, reconstructed observation address,
-object key alone, snapshot pin, write observation
+**Observed State Key**:
+The internal Unit Work address of one exact observed state: either an Object Key
+plus its observed positive version or an Object Key plus its milestone Edge.
+It keys observation eligibility and consumption while the Object Key alone keys
+cross-state coalescing. It is neither caller-facing, the evidence itself, nor a
+read pin.
+_Avoid_: Observation Key, public provenance, Source Hint, Object Key, snapshot
+pin, Write Observation
 
 **Write Observation**:
 The database evidence retained for a surviving write against existing state: an
@@ -780,8 +832,64 @@ reads at coordinates resolving to different milestones retain evidence about
 each, and two resolving to one milestone share one piece of evidence. The
 Temporal Facet, not a separate observation variant, distinguishes
 Transaction-Time-only from Bitemporal expansion. Inserts and unversioned
-Non-Temporal writes have no Write Observation by construction.
+Non-Temporal writes have no Write Observation by construction. An observation
+is eligible only while a live independently writable source node or buffered
+write claims it. A successful flush consumes observations used by surviving
+writes; a write coalesced away before DML consumes none.
 _Avoid_: optional row bag, no-observation value, write target, read pin
+
+**Write Evidence Failure**:
+A non-retriable request failure produced while resolving usable evidence for a
+write: either current-transaction lock participation or an authentic source's
+state-specific Write Observation. Its closed codes distinguish no currently
+eligible evidence (`write-evidence-unavailable`) and an exact Typed or frozen
+Wire source whose evidence a successful flush already used
+(`write-evidence-consumed`). A second incompatible intent against evidence
+already carried by a buffered write is `write-evidence-already-claimed`;
+compatible updates coalesce and identical destructive intents deduplicate
+instead. The failure identifies the attempted visible Object Key but exposes
+neither Source Hint nor Observed State Key.
+Resolution succeeds or raises at the keyed write verb before buffering or
+database access; a later flush conflict retains its database-write
+classification. A keyed Wire verb rejects an ordinary, converted, or serialized
+mapping as malformed source input before this failure family applies. All other
+static Wire shape, target, bound, member, value, and assignment validation
+likewise precedes this family, so ledger state never changes the classification
+of malformed input.
+_Avoid_: Write Observation Failure, optimistic conflict, stale-object error,
+observation lookup result, public ledger key
+
+**Observed-State Coalescing**:
+The pre-flush combination of compatible assignment-bearing writes carrying the
+same Observed State Key and identical temporal bounds. Sparse assignments merge
+in authored order, with the later value winning for a repeated member, into one
+surviving write that consumes the observation once. The rule is independent of
+whether the writes entered through Typed or Wire verbs. Different temporal
+bounds are incompatible rather than silently composed. Net-zero elimination
+follows the merge. A winning Typed assignment is compared with its Change
+Record original, while a winning keyed Wire assignment is compared with the
+corresponding value in its frozen observed source. A wholly canceled Typed,
+Wire, or mixed intent emits no DML and consumes no observation. A later delete
+or terminate supersedes earlier assignments only
+for the exact same state and temporal region; identical destructive intents
+deduplicate. Different regions and assignment after destruction are
+incompatible rather than acquiring interval-composition or resurrection
+semantics.
+An observation held by a Materialized Write Group is already claimed for keyed
+ingress: an overlapping later keyed intent is incompatible, while a
+non-overlapping one remains independent. Keyed-before-predicate instead
+force-flushes and lets predicate resolution select fresh state.
+_Avoid_: duplicate write, batch update, source replacement, implicit flush
+
+**Wire Write Snapshot**:
+The immutable recursive capture a Wire verb makes of its required caller-owned
+input before returning: inserted data or explicit assignments, target, temporal
+bounds, the frozen source's identity and changed-member originals, and resolved
+evidence. Later mutation of any caller-owned data, changes mapping, or nested
+collection cannot alter buffered intent. A keyed source is already deeply
+frozen, so the verb captures originals only for explicitly assigned members
+rather than duplicating the read result.
+_Avoid_: live input mapping, deferred serialization, shallow copy, write source
 
 **Predecessor Row**:
 The complete, immutable, concrete persisted state retained by a Temporal
@@ -817,7 +925,7 @@ _Avoid_: list of observed writes, result collection, public plan group, Atomic U
 **Write Planner**:
 The model-scoped, stateless Unit Work module whose single pure planning
 operation converts one flush's boundary-captured Subject Identity, lazy
-Transaction Instant, concurrency mode, buffered writes, and observations into a
+Transaction Instant, Concurrency Preference, buffered writes, and observations into a
 Write Plan. Its planning strategies are wired at construction; it retains no
 attempt state and performs no database, clock, SQL, dialect, or driver work.
 _Avoid_: flush coordinator, SQL planner, mutable transaction planner, Final Write Planner
@@ -885,13 +993,13 @@ contains multiple keys.
 _Avoid_: inferred row-count check, effect policy, optional expected count
 
 **Write Gate**:
-An optimistic-mode concurrency condition derived from a required Write
-Observation and added to a keyed update, delete, or temporal close. Locking mode
+An effective-Optimistic concurrency condition derived from a required Write
+Observation and added to a keyed update, delete, or temporal close. The effective Locking strategy
 records an explicit ungated decision and relies on the shared read lock instead.
 The closed payloads are a Version Gate containing its Attribute Identity and
 observed integer, or a Temporal Gate containing its Transaction-Time start
 Attribute Identity and observed Instant; neither repeats assignments, the full
-observation, or concurrency mode.
+observation, Concurrency Preference, or Effective Concurrency Strategy.
 _Avoid_: Write Target, affected-row policy, locking predicate
 
 **Non-Temporal Concurrency**:

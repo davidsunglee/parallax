@@ -162,24 +162,139 @@ Entity Class instance on the Typed interface and a Wire Entity Mapping on the
 Wire interface; no method touches the database.
 _Avoid_: result set, lazy list, query result proxy, domain snapshot
 
+**Checked Snapshot**:
+The read-only `CheckedSnapshot[T]` view returned by `Snapshot.checked()`. It
+shares the Snapshot's result storage, Pin, and Read Trace while its ordinary
+arity accessors return `InvalidData` in-band; constructing or using the view
+performs no database work. Its ordinary accessors are the complete surface;
+there is no separate valid/invalid partition method.
+_Avoid_: lenient Snapshot, copied result, ignore-invalid mode, partitioned
+result
+
 **Wire Interface**:
 The class-independent read-and-write interface reached through `db.wire` or
 `tx.wire`. It shares the underlying handle and, within a transaction, the same
 Unit Work and observations as the Typed interface; it is not a format option or
-transaction mode.
+transaction mode. Its `find` accepts either the canonical Object Query mapping
+or, for a class-backed model, the Typed Object Query authoring value; a
+descriptor-backed caller therefore needs no Entity Class.
 _Avoid_: Neutral API, Wire transaction, format selector, descriptor mode
 
 **Wire Entity Mapping**:
 The mapping-shaped Python representation of one Entity node in a Wire Snapshot,
 keyed by declared member names and carrying no serialized framework metadata.
 It may retain a core Source Hint privately without changing its mapping value.
+The hint identifies the concrete Entity and original Object Key and optionally
+an exact observed state; an unversioned Non-Temporal source has no observed
+state.
+The returned mapping and every nested dictionary or list are frozen; ordinary
+mutation raises `TypeError`. They retain ordinary structural equality with
+plain dictionaries and lists and remain unhashable. Only the verb's separate
+changes mapping authors an update. Immutable copy operations may return the same
+hinted value, while `dict(value)`, serialization, and reconstruction produce
+ordinary data that is not a keyed write source. Standard JSON serialization
+treats the private subclasses as ordinary objects and arrays and sees no Source
+Hint; decoding returns plain dictionaries and lists. A keyed Wire verb accepts
+only a frozen value returned by a Parallax Wire read; an ordinary mapping is
+malformed source input and must be reread before writing. Every existing-object
+keyed write requires an authentic Parallax read source. Under the source Entity's effective Locking strategy that
+source must have participated in the current transaction, proving that it
+acquired and still holds the shared row lock. Under its effective Optimistic strategy an authentic
+versioned or temporal source from `db.wire.find` may instead contribute its
+privately retained version or milestone evidence; the emitted database gate
+detects intervening writes. An unversioned Non-Temporal source has no optimistic
+gate and must still come from the current transaction's locking read.
+The recursive `WireValue` alias contains canonical scalar values, lists, and
+string-keyed dictionaries. `WireEntity` is instead a public, non-constructible,
+read-only nominal `Mapping[str, WireValue]` implemented by the private frozen
+`dict` subclass. It gives result annotations and keyed verbs static source
+discrimination while retaining indexing, iteration, `get`, `items`, and other
+idiomatic mapping operations; runtime values remain instances of `dict`.
+Ordinary mappings remain the structural inputs for inserts, changes, predicates,
+and Object Queries. Nominal identity does not prove that a source belongs to the
+current transaction, so keyed verbs still validate private provenance and any
+required locking participation or optimistic state evidence at runtime.
+`WireValue` deliberately does not add public frozen mapping/list types merely to
+express deep immutability statically; the runtime contract enforces it. Neither
+type exposes a Source Hint constructor.
 _Avoid_: Neutral Node, metadata dictionary, physical row, DTO
 
+**Write Evidence Error**:
+The `LookupError` raised when a Typed or Wire keyed write cannot resolve usable
+evidence, encompassing current-transaction lock participation and authentic
+source-retained Write Observations. Its public `code` is one of
+`write-evidence-unavailable`, `write-evidence-consumed`, or
+`write-evidence-already-claimed`, and its `object_key` identifies the attempted
+visible object. Consumed means that the exact source's evidence authorized a
+write that reached a successful flush;
+the still-live source remains readable but must not authorize another write.
+The keyed verb raises the error synchronously before buffering or I/O; later
+optimistic or temporal conflicts keep their flush-time error families.
+Several pre-flush updates may use one observation when their temporal bounds
+match; Unit Work coalesces Typed, Wire, and mixed changes in call order, with the
+later value winning for a repeated member, and consumes the observation once.
+Typed ingress preserves touched assignments until that merge, so an edit that
+is net-zero by itself can cancel an earlier pending assignment. Net-zero
+elimination then compares Typed assignments with their Change Record originals
+and Wire assignments with their frozen observed source values. The Wire verb
+captures originals only for explicitly changed members, so it does not retain a
+second copy of the read result. A wholly Typed, Wire, or mixed intent may
+therefore collapse without DML or consumption.
+An incompatible second intent, including a temporal update with different
+bounds, raises already-claimed at that verb. Identical destructive intents
+deduplicate. For the same state and region, update-then-delete or
+update-then-terminate collapses to the destructive intent; the reverse order
+raises already-claimed.
+An observation already selected into a predicate Materialized Write Group also
+raises already-claimed for a later overlapping keyed verb; non-overlapping keys
+remain valid. Keyed-before-predicate force-flushes and resolves fresh state.
+_Avoid_: Write Observation Error, concurrency error, hint error, stale model,
+observation exception
+
+**Buffered Wire Input**:
+The recursively snapshotted immutable value captured by every `tx.wire` verb at
+the call boundary. It includes all supplied data or changes, target and bounds,
+the frozen keyed source facts and explicitly changed-member originals needed by
+the verb, and resolved observation evidence. Mutating a caller dictionary or any
+nested list or dictionary after the call cannot alter the buffered write. The
+copy cost is proportional to authored write input and does not duplicate a Wire
+read result.
+_Avoid_: retained caller mapping, shallow write copy, lazy changes, live payload
+
+**Wire Write Validation Order**:
+The fixed verb-time phase order: validate verb and target shape, source key and
+required version, temporal bounds, member names and values, and assignment
+legality; reject any keyed source that is not a frozen Parallax Wire read; then
+resolve the source Entity's Effective Concurrency Strategy and its evidence
+requirement—current-transaction read participation under Locking, or retained
+version/milestone evidence under Optimistic—then recursively snapshot and buffer. A malformed request
+therefore raises `WriteInstructionError` before any possible write-evidence
+failure.
+_Avoid_: best-effort validation, ledger-first refusal, flush validation
+
 **InvalidData**:
-The checked Snapshot element carrying StoredDataIssues and either the hydrated
-Typed or Wire root or `None` when hydration would require invention. Ordinary
-Snapshot access raises instead of returning this value.
+The checked Snapshot element carrying a `frozenset` of unique StoredDataIssues
+and either the hydrated Typed or Wire root or `None` when hydration would
+require invention. Its diagnostic locator is an optional `ObjectKey`, mutually
+exclusive optional version or Edge, and an always-present zero-based result
+ordinal; none grants write authority. Ordinary Snapshot access raises instead
+of returning this value. When `data` is present, callers may write that ordinary
+observed value under ordinary ingress rules. A Typed assignment equal to the
+hydrated collapse remains a no-op; a keyed Wire assignment equal to the frozen
+hydrated source is also a no-op. Python retains no repair-sensitive metadata and
+promises no general remediation API. The wrapper and `data=None` are not write
+sources. Storage-aware administrative repair is outside the interface.
+Neither the wrapper nor its diagnostic locators retains an observation claim.
+When `data=None`, reconstructing an ordinary mapping cannot use that read as a
+keyed write source. Hydrated data nodes retain their ordinary per-node claims.
 _Avoid_: failed Entity, skipped result, validation error, error side list
+
+**InvalidDataError**:
+The default eager Snapshot exception whose nonempty `invalid_data` tuple carries
+the complete invalid roots selected by the accessor in result order. Its message
+is derived; it exposes no singular code, flattened issue list, cause, or records
+alias.
+_Avoid_: decoding error, aggregate issue, checked result
 
 **Pin**:
 A frozen point-coordinate value with one entry per actually pinned temporal

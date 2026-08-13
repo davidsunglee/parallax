@@ -1,5 +1,5 @@
 ---
-status: superseded in part by ADR-0012
+status: superseded by ADR-0059
 ---
 
 # Transaction reads lock by default

@@ -20,7 +20,7 @@ The Write Planner is constructed once per connected Metamodel with that model
 and its immutable strategy adapters. Its sole external operation is
 `plan(PlanningRequest) -> WritePlan`, where each request carries the current
 flush's boundary-captured Subject Identity, attempt-owned lazy Transaction
-Instant, concurrency mode, buffered writes, and observations. Subject Identity
+Instant, Concurrency Preference, buffered writes, and observations. Subject Identity
 is the first required field of the keyword-only request, emphasizing that
 planning occurs inside an established Principal boundary without making field
 order a positional API. The planner is stateless across calls and retains
@@ -39,10 +39,10 @@ explicit planned audit value.
 
 A Planned Write is a closed semantic execution unit and may cover one row or
 multiple rows. Absence is structural: inserts and unversioned Non-Temporal
-writes do not carry an invented no-observation value, while a locking mode that
+writes do not carry an invented no-observation value, while an effective Locking strategy that
 deliberately omits an optimistic predicate is an explicit ungated decision.
 Ordinary SQL lowering consumes only the Write Plan; it never interprets the
-configured concurrency mode or a raw observation to rediscover semantics. The
+configured Concurrency Preference, an Effective Concurrency Strategy, or a raw observation to rediscover semantics. The
 planner resolves the attempt-scoped Transaction Instant only when surviving
 work requires it and materializes the derived temporal and future audit values
 into Planned Writes before freezing the plan. Write Plan retains neither the
@@ -157,6 +157,58 @@ finalization authority, still stateless and pure, still resolves the Transaction
 Instant lazily, and still emits one immutable `WritePlan`. Subject Identity
 remains the first required field of the keyword-only request.
 
+## Amendment (2026-08): compatible observed-state updates coalesce
+
+The original same-transaction coalescing cases cover only insert-then-update and
+insert-then-delete. The planner additionally coalesces several assignment-bearing
+writes carrying the same Observed State Key when their temporal bounds are
+identical. It merges their sparse assignments in authored order, with the later
+value winning for a member assigned more than once, and retains one observation
+on the resulting write. Typed, Wire, and mixed ingress share this merge rule,
+while the surviving assignment retains its ingress's no-op semantics. Writes
+with different temporal bounds are not compatible under this rule because their
+interval geometry is semantically distinct.
+At write ingress, a second intent with different temporal bounds or otherwise
+incompatible mutation semantics is refused as
+`write-evidence-already-claimed` rather than reaching this planner as two
+self-conflicting writes. An identical destructive intent deduplicates.
+
+Same-observation coalescing precedes effective-change elimination even when a
+Typed edit is net-zero against its source in isolation. The Typed ingress must
+therefore preserve its touched assignments through coalescing instead of
+discarding that edit before buffering. For example, an observed value of 100,
+followed by buffered assignments of 125 and then 100, coalesces to the observed
+value and is eliminated as a whole: no DML and no observation consumption. A
+standalone edit from 100 to 100 remains the same no-op. This realizes the
+pipeline's established coalesce-before-no-op order.
+
+A keyed Wire assignment is compared with the corresponding value in its deeply
+frozen observed source. The Wire verb captures originals only for explicitly
+assigned members, so it does not retain an immutable duplicate of the complete
+read result. In a mixed merge, the later assignment still wins, and the merged
+result is eliminated when every winning assignment equals the original supplied
+by its ingress. Thus both Typed and Wire restores may cancel earlier pending
+intent. Predicate-write materialization continues to eliminate equal
+assignments from the row observed during resolution.
+
+A later destructive intent supersedes earlier assignments only when both carry
+the same Observed State Key and address the same temporal region. Thus a
+Non-Temporal update followed by delete becomes one delete, and an update
+followed by terminate with identical temporal bounds becomes one terminate.
+Identical destructive intents deduplicate. Different temporal regions and a
+destructive intent followed by an assignment are incompatible and raise
+`write-evidence-already-claimed`; the planner invents neither interval
+composition nor resurrection semantics.
+
+A Materialized Write Group owns the observation claim for every state its
+resolving read selected. A later keyed write against an overlapping state is
+refused as `write-evidence-already-claimed`; Unit Work does not mutate or
+index the compact group to merge keyed assignments into it. A non-overlapping
+keyed write remains independent. In the reverse order, the predicate write's
+participating resolution force-flushes earlier keyed intent and selects fresh
+database state, preserving read-your-own-writes semantics without a cross-shape
+coalescing rule.
+
 ## Amendment (2026-08): a Materialized Write Group carries no Transaction-Time Basis
 
 The Materialized Write Group shape recorded above stores
@@ -181,10 +233,10 @@ The supported advanced compile-only path constructs the same production
 Write Plan through `stream_lowered`. It introduces no `plan_neutral_writes`,
 neutral-plan wrapper, parallel planner, or second emission prediction pass.
 
-An `ObservationKey` is intentionally not a compile-only input: it addresses
+An `ObservedStateKey` is intentionally not a compile-only input: it addresses
 evidence in an active Unit Work, which pure planning does not have. A
 compile-only caller pairs explicit evidence through `buffered_write` or supplies
 a bare Write Instruction; a materialized predicate input uses the existing
-Materialized Write Group. The runtime path may resolve an Observation Key before
+Materialized Write Group. The runtime path may resolve an Observed State Key before
 constructing that same Buffer Item, so lookup remains transaction-owned while
 planning remains store-free.

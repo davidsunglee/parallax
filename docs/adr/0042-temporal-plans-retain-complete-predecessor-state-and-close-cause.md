@@ -61,7 +61,7 @@ fully protected. There is nothing to license separately — a locking-mode close
 addresses the milestone its own written value came from, and the observation
 supplying that address is the record of the read that locked it. A read at a
 finite Transaction-Time coordinate is refused by the Transaction-Time pin rule,
-at the verb, in both concurrency modes, before any planning.
+at the verb, under both Effective Concurrency Strategies, before any planning.
 
 The lock-scope statement this ADR makes is unchanged and still load-bearing: the
 resolving read locks the one selected current physical milestone row and not the

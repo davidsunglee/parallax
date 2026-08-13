@@ -66,4 +66,5 @@ verb.
 
 Everything else recorded above is unchanged: the Milestone Target is the primary
 key plus one write-required exclusive upper bound per As-Of Axis, identical in
-both concurrency modes, and the gate remains a separate optimistic-only addition.
+both Effective Concurrency Strategies, and the gate remains a separate
+Optimistic-only addition.
