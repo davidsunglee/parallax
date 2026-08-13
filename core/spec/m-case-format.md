@@ -72,6 +72,41 @@ catalog in [`modules.md`](modules.md); every other tag is a free-form feature ta
 case ID (`m-pk-gen-001`) also matches that grammar — a harmless overlap, since module
 identity is only ever resolved against the catalog, never inferred from a filename.
 
+### Cross-layout twin proofs
+
+A bounded set of cases proves that Storage Layout does not change logical
+behavior by authoring the same logical model and operation once per physical arm.
+The convention is intentionally file-based; it adds no case-schema field and no
+adapter-only way to reinterpret a production descriptor.
+
+Twin model descriptors are named
+`<name>-layout-twin-columns.yaml` and
+`<name>-layout-twin-document.yaml`. The `columns` descriptor uses the ordinary
+production spelling for `Columns` — omission of `layout`. The `document`
+descriptor uses ordinary root-owned `layout.document` declarations. Removing
+those `layout` blocks MUST leave canonically equal descriptor documents. Both
+descriptors are independently schema-validated, formed, provisioned, and consumed
+exactly like every other model in the corpus. Their fixture files use the same
+stems and MUST author equal logical fixture documents.
+
+Twin cases are named
+`<module>-NNN-<proof>-layout-twin-columns.yaml` and
+`<module>-NNN-<proof>-layout-twin-document.yaml`. The sequence numbers remain
+ordinary unique case numbers and need not match; the pair identity is
+`<module>-<proof>`. Each case MUST reference the matching descriptor arm, and
+every twin descriptor pair MUST be used by at least one complete case pair.
+An unpaired descriptor or case is invalid corpus state.
+
+The two case documents MUST be canonically equal after normalizing their model
+references, omitting routing tags, and removing physical observations. Physical
+observations are `given.apply`, every `statements` group (including its SQL and
+binds), `referenceSql`, `tableState`, and `execution`; each remains authored and
+graded independently in its own file. Everything else is layout-invariant,
+including the action, `rows`, `graph` / `graphs`, nested step observations,
+errors, affected-row outcomes, and `roundTrips`. The static equality gate plus
+the ordinary corpus sweep of both members is the proof: no harness provisions
+one descriptor under a layout it did not declare.
+
 ### Its fields — grouped `given` / `when` / `then`
 
 A case reads top-to-bottom as a behavioral sentence — **given** an ambient

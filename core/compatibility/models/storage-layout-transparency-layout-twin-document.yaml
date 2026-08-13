@@ -1,0 +1,20 @@
+# Relational Document Layout member of the Storage Layout transparency twin. This
+# is an ordinary production descriptor consumed without a harness override. The
+# root-owned layout block is its only logical-model difference from the Columns
+# member; `id` remains direct while `label` and `rank` share `payload` physically.
+entity:
+  name: LayoutTwinItem
+  namespace: parallax.compatibility
+  table: storage_layout_transparency
+  layout:
+    document:
+      column: payload
+  attributes:
+    - name: id
+      type: int64
+      primaryKey: true
+    - name: label
+      type: string
+      maxLength: 64
+    - name: rank
+      type: int32

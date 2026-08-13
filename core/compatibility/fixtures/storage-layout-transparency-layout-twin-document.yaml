@@ -1,0 +1,5 @@
+# Logical rows shared by both Storage Layout transparency descriptors. This file
+# deliberately authors declared member names rather than a raw `payload` document.
+parallax.compatibility.LayoutTwinItem:
+  - { id: 1, label: alpha, rank: 20 }
+  - { id: 2, label: beta, rank: 10 }

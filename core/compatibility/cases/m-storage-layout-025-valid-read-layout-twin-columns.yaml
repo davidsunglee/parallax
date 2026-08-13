@@ -1,0 +1,25 @@
+# Columns half of the first cross-layout proof: one production descriptor, fixture,
+# and Object Query materialize two valid rows in a stable logical order. Its twin
+# authors the same operation and expected rows under Relational Document Layout.
+# The static twin gate proves the logical descriptors, fixtures, and observations
+# equal; the ordinary sweep proves this member's direct-column SQL and result.
+model: models/storage-layout-transparency-layout-twin-columns.yaml
+tags: [m-storage-layout, m-sql, m-document-codec, read, layout-twin, columns, slice-snapshot-1, slice-managed-1]
+shape: read
+when:
+  objectQuery:
+    target: parallax.compatibility.LayoutTwinItem
+    predicate:
+      all: {}
+    orderBy:
+      - attr: parallax.compatibility.LayoutTwinItem.id
+        direction: asc
+then:
+  statements:
+    - sql:
+        postgres: select t0.id, t0.label, t0.rank from storage_layout_transparency t0 order by t0.id asc
+        mariadb: select t0.id, t0.label, t0.`rank` from storage_layout_transparency t0 order by t0.id asc
+  rows:
+    - { id: 1, label: alpha, rank: 20 }
+    - { id: 2, label: beta, rank: 10 }
+  roundTrips: 1

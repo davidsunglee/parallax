@@ -3479,6 +3479,74 @@
       ]
     }
   },
+  "models/storage-layout-transparency-layout-twin-columns.yaml": {
+    "storage_layout_transparency": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutTwinItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.LayoutTwinItem.id",
+          "declaringOwner": "parallax.compatibility.LayoutTwinItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutTwinItem"
+          ],
+          "column": "label",
+          "contributor": "attribute:parallax.compatibility.LayoutTwinItem.label",
+          "declaringOwner": "parallax.compatibility.LayoutTwinItem",
+          "effectiveNullable": false,
+          "tier": "domain"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutTwinItem"
+          ],
+          "column": "rank",
+          "contributor": "attribute:parallax.compatibility.LayoutTwinItem.rank",
+          "declaringOwner": "parallax.compatibility.LayoutTwinItem",
+          "effectiveNullable": false,
+          "tier": "domain"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
+  "models/storage-layout-transparency-layout-twin-document.yaml": {
+    "storage_layout_transparency": {
+      "columns": [
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutTwinItem"
+          ],
+          "column": "id",
+          "contributor": "attribute:parallax.compatibility.LayoutTwinItem.id",
+          "declaringOwner": "parallax.compatibility.LayoutTwinItem",
+          "effectiveNullable": false,
+          "tier": "identity"
+        },
+        {
+          "applicableEntities": [
+            "parallax.compatibility.LayoutTwinItem"
+          ],
+          "column": "payload",
+          "contributor": "relationalDocument:parallax.compatibility.LayoutTwinItem",
+          "declaringOwner": "parallax.compatibility.LayoutTwinItem",
+          "effectiveNullable": false,
+          "tier": "document"
+        }
+      ],
+      "physicalPrimaryKey": [
+        0
+      ]
+    }
+  },
   "models/storage-layout.yaml": {
     "layout_audit": {
       "columns": [
