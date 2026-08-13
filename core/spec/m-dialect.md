@@ -431,7 +431,11 @@ A conventional Value Object Structured Column keeps its existing derivation: the
 declared nullability.
 
 The initial contract adds no generated deep `CHECK` constraint over document
-contents on either dialect.
+contents on either dialect. The structured-document type therefore admits JSON
+null, arrays, and scalars as well as objects. If external state contains one of
+those non-object Entity carriers, read materialization applies
+`m-document-codec`'s member-local missing projection; the dialect neither rejects
+the row nor invents a provider-specific corruption result.
 
 ### `NULL` ordering
 

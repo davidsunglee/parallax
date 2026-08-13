@@ -120,6 +120,14 @@ value for that Attribute under `Columns` both produce
 `RequiredMemberAbsent` or `RequiredMemberNull` is detection evidence, not a
 layout-selected public verdict.
 
+The shared Structured Column's database type guarantees a non-SQL-null document,
+not an object-shaped document. When its raw value is JSON null, an array, or a
+scalar, it supplies no Entity-root cursor. Each requested document-resident
+Entity member instead enters the same classifier as a missing located member,
+using `m-document-codec`'s existing member verdict and hydration rule. The raw
+carrier has no logical member identity and therefore creates no independent
+stored-data issue or recursive validation work.
+
 For a top-level occurrence under `Columns`, its own Structured Column is the
 occurrence carrier. Under `Document`, classified Entity-member decoding obtains
 the occurrence carrier from the Entity's shared Structured Column. In both arms
@@ -517,6 +525,11 @@ and no consumer distinguishes "no document" from "an empty document". It also
 takes no database default: every write this contract admits binds the complete
 object explicitly.
 
+This physical non-null guarantee does not assert that externally written stored
+JSON is object-shaped. The DDL deliberately has no deep shape constraint. Read
+materialization handles a JSON-null, array, or scalar carrier through the
+member-local missing projection above rather than passing it to a codec cursor.
+
 The fourth rule makes a required subtype-only member nullable in a shared
 table-per-hierarchy Table, because rows of a sibling subtype have no value for
 it. Entity-level write validation still requires that member for every Entity
@@ -846,10 +859,11 @@ their spellings equals a physical Column.
   a Column spelling or a stored document's own keys.
 - Read materialization derives Logical Judging Roots from accepted Metadata
   before using Member Placement to locate member inputs. It normalizes direct and
-  document-resident Entity members at that carrier-independent seam, then advances
-  Logical Judging Cursors only along requested occurrence branches. It cannot use
-  a Structured Column boundary to add, remove, or recursively expand
-  classification work.
+  document-resident Entity members at that carrier-independent seam, projecting a
+  non-object raw Entity document to missing inputs only for requested members,
+  then advances Logical Judging Cursors only along requested occurrence branches.
+  It cannot use a Structured Column boundary to add, remove, or recursively
+  expand classification work.
 
 No consumer may infer a declaration from a duplicate raw Column spelling,
 rebuild a whole-family table projection, retain a competing canonical physical
