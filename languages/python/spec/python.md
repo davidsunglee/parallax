@@ -2675,11 +2675,16 @@ or descriptor authoring form and performs no audit stamping.
   violations are always reported; there is no ignore posture, connection
   setting, or Object Query clause.
 - **The published shapes**, exported from `parallax.snapshot`. None of the three
-  can be mutated after construction: the two records are frozen and slotted, and
-  `InvalidDataError` settles its report in its constructor and exposes it
-  read-only. The error is not itself a frozen dataclass, because that spelling
+  accepts attribute assignment after construction: the two records are frozen and
+  slotted, and `InvalidDataError` settles its read-only report and the message
+  derived from it in its constructor, then refuses every later assignment or
+  deletion — including the inherited `args` the message lives in. The error is
+  frozen by hand rather than as a frozen dataclass, because that spelling also
   refuses `add_note` on a `BaseException` subclass and `__slots__` restricts
-  nothing there — the base always carries an instance dictionary:
+  nothing there — the base always carries an instance dictionary. The hand-written
+  refusal leaves exactly the state the interpreter owns (`__cause__`,
+  `__context__`, `__notes__`, `__suppress_context__`, `__traceback__`) writable,
+  so chaining, tracebacks, and notes behave as on any exception:
 
   ```python
   class StoredDataIssue:

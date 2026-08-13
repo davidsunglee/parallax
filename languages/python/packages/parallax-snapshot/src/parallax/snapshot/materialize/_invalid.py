@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Final
 
 from parallax.core.metamodel import EntityIdentity, MemberIdentity
 from parallax.core.temporal_read import Edge
@@ -77,20 +78,31 @@ class InvalidData[T]:
     ordinal: int
 
 
+_EXCEPTION_MACHINERY: Final[frozenset[str]] = frozenset(
+    {"__cause__", "__context__", "__notes__", "__suppress_context__", "__traceback__"}
+)
+
+
 class InvalidDataError(RuntimeError):
     """A default accessor's refusal of a result carrying invalid stored data.
 
     :attr:`invalid_data` is nonempty, in result order, and is the exception's
     sole machine-readable report: there is no singular code, no flattened issue
-    collection, no cause, and no second name for the same tuple. It is settled
-    in the constructor and read-only afterwards, alongside a message derived
-    from it, so the two can never disagree.
+    collection, no cause, and no second name for the same tuple. The
+    constructor settles it together with the message derived from it, and every
+    later assignment or deletion is refused — including the inherited ``args``
+    :func:`str` reads — so the wording can never describe results the report no
+    longer carries.
 
-    The immutability the two records get from ``frozen=True`` is spelled that
-    way here because a dataclass cannot spell it on an exception: a frozen
-    ``__setattr__`` also refuses :meth:`add_note`, and ``__slots__`` restricts
-    nothing while :class:`BaseException` carries an instance dictionary.
+    The two records get that immutability from ``frozen=True``, which an
+    exception cannot use: a frozen ``__setattr__`` also refuses
+    :meth:`add_note`, and ``__slots__`` restricts nothing while
+    :class:`BaseException` carries an instance dictionary. Freezing by hand
+    instead leaves the state the interpreter owns — chaining, traceback, and
+    notes — writable, and refuses everything else.
     """
+
+    _invalid_data: tuple[InvalidData[object], ...]
 
     def __init__(self, invalid_data: Iterable[InvalidData[object]]) -> None:
         records = tuple(invalid_data)
@@ -100,7 +112,17 @@ class InvalidDataError(RuntimeError):
         super().__init__(
             f"{len(records)} result root(s) hold invalid stored data ({', '.join(codes)})"
         )
-        self._invalid_data = records
+        object.__setattr__(self, "_invalid_data", records)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name not in _EXCEPTION_MACHINERY:
+            raise AttributeError(f"InvalidDataError is frozen; cannot assign {name!r}")
+        super().__setattr__(name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name not in _EXCEPTION_MACHINERY:
+            raise AttributeError(f"InvalidDataError is frozen; cannot delete {name!r}")
+        super().__delattr__(name)
 
     @property
     def invalid_data(self) -> tuple[InvalidData[object], ...]:
