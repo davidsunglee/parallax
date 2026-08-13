@@ -344,16 +344,16 @@ the same in either case.
 
 The distinction also fixes the judging boundary. SQL extraction never judges a
 document's declared shape: it follows the requested path and applies this collapse
-at any depth. Classified decoding accepts exactly one requested direct member of
-an `m-document-codec` Logical Judging Root: the Entity or one of its top-level
-Value Object occurrences. Materialization may presence-decode a top-level
-occurrence carrier and then classify a requested direct member against that
-occurrence's root, but it does not recursively judge the member's descendants or
-inspect unrequested members. A multi-segment placement used only to lower a
-predicate likewise creates no judged materialization position. Consequently path
-depth and physical placement never select a second validity rule: every logical
-root position that is judged has the `m-document-codec` verdict under either
-layout, while every predicate extraction retains the collapse defined here.
+at any depth. Classified decoding starts at an `m-document-codec` Logical Judging
+Root: the Entity or one of its top-level Value Object occurrences. Materialization
+classifies each occurrence on a requested branch and advances a Logical Judging
+Cursor only through a conforming carrier, so a requested deeper member returns a
+finding for malformed stored state without scanning siblings. A multi-segment
+placement used only to lower a predicate creates no such cursor and performs no
+judgement. Consequently path depth and physical placement never select a second
+validity rule: every requested position within a logical root has the
+`m-document-codec` verdict under either layout, while every predicate extraction
+retains the collapse defined here.
 
 #### To-many members — any-element and same-element semantics
 

@@ -41,6 +41,11 @@ LogicalJudgingRoot
   position: EntityIdentity | top-level ValueObjectIdentity
   members: immutable sequence<DocumentMember>
 
+LogicalJudgingCursor
+  root: LogicalJudgingRoot
+  prefix: sequence<MemberName>
+  members: immutable sequence<DocumentMember>
+
 DocumentMember =
     Leaf(name: MemberName,
          type: NeutralType,
@@ -70,12 +75,18 @@ declared name, the same spelling a materialized result uses.
 A `LogicalJudgingRoot` is also derived from accepted Metadata, but it defines a
 read-validity boundary rather than a physical document shape. Every Entity
 supplies one root over its applicable top-level members, and every top-level
-Value Object occurrence supplies one root over its direct members. A nested
-occurrence supplies no further root. These roots and their direct members are
-identical under `Columns` and `Document`; a Structured Column root, a Column, and
-a `DocumentPath` are physical locations and cannot create or remove one. For a
-top-level `Many`, the occurrence root describes each element document's direct
-members, not the array as one recursively judged subtree.
+Value Object occurrence supplies one root over its direct members. These roots
+and their member trees are identical under `Columns` and `Document`; a Structured
+Column root, a Column, and a `DocumentPath` are physical locations and cannot
+create or remove one.
+
+A `LogicalJudgingCursor` is an on-demand position within one root. The root cursor
+has an empty prefix. Materialization advances it only through an occurrence on a
+requested path, after that occurrence's carrier has been classified. A nested
+occurrence therefore supplies no independent root: its cursor retains the
+top-level root and records the logical prefix used for findings. A `One` has one
+cursor over its object; a `Many` has one cursor over each visited element object.
+Creating a cursor neither inspects nor judges any sibling member.
 
 A `Document` is a portable JSON value — object, array, string, number, boolean,
 or null — and nothing else. It is not a driver value, a rendered text, or a
@@ -105,7 +116,7 @@ decode(shape: DocumentShape,
        document: Document,
        path: nonempty sequence<MemberName>)          -> Presence
 
-decodeClassified(root: LogicalJudgingRoot,
+decodeClassified(cursor: LogicalJudgingCursor,
                  document: Document,
                  member: MemberName)                  -> DecodedMember
 
@@ -178,44 +189,47 @@ back to `decode` with the occurrence's shape. That is what makes a `many`
 traversable without an element index — a `path` stays a sequence of member names
 and never addresses an array position.
 
-`decodeClassified` is the read-facing, logical-root-member form of decoding.
-`member` MUST name one direct member of `root`, and `document` MUST be the
-carrier object for that root: the applicable Entity document, a top-level `One`
-occurrence's object, or one visited element document of a top-level `Many`.
-Passing an arbitrary nested-occurrence shape, an unrequested subtree, or a
-multi-segment path is a caller error; ordinary `decode` remains the
-presence-only operation for those paths. A conforming member has the same
-`Presence` as `decode` and no finding. Stored data that
-contradicts the member's declared shape produces one or more `StoredShapeFinding`
-values and is therefore the third semantic answer beside *present* and *not
-present*. Where the ordinary read collapse can produce a value without invention,
-`presence` carries that collapsed value: an absent or JSON-null required non-`Many`
-member retains its absence, a non-null wrong-kind `One` is absent, and a non-null
-wrong-kind `Many` is the empty array. A non-null undecodable leaf carries
-`Unavailable`, because no value of its declared Neutral Type can be produced. At
-a logical-root-member boundary, strict `decode` may surface the same invalid state
-as a failure; refusing and classifying are two surfaces over one verdict there.
-Away from that boundary, ordinary `decode` may still fail because it cannot
-produce the requested declared value, but it emits no `StoredShapeFinding` and
-does not create another stored-shape judging position.
+`decodeClassified` is the read-facing form of decoding. `member` MUST name one
+direct member of `cursor`, and `document` MUST be that cursor's carrier object.
+An unknown member or a cursor not derived from accepted Metadata is a caller
+error. Stored state is not: the operation returns findings as values for every
+shape contradiction it encounters on the requested branch and never raises for
+one. A conforming member has the same `Presence` as `decode` and no finding.
+Stored data that contradicts the member's declared shape produces one or more
+`StoredShapeFinding` values and is therefore the third semantic answer beside
+*present* and *not present*. Where the ordinary read collapse can produce a value
+without invention, `presence` carries that collapsed value: an absent or
+JSON-null required non-`Many` member retains its absence, a non-null wrong-kind
+`One` is absent, and a wrong-kind `Many` is the empty array. A non-null
+undecodable leaf carries `Unavailable`, because no value of its declared Neutral
+Type can be produced.
+
+When a requested path continues through an occurrence, materialization first
+calls `decodeClassified` for that occurrence. A conforming `One` object advances
+to one cursor and a conforming `Many` array advances to one cursor per element,
+in stored order. A `Many` is conforming only when every element is an object
+document. A non-array value or an array containing a non-object element is one
+`ManyWrongKind` at the occurrence position; it collapses the whole occurrence to
+the empty array and creates no element cursor. A wrong-kind `One` likewise
+creates no cursor. The requested descendant therefore never reaches strict
+`decode` after a malformed ancestor.
 
 Materialization obtains a requested top-level occurrence carrier before using its
 root. Under `Columns`, the occurrence's Structured Column supplies that carrier.
-Under `Document`, presence decoding first obtains the same carrier from the
-Entity document; a `One` supplies its object and a `Many` supplies the visited
-element objects in order. The materializer then calls `decodeClassified` only for
-the direct occurrence members it requested. Thus `address.city` is judged against
-the `address` root under both layouts even though its physical paths differ.
+Under `Document`, classified Entity-member decoding obtains the same carrier from
+the Entity document. The materializer then classifies only the requested branch,
+advancing a cursor after each conforming occurrence. Thus `address.city` and
+`address.geo.lat` are judged from the `address` root under both layouts even
+though their physical paths differ.
 
 Judgement remains demand-driven rather than a scan of an opaque subtree. One
-invocation judges one requested direct member of one logical root. Requesting or
-returning an occurrence carrier does not recursively judge its members, and
-judging a requested nested-occurrence member does not judge that occurrence's
-descendants. Materialization may hydrate those descendants through ordinary
-`decode`, but unrequested descendants are never inspected for findings. A
-multi-segment placement used only for SQL predicate extraction likewise performs
-no codec judgement. Logical roots select the validity boundary; physical paths
-only locate their carriers.
+invocation judges one requested direct member of one cursor. Advancing through an
+occurrence judges only its carrier kind; its members are judged only when the
+requested path or requested result shape names them. Unrequested siblings and
+descendants are never inspected for findings. A multi-segment placement used
+only for SQL predicate extraction likewise performs no codec judgement. Logical
+roots select the validity boundary, cursors keep descendant work within that
+boundary, and physical paths only locate carriers.
 
 `comparisonText` answers the exact characters a dialect's text extraction returns
 for the encoding of `value` — the literal SQL binds when the member's declared
@@ -568,15 +582,16 @@ At a judged member position, the verdict is closed:
 | non-nullable, non-`Many` member key absent | `RequiredMemberAbsent` | retain the normative absence collapse |
 | non-nullable, non-`Many` member key present with JSON null | `RequiredMemberNull` | retain the normative null collapse |
 | `One` occurrence present with a non-null, non-object value | `OneWrongKind` | collapse the occurrence to absent |
-| `Many` occurrence present with a non-null, non-array value | `ManyWrongKind` | collapse the occurrence to the empty array |
+| `Many` occurrence present with a non-null value that is not an array of object documents | `ManyWrongKind` | collapse the whole occurrence to the empty array |
 | non-null leaf value not decodable as its declared Neutral Type | `LeafUndecodable` | `Unavailable` |
 
 The complementary states remain conforming: an absent or JSON-null nullable leaf
 or nullable `One` preserves its exact `Missing` or `ExplicitNull` presence; the
 accepted non-canonical absent and JSON-null `Many` forms and the canonical empty
-array all decode to `Present([])`; a correctly shaped occurrence and a decodable
-leaf are present; and unknown keys remain valid carrier state. There is no
-implementation-selected middle category.
+array all decode to `Present([])`; a `Many` array is correctly shaped only when
+every element is an object document; every other correctly shaped occurrence and
+a decodable leaf are present; and unknown keys remain valid carrier state. There
+is no implementation-selected middle category.
 
 This module defines no repair, no defaulting, and no cross-dialect corruption
 error normalization. Classification records the contradiction; it does not make
@@ -607,8 +622,9 @@ neither outcome changes this shape-aware verdict.
   text.
 - Write composition encodes an insert's complete document here and derives each
   update's patches here, then lowers them through `m-dialect`.
-- Read materialization decodes only the paths its result form needs, by declared
-  Neutral Type, and drops unknown keys.
+- Read materialization uses classified decoding on every requested path, by
+  declared Neutral Type, and drops unknown keys. It never falls back to strict
+  decoding for requested stored state below a logical root.
 - Temporal observation retains the raw predecessor document unchanged and patches
   it here to build a successor.
 - Fixture provisioning and conformance table read-back build and compare
