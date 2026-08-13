@@ -103,6 +103,7 @@ metadata is exposed on the `RelatedFinder` and every `Attribute`.
 | [25-cascade-operations.md](25-cascade-operations.md) | Cascade operations walk dependent lifecycle graphs for insert, delete, and temporal termination, including list and business-window-bounded variants |
 | [26-stored-nullability-violations.md](26-stored-nullability-violations.md) | A stored NULL in a non-nullable column raises per row at hydration for most types but passes silently for `String`/`Timestamp`; INSERT enforces the mirror-image subset; embedded values have no absent-versus-null distinction |
 | [27-read-enrollment-and-write-licensing.md](27-read-enrollment-and-write-licensing.md) | Transaction read state is keyed by object identity *plus* temporal coordinate, never by primary key alone; write eligibility is re-checked on the object being written, and every dated UPDATE is unconditionally gated on the milestone's own end columns |
+| [28-transaction-participation-mode-scope.md](28-transaction-participation-mode-scope.md) | Transaction participation mode is scoped by transaction and object portal/class, allowing locked unversioned Entities and optimistically gated versioned or temporal Entities to coexist in one Reladomo transaction |
 
 ## Research questions
 
@@ -161,6 +162,14 @@ clearly labeled closing section contrasting the key construction against a prima
 map; it recommends nothing. It fills a gap [06](06-bitemporal-milestoning.md) and
 [09](09-transactions-locking.md) left: those cover milestone chaining and optimistic retry, but not the
 enrollment structures or their key construction.
+
+**Transaction-participation scope pass (2026-08-12, same commit).** A task-directed
+source pass answered whether Reladomo applies one concurrency mode to a whole
+transaction. It records the transaction-and-portal-scoped override, class-specific
+generated Finder methods and defaults, and the read/write call sites that permit
+mixed strategies in one transaction, then contrasts that behavior with Parallax's
+former transaction-uniform rule and records the adopted model-derived direction
+([28](28-transaction-participation-mode-scope.md)).
 
 ## Scope — what this research does not cover
 
